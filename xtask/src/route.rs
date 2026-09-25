@@ -17,6 +17,12 @@ pub struct ReadError {
     pub source: serde_json::Error,
 }
 
+impl crate::error::Coded for ReadError {
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::RecordingLine
+    }
+}
+
 /// Every granularity a route can be decided at.
 #[cfg(feature = "testkit")]
 pub const GRANULARITIES: [&str; 5] = ["all", "block", "test", "discharged", "unreached"];

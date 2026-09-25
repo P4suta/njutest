@@ -22,6 +22,20 @@ const EXPECTED_ACTIVE: &str = "NJUTEST_DEVKIT_EXPECTED_ACTIVE";
 const EXPECTED_CATALOG: &str = "NJUTEST_DEVKIT_EXPECTED_CATALOG";
 const EXPECTED_TOUCH: &str = "NJUTEST_DEVKIT_EXPECTED_TOUCH";
 
+/// Asserts a nested run of this binary succeeded and ran exactly the one test it named.
+fn assert_ran_the_one_test(output: &std::process::Output) {
+    let stdout = test_utf8(&output.stdout, "nested test stdout");
+    assert!(
+        output.status.success(),
+        "{stdout}{}",
+        test_utf8(&output.stderr, "nested test stderr")
+    );
+    assert!(
+        stdout.contains("running 1 test"),
+        "the nested run ran the one test it named, and not none of them: {stdout}"
+    );
+}
+
 fn add_synthetic_mutation_identity(command: &mut std::process::Command) {
     if option_env!("RUST_MUTANTS_COMPILED_CATALOG").is_none() {
         command
@@ -120,7 +134,11 @@ fn an_in_process_inner_run_receives_none_of_the_outer_measurement() {
     command
         .args([
             "--exact",
-            "an_in_process_inner_run_receives_none_of_the_outer_measurement",
+            njutest_devkit::process::test_name(
+                module_path!(),
+                "an_in_process_inner_run_receives_none_of_the_outer_measurement",
+            )
+            .as_str(),
         ])
         .current_dir(profiles.path())
         .env(STAGE, "coverage")
@@ -131,19 +149,18 @@ fn an_in_process_inner_run_receives_none_of_the_outer_measurement() {
         .env(RUSTC_WRAPPER, "outer-coverage-wrapper");
     add_synthetic_mutation_identity(&mut command);
     let output = test_ok(command.output(), "the nested test runs");
-    assert!(
-        output.status.success(),
-        "{}{}",
-        test_utf8(&output.stdout, "nested test stdout"),
-        test_utf8(&output.stderr, "nested test stderr")
-    );
+    assert_ran_the_one_test(&output);
 
     let executable = test_ok(std::env::current_exe(), "this test binary");
     let output = test_ok(
         std::process::Command::new(executable)
             .args([
                 "--exact",
-                "an_in_process_inner_run_receives_none_of_the_outer_measurement",
+                njutest_devkit::process::test_name(
+                    module_path!(),
+                    "an_in_process_inner_run_receives_none_of_the_outer_measurement",
+                )
+                .as_str(),
             ])
             .current_dir(profiles.path())
             .env(STAGE, "ordinary-wrapper")
@@ -154,12 +171,7 @@ fn an_in_process_inner_run_receives_none_of_the_outer_measurement() {
             .output(),
         "the ordinary-wrapper test runs",
     );
-    assert!(
-        output.status.success(),
-        "{}{}",
-        test_utf8(&output.stdout, "ordinary wrapper stdout"),
-        test_utf8(&output.stderr, "ordinary wrapper stderr")
-    );
+    assert_ran_the_one_test(&output);
 }
 
 #[test]
@@ -172,7 +184,11 @@ fn a_subprocess_keeps_mutation_identity_and_drops_only_the_coverage_sink() {
             command
                 .args([
                     "--exact",
-                    "a_subprocess_keeps_mutation_identity_and_drops_only_the_coverage_sink",
+                    njutest_devkit::process::test_name(
+                        module_path!(),
+                        "a_subprocess_keeps_mutation_identity_and_drops_only_the_coverage_sink",
+                    )
+                    .as_str(),
                 ])
                 .env(STAGE, "inspect");
             for (name, expected) in [
@@ -187,12 +203,7 @@ fn a_subprocess_keeps_mutation_identity_and_drops_only_the_coverage_sink() {
                 }
             }
             let output = test_ok(command.output(), "the subprocess runs");
-            assert!(
-                output.status.success(),
-                "{}{}",
-                test_utf8(&output.stdout, "subprocess stdout"),
-                test_utf8(&output.stderr, "subprocess stderr")
-            );
+            assert_ran_the_one_test(&output);
             return;
         }
         Ok("inspect") => {
@@ -221,19 +232,18 @@ fn a_subprocess_keeps_mutation_identity_and_drops_only_the_coverage_sink() {
     command
         .args([
             "--exact",
-            "a_subprocess_keeps_mutation_identity_and_drops_only_the_coverage_sink",
+            njutest_devkit::process::test_name(
+                module_path!(),
+                "a_subprocess_keeps_mutation_identity_and_drops_only_the_coverage_sink",
+            )
+            .as_str(),
         ])
         .current_dir(profiles.path())
         .env(STAGE, "forward")
         .env(PROFILE, profiles.path().join("profiles-%p.profraw"));
     add_synthetic_mutation_identity(&mut command);
     let output = test_ok(command.output(), "the forwarding test runs");
-    assert!(
-        output.status.success(),
-        "{}{}",
-        test_utf8(&output.stdout, "forwarding test stdout"),
-        test_utf8(&output.stderr, "forwarding test stderr")
-    );
+    assert_ran_the_one_test(&output);
 }
 
 #[test]

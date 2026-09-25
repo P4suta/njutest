@@ -137,7 +137,10 @@ fn a_child_that_cannot_be_reaped_aborts_instead_of_becoming_detached() {
         [
             executable.into_os_string(),
             OsString::from("--exact"),
-            OsString::from("a_child_that_cannot_be_reaped_aborts_instead_of_becoming_detached"),
+            OsString::from(njutest_devkit::process::test_name(
+                module_path!(),
+                "a_child_that_cannot_be_reaped_aborts_instead_of_becoming_detached",
+            )),
             OsString::from("--nocapture"),
         ],
         Bound::After(Duration::from_secs(8)),

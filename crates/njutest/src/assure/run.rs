@@ -1605,7 +1605,7 @@ fn narrowing(
     let Some(change) = request.changed.as_ref() else {
         return Ok(configured);
     };
-    rust_mutants::git::within(change, &configured)
+    rust_mutants::git::within(change, &configured)?.patterns()
 }
 
 /// Puts what the mutation phase judged into the report: the counts, one row per mutation, the findings, and what was not mutated.
@@ -1652,6 +1652,11 @@ pub fn record(
         let whole = crate::report::whole_catalog(&report.drift, &report.knobs, &report.mutants);
         report.findings.extend(whole.findings);
         report.limitations.extend(whole.limitations);
+        report.limitations.extend(crate::report::drift::repaired(
+            &report.drift,
+            &report.mutants,
+            &mutation.repaired,
+        ));
     }
     for (reason, count) in &mutation.skips {
         report.limitations.push(Limitation::new(

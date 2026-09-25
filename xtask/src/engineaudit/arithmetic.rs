@@ -11,8 +11,8 @@ use super::{
     Audit, DISCHARGED, DISCHARGED_MUTANT, DISPLAY_ID_LENGTH, ERRORED, ERRORED_MUTANT, ID_DOMAIN,
     INCONCLUSIVE, INCONCLUSIVE_MUTANT, KILLED, Layer, MET, NOT_RUN, NOT_RUN_MUTANT, Notes, Report,
     Row, STALE, STALE_EXPECTATION, STEP_LIMIT_REACHED, STEP_LIMIT_REACHED_MUTANT, STOPPED_EARLY,
-    SURVIVED, SURVIVING_MUTANT, UNMATCHED, UNMATCHED_EXPECTATION, UNREACHED, UNREACHED_MUTANT,
-    UNSELECTED, WAITED, WAITED_MUTANT, count,
+    SURVIVED, SURVIVING_MUTANT, UNJUDGED, UNMATCHED, UNMATCHED_EXPECTATION, UNREACHED,
+    UNREACHED_MUTANT, UNSELECTED, WAITED, WAITED_MUTANT, count,
 };
 
 /// Every identity re-minted from the row that carries it.
@@ -564,6 +564,16 @@ pub(super) fn expectations(report: &Report, audit: &mut Audit) {
                         &claim.id,
                         "the claim is unmatched and names a mutant; a claim that matched \
                          nothing names nothing"
+                            .to_owned(),
+                    );
+                }
+            }
+            UNJUDGED => {
+                if claim.mutant.is_some() {
+                    notes.violated(
+                        &claim.id,
+                        "the claim is unjudged and names a mutant; a claim the run decided none \
+                         of names none"
                             .to_owned(),
                     );
                 }

@@ -807,7 +807,7 @@ impl StepProtocolFailure {
 pub struct Observation {
     /// Its single terminal fact.
     pub stopped: Stopped,
-    /// Whether the runtime said the binary was built from another catalog.
+    /// Whether the process itself was refused by its runtime for carrying another catalog: it exited with the refusal's code and said so, which a test relaying a child's refusal does not.
     pub stale_catalog: bool,
 }
 
@@ -816,7 +816,10 @@ impl Observation {
         let stopped = observed_stop(result, step);
         Self {
             stopped,
-            stale_catalog: said(&result.output, crate::instrument::STALE_CATALOG_MARKER),
+            stale_catalog: matches!(
+                result.termination,
+                Termination::Exited(ProcessExit::Code(crate::instrument::STALE_CATALOG_EXIT))
+            ) && said(&result.output, crate::instrument::STALE_CATALOG_MARKER),
         }
     }
 }

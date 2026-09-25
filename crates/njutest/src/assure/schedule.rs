@@ -6,21 +6,13 @@
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// The most workers a run gives itself when the configuration does not say.
-pub const CAP: usize = 4;
-
 /// How many mutations to measure at once, given what the configuration asked for, what the machine offers, and whether a resource forces the run to be alone.
-/// # Errors
-/// The requested count does not fit this target's address space.
-pub fn workers(jobs: u32, available: usize, exclusive: bool) -> Result<usize, ScheduleError> {
+#[must_use]
+pub fn workers(jobs: rust_mutants::run::Jobs, available: usize, exclusive: bool) -> usize {
     if exclusive {
-        return Ok(1);
+        return 1;
     }
-    if jobs > 0 {
-        return usize::try_from(jobs)
-            .map_err(|_out_of_range| ScheduleError::WorkerCount { requested: jobs });
-    }
-    Ok(available.clamp(1, CAP))
+    jobs.resolve_on(available)
 }
 
 /// The processors this machine offers.
@@ -36,12 +28,6 @@ pub fn available() -> Result<usize, ScheduleError> {
 /// Why work could not be scheduled without inventing or recovering state.
 #[derive(Debug, thiserror::Error)]
 pub enum ScheduleError {
-    /// The configured worker count does not fit this target.
-    #[error("the requested worker count {requested} does not fit this target")]
-    WorkerCount {
-        /// The count from configuration.
-        requested: u32,
-    },
     /// The operating system could not report the available processors.
     #[error("the operating system could not report available parallelism: {source}")]
     Parallelism {

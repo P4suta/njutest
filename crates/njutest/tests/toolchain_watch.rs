@@ -547,7 +547,7 @@ fn once_slow(report: &serde_json::Value) {
             part_of(report)["accounting"]["mutants"]["killed"].as_u64(),
             part_of(report)["accounting"]["mutants"]["survived"].as_u64(),
         ),
-        (Some(8), Some(1)),
+        (Some(9), Some(1)),
         "every mutation but one is noticed here, and by the second measurement rather \
          than the first. The one nothing noticed ran and was not noticed, which is a \
          different fact from one nothing could decide: {report}"

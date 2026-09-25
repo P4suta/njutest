@@ -228,33 +228,55 @@ fn findings_of<'a>(document: &'a serde_json::Value, kind: &str) -> Vec<&'a serde
 
 #[cfg(unix)]
 #[test]
-fn a_target_whose_reach_moved_between_its_baseline_and_a_control_is_an_unstable_baseline() {
+fn a_target_whose_reach_moved_has_every_disposition_resting_on_it_run_again() {
     let fixture = fixture("fixture-drifts");
     let output = verify(&fixture, &[]);
     let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
     let document = document(&fixture);
     let target = "fixture-drifts/lib/fixture_drifts";
-    let unstable = findings_of(&document, "unstable-baseline");
-    assert_eq!(
-        unstable.len(),
-        1,
-        "the baseline was the first process of the run to look and every control after it          was not, so the one target reached one function on its baseline and another on the          control that confirmed a kill, over the same passing test: {document}\n{stderr}"
-    );
-    assert_eq!(unstable[0]["subject"], target, "{}", unstable[0]);
-    let detail = unstable[0]["detail"].as_str().unwrap_or_default();
-    assert!(
-        detail.contains("2 mutations no test reached"),
-        "the weight of the finding is what rests on the moved record: both mutations of \
-         `return_visit` are unreached on its word, and nothing was discharged: {detail}"
-    );
-    let drift = &document["builds"][0]["parts"][0]["drift"];
+    let part = &document["builds"][0]["parts"][0];
+    let drift = &part["drift"];
     assert_eq!(drift[0]["state"], "moved", "{drift}");
     assert_eq!(drift[0]["target"], target, "{drift}");
+    let unreached: Vec<&serde_json::Value> = part["mutants"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the part lists its mutants: {document}"))
+        .iter()
+        .filter(|mutant| mutant["decision"]["outcome"] == "unreached")
+        .collect();
+    assert!(
+        unreached.is_empty(),
+        "the mutations of `return_visit` were `unreached` only on the word of a baseline the \
+         control contradicted, so each was run against the moved target and decided by that \
+         execution instead: {unreached:?}\n{stderr}"
+    );
+    assert!(
+        findings_of(&document, "unstable-baseline").is_empty(),
+        "nothing the report concludes rests on the moved record any more, so no finding \
+         says it does: {document}"
+    );
+    let moved: Vec<&serde_json::Value> = part["limitations"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the part lists its limitations: {document}"))
+        .iter()
+        .filter(|one| one["name"] == "reach-moved")
+        .collect();
+    assert_eq!(
+        moved.len(),
+        1,
+        "the suite's reach still moved, and a reader deciding whether to trust later runs is \
+         told so: {document}"
+    );
+    let detail = moved[0]["detail"].as_str().unwrap_or_default();
+    assert!(
+        detail.contains(target) && detail.contains("2 dispositions"),
+        "it names the target and how many dispositions were run again: {detail}"
+    );
     assert_eq!(
         output.status.code(),
         Some(2),
-        "a moved measurement is a gap in what the run established, not a fault in the code: \
-         {stderr}"
+        "`return_visit` is called but not asserted on, so its mutations survive the run \
+         against the target, and a survivor is a gap: {stderr}"
     );
 }
 
@@ -2031,4 +2053,72 @@ fn a_catalog_measured_in_shards_and_merged_concludes_what_it_concludes_measured_
         measured_in_shards, measured_whole,
         "how a catalog was divided among runs is not something its conclusion may depend on"
     );
+}
+
+#[cfg(unix)]
+fn published(name: &str) -> serde_json::Value {
+    let path = njutest_devkit::paths::workspace_root()
+        .join("schema")
+        .join(name);
+    let text = std::fs::read_to_string(&path).expect("the published schema");
+    njutest_devkit::strictjson::decode_str(&text).expect("the schema is JSON")
+}
+
+#[cfg(unix)]
+fn off_the_trace_schema(recording: &Path) -> Vec<String> {
+    let registry = jsonschema::Registry::new()
+        .add(
+            "https://github.com/P4suta/njutest/schema/rust-mutants-trace-v1.json",
+            published("rust-mutants-trace-v1.json"),
+        )
+        .expect("the engine trace schema has a canonical URI")
+        .add(
+            "https://github.com/P4suta/njutest/schema/njutest-assurance-report-v1.json",
+            published("njutest-assurance-report-v1.json"),
+        )
+        .expect("the report schema has a canonical URI")
+        .prepare()
+        .expect("the referenced schemas prepare");
+    let validator = jsonschema::options()
+        .with_registry(&registry)
+        .build(&published("njutest-trace-v1.json"))
+        .expect("the trace schema compiles offline");
+    let text =
+        std::fs::read_to_string(recording.join(njutest::trace::FILE_NAME)).expect("the recording");
+    text.lines()
+        .enumerate()
+        .filter_map(|(at, line)| {
+            let event: serde_json::Value =
+                njutest_devkit::strictjson::decode_str(line).expect("a recorded line is JSON");
+            match validator.validate(&event) {
+                Ok(()) => None,
+                Err(error) => Some(format!("line {}: {error}: {line}", at.saturating_add(1))),
+            }
+        })
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn every_line_a_run_records_is_on_the_published_trace_schema_whole_or_sharded() {
+    for extra in [&["--trace"][..], &["--trace", "--shard", "1/2"][..]] {
+        let fixture = fixture("fixture-assured");
+        let output = verify(&fixture, extra);
+        assert!(
+            matches!(output.status.code(), Some(0 | 2)),
+            "{extra:?}: {}",
+            njutest_devkit::process::strict_utf8(&output.stderr)
+        );
+        let recording = std::fs::read_dir(fixture.root.join(".njutest/trace"))
+            .expect("the trace root")
+            .next()
+            .expect("one namespace")
+            .expect("the namespace is readable")
+            .path();
+        assert_eq!(
+            off_the_trace_schema(&recording),
+            Vec::<String>::new(),
+            "{extra:?}: a recording a reader must validate before it reads is written on its schema"
+        );
+    }
 }

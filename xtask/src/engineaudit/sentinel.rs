@@ -75,7 +75,7 @@ fn survived() -> Value {
 pub fn base() -> Value {
     json!({
         "document_type": "rust-mutants/run-report",
-        "schema_version": 2,
+        "schema_version": super::SCHEMA_VERSION,
         "tool_version": "0.1.0",
         "run": {
             "id": RUN,
@@ -84,7 +84,8 @@ pub fn base() -> Value {
             "duration_ms": 2000,
             "interrupted": false,
             "exit_code": 0,
-            "shard": null
+            "shard": null,
+            "jobs": {"asked": "auto", "used": 1}
         },
         "workspace": {
             "root_name": "demo",
@@ -251,6 +252,17 @@ pub enum SpecimenError {
         /// The missing field.
         field: &'static str,
     },
+}
+
+impl crate::error::Coded for SpecimenError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Directory { .. } | Self::Unwritable { .. } => {
+                crate::error::XtCode::SpecimenUnwritable
+            }
+            Self::NotAnObject { .. } | Self::Envelope { .. } => crate::error::XtCode::SpecimenEvent,
+        }
+    }
 }
 
 fn directory() -> Result<TempDir, SpecimenError> {

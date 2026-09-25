@@ -80,7 +80,9 @@ fn recorded(root: &Path) {
             noticed_by: "workspace/test/payments".to_owned(),
         },
     });
-    trace.run_end("ASSURED", None, None).expect("trace closes");
+    trace
+        .run_end(njutest::report::Verdict::Assured, None, None)
+        .expect("trace closes");
 }
 
 fn ask(root: &Path, id: &str) -> (u8, String, String) {

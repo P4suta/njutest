@@ -302,9 +302,8 @@ pub struct Execution {
         serialize_with = "as_optional_millis"
     )]
     pub build_timeout: Option<Duration>,
-    /// How many mutation workers.
-    /// Zero means the logical CPUs, capped.
-    pub jobs: u32,
+    /// How many mutation workers: a count, `auto` for the logical CPUs capped, or `all` for every one.
+    pub jobs: rust_mutants::run::Jobs,
     /// Test targets never to start, by the stable id a report names them with.
     pub skip_targets: Vec<String>,
     /// Whether to make the coverage build, which is an independent second opinion rather than the measurement (ADR 0014).
@@ -340,7 +339,7 @@ impl Default for Execution {
             timeout: DEFAULT_TIMEOUT,
             steps: default_steps(),
             build_timeout: None,
-            jobs: 0,
+            jobs: rust_mutants::run::Jobs::Auto,
             skip_targets: Vec::new(),
             coverage: false,
         }
@@ -1020,7 +1019,7 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\" | \"verified-v
 # environment = []               # variable names only, never values
 # timeout = \"{timeout}m\"              # upper bound for one measurement
 # build_timeout = \"\"            # upper bound for one build; empty = no bound
-# jobs = 0                       # mutation workers; 0 = logical CPUs, capped
+# jobs = \"auto\"                  # mutation workers: a count, \"auto\" (logical CPUs, capped), or \"all\"
 # skip_targets = []              # target ids never to start; reported as a limitation
 # coverage = false                # make the coverage build as a second opinion (ADR 0014)
 

@@ -185,6 +185,31 @@ pub const CACHE_UNREADABLE: ErrorCode = ErrorCode {
     ),
 };
 
+/// A continuous integration host a command was asked to write for, which the environment does not provide.
+pub const CI_HOST_UNAVAILABLE: ErrorCode = ErrorCode {
+    code: "RM0014",
+    summary: "a continuous integration host was asked for that the environment does not provide",
+    remedy: Some(
+        "run the step inside GitHub Actions, which names GITHUB_STEP_SUMMARY, GITHUB_OUTPUT and GITHUB_WORKSPACE, or pass --host plain",
+    ),
+};
+
+/// A workspace root outside the checkout a host places annotations in.
+pub const CI_ROOT_OUTSIDE_CHECKOUT: ErrorCode = ErrorCode {
+    code: "RM0015",
+    summary: "a workspace root outside the checkout the host places annotations in",
+    remedy: Some("pass --root at the workspace inside the checkout GITHUB_WORKSPACE names"),
+};
+
+/// A file the host named for a step's summary or outputs, which could not be appended to.
+pub const CI_SINK_UNWRITABLE: ErrorCode = ErrorCode {
+    code: "RM0016",
+    summary: "a file the host named for a step's summary or outputs could not be appended to",
+    remedy: Some(
+        "the runner names the file for this step; check no earlier step removed it or its directory",
+    ),
+};
+
 /// Declares one error code.
 /// There is no form without a remedy, on purpose.
 macro_rules! snapshot_code {
@@ -579,6 +604,9 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         MERGE_REFUSED,
         SOURCE_UNREADABLE,
         CACHE_UNREADABLE,
+        CI_HOST_UNAVAILABLE,
+        CI_ROOT_OUTSIDE_CHECKOUT,
+        CI_SINK_UNWRITABLE,
         SNAPSHOT_INVALID_OPTIONS,
         SNAPSHOT_SOURCE_ROOT,
         SNAPSHOT_WALK,

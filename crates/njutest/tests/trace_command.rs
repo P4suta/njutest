@@ -363,7 +363,7 @@ fn whole(run: &str) -> Vec<Event> {
             5,
             Payload::RunEnd {
                 run: njutest::trace::RunRecord {
-                    verdict: "ASSURED".to_owned(),
+                    verdict: njutest::report::Verdict::Assured,
                     accounting: None,
                     error: None,
                     events_emitted: 4,

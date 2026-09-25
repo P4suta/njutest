@@ -261,6 +261,50 @@ pub enum CliError {
         error::WRITE_FAILED.code
     )]
     PreparationPanicked,
+    /// A continuous integration host was asked for that the environment does not provide.
+    #[error(
+        "{}: --host {host} was asked for, and this is not a {host} step that names where a step reports",
+        error::CI_HOST_UNAVAILABLE.code
+    )]
+    CiHostUnavailable {
+        /// The host, as `--host` spells it.
+        host: &'static str,
+    },
+    /// The workspace root is not inside the checkout the host places annotations in.
+    #[error(
+        "{}: {} is not inside the checkout {}, so no annotation could name a file the host finds",
+        error::CI_ROOT_OUTSIDE_CHECKOUT.code,
+        root.display(),
+        checkout.display()
+    )]
+    CiRootOutsideCheckout {
+        /// The workspace root.
+        root: PathBuf,
+        /// The checkout the host names.
+        checkout: PathBuf,
+    },
+    /// A path the placement of annotations depends on could not be resolved.
+    #[error(
+        "{}: resolving {}: {source}",
+        error::CI_ROOT_OUTSIDE_CHECKOUT.code,
+        path.display()
+    )]
+    CiPathUnresolved {
+        /// The workspace root or the checkout.
+        path: PathBuf,
+        /// The operating system's reason.
+        #[source]
+        source: std::io::Error,
+    },
+    /// A file the host named for a step's summary or outputs could not be appended to.
+    #[error("{}: appending to {}: {source}", error::CI_SINK_UNWRITABLE.code, path.display())]
+    CiSinkUnwritable {
+        /// The file the host named.
+        path: PathBuf,
+        /// The operating system's reason.
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 impl From<crate::run::ShardError> for CliError {
@@ -293,6 +337,11 @@ impl CliError {
             | Self::CandidateTextNotUtf8 { .. }
             | Self::CandidatePosition { .. } => error::CANDIDATE_INVALID,
             Self::EnvironmentReserved { .. } => error::ENVIRONMENT_RESERVED,
+            Self::CiHostUnavailable { .. } => error::CI_HOST_UNAVAILABLE,
+            Self::CiRootOutsideCheckout { .. } | Self::CiPathUnresolved { .. } => {
+                error::CI_ROOT_OUTSIDE_CHECKOUT
+            }
+            Self::CiSinkUnwritable { .. } => error::CI_SINK_UNWRITABLE,
             Self::CacheUnreadable { .. } | Self::KeptLedgerUnreadable { .. } => {
                 error::CACHE_UNREADABLE
             }

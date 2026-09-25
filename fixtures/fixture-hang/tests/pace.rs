@@ -76,3 +76,8 @@ fn clamping_keeps_a_positive_and_floors_everything_else() {
     assert_eq!(fixture_hang::clamp_positive(-3), 0);
     assert_eq!(fixture_hang::clamp_positive(0), 0);
 }
+
+#[test]
+fn walking_to_two_takes_two_strides() {
+    assert_eq!(fixture_hang::walked(2), 2);
+}

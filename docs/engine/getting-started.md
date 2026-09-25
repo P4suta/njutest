@@ -51,6 +51,7 @@ $ rust-mutants run
 run       <run>
 workspace <workspace digest>
 catalog   <catalog digest>
+jobs      1 (1)
 
 discharged-mutant      every target that could have noticed f0d20edfda2959667ff1 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
 
@@ -107,6 +108,7 @@ The score is over what a run *decided*, and this one was decided by a proof rath
 MUTANTS   cataloged=117 refused=3 skipped=17 executed=113
 OUTCOMES  killed=98 survived=14 step_limit_reached=1 waited=0 inconclusive=0 errored=0 not_run=4 unreached=4 …
 SCORE     87.5%  (98 detected of 112 decided)
+LEFT      2 of 14 survivors are accounted for by no claim
 ```
 
 - **killed** — a test failed with the mutation live.
@@ -122,6 +124,9 @@ SCORE     87.5%  (98 detected of 112 decided)
 - **refused** — the compiler would not accept the mutation.
   Not a finding.
 - **skipped** — discovery passed over the place, and every skip states a reason.
+
+`LEFT` appears once a `[[mutation.expect]]` claim accounts for a survivor, and counts the survivors no claim does: what is left to do.
+The score does not move for a claim — a survivor a reviewer accounted for is still one the tests did not notice — so the two lines together say how much the tests notice and how much of the rest somebody has answered for.
 
 The exit code is `0` when there is no finding, `1` when there is, `2` when the run itself failed, `130` when it was interrupted.
 

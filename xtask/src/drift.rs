@@ -7,13 +7,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-/// Which of the two runs of a whole target one touch record was measured on.
+/// Which run of a whole target one touch record was measured on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 pub enum Measured {
     /// The one run of every target with nothing active, which routing rests on.
     Baseline,
     /// An original-code control of the whole target, run to confirm a kill.
     Control,
+    /// A mutant run again against a target whose reach moved (ADR 0036).
+    Repair,
 }
 
 impl Measured {
@@ -23,6 +25,7 @@ impl Measured {
         match self {
             Self::Baseline => "baseline",
             Self::Control => "control",
+            Self::Repair => "repair",
         }
     }
 
@@ -38,6 +41,8 @@ pub struct Touch {
     pub target: String,
     /// Which run it was measured on.
     pub measured: Measured,
+    /// The full identity of the mutation a repair ran; nothing on a baseline or a control, which the reader holds.
+    pub mutant: Option<String>,
     /// The tests that run passed, which is what its reach is the reach of.
     pub passed: BTreeSet<String>,
     /// Whether the tests the record names are the harness's answer: under libtest, whether they come to its summary's count; in any other protocol, which names none, nothing to fall short of.
@@ -143,10 +148,17 @@ pub(crate) fn touch(record: &Value) -> Option<Touch> {
         "unanswered" => false,
         _ => return None,
     };
+    let measured = Measured::parse(record.get("measured")?.as_str()?)?;
+    let mutant = match (measured, record.get("mutant")?) {
+        (Measured::Repair, Value::String(mutant)) => Some(mutant.clone()),
+        (Measured::Baseline | Measured::Control, Value::Null) => None,
+        (Measured::Repair | Measured::Baseline | Measured::Control, _) => return None,
+    };
     Some(Touch {
         whole,
         target: record.get("target")?.as_str()?.to_owned(),
-        measured: Measured::parse(record.get("measured")?.as_str()?)?,
+        measured,
+        mutant,
         passed: record
             .get("passed")?
             .as_array()?

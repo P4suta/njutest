@@ -64,6 +64,9 @@ pub const SEAM_NOT_WATCHED: &str = "seam-not-watched";
 /// A target's baseline was measured and no original-code control over the same passing tests recorded what it reached, so whether its reach is a function of the target is not known.
 pub const DRIFT_NOT_MEASURED: &str = "drift-not-measured";
 
+/// A target's reach moved and every disposition that rested on it was decided again against it, so nothing the run concludes stands on the moved record, but the suite's reach is still not a function of the target (ADR 0036).
+pub const REACH_MOVED: &str = "reach-moved";
+
 /// A knob was asked for and not put on a target, so nothing is claimed about whether the target depends on what it sets.
 pub const KNOB_NOT_PUT: &str = "knob-not-put";
 
@@ -72,7 +75,7 @@ pub const KNOB_NOT_COMPARED: &str = "knob-not-compared";
 
 /// Every limitation this runner states of its own, in the order a reader meets them in a run.
 #[cfg(feature = "testkit")]
-pub const ALL: [&str; 22] = [
+pub const ALL: [&str; 23] = [
     WORKSPACE_DIGEST_NOT_COMPUTED,
     TREE_WRITTEN_DURING_MEASUREMENT,
     RESUMED_FROM_CHECKPOINT,
@@ -93,6 +96,7 @@ pub const ALL: [&str; 22] = [
     RESOURCE_NOT_STOPPED,
     SEAM_NOT_WATCHED,
     DRIFT_NOT_MEASURED,
+    REACH_MOVED,
     KNOB_NOT_PUT,
     KNOB_NOT_COMPARED,
 ];

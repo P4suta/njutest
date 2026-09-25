@@ -71,8 +71,9 @@ Options:
       --build-jobs <N>
           How many compilation jobs cargo may run at once
 
-  -j, --jobs <N>
-          How many mutants to measure at once. Zero is as many as the machine has, capped at four
+  -j, --jobs <N|auto|all>
+          How many mutants to measure at once: a count, `auto` for as many as the machine has capped
+          at four, or `all` for every one
 
       --skip-target <PKG/KIND/NAME>
           Never start this target, by the id a report names it with. Repeatable
