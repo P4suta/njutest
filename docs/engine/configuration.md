@@ -251,7 +251,7 @@ A skip that quietly stops meaning anything when the code under it moves is worse
 
 ## Reserved environment
 
-A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_FAULT`, `RUST_MUTANTS_CATALOG`, `RUST_MUTANTS_TOUCH`, `RUST_MUTANTS_TOUCH_ITEMS`, `RUST_MUTANTS_DELAY`, `RUST_MUTANTS_STEPS`, `RUST_MUTANTS_STEP_NOTICE`, and `RUST_MUTANTS_STEP_NONCE`, `RUST_MUTANTS_STEP_STATE`, `RUST_MUTANTS_CRASH_NOTICE` and `RUST_MUTANTS_CRASH_NONCE` for every test process it starts.
+A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_FAULT`, `RUST_MUTANTS_CATALOG`, `RUST_MUTANTS_TOUCH`, `RUST_MUTANTS_TOUCH_ITEMS`, `RUST_MUTANTS_DELAY`, `RUST_MUTANTS_STEPS`, `RUST_MUTANTS_STEP_NOTICE`, and `RUST_MUTANTS_STEP_NONCE`, `RUST_MUTANTS_STEP_STATE`, `RUST_MUTANTS_STEP_BEAT`, `RUST_MUTANTS_CRASH_NOTICE` and `RUST_MUTANTS_CRASH_NONCE` for every test process it starts.
 `RUST_MUTANTS_FAULT` names a fault to activate beside the active mutation, and only a fault whose guard the instrumentation carried into that mutation's branch can be; it is set only with `RUST_MUTANTS_ACTIVE` ([ADR 0032](../adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
 `RUST_MUTANTS_TOUCH_ITEMS`, set to `1` beside `RUST_MUTANTS_TOUCH`, asks a mutant execution to record only the items it entered, which is what a run that keeps its answers in the store records about each one.
 Finding any of them already set normally ends the command with `RM0006`: nothing a test process said under an unrelated activation would be about this run, and a touch log another run owns is not one this run may append to.
@@ -267,6 +267,8 @@ malformed, mismatched or replayed notice fails closed as a protocol error.
 No exit status is reserved: a test that returns 95 is an ordinary non-zero test failure.
 Unset, or `0`, counts nothing and leaves the clock as the only bound.
 `RUST_MUTANTS_STEP_STATE` names the execution-private state shared by every instrumented module and descendant process, so a selected mutation has one process-wide allowance rather than one counter per compilation unit.
+`RUST_MUTANTS_STEP_BEAT` is `<ms>@<path>`, set by the runner that watches a counted execution for quiet: a process spending a reservation of its allowance rewrites the file at most `<ms>` apart, a quarter of the window, since the state only changes when a reservation is taken ([ADR 0039](../adr/0039-a-step-is-spent-in-memory.md)).
+Anything but canonical milliseconds above zero and a path is a protocol failure.
 
 `RUST_MUTANTS_CRASH_NOTICE` and `RUST_MUTANTS_CRASH_NONCE` are set for a run that keeps its scratch for a next run ([ADR 0035](../adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
 When a crash stops the process after its call, the runtime first publishes a notice carrying the schema, the fresh nonce, the catalog and the mutant, in a directory apart from the scratch the test sees.
