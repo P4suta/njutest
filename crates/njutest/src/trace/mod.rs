@@ -199,9 +199,9 @@ enum EndDelivery {
     Delivered(Option<std::io::Error>),
 }
 
-struct EndInput<'a> {
+struct EndInput {
     moment: Timestamp,
-    verdict: &'a str,
+    verdict: crate::report::Verdict,
     accounting: Option<ConclusionAccounting>,
     error: Option<String>,
 }
@@ -440,7 +440,7 @@ impl Recorder {
     /// The sink could not make the completed recording durable.
     pub fn run_end(
         &self,
-        verdict: &str,
+        verdict: crate::report::Verdict,
         accounting: Option<ConclusionAccounting>,
         error: Option<String>,
     ) -> std::io::Result<()> {
@@ -546,7 +546,7 @@ impl Recorder {
     }
 }
 
-fn deliver_end(inner: &Inner, input: EndInput<'_>) -> std::io::Result<EndDelivery> {
+fn deliver_end(inner: &Inner, input: EndInput) -> std::io::Result<EndDelivery> {
     let failure = {
         let mut state = inner.lock_state()?;
         if state.ended {
@@ -559,7 +559,7 @@ fn deliver_end(inner: &Inner, input: EndInput<'_>) -> std::io::Result<EndDeliver
             input.moment,
             Payload::RunEnd {
                 run: RunRecord {
-                    verdict: input.verdict.to_owned(),
+                    verdict: input.verdict,
                     accounting: input.accounting.map(RunAccounting::from),
                     error: input.error,
                     events_emitted,

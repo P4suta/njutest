@@ -629,8 +629,8 @@ pub struct NoteRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunRecord {
-    /// The verdict, or what stopped the run from reaching one.
-    pub verdict: String,
+    /// The verdict, which is `ERROR` where something stopped the run from reaching one.
+    pub verdict: crate::report::Verdict,
     /// What the run counted, when it got far enough to count.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub accounting: Option<RunAccounting>,

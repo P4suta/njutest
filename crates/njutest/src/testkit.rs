@@ -650,7 +650,7 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
         },
         Payload::RunEnd {
             run: RunRecord {
-                verdict: "ERROR".to_owned(),
+                verdict: crate::report::Verdict::Error,
                 accounting: None,
                 error: Some("one failure".to_owned()),
                 events_emitted: 10,

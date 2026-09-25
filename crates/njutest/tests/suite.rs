@@ -61,6 +61,8 @@ mod git;
 mod hollow;
 #[path = "identity.rs"]
 mod identity;
+#[path = "identity_environment.rs"]
+mod identity_environment;
 #[path = "interpose.rs"]
 mod interpose;
 #[path = "item_spec.rs"]

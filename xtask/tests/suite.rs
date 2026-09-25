@@ -17,6 +17,8 @@ mod docs;
 mod dogfood;
 #[path = "engineaudit.rs"]
 mod engineaudit;
+#[path = "errors_doc.rs"]
+mod errors_doc;
 #[path = "fixtures.rs"]
 mod fixtures;
 #[path = "fuzz_ledger.rs"]
