@@ -324,6 +324,11 @@ fn fixture_edits() {
 }
 
 #[test]
+fn fixture_entered() {
+    holds("fixture-entered");
+}
+
+#[test]
 fn fixture_environment() {
     holds("fixture-environment");
 }
@@ -469,6 +474,11 @@ fn fixture_shared_path() {
 }
 
 #[test]
+fn fixture_silent_kill() {
+    holds("fixture-silent-kill");
+}
+
+#[test]
 fn fixture_simple() {
     holds("fixture-simple");
 }
@@ -491,6 +501,11 @@ fn fixture_targets() {
 #[test]
 fn fixture_threaded() {
     holds("fixture-threaded");
+}
+
+#[test]
+fn fixture_two_bodies() {
+    holds("fixture-two-bodies");
 }
 
 #[test]

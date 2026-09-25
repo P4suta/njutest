@@ -7,6 +7,8 @@
 
 #[path = "adrs.rs"]
 mod adrs;
+#[path = "carry.rs"]
+mod carry;
 #[path = "deps.rs"]
 mod deps;
 #[path = "devgates.rs"]
