@@ -784,7 +784,14 @@ impl Session {
     /// Which item bodies are sealed, each body's digest, and each unit's skeleton, as the pristine build left them.
     #[must_use]
     pub fn skeletons(&self) -> crate::skeleton::Skeletons {
-        crate::skeleton::evidence(&self.closure.units, &self.verified.touched.items)
+        let items: Vec<(&crate::touch::Item, &crate::touch::ItemRef)> = self
+            .verified
+            .touched
+            .items
+            .iter()
+            .zip(&self.item_refs)
+            .collect();
+        crate::skeleton::evidence(&self.closure.units, &items)
     }
 
     /// What the one run of every target with nothing active established, target by target.

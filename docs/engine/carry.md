@@ -120,6 +120,7 @@ rustfmt
 ## Body digests
 
 An item's `body_digest` is the lowercase hex SHA-256 of the bytes `touched-v1.json`'s `items[].body` names, braces included, as the pristine file holds them.
+Every item is named by `item`, the reference an entered union names it by: its package, its file, and its `ordinal`.
 
 ## Skeletons
 
@@ -129,7 +130,7 @@ Its skeleton is the SHA-256 of one line `<name>\0<digest>\n` per entry, in byte 
 
 - every file the unit's dep-info names, as `$root/<path>` under the workspace root or `$target/<path>` under the target directory, each path with forward slashes; a file under neither is the lock file's to key and has no entry.
   The digest is the SHA-256 of the file's bytes with every sealed body of it replaced by `{sealed:<name>#<ordinal>/<newlines>:<bytes>:<characters>}`.
-  `<name>` is the entry's name, `<ordinal>` is the item's position among the file's cataloged items, from 0, `<newlines>` is how many line feeds the body holds, and `<bytes>` and `<characters>` are the length of its last line, after its last line feed, in bytes and in UTF-8 characters.
+  `<name>` is the entry's name, `<ordinal>` is the `ordinal` of the item's reference, its position among the file's cataloged items from 0, `<newlines>` is how many line feeds the body holds, and `<bytes>` and `<characters>` are the length of its last line, after its last line feed, in bytes and in UTF-8 characters.
   The shape is there because a body's length decides where everything after it is: a line added inside a sealed body moves the line `panic!`, `line!()`, `Location::caller()` and a backtrace report for every line after it;
 - every variable rustc recorded reading, as `$env/<NAME>`, with the value `unset`, or `set:` and the SHA-256 of the value with the run's own workspace root and target directory spelled `$root` and `$target`;
 - every build script the unit's package ran, as `$emitted/<out_dir>` with the directory spelled the same way.

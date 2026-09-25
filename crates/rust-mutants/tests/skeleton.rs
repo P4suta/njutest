@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 
 use rust_mutants::instrument::{ItemSource, catalog_items};
 use rust_mutants::skeleton::{ItemEvidence, Skeletons, UnitSource, Unsealing, evidence};
+use rust_mutants::touch::{Item, ItemRef};
 
 /// One library unit reading exactly these Rust files.
 fn unit(files: &[(&str, &str)]) -> UnitSource {
@@ -40,7 +41,17 @@ fn evidence_of(unit: &UnitSource, files: &[(&str, &str)]) -> Skeletons {
         })
         .collect();
     let catalog = catalog_items(&sources).expect("the fixture's items are cataloged");
-    evidence(std::slice::from_ref(unit), &catalog.items)
+    let refs: Vec<ItemRef> = catalog
+        .items
+        .iter()
+        .map(|item| {
+            catalog
+                .item_ref(item.index)
+                .expect("every item has a reference")
+        })
+        .collect();
+    let pairs: Vec<(&Item, &ItemRef)> = catalog.items.iter().zip(&refs).collect();
+    evidence(std::slice::from_ref(unit), &pairs)
 }
 
 /// The evidence of the one item called `name`, wherever it is declared.
@@ -422,5 +433,36 @@ fn nothing_the_compiler_runs_while_it_builds_is_sealed() {
         Some(Unsealing::CompileTime),
         "a procedural macro's body runs in the compiler, where no test enters it, and what it \
          returns is the code of every crate that uses it"
+    );
+}
+
+#[test]
+fn an_item_is_named_by_the_reference_every_record_joins_on() {
+    let files = [(
+        "src/lib.rs",
+        "const K: i32 = 1;\npub fn f() -> i32 { K }\npub fn g() -> i32 { 2 }\n",
+    )];
+    let kept = evidence_of(&unit(&files), &files);
+    let g = item(&kept, "g");
+    assert_eq!(
+        g.item,
+        ItemRef {
+            package: "demo".to_owned(),
+            path: "src/lib.rs".to_owned(),
+            ordinal: 2,
+        },
+        "an item is named by its package, its file, and its position among the file's \
+         cataloged items, the constant included, which is what an entered union names it by"
+    );
+    let entry = kept
+        .units
+        .first()
+        .and_then(|one| one.entries.get("$root/src/lib.rs"))
+        .expect("the file's entry");
+    let rendered = "const K: i32 = 1;\npub fn f() -> i32 {sealed:$root/src/lib.rs#1/0:5:5}\npub fn g() -> i32 {sealed:$root/src/lib.rs#2/0:5:5}\n";
+    assert_eq!(
+        entry,
+        &rust_mutants::id::digest(rendered.as_bytes()),
+        "and the placeholder names each sealed body by that same ordinal"
     );
 }
