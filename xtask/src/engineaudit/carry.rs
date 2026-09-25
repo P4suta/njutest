@@ -28,6 +28,10 @@ pub enum Unsealed {
     Unlocated,
     /// A `const fn`, which the compiler can evaluate where nothing enters it.
     Evaluated,
+    /// A body of a file a `proc-macro` or `custom-build` unit read, which runs inside the compiler.
+    CompileTime,
+    /// An `async fn`, or one whose return type holds `impl`, whose body decides a type observed without entering it.
+    OpaqueType,
     /// An attribute off the list.
     Attribute,
     /// A macro off the list, or one invoked inside a listed one's arguments.
@@ -49,6 +53,8 @@ impl Unsealed {
         match self {
             Self::Unlocated => "unlocated",
             Self::Evaluated => "evaluated",
+            Self::CompileTime => "compile-time",
+            Self::OpaqueType => "opaque-type",
             Self::Attribute => "attribute",
             Self::Macro => "macro",
             Self::DeclaresItem => "declares-item",
@@ -83,6 +89,9 @@ pub fn sealing(
     {
         return Err(Unsealed::Attribute);
     }
+    if found.opaque {
+        return Err(Unsealed::OpaqueType);
+    }
     let mut first = FirstInBody { lists, found: None };
     first.visit_block(&found.block);
     if let Some(why) = first.found {
@@ -100,6 +109,7 @@ pub fn sealing(
 struct Located {
     block: syn::Block,
     constness: bool,
+    opaque: bool,
     context: Vec<syn::Attribute>,
 }
 
@@ -132,11 +142,9 @@ impl Search {
 
     fn item(&mut self, item: &syn::Item) {
         match item {
-            syn::Item::Fn(function) => self.candidate(
-                &function.block,
-                function.sig.constness.is_some(),
-                &function.attrs,
-            ),
+            syn::Item::Fn(function) => {
+                self.candidate(&function.block, &function.sig, &function.attrs);
+            }
             syn::Item::Mod(module) => {
                 if let Some((_, inner)) = &module.content {
                     self.within(&module.attrs, |search| search.items(inner));
@@ -145,11 +153,7 @@ impl Search {
             syn::Item::Impl(block) => self.within(&block.attrs, |search| {
                 for member in &block.items {
                     if let syn::ImplItem::Fn(method) = member {
-                        search.candidate(
-                            &method.block,
-                            method.sig.constness.is_some(),
-                            &method.attrs,
-                        );
+                        search.candidate(&method.block, &method.sig, &method.attrs);
                     }
                 }
             }),
@@ -158,7 +162,7 @@ impl Search {
                     if let syn::TraitItem::Fn(method) = member
                         && let Some(block) = &method.default
                     {
-                        search.candidate(block, method.sig.constness.is_some(), &method.attrs);
+                        search.candidate(block, &method.sig, &method.attrs);
                     }
                 }
             }),
@@ -173,16 +177,33 @@ impl Search {
         self.context.truncate(depth);
     }
 
-    fn candidate(&mut self, block: &syn::Block, constness: bool, attributes: &[syn::Attribute]) {
+    fn candidate(
+        &mut self,
+        block: &syn::Block,
+        signature: &syn::Signature,
+        attributes: &[syn::Attribute],
+    ) {
         if block.brace_token.span.open().start() == self.start {
             let mut context = self.context.clone();
             context.extend(attributes.iter().cloned());
+            let mut opaque = HoldsImpl(false);
+            opaque.visit_return_type(&signature.output);
             self.found = Some(Located {
                 block: block.clone(),
-                constness,
+                constness: signature.constness.is_some(),
+                opaque: signature.asyncness.is_some() || opaque.0,
                 context,
             });
         }
+    }
+}
+
+/// Whether a type holds `impl` anywhere.
+struct HoldsImpl(bool);
+
+impl<'ast> Visit<'ast> for HoldsImpl {
+    fn visit_type_impl_trait(&mut self, _: &'ast syn::TypeImplTrait) {
+        self.0 = true;
     }
 }
 
@@ -649,6 +670,17 @@ fn bodies(
     if !item.sealed {
         return;
     }
+    if read_by_the_compiler(&item.path, skeletons) {
+        notes.violated(
+            &subject,
+            format!(
+                "the run calls {} sealed and the page says it is not: {}",
+                item.name,
+                Unsealed::CompileTime.name()
+            ),
+        );
+        return;
+    }
     let (Ok(file), Some(start)) = (syn::parse_file(&text), line_column(&text, item.body.start))
     else {
         notes.violated(
@@ -681,6 +713,27 @@ fn bodies(
             ),
         );
     }
+}
+
+/// Whether a unit that runs inside the compiler, a `proc-macro` or a `custom-build` one, read `path`.
+fn read_by_the_compiler(path: &str, skeletons: &serde_json::Value) -> bool {
+    let named = format!("$root/{path}");
+    skeletons
+        .get("units")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter(|unit| {
+            unit.get("entries")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|entries| entries.contains_key(&named))
+        })
+        .filter_map(|unit| unit.get("kind").and_then(serde_json::Value::as_str))
+        .any(|kind| {
+            kind.split(',')
+                .any(|one| one == "proc-macro" || one == "custom-build")
+        })
 }
 
 /// Every Rust file read by any unit that read `path`, parsed, or `None` where one of them cannot be read: a `$target` entry, or a `$root` one --root does not hold.

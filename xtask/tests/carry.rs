@@ -71,6 +71,17 @@ fn a_body_that_contributes_only_its_own_execution_is_sealed() {
 fn a_body_that_contributes_more_than_its_execution_names_why() {
     for (source, why) in [
         ("const fn f() -> u32 { 1 }", Unsealed::Evaluated),
+        ("async fn f() -> u32 { 1 }", Unsealed::OpaqueType),
+        ("fn f() -> impl Fn() -> i32 { || 1 }", Unsealed::OpaqueType),
+        (
+            "fn f() -> Box<dyn Iterator<Item = impl Copy>> { todo() }",
+            Unsealed::OpaqueType,
+        ),
+        (
+            "trait T { fn f(&self) -> impl Sized { 1 } }",
+            Unsealed::OpaqueType,
+        ),
+        ("impl S { async fn f(&self) {} }", Unsealed::OpaqueType),
         ("#[tokio::main] fn f() {}", Unsealed::Attribute),
         ("#![feature(x)] fn f() {}", Unsealed::Attribute),
         (
