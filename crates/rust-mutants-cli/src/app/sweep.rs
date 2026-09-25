@@ -34,6 +34,19 @@ pub(super) struct Sweeping<'a> {
     pub(super) clear_outcomes: bool,
     /// Where the store is, when it is not under the user's cache directory.
     pub(super) cache_dir: Option<&'a Path>,
+    /// Whether the store travels out to a file, in from one, or stays.
+    pub(super) transport: StoreTransport<'a>,
+}
+
+/// Where a store goes, when a command moves it.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum StoreTransport<'a> {
+    /// It stays where it is.
+    Stay,
+    /// Every record is written to this file.
+    Export(&'a Path),
+    /// Every record in this file is filed here.
+    Import(&'a Path),
 }
 
 /// Everything the cache command reports after both collectors have finished.
@@ -116,16 +129,28 @@ pub(super) fn cache(
             .cache_dir
             .unwrap_or(environment.cache_directory.as_path()),
     );
+    if let Some(code) = transported(&store, asked.transport, stdout)? {
+        return Ok(code);
+    }
     if asked.clear_outcomes {
         let (records, bytes) = store
             .clear()
             .map_err(|source| cache_unreadable(store.root(), source))?;
+        let killers = rust_mutants::killers::Killers::new(
+            asked
+                .cache_dir
+                .unwrap_or(environment.cache_directory.as_path()),
+        );
+        let hints = killers
+            .clear()
+            .map_err(|source| cache_unreadable(killers.root(), source))?;
         write(
             stdout,
             &format!(
-                "outcomes    {} removed, {bytes} bytes, from {}\n",
+                "outcomes    {} removed, {bytes} bytes, from {}\nkillers     {hints} removed, from {}\n",
                 records,
-                store.root().display()
+                store.root().display(),
+                killers.root().display()
             ),
         )?;
         return Ok(0);
@@ -169,6 +194,59 @@ pub(super) fn cache(
     write(stdout, &text)?;
     write(stdout, &preserved(asked, environment)?)?;
     Ok(0)
+}
+
+/// Moves the store out to a file or in from one, when asked, and says what moved; nothing when it stays.
+fn transported(
+    store: &crate::outcomes::Store,
+    transport: StoreTransport<'_>,
+    stdout: &mut dyn Write,
+) -> Result<Option<u8>, CliError> {
+    match transport {
+        StoreTransport::Stay => Ok(None),
+        StoreTransport::Export(file) => {
+            let exported = store.export().map_err(rust_mutants::EngineError::from)?;
+            let mut text = serde_json::to_string_pretty(&exported)
+                .map_err(|source| CliError::writing(file, std::io::Error::other(source)))?;
+            text.push('\n');
+            rust_mutants::replace::file(file, text.as_bytes())
+                .map_err(|failure| CliError::writing(&failure.path, failure.source))?;
+            write(
+                stdout,
+                &format!(
+                    "exported    {} records from {} to {}\n",
+                    exported.records.len(),
+                    store.root().display(),
+                    file.display()
+                ),
+            )?;
+            Ok(Some(0))
+        }
+        StoreTransport::Import(file) => {
+            let text =
+                std::fs::read_to_string(file).map_err(|source| CliError::CacheUnreadable {
+                    path: file.to_path_buf(),
+                    source,
+                })?;
+            let exported: crate::outcomes::Exported = crate::strictjson::decode_str(&text)
+                .map_err(|error| CliError::CacheUnreadable {
+                    path: file.to_path_buf(),
+                    source: std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()),
+                })?;
+            let filed = store
+                .import(&exported)
+                .map_err(rust_mutants::EngineError::from)?;
+            write(
+                stdout,
+                &format!(
+                    "imported    {filed} records from {} into {}\n",
+                    file.display(),
+                    store.root().display()
+                ),
+            )?;
+            Ok(Some(0))
+        }
+    }
 }
 
 fn cache_unreadable(path: &Path, source: std::io::Error) -> CliError {

@@ -11,7 +11,7 @@ use xtask::schemas::Producer;
 const ENGINE: &str = r#"
 {"seq":1,"timestamp":"2026-09-06T00:00:00Z","elapsed_ms":0,"payload":{"type":"run-start","schema":"rust-mutants-trace-v1","engine":"0.1.0","context":{"kind":"standalone","run_id":"route-specimen","build_selection":"c5a587d94348b75388f86ec2495002bcecf82b4abb21333627414c945c0746ed"}}}
 {"seq":2,"timestamp":"2026-09-06T00:00:01Z","elapsed_ms":1,"payload":{"type":"route","route":{"mutant":"aaaaaaaaaaaaaaaaaaaa","index":3,"granularity":"block","fallback":null,"reaching":["pkg/lib/pkg"],"discharged":[],"considered":[],"executed":["pkg/lib/pkg"],"reused":null}}}
-{"seq":3,"timestamp":"2026-09-06T00:00:02Z","elapsed_ms":2,"payload":{"type":"mutant-exec","mutant":{"id":"aaaaaaaaaaaaaaaaaaaa","index":3,"target":"pkg/lib/pkg","outcome":"killed","step_notice":null,"exit_code":101,"duration_ms":7,"tests_run":2,"signal":null,"failed_tests":[],"timeout_ms":1000,"timeout_source":"configured","alone":false}}}
+{"seq":3,"timestamp":"2026-09-06T00:00:02Z","elapsed_ms":2,"payload":{"type":"mutant-exec","mutant":{"id":"aaaaaaaaaaaaaaaaaaaa","index":3,"target":"pkg/lib/pkg","outcome":"killed","step_notice":null,"exit_code":101,"duration_ms":7,"tests_run":2,"signal":null,"failed_tests":[],"timeout_ms":1000,"timeout_source":"configured","alone":false,"entered_records":null,"lingered":false}}}
 {"seq":4,"timestamp":"2026-09-06T00:00:03Z","elapsed_ms":3,"payload":{"type":"route","route":{"mutant":"bbbbbbbbbbbbbbbbbbbb","index":4,"granularity":"unreached","fallback":null,"reaching":[],"discharged":[],"considered":[],"executed":[],"reused":null}}}
 "#;
 

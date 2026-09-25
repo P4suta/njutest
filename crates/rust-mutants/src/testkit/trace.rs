@@ -79,6 +79,7 @@ pub const fn record_key(payload: &Payload) -> Option<&'static str> {
         Payload::Build { .. } => Some("build"),
         Payload::Verify { .. } => Some("verify"),
         Payload::Touch { .. } => Some("touch"),
+        Payload::PerturbedControl { .. } => Some("perturbed"),
         Payload::Witness { .. } => Some("witness"),
         Payload::SkipClaim { .. } => Some("claim"),
         Payload::Kept { .. } => Some("kept"),
@@ -222,10 +223,45 @@ pub fn every_payload() -> Vec<Payload> {
                 retried: true,
             },
         },
+        Payload::PerturbedControl {
+            perturbed: crate::trace::PerturbedRecord {
+                target: "demo/lib/demo".to_owned(),
+                perturbation: crate::trace::PerturbationRecord {
+                    environment: vec![crate::trace::SetRecord {
+                        name: "TMPDIR".to_owned(),
+                        value: None,
+                    }],
+                    launcher: Some("umask 077".to_owned()),
+                    arguments: vec!["--test-threads=1".to_owned()],
+                },
+                outcome: "survived".to_owned(),
+                failed_tests: Vec::new(),
+                duration_ms: 3,
+                reach: crate::trace::ReachRecord::Recorded {
+                    touch: TouchRecord {
+                        target: "demo/lib/demo".to_owned(),
+                        measured: crate::trace::Measurement::Control,
+                        mutant: None,
+                        passed: vec!["tests::adds".to_owned()],
+                        summary: crate::trace::SummaryRecord::Libtest { tests_run: Some(1) },
+                        reached_sites: vec![0],
+                        entered_bodies: Vec::new(),
+                        infected_sites: Vec::new(),
+                        tests: 1,
+                        sites: 1,
+                        loose: 0,
+                        infected: 0,
+                        entered: 0,
+                        entered_items: Vec::new(),
+                    },
+                },
+            },
+        },
         Payload::Touch {
             touch: TouchRecord {
                 target: "demo/lib/demo".to_owned(),
                 measured: crate::trace::Measurement::Control,
+                mutant: None,
                 passed: vec!["tests::adds".to_owned(), "tests::subtracts".to_owned()],
                 summary: crate::trace::SummaryRecord::Libtest { tests_run: Some(2) },
                 reached_sites: vec![0, 1, 2],
@@ -235,6 +271,8 @@ pub fn every_payload() -> Vec<Payload> {
                 sites: 3,
                 loose: 1,
                 infected: 1,
+                entered: 2,
+                entered_items: vec![0, 1],
             },
         },
         Payload::Witness {
@@ -281,6 +319,8 @@ pub fn every_payload() -> Vec<Payload> {
                 key: "key".to_owned(),
                 hit: true,
                 source_run_id: Some("earlier-run".to_owned()),
+                rule: "exact".to_owned(),
+                refused: None,
             },
         },
         Payload::Select {
@@ -305,6 +345,7 @@ pub fn every_payload() -> Vec<Payload> {
         },
         Payload::MutantExec {
             mutant: MutantExecRecord {
+                entered_records: None,
                 id: "abcdef".to_owned(),
                 index: 1,
                 target: "demo/lib/demo".to_owned(),
@@ -318,6 +359,7 @@ pub fn every_payload() -> Vec<Payload> {
                 timeout_ms: 30_000,
                 timeout_source: "configured".to_owned(),
                 alone: true,
+                lingered: true,
             },
         },
         Payload::Note {
@@ -328,7 +370,7 @@ pub fn every_payload() -> Vec<Payload> {
         },
         Payload::RunEnd {
             run: RunRecord {
-                outcome: "failed".to_owned(),
+                outcome: crate::trace::RunOutcome::Failed,
                 error: Some("one failure".to_owned()),
                 events_emitted: 22,
                 events_dropped: 1,
@@ -362,7 +404,7 @@ pub fn every_payload() -> Vec<Payload> {
 
 /// Every way a process can stop, named so extending the enum extends the specimen ledger at compile time.
 #[must_use]
-pub fn every_stopped() -> [crate::execute::Stopped; 10] {
+pub fn every_stopped() -> [crate::execute::Stopped; 11] {
     use crate::execute::Stopped;
 
     let exits = every_process_exit();
@@ -382,6 +424,7 @@ pub fn every_stopped() -> [crate::execute::Stopped; 10] {
         Stopped::StepProtocolFailed {
             reason: protocol[0].clone(),
         },
+        Stopped::Answered,
     ];
     for one in &stopped {
         match one {
@@ -392,7 +435,8 @@ pub fn every_stopped() -> [crate::execute::Stopped; 10] {
             | Stopped::Cancelled { .. }
             | Stopped::WaitFailed
             | Stopped::StepLimitReached { .. }
-            | Stopped::StepProtocolFailed { .. } => {}
+            | Stopped::StepProtocolFailed { .. }
+            | Stopped::Answered => {}
         }
     }
     stopped

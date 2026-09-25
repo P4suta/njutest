@@ -44,7 +44,7 @@ offline = false
 locked = false
 doctests = true                # run a library's documented examples as a target
 skip_targets = []              # target ids never to start, as pkg/kind/name; a name no target has is refused
-jobs = 0                       # mutants measured at once; 0 = the machine, capped at 4
+jobs = "auto"                  # mutants measured at once: a count, "auto" (the machine, capped at 4), or "all"
 test_binary_args = []          # --test-threads, --include-ignored, --nocapture, --show-output
 scratch_working_directory = false # start each test process in a directory of its own
 
@@ -85,8 +85,11 @@ The typed scope of that fact is `InstrumentedWorkspaceSource`.
 Macro expansion and dependency bodies are not rewritten.
 An execution that activates in the workspace and then remains inside either has no source boundary to count and can still reach the clock as `waited`; that limitation cannot be upgraded into `step_limit_reached` or any verdict.
 
-The default of fifty million was sized for an in-memory counter that this durable protocol replaced, and what it costs is no longer a property of the engine.
-Measured on one developer machine after the per-take `fsync` was lifted out of the hot path, a take costs about half a microsecond and fifty million of them spend about twenty-five seconds, against the thirty-second floor a derived `timeout` never goes below; measured on Windows with that `fsync` still in place, a take cost 7.3ms and fifty million would have spent days.
+The default of fifty million was sized for an in-memory counter, and since [ADR 0039](../adr/0039-a-step-is-spent-in-memory.md) a take is one again.
+A runtime copy reserves a share of what is left of the allowance from the shared state and spends it in memory, and a copy that has not seen the mutation activate asks the state only every 256 boundaries.
+Measured median per boundary, on a loaded development Mac: dormant 30 ns and active 90 ns, where one file round trip per boundary had cost 3.2 µs and 35 µs; on Windows the round trip had cost 14 µs and 44 µs, and 4 ms before the file was opened once per copy.
+The allowance is exact for the copy that activates the mutation: the reservations never cross it, and the step past it is decided one at a time under the lock.
+With several copies spending at once it can stop early by what the others still hold, at most one reservation each, and a dormant copy charges nothing for up to 256 boundaries after another copy activates.
 So whether the count is reached before the clock is a fact about the machine, which is the one thing a verdict may not rest on ([ADR 0023](../adr/0023-a-run-may-not-conclude-from-how-it-measured.md)).
 
 Tuning the number does not fix that, because the number is machine-independent and its cost is not.
@@ -193,13 +196,15 @@ path = "src/lib.rs"
 item = "clamp"                 # a suffix of the item path is enough
 rule = "le-to-lt"
 original = "<="                # the bytes the edit replaces
-line = 42                      # a hint, when the rest names more than one
+line = 42                      # which of them, when the rest names more than one
 reason = "the bound is equivalent under the invariant the type carries"
 outcome = "survived"
 ```
 
 Never both: an identity and a locator are two ways of naming one mutant and two chances to name different ones.
 A locator whose line has moved still holds, and the report says where the mutation is now.
+`line` is part of the claim, so two claims on one item that differ only in their line are two claims, each with its own reason, and the report names each with its line.
+A mutation two claims both name — a claim on the whole item beside one on a line of it, say — has two reasons, and the run refuses it with `RM0004` naming the mutation, since a report cannot audit which reason holds.
 
 A locator names one mutation.
 Where the same reason is true of several of them at once — the same call written at three places in one function, say —
@@ -220,6 +225,7 @@ The count is what keeps that from being a licence.
 Without it, a locator that names more than one mutation is `unmatched`, because a reason written about one mutation says nothing about another that happens to share a path,
 an item, a rule and the bytes it replaces.
 With it, two things have to hold at once: the catalog holds exactly that many, so a mutation added or removed at the same place stops the claim instead of joining it, and **every one of them** came to the declared outcome, so a claim covering three stops holding the moment a test kills one of the three.
+With `line` as well, the count is of the mutations on that line: two `?` on one line are `line = 176` with `count = 2`.
 What covered that one is the test,
 and the claim would otherwise go on exempting the other two on its strength.
 
@@ -244,7 +250,8 @@ A skip that quietly stops meaning anything when the code under it moves is worse
 ## Reserved environment
 
 A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_CATALOG`,
-`RUST_MUTANTS_TOUCH`, `RUST_MUTANTS_STEPS`, `RUST_MUTANTS_STEP_NOTICE`, and `RUST_MUTANTS_STEP_NONCE`, and `RUST_MUTANTS_STEP_STATE` for every test process it starts.
+`RUST_MUTANTS_TOUCH`, `RUST_MUTANTS_TOUCH_ITEMS`, `RUST_MUTANTS_STEPS`, `RUST_MUTANTS_STEP_NOTICE`, and `RUST_MUTANTS_STEP_NONCE`, and `RUST_MUTANTS_STEP_STATE` for every test process it starts.
+`RUST_MUTANTS_TOUCH_ITEMS`, set to `1` beside `RUST_MUTANTS_TOUCH`, asks a mutant execution to record only the items it entered, which is what a run that keeps its answers in the store records about each one.
 Finding any of them already set normally ends the command with `RM0006`: nothing a test process said under an unrelated activation would be about this run, and a touch log another run owns is not one this run may append to.
 
 `RUST_MUTANTS_STEPS` is how many times the active mutant's guard may be taken.

@@ -17,19 +17,19 @@ fn only_a_sentinel_completes_a_specimen() {
         if text.contains("specimen::completed(")
             || text.contains("specimen::complete(")
             || text.contains("specimen::concluded(")
+            || text.contains("specimen::shard(")
+            || text.contains("specimen::merged(")
         {
-            callers.push(
-                path.strip_prefix(&root)
-                    .expect("under src")
-                    .display()
-                    .to_string(),
-            );
+            callers.push(path.strip_prefix(&root).expect("under src").to_path_buf());
         }
     }
     callers.sort();
     assert_eq!(
         callers,
-        ["engineaudit/sentinel.rs", "proofaudit/sentinel.rs"],
+        [
+            std::path::Path::new("engineaudit").join("sentinel.rs"),
+            std::path::Path::new("proofaudit").join("sentinel.rs"),
+        ],
         "a reader that completed its input before checking it would pass the schema law on anything"
     );
 }

@@ -56,6 +56,7 @@ const NEUTRAL: [Neutral; 5] = [
         fields: &[
             ("alone", NeutralValue::False),
             ("duration_ms", NeutralValue::Zero),
+            ("entered_records", NeutralValue::Null),
             ("exit_code", NeutralValue::Zero),
             ("failed_tests", NeutralValue::Empty),
             ("signal", NeutralValue::Null),
@@ -280,4 +281,167 @@ pub(crate) fn concluded(verdict: &str, events: usize) -> Value {
             "events_dropped": 0
         }
     })
+}
+
+/// The shard document the run `run` writes having measured the flat specimen `flat` as shard `index` of `of`: its rows, accounting and findings are the shard's own.
+///
+/// # Errors
+/// [`CompletionError`] where `flat` cannot be completed.
+pub(crate) fn shard(
+    flat: &Value,
+    (run, index, of): (&str, u64, u64),
+) -> Result<Value, CompletionError> {
+    let complete = complete(flat)?;
+    let report = complete
+        .get("report")
+        .and_then(Value::as_object)
+        .ok_or(CompletionError::Shape { at: "report" })?;
+    let build = report
+        .get("builds")
+        .and_then(|builds| builds.get(0))
+        .ok_or(CompletionError::Shape { at: "first build" })?;
+    let whole =
+        build
+            .get("parts")
+            .and_then(|parts| parts.get(0))
+            .ok_or(CompletionError::Shape {
+                at: "first part of its first build",
+            })?;
+    let placed = serde_json::json!({ "kind": "shard", "index": index, "of": of });
+    let evidence = format!("{run}-b0000000000");
+    let mut part = whole.clone();
+    if let Some(fields) = part.as_object_mut() {
+        fields.insert("run_id".to_owned(), Value::from(evidence.as_str()));
+        fields.insert("part".to_owned(), placed.clone());
+        let origin = serde_json::json!({
+            "scope": "source",
+            "build": build.get("name").cloned().unwrap_or(Value::Null),
+            "run_id": evidence,
+            "part": placed
+        });
+        if let Some(Value::Array(rows)) = fields.get_mut("findings") {
+            for row in rows.iter_mut() {
+                if let Some(row) = row.as_object_mut() {
+                    row.insert("origin".to_owned(), origin.clone());
+                }
+            }
+        }
+    }
+    let mut shard = serde_json::Map::new();
+    for key in [
+        "run_kind",
+        "contract",
+        "tool",
+        "repository",
+        "provenance",
+        "scope",
+        "global_findings",
+    ] {
+        shard.insert(
+            key.to_owned(),
+            report.get(key).cloned().unwrap_or(Value::Null),
+        );
+    }
+    shard.insert(
+        "schema".to_owned(),
+        Value::from("njutest-assurance-shard-report-v1"),
+    );
+    shard.insert("schema_version".to_owned(), Value::from(2));
+    shard.insert("run_id".to_owned(), Value::from(run));
+    shard.insert(
+        "shard".to_owned(),
+        serde_json::json!({ "index": index, "of": of }),
+    );
+    shard.insert(
+        "builds".to_owned(),
+        serde_json::json!([{
+            "name": build.get("name").cloned().unwrap_or(Value::Null),
+            "configuration": build.get("configuration").cloned().unwrap_or(Value::Null),
+            "source": part
+        }]),
+    );
+    Ok(serde_json::json!({ "document_type": "shard", "report": shard }))
+}
+
+/// The complete report `njutest merge` writes as the run `run` from the shard documents `shards`, in shard order: the first shard's envelope, each build's parts the shards' sources, and the composition naming each shard.
+///
+/// # Errors
+/// [`CompletionError::Shape`] where no shard is given, or one holds no report.
+pub(crate) fn merged(shards: &[Value], run: &str) -> Result<Value, CompletionError> {
+    let reports: Vec<&serde_json::Map<String, Value>> = shards
+        .iter()
+        .map(|shard| shard.get("report").and_then(Value::as_object))
+        .collect::<Option<_>>()
+        .ok_or(CompletionError::Shape { at: "shard report" })?;
+    let first = reports
+        .first()
+        .ok_or(CompletionError::Shape { at: "first shard" })?;
+    let mut report = serde_json::Map::new();
+    report.insert(
+        "schema".to_owned(),
+        Value::from("njutest-assurance-report-v1"),
+    );
+    report.insert("schema_version".to_owned(), Value::from(2));
+    report.insert("run_id".to_owned(), Value::from(run));
+    for key in [
+        "run_kind",
+        "contract",
+        "tool",
+        "repository",
+        "provenance",
+        "scope",
+        "global_findings",
+    ] {
+        report.insert(
+            key.to_owned(),
+            first.get(key).cloned().unwrap_or(Value::Null),
+        );
+    }
+    let sources: Vec<Value> = reports
+        .iter()
+        .map(|shard| {
+            serde_json::json!({
+                "run_id": shard.get("run_id").cloned().unwrap_or(Value::Null),
+                "shard": shard.get("shard").cloned().unwrap_or(Value::Null)
+            })
+        })
+        .collect();
+    report.insert(
+        "composition".to_owned(),
+        serde_json::json!({ "kind": "merged", "sources": sources }),
+    );
+    let builds = first
+        .get("builds")
+        .and_then(Value::as_array)
+        .ok_or(CompletionError::Shape {
+            at: "first shard's builds",
+        })?;
+    let merged_builds: Vec<Value> = builds
+        .iter()
+        .enumerate()
+        .map(|(at, build)| {
+            let parts: Vec<Value> = reports
+                .iter()
+                .map(|shard| {
+                    shard
+                        .get("builds")
+                        .and_then(|builds| builds.get(at))
+                        .and_then(|build| build.get("source"))
+                        .cloned()
+                        .unwrap_or(Value::Null)
+                })
+                .collect();
+            serde_json::json!({
+                "name": build.get("name").cloned().unwrap_or(Value::Null),
+                "configuration": build.get("configuration").cloned().unwrap_or(Value::Null),
+                "parts": parts
+            })
+        })
+        .collect();
+    report.insert("builds".to_owned(), Value::Array(merged_builds));
+    report.insert(
+        "model_completion".to_owned(),
+        serde_json::json!({ "kind": "not-required" }),
+    );
+    Ok(serde_json::json!({ "document_type": "complete", "report": report }))
 }

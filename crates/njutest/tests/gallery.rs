@@ -18,8 +18,8 @@
 use std::path::Path;
 
 use njutest::presentation::{
-    Across, Action, Blindness, Diagnostic, Excerpt, Headline, Missing, Place, Severity, Site, Spot,
-    Standing, Stated, Terminal, Told, Unsettled, human,
+    Across, Action, Blindness, Diagnostic, Excerpt, Headline, MeasuredLine, Missing, Place,
+    Severity, Site, Spot, Standing, Stated, Terminal, Told, Unsettled, human,
 };
 use njutest::report::{Decided, Established, MutantRecord, Outcome, Reuse, RunKind};
 use njutest::spec::{Specification, Subject, specified};
@@ -126,7 +126,7 @@ fn place(item: &str, from: u32, lines: &[&str], spots: Vec<Spot>) -> Place {
             .map(|(at, text)| {
                 (
                     from.saturating_add(u32::try_from(at).unwrap_or(0)),
-                    njutest::presentation::MeasuredLine::specimen(text),
+                    MeasuredLine::specimen(text),
                 )
             })
             .collect(),
@@ -146,6 +146,7 @@ fn spot(at: (u32, u32), change: (&str, &str), standing: Standing, locator: &str)
         standing,
         blind_in: Vec::new(),
         locator: locator.to_owned(),
+        mutant: String::new(),
     }
 }
 
@@ -333,9 +334,7 @@ fn cases() -> Vec<(&'static str, Told)> {
                         .to_owned(),
                     at: Some(site(
                         (4, 5),
-                        Excerpt::Read(njutest::presentation::MeasuredLine::specimen(
-                            "    undefined_function();",
-                        )),
+                        Excerpt::Read(MeasuredLine::specimen("    undefined_function();")),
                         "cannot find function `undefined_function` in this scope",
                         18,
                     )),
@@ -481,6 +480,7 @@ fn moved_reach() -> Specification {
         },
         bodies: nothing(),
         infected: nothing(),
+        entered: nothing(),
     };
     let report = njutest::testkit::reports::completed_with_drift(
         "the-run",
@@ -637,6 +637,108 @@ fn specifications() -> Vec<(&'static str, Specification)> {
     ]
 }
 
+/// One shape `njutest guard` draws: what the run established, and the lines it measured, or nothing where the run cannot vouch for the file.
+struct Guard {
+    name: &'static str,
+    specification: Specification,
+    measured: Option<Vec<(u32, MeasuredLine)>>,
+}
+
+/// Every shape `njutest guard` draws: a file with a line in every section, one line two changes share and one change two lines long, and a file the run cannot vouch for.
+fn guards() -> Vec<Guard> {
+    let it = "pkg/test/it";
+    let measured = [
+        "pub fn sign(n: i32) -> bool {",
+        "    n > 0",
+        "        && n < 7",
+        "}",
+        "pub fn same(n: i32) -> i32 {",
+        "    n + 0",
+        "}",
+        "pub fn slow(n: u64) -> u64 {",
+        "    (0..n).sum()",
+        "}",
+        "pub fn log(n: i32) {",
+        "    println!(",
+        "        \"{n}\");",
+        "}",
+    ];
+    let at =
+        |index, (item, line), rule, outcome| row(index, ("src/lib.rs", item, line), rule, outcome);
+    let lines = (1..)
+        .zip(measured)
+        .map(|(number, text)| (number, MeasuredLine::specimen(text)))
+        .collect();
+    let every = || {
+        reported(
+            RunKind::Full,
+            vec![(
+                "default",
+                vec![
+                    at(
+                        0,
+                        ("sign", 2),
+                        ("gt-to-ge", ">", ">="),
+                        Decided::Killed { by: it.to_owned() },
+                    ),
+                    at(
+                        1,
+                        ("sign", 3),
+                        ("and-to-or", "&&", "||"),
+                        Decided::Killed { by: it.to_owned() },
+                    ),
+                    at(2, ("sign", 3), ("lt-to-le", "<", "<="), Decided::Survived),
+                    at(
+                        3,
+                        ("same", 6),
+                        ("add-to-sub", "+", "-"),
+                        Decided::Equivalent,
+                    ),
+                    at(
+                        4,
+                        ("slow", 9),
+                        ("return-default", "(0..n).sum()", "Default::default()"),
+                        Decided::Waited { on: it.to_owned() },
+                    ),
+                    at(
+                        5,
+                        ("log", 12),
+                        ("delete-call-statement", "println!(\n        \"{n}\");", ""),
+                        Decided::Survived,
+                    ),
+                ],
+            )],
+        )
+    };
+    vec![
+        Guard {
+            name: "a file with a line in every section",
+            specification: every(),
+            measured: Some(lines),
+        },
+        Guard {
+            name: "a file edited since the run read it",
+            specification: every(),
+            measured: None,
+        },
+    ]
+}
+
+/// What `njutest guard` draws for `guard` at `terminal`.
+fn guarded(guard: &Guard, terminal: Terminal) -> String {
+    match &guard.measured {
+        Some(lines) => {
+            njutest::presentation::guard::page(&guard.specification, "src/lib.rs", lines, terminal)
+        }
+        None => njutest::presentation::guard::unasked(
+            &guard.specification,
+            "src/lib.rs",
+            Missing::Edited,
+            terminal,
+        ),
+    }
+}
+
 #[test]
 fn every_shape_a_person_is_shown_is_one_somebody_has_looked_at() {
     let mut out = String::from(
@@ -659,6 +761,12 @@ fn every_shape_a_person_is_shown_is_one_somebody_has_looked_at() {
             out.push_str(&njutest::presentation::spec::page(&specification, terminal));
         }
     }
+    for guard in guards() {
+        for (shape, terminal) in SHAPES {
+            out.push_str(&format!("\n=== guard: {} — {shape}\n\n", guard.name));
+            out.push_str(&guarded(&guard, terminal));
+        }
+    }
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/gallery.golden");
     if let Err(error) = njutest_devkit::golden::golden(&path, out.as_bytes()) {
         panic!("the gallery: {error}");
@@ -666,6 +774,8 @@ fn every_shape_a_person_is_shown_is_one_somebody_has_looked_at() {
 }
 
 /// What a line is allowed to run past the edge for: code, a mark under code, and a command.
+///
+/// Code is a numbered line, whether the number stands before a rule, as an excerpt draws it, or after a mark, as a guard does.
 ///
 /// Folding any of the three makes it worse.
 /// A wrapped source line takes the caret away from the column it is under; a mark that is not at that column points at nothing, so it is exactly as wide as the code it is about and no narrower; and a wrapped command is one a reader cannot select.
@@ -681,6 +791,16 @@ fn unbreakable(line: &str) -> bool {
     };
     if line
         .split_once(" | ")
+        .is_some_and(|(before, _)| numbered(before))
+    {
+        return true;
+    }
+    let mut marked = line.chars();
+    marked.next();
+    if marked
+        .as_str()
+        .strip_prefix(' ')
+        .and_then(|rest| rest.split_once("  "))
         .is_some_and(|(before, _)| numbered(before))
     {
         return true;
@@ -711,6 +831,16 @@ fn nothing_a_person_is_shown_runs_past_the_edge_but_the_two_things_that_must() {
                     continue;
                 }
                 over.push(format!("spec: {name} — {shape}: {line}"));
+            }
+        }
+    }
+    for guard in guards() {
+        for (shape, terminal) in SHAPES {
+            for line in guarded(&guard, terminal).lines() {
+                if unbreakable(line) || njutest::presentation::wide(line) <= terminal.width {
+                    continue;
+                }
+                over.push(format!("guard: {} — {shape}: {line}", guard.name));
             }
         }
     }

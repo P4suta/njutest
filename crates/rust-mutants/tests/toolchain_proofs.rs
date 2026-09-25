@@ -395,6 +395,7 @@ fn discovered_in(files: &[(&str, &str)]) -> rust_mutants::discover::Discovery {
         claims: Vec::new(),
         decisions: Vec::new(),
         catalog: builder.build().expect("catalog"),
+        marked_only: std::collections::BTreeSet::new(),
     }
 }
 

@@ -9,7 +9,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 `rust-mutants` discovers, instruments, validates, and executes mutants and has a command line.
 `njutest verify` runs every test of a workspace on its own under coverage instrumentation, records what each one reached, and writes an audited report; Every mutation the compiler accepts is then routed to the tests baseline coverage proves can reach it,
 run against them cheapest first, and a kill is confirmed by a pair before it is believed.
-`plan`, `report`, `explain`, `why`, `spec`, `replay`, `trace`, `diagnostics`,
+`plan`, `report`, `explain`, `why`, `spec`, `guard`, `replay`, `trace`, `diagnostics`,
 `init`, and `doctor` read, re-run, and prepare around it.
 
 njutest is an orchestrator, not a replacement testing framework.

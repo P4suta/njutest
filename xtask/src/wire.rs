@@ -91,6 +91,12 @@ pub enum IdentityError {
     },
 }
 
+impl crate::error::Coded for IdentityError {
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::IdentityField
+    }
+}
+
 /// Everything the recording says about the seams, read from the stream alone.
 ///
 /// # Errors

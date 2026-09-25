@@ -33,6 +33,10 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   shard:
     name: shard ${{ matrix.shard }} of 4
@@ -57,12 +61,12 @@ jobs:
           TIER: ${{ inputs.tier || 'balanced' }}
           INCLUDE: ${{ inputs.include }}
         # The exit code says what the run found, and what it found is the merge job's business.
-        # A part that reports a survivor is not a part that failed.
-        run: >-
-          ./target/release/rust-mutants run
-          --shard "$SHARD/4" --tier "$TIER" --probe --jobs 4 --trace
-          ${INCLUDE:+--include "$INCLUDE"}
-          || true
+        # A part that reports a finding (1) is not a part that failed; a run that failed (2) or was stopped is.
+        run: |
+          ./target/release/rust-mutants run \
+            --shard "$SHARD/4" --tier "$TIER" --jobs 4 --trace \
+            ${INCLUDE:+--include "$INCLUDE"} \
+            || case "$?" in 1) ;; *) exit 1 ;; esac
       - name: Upload this part and its recording
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -120,7 +124,7 @@ jobs:
         run: |
           set -euo pipefail
           previous=$(gh run list --workflow dogfood.yml --status success \
-            --json databaseId --jq '.[0].databaseId' || true)
+            --json databaseId --jq '.[0].databaseId // empty')
           if [ -z "$previous" ]; then
             echo "no earlier run of this workflow to compare with" >> "$GITHUB_STEP_SUMMARY"
             exit 0

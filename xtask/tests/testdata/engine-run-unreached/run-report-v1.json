@@ -1,25 +1,29 @@
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 2,
+  "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260924t131147643z",
-    "started_at": "2026-09-24T13:11:47.643657Z",
-    "finished_at": "2026-09-24T13:11:52.269009Z",
-    "duration_ms": 107,
+    "id": "20260925t161543155z",
+    "started_at": "2026-09-25T16:15:43.155195237Z",
+    "finished_at": "2026-09-25T16:15:48.434417421Z",
+    "duration_ms": 169,
     "interrupted": false,
     "exit_code": 1,
-    "shard": null
+    "shard": null,
+    "jobs": {
+      "asked": "auto",
+      "used": 4
+    }
   },
   "workspace": {
-    "root_name": "fixture-unreached",
-    "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-    "workspace_digest": "4fde05997ecc1b35a248234d07027c2aa04f409536107fd95c3c753697a3b9b8",
+    "root_name": "tmp.zKo01YQfqg",
+    "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "workspace_digest": "f7696419ee539172367d1c26049865d597ef058bb162f185cf5a8a19a0a1fbb1",
     "catalog_digest": "03c20af27c9024062341116ff85836fcf3a0955215778abecd0001f5c374dd22",
     "platform": {
-      "os": "darwin",
-      "arch": "aarch64",
-      "target": "aarch64-apple-darwin"
+      "os": "gnu",
+      "arch": "x86_64",
+      "target": "x86_64-unknown-linux-gnu"
     }
   },
   "selection": {
@@ -93,14 +97,15 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
-      "exit_code": 0,
-      "duration_ms": 0,
+      "exit_code": 101,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -109,13 +114,15 @@
           "fixture-unreached/lib/fixture_unreached"
         ],
         "discharged": [],
-        "executed": [],
+        "executed": [
+          "fixture-unreached/lib/fixture_unreached"
+        ],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": "20260923t165054148z"
+      "source_run_id": null
     },
     {
       "index": 1,
@@ -137,14 +144,15 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
-      "exit_code": 0,
-      "duration_ms": 0,
+      "exit_code": 101,
+      "duration_ms": 28,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -153,13 +161,15 @@
           "fixture-unreached/lib/fixture_unreached"
         ],
         "discharged": [],
-        "executed": [],
+        "executed": [
+          "fixture-unreached/lib/fixture_unreached"
+        ],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": "20260923t165054148z"
+      "source_run_id": null
     },
     {
       "index": 2,
@@ -181,14 +191,15 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
-      "exit_code": 0,
-      "duration_ms": 0,
+      "exit_code": 101,
+      "duration_ms": 26,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -197,13 +208,15 @@
           "fixture-unreached/lib/fixture_unreached"
         ],
         "discharged": [],
-        "executed": [],
+        "executed": [
+          "fixture-unreached/lib/fixture_unreached"
+        ],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": "20260923t165054148z"
+      "source_run_id": null
     },
     {
       "index": 3,
@@ -225,14 +238,15 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
-      "exit_code": 0,
-      "duration_ms": 0,
+      "exit_code": 101,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -241,13 +255,15 @@
           "fixture-unreached/lib/fixture_unreached"
         ],
         "discharged": [],
-        "executed": [],
+        "executed": [
+          "fixture-unreached/lib/fixture_unreached"
+        ],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": "20260923t165054148z"
+      "source_run_id": null
     },
     {
       "index": 4,
@@ -275,6 +291,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -315,6 +332,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -355,6 +373,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -395,6 +414,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",

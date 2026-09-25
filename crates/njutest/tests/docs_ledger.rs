@@ -641,6 +641,19 @@ fn every_closed_set_the_schema_declares_is_one_this_release_produces() {
         "/$defs/drift/oneOf/2/properties/why",
         names(&njutest::report::drift::Unmeasured::ALL),
     ));
+    rows.push(("/$defs/knob", names(&njutest::report::knobs::Knob::ALL)));
+    rows.push((
+        "/$defs/knobStanding/oneOf/4/properties/why",
+        names(&njutest::report::drift::Unmeasured::ALL),
+    ));
+    rows.push((
+        "/$defs/knobStanding/oneOf/5/properties/why",
+        names(&njutest::report::knobs::Unsettled::ALL),
+    ));
+    rows.push((
+        "/$defs/knobStanding/oneOf/6/properties/why",
+        names(&njutest::report::knobs::NotPut::ALL),
+    ));
     let borrowed: Vec<(&str, Vec<&str>)> = rows
         .iter()
         .map(|(pointer, names)| {
@@ -770,5 +783,45 @@ fn the_sections_the_contract_says_a_specification_lists_are_the_ones_it_draws() 
         "the contract's table of what a specification lists is the page's headings, each with \
          the decisions that land under it, in both directions: a decision the table puts in the \
          wrong row tells a reader a change stands where the page will not show it"
+    );
+}
+
+#[test]
+fn the_marks_the_contract_says_a_guard_draws_are_the_ones_it_draws() {
+    let text = page("docs/assurance-contract.md");
+    let (_, after) = text
+        .split_once("## What a guard marks")
+        .expect("the contract says what a guard marks");
+    let said = after.split("\n## ").next().unwrap_or_default();
+    let plain = njutest::presentation::Terminal::plain(80);
+    let drawn = njutest::presentation::Telling::of(njutest::presentation::Terminal {
+        unicode: true,
+        ..plain
+    })
+    .strokes();
+    let ascii = njutest::presentation::Telling::of(plain).strokes();
+    for section in njutest::spec::Section::ALL {
+        let named = njutest::presentation::spec::named(section);
+        let mark = njutest::presentation::guard::mark(section, &drawn);
+        assert!(
+            said.contains(&format!("`{mark}` {named}")),
+            "the contract names `{mark}` as what a line {named} is marked with, as the page and \
+             the editor mark it"
+        );
+    }
+    let fallbacks: Vec<String> = njutest::spec::Section::ALL
+        .into_iter()
+        .map(|section| format!("`{}`", njutest::presentation::guard::mark(section, &ascii)))
+        .collect();
+    assert!(
+        said.contains(&format!(
+            "({} where the terminal has only ASCII)",
+            fallbacks.join(", ")
+        )),
+        "the contract lists the ASCII marks in the order of the sections they stand for"
+    );
+    assert!(
+        said.contains(&format!("`{}` not yet asked", drawn.unasked)),
+        "the contract names the mark of a file no run has asked about as it is now"
     );
 }

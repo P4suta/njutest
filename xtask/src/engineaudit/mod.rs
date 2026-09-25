@@ -6,7 +6,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+pub use crate::layers::Coverage;
+
 mod arithmetic;
+pub mod carry;
 mod evidence;
 mod ledger;
 mod recording;
@@ -14,7 +17,7 @@ pub mod sentinel;
 mod wire;
 
 use arithmetic::{accounting, exit, expectations, findings, identity, score};
-use evidence::{merge, proofs, sites, touch};
+use evidence::{entry, merge, proofs, sites, touch};
 use ledger::ledger;
 use recording::{trace, work};
 
@@ -27,7 +30,7 @@ pub const REPORT_FILE: &str = "run-report-v1.json";
 pub const DOCUMENT_TYPE: &str = "rust-mutants/run-report";
 
 /// The current report shape this audit independently re-decides.
-pub const SCHEMA_VERSION: u64 = 2;
+pub const SCHEMA_VERSION: u64 = 3;
 
 /// The current engine recording shape paired with [`SCHEMA_VERSION`].
 pub const TRACE_SCHEMA: &str = "rust-mutants-trace-v1";
@@ -64,9 +67,12 @@ const ERRORED_MUTANT: &str = "errored-mutant";
 const NOT_RUN_MUTANT: &str = "not-run-mutant";
 const STALE_EXPECTATION: &str = "stale-expectation";
 const UNMATCHED_EXPECTATION: &str = "unmatched-expectation";
-const MET: &str = "met";
-const STALE: &str = "stale";
-const UNMATCHED: &str = "unmatched";
+/// Every standing a claim can have, as a report writes it.
+pub const CLAIM_STANDINGS: [&str; 4] = ["met", "stale", "unmatched", "unjudged"];
+const MET: &str = CLAIM_STANDINGS[0];
+const STALE: &str = CLAIM_STANDINGS[1];
+const UNMATCHED: &str = CLAIM_STANDINGS[2];
+const UNJUDGED: &str = CLAIM_STANDINGS[3];
 
 /// Why a run could not be re-decided at all.
 #[derive(Debug, thiserror::Error)]
@@ -155,6 +161,25 @@ pub enum AuditError {
     },
 }
 
+impl crate::error::Coded for AuditError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Unreadable { .. } => crate::error::XtCode::EngineUnreadable,
+            Self::Unparsable { .. } => crate::error::XtCode::EngineUnparsable,
+            Self::OffSchema { .. } => crate::error::XtCode::EngineOffSchema,
+            Self::Schema(_) => crate::error::XtCode::SchemaUncompilable,
+            Self::MalformedEvidence { .. } => crate::error::XtCode::EngineEvidence,
+            Self::MalformedRecording { .. } | Self::UnsupportedTrace { .. } => {
+                crate::error::XtCode::EngineRecording
+            }
+            Self::MalformedLedger { .. } => crate::error::XtCode::EngineLedger,
+            Self::Unrecognised { .. } | Self::UnsupportedVersion { .. } => {
+                crate::error::XtCode::EngineUnrecognised
+            }
+        }
+    }
+}
+
 /// What the re-decision was able to conclude about one thing it looked at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Standing {
@@ -204,6 +229,10 @@ pub enum Layer {
     Work,
     /// Every route the guards decided, re-decided from what the guards recorded.
     Touch,
+    /// Every reached site and every kill, against the items the entry markers say each test entered.
+    Entry,
+    /// Every body the run calls sealed and every body digest it kept, read again from the tree under `docs/engine/carry.md`.
+    Carry,
 }
 
 impl Layer {
@@ -224,6 +253,8 @@ impl Layer {
             Self::Ledger => "ledger",
             Self::Work => "work",
             Self::Touch => "touch",
+            Self::Entry => "entry",
+            Self::Carry => "carry",
         }
     }
 }
@@ -265,6 +296,8 @@ pub struct Audit {
     pub rejections: usize,
     /// Everything it has to say, grouped by layer with the violations of each first.
     pub remarks: Vec<Remark>,
+    /// How far each layer got.
+    pub coverage: BTreeMap<Layer, Coverage>,
 }
 
 impl Audit {
@@ -302,7 +335,13 @@ impl Audit {
     /// A run that could not be read at all never reaches here and earns [`EXIT_UNREADABLE`] instead.
     #[must_use]
     pub fn exit_code(&self) -> u8 {
-        u8::from(self.violations() > 0)
+        if self.violations() > 0 {
+            1
+        } else if self.unaudited() > 0 {
+            crate::proofaudit::EXIT_UNAUDITED
+        } else {
+            0
+        }
     }
 
     fn standing(&self, standing: Standing) -> usize {
@@ -317,6 +356,9 @@ impl fmt::Display for Audit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for remark in &self.remarks {
             writeln!(f, "{remark}")?;
+        }
+        for (layer, coverage) in &self.coverage {
+            writeln!(f, "layer: {}: {coverage}", layer.label())?;
         }
         write!(
             f,
@@ -358,6 +400,12 @@ pub struct Evidence<'a> {
     pub probe_logs: Vec<String>,
     /// What the guards recorded, as the run kept it.
     pub touched: Option<Source<'a>>,
+    /// The carry evidence the run kept: body digests, sealing, and unit skeletons.
+    pub skeletons: Option<Source<'a>>,
+    /// Every carried record the run believed, with the plan each was held to.
+    pub carried: Option<Source<'a>>,
+    /// The tree the run measured, which the carry evidence is read again from.
+    pub root: Option<&'a std::path::Path>,
 }
 
 /// Evidence after every serialization boundary has been crossed without loss.
@@ -370,6 +418,9 @@ struct CheckedEvidence<'a> {
     catalog: Option<Value>,
     probe_logs: &'a [String],
     touched: Option<Value>,
+    skeletons: Option<Value>,
+    carried: Option<Value>,
+    root: Option<&'a std::path::Path>,
 }
 
 /// One recording whose every non-empty line is JSON.
@@ -439,6 +490,9 @@ impl<'a> Evidence<'a> {
                 .touched
                 .map(|source| parse_typed_evidence(source, wire::validate_touched))
                 .transpose()?,
+            skeletons: self.skeletons.map(parse_evidence).transpose()?,
+            carried: self.carried.map(parse_evidence).transpose()?,
+            root: self.root,
         })
     }
 }
@@ -482,6 +536,11 @@ fn parse_typed_evidence(
     Ok(value)
 }
 
+/// What a layer hands back to show it said how far it got, which only [`Notes::looked`] and [`Notes::absent`] make.
+#[must_use]
+#[derive(Debug)]
+struct Decided(());
+
 /// Where one layer's re-decisions are written down.
 #[derive(Debug)]
 struct Notes<'a> {
@@ -500,6 +559,30 @@ impl<'a> Notes<'a> {
 
     fn unaudited(&mut self, subject: &str, detail: String) {
         self.note(Standing::Unaudited, subject, detail);
+    }
+
+    /// The layer looked at everything the run owes it, and its remarks say what it found.
+    fn looked(self) -> Decided {
+        let partly = self
+            .audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == self.layer && remark.standing == Standing::Unaudited);
+        let coverage = if partly {
+            Coverage::Partly
+        } else {
+            Coverage::Rederived
+        };
+        self.audit.coverage.insert(self.layer, coverage);
+        Decided(())
+    }
+
+    /// The run holds nothing this layer re-decides, for the reason `why`.
+    fn absent(self, why: &'static str) -> Decided {
+        self.audit
+            .coverage
+            .insert(self.layer, Coverage::Absent(why));
+        Decided(())
     }
 
     fn note(&mut self, standing: Standing, subject: &str, detail: String) {
@@ -556,20 +639,27 @@ pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, A
         mutants: report.mutants.len(),
         rejections: report.rejections.len(),
         remarks: Vec::new(),
+        coverage: BTreeMap::new(),
     };
-    identity(&report, &mut audit);
-    accounting(&report, &mut audit);
-    score(&report, &mut audit);
-    findings(&report, &mut audit);
-    expectations(&report, &mut audit);
-    exit(&report, &mut audit);
-    merge(&report, &evidence, &mut audit);
-    proofs(&report, &evidence, &mut audit);
-    sites(&evidence, &mut audit);
-    trace(&report, evidence.recorded.as_ref(), &mut audit);
-    ledger(&report, evidence.ledger.as_ref(), &mut audit);
-    work(&report, evidence.recorded.as_ref(), &mut audit);
-    touch(&report, evidence.touched.as_ref(), &mut audit);
+    for layer in Layer::ALL {
+        let Decided(()) = match layer {
+            Layer::Identity => identity(&report, &mut audit),
+            Layer::Accounting => accounting(&report, &mut audit),
+            Layer::Score => score(&report, &mut audit),
+            Layer::Findings => findings(&report, &mut audit),
+            Layer::Expectations => expectations(&report, &mut audit),
+            Layer::Exit => exit(&report, &mut audit),
+            Layer::Merge => merge(&report, &evidence, &mut audit),
+            Layer::Proofs => proofs(&report, &evidence, &mut audit),
+            Layer::Sites => sites(&evidence, &mut audit),
+            Layer::Trace => trace(&report, evidence.recorded.as_ref(), &mut audit),
+            Layer::Ledger => ledger(&report, evidence.ledger.as_ref(), &mut audit),
+            Layer::Work => work(&report, evidence.recorded.as_ref(), &mut audit),
+            Layer::Touch => touch(&report, evidence.touched.as_ref(), &mut audit),
+            Layer::Entry => entry(&report, evidence.touched.as_ref(), &mut audit),
+            Layer::Carry => carry::layer(&report, &evidence, &mut audit),
+        };
+    }
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
@@ -577,6 +667,10 @@ pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, A
 
 /// One mutant row, as a reader sees it.
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is an independent fact the published report row states"
+)]
 struct Row {
     index: u64,
     route: Option<RouteDecision>,
@@ -594,7 +688,10 @@ struct Row {
     step_notice: Option<StepNotice>,
     target: String,
     tests_run: Option<u64>,
+    killed_by: Vec<String>,
+    item: String,
     retried: bool,
+    lingered: bool,
     expected: bool,
     unreached: bool,
     not_run_reason: Option<NotRunReason>,
@@ -775,6 +872,7 @@ enum ClaimStanding {
     Met,
     Stale,
     Unmatched,
+    Unjudged,
 }
 
 impl ClaimStanding {
@@ -783,6 +881,7 @@ impl ClaimStanding {
             Self::Met => MET,
             Self::Stale => STALE,
             Self::Unmatched => UNMATCHED,
+            Self::Unjudged => UNJUDGED,
         }
     }
 }
@@ -947,5 +1046,33 @@ fn plural(count: usize, thing: &str) -> String {
         format!("{count} {thing}")
     } else {
         format!("{count} {thing}s")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CLAIM_STANDINGS, ClaimStanding};
+
+    #[test]
+    fn every_standing_the_audit_decodes_is_one_it_names() {
+        let every = [
+            ClaimStanding::Met,
+            ClaimStanding::Stale,
+            ClaimStanding::Unmatched,
+            ClaimStanding::Unjudged,
+        ];
+        for standing in every {
+            match standing {
+                ClaimStanding::Met
+                | ClaimStanding::Stale
+                | ClaimStanding::Unmatched
+                | ClaimStanding::Unjudged => {}
+            }
+            assert!(
+                CLAIM_STANDINGS.contains(&standing.as_str()),
+                "{standing:?} decodes and is not among the standings the audit names"
+            );
+        }
+        assert_eq!(every.len(), CLAIM_STANDINGS.len());
     }
 }

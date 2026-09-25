@@ -1,0 +1,40 @@
+src/lib.rs as run <run> measured it, 1 build, default
+
+   1  // SPDX-FileCopyrightText: 2026 njutest contributors
+   2  // SPDX-License-Identifier: MIT OR Apache-2.0
+   3  
+   4  //! A workspace for the runner's baseline: two functions that no single test reaches together, one test that libtest ignores, and an integration target, so a baseline has something to route with and something to refuse to call a pass.
+   5  
+   6  /// Which side of zero `n` is on. Three regions, and one test reaches two of them.
+   7  pub fn sign(n: i32) -> &'static str {
+o  8      if n > 0 {
+*  9          "positive"
+o 10      } else if n < 0 {
+* 11          "negative"
+  12      } else {
+o 13          "zero"
+  14      }
+  15  }
+  16  
+  17  /// Twice `n`. Nothing in the library reaches this; only the integration target does.
+  18  pub fn double(n: i32) -> i32 {
+* 19      n * 2
+  20  }
+  21  
+  22  #[cfg(test)]
+  23  mod tests {
+  24      #[test]
+  25      fn sign_names_both_sides_of_zero() {
+  26          assert_eq!(super::sign(1), "positive");
+  27          assert_eq!(super::sign(-1), "negative");
+  28      }
+  29  
+  30      /// Ignored on purpose: a baseline must report it as skipped, and never as a pass it did not observe.
+  31      #[test]
+  32      #[ignore = "the baseline reports an ignored test as skipped, not as a pass"]
+  33      fn zero_has_a_sign_of_its_own() {
+  34          assert_eq!(super::sign(0), "zero");
+  35      }
+  36  }
+
+* pinned   o left free   = the same program   ? could not tell

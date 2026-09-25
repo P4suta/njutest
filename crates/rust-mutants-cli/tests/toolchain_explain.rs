@@ -47,6 +47,7 @@ fn environment(fixture: &Fixture) -> Environment {
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        ci: rust_mutants_cli::CiHost::None,
     }
 }
 
@@ -450,5 +451,225 @@ fn explain_reads_the_run_it_is_told_to_and_refuses_a_name_nobody_stored() {
                     .display()
             )),
         "naming what was asked for and where runs are kept: {message}"
+    );
+}
+
+#[test]
+fn a_catalog_and_a_report_that_disagree_about_a_mutant_are_said_to_rather_than_one_believed() {
+    let fixture = Fixture::copy("fixture-simple");
+    measured(&fixture);
+    let run = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    );
+    let path = run.join(rust_mutants::report::evidence::CATALOG);
+    let mut catalog: rust_mutants::report::catalog::CatalogDocument =
+        njutest_devkit::strictjson::decode_str(
+            &std::fs::read_to_string(&path).expect("the stored catalog"),
+        )
+        .expect("the catalog is a document");
+    let measured_one = catalog
+        .mutants
+        .iter()
+        .find(|one| one.display_id.starts_with("f0d2"))
+        .expect("the mutant the report answers for")
+        .clone();
+    catalog
+        .rejections
+        .push(rust_mutants::report::catalog::RejectionDocument {
+            index: measured_one.index,
+            id: measured_one.id.clone(),
+            display_id: measured_one.display_id.clone(),
+            path: measured_one.path.clone(),
+            rule: measured_one.rule.clone(),
+            code: Some("E0308".to_owned()),
+            diagnostic: "error[E0308]: mismatched types at another mutant's line".to_owned(),
+            isolated: false,
+        });
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&catalog).expect("the catalog serializes"),
+    )
+    .expect("the catalog rewritten");
+
+    let output = against(&fixture, &["explain", "f0d2"]);
+    let said = format!(
+        "{}{}",
+        njutest_devkit::process::strict_utf8(&output.stdout),
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    assert!(
+        !said.contains("refused by the compiler"),
+        "the run measured this mutant, so a refusal the catalog carries for it is not what \
+         happened to it; saying so states a false fact about a mutation: {said}"
+    );
+    assert_ne!(
+        output.status.code(),
+        Some(0),
+        "and two stored documents that disagree about one mutant are a defect to report, not a \
+         choice to make quietly: {said}"
+    );
+    assert!(said.contains(&measured_one.display_id), "{said}");
+}
+
+#[test]
+fn an_identity_the_newest_run_lacks_is_answered_with_the_runs_that_hold_it() {
+    let fixture = Fixture::copy("fixture-simple");
+    measured(&fixture);
+    let stored = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
+    let holding = njutest_devkit::fixture::newest_run(&stored);
+    let holding = holding
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .expect("a run directory name")
+        .to_owned();
+    let narrowed = against(
+        &fixture,
+        &[
+            "run",
+            "--tier",
+            "all",
+            "--no-coverage",
+            "--jobs",
+            "1",
+            "--ui",
+            "quiet",
+            "--file",
+            "src/testutil.rs",
+        ],
+    );
+    assert!(
+        narrowed.status.code().is_some_and(|code| code < 3),
+        "{narrowed:?}"
+    );
+
+    let unreadable = stored.join("20200101t000000000z");
+    std::fs::create_dir_all(&unreadable).expect("an older run directory");
+    std::fs::write(
+        unreadable.join(rust_mutants::report::evidence::CATALOG),
+        "{\"written_by\": \"another release\"}",
+    )
+    .expect("a catalog this release cannot read");
+    std::fs::write(unreadable.join("run-report-v1.json"), "{}").expect("its run report");
+
+    let output = against(&fixture, &["explain", "f0d2"]);
+    let said = njutest_devkit::process::strict_utf8(&output.stderr);
+    assert!(
+        said.contains(&holding) && said.contains("--run"),
+        "a mutant the newest run did not catalog is one an earlier run may hold, and the answer \
+         names that run and how to ask it rather than only that the newest does not: {said}"
+    );
+    assert!(
+        said.contains("20200101t000000000z") && said.contains("not known"),
+        "and a run it could not read is named as one whose answer is not known, not left out: \
+         {said}"
+    );
+}
+
+#[test]
+fn the_reproduce_line_explain_prints_reproduces_the_mutant_it_explains() {
+    let fixture = Fixture::copy("fixture-simple");
+    measured(&fixture);
+    let explained = against(&fixture, &["explain", "f0d2"]);
+    let text = njutest_devkit::process::strict_utf8(&explained.stdout);
+    let line = text
+        .lines()
+        .find_map(|line| line.strip_prefix("REPRODUCE "))
+        .expect("explain says how to reproduce the mutant")
+        .trim()
+        .to_owned();
+    let words: Vec<&str> = line.split_whitespace().collect();
+    assert_eq!(words.first(), Some(&"rust-mutants"), "{line}");
+    let mut args: Vec<&str> = words.iter().skip(1).copied().collect();
+    args.extend(["--no-coverage", "--jobs", "1", "--ui", "quiet"]);
+    let reproduced = against(&fixture, &args);
+    let said = format!(
+        "{}{}",
+        njutest_devkit::process::strict_utf8(&reproduced.stdout),
+        njutest_devkit::process::strict_utf8(&reproduced.stderr)
+    );
+    assert!(
+        reproduced.status.code().is_some_and(|code| code < 2) && !said.contains("RM5003"),
+        "the line explain prints is the one a person copies to see the mutant again, so running \
+         it must measure that mutant rather than refuse it: `{line}` said {said}"
+    );
+}
+
+#[test]
+fn a_stored_run_this_release_cannot_read_does_not_stop_an_answer_about_another() {
+    let fixture = Fixture::copy("fixture-simple");
+    measured(&fixture);
+    let stored = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
+    let current = njutest_devkit::fixture::newest_run(&stored);
+    let older = stored.join("20200101t000000000z");
+    std::fs::create_dir_all(&older).expect("an older run directory");
+    let catalog = rust_mutants::report::evidence::CATALOG;
+    let text = std::fs::read_to_string(current.join(catalog)).expect("the current catalog");
+    let without_item = text.replacen("\"item\":", "\"retired_item\":", 1);
+    assert_ne!(
+        without_item, text,
+        "the older catalog lacks a field this release reads"
+    );
+    std::fs::write(older.join(catalog), without_item).expect("an older catalog");
+    std::fs::copy(
+        current.join("run-report-v1.json"),
+        older.join("run-report-v1.json"),
+    )
+    .expect("the older run's report");
+
+    let output = against(&fixture, &["explain", "0000"]);
+    let said = njutest_devkit::process::strict_utf8(&output.stderr);
+    assert!(
+        said.contains("\"0000\"") && !said.contains("is not a document this release reads"),
+        "a question no stored run answers is refused for what was asked, not for a run from \
+         another release that was never needed to answer it: {said}"
+    );
+}
+
+#[test]
+fn every_command_a_run_prints_for_a_person_is_one_the_tool_accepts() {
+    let fixture = Fixture::copy("fixture-families");
+    let ran = against(&fixture, &["run", "--include", "src/lib.rs"]);
+    let printed_by = |text: &str| -> Vec<String> {
+        text.lines()
+            .filter(|line| line.starts_with("NEXT ") || line.starts_with("REPRODUCE "))
+            .filter_map(|line| {
+                line.split_once("rust-mutants ")
+                    .map(|(_, rest)| rest.to_owned())
+            })
+            .collect()
+    };
+    let mut pending = printed_by(&njutest_devkit::process::strict_utf8(&ran.stdout));
+    assert!(
+        pending.iter().any(|one| one.starts_with("explain ")),
+        "a run that leaves a survivor points a person at explain: {}{}",
+        njutest_devkit::process::strict_utf8(&ran.stdout),
+        njutest_devkit::process::strict_utf8(&ran.stderr)
+    );
+    let mut tried = Vec::new();
+    let mut refused = Vec::new();
+    while let Some(command) = pending.pop() {
+        if tried.contains(&command) {
+            continue;
+        }
+        let arguments: Vec<&str> = command.split_whitespace().collect();
+        let output = against(&fixture, &arguments);
+        if output.status.code().is_some_and(|code| code < 2) {
+            pending.extend(printed_by(&njutest_devkit::process::strict_utf8(
+                &output.stdout,
+            )));
+        } else {
+            refused.push(format!(
+                "`rust-mutants {command}` exited {:?}: {}",
+                output.status.code(),
+                njutest_devkit::process::strict_utf8(&output.stderr)
+            ));
+        }
+        tried.push(command);
+    }
+    assert!(
+        refused.is_empty(),
+        "a command the tool prints for a person to run is one the tool accepts, and so is every \
+         one that command prints in turn:\n{}",
+        refused.join("\n")
     );
 }

@@ -23,7 +23,10 @@ use crate::trace::Recorder;
 
 pub use build_identity::{BUILD_SELECTION_DOMAIN, BuildSelection, BuildSelectionDigest};
 pub use compile::{BuildConfig, CompileKind, CompileOptions, Compiled, compile, compile_arguments};
-pub use depinfo::{Unit, dep_info_path, parse_dep_info, units_of};
+pub use depinfo::{
+    Emitted, Unit, compile_time_inputs, dep_info_path, emitted_of, env_deps, every_unit_of,
+    parse_dep_info, units_of,
+};
 
 pub use locate::{LocateOptions, Toolchain, command_failed, resolve_executable};
 pub use messages::{

@@ -415,8 +415,10 @@ pub fn names() -> Vec<String> {
             found.push(name);
             continue;
         }
-        for (inner, _nested) in directories(&path) {
-            found.push(format!("{name}/{inner}"));
+        for (inner, nested) in directories(&path) {
+            if std::fs::metadata(nested.join("Cargo.toml")).is_ok_and(|entry| entry.is_file()) {
+                found.push(format!("{name}/{inner}"));
+            }
         }
     }
     found.sort();

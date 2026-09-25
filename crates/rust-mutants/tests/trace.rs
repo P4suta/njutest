@@ -54,6 +54,7 @@ const fn relevant_payload(payload: &Payload) -> RelevantPayload<'_> {
         | Payload::Build { .. }
         | Payload::Verify { .. }
         | Payload::Touch { .. }
+        | Payload::PerturbedControl { .. }
         | Payload::Witness { .. }
         | Payload::SkipClaim { .. }
         | Payload::Kept { .. }
@@ -107,7 +108,9 @@ fn a_disabled_recorder_records_nothing_and_every_call_is_a_no_op() {
     recorder.exec(exec(&["cargo", "metadata"]));
     recorder.note("progress", "nothing to see");
     phase.end();
-    recorder.run_end("ok", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
+        .expect("trace closes");
     assert!(!Recorder::clone(&recorder).is_enabled());
 }
 
@@ -260,7 +263,9 @@ fn a_recording_starts_with_run_start_and_ends_with_run_end_carrying_the_accounti
     assert!(recorder.is_enabled());
     recorder.note("progress", "one");
     recorder.note("progress", "two");
-    recorder.run_end("prepared", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
+        .expect("trace closes");
 
     let events = recorder.events();
     assert_eq!(
@@ -289,7 +294,7 @@ fn a_recording_starts_with_run_start_and_ends_with_run_end_carrying_the_accounti
     let Payload::RunEnd { run } = &events[3].payload else {
         return;
     };
-    assert_eq!(run.outcome, "prepared");
+    assert_eq!(run.outcome, rust_mutants::trace::RunOutcome::Completed);
     assert_eq!(run.error, None);
     assert_eq!(run.events_emitted, 3, "run-start and two notes");
     assert_eq!(run.events_dropped, 0);
@@ -299,10 +304,15 @@ fn a_recording_starts_with_run_start_and_ends_with_run_end_carrying_the_accounti
 fn run_end_happens_once_and_nothing_is_recorded_afterwards() {
     let recorder = memory_recorder();
     recorder
-        .run_end("errored", Some("boom".to_owned()))
+        .run_end(
+            rust_mutants::trace::RunOutcome::Failed,
+            Some("boom".to_owned()),
+        )
         .expect("trace closes");
     recorder.note("progress", "too late");
-    recorder.run_end("ok", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
+        .expect("trace closes");
     let events = recorder.events();
     assert_eq!(type_names(&events), ["run-start", "run-end"]);
     assert!(matches!(&events[1].payload, Payload::RunEnd { .. }));
@@ -327,7 +337,9 @@ fn a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest() {
         drop(dropped_phase);
     }
     drop(outer);
-    recorder.run_end("ok", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
+        .expect("trace closes");
     let events = recorder.events();
     assert_eq!(
         type_names(&events),
@@ -382,7 +394,9 @@ fn events_are_sequenced_in_delivery_order_across_threads() {
             worker.join().expect("trace fixture worker joins");
         }
     });
-    recorder.run_end("ok", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
+        .expect("trace closes");
     let events = recorder.events();
     assert_eq!(events.len(), 1 + 400 + 1);
     for (index, event) in events.iter().enumerate() {
@@ -414,7 +428,9 @@ fn exec_keeps_environment_names_only_sorted_and_deduplicated_and_digests_the_out
         ..exec(&["cargo", "test", "--", "--exact", "t::x"])
     };
     recorder.exec(record);
-    recorder.run_end("ok", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
+        .expect("trace closes");
     let events = recorder.events();
     assert!(
         matches!(&events[1].payload, Payload::Exec { .. }),
@@ -451,7 +467,7 @@ fn a_directory_sink_that_lost_events_fails_finalization() {
         recorder.note("n", &i.to_string());
     }
     let error = recorder
-        .run_end("ok", None)
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
         .expect_err("a durable trace cannot hide lost events");
     assert!(error.to_string().contains("lost 7 event"), "{error}");
     assert!(recorder.events().is_empty());
@@ -466,7 +482,7 @@ fn a_required_directory_failure_after_start_fails_finalization() {
     recorder.fail_durable_writes_for_test();
     recorder.note("after-start", "must be durable");
     let error = recorder
-        .run_end("ok", None)
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
         .expect_err("an observer cannot turn a lost durable event into success");
     assert!(
         error
@@ -490,7 +506,7 @@ fn a_required_directory_remains_authoritative_when_progress_disconnects() {
     );
     recorder.note("durable", "the channel is only an observer");
     recorder
-        .run_end("ok", None)
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
         .expect("the durable authority kept every event");
     let text = fs::read_to_string(directory.join(FILE_NAME)).expect("the durable stream");
     assert_eq!(text.lines().count(), 3, "{text}");
@@ -509,7 +525,7 @@ fn a_full_bounded_progress_observer_cannot_block_or_replace_durable_authority() 
     );
     recorder.note("durable", "the bounded observer is already full");
     recorder
-        .run_end("ok", None)
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
         .expect("only the durable authority decides completion");
 
     assert_eq!(
@@ -542,7 +558,7 @@ fn output_preservation_failure_keeps_the_event_and_the_observers_original_captur
         ..exec(&["cargo", "check"])
     });
     recorder
-        .run_end("ok", None)
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
         .expect("the event itself remained durable");
 
     let observed: Vec<_> = receiver.try_iter().collect();
@@ -599,7 +615,9 @@ fn a_sink_that_counts_its_own_drops_is_the_authority() {
     for i in 0..5 {
         recorder.note("n", &i.to_string());
     }
-    recorder.run_end("ok", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
+        .expect("trace closes");
     let events = recorder.events();
     assert_eq!(events.len(), 4, "the ring keeps the newest four");
     assert_eq!(type_names(&events), ["note", "note", "note", "run-end"]);
@@ -648,7 +666,9 @@ fn a_recording_writes_one_json_line_per_event_and_the_reader_round_trips() {
         output: b"ok\n".to_vec(),
         ..exec(&["cargo", "metadata"])
     });
-    recorder.run_end("ok", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
+        .expect("trace closes");
 
     let text = fs::read_to_string(stream.join(FILE_NAME)).expect("the stream");
     assert_eq!(text.lines().count(), 7);
@@ -705,7 +725,9 @@ fn dir_sink_claims_its_directory_exclusively_and_preserves_output_beside_the_str
         ..exec(&["small"])
     });
     recorder.exec(exec(&["silent"]));
-    recorder.run_end("ok", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
+        .expect("trace closes");
 
     let stream = fs::read_to_string(dir.join(FILE_NAME)).expect("stream");
     let events = read_events(stream.as_bytes()).expect("read");
@@ -828,7 +850,9 @@ fn check_reports_sequence_gaps_a_missing_run_end_and_drops() {
     );
     recorder.note("a", "1");
     recorder.note("b", "2");
-    recorder.run_end("ok", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
+        .expect("trace closes");
     let problems = check(&recorder.events());
     assert!(problems.contains(&Problem::MissingRunStart), "{problems:?}");
     assert!(problems.contains(&Problem::Dropped(1)), "{problems:?}");
@@ -924,6 +948,7 @@ fn one_of_each_measurement(recorder: &Recorder) {
     recorder.touch(rust_mutants::trace::TouchRecord {
         target: "demo/lib/demo".to_owned(),
         measured: rust_mutants::trace::Measurement::Baseline,
+        mutant: None,
         passed: vec!["a".to_owned(), "b".to_owned(), "c".to_owned()],
         summary: rust_mutants::trace::SummaryRecord::Libtest { tests_run: Some(3) },
         reached_sites: vec![0, 1, 2, 3, 4, 5, 6],
@@ -933,6 +958,23 @@ fn one_of_each_measurement(recorder: &Recorder) {
         sites: 7,
         loose: 1,
         infected: 2,
+        entered: 4,
+        entered_items: vec![0, 1, 2, 3],
+    });
+    recorder.perturbed(rust_mutants::trace::PerturbedRecord {
+        target: "demo/lib/demo".to_owned(),
+        perturbation: rust_mutants::trace::PerturbationRecord {
+            environment: vec![rust_mutants::trace::SetRecord {
+                name: "TZ".to_owned(),
+                value: Some("Australia/Lord_Howe".to_owned()),
+            }],
+            launcher: None,
+            arguments: Vec::new(),
+        },
+        outcome: "killed".to_owned(),
+        failed_tests: vec!["the_zone_is_utc".to_owned()],
+        duration_ms: 4,
+        reach: rust_mutants::trace::ReachRecord::NotRead,
     });
     recorder.witness(WitnessRecord {
         index: 1,
@@ -956,6 +998,7 @@ fn one_of_each_measurement(recorder: &Recorder) {
 /// The last of it: what a run says about the mutants it put to the tests.
 fn one_of_each_execution(recorder: &Recorder) {
     recorder.mutant_exec(rust_mutants::trace::MutantExecRecord {
+        entered_records: None,
         id: "b".repeat(64),
         index: 1,
         target: "demo/lib/demo".to_owned(),
@@ -968,6 +1011,7 @@ fn one_of_each_execution(recorder: &Recorder) {
         timeout_ms: 90_000,
         timeout_source: "derived".to_owned(),
         alone: true,
+        lingered: false,
         step_notice: None,
     });
     recorder.cache(rust_mutants::trace::CacheRecord {
@@ -975,6 +1019,8 @@ fn one_of_each_execution(recorder: &Recorder) {
         key: "d".repeat(64),
         hit: true,
         source_run_id: Some("20260907T000000000Z".to_owned()),
+        rule: "exact".to_owned(),
+        refused: None,
     });
     recorder.select(rust_mutants::trace::SelectRecord {
         mutant: "b".repeat(20),
@@ -1014,7 +1060,9 @@ fn every_event_type_has_one_golden_line_and_validates_against_the_schema() {
     one_of_each_preparation(&recorder);
     one_of_each_measurement(&recorder);
     phase.end();
-    recorder.run_end("detected", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Detected, None)
+        .expect("trace closes");
 
     let text = fs::read_to_string(dir.join(FILE_NAME)).expect("the stream");
     let events = read_events(text.as_bytes()).expect("read");
@@ -1095,7 +1143,9 @@ fn the_trace_schema_ties_step_evidence_to_exactly_the_step_outcome() {
                 "failed_tests": [],
                 "timeout_ms": 1000,
                 "timeout_source": "configured",
-                "alone": true
+                "alone": true,
+                "entered_records": null,
+                "lingered": false
             }
         }
     });
@@ -1149,7 +1199,7 @@ fn a_phase_that_never_ended_is_a_problem_a_reader_is_told_about() {
             3,
             Payload::RunEnd {
                 run: rust_mutants::trace::RunRecord {
-                    outcome: "failed".to_owned(),
+                    outcome: rust_mutants::trace::RunOutcome::Failed,
                     error: Some("killed".to_owned()),
                     events_emitted: 3,
                     events_dropped: 0,
@@ -1200,7 +1250,7 @@ fn a_phase_that_began_and_ended_is_no_problem() {
             6,
             Payload::RunEnd {
                 run: rust_mutants::trace::RunRecord {
-                    outcome: "detected".to_owned(),
+                    outcome: rust_mutants::trace::RunOutcome::Detected,
                     error: None,
                     events_emitted: 6,
                     events_dropped: 0,
@@ -1232,7 +1282,9 @@ fn a_summary_counts_the_types_times_every_phase_and_names_the_slowest_commands()
     recorder.exec(exec(&["cargo", "test", "--no-run"]));
     one_of_each_measurement(&recorder);
     outer.end();
-    recorder.run_end("detected", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Detected, None)
+        .expect("trace closes");
 
     let summary = summarize(&recorder.events(), 2);
     assert_eq!(
@@ -1292,7 +1344,9 @@ fn a_summary_renders_as_lines_a_person_reads_and_a_diff_says_what_moved() {
     let phase = recorder.phase("prepare");
     recorder.exec(exec(&["cargo", "check"]));
     phase.end();
-    recorder.run_end("detected", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Detected, None)
+        .expect("trace closes");
     let before = summarize(&recorder.events(), 3);
     assert_eq!(
         result_state(&before),
@@ -1311,7 +1365,9 @@ fn a_summary_renders_as_lines_a_person_reads_and_a_diff_says_what_moved() {
     second.exec(exec(&["cargo", "check"]));
     second.exec(exec(&["cargo", "test"]));
     phase.end();
-    second.run_end("detected", None).expect("trace closes");
+    second
+        .run_end(rust_mutants::trace::RunOutcome::Detected, None)
+        .expect("trace closes");
     let after = summarize(&second.events(), 3);
     assert_eq!(
         result_state(&after),
@@ -1346,7 +1402,9 @@ fn a_summary_counts_how_many_times_each_program_was_started() {
     recorder.exec(exec(&["cargo", "test", "--no-run"]));
     recorder.exec(exec(&["cargo", "test", "--no-run"]));
     recorder.exec(exec(&["rustc", "--print", "sysroot"]));
-    recorder.run_end("detected", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Detected, None)
+        .expect("trace closes");
 
     let summary = summarize(&recorder.events(), 2);
     assert_eq!(
@@ -1439,4 +1497,31 @@ fn every_reason_a_select_record_can_carry_is_one_the_published_schema_allows() {
         published, written,
         "the engine writes the name of every reason a mutant did not run, so the schema lists each"
     );
+}
+
+#[test]
+fn the_schema_lists_exactly_the_outcomes_a_run_can_end_with() {
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &fs::read_to_string(
+            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v1.json"),
+        )
+        .expect("the schema file"),
+    )
+    .expect("the schema parses");
+    let listed: BTreeSet<String> = schema["properties"]["payload"]["oneOf"]
+        .as_array()
+        .expect("one branch per type")
+        .iter()
+        .find(|branch| branch["properties"]["type"]["const"] == "run-end")
+        .and_then(|branch| branch["properties"]["run"]["properties"]["outcome"]["enum"].as_array())
+        .expect("run-end closes its outcome")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    let known: BTreeSet<String> = rust_mutants::trace::RunOutcome::ALL
+        .iter()
+        .map(|outcome| outcome.name().to_owned())
+        .collect();
+    assert_eq!(listed, known);
 }
