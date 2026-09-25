@@ -203,7 +203,12 @@ fn a_subprocess_keeps_mutation_identity_and_drops_only_the_coverage_sink() {
             ] {
                 assert_eq!(std::env::var_os(name), std::env::var_os(expected), "{name}");
             }
-            assert_eq!(std::env::var_os(PROFILE), None);
+            assert_eq!(
+                std::env::var_os(PROFILE).as_deref(),
+                Some(std::ffi::OsStr::new(njutest_devkit::paths::NULL_DEVICE)),
+                "a child is told to throw its profile away rather than left to write one into \
+                 whatever directory it runs in"
+            );
             return;
         }
         Ok(other) => test_fail(format_args!("unknown test stage {other}")),

@@ -688,6 +688,10 @@ fn a_free_change_that_rests_on_a_target_whose_reach_moved_says_so_and_a_kill_doe
             gained: std::collections::BTreeSet::new(),
             lost: std::collections::BTreeSet::new(),
         },
+        entered: njutest::report::drift::Moved {
+            gained: std::collections::BTreeSet::new(),
+            lost: std::collections::BTreeSet::new(),
+        },
     };
     let mut kept_off = at(0, Decided::Survived);
     kept_off.routing = Some(routed(&[IT], &[], &[(IT, Outcome::Survived)]));

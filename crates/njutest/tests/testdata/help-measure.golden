@@ -1,0 +1,8 @@
+Record what each test target enters, for `njutest select` to read
+
+Usage: njutest measure [OPTIONS]
+
+Options:
+      --offline  Pass `--offline` to cargo
+      --locked   Pass `--locked` to cargo
+  -h, --help     Print help

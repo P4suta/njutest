@@ -15,6 +15,7 @@ fn a_key_over_nothing_is_not_a_key_and_remembers_nothing() {
         timeout: "auto".to_owned(),
         steps: 50_000_000,
         build: Vec::new(),
+        engine: "e".to_owned(),
     };
     assert!(
         !keyed.usable(),
@@ -26,6 +27,15 @@ fn a_key_over_nothing_is_not_a_key_and_remembers_nothing() {
         ..keyed
     };
     assert!(usable.usable());
+    let unread = rust_mutants::outcomes::Keyed {
+        engine: String::new(),
+        ..usable
+    };
+    assert!(
+        !unread.usable(),
+        "an engine that could not be read names no build of it, and a verdict one build \
+         remembered is only this one's answer while the two mean the same thing by it"
+    );
 }
 
 #[test]
@@ -48,6 +58,7 @@ fn what_the_key_is_computed_from_is_what_could_change_the_answer() {
         timeout: "auto".to_owned(),
         steps: 50_000_000,
         build: vec!["--all-features".to_owned()],
+        engine: "e".to_owned(),
     };
     let key = base.key(&mutant);
     for other in [
@@ -77,6 +88,10 @@ fn what_the_key_is_computed_from_is_what_could_change_the_answer() {
         },
         rust_mutants::outcomes::Keyed {
             build: Vec::new(),
+            ..base.clone()
+        },
+        rust_mutants::outcomes::Keyed {
+            engine: "another build".to_owned(),
             ..base.clone()
         },
     ] {
@@ -118,4 +133,30 @@ fn the_policy_break_has_a_new_schema_layout_and_cache_abi() {
     assert_eq!(rust_mutants::outcomes::CACHE_ABI, 6);
     assert_eq!(rust_mutants::outcomes::INSTRUMENTATION_ABI, 2);
     assert_eq!(rust_mutants::outcomes::STEP_POLICY_ABI, 1);
+}
+
+#[test]
+fn the_engine_is_named_by_what_it_is_and_not_by_where_it_lies() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (one, same, other) = (
+        dir.path().join("one"),
+        dir.path().join("same"),
+        dir.path().join("other"),
+    );
+    std::fs::write(&one, b"an engine").expect("write");
+    std::fs::write(&same, b"an engine").expect("write");
+    std::fs::write(&other, b"another engine").expect("write");
+    let digest = |path: &std::path::Path| {
+        rust_mutants::outcomes::engine_of(path).expect("a readable engine")
+    };
+    assert_eq!(digest(&one), digest(&same), "one build, two places");
+    assert_ne!(
+        digest(&one),
+        digest(&other),
+        "a rebuilt engine may mean something else by a verdict, so it files under another name"
+    );
+    assert!(
+        rust_mutants::outcomes::engine_of(&dir.path().join("missing")).is_err(),
+        "and one that cannot be read names nothing"
+    );
 }

@@ -26,6 +26,7 @@ fn moved() -> Drift {
         },
         bodies: nothing(),
         infected: nothing(),
+        entered: nothing(),
     }
 }
 
