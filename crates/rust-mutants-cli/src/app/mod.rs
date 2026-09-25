@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use jiff::Timestamp;
 use rust_mutants::EngineError;
 use rust_mutants::id::RunId;
+use rust_mutants::killers::Killers;
 use rust_mutants::report::explain;
 use rust_mutants::run::Expectation;
 use rust_mutants::runner::Cancel;
@@ -1058,9 +1059,9 @@ struct Switches {
     dry_run: bool,
 }
 
-/// Where a run reads and writes what it established: the exact store and the carried one, under this run's keys.
+/// Where a run reads and writes what it established: the exact store, the carried one and the killers, under this run's keys.
 fn reusing<'a>(
-    (store, carried): &'a (crate::outcomes::Store, rust_mutants::carry::Store),
+    (store, carried, killers): &'a (crate::outcomes::Store, rust_mutants::carry::Store, Killers),
     keyed: &'a rust_mutants::outcomes::Keyed,
     id: &'a RunId,
 ) -> run::Reusing<'a> {
@@ -1069,6 +1070,7 @@ fn reusing<'a>(
         keyed,
         run_id: id.as_str(),
         carried,
+        killers,
     }
 }
 
@@ -1116,6 +1118,7 @@ fn whole(
     let stores = (
         crate::outcomes::Store::new(&environment.cache_directory),
         rust_mutants::carry::Store::new(&environment.cache_directory),
+        Killers::new(&environment.cache_directory),
     );
     let (keyed, expectations) = (keyed(session, whole), expectations(settings));
     let selection = report::selection_document(&settings.prepare_options()?);

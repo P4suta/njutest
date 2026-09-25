@@ -646,7 +646,11 @@ fn every_violation_is_a_line_of_its_own_before_the_summary() {
 
 #[test]
 fn a_clean_recording_exits_zero_and_one_with_a_violation_in_it() {
-    assert_eq!(exit_code(run_directory(&base()).path()), 0);
+    assert_eq!(
+        exit_code(run_directory(&base()).path()),
+        i32::from(xtask::proofaudit::EXIT_UNAUDITED),
+        "read without its recording, a clean run leaves layers unaudited"
+    );
     assert_eq!(
         exit_code(run_directory(&with(serde_json::json!({ "findings": [] }))).path()),
         1
@@ -2847,4 +2851,17 @@ fn the_audit_comes_to_the_verdict_the_published_contract_gives_every_case() {
             "{name}: the audit and the runner come to what the contract says of this case"
         );
     }
+}
+#[test]
+fn an_audit_that_left_something_unaudited_does_not_exit_as_one_that_checked_everything() {
+    let unrecorded = audited(&base());
+    assert_eq!(unrecorded.violations(), 0, "{unrecorded}");
+    assert!(unrecorded.unaudited() > 0, "{unrecorded}");
+    assert_eq!(
+        unrecorded.exit_code(),
+        xtask::proofaudit::EXIT_UNAUDITED,
+        "a run whose recording was not given leaves layers unaudited, and a step that reads only \
+         the exit code must not read that as an audit that checked everything"
+    );
+    assert_eq!(xtask::proofaudit::EXIT_UNAUDITED, 3);
 }

@@ -6,6 +6,7 @@
 #![deny(unsafe_code)]
 
 pub mod canonical;
+pub mod capdir;
 pub mod cargo;
 pub mod carry;
 pub mod catalog;
@@ -23,6 +24,7 @@ pub mod glob;
 pub mod id;
 pub mod instrument;
 pub mod interval;
+pub mod killers;
 pub mod limitation;
 pub mod orphan;
 pub mod outcome;

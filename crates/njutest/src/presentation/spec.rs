@@ -36,12 +36,17 @@ pub fn page(specification: &Specification, terminal: Terminal) -> String {
     page
 }
 
-/// The line that says what was read, from which run, and how much of the workspace that run asked about.
-fn headline(specification: &Specification) -> String {
-    let builds = match specification.builds() {
+/// How many builds the run measured, and which.
+pub(super) fn builds(specification: &Specification) -> String {
+    match specification.builds() {
         [one] => format!("1 build, {one}"),
         several => format!("{} builds, {}", several.len(), several.join(", ")),
-    };
+    }
+}
+
+/// The line that says what was read, from which run, and how much of the workspace that run asked about.
+fn headline(specification: &Specification) -> String {
+    let builds = builds(specification);
     let items = match specification.items().len() {
         1 => "1 item".to_owned(),
         count => format!("{count} items"),
@@ -90,8 +95,19 @@ pub const fn heading(section: Section) -> &'static str {
     }
 }
 
+/// What a section is called where it is named in a word or two.
+#[must_use]
+pub const fn named(section: Section) -> &'static str {
+    match section {
+        Section::Pinned => "pinned",
+        Section::Free => "left free",
+        Section::Same => "the same program",
+        Section::Unsettled => "could not tell",
+    }
+}
+
 /// How a section's heading is painted, which is what it is worth to a reader.
-const fn painted(section: Section) -> Style {
+pub(super) const fn painted(section: Section) -> Style {
     match section {
         Section::Pinned => Style::Well,
         Section::Free => Style::Gap,
@@ -116,6 +132,15 @@ fn listed(change: &Change, telling: Telling) -> String {
         apart.push('\n');
         apart
     };
+    for account in accounts(change) {
+        listed.push_str(&set_in(&account, HELD, telling));
+    }
+    listed
+}
+
+/// What the builds established about `change`: one account when they all say the same, and one per build, named, when they do not.
+#[must_use]
+pub fn accounts(change: &Change) -> Vec<String> {
     let said: Vec<(&str, String)> = change
         .answers()
         .map(|answer| (answer.build(), established(answer)))
@@ -124,14 +149,18 @@ fn listed(change: &Change, telling: Telling) -> String {
         .iter()
         .all(|(_, one)| said.first().is_some_and(|(_, first)| first == one));
     match (agreed, said.first()) {
-        (true, Some((_, one))) => listed.push_str(&set_in(one, HELD, telling)),
-        (true, None) | (false, _) => {
-            for (build, one) in &said {
-                listed.push_str(&set_in(&format!("{build}: {one}"), HELD, telling));
-            }
-        }
+        (true, Some((_, one))) => vec![one.clone()],
+        (true, None) | (false, _) => said
+            .iter()
+            .map(|(build, one)| format!("{build}: {one}"))
+            .collect(),
     }
-    listed
+}
+
+/// What `change` did to the code, as a reader reads it at a glance, for `terminal`.
+#[must_use]
+pub fn glance(change: &Change, terminal: Terminal) -> String {
+    edited(change.edit(), Telling::of(terminal))
 }
 
 /// `text` set in by `indent`, folded to what is left of the terminal, with every line after the first set in a little further.

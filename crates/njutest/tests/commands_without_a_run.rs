@@ -62,7 +62,7 @@ fn ask(root: &Path, args: &[&str]) -> Said {
 #[cfg(unix)]
 #[test]
 fn accept_propagates_both_a_missing_run_and_an_unreadable_report() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = njutest_devkit::paths::Project::fresh();
     let no_run = ask(dir.path(), &["accept", "abcdef", "--reason", "reviewed"]);
     assert_eq!(no_run.code, 3, "{}{}", no_run.out, no_run.err);
     assert!(
@@ -91,10 +91,7 @@ fn accept_propagates_both_a_missing_run_and_an_unreadable_report() {
 
 #[test]
 fn a_configuration_is_written_once_and_never_over_one_somebody_wrote() {
-    let dir = tempfile::Builder::new()
-        .prefix("njutest-init-")
-        .tempdir()
-        .expect("a temporary directory");
+    let dir = njutest_devkit::paths::Project::fresh();
     let root = dir.path().to_path_buf();
 
     let written = ask(&root, &["init"]);

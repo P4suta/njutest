@@ -432,13 +432,14 @@ fn dep_info_of(artifact: &Artifact) -> Result<String, CargoError> {
             )
         })?,
     };
-    std::fs::read_to_string(&file).map_err(|source| {
+    let text = std::fs::read_to_string(&file).map_err(|source| {
         CargoError::new(
             CargoErrorKind::DepInfoMissing,
             format!("cannot read dep-info {}", file.display()),
         )
         .with_source(source)
-    })
+    })?;
+    Ok(text)
 }
 
 /// The first existing regular candidate.

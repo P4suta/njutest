@@ -41,7 +41,7 @@ An `njutest` context binds the final run id, build-internal run id, zero-based o
 configured name, and that same canonical build digest.
 The last event is `run-end` with `outcome`,
 `events_emitted`, and `events_dropped`, where a sink that counts its own drops (a full ring, a failed write) is the authority and the recorder's observed failures fill in otherwise.
-The outcome is the word the command's exit code is named after: `detected` when everything the run executed was noticed and there is nothing to report, `undetected` when something was not, `failed` when the command itself could not finish, and `interrupted` when it was stopped.
+The outcome is the word the command's exit code is named after: `detected` when everything the run executed was noticed and there is nothing to report, `found` when it reported a finding of any kind (a survivor, a stale claim, something it could not decide), `failed` when the command itself could not finish, and `interrupted` when it was stopped.
 
 An `exec` record carries environment variable *names* only (the recorder strips `=value`), and the output as `output_bytes` plus `output_sha256`; a `DirSink` preserves the capture beside the stream under `output/<seq>.txt`,
 cut at 1 MiB with a `...` marker, and records `output_path` and `output_truncated`.

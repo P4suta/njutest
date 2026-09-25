@@ -1975,6 +1975,79 @@ fn surface_harnesses(
         .collect()
 }
 
+/// The decision records against their numbers, their headings, the book's list, and every name of one in the tree.
+///
+/// # Errors
+/// The first record that does not hold together, or every name of a record that no record has.
+pub fn adrs(root: &Path) -> Result<String, GateFailure> {
+    let directory = root.join("docs/adr");
+    let mut files = Vec::new();
+    for entry in WalkDir::new(&directory)
+        .min_depth(1)
+        .max_depth(1)
+        .sort_by_file_name()
+    {
+        let entry = walked(entry)?;
+        let name = relative_slash(&directory, entry.path())?;
+        if !entry.file_type().is_file() {
+            return Err(GateFailure(format!(
+                "adrs: docs/adr/{name} is not a file, and the directory holds decision records only"
+            )));
+        }
+        let text = std::fs::read_to_string(entry.path())
+            .map_err(|error| GateFailure(format!("{}: {error}", entry.path().display())))?;
+        files.push((name, text));
+    }
+    let records =
+        crate::adrs::records(&files).map_err(|error| GateFailure(format!("adrs: {error}")))?;
+    let book = root.join("docs/SUMMARY.md");
+    let listed = std::fs::read_to_string(&book)
+        .map_err(|error| GateFailure(format!("{}: {error}", book.display())))?;
+    crate::adrs::summary(&listed, &records)
+        .map_err(|error| GateFailure(format!("adrs: {error}")))?;
+    let mut dangling = Vec::new();
+    let mut pages = 0_usize;
+    for entry in WalkDir::new(root)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|entry| {
+            entry.depth() == 0
+                || !(entry.file_name().as_encoded_bytes().first() == Some(&b'.')
+                    || entry.file_name() == "target")
+        })
+    {
+        let entry = walked(entry)?;
+        let read = entry.file_type().is_file()
+            && entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "md" || extension == "rs");
+        if !read {
+            continue;
+        }
+        pages = pages.saturating_add(1);
+        let page = relative_slash(root, entry.path())?;
+        let text = std::fs::read_to_string(entry.path())
+            .map_err(|error| GateFailure(format!("{page}: {error}")))?;
+        dangling.extend(
+            crate::adrs::dangling(&page, &text, &records)
+                .iter()
+                .map(ToString::to_string),
+        );
+    }
+    if !dangling.is_empty() {
+        return Err(GateFailure(format!(
+            "adrs: these name a decision record that is not there:\n  {}",
+            dangling.join("\n  ")
+        )));
+    }
+    Ok(format!(
+        "adrs: {} decision records, one number each and each listed once in the book under it, and \
+         {pages} files name no other",
+        records.len()
+    ))
+}
+
 /// Every variable that points git at a repository other than the one it is standing in, which a hook or a wrapper may have set.
 pub const REDIRECTING_GIT: [&str; 10] = [
     "GIT_DIR",
@@ -2111,6 +2184,7 @@ pub fn all(root: &Path) -> Result<String, GateFailure> {
         fixtures,
         release_check,
         milestones,
+        adrs,
         surfaces,
         reached,
         waivers,

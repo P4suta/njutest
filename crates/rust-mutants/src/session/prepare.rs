@@ -250,11 +250,17 @@ fn watched_of(
 fn closure_of(
     workspace: &Workspace,
     checked: &crate::cargo::Compiled,
-) -> Result<String, SessionError> {
+) -> Result<String, EngineError> {
     let root = workspace.snapshot_root();
     let target = workspace.target_dir();
+    let mut read: BTreeSet<PathBuf> = checked
+        .units
+        .iter()
+        .flat_map(|unit| unit.inputs.iter().cloned())
+        .collect();
+    read.extend(crate::cargo::compile_time_inputs(&checked.messages, root)?);
     let mut files: BTreeMap<String, String> = BTreeMap::new();
-    for path in &checked.inputs.files {
+    for path in &read {
         let (relative, class) = match (path.strip_prefix(root), path.strip_prefix(target)) {
             (Ok(relative), _) => (relative, ""),
             (Err(_), Ok(relative)) => (relative, "$target/"),

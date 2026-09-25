@@ -78,8 +78,8 @@ impl Expectation {
 /// The exit code of a run that established detection for everything it executed.
 pub const EXIT_DETECTED: u8 = Exit::Detected.code();
 
-/// The exit code of a run that left something the tests did not notice.
-pub const EXIT_UNDETECTED: u8 = Exit::Undetected.code();
+/// The exit code of a run that reported a finding about the tests.
+pub const EXIT_FOUND: u8 = Exit::Found.code();
 
 /// The exit code of a run that was interrupted.
 pub const EXIT_INTERRUPTED: u8 = Exit::Interrupted.code();
@@ -287,7 +287,7 @@ impl FindingKind {
             | Self::DischargedMutant
             | Self::StaleExpectation
             | Self::UnmatchedExpectation
-            | Self::UnmatchedSkip => Exit::Undetected,
+            | Self::UnmatchedSkip => Exit::Found,
             Self::StepLimitReachedMutant
             | Self::WaitedMutant
             | Self::ErroredMutant
@@ -308,7 +308,7 @@ pub enum Exit {
     /// Every mutant the run decided, the tests noticed.
     Detected,
     /// There is a finding about the tests.
-    Undetected,
+    Found,
     /// The run could not measure something it ran, or failed, or was used wrongly.
     Unestablished,
     /// The run was interrupted.
@@ -323,7 +323,7 @@ impl Exit {
     pub const fn code(self) -> u8 {
         match self {
             Self::Detected => 0,
-            Self::Undetected => 1,
+            Self::Found => 1,
             Self::Unestablished => 2,
             Self::Interrupted => 130,
             Self::Terminated => 143,
@@ -335,7 +335,7 @@ impl Exit {
     pub const fn meaning(self) -> &'static str {
         match self {
             Self::Detected => "every mutant the run decided, the tests noticed",
-            Self::Undetected => {
+            Self::Found => {
                 "there is a finding about the tests: a survivor, a mutation no test reached or a \
                  proof removed, a mutation the run could not decide either way, or a stale or \
                  unmatched claim"
@@ -798,6 +798,8 @@ pub struct Reusing<'a> {
     pub run_id: &'a str,
     /// The records an answer is carried across an edit by (ADR 0041).
     pub carried: &'a crate::carry::Store,
+    /// Which target last killed each mutant, which decides only the order targets are asked in.
+    pub killers: &'a crate::killers::Killers,
 }
 
 /// The part of a catalog one run answers for: the part a shard holds, and whether the run's own selection narrowed the catalog to some of the project's files.
@@ -1753,12 +1755,17 @@ fn execute(
     options: &Options<'_>,
     cancel: &Cancel,
 ) -> Result<(Judged, Vec<crate::execute::MutantResult>), EngineError> {
+    let first = match options.outcomes.as_ref() {
+        Some(reusing) => reusing.killers.of(mutant.id.as_str())?,
+        None => None,
+    };
     let recording = match options.outcomes {
         Some(_) => crate::session::Recording::Items,
         None => crate::session::Recording::Off,
     };
     let request = Request::new(mutant.id.to_string())
         .with_args(options.args.to_vec())
+        .trying_first(first)
         .recording(recording);
     let judgement = session.judge(&request, options.quiet, cancel)?;
     let duration = judgement.duration();
@@ -2080,6 +2087,13 @@ fn believable(session: &Session, mutant: &Mutant, outcome: crate::outcomes::Cach
 /// Records what this run established, for the next run of this exact tree.
 /// Only an outcome about the mutant is kept: a run that could not decide, or that never ran, says nothing the next run could inherit.
 fn keep(mutant: &Mutant, options: &Options<'_>, judged: &Judged) -> Result<(), EngineError> {
+    if let Some(reusing) = options.outcomes.as_ref()
+        && judged.outcome == Outcome::Killed
+    {
+        reusing
+            .killers
+            .remember(mutant.id.as_str(), &judged.target)?;
+    }
     let Some(reusing) = options.outcomes else {
         return Ok(());
     };

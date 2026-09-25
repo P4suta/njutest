@@ -430,6 +430,8 @@ pub struct Request {
     pub timeout: Option<Duration>,
     /// What each execution records of the items its process entered.
     pub entered: Recording,
+    /// A target to ask before the others, where one is known to have killed this mutant before; every target is still asked until one notices.
+    pub first: Option<String>,
 }
 
 /// What a mutant execution records of what its process entered.
@@ -452,6 +454,7 @@ impl Request {
             args: Vec::new(),
             timeout: None,
             entered: Recording::Off,
+            first: None,
         }
     }
 
@@ -487,6 +490,13 @@ impl Request {
     #[must_use]
     pub const fn with_timeout(mut self, timeout: Option<Duration>) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Asks `target` before the other targets, which changes the order they are asked in and never which are asked.
+    #[must_use]
+    pub fn trying_first(mut self, target: Option<String>) -> Self {
+        self.first = target;
         self
     }
 
@@ -1603,7 +1613,10 @@ impl Session {
             chosen,
             mutant,
         } = how;
-        let targets = self.selected(request.target.as_deref())?;
+        let mut targets = self.selected(request.target.as_deref())?;
+        if let Some(first) = request.first.as_deref() {
+            targets.sort_by_key(|target| target.id != first);
+        }
         let targets = match chosen {
             Chosen::Everything => targets,
             Chosen::Narrowed { only, .. } => {
