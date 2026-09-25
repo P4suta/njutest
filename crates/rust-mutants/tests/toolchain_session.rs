@@ -1100,8 +1100,13 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
     let mut every: Vec<rust_mutants::run::Judged> = (0..indices.len())
         .map(|at| judged(at, Outcome::Survived))
         .collect();
-    let held = rust_mutants::run::verify(&session, std::slice::from_ref(&expectation), &mut every)
-        .expect("the small expectation set is representable");
+    let held = rust_mutants::run::verify(
+        &session,
+        std::slice::from_ref(&expectation),
+        &mut every,
+        None,
+    )
+    .expect("the small expectation set is representable");
     assert!(
         matches!(held[0].standing, rust_mutants::run::Standing::Met),
         "every mutation the claim names came to the outcome it declared: {:?}",
@@ -1132,6 +1137,7 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
         &session,
         std::slice::from_ref(&expectation),
         &mut one_killed,
+        None,
     )
     .expect("the small expectation set is representable");
     assert!(
@@ -1164,8 +1170,9 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
     for one in &mut again {
         one.expected = false;
     }
-    let unnamed = rust_mutants::run::verify(&session, std::slice::from_ref(&uncounted), &mut again)
-        .expect("the small expectation set is representable");
+    let unnamed =
+        rust_mutants::run::verify(&session, std::slice::from_ref(&uncounted), &mut again, None)
+            .expect("the small expectation set is representable");
     assert!(
         matches!(
             unnamed[0].standing,

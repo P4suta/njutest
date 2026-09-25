@@ -58,7 +58,44 @@ pub struct Locator {
     pub count: Option<u32>,
 }
 
+/// Where a mutation is and what it edits, as a locator reads it.
+#[derive(Debug, Clone, Copy)]
+pub struct Place<'a> {
+    /// The workspace-relative path with forward slashes.
+    pub path: &'a str,
+    /// The rule's name.
+    pub rule: &'a str,
+    /// The bytes the edit replaces.
+    pub original: &'a [u8],
+    /// The item it is in, when one is known.
+    pub item: Option<&'a str>,
+    /// The line it is on.
+    pub line: u32,
+}
+
 impl Locator {
+    /// Whether this names `mutant`, whose item is `item` and which sits at `line`: the one reading of a name every command shares, so a name one of them prints is one every other accepts.
+    #[must_use]
+    pub fn describes(&self, mutant: &Mutant, item: Option<&str>, line: u32) -> bool {
+        self.describes_place(&Place {
+            path: &mutant.candidate.path,
+            rule: mutant.candidate.rule.name,
+            original: &mutant.candidate.original,
+            item,
+            line,
+        })
+    }
+
+    /// Whether this names the mutation at `place`, however the place was read: from a live catalog or a stored one.
+    #[must_use]
+    pub fn describes_place(&self, place: &Place<'_>) -> bool {
+        place.path == self.path
+            && place.rule == self.rule
+            && (self.original.is_empty() || place.original == self.original.as_bytes())
+            && place.item.is_some_and(|item| names(item, &self.item))
+            && self.line.is_none_or(|wanted| wanted == place.line)
+    }
+
     /// The locator a reader writes on a command line, or nothing when the text is not one.
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {

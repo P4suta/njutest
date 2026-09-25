@@ -1111,8 +1111,8 @@ fn whole(
         cancel,
         stdout,
     )?;
-    result.expectations =
-        run::verify(session, &expectations, &mut result.judged).map_err(EngineError::from)?;
+    result.expectations = run::verify(session, &expectations, &mut result.judged, options.shard)
+        .map_err(EngineError::from)?;
     let document = run_report::document(
         session,
         &result,
@@ -1555,12 +1555,11 @@ fn fresh_explain(
     let session = prepared.session;
     let catalog =
         rust_mutants::report::catalog::document(session, &prepared.settings.prepare_options()?)?;
-    let source = session
-        .catalog()
-        .mutants()
+    let source = catalog
+        .mutants
         .iter()
-        .find(|one| one.id.as_str().starts_with(prefix))
-        .map(|one| read_source(session, &one.candidate.path))
+        .find(|one| one.answers_to(prefix))
+        .map(|one| read_source(session, &one.path))
         .transpose()?;
     said(
         &explain::Asked {
@@ -1580,18 +1579,24 @@ fn stored_explain(
     environment: &Environment,
     stdout: &mut dyn Write,
 ) -> Result<u8, CliError> {
-    let (scope, prefix, run, json) = asked;
+    let (scope, prefix, named, json) = asked;
     let settings = Settings::resolve(scope, environment)?;
     let directory = settings.report_directory();
-    let report = stored::report_of(&directory, run)?;
+    let report = stored::report_of(&directory, named)?;
     let run = report.parent().map(Path::to_path_buf).unwrap_or_default();
     let catalog: rust_mutants::report::catalog::CatalogDocument =
         read_document(&run.join(rust_mutants::report::evidence::CATALOG))?;
+    if named.is_none()
+        && !catalog.mutants.iter().any(|one| one.answers_to(prefix))
+        && let Some(message) = runs_holding(&directory, prefix)?.refusal(prefix)
+    {
+        return Err(CliError::ReportMissing { message });
+    }
     let stored = read_run_document(&report)?;
     let source = catalog
         .mutants
         .iter()
-        .find(|one| one.id.starts_with(prefix))
+        .find(|one| one.answers_to(prefix))
         .map(|one| read_source_at(&settings.root, &one.path))
         .transpose()?;
     said(
@@ -1604,6 +1609,70 @@ fn stored_explain(
         json,
         stdout,
     )
+}
+
+/// What the stored runs say about a mutant: the runs whose catalog holds it, and the runs this release could not read, which neither do nor do not.
+///
+/// The fields are private and the one way to turn this into words names both, so a caller cannot report the first and drop the second.
+struct Holding {
+    holding: Vec<String>,
+    unreadable: Vec<(String, String)>,
+}
+
+impl Holding {
+    /// Why the newest run cannot answer while an earlier one can, or nothing when no readable run holds it.
+    fn refusal(&self, prefix: &str) -> Option<String> {
+        let latest = self.holding.last()?;
+        let mut said = format!(
+            "the newest run does not catalog {prefix:?}; {} stored run(s) do: {}. \
+             Ask one of them: `rust-mutants explain {prefix} --run {latest}`",
+            self.holding.len(),
+            self.holding.join(", ")
+        );
+        if !self.unreadable.is_empty() {
+            let named: Vec<String> = self
+                .unreadable
+                .iter()
+                .map(|(run, why)| format!("{run} ({why})"))
+                .collect();
+            let written = write!(
+                said,
+                ". Whether {} more hold it is not known, since this release cannot read them: {}",
+                self.unreadable.len(),
+                named.join("; ")
+            );
+            debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        }
+        Some(said)
+    }
+}
+
+/// Every stored run, oldest first, whose catalog holds a mutant `prefix` names, and every one whose catalog this release cannot read.
+fn runs_holding(directory: &Path, prefix: &str) -> Result<Holding, CliError> {
+    let runs = stored::kept(directory)?.0;
+    let mut holding = Vec::new();
+    let mut unreadable = Vec::new();
+    for run in runs {
+        let Some(name) = run.file_name().and_then(std::ffi::OsStr::to_str) else {
+            continue;
+        };
+        let read: Result<rust_mutants::report::catalog::CatalogDocument, CliError> =
+            read_document(&run.join(rust_mutants::report::evidence::CATALOG));
+        match read {
+            Ok(catalog) => {
+                if catalog.mutants.iter().any(|one| one.answers_to(prefix)) {
+                    holding.push(name.to_owned());
+                }
+            }
+            Err(error) => unreadable.push((name.to_owned(), error.to_string())),
+        }
+    }
+    holding.sort();
+    unreadable.sort();
+    Ok(Holding {
+        holding,
+        unreadable,
+    })
 }
 
 /// One stored document, or the reason it is not one this release reads.
