@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 
 use rust_mutants::instrument::{ItemSource, catalog_items};
 use rust_mutants::skeleton::{ItemEvidence, Skeletons, UnitSource, Unsealing, evidence};
+use rust_mutants::touch::{Item, ItemRef};
 
 /// One library unit reading exactly these Rust files.
 fn unit(files: &[(&str, &str)]) -> UnitSource {
@@ -40,7 +41,17 @@ fn evidence_of(unit: &UnitSource, files: &[(&str, &str)]) -> Skeletons {
         })
         .collect();
     let catalog = catalog_items(&sources).expect("the fixture's items are cataloged");
-    evidence(std::slice::from_ref(unit), &catalog.items)
+    let refs: Vec<ItemRef> = catalog
+        .items
+        .iter()
+        .map(|item| {
+            catalog
+                .item_ref(item.index)
+                .expect("every item has a reference")
+        })
+        .collect();
+    let pairs: Vec<(&Item, &ItemRef)> = catalog.items.iter().zip(&refs).collect();
+    evidence(std::slice::from_ref(unit), &pairs)
 }
 
 /// The evidence of the one item called `name`, wherever it is declared.
@@ -61,14 +72,15 @@ fn verdict(source: &str) -> Option<Unsealing> {
 }
 
 #[test]
-fn a_body_is_sealed_only_when_all_it_contributes_is_its_own_execution() {
+fn a_body_whose_only_contribution_is_its_own_execution_is_sealed() {
     for sealed in [
         "fn f() -> i32 { let x = 1; x + 1 }",
         "fn f() { println!(\"{}\", 1); }",
         "fn f() { std::println!(\"x\"); assert_eq!(1, 1); let _ = vec![1, 2]; }",
         "fn f() -> bool { matches!(Some(1), Some(_)) && cfg!(test) }",
         "fn f() -> i32 { unsafe { 1 } }",
-        "fn f() -> impl Fn() -> i32 { || 1 }",
+        "#[test] fn f() { assert!(true); }",
+        "#[test] #[should_panic(expected = \"x\")] #[ignore] fn f() { panic!(\"x\"); }",
         "#[inline] #[must_use] #[doc = \"x\"] fn f() -> i32 { 1 }",
         "fn f() { #[allow(unused_variables)] let x = 1; }",
         "struct S; impl S { #[track_caller] fn f(&self) {} }",
@@ -76,6 +88,10 @@ fn a_body_is_sealed_only_when_all_it_contributes_is_its_own_execution() {
     ] {
         assert_eq!(verdict(sealed), None, "{sealed}");
     }
+}
+
+#[test]
+fn a_body_that_contributes_anything_else_is_not_sealed_and_says_why() {
     for (unsealed, why) in [
         (
             "fn f() { thing!(); }",
@@ -133,6 +149,12 @@ fn a_body_is_sealed_only_when_all_it_contributes_is_its_own_execution() {
         ),
         ("fn f() -> i32 { const { 1 } }", Unsealing::ConstBlock),
         ("const fn f() -> i32 { 1 }", Unsealing::Evaluated),
+        ("fn f() -> impl Fn() -> i32 { || 1 }", Unsealing::OpaqueType),
+        ("async fn f() -> i32 { 1 }", Unsealing::OpaqueType),
+        (
+            "trait T { fn f(&self) -> impl Sized { 1 } }",
+            Unsealing::OpaqueType,
+        ),
     ] {
         assert_eq!(verdict(unsealed), Some(why), "{unsealed}");
     }
@@ -206,7 +228,7 @@ fn an_edit_inside_a_sealed_body_changes_its_digest_and_no_skeleton() {
     )];
     let after = [(
         "src/lib.rs",
-        "pub fn f() -> i32 { 1 + 2 + 3 }\npub fn g() -> i32 { 2 }\n",
+        "pub fn f() -> i32 { 7 }\npub fn g() -> i32 { 2 }\n",
     )];
     let (then, now) = (
         evidence_of(&unit(&before), &before),
@@ -360,11 +382,87 @@ fn a_skeleton_is_the_fold_of_the_entries_it_names() {
         rust_mutants::id::digest(folded.as_bytes()),
         "and the skeleton is exactly their fold, so a reader re-derives it from them"
     );
-    let rendered = "pub fn f() -> i32 {sealed:$root/src/lib.rs#0}\nconst K: i32 = 2;\n";
+    let rendered = "pub fn f() -> i32 {sealed:$root/src/lib.rs#0/0:5:5}\nconst K: i32 = 2;\n";
     assert_eq!(
         one.entries.get("$root/src/lib.rs"),
         Some(&rust_mutants::id::digest(rendered.as_bytes())),
         "a Rust file's entry is its bytes with each sealed body replaced by a placeholder \
-         naming the file and the item's position in it"
+         naming the file, the item's position in it, and the body's shape"
+    );
+}
+
+#[test]
+fn an_edit_that_moves_what_follows_a_sealed_body_moves_the_skeleton() {
+    let before = [(
+        "src/lib.rs",
+        "pub fn f() -> i32 { 1 }\npub fn g() { panic!() }\n",
+    )];
+    let taller = [(
+        "src/lib.rs",
+        "pub fn f() -> i32 {\n    1\n}\npub fn g() { panic!() }\n",
+    )];
+    let wider = [(
+        "src/lib.rs",
+        "pub fn f() -> i32 { 1 } pub fn g() { panic!() }\n",
+    )];
+    let widened = [(
+        "src/lib.rs",
+        "pub fn f() -> i32 { 10 } pub fn g() { panic!() }\n",
+    )];
+    assert_ne!(
+        evidence_of(&unit(&before), &before).units,
+        evidence_of(&unit(&taller), &taller).units,
+        "a line added inside a sealed body moves every line after it, and `panic!` in `g` \
+         reports the line it is on"
+    );
+    assert_ne!(
+        evidence_of(&unit(&wider), &wider).units,
+        evidence_of(&unit(&widened), &widened).units,
+        "and a body that grows on its last line moves the columns after it on that line"
+    );
+}
+
+#[test]
+fn nothing_the_compiler_runs_while_it_builds_is_sealed() {
+    let files = [("src/lib.rs", "pub fn expand(n: i32) -> i32 { n + 1 }\n")];
+    let mut macros = unit(&files);
+    macros.kind = "proc-macro".to_owned();
+    let kept = evidence_of(&macros, &files);
+    assert_eq!(
+        item(&kept, "expand").unsealed,
+        Some(Unsealing::CompileTime),
+        "a procedural macro's body runs in the compiler, where no test enters it, and what it \
+         returns is the code of every crate that uses it"
+    );
+}
+
+#[test]
+fn an_item_is_named_by_the_reference_every_record_joins_on() {
+    let files = [(
+        "src/lib.rs",
+        "const K: i32 = 1;\npub fn f() -> i32 { K }\npub fn g() -> i32 { 2 }\n",
+    )];
+    let kept = evidence_of(&unit(&files), &files);
+    let g = item(&kept, "g");
+    assert_eq!(
+        g.item,
+        ItemRef {
+            package: "demo".to_owned(),
+            path: "src/lib.rs".to_owned(),
+            ordinal: 2,
+        },
+        "an item is named by its package, its file, and its position among the file's \
+         cataloged items, the constant included, which is what an entered union names it by"
+    );
+    let entry = kept
+        .units
+        .first()
+        .and_then(|one| one.entries.get("$root/src/lib.rs"))
+        .expect("the file's entry");
+    let rendered = "const K: i32 = 1;\npub fn f() -> i32 {sealed:$root/src/lib.rs#1/0:5:5}\npub fn g() -> i32 {sealed:$root/src/lib.rs#2/0:5:5}\n";
+    assert_eq!(
+        entry,
+        &rust_mutants::id::digest(rendered.as_bytes()),
+        "and the placeholder names each sealed body by that same ordinal"
     );
 }

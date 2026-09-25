@@ -844,6 +844,9 @@ pub struct MutantExecRecord {
     pub timeout_source: String,
     /// Whether it ran with nothing else this run started running beside it, which is what a confirming retry does.
     pub alone: bool,
+    /// How many records the process wrote naming the items it entered, when it was asked to record them (ADR 0027 measures what recording costs by this).
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub entered_records: Option<u32>,
 }
 
 /// What the outcome store was asked about one mutant.

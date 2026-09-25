@@ -26,10 +26,11 @@ use crate::trace::{ExecRecord, Recorder};
 
 /// Every variable the engine owns.
 /// A test process sees exactly the ones this run set, never one an outer run left behind.
-pub const RESERVED_ENV: [&str; 7] = [
+pub const RESERVED_ENV: [&str; 8] = [
     ACTIVE_ENV,
     CATALOG_ENV,
     TOUCH_ENV,
+    crate::instrument::TOUCH_ITEMS_ENV,
     STEPS_ENV,
     STEP_NOTICE_ENV,
     STEP_NONCE_ENV,
@@ -37,10 +38,11 @@ pub const RESERVED_ENV: [&str; 7] = [
 ];
 
 /// The variables a run composes for every test process it starts, which it therefore never lets one inherit.
-pub const COMPOSED_ENV: [&str; 8] = [
+pub const COMPOSED_ENV: [&str; 9] = [
     ACTIVE_ENV,
     CATALOG_ENV,
     TOUCH_ENV,
+    crate::instrument::TOUCH_ITEMS_ENV,
     STEPS_ENV,
     STEP_NOTICE_ENV,
     STEP_NONCE_ENV,
@@ -1400,6 +1402,15 @@ pub fn environment(
     if let Some(touch) = context.touch {
         env.insert(OsString::from(TOUCH_ENV), touch.log.as_os_str().to_owned());
         env.insert(OsString::from(CATALOG_ENV), OsString::from(touch.catalog));
+        match touch.scope {
+            TouchScope::Everything => {}
+            TouchScope::Items => {
+                env.insert(
+                    OsString::from(crate::instrument::TOUCH_ITEMS_ENV),
+                    OsString::from("1"),
+                );
+            }
+        }
     }
     match (context.profile, scratch) {
         (Some(profile), _) => {
@@ -1639,6 +1650,17 @@ pub struct Touching<'a> {
     pub log: &'a Path,
     /// The catalog every guard that may write to it was generated from.
     pub catalog: &'a str,
+    /// What the process records into it.
+    pub scope: TouchScope,
+}
+
+/// What a process asked to record its touches records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TouchScope {
+    /// Every site, body, infection and item, which is what a baseline's routing reads.
+    Everything,
+    /// Only the items it entered, which is all a mutant execution's union needs.
+    Items,
 }
 
 /// The one fact a mutant execution established.
@@ -1771,6 +1793,8 @@ pub struct MutantResult {
     pub passed_tests: Vec<String>,
     /// Every test the harness was told to skip.
     pub ignored_tests: Vec<String>,
+    /// The items the whole process entered, when the execution was asked to record them and could.
+    pub entered: Option<crate::touch::Entered>,
     /// The id of the process the execution started, which is the parent of whatever it starts, or nothing where none started.
     pub leader: Option<u32>,
 }
@@ -1825,6 +1849,7 @@ impl MutantResult {
     /// An execution-shaped apparatus failure produced before a child can answer.
     pub(crate) fn apparatus_error(target: &str, message: String) -> Self {
         Self {
+            entered: None,
             conclusion: MutantConclusion::Errored,
             target: target.to_owned(),
             exit_code: EXIT_CODE_UNAVAILABLE,
@@ -1944,6 +1969,7 @@ pub fn exec(
         };
     let signal = result.signal();
     MutantResult {
+        entered: None,
         conclusion: if protocol_exact {
             MutantConclusion::of(&observation, summary, target.harness)
         } else {

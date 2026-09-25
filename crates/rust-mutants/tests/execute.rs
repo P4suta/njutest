@@ -378,6 +378,7 @@ fn the_guards_are_told_where_to_record_exactly_when_the_run_asks_them_to() {
             sysroot: None,
             active: None,
             touch: Some(rust_mutants::execute::Touching {
+                scope: rust_mutants::execute::TouchScope::Everything,
                 log,
                 catalog: "digest",
             }),

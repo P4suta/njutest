@@ -1537,7 +1537,13 @@ fn execute(
     options: &Options<'_>,
     cancel: &Cancel,
 ) -> Result<Judged, EngineError> {
-    let request = Request::new(mutant.id.to_string()).with_args(options.args.to_vec());
+    let recording = match options.outcomes {
+        Some(_) => crate::session::Recording::Items,
+        None => crate::session::Recording::Off,
+    };
+    let request = Request::new(mutant.id.to_string())
+        .with_args(options.args.to_vec())
+        .recording(recording);
     let judgement = session.judge(&request, options.quiet, cancel)?;
     let duration = judgement.duration();
     let retried = judgement.retried();

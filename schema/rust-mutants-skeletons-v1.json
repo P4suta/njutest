@@ -43,7 +43,7 @@
       "additionalProperties": false,
       "required": [
         "index",
-        "path",
+        "item",
         "name",
         "body_digest",
         "sealed",
@@ -55,10 +55,29 @@
           "type": "integer",
           "minimum": 0
         },
-        "path": {
-          "description": "The workspace-relative path of its file, with forward slashes.",
-          "type": "string",
-          "minLength": 1
+        "item": {
+          "description": "The item as every record that names one names it: the package whose unit compiled its file, the file's workspace-relative path with forward slashes, and its position among the file's cataloged items from 0.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "package",
+            "path",
+            "ordinal"
+          ],
+          "properties": {
+            "package": {
+              "type": "string",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "ordinal": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
         },
         "name": {
           "description": "The item as a reader writes it, which is what a mutant inside it names as its item.",
@@ -97,6 +116,8 @@
             "why": {
               "enum": [
                 "evaluated",
+                "compile-time",
+                "opaque-type",
                 "const-block",
                 "unlocated",
                 "unread"

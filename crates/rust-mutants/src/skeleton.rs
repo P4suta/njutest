@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 
-use crate::touch::Item;
+use crate::touch::{Item, ItemRef};
 
 /// The file a run keeps this evidence in, beside `touched-v1.json`.
 pub const FILE: &str = "skeletons-v1.json";
@@ -60,7 +60,7 @@ pub const STANDARD_ROOTS: [&str; 3] = ["std", "core", "alloc"];
 pub const LOCAL_ROOTS: [&str; 3] = ["self", "super", "crate"];
 
 /// The attributes a sealed body, its item, and the items around it may carry.
-pub const SEALABLE_ATTRIBUTES: [&str; 13] = [
+pub const SEALABLE_ATTRIBUTES: [&str; 16] = [
     "allow",
     "cfg",
     "cfg_attr",
@@ -70,8 +70,11 @@ pub const SEALABLE_ATTRIBUTES: [&str; 13] = [
     "doc",
     "expect",
     "forbid",
+    "ignore",
     "inline",
     "must_use",
+    "should_panic",
+    "test",
     "track_caller",
     "warn",
 ];
@@ -107,8 +110,8 @@ pub struct Skeletons {
 pub struct ItemEvidence {
     /// The item index `touched-v1.json` names it by.
     pub index: u32,
-    /// The workspace-relative path of its file.
-    pub path: String,
+    /// The item as every record that names one names it: its package, its file, and its position among the file's cataloged items.
+    pub item: ItemRef,
     /// The item as a reader writes it.
     pub name: String,
     /// The lowercase hex SHA-256 of its body's bytes, braces included.
@@ -125,6 +128,10 @@ pub struct ItemEvidence {
 pub enum Unsealing {
     /// The item is a `const fn`, a `const` or a `static`, which can be evaluated where nothing enters it.
     Evaluated,
+    /// A unit that read the item's file runs in the compiler, as a procedural macro or a build script does, where no test enters it.
+    CompileTime,
+    /// The function is `async` or returns an `impl` type, whose hidden type the body decides and a caller can observe without entering it.
+    OpaqueType,
     /// The body invokes a macro off the list, or one qualified by a path outside the standard library.
     Macro {
         /// The macro's path as written.
@@ -195,13 +202,13 @@ pub struct UnitSource {
     pub emitted: BTreeMap<String, String>,
 }
 
-/// The evidence for `units` and the cataloged `items`.
+/// The evidence for `units` and the cataloged `items`, each with the reference the catalog gives it.
 #[must_use]
-pub fn evidence(units: &[UnitSource], items: &[Item]) -> Skeletons {
+pub fn evidence(units: &[UnitSource], items: &[(&Item, &ItemRef)]) -> Skeletons {
     let shadowing: Vec<Option<Unsealing>> = units.iter().map(unit_unsealing).collect();
     let mut verdicts: BTreeMap<&str, BTreeMap<(u32, u32), Option<Unsealing>>> = BTreeMap::new();
     let mut item_evidence = Vec::with_capacity(items.len());
-    for item in items {
+    for (item, reference) in items {
         let name = format!("$root/{}", item.path);
         let reading: Vec<usize> = units
             .iter()
@@ -217,6 +224,18 @@ pub fn evidence(units: &[UnitSource], items: &[Item]) -> Skeletons {
         let unsealed = match (source, body) {
             (None, _) => Some(Unsealing::Unread),
             (Some(_), None) => Some(Unsealing::Unlocated),
+            (Some(_), Some(_))
+                if item.measurable
+                    && reading.iter().any(|position| {
+                        units.get(*position).is_some_and(|unit| {
+                            unit.kind
+                                .split(',')
+                                .any(|kind| kind == "proc-macro" || kind == "custom-build")
+                        })
+                    }) =>
+            {
+                Some(Unsealing::CompileTime)
+            }
             (Some(bytes), Some(_)) if item.measurable => {
                 let file = verdicts
                     .entry(item.path.as_str())
@@ -234,7 +253,7 @@ pub fn evidence(units: &[UnitSource], items: &[Item]) -> Skeletons {
         };
         item_evidence.push(ItemEvidence {
             index: item.index,
-            path: item.path.clone(),
+            item: (*reference).clone(),
             name: item.name.clone(),
             body_digest: crate::id::digest(body.unwrap_or_default()),
             sealed: unsealed.is_none(),
@@ -291,26 +310,20 @@ fn parsed(bytes: &[u8]) -> Option<(u32, syn::File)> {
 /// What one unit's skeleton folds: its files with each sealed body replaced, its variables, and what its build scripts emitted.
 fn entries(
     unit: &UnitSource,
-    items: &[Item],
+    items: &[(&Item, &ItemRef)],
     evidence: &[ItemEvidence],
 ) -> BTreeMap<String, String> {
     let mut entries: BTreeMap<String, String> = BTreeMap::new();
     for (name, bytes) in &unit.files {
-        let sealed: Vec<(usize, &Item)> = name
+        let sealed: Vec<(u32, &Item)> = name
             .strip_prefix("$root/")
             .map(|path| {
-                let mut ordinal = 0_usize;
-                let mut found = Vec::new();
-                for (item, said) in items.iter().zip(evidence) {
-                    if item.path != path {
-                        continue;
-                    }
-                    if said.sealed {
-                        found.push((ordinal, item));
-                    }
-                    ordinal = ordinal.saturating_add(1);
-                }
-                found
+                items
+                    .iter()
+                    .zip(evidence)
+                    .filter(|((_, reference), said)| reference.path == path && said.sealed)
+                    .map(|((item, reference), _)| (reference.ordinal, *item))
+                    .collect()
             })
             .unwrap_or_default();
         entries.insert(
@@ -340,10 +353,10 @@ fn folded(entries: &BTreeMap<String, String>) -> String {
 }
 
 /// `bytes` with every sealed body replaced by `{sealed:<file>#<ordinal>}`.
-fn with_placeholders(bytes: &[u8], name: &str, sealed: &[(usize, &Item)]) -> Vec<u8> {
+fn with_placeholders(bytes: &[u8], name: &str, sealed: &[(u32, &Item)]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
     let mut from = 0_usize;
-    let mut ordered: Vec<&(usize, &Item)> = sealed.iter().collect();
+    let mut ordered: Vec<&(u32, &Item)> = sealed.iter().collect();
     ordered.sort_by_key(|(_, item)| item.body.start);
     for (ordinal, item) in ordered {
         let (Ok(start), Ok(end)) = (
@@ -352,15 +365,27 @@ fn with_placeholders(bytes: &[u8], name: &str, sealed: &[(usize, &Item)]) -> Vec
         ) else {
             continue;
         };
-        let Some(before) = bytes.get(from..start) else {
+        let (Some(before), Some(body)) = (bytes.get(from..start), bytes.get(start..end)) else {
             continue;
         };
         out.extend_from_slice(before);
-        out.extend_from_slice(format!("{{sealed:{name}#{ordinal}}}").as_bytes());
+        out.extend_from_slice(format!("{{sealed:{name}#{ordinal}/{}}}", shape(body)).as_bytes());
         from = end;
     }
     out.extend_from_slice(bytes.get(from..).unwrap_or_default());
     out
+}
+
+/// Where a body leaves what follows it: its line breaks, and its last line's length in bytes and in characters.
+fn shape(body: &[u8]) -> String {
+    let mut lines = body.split(|byte| *byte == b'\n');
+    let last = lines.next_back().unwrap_or_default();
+    let newlines = lines.count();
+    let characters = match std::str::from_utf8(last) {
+        Ok(text) => text.chars().count().to_string(),
+        Err(_not_text) => "bytes".to_owned(),
+    };
+    format!("{newlines}:{}:{characters}", last.len())
 }
 
 /// Why no body of this unit is sealed, when a file of it can rename a listed macro.
@@ -531,7 +556,12 @@ impl Bodies {
         self.around = outer;
     }
 
-    fn function(&mut self, attrs: &[syn::Attribute], block: &syn::Block) {
+    fn function(
+        &mut self,
+        attrs: &[syn::Attribute],
+        signature: &syn::Signature,
+        block: &syn::Block,
+    ) {
         self.within(attrs, |bodies| {
             let range = block.span().byte_range();
             let span = match (u32::try_from(range.start), u32::try_from(range.end)) {
@@ -541,11 +571,15 @@ impl Bodies {
                     .zip(bodies.base.checked_add(end)),
                 (Err(_does_not_fit), _) | (_, Err(_does_not_fit)) => None,
             };
-            let verdict = bodies.around.clone().or_else(|| {
-                let mut body = Body::default();
-                body.visit_block(block);
-                body.found
-            });
+            let verdict = bodies
+                .around
+                .clone()
+                .or_else(|| opaque(signature))
+                .or_else(|| {
+                    let mut body = Body::default();
+                    body.visit_block(block);
+                    body.found
+                });
             if let Some(span) = span {
                 bodies.verdicts.insert(span, verdict);
             }
@@ -556,16 +590,16 @@ impl Bodies {
 
 impl<'ast> Visit<'ast> for Bodies {
     fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
-        self.function(&node.attrs, &node.block);
+        self.function(&node.attrs, &node.sig, &node.block);
     }
 
     fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
-        self.function(&node.attrs, &node.block);
+        self.function(&node.attrs, &node.sig, &node.block);
     }
 
     fn visit_trait_item_fn(&mut self, node: &'ast syn::TraitItemFn) {
         if let Some(block) = &node.default {
-            self.function(&node.attrs, block);
+            self.function(&node.attrs, &node.sig, block);
         }
     }
 
@@ -579,6 +613,25 @@ impl<'ast> Visit<'ast> for Bodies {
 
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
         self.within(&node.attrs, |bodies| visit::visit_item_mod(bodies, node));
+    }
+}
+
+/// Why a function with this signature has a type its body decides, or nothing when it has none.
+fn opaque(signature: &syn::Signature) -> Option<Unsealing> {
+    let mut returned = Returned::default();
+    returned.visit_return_type(&signature.output);
+    (signature.asyncness.is_some() || returned.opaque).then_some(Unsealing::OpaqueType)
+}
+
+/// The walk over a return type that finds an `impl` type in it.
+#[derive(Debug, Default)]
+struct Returned {
+    opaque: bool,
+}
+
+impl<'ast> Visit<'ast> for Returned {
+    fn visit_type_impl_trait(&mut self, _node: &'ast syn::TypeImplTrait) {
+        self.opaque = true;
     }
 }
 
