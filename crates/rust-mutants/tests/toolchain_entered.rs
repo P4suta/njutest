@@ -108,5 +108,11 @@ fn every_mutant_execution_names_the_items_it_entered() {
         !elsewhere.items.contains(&rare),
         "and a mutation that leaves the branch alone never reaches it: {elsewhere:?}"
     );
+    assert_eq!(
+        elsewhere.completeness,
+        Completeness::UpToFirstFailure,
+        "and a kill's union is claimed only up to its failure, however the process ended, \
+         because a process may be stopped there: {elsewhere:?}"
+    );
     session.close().expect("close");
 }

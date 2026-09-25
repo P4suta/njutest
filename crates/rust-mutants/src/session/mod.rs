@@ -1431,17 +1431,10 @@ impl Session {
                 Err(_beyond_this_target) => None,
             })
             .collect::<Option<BTreeSet<_>>>()?;
-        let completeness = match result.conclusion {
-            _ if cancel.is_cancelled() => crate::touch::Completeness::Cut,
-            MutantConclusion::Killed | MutantConclusion::Survived => {
-                crate::touch::Completeness::Whole
-            }
-            MutantConclusion::NotRun
-            | MutantConclusion::StepLimitReached { .. }
-            | MutantConclusion::Waited
-            | MutantConclusion::Inconclusive
-            | MutantConclusion::Unobserved
-            | MutantConclusion::Errored => crate::touch::Completeness::Cut,
+        let completeness = if cancel.is_cancelled() {
+            crate::touch::Completeness::Cut
+        } else {
+            completeness_of(&result.stopped, &result.conclusion)
         };
         let written = text
             .lines()
@@ -2423,6 +2416,34 @@ impl TargetAggregate {
     }
 }
 
+/// How much of a process its union of entered items accounts for, read from the one way it ended and then from what it concluded.
+const fn completeness_of(
+    stopped: &execute::Stopped,
+    conclusion: &MutantConclusion,
+) -> crate::touch::Completeness {
+    use crate::touch::Completeness;
+    use execute::Stopped;
+    match stopped {
+        Stopped::Exited { .. } => match conclusion {
+            MutantConclusion::Survived => Completeness::Whole,
+            MutantConclusion::Killed => Completeness::UpToFirstFailure,
+            MutantConclusion::NotRun
+            | MutantConclusion::StepLimitReached { .. }
+            | MutantConclusion::Waited
+            | MutantConclusion::Inconclusive
+            | MutantConclusion::Unobserved
+            | MutantConclusion::Errored => Completeness::Cut,
+        },
+        Stopped::NotStarted
+        | Stopped::TimedOut { .. }
+        | Stopped::Stalled { .. }
+        | Stopped::Cancelled { .. }
+        | Stopped::WaitFailed
+        | Stopped::StepLimitReached { .. }
+        | Stopped::StepProtocolFailed { .. } => Completeness::Cut,
+    }
+}
+
 #[cfg(kani)]
 mod kani_laws {
     use super::{AttemptLedger, TargetAggregate, WaitedAttempt, aggregate_outcomes, retry_outcome};
@@ -2823,6 +2844,7 @@ const fn unreached() -> MutantResult {
         passed_tests: Vec::new(),
         ignored_tests: Vec::new(),
         leader: None,
+        stopped: execute::Stopped::NotStarted,
     }
 }
 
@@ -2843,19 +2865,10 @@ mod tests {
 
     fn result(conclusion: MutantConclusion, duration: Duration) -> MutantResult {
         MutantResult {
-            entered: None,
             conclusion,
-            target: "target".to_owned(),
-            exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
             duration,
             output: Vec::new(),
-            protocol: crate::execute::Protocol::Unanswered,
-            summary: None,
-            signal: None,
-            failed_tests: Vec::new(),
-            passed_tests: Vec::new(),
-            ignored_tests: Vec::new(),
-            leader: None,
+            ..MutantResult::apparatus_error("target", String::new())
         }
     }
 
