@@ -4,7 +4,7 @@
 //! Preparing a workspace: the gate it stands on, what the proof layers establish before anything is instrumented, and the one build every accepted mutant lives in.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::{PrepareOptions, Session, Verified, verify};
@@ -71,7 +71,6 @@ pub(super) fn pristine(
     }
 }
 
-/// The digest of the pristine sources every unit of the build compiled.
 /// What the build read that no survey of the tree sees: every file outside the copy and outside the build's own output, and every variable the compiler read.
 fn inputs_of(
     workspace: &Workspace,
@@ -175,7 +174,7 @@ fn scripts_of(
         let said = script
             .out_dir
             .as_deref()
-            .and_then(std::path::Path::parent)
+            .and_then(Path::parent)
             .map(|build| std::fs::read_to_string(build.join("output")));
         let text = match said {
             Some(Ok(text)) => text,
@@ -217,8 +216,8 @@ fn said_by(
 /// What one build script watches: its whole package where it named no path, and otherwise each path it named, inside the tree by place and outside it by what is there.
 fn watched_of(
     changed: Vec<String>,
-    directory: Option<&std::path::Path>,
-    root: &std::path::Path,
+    directory: Option<&Path>,
+    root: &Path,
 ) -> Result<crate::select::Watched, SessionError> {
     if changed.is_empty() {
         return Ok(crate::select::Watched::Package);
@@ -246,36 +245,54 @@ fn watched_of(
     Ok(crate::select::Watched::Paths { inside, outside })
 }
 
+/// The digest of everything the build read: every file any unit's dep-info names, build scripts and generated files included, and every environment variable rustc recorded reading.
+/// A file under the root is named relative to it and one the build generated relative to the target directory, so the digest travels with the tree; anything else outside is the lock file's to key.
 fn closure_of(
     workspace: &Workspace,
     checked: &crate::cargo::Compiled,
 ) -> Result<String, SessionError> {
     let root = workspace.snapshot_root();
-    let units = &checked.units;
+    let target = workspace.target_dir();
     let mut files: BTreeMap<String, String> = BTreeMap::new();
-    for unit in units {
-        for path in &unit.sources {
-            let Ok(relative) = path.strip_prefix(root) else {
-                continue;
-            };
-            let relative_text = relative
-                .to_str()
-                .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: path.clone() })?;
-            let name = crate::id::normalize_path(relative_text).map_err(|source| {
-                SessionError::EvidencePathInvalid {
-                    path: path.clone(),
-                    source,
-                }
-            })?;
-            if let std::collections::btree_map::Entry::Vacant(entry) = files.entry(name) {
-                let bytes =
-                    std::fs::read(path).map_err(|source| SessionError::EvidenceReadFailed {
-                        path: path.clone(),
-                        source,
-                    })?;
-                entry.insert(crate::id::digest(&bytes));
+    for path in &checked.inputs.files {
+        let (relative, class) = match (path.strip_prefix(root), path.strip_prefix(target)) {
+            (Ok(relative), _) => (relative, ""),
+            (Err(_), Ok(relative)) => (relative, "$target/"),
+            (Err(_), Err(_)) => continue,
+        };
+        let relative_text = relative
+            .to_str()
+            .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: path.clone() })?;
+        let name = crate::id::normalize_path(relative_text).map_err(|source| {
+            SessionError::EvidencePathInvalid {
+                path: path.clone(),
+                source,
             }
+        })?;
+        if let std::collections::btree_map::Entry::Vacant(entry) =
+            files.entry(format!("{class}{name}"))
+        {
+            let bytes = std::fs::read(path).map_err(|source| SessionError::EvidenceReadFailed {
+                path: path.clone(),
+                source,
+            })?;
+            entry.insert(crate::id::digest(&bytes));
         }
+    }
+    let (root_text, target_text) = (text_of(root)?, text_of(target)?);
+    let portable = |text: &str| {
+        text.replace(target_text, "$target")
+            .replace(root_text, "$root")
+    };
+    for read in &checked.inputs.env {
+        files.insert(
+            format!("$env/{}", read.name),
+            env_value(read.value.as_deref(), portable),
+        );
+    }
+    for told in &checked.inputs.emitted {
+        let (name, digest) = emitted_entry(told, portable);
+        files.insert(name, digest);
     }
     if files.is_empty() {
         return Ok(String::new());
@@ -285,6 +302,42 @@ fn closure_of(
             .iter()
             .map(|(name, digest)| (name.as_str(), digest.as_str())),
     ))
+}
+
+/// What one build script emitted, as a closure entry: named by the directory it wrote into, and digested over every configuration, variable, and link request, with the run's own directories spelled portably.
+fn emitted_entry(
+    told: &crate::cargo::Emitted,
+    portable: impl Fn(&str) -> String,
+) -> (String, String) {
+    let named = told
+        .out_dir
+        .as_deref()
+        .and_then(Path::to_str)
+        .map_or_else(|| "unnamed".to_owned(), &portable);
+    let mut said = String::new();
+    for (kind, values) in [
+        ("cfg", told.cfgs.clone()),
+        (
+            "env",
+            told.env
+                .iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect(),
+        ),
+        ("lib", told.linked_libs.clone()),
+        ("path", told.linked_paths.clone()),
+    ] {
+        for value in values {
+            said.push_str(kind);
+            said.push('\0');
+            said.push_str(&portable(&value));
+            said.push('\n');
+        }
+    }
+    (
+        format!("$emitted/{named}"),
+        crate::id::digest(said.as_bytes()),
+    )
 }
 
 /// The digest of every manifest, the lock file, and the cargo configuration the build read.
@@ -632,7 +685,10 @@ fn gated(
     let pristine_phase = trace.phase("pristine");
     let checked = gate(workspace, options, cancel)?;
     let read = Digested {
-        closure: closure_of(workspace, &checked)?,
+        closure: super::Closure {
+            digest: closure_of(workspace, &checked)?,
+            units: unit_sources(workspace, &checked)?,
+        },
         inputs: inputs_of(workspace, &checked)?,
         manifests: manifests_of(workspace)?,
     };
@@ -657,17 +713,110 @@ fn gated(
     Ok(Gated { discovery, read })
 }
 
-/// What the gate established: what there is to mutate, and the digest of everything the build read.
+/// What the gate established: what there is to mutate, and everything the build read.
 struct Gated {
     discovery: discover::Discovery,
     read: Digested,
 }
 
-/// What the build read, as digests a later run or a selection compares against.
+/// What the build read, as digests a later run or a selection compares against, and what each unit read.
 struct Digested {
-    closure: String,
+    closure: super::Closure,
     inputs: crate::select::Inputs,
     manifests: String,
+}
+
+/// Every unit the pristine build compiled, named without a package id, with each file it read under the root or the target directory spelled by its class.
+fn unit_sources(
+    workspace: &Workspace,
+    checked: &crate::cargo::Compiled,
+) -> Result<Vec<crate::skeleton::UnitSource>, EngineError> {
+    let root = workspace.snapshot_root();
+    let target = workspace.target_dir();
+    let (root_text, target_text) = (text_of(root)?, text_of(target)?);
+    let portable = |text: &str| {
+        text.replace(target_text, "$target")
+            .replace(root_text, "$root")
+    };
+    let names: BTreeMap<&str, &str> = workspace
+        .metadata
+        .packages
+        .iter()
+        .map(|package| (package.id.as_str(), package.name.as_str()))
+        .collect();
+    let mut read: BTreeMap<PathBuf, Vec<u8>> = BTreeMap::new();
+    let mut units = Vec::new();
+    for unit in crate::cargo::unit_inputs_of(&checked.messages, root)? {
+        let mut files = BTreeMap::new();
+        for path in &unit.inputs.files {
+            let (relative, class) = match (path.strip_prefix(root), path.strip_prefix(target)) {
+                (Ok(relative), _) => (relative, "$root/"),
+                (Err(_), Ok(relative)) => (relative, "$target/"),
+                (Err(_), Err(_)) => continue,
+            };
+            let name = crate::id::normalize_path(text_of(relative)?).map_err(|source| {
+                SessionError::EvidencePathInvalid {
+                    path: path.clone(),
+                    source,
+                }
+            })?;
+            let bytes = match read.entry(path.clone()) {
+                std::collections::btree_map::Entry::Occupied(entry) => entry.get().clone(),
+                std::collections::btree_map::Entry::Vacant(entry) => entry
+                    .insert(std::fs::read(path).map_err(|source| {
+                        SessionError::EvidenceReadFailed {
+                            path: path.clone(),
+                            source,
+                        }
+                    })?)
+                    .clone(),
+            };
+            files.insert(format!("{class}{name}"), bytes);
+        }
+        units.push(crate::skeleton::UnitSource {
+            package: names
+                .get(unit.package_id.as_str())
+                .map_or_else(|| unit.package_id.clone(), |name| (*name).to_owned()),
+            target: unit.target.name.clone(),
+            kind: unit.target.kind.join(","),
+            test: unit.test,
+            files,
+            env: unit
+                .inputs
+                .env
+                .iter()
+                .map(|read| {
+                    (
+                        read.name.clone(),
+                        env_value(read.value.as_deref(), portable),
+                    )
+                })
+                .collect(),
+            emitted: unit
+                .inputs
+                .emitted
+                .iter()
+                .map(|told| emitted_entry(told, portable))
+                .collect(),
+        });
+    }
+    Ok(units)
+}
+
+/// A path as exact text, which every portable name is built from.
+fn text_of(path: &Path) -> Result<&str, SessionError> {
+    path.to_str()
+        .ok_or_else(|| SessionError::EvidencePathNotUtf8 {
+            path: path.to_path_buf(),
+        })
+}
+
+/// A variable's value as a key holds it: unset, or the digest of what it was set to with the run's own directories spelled portably.
+fn env_value(value: Option<&str>, portable: impl Fn(&str) -> String) -> String {
+    value.map_or_else(
+        || "unset".to_owned(),
+        |value| format!("set:{}", crate::id::digest(portable(value).as_bytes())),
+    )
 }
 
 /// The pristine sources, selected placements, and complete-catalog indices one preparation must validate.
@@ -726,7 +875,7 @@ pub fn prepare(
         sources: &sources,
         options,
     };
-    let remembered = remembering(options, &read.closure, &read.manifests, &workspace);
+    let remembered = remembering(options, &read.closure.digest, &read.manifests, &workspace);
     let (established, reached) = layers(&asking, &eligible, remembered.as_ref(), cancel)?;
 
     let Instrumented {
@@ -758,7 +907,7 @@ pub fn prepare(
         accepted: &validated.accepted,
         narrowing: &narrowing,
         items: item_count(&item_catalog)?,
-        closure: &read.closure,
+        closure: &read.closure.digest,
         manifests: &read.manifests,
         asked: options.touch,
         last_build: &last_build,
@@ -988,10 +1137,7 @@ fn resealed(
 /// Files without a candidate are retained because a mutation activated elsewhere can enter their loops or functions later in the same process, and those boundaries share the same step allowance.
 type Planned = (BTreeMap<String, Vec<u8>>, BTreeMap<String, Vec<Placement>>);
 
-fn plan_tree(
-    root: &std::path::Path,
-    discovery: &discover::Discovery,
-) -> Result<Planned, EngineError> {
+fn plan_tree(root: &Path, discovery: &discover::Discovery) -> Result<Planned, EngineError> {
     let found: Vec<Found> = discovery
         .candidates
         .iter()

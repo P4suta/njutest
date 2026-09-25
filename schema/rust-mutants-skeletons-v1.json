@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://njutest.dev/schema/rust-mutants-skeletons-v1.json",
+  "title": "rust-mutants skeletons v1",
+  "description": "What an edit can change without an execution noticing it, as the pristine build left the tree: every cataloged item's body digest and whether the body is sealed, and every compiled unit's skeleton. A sealed body contributes nothing to the program except its own execution; a unit's skeleton covers everything the unit read outside its sealed bodies. The rules are in docs/engine/carry.md; ADR 0041 is why they exist.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "document_type",
+    "schema_version",
+    "items",
+    "units"
+  ],
+  "properties": {
+    "document_type": {
+      "const": "rust-mutants/skeletons"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "items": {
+      "description": "Every cataloged item, by the item index touched-v1.json names it by.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/item"
+      }
+    },
+    "units": {
+      "description": "Every compiled unit, sorted by package, target, kind and test flag.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/unit"
+      }
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index",
+        "path",
+        "name",
+        "body_digest",
+        "sealed",
+        "unsealed"
+      ],
+      "properties": {
+        "index": {
+          "description": "The item index touched-v1.json names it by.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "path": {
+          "description": "The workspace-relative path of its file, with forward slashes.",
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "description": "The item as a reader writes it, which is what a mutant inside it names as its item.",
+          "type": "string"
+        },
+        "body_digest": {
+          "description": "The SHA-256 of its body's bytes, braces included.",
+          "$ref": "#/$defs/digest"
+        },
+        "sealed": {
+          "description": "Whether everything the body contributes to the program is its own execution.",
+          "type": "boolean"
+        },
+        "unsealed": {
+          "description": "Why it is not sealed, null exactly when it is.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/unsealing"
+            }
+          ]
+        }
+      }
+    },
+    "unsealing": {
+      "type": "object",
+      "required": [
+        "why"
+      ],
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "why": {
+              "enum": [
+                "evaluated",
+                "const-block",
+                "unlocated",
+                "unread"
+              ]
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "why": {
+              "enum": [
+                "macro",
+                "attribute",
+                "shadowed"
+              ]
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "why": {
+              "const": "declares-item"
+            },
+            "kind": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": [
+            "path"
+          ],
+          "properties": {
+            "why": {
+              "const": "foreign-glob"
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "package",
+        "target",
+        "kind",
+        "test",
+        "skeleton",
+        "entries"
+      ],
+      "properties": {
+        "package": {
+          "description": "The package's name; never a package id, which carries an absolute path.",
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "description": "The target's name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "description": "The target's kinds, comma-separated.",
+          "type": "string",
+          "minLength": 1
+        },
+        "test": {
+          "description": "Whether this is the target's test build.",
+          "type": "boolean"
+        },
+        "skeleton": {
+          "description": "The SHA-256 of the unit's inputs with each sealed body replaced by a placeholder naming its item: the fold of `entries`.",
+          "$ref": "#/$defs/digest"
+        },
+        "entries": {
+          "description": "Every entry the skeleton folds, by name: a file under the root or the target directory, a variable, or a build script's output, with its digest or value.",
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[$](root|target|env|emitted)/"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

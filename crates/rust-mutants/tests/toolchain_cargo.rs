@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use njutest_devkit::fixture::copy_tree;
 use rust_mutants::cargo::{
     CargoErrorKind, Diagnostic, Driver, LocateOptions, Message, Metadata, MetadataOptions,
-    Toolchain, parse_messages, resolve_executable, units_of,
+    Toolchain, UnitInputs, parse_messages, resolve_executable, unit_inputs_of, units_of,
 };
 use rust_mutants::runner::{Cancel, run};
 use rust_mutants::trace::Recorder;
@@ -399,4 +399,127 @@ fn a_check_that_fails_to_compile_still_yields_its_messages() {
         messages.last(),
         Some(Message::BuildFinished { success: false })
     ));
+}
+
+/// Every unit of a checked fixture and what each read, with the directories its paths are under.
+fn checked_units(name: &str) -> (PathBuf, tempfile::TempDir, Vec<UnitInputs>) {
+    let dir = fixture(name);
+    let tc = toolchain(&dir);
+    let target = scratch_target(name);
+    let mut spec = tc.command(
+        &dir,
+        [
+            "check",
+            "--workspace",
+            "--all-targets",
+            "--message-format=json",
+            "--offline",
+            "--locked",
+        ],
+    );
+    spec.argv.push("--target-dir".into());
+    spec.argv.push(target.path().into());
+    spec.structured_stdout = Some(64 << 20);
+    let result = run(&spec, &Cancel::new());
+    assert!(
+        result.succeeded(),
+        "{}",
+        std::str::from_utf8(&result.output).expect("the fixture writes exact UTF-8")
+    );
+    let messages = parse_messages(&result.stdout).expect("messages");
+    let units = unit_inputs_of(&messages, &dir).expect("the units and what each read");
+    (dir, target, units)
+}
+
+/// A file a unit read, relative to the fixture, or by name under the target directory.
+fn read_as(dir: &Path, target: &Path, path: &Path) -> String {
+    match (path.strip_prefix(dir), path.strip_prefix(target)) {
+        (Ok(relative), _) => relative.to_str().expect("exact UTF-8").replace('\\', "/"),
+        (Err(_outside), Ok(generated)) => format!(
+            "$target/{}",
+            generated
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .expect("a generated file has a UTF-8 name")
+        ),
+        (Err(_outside), Err(_elsewhere)) => format!("elsewhere:{}", path.display()),
+    }
+}
+
+/// One unit as a reader checks it: which target, whether it is the test build, and what it read.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct Read {
+    target: String,
+    kind: Vec<String>,
+    test: bool,
+    files: Vec<String>,
+    env: Vec<String>,
+}
+
+impl Read {
+    fn of((target, kind, test): (&str, &str, bool), files: &[&str], env: &[&str]) -> Self {
+        Self {
+            target: target.to_owned(),
+            kind: vec![kind.to_owned()],
+            test,
+            files: files.iter().map(|file| (*file).to_owned()).collect(),
+            env: env.iter().map(|name| (*name).to_owned()).collect(),
+        }
+    }
+}
+
+#[test]
+fn every_unit_names_each_file_it_read_whatever_its_kind_and_each_variable_it_asked_for() {
+    let (dir, target, units) = checked_units("fixture-carry");
+    let mut described: Vec<Read> = units
+        .iter()
+        .map(|unit| {
+            let mut files: Vec<String> = unit
+                .inputs
+                .files
+                .iter()
+                .map(|path| read_as(&dir, target.path(), path))
+                .collect();
+            files.sort();
+            Read {
+                target: unit.target.name.clone(),
+                kind: unit.target.kind.clone(),
+                test: unit.test,
+                files,
+                env: unit
+                    .inputs
+                    .env
+                    .iter()
+                    .map(|read| read.name.clone())
+                    .collect(),
+            }
+        })
+        .collect();
+    described.sort();
+    let library = ["$target/limit.rs", "src/answer.txt", "src/lib.rs"];
+    assert_eq!(
+        described,
+        [
+            Read::of(
+                ("build-script-build", "custom-build", false),
+                &["build.rs"],
+                &[]
+            ),
+            Read::of(("fixture_carry", "lib", false), &library, &["OUT_DIR"]),
+            Read::of(("fixture_carry", "lib", true), &library, &["OUT_DIR"]),
+        ],
+        "a unit is keyed on everything its own compilation read: the build script is a \
+         unit of its own, and a library reads a text file and a generated file as surely \
+         as it reads its Rust"
+    );
+    for unit in &units {
+        let told = unit.inputs.emitted.len();
+        let expected = usize::from(!unit.target.is_custom_build());
+        assert_eq!(
+            told, expected,
+            "{}: every unit of the package is compiled with what its build script emitted, \
+             and the build script itself with none of it",
+            unit.target.name
+        );
+    }
 }

@@ -421,12 +421,21 @@ pub struct Session {
     established: std::sync::Mutex<EstablishmentState>,
     /// What the tree gained or lost while the proof layers ran, which is what a test wrote before anything was instrumented.
     written_by_a_test: Vec<Drift>,
-    /// The digest of the pristine sources every unit of this build compiled.
-    closure: String,
+    /// Everything the pristine build read: the digest that keys the outcome store, and what each unit read.
+    closure: Closure,
     /// What the build read that no survey of the tree sees.
     inputs: crate::select::Inputs,
     /// The digest of the manifests, the lock file, and the cargo configuration the build read.
     manifests: String,
+}
+
+/// Everything the pristine build read, as the outcome store keys it and as each unit's skeleton is taken over.
+#[derive(Debug)]
+pub(crate) struct Closure {
+    /// The digest of every file, variable, and build script output any unit read.
+    pub(crate) digest: String,
+    /// Each unit and what it read, spelled by class.
+    pub(crate) units: Vec<crate::skeleton::UnitSource>,
 }
 
 /// What narrowing a target's tests left: the ones that could still notice the mutation, or the proof that took the last of them away.
@@ -533,7 +542,7 @@ impl Session {
     /// The digest of the pristine sources every unit of this build compiled.
     #[must_use]
     pub fn closure(&self) -> &str {
-        &self.closure
+        &self.closure.digest
     }
 
     /// What the build read that no survey of the tree sees: files outside the copy, and the variables the compiler read.
@@ -743,6 +752,12 @@ impl Session {
     #[must_use]
     pub const fn touched(&self) -> &crate::touch::Touched {
         &self.verified.touched
+    }
+
+    /// Which item bodies are sealed, each body's digest, and each unit's skeleton, as the pristine build left them.
+    #[must_use]
+    pub fn skeletons(&self) -> crate::skeleton::Skeletons {
+        crate::skeleton::evidence(&self.closure.units, &self.verified.touched.items)
     }
 
     /// What the one run of every target with nothing active established, target by target.

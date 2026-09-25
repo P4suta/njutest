@@ -1,0 +1,130 @@
+<!--
+SPDX-FileCopyrightText: 2026 njutest contributors
+SPDX-License-Identifier: MIT OR Apache-2.0
+-->
+
+# Carrying an answer across an edit
+
+**Status: implemented** as evidence; the rule that carries an answer by it is not.
+A run keeps, in `skeletons-v1.json` (`schema/rust-mutants-skeletons-v1.json`), every cataloged item's body digest and whether the body is sealed, and every compiled unit's skeleton.
+Why an answer may be carried at all is ADR 0041 (#151).
+This page is the specification the audit implements; the engine's code is one implementation of it.
+
+## Sealed bodies
+
+A body is sealed when everything it contributes to the program is its own execution.
+An edit inside a sealed body can change only what an execution that enters it does.
+
+Only the body of a function, a method, or a trait method with a default is ever sealed.
+A body is not sealed when any of these holds, and `unsealed` names the first that does, in this order:
+
+1. `unread`: no unit read the item's file.
+2. `unlocated`: the catalog's body span names no bytes of the file.
+3. `evaluated`: the item is a `const fn`, a `const` or a `static`, which the compiler can evaluate where nothing enters it.
+4. `unlocated`: the catalog's body span is not a function body of the file as the parser reads it.
+5. `attribute`: an attribute off the list is on the file, on an inline `mod`, `impl` or `trait` around the item, or on the item.
+   An attribute is on the list when its path is one segment named in `sealable-attributes`, or its first segment is named in `tool-namespaces`.
+   A `cfg_attr` is on the list when every attribute it would apply is.
+6. The first of these inside the body, in source order:
+   - `attribute`: an attribute off the list;
+   - `macro`: a macro invocation whose path is not one segment named in `sealable-macros`, or two segments whose first is named in `standard-roots` and whose second is named in `sealable-macros`;
+   - `macro`, too: a macro invoked inside the arguments of a listed one.
+     The arguments are read as tokens, not parsed: every identifier path followed by `!` and a delimited group is an invocation unless the path's last segment is a keyword, and the rule applies to it and to its own arguments in turn;
+   - `declares-item`: any item: `fn`, `struct`, `enum`, `union`, `impl`, `trait`, `type`, `use`, `mod`, `macro_rules!` or another item macro, `const`, `static`, `extern crate`, an `extern` block, or an item the parser keeps as tokens;
+   - `const-block`: an inline `const { … }` block.
+7. The first of these in the files the unit read, in byte order of their names:
+   - `shadowed`: the file declares `macro_rules!` with a name in `sealable-macros`, or a `use` makes a name in `sealable-macros` visible, directly or with `as`, from a path whose first segment is not in `standard-roots`;
+   - `foreign-glob`: the file imports `*` from a path whose first segment is in neither `standard-roots` nor `local-roots`, or takes a crate that is not in `standard-roots` with `#[macro_use] extern crate`.
+     A glob reaches every module below the one that holds it, so this unseals every body of the unit.
+
+Rule 7 reads every file of the unit that parses as a whole Rust file, whatever its extension.
+A file that does not, such as a data file or an included expression, can declare no macro another file sees.
+A body is sealed only if it is sealed in every unit that read its file; rule 7 names the first such unit in the order the build reported them.
+
+### Lists
+
+```sealable-macros
+assert
+assert_eq
+assert_ne
+cfg
+column
+concat
+dbg
+debug_assert
+debug_assert_eq
+debug_assert_ne
+eprint
+eprintln
+file
+format
+format_args
+line
+matches
+module_path
+panic
+print
+println
+stringify
+todo
+unimplemented
+unreachable
+vec
+write
+writeln
+```
+
+`include`, `include_str`, `include_bytes`, `env`, `option_env`, `asm` and `global_asm` are left off on purpose: each reads something outside the body.
+
+```standard-roots
+std
+core
+alloc
+```
+
+```local-roots
+self
+super
+crate
+```
+
+```sealable-attributes
+allow
+cfg
+cfg_attr
+cold
+deny
+deprecated
+doc
+expect
+forbid
+inline
+must_use
+track_caller
+warn
+```
+
+```tool-namespaces
+clippy
+diagnostic
+rustfmt
+```
+
+## Body digests
+
+An item's `body_digest` is the lowercase hex SHA-256 of the bytes `touched-v1.json`'s `items[].body` names, braces included, as the pristine file holds them.
+
+## Skeletons
+
+A unit is named by its package's name, its target's name, its target's kinds joined by `,`, and whether it is the test build; never by a package id, which carries an absolute path.
+
+Its skeleton is the SHA-256 of one line `<name>\0<digest>\n` per entry, in byte order of the names, and `entries` keeps every one of those names with its digest, so a reader can fold them again and check any entry it can read:
+
+- every file the unit's dep-info names, as `$root/<path>` under the workspace root or `$target/<path>` under the target directory, each path with forward slashes; a file under neither is the lock file's to key and has no entry.
+  The digest is the SHA-256 of the file's bytes with every sealed body of it replaced by `{sealed:<name>#<ordinal>}`, where `<name>` is the entry's name and `<ordinal>` is the item's position among the file's cataloged items, from 0;
+- every variable rustc recorded reading, as `$env/<NAME>`, with the value `unset`, or `set:` and the SHA-256 of the value with the run's own workspace root and target directory spelled `$root` and `$target`;
+- every build script the unit's package ran, as `$emitted/<out_dir>` with the directory spelled the same way.
+  The digest is the SHA-256 of one line `<kind>\0<value>\n` for each `cargo::rustc-cfg` (`cfg`), `rustc-env` (`env`, as `NAME=value`), `rustc-link-lib` (`lib`) and `rustc-link-search` (`path`) it emitted, each kind's values sorted and spelled the same way.
+  A build script's own unit has no such entry.
+
+So an edit to anything outside a sealed body, a signature, a type, a constant, a trait `impl` header, a macro, an unsealed body, a file the build included, a variable, or what a build script emitted, moves the skeleton of every unit that read it, and an edit inside a sealed body moves only that item's digest.

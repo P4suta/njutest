@@ -364,6 +364,7 @@ fn emptying_what_earlier_runs_established_says_how_much_was_in_it() {
                 closure: "c".repeat(64),
                 manifests: "m".repeat(64),
                 toolchain: "cargo 1.98.0 rustc 1.98.0 aarch64-apple-darwin".to_owned(),
+                engine: "e".repeat(64),
                 args: Vec::new(),
                 timeout: "auto".to_owned(),
                 steps: 0,
