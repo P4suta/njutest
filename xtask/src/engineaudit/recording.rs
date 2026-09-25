@@ -472,8 +472,45 @@ fn answered(row: &Row, execs: &[&crate::route::Exec], notes: &mut Notes<'_>) {
     retried(row, execs, notes);
 }
 
+/// Whether the row says its process outlived its harness's answer exactly when a recorded execution of it did.
+fn lingered(row: &Row, execs: &[&crate::route::Exec], notes: &mut Notes<'_>) {
+    let recorded = execs
+        .iter()
+        .try_fold(false, |any, exec| match exec.lingered {
+            crate::route::Linger::Unrecorded => None,
+            crate::route::Linger::Ended => Some(any),
+            crate::route::Linger::Outlived => Some(true),
+        });
+    match recorded {
+        None => notes.unaudited(
+            &row.display_id,
+            "an execution of it does not say whether its process outlived its harness's answer, \
+             so the row's `lingered` is not re-derived"
+                .to_owned(),
+        ),
+        Some(recorded) if recorded != row.lingered => notes.violated(
+            &row.display_id,
+            format!(
+                "the row says lingered is {} and the recording's executions of it say {recorded}; \
+                 whether the harness or the clock decided it is a fact the recording holds",
+                row.lingered
+            ),
+        ),
+        Some(_) => {}
+    }
+}
+
 /// A wall-clock expiry the run believed, against the serial retry that is what believing one takes.
 fn retried(row: &Row, execs: &[&crate::route::Exec], notes: &mut Notes<'_>) {
+    lingered(row, execs, notes);
+    if row.lingered && row.outcome == WAITED {
+        notes.violated(
+            &row.display_id,
+            "the row says its harness had already answered when the clock ended the process, and \
+             that the clock decided it; a verdict the harness gave is not a wait"
+                .to_owned(),
+        );
+    }
     let waited = execs.iter().filter(|exec| exec.outcome == WAITED).count();
     if row.outcome == WAITED && (waited < 2 || !row.retried) {
         notes.violated(

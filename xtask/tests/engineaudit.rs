@@ -230,7 +230,7 @@ fn a_waited_mutant_is_an_infrastructure_finding_not_a_detection() {
             "inconclusive": 0, "errored": 0
         },
         "score": { "detected": 0, "decided": 1, "value": 0.0 },
-        "mutants": [{ "outcome": "waited", "retried": true, "expected": false }, {}],
+        "mutants": [{ "outcome": "waited", "retried": true, "lingered": false, "expected": false }, {}],
         "findings": [{
             "kind": "waited-mutant", "mutant": short(KILLED),
             "detail": "the wall-clock bound expired twice"
@@ -325,6 +325,29 @@ fn a_mutant_exec_that_disagrees_with_its_row_is_a_violation() {
     assert!(
         found.iter().any(|remark| remark.contains("disagrees")),
         "{audit}"
+    );
+}
+
+#[test]
+fn a_row_says_it_lingered_exactly_when_its_recorded_execution_did() {
+    let mut claimed = base();
+    claimed["mutants"][0]["lingered"] = serde_json::json!(true);
+    let audit = audited_with(&claimed, &recording());
+    assert!(
+        violations(&audit, Layer::Trace)
+            .iter()
+            .any(|remark| remark.contains("lingered")),
+        "a row that says its process outlived its harness's answer, over an execution the \
+         recording says ended with it, rests on nothing: {audit}"
+    );
+    let mut events = recording();
+    events[8]["mutant"]["lingered"] = serde_json::json!(true);
+    let audit = audited_with(&base(), &events);
+    assert!(
+        violations(&audit, Layer::Trace)
+            .iter()
+            .any(|remark| remark.contains("lingered")),
+        "and a row that hides an execution the recording says lingered hides it: {audit}"
     );
 }
 
@@ -915,7 +938,7 @@ fn a_run_the_interruption_stopped_is_not_a_run_that_lost_its_routes() {
             "original": ">", "replacement": ">=",
             "outcome": "not_run", "target": "", "exit_code": 0,
             "duration_ms": 0, "tests_run": null, "killed_by": [], "signal": null,
-            "step_notice": null, "retried": false, "not_run_reason": "interrupted",
+            "step_notice": null, "retried": false, "lingered": false, "not_run_reason": "interrupted",
             "route": null, "identical": "not-measured",
             "expected": false, "unreached": false, "source_run_id": null
         }]

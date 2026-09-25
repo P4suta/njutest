@@ -101,6 +101,7 @@
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -147,6 +148,7 @@
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -193,6 +195,7 @@
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -239,6 +242,7 @@
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -283,6 +287,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -323,6 +328,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -363,6 +369,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -403,6 +410,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",

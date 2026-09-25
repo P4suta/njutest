@@ -29,6 +29,7 @@ fn judged(index: u32, outcome: Outcome) -> Judged {
         not_run_reason: None,
         route: None,
         retried: false,
+        lingered: false,
         expected: false,
         measured: true,
         identical: CodegenIdentity::NotMeasured,

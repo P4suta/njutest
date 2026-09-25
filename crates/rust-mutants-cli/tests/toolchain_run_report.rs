@@ -1603,3 +1603,72 @@ fn a_mutant_of_a_whole_condition_replaces_all_of_it_whatever_operators_it_holds(
         );
     }
 }
+
+#[test]
+fn a_mutant_a_test_noticed_before_another_hung_is_killed_and_names_that_test() {
+    let fixture = Fixture::copy("fixture-fails-then-hangs");
+    let recording = fixture.temp().join("recording");
+    let trace = format!("--trace={}", recording.display());
+    let output = against(
+        &fixture,
+        &["run", "--offline", "--locked", "--tier", "all", &trace],
+    );
+    assert!(
+        output.status.code() == Some(0) || output.status.code() == Some(1),
+        "{}",
+        stderr(&output)
+    );
+    let report = stored(&fixture);
+    assert_eq!(
+        against_schema("rust-mutants-run-report-v1.json", &report),
+        Vec::<String>::new()
+    );
+    let rows = report["mutants"].as_array().expect("the rows");
+    let waited_naming: Vec<&serde_json::Value> = rows
+        .iter()
+        .filter(|row| {
+            row["outcome"] == "waited"
+                && row["killed_by"]
+                    .as_array()
+                    .is_some_and(|named| !named.is_empty())
+        })
+        .collect();
+    assert!(
+        waited_naming.is_empty(),
+        "a row that names the test that noticed it is not one the clock decided: {waited_naming:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row["outcome"] == "killed"
+                && row["killed_by"].as_array().is_some_and(|named| {
+                    named.iter().any(|one| one == "a_says_the_answer_is_ready")
+                })
+        }),
+        "the mutation that made one test fail and the other hang was noticed by the one that \
+         failed: {rows:#?}"
+    );
+    let text = std::fs::read_to_string(recording.join("trace.jsonl")).expect("the recording");
+    let outlived: std::collections::BTreeSet<u64> = text
+        .lines()
+        .map(|line| {
+            njutest_devkit::strictjson::decode_str::<serde_json::Value>(line)
+                .expect("a recorded line is JSON")
+        })
+        .filter(|event| event["payload"]["type"] == "mutant-exec")
+        .filter(|event| event["payload"]["mutant"]["lingered"] == true)
+        .filter_map(|event| event["payload"]["mutant"]["index"].as_u64())
+        .collect();
+    let claimed: std::collections::BTreeSet<u64> = rows
+        .iter()
+        .filter(|row| row["lingered"] == true)
+        .filter_map(|row| row["index"].as_u64())
+        .collect();
+    assert!(
+        !claimed.is_empty(),
+        "the fixture exists to make a process outlive its harness's answer: {rows:#?}"
+    );
+    assert_eq!(
+        claimed, outlived,
+        "a row says it lingered exactly where the recording says an execution of it did"
+    );
+}
