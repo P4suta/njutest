@@ -5,6 +5,7 @@
 
 #![deny(unsafe_code)]
 
+pub mod apparatus;
 pub mod canonical;
 pub mod capdir;
 pub mod cargo;
