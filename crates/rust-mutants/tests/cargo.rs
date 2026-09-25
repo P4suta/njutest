@@ -550,6 +550,20 @@ fn a_run_told_not_to_touch_the_network_tells_every_command_it_starts() {
 }
 
 #[test]
+fn a_windows_path_in_dep_info_keeps_its_separators() {
+    let parsed = parse_dep_info("C:\\t\\demo.d: C:\\src\\lib.rs C:\\with\\ space\\x.rs\n");
+    let Ok(parsed) = parsed else {
+        panic!("dep-info: {parsed:?}");
+    };
+    assert_eq!(
+        parsed,
+        ["C:\\src\\lib.rs", "C:\\with space\\x.rs"],
+        "only a space or another backslash follows an escaping backslash, so every other one is \
+         a separator the path keeps"
+    );
+}
+
+#[test]
 fn a_dep_info_names_the_environment_it_read_set_or_not() {
     let text = "target/debug/deps/lib.rmeta: src/lib.rs src/answer.txt\n\nsrc/lib.rs:\nsrc/answer.txt:\n\n# env-dep:OUT_DIR=/tmp/out\n# env-dep:NEVER_SET\n";
     assert_eq!(

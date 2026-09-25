@@ -9,6 +9,7 @@ use crate::concurrency::explore::{CONFIRMING_ROUNDS, Ended, chosen, clean, repea
 use crate::concurrency::proof::{
     Evidence, Harness, PackageScan, Reach, Standing, Threads, standing, threads_of,
 };
+use crate::observe::SourceReadError;
 use crate::report::concurrency::{ConcurrencyRecord, Exploration, Unexplored};
 use rust_mutants::execute::TargetKind;
 use rust_mutants::session::{Conditions, Observing, Perturbation, Request};
@@ -16,12 +17,14 @@ use rust_mutants::session::{Conditions, Observing, Perturbation, Request};
 /// How long a delayed guard holds each thread that reaches it, once.
 pub const PAUSE_MS: u64 = 100;
 
-/// One record per test binary the session measured, in binary order, each package of every closure read once; `harness_args` are what every libtest binary was run with.
-#[must_use]
+/// One record per measured test binary, and the closure packages the build compiled nothing of.
+///
+/// # Errors
+/// [`SourceReadError::Exhausted`] where the process ran out of descriptors or memory while reading.
 pub fn recorded(
     session: &rust_mutants::session::Session,
     harness_args: &[String],
-) -> Vec<ConcurrencyRecord> {
+) -> Result<(Vec<ConcurrencyRecord>, Vec<String>), SourceReadError> {
     let threads = threads_of(harness_args);
     let mut binaries: BTreeMap<String, (&str, Harness)> = BTreeMap::new();
     for target in session.targets() {
@@ -30,8 +33,10 @@ pub fn recorded(
     }
     let metadata = session.metadata();
     let touched = &session.verified().touched.targets;
+    let compiled = crate::concurrency::read::Compiled::of(session.compilation())?;
     let mut read: BTreeMap<String, PackageScan> = BTreeMap::new();
-    binaries
+    let mut uncompiled: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let records = binaries
         .into_iter()
         .map(|(binary, (package, harness))| {
             let closure = metadata
@@ -44,23 +49,31 @@ pub fn recorded(
                 found: Vec::new(),
                 unread: vec!["Cargo.toml".to_owned()],
             });
-            for id in &closure {
+            let (linked, left_out) = linked(&closure, &compiled);
+            uncompiled.extend(left_out.into_iter().cloned());
+            for id in &linked {
+                let id = *id;
                 if !read.contains_key(id) {
-                    let scan = metadata.package(id).map_or_else(
-                        || PackageScan {
+                    let scan = match metadata.package(id) {
+                        Some(package) => crate::concurrency::read::package(package, &compiled)?,
+                        None => PackageScan {
                             package: id.clone(),
                             links: false,
                             found: Vec::new(),
                             unread: vec!["Cargo.toml".to_owned()],
                         },
-                        crate::concurrency::read::package,
-                    );
+                    };
+                    let mut scan = scan;
+                    if compiled.inputs.is_empty() {
+                        scan.unread
+                            .push("the build reported no unit it compiled".to_owned());
+                    }
                     read.insert(id.clone(), scan);
                 }
             }
-            let packages: Vec<&PackageScan> = closure
+            let packages: Vec<&PackageScan> = linked
                 .iter()
-                .filter_map(|id| read.get(id))
+                .filter_map(|id| read.get(*id))
                 .chain(missing.iter())
                 .collect();
             let reach = match touched.get(&binary) {
@@ -83,16 +96,31 @@ pub fn recorded(
                     }
                 }
             };
-            ConcurrencyRecord {
+            Ok(ConcurrencyRecord {
                 standing,
                 explored,
                 target: binary,
-            }
+            })
         })
-        .collect()
+        .collect::<Result<Vec<ConcurrencyRecord>, SourceReadError>>()?;
+    Ok((records, uncompiled.into_iter().collect()))
 }
 
-/// What runs `target`'s tests, when libtest runs them on `threads`.
+/// Which packages of `closure` the session's build compiled, and so links, and which it compiled no unit of for this target and these features, and so does not; where the build reported no unit at all nothing is left out, since that says nothing about what it compiled.
+#[must_use]
+pub fn linked<'a>(
+    closure: &'a [String],
+    compiled: &crate::concurrency::read::Compiled,
+) -> (Vec<&'a String>, Vec<&'a String>) {
+    if compiled.inputs.is_empty() {
+        return (closure.iter().collect(), Vec::new());
+    }
+    closure
+        .iter()
+        .partition(|id| compiled.inputs.contains_key(id.as_str()))
+}
+
+/// The harness `target` runs its tests under, where libtest's runs them on `threads`.
 const fn harness_of(target: &rust_mutants::execute::TestTarget, threads: Threads) -> Harness {
     match (target.kind, target.harness) {
         (TargetKind::Doc, _) => Harness::Doctest,

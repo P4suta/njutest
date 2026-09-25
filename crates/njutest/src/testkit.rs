@@ -187,6 +187,10 @@ pub fn every_failure() -> Vec<RunnerError> {
             message: "model artifact could not be retained".to_owned(),
         },
         RunnerError::Schedule(crate::assure::schedule::ScheduleError::WorkerPanicked),
+        RunnerError::Sources(crate::observe::SourceReadError::Exhausted {
+            path: nowhere.to_path_buf(),
+            source: std::io::Error::other("no"),
+        }),
         RunnerError::Equivalence {
             source: crate::assure::equivalence::EquivalenceError::DuplicateDecision {
                 display_id: "abcdef".to_owned(),
@@ -240,6 +244,7 @@ pub fn every_failure() -> Vec<RunnerError> {
             | RunnerError::PhaseOutput { .. }
             | RunnerError::Model { .. }
             | RunnerError::Schedule(_)
+            | RunnerError::Sources(_)
             | RunnerError::Equivalence { .. }
             | RunnerError::Resource(_)
             | RunnerError::Report(_)

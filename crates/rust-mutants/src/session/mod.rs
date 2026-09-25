@@ -731,6 +731,8 @@ pub struct Session {
     beside: BTreeSet<(u32, u32)>,
     /// Everything the pristine build read: the digest that keys the outcome store, and what each unit read.
     closure: Closure,
+    /// What the pristine build compiled: every unit with the files it read, and every build script with what it told the linker.
+    compilation: crate::cargo::Compilation,
     /// What the build read that no survey of the tree sees.
     inputs: crate::select::Inputs,
     /// The digest of the manifests, the lock file, and the cargo configuration the build read.
@@ -974,6 +976,12 @@ impl Session {
     #[must_use]
     pub fn workspace_digest(&self) -> &str {
         self.workspace.workspace_digest()
+    }
+
+    /// What the pristine build compiled, as cargo reported it: every unit with the files the compiler read, and every build script with what it told the linker.
+    #[must_use]
+    pub const fn compilation(&self) -> &crate::cargo::Compilation {
+        &self.compilation
     }
 
     /// The directory every build of this session writes into, which is where the proof layers left their own files.

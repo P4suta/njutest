@@ -1440,7 +1440,18 @@ fn concurrency_of(
     session: &rust_mutants::session::Session,
     watch: Watch<'_>,
 ) -> Result<(), RunnerError> {
-    let mut concurrency = super::concurrency::recorded(session, &mutating.request.test_args);
+    let (mut concurrency, uncompiled) =
+        super::concurrency::recorded(session, &mutating.request.test_args)?;
+    if !uncompiled.is_empty() {
+        watch.trace.note(
+            "concurrency-uncompiled",
+            &format!(
+                "the build compiled no unit of these packages for this target and these features, \
+                 so no binary links them and none was read: {}",
+                uncompiled.join(", ")
+            ),
+        );
+    }
     let whole = mutating.report.scope.shard.is_none();
     super::concurrency::explored(
         session,

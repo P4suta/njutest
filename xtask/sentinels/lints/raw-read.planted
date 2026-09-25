@@ -1,0 +1,12 @@
+=== filesystem-call source crates/njutest/src/concurrency/read.rs
+fn listed(path: &Path) -> bool { std::fs::read_dir(path).is_ok() }
+=== imported-filesystem source crates/njutest/src/concurrency/read.rs
+use std::fs;
+=== imported-file source crates/njutest/src/concurrency/proof.rs
+use std::fs::File;
+=== path-question source crates/njutest/src/concurrency/scan.rs
+fn there(path: &Path) -> bool { path.exists() }
+=== entry-type source crates/njutest/src/concurrency/read.rs
+fn kind(entry: &DirEntry) -> bool { entry.file_type().is_ok() }
+=== in-a-macro source crates/njutest/src/concurrency/read.rs
+fn listed(path: &Path) -> String { format!("{:?}", fs::read_to_string(path)) }

@@ -101,6 +101,8 @@ mod table {
         SchedulerUnusable,
         /// An assurance phase printed output that is not valid UTF-8.
         PhaseOutputUnreadable,
+        /// The run ran out of descriptors or memory while reading the sources a proof rests on.
+        SourcesUnreadable,
         /// The run has nowhere to work.
         ScratchUnusable,
         /// The store of earlier answers could not be used.
@@ -363,6 +365,12 @@ mod table {
                     remedy: "the named tool violated its text-output contract; fix or replace that tool before trusting its result",
                     sealed: Sealed,
                 },
+                Self::SourcesUnreadable => ErrorCode {
+                    code: "NJ7005",
+                    summary: "the run ran out of descriptors or memory while reading the sources a proof rests on",
+                    remedy: "raise the open-file limit or free memory and run it again; what could not be opened is not known to be unreadable",
+                    sealed: Sealed,
+                },
                 Self::ScratchUnusable => ErrorCode {
                     code: "NJ8001",
                     summary: "the run has nowhere to work",
@@ -442,6 +450,7 @@ pub(crate) const MIRI_MISSING: ErrorCode = NjCode::MiriMissing.error_code();
 pub(crate) const MODEL_PHASE_FAILED: ErrorCode = NjCode::ModelPhaseFailed.error_code();
 pub(crate) const SCHEDULER_UNUSABLE: ErrorCode = NjCode::SchedulerUnusable.error_code();
 pub(crate) const PHASE_OUTPUT_UNREADABLE: ErrorCode = NjCode::PhaseOutputUnreadable.error_code();
+pub(crate) const SOURCES_UNREADABLE: ErrorCode = NjCode::SourcesUnreadable.error_code();
 pub(crate) const GENERATION_PROTOCOL: ErrorCode = NjCode::GenerationProtocol.error_code();
 pub(crate) const GENERATION_PATH_REFUSED: ErrorCode = NjCode::GenerationPathRefused.error_code();
 pub(crate) const GENERATION_PREIMAGE_MOVED: ErrorCode =
@@ -538,6 +547,9 @@ pub enum RunnerError {
     /// Measurements could not be scheduled without trusting state interrupted by a panic.
     #[error(transparent)]
     Schedule(#[from] crate::assure::schedule::ScheduleError),
+    /// The sources a proof rests on could not be read just now.
+    #[error(transparent)]
+    Sources(#[from] crate::observe::SourceReadError),
     /// Equivalence answers could not be correlated without ambiguity.
     #[error("{}: {source}", REPORT_UNSOUND.code)]
     Equivalence {
@@ -627,6 +639,7 @@ impl RunnerError {
             Self::PhaseOutput { .. } => PHASE_OUTPUT_UNREADABLE,
             Self::Model { .. } => MODEL_PHASE_FAILED,
             Self::Schedule(_) => SCHEDULER_UNUSABLE,
+            Self::Sources(error) => error.code(),
             Self::Blind { .. } => SENTINEL_BLIND,
             Self::Resource(error) => error.code(),
             Self::Report(error) => error.code(),

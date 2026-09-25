@@ -46,10 +46,10 @@ pub struct BuildScript {
     /// The configurations it set with `cargo::rustc-cfg`, in the order it said them.
     #[serde(default)]
     pub cfgs: Vec<String>,
-    /// The libraries it asked to link with `cargo::rustc-link-lib`.
+    /// Every library it told the linker to link, however it spelled that: cargo has already read `rustc-link-lib` and the `-l` of `rustc-flags` into this.
     #[serde(default)]
     pub linked_libs: Vec<String>,
-    /// The directories it asked to search with `cargo::rustc-link-search`.
+    /// Every directory it told the linker to search, from `rustc-link-search` and the `-L` of `rustc-flags`.
     #[serde(default)]
     pub linked_paths: Vec<String>,
     #[serde(flatten)]
