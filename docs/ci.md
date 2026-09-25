@@ -23,7 +23,7 @@ jobs:
       - run: cargo install njutest --locked
       - name: Pull-request scope
         if: github.event_name == 'pull_request'
-        run: njutest verify --changed=origin/${{ github.base_ref }} --ui=plain
+        run: njutest verify --changed-from origin/${{ github.base_ref }} --ui=plain
       - name: Full main scope
         if: github.event_name != 'pull_request'
         run: njutest verify --ui=plain
@@ -101,7 +101,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools # coverage routing; without it every mutant runs everywhere
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - run: cargo install rust-mutants-cli --locked
       - run: rust-mutants doctor
       - name: Measure one part of the catalog
@@ -213,7 +213,8 @@ jobs:
 
 `version` pins the release, `args` is what follows `njutest verify`,
 `working-directory` picks a workspace inside the checkout, and `upload-sarif` turns the code-scanning step off for a repository that has no `security-events: write`.
-The action's outputs are `verdict` and `report`.
+The action's outputs are `verdict`, and `report`, `sarif` and `junit`, the paths of the files the run wrote.
+Each path is one `njutest verify` printed as a `REPORT`, `SARIF` or `JUNIT` record from the list of files it sealed into the run directory, so the action never rebuilds a path the run did not promise.
 
 The step ends with the verdict's own exit code, so a `DEFECT` fails the job —
 **after** the findings have been uploaded.
@@ -226,5 +227,5 @@ A workflow that has already put `njutest` on the path keeps it: the action insta
 A job that built the commit under test, restored a cached binary, or installed from somewhere else has said which one it wants, and installing over it would answer a question nobody asked.
 
 That is also what makes the action testable here.
-`action-smoke` builds this workspace's own `njutest`, puts it on the path, and runs the action against `fixtures/fixture-assured` the way another repository would, checking that the `verdict` output is the one the run reached and that `report` names a file that exists.
+`action-smoke` builds this workspace's own `njutest`, puts it on the path, and runs the action against `fixtures/fixture-assured` the way another repository would, checking that the `verdict` output is the one the run reached and that every other output names a file that exists, so an output added later is held to the same check.
 What it does not exercise is the install itself, which needs a published release; until there is one, that step is checked by reading.
