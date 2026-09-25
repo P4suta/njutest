@@ -143,7 +143,7 @@ fn several_jobs_name_every_mutant_running_and_leave_the_callers_cancel_alone() {
          the caller's cancel made the command exit 130 as though somebody had: {said}"
     );
     assert!(
-        said.contains("RM5009") && emptying.iter().any(|mutant| said.contains(mutant.as_str())),
+        said.contains("RM5011") && emptying.iter().any(|mutant| said.contains(mutant.as_str())),
         "with several jobs the mutant that noticed the change may not be the one that made it, so \
          the run names every mutant that was running then, which includes the one that did: \
          {said}"
