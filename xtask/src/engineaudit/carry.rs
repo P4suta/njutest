@@ -114,6 +114,14 @@ struct Located {
 }
 
 /// The function whose body's opening brace is at `start`, with the attributes of the item and of every inline module, `impl` or `trait` around it.
+/// A text field as a message quotes it, or what its absence is called there, so a message never passes an absent field off as an empty one.
+fn said(value: Option<&serde_json::Value>, absent: &'static str) -> String {
+    match value.and_then(serde_json::Value::as_str) {
+        Some(text) => text.to_owned(),
+        None => absent.to_owned(),
+    }
+}
+
 fn located(file: &syn::File, start: LineColumn) -> Option<Located> {
     let mut search = Search {
         start,
@@ -829,12 +837,8 @@ fn skeleton_folds(
     {
         let name = format!(
             "{}/{}",
-            unit.get("package")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default(),
-            unit.get("target")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
+            said(unit.get("package"), "<no package>"),
+            said(unit.get("target"), "<no target>")
         );
         let Some(entries) = unit.get("entries").and_then(serde_json::Value::as_object) else {
             notes.unaudited(
@@ -1243,9 +1247,7 @@ fn premise_fails(
                 if ran.peek().is_none() {
                     return Some(format!(
                         "route-grew: nothing recorded ran {}",
-                        target
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or_default()
+                        said(target, "<no target>")
                     ));
                 }
                 let Some(execution) = ran
@@ -1253,9 +1255,7 @@ fn premise_fails(
                 else {
                     return Some(format!(
                         "filter-differs: {} ran other tests",
-                        target
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or_default()
+                        said(target, "<no target>")
                     ));
                 };
                 resting.push((execution, ["whole"].as_slice()));
