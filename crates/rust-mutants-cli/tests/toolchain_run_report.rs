@@ -1315,3 +1315,92 @@ fn a_glob_that_names_the_same_part_twice_is_still_the_same_part_twice() {
         stderr(&merged)
     );
 }
+
+/// Every row of a stored report by where and what it mutates, which an edit elsewhere in the file leaves unchanged where an identity does not.
+fn by_place(
+    report: &serde_json::Value,
+) -> std::collections::BTreeMap<(u64, String, String, String), serde_json::Value> {
+    report["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .map(|row| {
+            (
+                (
+                    row["line"].as_u64().unwrap_or_default(),
+                    row["rule"].as_str().unwrap_or_default().to_owned(),
+                    row["original"].as_str().unwrap_or_default().to_owned(),
+                    row["replacement"].as_str().unwrap_or_default().to_owned(),
+                ),
+                row.clone(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
+    let fixture = Fixture::copy("fixture-two-bodies");
+    let asked = ["run", "--offline", "--locked", "--tier", "all"];
+    let first = against(&fixture, &asked);
+    assert!(
+        first.status.code() == Some(0) || first.status.code() == Some(1),
+        "{}",
+        stderr(&first)
+    );
+    let source = fixture.root().join("src/lib.rs");
+    let text = std::fs::read_to_string(&source).expect("the library");
+    std::fs::write(&source, text.replace("left + right", "right + left"))
+        .expect("edit inside the body of `total` alone");
+    let carried = against(&fixture, &asked);
+    assert!(
+        carried.status.code() == Some(0) || carried.status.code() == Some(1),
+        "{}",
+        stderr(&carried)
+    );
+    let with_carry = by_place(&stored(&fixture));
+    let fresh = against(
+        &fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-cache",
+        ],
+    );
+    assert!(
+        fresh.status.code() == Some(0) || fresh.status.code() == Some(1),
+        "{}",
+        stderr(&fresh)
+    );
+    let without = by_place(&stored(&fixture));
+    for (place, row) in &with_carry {
+        assert_eq!(
+            row["outcome"],
+            without
+                .get(place)
+                .map_or(serde_json::Value::Null, |fresh| fresh["outcome"].clone()),
+            "a carried answer must be the answer running it gives: {place:?}"
+        );
+    }
+    let over: Vec<&serde_json::Value> = with_carry
+        .iter()
+        .filter(|(place, _)| place.0 >= 12)
+        .map(|(_, row)| row)
+        .collect();
+    assert!(
+        !over.is_empty(),
+        "the fixture mutates `over`: {with_carry:#?}"
+    );
+    let ran: Vec<&&serde_json::Value> = over
+        .iter()
+        .filter(|row| row["source_run_id"].is_null())
+        .collect();
+    assert!(
+        ran.is_empty(),
+        "the edit was inside `total`, which no execution of a mutant of `over` entered, so \
+         every such answer carries rather than running again: {ran:#?}"
+    );
+}
