@@ -31,6 +31,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [Operators](engine/operators.md)
 - [Proofs](engine/proofs.md)
 - [Item reach](engine/item-reach.md)
+- [Carrying an answer](engine/carry.md)
 - [Reports](engine/reports.md)
 - [Trace](engine/trace.md)
 - [JSON Schema](engine/json-schema.md)

@@ -16,6 +16,9 @@ pub const TOUCHED: &str = "touched-v1.json";
 /// The catalog, as a document.
 pub const CATALOG: &str = "catalog-v1.json";
 
+/// Which bodies are sealed and each unit's skeleton, as a document.
+pub const SKELETONS: &str = crate::skeleton::FILE;
+
 /// One file a run kept, with what a reader can check it by.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Written {
@@ -102,6 +105,12 @@ pub fn write(
             source,
         })?;
     written.push(keep(directory, TOUCHED, &touched)?);
+    let skeletons =
+        serde_json::to_vec(&session.skeletons()).map_err(|source| EvidenceError::Serialize {
+            file: SKELETONS,
+            source,
+        })?;
+    written.push(keep(directory, SKELETONS, &skeletons)?);
     let catalog_document = super::catalog::document(session, options)
         .map_err(|source| EvidenceError::Catalog { source })?;
     let catalog =

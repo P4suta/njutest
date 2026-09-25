@@ -105,32 +105,17 @@ fn closure_of(
             entry.insert(crate::id::digest(&bytes));
         }
     }
-    let target_text = target
-        .to_str()
-        .ok_or_else(|| SessionError::EvidencePathNotUtf8 {
-            path: target.to_path_buf(),
-        })?;
-    let root_text = root
-        .to_str()
-        .ok_or_else(|| SessionError::EvidencePathNotUtf8 {
-            path: root.to_path_buf(),
-        })?;
-    for read in &checked.inputs.env {
-        let value = read.value.as_deref().map_or_else(
-            || "unset".to_owned(),
-            |value| {
-                let portable = value
-                    .replace(target_text, "$target")
-                    .replace(root_text, "$root");
-                format!("set:{}", crate::id::digest(portable.as_bytes()))
-            },
-        );
-        files.insert(format!("$env/{}", read.name), value);
-    }
+    let (root_text, target_text) = (text_of(root)?, text_of(target)?);
     let portable = |text: &str| {
         text.replace(target_text, "$target")
             .replace(root_text, "$root")
     };
+    for read in &checked.inputs.env {
+        files.insert(
+            format!("$env/{}", read.name),
+            env_value(read.value.as_deref(), portable),
+        );
+    }
     for told in &checked.inputs.emitted {
         let (name, digest) = emitted_entry(told, portable);
         files.insert(name, digest);
@@ -525,7 +510,10 @@ fn gated(
 ) -> Result<Gated, EngineError> {
     let pristine_phase = trace.phase("pristine");
     let checked = gate(workspace, options, cancel)?;
-    let closure = closure_of(workspace, &checked)?;
+    let closure = super::Closure {
+        digest: closure_of(workspace, &checked)?,
+        units: unit_sources(workspace, &checked)?,
+    };
     pristine_phase.end();
     let discover_phase = trace.phase("discover");
     let discovery = discover::discover(
@@ -547,10 +535,103 @@ fn gated(
     Ok(Gated { discovery, closure })
 }
 
-/// What the gate established: what there is to mutate, and the digest of everything the build read.
+/// What the gate established: what there is to mutate, and everything the build read.
 struct Gated {
     discovery: discover::Discovery,
-    closure: String,
+    closure: super::Closure,
+}
+
+/// Every unit the pristine build compiled, named without a package id, with each file it read under the root or the target directory spelled by its class.
+fn unit_sources(
+    workspace: &Workspace,
+    checked: &crate::cargo::Compiled,
+) -> Result<Vec<crate::skeleton::UnitSource>, EngineError> {
+    let root = workspace.snapshot_root();
+    let target = workspace.target_dir();
+    let (root_text, target_text) = (text_of(root)?, text_of(target)?);
+    let portable = |text: &str| {
+        text.replace(target_text, "$target")
+            .replace(root_text, "$root")
+    };
+    let names: BTreeMap<&str, &str> = workspace
+        .metadata
+        .packages
+        .iter()
+        .map(|package| (package.id.as_str(), package.name.as_str()))
+        .collect();
+    let mut read: BTreeMap<PathBuf, Vec<u8>> = BTreeMap::new();
+    let mut units = Vec::new();
+    for unit in crate::cargo::unit_inputs_of(&checked.messages, root)? {
+        let mut files = BTreeMap::new();
+        for path in &unit.inputs.files {
+            let (relative, class) = match (path.strip_prefix(root), path.strip_prefix(target)) {
+                (Ok(relative), _) => (relative, "$root/"),
+                (Err(_), Ok(relative)) => (relative, "$target/"),
+                (Err(_), Err(_)) => continue,
+            };
+            let name = crate::id::normalize_path(text_of(relative)?).map_err(|source| {
+                SessionError::EvidencePathInvalid {
+                    path: path.clone(),
+                    source,
+                }
+            })?;
+            let bytes = match read.entry(path.clone()) {
+                std::collections::btree_map::Entry::Occupied(entry) => entry.get().clone(),
+                std::collections::btree_map::Entry::Vacant(entry) => entry
+                    .insert(std::fs::read(path).map_err(|source| {
+                        SessionError::EvidenceReadFailed {
+                            path: path.clone(),
+                            source,
+                        }
+                    })?)
+                    .clone(),
+            };
+            files.insert(format!("{class}{name}"), bytes);
+        }
+        units.push(crate::skeleton::UnitSource {
+            package: names
+                .get(unit.package_id.as_str())
+                .map_or_else(|| unit.package_id.clone(), |name| (*name).to_owned()),
+            target: unit.target.name.clone(),
+            kind: unit.target.kind.join(","),
+            test: unit.test,
+            files,
+            env: unit
+                .inputs
+                .env
+                .iter()
+                .map(|read| {
+                    (
+                        read.name.clone(),
+                        env_value(read.value.as_deref(), portable),
+                    )
+                })
+                .collect(),
+            emitted: unit
+                .inputs
+                .emitted
+                .iter()
+                .map(|told| emitted_entry(told, portable))
+                .collect(),
+        });
+    }
+    Ok(units)
+}
+
+/// A path as exact text, which every portable name is built from.
+fn text_of(path: &Path) -> Result<&str, SessionError> {
+    path.to_str()
+        .ok_or_else(|| SessionError::EvidencePathNotUtf8 {
+            path: path.to_path_buf(),
+        })
+}
+
+/// A variable's value as a key holds it: unset, or the digest of what it was set to with the run's own directories spelled portably.
+fn env_value(value: Option<&str>, portable: impl Fn(&str) -> String) -> String {
+    value.map_or_else(
+        || "unset".to_owned(),
+        |value| format!("set:{}", crate::id::digest(portable(value).as_bytes())),
+    )
 }
 
 /// The pristine sources, selected placements, and complete-catalog indices one preparation must validate.
@@ -610,7 +691,7 @@ pub fn prepare(
         sources: &sources,
         options,
     };
-    let remembered = remembering(options, &closure, &manifests, &workspace);
+    let remembered = remembering(options, &closure.digest, &manifests, &workspace);
     let (established, reached) = layers(&asking, &eligible, remembered.as_ref(), cancel)?;
 
     let Instrumented {
@@ -642,7 +723,7 @@ pub fn prepare(
         accepted: &validated.accepted,
         narrowing: &narrowing,
         items: item_count(&item_catalog)?,
-        closure: &closure,
+        closure: &closure.digest,
         manifests: &manifests,
         asked: options.touch,
         last_build: &last_build,
