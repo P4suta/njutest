@@ -50,6 +50,12 @@ impl HexDigest {
         self.0
     }
 
+    /// The SHA-256 of `bytes`.
+    #[must_use]
+    pub fn of(bytes: &[u8]) -> Self {
+        Self::finish(Sha256::new().chain_update(bytes))
+    }
+
     /// Finishes a SHA-256 computation directly into the only canonical text representation this type admits.
     #[must_use]
     pub fn finish(hasher: Sha256) -> Self {

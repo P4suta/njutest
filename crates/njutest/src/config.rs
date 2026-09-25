@@ -191,6 +191,8 @@ pub struct Config {
     pub soundness: Soundness,
     /// The fuzz targets a run may drive.
     pub fuzz: Fuzz,
+    /// What a run sets differently for one more control of each target, to ask whether the target's verdict and reach hold where it differs.
+    pub repeatable: Repeatable,
     /// The integration resources a run may start, by name.
     pub resources: BTreeMap<String, Resource>,
     /// The provider that writes candidate tests.
@@ -214,6 +216,7 @@ impl Default for Config {
             reports: Reports::default(),
             soundness: Soundness::default(),
             fuzz: Fuzz::default(),
+            repeatable: Repeatable::default(),
             resources: BTreeMap::new(),
             generation: None,
             acceptance: Vec::new(),
@@ -299,9 +302,8 @@ pub struct Execution {
         serialize_with = "as_optional_millis"
     )]
     pub build_timeout: Option<Duration>,
-    /// How many mutation workers.
-    /// Zero means the logical CPUs, capped.
-    pub jobs: u32,
+    /// How many mutation workers: a count, `auto` for the logical CPUs capped, or `all` for every one.
+    pub jobs: rust_mutants::run::Jobs,
     /// Test targets never to start, by the stable id a report names them with.
     pub skip_targets: Vec<String>,
     /// Whether to make the coverage build, which is an independent second opinion rather than the measurement (ADR 0014).
@@ -337,7 +339,7 @@ impl Default for Execution {
             timeout: DEFAULT_TIMEOUT,
             steps: default_steps(),
             build_timeout: None,
-            jobs: 0,
+            jobs: rust_mutants::run::Jobs::Auto,
             skip_targets: Vec::new(),
             coverage: false,
         }
@@ -500,6 +502,14 @@ pub struct Soundness {
     pub miri_flags: Vec<String>,
     /// Sanitizers to run under, on a toolchain that has them.
     pub sanitizers: Vec<String>,
+}
+
+/// What a run sets differently for one more control of each target: nothing unless asked, since each knob is one more run of every target.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Repeatable {
+    /// The knobs to put, by name.
+    pub knobs: Vec<crate::report::knobs::Knob>,
 }
 
 /// The fuzz targets a run may drive.
@@ -1009,7 +1019,7 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\" | \"verified-v
 # environment = []               # variable names only, never values
 # timeout = \"{timeout}m\"              # upper bound for one measurement
 # build_timeout = \"\"            # upper bound for one build; empty = no bound
-# jobs = 0                       # mutation workers; 0 = logical CPUs, capped
+# jobs = \"auto\"                  # mutation workers: a count, \"auto\" (logical CPUs, capped), or \"all\"
 # skip_targets = []              # target ids never to start; reported as a limitation
 # coverage = false                # make the coverage build as a second opinion (ADR 0014)
 

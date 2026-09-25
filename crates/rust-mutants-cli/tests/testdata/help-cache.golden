@@ -31,5 +31,13 @@ Options:
       --cache-dir <DIR>
           Read and write the store under this directory rather than the user's cache directory
 
+      --export <FILE>
+          Write every record of the store to this file, each carrying what it was keyed on, for
+          another checkout or a CI job to import
+
+      --import <FILE>
+          File every record of an exported store under the key its own inputs name, refusing one
+          keyed under another release's versions
+
   -h, --help
           Print help (see a summary with '-h')

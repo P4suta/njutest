@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use njutest_devkit::fixture::copy_tree;
 use rust_mutants::cargo::{
     CargoErrorKind, Diagnostic, Driver, LocateOptions, Message, Metadata, MetadataOptions,
-    Toolchain, UnitInputs, parse_messages, resolve_executable, unit_inputs_of, units_of,
+    Toolchain, emitted_of, parse_messages, resolve_executable, units_of,
 };
 use rust_mutants::runner::{Cancel, run};
 use rust_mutants::trace::Recorder;
@@ -173,6 +173,72 @@ fn metadata_is_loaded_from_a_workspace_with_the_locked_offline_flags() {
         "the command's own words are kept: {error}"
     );
 }
+#[test]
+fn a_unit_names_every_file_and_variable_the_compiler_read_for_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("src")).expect("mkdir");
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"reads\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("manifest");
+    std::fs::write(root.join("src/greeting.txt"), "hello\n").expect("data");
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub const GREETING: &str = include_str!(\"greeting.txt\");\n\
+         pub const WHO: Option<&str> = option_env!(\"RUST_MUTANTS_PROBE_UNSET\");\n",
+    )
+    .expect("source");
+    let tc = toolchain(root);
+    let target = scratch_target("reads");
+    let mut spec = tc.command(
+        root,
+        ["check", "--lib", "--message-format=json", "--offline"],
+    );
+    spec.argv.push("--target-dir".into());
+    spec.argv.push(target.path().into());
+    spec.structured_stdout = Some(64 << 20);
+    let result = run(&spec, &Cancel::new());
+    assert!(
+        result.succeeded(),
+        "{}",
+        std::str::from_utf8(&result.output).expect("the tree writes exact UTF-8")
+    );
+    let messages = parse_messages(&result.stdout).expect("messages");
+    let units = units_of(&messages, root).expect("units");
+    let [unit] = units.as_slice() else {
+        panic!("one library unit: {units:?}");
+    };
+    let root = root
+        .canonicalize()
+        .expect("the tree has a physical spelling");
+    let inputs: Vec<String> = unit
+        .inputs
+        .iter()
+        .map(|path| under(&root, &path.canonicalize().expect("an input is a file")))
+        .collect();
+    assert_eq!(
+        inputs,
+        ["src/greeting.txt", "src/lib.rs"],
+        "an included file is read by the compiler as surely as a compiled one"
+    );
+    assert_eq!(
+        unit.sources
+            .iter()
+            .map(|path| under(&root, &path.canonicalize().expect("a source")))
+            .collect::<Vec<_>>(),
+        ["src/lib.rs"],
+        "what is compiled stays what is compiled"
+    );
+    assert_eq!(
+        unit.env.get("RUST_MUTANTS_PROBE_UNSET"),
+        Some(&None),
+        "an unset variable the compiler read is a fact about the build: {:?}",
+        unit.env
+    );
+}
+
 #[test]
 fn units_from_a_check_name_exactly_the_files_each_unit_compiled() {
     let dir = fixture("fixture-simple");
@@ -335,24 +401,21 @@ fn a_check_that_fails_to_compile_still_yields_its_messages() {
     ));
 }
 
-/// Every unit of a checked fixture and what each read, with the directories its paths are under.
-fn checked_units(name: &str) -> (PathBuf, tempfile::TempDir, Vec<UnitInputs>) {
-    let dir = fixture(name);
-    let tc = toolchain(&dir);
-    let target = scratch_target(name);
+/// What fixture-carry's build script emitted when checked in `copy`, by package.
+fn emitted_in(copy: &Path, target: &Path) -> Vec<Vec<rust_mutants::cargo::Emitted>> {
+    let tc = toolchain(copy);
     let mut spec = tc.command(
-        &dir,
+        copy,
         [
             "check",
-            "--workspace",
-            "--all-targets",
+            "--lib",
             "--message-format=json",
             "--offline",
             "--locked",
         ],
     );
     spec.argv.push("--target-dir".into());
-    spec.argv.push(target.path().into());
+    spec.argv.push(target.into());
     spec.structured_stdout = Some(64 << 20);
     let result = run(&spec, &Cancel::new());
     assert!(
@@ -360,100 +423,37 @@ fn checked_units(name: &str) -> (PathBuf, tempfile::TempDir, Vec<UnitInputs>) {
         "{}",
         std::str::from_utf8(&result.output).expect("the fixture writes exact UTF-8")
     );
-    let messages = parse_messages(&result.stdout).expect("messages");
-    let units = unit_inputs_of(&messages, &dir).expect("the units and what each read");
-    (dir, target, units)
-}
-
-/// A file a unit read, relative to the fixture, or by name under the target directory.
-fn read_as(dir: &Path, target: &Path, path: &Path) -> String {
-    match (path.strip_prefix(dir), path.strip_prefix(target)) {
-        (Ok(relative), _) => relative.to_str().expect("exact UTF-8").replace('\\', "/"),
-        (Err(_outside), Ok(generated)) => format!(
-            "$target/{}",
-            generated
-                .file_name()
-                .and_then(std::ffi::OsStr::to_str)
-                .expect("a generated file has a UTF-8 name")
-        ),
-        (Err(_outside), Err(_elsewhere)) => format!("elsewhere:{}", path.display()),
-    }
-}
-
-/// One unit as a reader checks it: which target, whether it is the test build, and what it read.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct Read {
-    target: String,
-    kind: Vec<String>,
-    test: bool,
-    files: Vec<String>,
-    env: Vec<String>,
-}
-
-impl Read {
-    fn of((target, kind, test): (&str, &str, bool), files: &[&str], env: &[&str]) -> Self {
-        Self {
-            target: target.to_owned(),
-            kind: vec![kind.to_owned()],
-            test,
-            files: files.iter().map(|file| (*file).to_owned()).collect(),
-            env: env.iter().map(|name| (*name).to_owned()).collect(),
-        }
-    }
+    emitted_of(&parse_messages(&result.stdout).expect("messages"))
+        .into_values()
+        .collect()
 }
 
 #[test]
-fn every_unit_names_each_file_it_read_whatever_its_kind_and_each_variable_it_asked_for() {
-    let (dir, target, units) = checked_units("fixture-carry");
-    let mut described: Vec<Read> = units
-        .iter()
-        .map(|unit| {
-            let mut files: Vec<String> = unit
-                .inputs
-                .files
-                .iter()
-                .map(|path| read_as(&dir, target.path(), path))
-                .collect();
-            files.sort();
-            Read {
-                target: unit.target.name.clone(),
-                kind: unit.target.kind.clone(),
-                test: unit.test,
-                files,
-                env: unit
-                    .inputs
-                    .env
-                    .iter()
-                    .map(|read| read.name.clone())
-                    .collect(),
-            }
-        })
-        .collect();
-    described.sort();
-    let library = ["$target/limit.rs", "src/answer.txt", "src/lib.rs"];
-    assert_eq!(
-        described,
-        [
-            Read::of(
-                ("build-script-build", "custom-build", false),
-                &["build.rs"],
-                &[]
-            ),
-            Read::of(("fixture_carry", "lib", false), &library, &["OUT_DIR"]),
-            Read::of(("fixture_carry", "lib", true), &library, &["OUT_DIR"]),
-        ],
-        "a unit is keyed on everything its own compilation read: the build script is a \
-         unit of its own, and a library reads a text file and a generated file as surely \
-         as it reads its Rust"
+fn what_a_build_script_emitted_is_kept_for_the_package_it_builds_for() {
+    let snapshot = tempfile::tempdir().expect("tempdir");
+    let copy = snapshot.path().join("fixture-carry");
+    copy_tree(&fixture("fixture-carry"), &copy);
+    let target = scratch_target("emitted");
+    let before = emitted_in(&copy, target.path());
+    let [told] = before.as_slice() else {
+        panic!("one package ran a build script: {before:?}");
+    };
+    let [told] = told.as_slice() else {
+        panic!("it ran once: {told:?}");
+    };
+    assert!(
+        told.out_dir.is_some() && told.cfgs.is_empty(),
+        "the directory it wrote into, and no configuration yet: {told:?}"
     );
-    for unit in &units {
-        let told = unit.inputs.emitted.len();
-        let expected = usize::from(!unit.target.is_custom_build());
-        assert_eq!(
-            told, expected,
-            "{}: every unit of the package is compiled with what its build script emitted, \
-             and the build script itself with none of it",
-            unit.target.name
-        );
-    }
+    std::fs::write(copy.join("waive"), "").expect("waive the limit");
+    let after = emitted_in(&copy, target.path());
+    assert_eq!(
+        after
+            .iter()
+            .flatten()
+            .map(|told| told.cfgs.clone())
+            .collect::<Vec<_>>(),
+        [vec!["waived".to_owned()]],
+        "a configuration the build script sets is in no dep-info, and changes what compiles"
+    );
 }

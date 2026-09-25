@@ -443,6 +443,153 @@
           }
         }
       ]
+    },
+    "touch-record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entered",
+        "entered_bodies",
+        "entered_items",
+        "infected",
+        "infected_sites",
+        "loose",
+        "measured",
+        "mutant",
+        "passed",
+        "reached_sites",
+        "sites",
+        "summary",
+        "target",
+        "tests"
+      ],
+      "properties": {
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "measured": {
+          "description": "Which whole run of the target the record was measured on: the baseline routing rests on, an original-code control run to confirm a kill, or a repair, one mutation run against a target whose reach moved (ADR 0036).",
+          "enum": [
+            "baseline",
+            "control",
+            "repair"
+          ]
+        },
+        "mutant": {
+          "description": "The mutation a repair ran, in full; null on a baseline or a control, which run with nothing active.",
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          ]
+        },
+        "passed": {
+          "description": "The tests that run passed, which is what the record is the reach of.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "summary": {
+          "description": "What the run's own summary said, in the protocol it answered in: under libtest, a comparison stands only where `tests_run` equals the number of names in `passed`; a custom harness prints no summary; a remembered baseline's run is not here to say.",
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "protocol",
+                "tests_run"
+              ],
+              "properties": {
+                "protocol": {
+                  "const": "libtest"
+                },
+                "tests_run": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 0
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "protocol"
+              ],
+              "properties": {
+                "protocol": {
+                  "enum": [
+                    "custom",
+                    "unanswered",
+                    "remembered"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "reached_sites": {
+          "description": "Every mutant site anything of the target reached.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "entered_bodies": {
+          "description": "Every branch body anything of the target entered, by the marker at its first statement.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "infected_sites": {
+          "description": "Every mutation anything of the target saw its guard's two branches differ over.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "tests": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sites": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "loose": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "infected": {
+          "description": "How many distinct mutations anything of it saw its guard's two branches differ over.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "entered": {
+          "description": "How many distinct items anything of it entered the body of.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "entered_items": {
+          "description": "Every item anything of it entered the body of, which is what a comparison of two whole runs holds against each other.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
     }
   },
   "type": "object",
@@ -860,6 +1007,18 @@
                       "properties": {
                         "kind": {
                           "const": "wait-failed"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "const": "answered"
                         }
                       }
                     },
@@ -1327,111 +1486,134 @@
               "const": "touch"
             },
             "touch": {
+              "$ref": "#/$defs/touch-record"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "perturbed",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "perturbed-control"
+            },
+            "perturbed": {
               "type": "object",
               "additionalProperties": false,
               "required": [
-                "entered",
-                "entered_bodies",
-                "infected",
-                "infected_sites",
-                "loose",
-                "measured",
-                "passed",
-                "reached_sites",
-                "sites",
-                "summary",
-                "target",
-                "tests"
+                "duration_ms",
+                "failed_tests",
+                "outcome",
+                "perturbation",
+                "reach",
+                "target"
               ],
               "properties": {
                 "target": {
                   "type": "string",
                   "minLength": 1
                 },
-                "measured": {
-                  "description": "Which whole run of the target with nothing active the record was measured on: the baseline routing rests on, or an original-code control run to confirm a kill.",
-                  "enum": [
-                    "baseline",
-                    "control"
-                  ]
+                "perturbation": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "arguments",
+                    "environment",
+                    "launcher"
+                  ],
+                  "properties": {
+                    "environment": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "name",
+                          "value"
+                        ],
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "value": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "launcher": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "arguments": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
                 },
-                "passed": {
-                  "description": "The tests that run passed, which is what the record is the reach of.",
+                "outcome": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "failed_tests": {
                   "type": "array",
                   "items": {
                     "type": "string"
                   }
                 },
-                "summary": {
-                  "description": "What the run's own summary said, in the protocol it answered in: under libtest, a comparison stands only where `tests_run` equals the number of names in `passed`; a custom harness prints no summary; a remembered baseline's run is not here to say.",
+                "duration_ms": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "reach": {
                   "oneOf": [
                     {
                       "type": "object",
                       "additionalProperties": false,
-                      "required": ["protocol", "tests_run"],
+                      "required": [
+                        "state"
+                      ],
                       "properties": {
-                        "protocol": { "const": "libtest" },
-                        "tests_run": { "type": ["integer", "null"], "minimum": 0 }
+                        "state": {
+                          "enum": [
+                            "not-asked",
+                            "not-read",
+                            "unrecorded",
+                            "unreadable"
+                          ]
+                        }
                       }
                     },
                     {
                       "type": "object",
                       "additionalProperties": false,
-                      "required": ["protocol"],
+                      "required": [
+                        "state",
+                        "touch"
+                      ],
                       "properties": {
-                        "protocol": { "enum": ["custom", "unanswered", "remembered"] }
+                        "state": {
+                          "const": "recorded"
+                        },
+                        "touch": {
+                          "$ref": "#/$defs/touch-record"
+                        }
                       }
                     }
                   ]
-                },
-                "reached_sites": {
-                  "description": "Every mutant site anything of the target reached.",
-                  "type": "array",
-                  "uniqueItems": true,
-                  "items": {
-                    "type": "integer",
-                    "minimum": 0
-                  }
-                },
-                "entered_bodies": {
-                  "description": "Every branch body anything of the target entered, by the marker at its first statement.",
-                  "type": "array",
-                  "uniqueItems": true,
-                  "items": {
-                    "type": "integer",
-                    "minimum": 0
-                  }
-                },
-                "infected_sites": {
-                  "description": "Every mutation anything of the target saw its guard's two branches differ over.",
-                  "type": "array",
-                  "uniqueItems": true,
-                  "items": {
-                    "type": "integer",
-                    "minimum": 0
-                  }
-                },
-                "tests": {
-                  "type": "integer",
-                  "minimum": 0
-                },
-                "sites": {
-                  "type": "integer",
-                  "minimum": 0
-                },
-                "loose": {
-                  "type": "integer",
-                  "minimum": 0
-                },
-                "infected": {
-                  "description": "How many distinct mutations anything of it saw its guard's two branches differ over.",
-                  "type": "integer",
-                  "minimum": 0
-                },
-                "entered": {
-                  "description": "How many distinct items anything of it entered the body of.",
-                  "type": "integer",
-                  "minimum": 0
                 }
               }
             }
@@ -1676,6 +1858,7 @@
                 "failed_tests",
                 "id",
                 "index",
+                "lingered",
                 "outcome",
                 "signal",
                 "step_notice",
@@ -1745,6 +1928,10 @@
                 "alone": {
                   "type": "boolean",
                   "description": "Whether it ran with nothing else the run started running beside it, which is what a confirming retry does."
+                },
+                "lingered": {
+                  "type": "boolean",
+                  "description": "Whether the harness had already answered when the clock ended the process, so the verdict is the harness's."
                 },
                 "step_notice": {
                   "oneOf": [

@@ -324,35 +324,12 @@ pub fn newest(directory: &Path) -> Result<PathBuf, CliError> {
             });
         }
     }
-    newest_by_name(directory).map_err(|error| match error {
-        CliError::ReportMissing { .. } => missing(),
-        other @ (CliError::Engine(_)
-        | CliError::Config(_)
-        | CliError::Evidence(_)
-        | CliError::TraceSummary { .. }
-        | CliError::RouteAccounting { .. }
-        | CliError::WorkAccounting { .. }
-        | CliError::InvalidCandidate { .. }
-        | CliError::CandidateTextNotUtf8 { .. }
-        | CliError::CandidatePosition { .. }
-        | CliError::EnvironmentReserved { .. }
-        | CliError::StoredRunsUnreadable { .. }
-        | CliError::StoredRunCorrupt { .. }
-        | CliError::CacheUnreadable { .. }
-        | CliError::KeptLedgerUnreadable { .. }
-        | CliError::FileExists { .. }
-        | CliError::Shard { .. }
-        | CliError::ChangeSetUnavailable { .. }
-        | CliError::InvalidValue { .. }
-        | CliError::PathNotUtf8 { .. }
-        | CliError::SourceUnreadable { .. }
-        | CliError::SourceTextNotUtf8 { .. }
-        | CliError::WriteFailed { .. }
-        | CliError::OutputFailed { .. }
-        | CliError::OutputEncodingFailed { .. }
-        | CliError::ProjectionOverflow { .. }
-        | CliError::PreparationStartFailed { .. }
-        | CliError::PreparationPanicked) => other,
+    newest_by_name(directory).map_err(|error| {
+        if matches!(error, CliError::ReportMissing { .. }) {
+            missing()
+        } else {
+            error
+        }
     })
 }
 

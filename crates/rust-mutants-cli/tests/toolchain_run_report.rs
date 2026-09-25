@@ -92,7 +92,7 @@ fn a_whole_run_judges_every_mutant_scores_the_workspace_and_writes_the_report() 
 
     let document = stored(&fixture);
     assert_eq!(document["document_type"], "rust-mutants/run-report");
-    assert_eq!(document["schema_version"], 2);
+    assert_eq!(document["schema_version"], 3);
     assert_eq!(document["run"]["exit_code"], 1);
     assert!(!document["run"]["interrupted"].as_bool().expect("a flag"));
     assert_eq!(document["selection"]["tier"], "all");
@@ -1179,12 +1179,15 @@ fn environment(fixture: &Fixture) -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
-        program: PathBuf::from("this test never runs it"),
+        program: std::env::current_exe().expect(
+            "this test's own executable stands in for the engine a remembered outcome is keyed on",
+        ),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        ci: rust_mutants_cli::CiHost::None,
     }
 }
 
@@ -1210,12 +1213,15 @@ fn environment_at(root: &Path, temp: &Path, cache: &Path) -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: temp.to_path_buf(),
-        program: PathBuf::from("this test never runs it"),
+        program: std::env::current_exe().expect(
+            "this test's own executable stands in for the engine a remembered outcome is keyed on",
+        ),
         cache_directory: cache.to_path_buf(),
         working_directory: root.to_path_buf(),
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        ci: rust_mutants_cli::CiHost::None,
     }
 }
 
@@ -1317,6 +1323,375 @@ fn a_glob_that_names_the_same_part_twice_is_still_the_same_part_twice() {
 }
 
 #[test]
+fn a_test_that_fails_because_its_child_was_refused_noticed_the_mutation() {
+    let fixture = Fixture::copy("fixture-child-refuses");
+    let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    assert!(
+        output.status.code() == Some(0) || output.status.code() == Some(1),
+        "{}",
+        stderr(&output)
+    );
+    let report = stored(&fixture);
+    let rows = report["mutants"].as_array().expect("the rows");
+    assert!(
+        rows.iter().all(|row| row["outcome"] != "errored"),
+        "a runtime's refusal is the process's own only when the process exits with the \
+         refusal's code; here a child was refused and the test that ran it failed: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| row["outcome"] == "killed"),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_claim_on_several_mutations_split_across_shards_merges_to_what_the_whole_run_says() {
+    let fixture = Fixture::copy("fixture-families");
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        "version = 1\n\n[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"results\"\nrule = \
+         \"question-to-unwrap\"\noriginal = \"?\"\ncount = 2\noutcome = \"killed\"\nreason = \
+         \"both of them parse the same text, so one reason is written for the pair\"\n",
+    )
+    .expect("write the configuration");
+    let narrowed = [
+        "run",
+        "--offline",
+        "--locked",
+        "--include",
+        "src/lib.rs",
+        "--operator",
+        "question-to-unwrap",
+    ];
+    let whole_output = against(&fixture, &narrowed);
+    let whole = stored(&fixture);
+    let mut written = Vec::new();
+    for part in ["1/2", "2/2"] {
+        let mut arguments = narrowed.to_vec();
+        arguments.extend(["--shard", part]);
+        let output = against(&fixture, &arguments);
+        assert!(
+            output.status.code().is_some_and(|code| code < 2),
+            "{part}: {}",
+            stderr(&output)
+        );
+        let path = fixture
+            .root()
+            .join(format!("claim-part-{}.json", part.replace('/', "-")));
+        std::fs::write(
+            &path,
+            serde_json::to_string(&stored(&fixture)).expect("renders"),
+        )
+        .expect("write");
+        written.push(path);
+    }
+    let said = |document: &serde_json::Value| -> (String, Vec<String>) {
+        let mut findings: Vec<String> = document["findings"]
+            .as_array()
+            .expect("findings")
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        findings.sort();
+        (document["expectations"].to_string(), findings)
+    };
+    let mut orders = vec![written.clone()];
+    orders.push(written.iter().rev().cloned().collect());
+    for order in orders {
+        let mut arguments = vec!["merge".to_owned()];
+        arguments.extend(
+            order
+                .iter()
+                .map(|path| njutest_devkit::paths::utf8(path).to_owned()),
+        );
+        let borrowed: Vec<&str> = arguments.iter().map(String::as_str).collect();
+        let merged_output = rootless(&fixture, &borrowed);
+        let merged: serde_json::Value = njutest_devkit::strictjson::decode_str(&stdout(
+            &merged_output,
+        ))
+        .unwrap_or_else(|error| panic!("one document: {error}: {}", stderr(&merged_output)));
+        assert_eq!(
+            (said(&merged), merged_output.status.code()),
+            (said(&whole), whole_output.status.code()),
+            "one claim over two mutations is one claim however the catalog was divided and in \
+             whatever order the parts are offered: each part judges the mutations it holds, and \
+             the merge answers for the pair as the whole run does. {}",
+            stderr(&merged_output)
+        );
+    }
+}
+
+#[test]
+fn claims_a_line_tells_apart_are_two_claims_and_a_mutant_two_claims_name_is_refused() {
+    let fixture = Fixture::copy("fixture-families");
+    let claim = |line: Option<u32>, count: Option<u32>, reason: &str| {
+        let line = line.map_or_else(String::new, |line| format!("line = {line}\n"));
+        let count = count.map_or_else(String::new, |count| format!("count = {count}\n"));
+        format!(
+            "\n[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"results\"\nrule = \
+             \"question-to-unwrap\"\noriginal = \"?\"\n{line}{count}outcome = \
+             \"killed\"\nreason = \"{reason}\"\n"
+        )
+    };
+    let narrowed = [
+        "run",
+        "--offline",
+        "--locked",
+        "--include",
+        "src/lib.rs",
+        "--operator",
+        "question-to-unwrap",
+    ];
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        format!(
+            "version = 1\n{}{}",
+            claim(Some(47), None, "the parse a caller can see"),
+            claim(Some(48), None, "the parse whose value is thrown away")
+        ),
+    )
+    .expect("write the configuration");
+    let output = against(&fixture, &narrowed);
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "two claims on one item that a line tells apart are two claims, not one written twice: {}",
+        stderr(&output)
+    );
+    let stored = stored(&fixture);
+    let claims: Vec<(String, String)> = stored["expectations"]
+        .as_array()
+        .expect("expectations")
+        .iter()
+        .map(|one| (one["id"].to_string(), one["mutant"].to_string()))
+        .collect();
+    assert_eq!(claims.len(), 2, "{claims:?}");
+    assert!(
+        claims.first().map(|one| &one.0) != claims.get(1).map(|one| &one.0)
+            && claims.first().map(|one| &one.1) != claims.get(1).map(|one| &one.1),
+        "each is named apart in the report and answers for its own mutation: {claims:?}"
+    );
+
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        format!(
+            "version = 1\n{}{}",
+            claim(None, Some(2), "both parses"),
+            claim(Some(47), None, "the parse a caller can see")
+        ),
+    )
+    .expect("write the configuration");
+    let overlapping = against(&fixture, &narrowed);
+    assert_eq!(
+        overlapping.status.code(),
+        Some(2),
+        "a mutation two claims both name has two reasons, which a report cannot audit: {}",
+        stderr(&overlapping)
+    );
+    assert!(
+        stderr(&overlapping).contains("RM0004") && stderr(&overlapping).contains("@47"),
+        "the refusal is the configuration's, and names the mutation both claims hold: {}",
+        stderr(&overlapping)
+    );
+}
+
+#[test]
+fn a_claim_on_mutations_the_selection_left_out_is_unjudged_and_no_finding() {
+    let fixture = Fixture::copy("fixture-families");
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        "version = 1\n\n[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"results\"\nrule = \
+         \"question-to-unwrap\"\noriginal = \"?\"\ncount = 2\noutcome = \"killed\"\nreason = \
+         \"both of them parse the same text\"\n",
+    )
+    .expect("write the configuration");
+    let output = against(
+        &fixture,
+        &["run", "--offline", "--locked", "--file", "src/lib.rs:55-58"],
+    );
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "{}",
+        stderr(&output)
+    );
+    let stored = stored(&fixture);
+    let claims: Vec<(String, String)> = stored["expectations"]
+        .as_array()
+        .expect("expectations")
+        .iter()
+        .map(|one| (one["standing"].to_string(), one["mutant"].to_string()))
+        .collect();
+    let findings: Vec<String> = stored["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .filter(|one| {
+            one["kind"]
+                .as_str()
+                .is_some_and(|kind| kind.ends_with("-expectation"))
+        })
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(
+        (claims, findings),
+        (
+            vec![("\"unjudged\"".to_owned(), "null".to_owned())],
+            Vec::new()
+        ),
+        "a run that decided none of a claim's mutations has not judged it: that is neither met nor \
+         stale, and nothing to find"
+    );
+}
+
+#[test]
+fn a_run_says_how_wide_it_measured_in_its_report_and_its_lines() {
+    let fixture = Fixture::copy("fixture-simple");
+    let output = against(&fixture, &["run", "--offline", "--locked", "--jobs", "all"]);
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "{}",
+        stderr(&output)
+    );
+    let report = stored(&fixture);
+    let asked = report
+        .pointer("/run/jobs/asked")
+        .and_then(serde_json::Value::as_str);
+    let used = report
+        .pointer("/run/jobs/used")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    assert_eq!(asked, Some("all"), "the report says what was asked for");
+    assert!(used >= 1, "and how many were measured at once: {used}");
+    let lines = against(&fixture, &["report"]);
+    assert!(
+        stdout(&lines).contains(&format!("jobs      {used} (all)\n")),
+        "a CI log says how wide the run measured without anybody opening the report: {}",
+        stdout(&lines)
+    );
+}
+
+#[test]
+fn a_mutant_of_a_whole_condition_replaces_all_of_it_whatever_operators_it_holds() {
+    let fixture = Fixture::copy("fixture-guarded-or");
+    let output = against(
+        &fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-cache",
+        ],
+    );
+    assert!(
+        output.status.code() == Some(0) || output.status.code() == Some(1),
+        "{}",
+        stderr(&output)
+    );
+    let report = stored(&fixture);
+    let rows = report["mutants"].as_array().expect("the rows");
+    for rule in ["condition-to-false", "or-to-and"] {
+        let row = rows
+            .iter()
+            .find(|row| row["rule"] == rule)
+            .unwrap_or_else(|| panic!("the fixture catalogs {rule}: {rows:#?}"));
+        assert_eq!(
+            row["outcome"], "killed",
+            "{rule} of `over(left) || over(right)` makes `either_over(0, 10)` false, so the test \
+             that asks it kills it; a survivor here means part of the original stayed live beside \
+             the mutant: {row:#}"
+        );
+    }
+}
+
+#[test]
+fn a_mutant_a_test_noticed_before_another_hung_is_killed_and_names_that_test() {
+    let fixture = Fixture::copy("fixture-fails-then-hangs");
+    let recording = fixture.temp().join("recording");
+    let trace = format!("--trace={}", recording.display());
+    let output = against(
+        &fixture,
+        &["run", "--offline", "--locked", "--tier", "all", &trace],
+    );
+    assert!(
+        output.status.code() == Some(0) || output.status.code() == Some(1),
+        "{}",
+        stderr(&output)
+    );
+    let report = stored(&fixture);
+    assert_eq!(
+        against_schema("rust-mutants-run-report-v1.json", &report),
+        Vec::<String>::new()
+    );
+    let rows = report["mutants"].as_array().expect("the rows");
+    let waited_naming: Vec<&serde_json::Value> = rows
+        .iter()
+        .filter(|row| {
+            row["outcome"] == "waited"
+                && row["killed_by"]
+                    .as_array()
+                    .is_some_and(|named| !named.is_empty())
+        })
+        .collect();
+    assert!(
+        waited_naming.is_empty(),
+        "a row that names the test that noticed it is not one the clock decided: {waited_naming:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row["outcome"] == "killed"
+                && row["killed_by"].as_array().is_some_and(|named| {
+                    named.iter().any(|one| one == "a_says_the_answer_is_ready")
+                })
+        }),
+        "the mutation that made one test fail and the other hang was noticed by the one that \
+         failed: {rows:#?}"
+    );
+    let text = std::fs::read_to_string(recording.join("trace.jsonl")).expect("the recording");
+    let outlived: std::collections::BTreeSet<u64> = text
+        .lines()
+        .map(|line| {
+            njutest_devkit::strictjson::decode_str::<serde_json::Value>(line)
+                .expect("a recorded line is JSON")
+        })
+        .filter(|event| event["payload"]["type"] == "mutant-exec")
+        .filter(|event| event["payload"]["mutant"]["lingered"] == true)
+        .filter_map(|event| event["payload"]["mutant"]["index"].as_u64())
+        .collect();
+    let claimed: std::collections::BTreeSet<u64> = rows
+        .iter()
+        .filter(|row| row["lingered"] == true)
+        .filter_map(|row| row["index"].as_u64())
+        .collect();
+    assert_eq!(
+        claimed, outlived,
+        "a row says it lingered exactly where the recording says an execution of it did"
+    );
+}
+
+#[test]
+fn a_kill_is_taken_at_the_first_failing_test_rather_than_after_the_rest_hang() {
+    let fixture = Fixture::copy("fixture-fails-then-hangs");
+    let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    assert!(
+        output.status.code() == Some(0) || output.status.code() == Some(1),
+        "{}",
+        stderr(&output)
+    );
+    let report = stored(&fixture);
+    let rows = report["mutants"].as_array().expect("the rows");
+    let waited_out: Vec<&serde_json::Value> = rows
+        .iter()
+        .filter(|row| row["outcome"] == "killed" && row["lingered"] == true)
+        .collect();
+    assert!(
+        waited_out.is_empty(),
+        "one failing test is the whole answer to whether the tests noticed a mutation, so the \
+         process is stopped there rather than kept running until the clock ends a test that \
+         hangs: {waited_out:#?}"
+    );
+}
+#[test]
 fn an_edit_to_a_file_the_build_read_misses_the_outcome_store() {
     let fixture = Fixture::copy("fixture-carry");
     let asked = ["run", "--offline", "--locked", "--tier", "all"];
@@ -1356,6 +1731,71 @@ fn an_edit_to_a_file_the_build_read_misses_the_outcome_store() {
             read_back.is_empty(),
             "{edited} changed what the compiled code computes, so no answer from before the \
              edit may be read back as though the program were the same: {read_back:#?}"
+        );
+    }
+}
+
+fn executions(directory: &Path) -> std::collections::BTreeMap<String, Vec<String>> {
+    let text = std::fs::read_to_string(directory.join("trace.jsonl")).expect("the recording");
+    let mut found: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for line in text.lines() {
+        let event: serde_json::Value =
+            njutest_devkit::strictjson::decode_str(line).expect("a recorded line is JSON");
+        if event["payload"]["type"] == "mutant-exec" {
+            let mutant = &event["payload"]["mutant"];
+            found
+                .entry(mutant["id"].as_str().unwrap_or_default().to_owned())
+                .or_default()
+                .push(mutant["target"].as_str().unwrap_or_default().to_owned());
+        }
+    }
+    found
+}
+
+#[test]
+fn a_mutant_goes_first_to_the_target_that_killed_it_before() {
+    let fixture = Fixture::copy("fixture-killer-last");
+    let first_trace = fixture.temp().join("first");
+    let second_trace = fixture.temp().join("second");
+    let run = |trace: &Path| {
+        let flag = format!("--trace={}", trace.display());
+        let output = against(
+            &fixture,
+            &["run", "--offline", "--locked", "--tier", "all", &flag],
+        );
+        assert!(
+            output.status.code() == Some(0) || output.status.code() == Some(1),
+            "{}",
+            stderr(&output)
+        );
+    };
+    run(&first_trace);
+    std::fs::write(
+        fixture.root().join("src/unrelated.rs"),
+        "/// A constant nothing else reads.\n#[must_use]\npub const fn unrelated() -> u32 {\n    8\n}\n",
+    )
+    .expect("edit a file no mutation of `double` depends on");
+    run(&second_trace);
+    let before = executions(&first_trace);
+    let after = executions(&second_trace);
+    let late: Vec<(&String, &Vec<String>)> = before
+        .iter()
+        .filter(|(_, targets)| targets.len() > 1)
+        .collect();
+    assert!(
+        !late.is_empty(),
+        "the fixture exists to have a mutant its first target passes and a later one kills: \
+         {before:#?}"
+    );
+    for (mutant, targets) in late {
+        let killer = targets.last().expect("a last target");
+        assert_eq!(
+            after.get(mutant),
+            Some(&vec![killer.clone()]),
+            "{mutant} was killed by {killer} after {} passed, so the next run asks {killer} \
+             first and has its answer from one process",
+            targets.first().map_or("", String::as_str)
         );
     }
 }

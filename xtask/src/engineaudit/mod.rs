@@ -27,7 +27,7 @@ pub const REPORT_FILE: &str = "run-report-v1.json";
 pub const DOCUMENT_TYPE: &str = "rust-mutants/run-report";
 
 /// The current report shape this audit independently re-decides.
-pub const SCHEMA_VERSION: u64 = 2;
+pub const SCHEMA_VERSION: u64 = 3;
 
 /// The current engine recording shape paired with [`SCHEMA_VERSION`].
 pub const TRACE_SCHEMA: &str = "rust-mutants-trace-v1";
@@ -64,9 +64,12 @@ const ERRORED_MUTANT: &str = "errored-mutant";
 const NOT_RUN_MUTANT: &str = "not-run-mutant";
 const STALE_EXPECTATION: &str = "stale-expectation";
 const UNMATCHED_EXPECTATION: &str = "unmatched-expectation";
-const MET: &str = "met";
-const STALE: &str = "stale";
-const UNMATCHED: &str = "unmatched";
+/// Every standing a claim can have, as a report writes it.
+pub const CLAIM_STANDINGS: [&str; 4] = ["met", "stale", "unmatched", "unjudged"];
+const MET: &str = CLAIM_STANDINGS[0];
+const STALE: &str = CLAIM_STANDINGS[1];
+const UNMATCHED: &str = CLAIM_STANDINGS[2];
+const UNJUDGED: &str = CLAIM_STANDINGS[3];
 
 /// Why a run could not be re-decided at all.
 #[derive(Debug, thiserror::Error)]
@@ -141,6 +144,23 @@ pub enum AuditError {
         /// The version it declares, absent when it declares none.
         schema_version: Option<u64>,
     },
+}
+
+impl crate::error::Coded for AuditError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Unreadable { .. } => crate::error::XtCode::EngineUnreadable,
+            Self::Unparsable { .. } => crate::error::XtCode::EngineUnparsable,
+            Self::MalformedEvidence { .. } => crate::error::XtCode::EngineEvidence,
+            Self::MalformedRecording { .. } | Self::UnsupportedTrace { .. } => {
+                crate::error::XtCode::EngineRecording
+            }
+            Self::MalformedLedger { .. } => crate::error::XtCode::EngineLedger,
+            Self::Unrecognised { .. } | Self::UnsupportedVersion { .. } => {
+                crate::error::XtCode::EngineUnrecognised
+            }
+        }
+    }
 }
 
 /// What the re-decision was able to conclude about one thing it looked at.
@@ -551,6 +571,10 @@ pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, A
 
 /// One mutant row, as a reader sees it.
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is an independent fact the published report row states"
+)]
 struct Row {
     index: u64,
     route: Option<RouteDecision>,
@@ -571,6 +595,7 @@ struct Row {
     killed_by: Vec<String>,
     item: String,
     retried: bool,
+    lingered: bool,
     expected: bool,
     unreached: bool,
     not_run_reason: Option<NotRunReason>,
@@ -751,6 +776,7 @@ enum ClaimStanding {
     Met,
     Stale,
     Unmatched,
+    Unjudged,
 }
 
 impl ClaimStanding {
@@ -759,6 +785,7 @@ impl ClaimStanding {
             Self::Met => MET,
             Self::Stale => STALE,
             Self::Unmatched => UNMATCHED,
+            Self::Unjudged => UNJUDGED,
         }
     }
 }
@@ -923,5 +950,33 @@ fn plural(count: usize, thing: &str) -> String {
         format!("{count} {thing}")
     } else {
         format!("{count} {thing}s")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CLAIM_STANDINGS, ClaimStanding};
+
+    #[test]
+    fn every_standing_the_audit_decodes_is_one_it_names() {
+        let every = [
+            ClaimStanding::Met,
+            ClaimStanding::Stale,
+            ClaimStanding::Unmatched,
+            ClaimStanding::Unjudged,
+        ];
+        for standing in every {
+            match standing {
+                ClaimStanding::Met
+                | ClaimStanding::Stale
+                | ClaimStanding::Unmatched
+                | ClaimStanding::Unjudged => {}
+            }
+            assert!(
+                CLAIM_STANDINGS.contains(&standing.as_str()),
+                "{standing:?} decodes and is not among the standings the audit names"
+            );
+        }
+        assert_eq!(every.len(), CLAIM_STANDINGS.len());
     }
 }

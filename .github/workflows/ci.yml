@@ -24,6 +24,10 @@ env:
   # The suites drive a real cargo against the fixture projects; nothing may reach a registry from inside a test.
   CARGO_NET_OFFLINE: "true"
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   test:
     name: test (${{ matrix.os }})
@@ -118,6 +122,8 @@ jobs:
         run: taplo fmt --check && taplo lint
       - name: actionlint
         run: actionlint
+      - name: every workflow the documentation shows passes actionlint against this repository's actions
+        run: cargo xtask docflows
       # Dependabot writes the body of a commit as the changelog it copied, and neither it nor anybody here wraps that at a hundred columns.
       # The rule is about a message somebody wrote, and what lands on `main` from one of those pull requests is the squash subject, which is its own `chore:` line and conventional already.
       - name: committed (pull request commits)
@@ -323,7 +329,12 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
       - name: Install the interpreter the deep-v1 contract promises
-        run: rustup toolchain install nightly --component miri --profile minimal
+        run: rustup toolchain install nightly --component miri,rust-src --profile minimal
+      # The run is offline, and Miri builds its own sysroot the first time it is asked; build it now, while the network is allowed, or the verify below interprets nothing.
+      - name: Build the interpreter's sysroot
+        env:
+          CARGO_NET_OFFLINE: "false"
+        run: cargo +nightly miri setup
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
@@ -341,7 +352,7 @@ jobs:
           ./target/release/njutest verify \
             --directory "$RUNNER_TEMP/interpreted" --offline --locked --no-cache --ui=plain \
             | tee "$RUNNER_TEMP/interpreted.out" \
-            || test "${PIPESTATUS[0]}" -eq 1
+            || case "${PIPESTATUS[0]}" in 1 | 2) ;; *) exit 1 ;; esac
       # The run says where it wrote, so this never has to know the layout.
       - name: The run says it interpreted the suite
         run: |
@@ -350,7 +361,10 @@ jobs:
           jq --exit-status '
               .report.contract == "deep-v1"
               and ([.report.builds[].parts[].accounting.soundness.executed] | length > 0 and all)
-            ' "$RUNNER_TEMP/interpreted/$written"
+            ' "$RUNNER_TEMP/interpreted/$written" || {
+            grep -E '^LIMITATION' "$RUNNER_TEMP/interpreted.out"
+            exit 1
+          }
 
   kani-verified:
     name: kani-verified
@@ -404,13 +418,18 @@ jobs:
           working-directory: fixtures/fixture-assured
           args: --offline --locked --ui=plain
           upload-sarif: "false"
-      - name: The verdict the action reports is the one the run reached
+      - name: The verdict is the one the run reached, and every path the action reports is a file
         env:
-          VERDICT: ${{ steps.njutest.outputs.verdict }}
-          REPORT: ${{ steps.njutest.outputs.report }}
+          OUTPUTS: ${{ toJSON(steps.njutest.outputs) }}
         run: |
-          test "$VERDICT" = ASSURED || { echo "verdict was '$VERDICT'"; exit 1; }
-          test -f "fixtures/fixture-assured/$REPORT"
+          verdict=$(jq -r .verdict <<<"$OUTPUTS")
+          test "$verdict" = ASSURED || { echo "verdict was '$verdict'"; exit 1; }
+          named=$(jq -r 'keys - ["verdict"] | join(",")' <<<"$OUTPUTS")
+          test "$named" = "junit,report,sarif" || { echo "the action reported the paths '$named'"; exit 1; }
+          for name in $(jq -r 'keys - ["verdict"] | .[]' <<<"$OUTPUTS"); do
+            path=$(jq -r --arg name "$name" '.[$name]' <<<"$OUTPUTS")
+            test -f "fixtures/fixture-assured/$path" || { echo "$name names '$path', which is not a file"; exit 1; }
+          done
 
   ci-success:
     name: ci-success

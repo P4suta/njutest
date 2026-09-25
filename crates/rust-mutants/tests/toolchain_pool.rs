@@ -39,6 +39,7 @@ const fn relevant_payload(payload: &Payload) -> RelevantPayload<'_> {
         | Payload::Build { .. }
         | Payload::Verify { .. }
         | Payload::Touch { .. }
+        | Payload::PerturbedControl { .. }
         | Payload::Witness { .. }
         | Payload::SkipClaim { .. }
         | Payload::Kept { .. }
@@ -113,7 +114,7 @@ fn measured(session: &Session, jobs: usize, observer: &mut Delivered) -> Run {
             expectations: &[],
             quiet: &quiet,
             equivalence: None,
-            jobs,
+            jobs: rust_mutants::run::Jobs::count(jobs).expect("a positive count"),
             args: &[],
             shard: None,
             outcomes: None,
@@ -230,7 +231,7 @@ fn cancellation_leaves_every_unjudged_mutant_not_run_and_the_run_interrupted() {
             expectations: &[],
             quiet: &quiet,
             equivalence: None,
-            jobs: 4,
+            jobs: rust_mutants::run::Jobs::count(4).expect("a positive count"),
             args: &[],
             shard: None,
             outcomes: None,
@@ -339,7 +340,7 @@ fn the_equivalence_layer_asks_only_about_survivors_and_writes_identical_never_eq
             expectations: &[],
             quiet: &quiet,
             equivalence: Some(&asking),
-            jobs: 1,
+            jobs: rust_mutants::run::Jobs::count(1).expect("a positive count"),
             args: &[],
             shard: None,
             outcomes: None,

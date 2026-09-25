@@ -19,3 +19,4 @@ pub mod reproducible;
 pub mod result;
 pub mod strictjson;
 pub mod thread;
+pub mod workflow_commands;
