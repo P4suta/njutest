@@ -3,10 +3,10 @@
   "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260925t161543155z",
-    "started_at": "2026-09-25T16:15:43.155195237Z",
-    "finished_at": "2026-09-25T16:15:48.434417421Z",
-    "duration_ms": 169,
+    "id": "20260925t163715758z",
+    "started_at": "2026-09-25T16:37:15.758225Z",
+    "finished_at": "2026-09-25T16:37:18.167729Z",
+    "duration_ms": 307,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -16,14 +16,14 @@
     }
   },
   "workspace": {
-    "root_name": "tmp.zKo01YQfqg",
+    "root_name": "fixture-unreached",
     "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "f7696419ee539172367d1c26049865d597ef058bb162f185cf5a8a19a0a1fbb1",
+    "workspace_digest": "2973d0731e74a4c567a5e16635803c4c4cc9a9a73bb4eaea990c6fe9dd42408d",
     "catalog_digest": "03c20af27c9024062341116ff85836fcf3a0955215778abecd0001f5c374dd22",
     "platform": {
-      "os": "gnu",
-      "arch": "x86_64",
-      "target": "x86_64-unknown-linux-gnu"
+      "os": "darwin",
+      "arch": "aarch64",
+      "target": "aarch64-apple-darwin"
     }
   },
   "selection": {
@@ -98,7 +98,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 25,
+      "duration_ms": 30,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -145,7 +145,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 28,
+      "duration_ms": 30,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -192,7 +192,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 26,
+      "duration_ms": 30,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -239,7 +239,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 25,
+      "duration_ms": 29,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"

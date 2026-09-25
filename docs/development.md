@@ -211,6 +211,7 @@ It reads that run's `run-report-v1.json` and re-decides it in fourteen layers, n
 Its output and exit codes are `proofaudit`'s: one line per remark, one `layer:` line per layer, a summary line, and 0, 1, or 2.
 Before it reads the run, it re-decides a clean synthetic run (`xtask::engineaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each layer, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
 Three runs of the fixtures are committed under `xtask/tests/testdata/engine-run-*/` and a test re-decides all three, so a change that makes the engine disagree with itself fails here rather than in a weekly job.
+They are recorded, not written: `crates/rust-mutants-cli/tests/toolchain_engine_runs.rs` runs each fixture again as they were recorded — every tier, offline, locked, with its recording, under an empty cache and the least environment a nested run needs — and refuses a committed run whose documents or events have a shape today's engine no longer records; `UPDATE_ENGINE_RUNS=1` records them again, and the diff is the review.
 
 `mise run dogfood:audit` and `mise run dogfood:engine:audit` are those rules as one command each: they run this workspace through the release build, keep the recording, and re-decide it.
 
