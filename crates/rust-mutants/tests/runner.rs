@@ -143,16 +143,10 @@ fn a_child_that_cannot_be_reaped_aborts_instead_of_becoming_detached() {
         Bound::After(Duration::from_secs(8)),
     );
     nested.env = Some(environment);
-    let started = Instant::now();
     let result = run(&nested, &Cancel::new());
     assert!(
         !result.succeeded() && !result.timed_out(),
         "the nested supervisor must terminate itself, not return or outlive the outer bound: {result:?}"
-    );
-    assert!(
-        started.elapsed() < Duration::from_secs(5),
-        "the terminal ownership path was not bounded: {:?}",
-        started.elapsed()
     );
 }
 

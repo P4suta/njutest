@@ -56,6 +56,9 @@ Pure computation that does not open or mutate a report store remains available.
   Three things a reader has to tell apart used to arrive as one refusal: a target that is broken, a target that lost a race with something outside the code, and a target that passed.
   The middle one is a finding about the run's footing, not a reason to throw away the work already done, and the run says which target it was so that a later reader knows a single result against it rests on a measurement that once came out differently.
 - A target whose guards recorded nothing this run can route by keeps every test of it in every route (`touch-not-recorded`), and one whose record did not read back is believed about nothing (`touch-log-unreadable`).
+- **Which items a test entered is measured where a body starts, and not everywhere code runs.** A `const fn`, a `const`, and a `static` are cataloged as items nothing records entering.
+  A closure written inside a macro invocation takes no entry marker, and an `async` body resumed on another test's thread is recorded on the thread that first polled it.
+  A change to any of these has to be routed to every test; [item reach](engine/item-reach.md) says which is which.
 - **A subprocess is measured, but its main-thread touches have no libtest test name.** It inherits the outer touch log and catalog, so its guards are not lost.
   The engine records those touches as unattributed and widens the route to every test of the target.
   An in-process command test keeps test-level attribution and costs less work; a subprocess test remains sound, with the fallback costing precision rather than evidence.

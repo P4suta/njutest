@@ -902,6 +902,22 @@ fn a_documented_example_is_named_the_way_rustdoc_names_it() {
 }
 
 #[test]
+fn a_test_that_expects_a_panic_is_named_by_its_name_and_not_by_what_libtest_adds_to_it() {
+    let lines = parse_lines(
+        b"test tests::refuses - should panic ... ok\ntest tests::stops - should panic ... FAILED\n",
+    );
+    assert_eq!(result_state(&lines), Returned, "the fixture is exact UTF-8");
+    let Ok(lines) = lines else { return };
+    assert_eq!(
+        lines.passed,
+        ["tests::refuses"],
+        "the thread libtest runs the test on, and the filter that selects it, both know it by \
+         its name"
+    );
+    assert_eq!(lines.failed, ["tests::stops"]);
+}
+
+#[test]
 fn a_line_that_is_not_a_verdict_is_not_a_test() {
     let lines = parse_lines(
         b"test result: ok. 1 passed; 0 failed\nrunning 1 test\ntesting the water ... ok\n",

@@ -249,7 +249,7 @@ pub(super) struct Walker<'a> {
     decisions: Vec<Decision>,
     suppressed: Option<SkipReason>,
     frames: Vec<Frame>,
-    mod_depth: u32,
+    scope: super::ModuleScope,
     /// What a proof would rest on for each `if` or `while` condition being walked, innermost last.
     gates: Vec<Option<branch::Prepared>>,
     /// The loops being walked, innermost last: the label each carries, and whether its breaks decide its value.
@@ -286,7 +286,7 @@ impl<'a> Walker<'a> {
             decisions: Vec::new(),
             suppressed: None,
             frames: Vec::new(),
-            mod_depth: 0,
+            scope: super::ModuleScope::root(),
             gates: Vec::new(),
             loops: Vec::new(),
             markers: Vec::new(),
@@ -559,11 +559,18 @@ impl<'a> Walker<'a> {
             source_digest: self.digest.to_owned(),
         };
         let item = self.item_path();
+        let super_depth = match self.scope.supers().map(u32::try_from) {
+            Some(Ok(supers)) => supers,
+            Some(Err(_)) | None => {
+                self.bounds_failed.set(true);
+                return;
+            }
+        };
         let hint = SiteHint {
             form: site.form,
             site: site.span,
             site_text: self.text(site.span).to_owned(),
-            super_depth: self.mod_depth,
+            super_depth,
         };
         let position = self.position(edit.span.start);
         let gate = self.gates.last().and_then(Option::as_ref);
@@ -776,15 +783,10 @@ impl<'a> Walker<'a> {
             }
             Item::Mod(m) => {
                 if let Some((_, items)) = &m.content {
-                    let Some(deeper) = self.mod_depth.checked_add(1) else {
-                        self.bounds_failed.set(true);
-                        return;
-                    };
-                    self.mod_depth = deeper;
+                    self.scope.enter(items);
                     self.within_item(m.ident.to_string(), |walker| walker.walk_items(items));
-                    match self.mod_depth.checked_sub(1) {
-                        Some(shallower) => self.mod_depth = shallower,
-                        None => self.bounds_failed.set(true),
+                    if !self.scope.leave() {
+                        self.bounds_failed.set(true);
                     }
                 }
             }
