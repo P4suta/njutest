@@ -108,6 +108,11 @@ pub enum Payload {
         /// The record.
         repair: RepairRecord,
     },
+    /// What one control under one knob established about one target, as the report keeps it.
+    Knob {
+        /// The record.
+        knob: crate::report::knobs::KnobRecord,
+    },
     /// Something worth writing down that has no shape of its own yet.
     Note {
         /// The record.
@@ -140,6 +145,7 @@ impl Payload {
             Self::Model { .. } => "model",
             Self::Drift { .. } => "drift",
             Self::Repair { .. } => "repair",
+            Self::Knob { .. } => "knob",
             Self::Note { .. } => "note",
             Self::RunEnd { .. } => "run-end",
         }

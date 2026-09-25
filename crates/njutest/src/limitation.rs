@@ -67,9 +67,15 @@ pub const DRIFT_NOT_MEASURED: &str = "drift-not-measured";
 /// A target's reach moved and every disposition that rested on it was decided again against it, so nothing the run concludes stands on the moved record, but the suite's reach is still not a function of the target (ADR 0036).
 pub const REACH_MOVED: &str = "reach-moved";
 
+/// A knob was asked for and not put on a target, so nothing is claimed about whether the target depends on what it sets.
+pub const KNOB_NOT_PUT: &str = "knob-not-put";
+
+/// A control under a knob established nothing to compare, so whether a target's verdict and reach hold there is not known.
+pub const KNOB_NOT_COMPARED: &str = "knob-not-compared";
+
 /// Every limitation this runner states of its own, in the order a reader meets them in a run.
 #[cfg(feature = "testkit")]
-pub const ALL: [&str; 21] = [
+pub const ALL: [&str; 23] = [
     WORKSPACE_DIGEST_NOT_COMPUTED,
     TREE_WRITTEN_DURING_MEASUREMENT,
     RESUMED_FROM_CHECKPOINT,
@@ -91,4 +97,6 @@ pub const ALL: [&str; 21] = [
     SEAM_NOT_WATCHED,
     DRIFT_NOT_MEASURED,
     REACH_MOVED,
+    KNOB_NOT_PUT,
+    KNOB_NOT_COMPARED,
 ];

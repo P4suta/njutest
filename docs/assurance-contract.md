@@ -106,6 +106,12 @@ One such observation is enough; a counterexample does not wait for a second.
 A measured target whose control could not be compared — it failed, passed other tests, or could not record — is named by `drift-not-measured`, because a proof read off it rests on one run.
 What rested on a moved target is run again against it with its reach recorded, and replaced by what that run decides where it reached the site ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)); `unstable-baseline` counts only what could not be, and a moved target nothing rests on any more is named in `reach-moved`.
 
+A second run under the same conditions cannot see a suite that depends on the conditions themselves: a clock read in the local zone, a string folded under the locale, a temporary path built into a command line without quotes, a file the home directory is expected to hold, the mode a new file gets, the width of a terminal, or a test that only passes while another runs beside it.
+Asked for with `[repeatable] knobs`, a run starts one more control of every target whose baseline passed per knob, with exactly that one thing set to a value chosen to differ, and compares it with the baseline as drift does ([ADR 0031](adr/0031-a-knob-is-one-control-started-differently.md)).
+A knob that broke a target is `environment-dependent`, a defect, because the suite's answer depends on something the contract lets differ between machines; a knob that moved only its reach is `environment-dependent-reach`, and every proof read off that baseline is unfounded where it differs.
+A knob this machine cannot put is never counted as held: the time zone database has to know the zone, the locale has to be installed, the mask needs a shell, and a target run through cargo is not given a temporary directory cargo reads itself, so each of those is `knob-not-put` with its reason.
+What a knob sets is a closed set in the engine (`execute::Variable`, `Launcher`, `Schedule`), so no knob can reach the variables that activate a mutant, record a process's reach, count its steps, or find its libraries, and only a control can be started under one.
+
 The decision widens whenever the evidence cannot carry it, and every widening runs more rather than less.
 The route names which one it was:
 

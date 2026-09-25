@@ -39,6 +39,7 @@ A test serializes closed specimens and compares this table in both directions.
 | `model` | `mutant`, `answer` | one retained closed model question; `answer` is a nested closed decision and affirmative arms carry their full typed evidence |
 | `drift` | `mutant`, `observed` | what an original-code control established about one target's baseline reach: the one confirming `mutant`'s kill, or, where `mutant` is null, the one a target that confirmed no kill is run alone for; `observed` is the report's closed drift record ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)) |
 | `repair` | `mutant`, `target`, `was`, `now`, `reached` | one disposition that rested on `target`, a target whose reach moved, run again against it with its reach recorded: the outcome it `was`, the outcome it is `now`, and whether that run `reached` the mutation's site (`reached`, `not-reached` or `unrecorded`); a pass that did not reach the site leaves `now` equal to `was` ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)) |
+| `knob` | `target`, `knob`, `standing` | what one control started with one knob put established about one target, the report's closed knob record: `stable`, `passed`, `broke` with the tests that failed, `moved` with the three unions, `uncompared`, `unsettled`, or `not-put` with why |
 | `note` | `kind`, `detail` | a named diagnostic with no richer event type |
 | `run-end` | `verdict`, `accounting`, `error`, `events_emitted`, `events_dropped` | the sole terminal event, emitted only after report persistence and cleanup succeed |
 

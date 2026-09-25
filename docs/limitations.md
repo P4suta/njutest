@@ -253,6 +253,17 @@ The comparison sees what the guards see, so a suite whose behaviour moves where 
 And what rested on a moved target is run again against it with its reach recorded ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)): a kill replaces the disposition, a pass replaces it only where the run's own record shows the site reached, and a pass that did not reach it leaves the disposition resting on the moved record, counted in `unstable-baseline`.
 Where nothing rests on a moved target any more, `reach-moved` still names it: nothing the run concludes stands on the moved record, and the suite's reach is still not a function of the target.
 
+## What a run asks of a suite that depends on where it runs
+
+A suite can pass on one machine and fail on the next because of something the contract lets differ between them: the time zone, the locale, the temporary directory, the home directory, the umask, the terminal width, or how many tests the harness runs at once.
+Asked for with `[repeatable] knobs`, a run starts one more control of each measured target per knob, with that one thing set to a value chosen to differ, and compares its verdict and its reach with the baseline's as drift compares a control's.
+A target the knob broke is `environment-dependent`, a defect; one whose reach moved over the same passing tests is `environment-dependent-reach`, and every proof read off its baseline is unfounded where that differs.
+
+Three things follow and are not hidden.
+A knob asked for and not put — no such zone in the time zone database, no such locale installed, no shell to set the mask through, a target that runs through cargo, a target that does not run under libtest, a platform with no way to put it — is `knob-not-put`, naming the knob, the targets, and why, because a pass under a knob that was never put says nothing.
+A knob whose controls established nothing to compare — a record that did not read back, other tests passing, a baseline that passed only on retry, a control that errored or ran out of time — is `knob-not-compared`, one per knob and reason, naming the targets.
+And the working directory and the order of the tests are not knobs: cargo's contract fixes the first at the package root, and stable libtest cannot reorder the second.
+
 ## What a run asks of a suite that talks about time
 
 A run does something to a suite that `cargo test` never does: it runs every target's baseline before it measures anything, and then measures mutants against a machine that is already busy.
