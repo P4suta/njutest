@@ -326,6 +326,12 @@ impl Place<'_> {
     }
 
     #[cfg(not(unix))]
+    #[expect(
+        clippy::missing_const_for_fn,
+        clippy::unnecessary_wraps,
+        clippy::unused_self,
+        reason = "only unix can tell the lock this run holds from a file now at its path, so elsewhere the answer is yes, in the signature the unix check needs"
+    )]
     fn still_named(&self, _lock: &File) -> Result<bool, LaneError> {
         Ok(true)
     }

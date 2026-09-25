@@ -77,14 +77,14 @@ pub enum EvidenceError {
     Carried {
         /// The engine's reason.
         #[source]
-        source: crate::EngineError,
+        source: Box<crate::EngineError>,
     },
     /// The catalog could not be represented without changing workspace or mutation bytes.
     #[error("constructing retained catalog evidence: {source}")]
     Catalog {
         /// The exact catalog construction failure.
         #[source]
-        source: crate::EngineError,
+        source: Box<crate::EngineError>,
     },
 }
 
@@ -123,14 +123,18 @@ pub fn write(
     written.push(keep(directory, SKELETONS, &skeletons)?);
     let believed = session
         .carried_evidence()
-        .map_err(|source| EvidenceError::Carried { source })?;
+        .map_err(|source| EvidenceError::Carried {
+            source: Box::new(source),
+        })?;
     let carried = serde_json::to_vec(&believed).map_err(|source| EvidenceError::Serialize {
         file: CARRIED,
         source,
     })?;
     written.push(keep(directory, CARRIED, &carried)?);
-    let catalog_document = super::catalog::document(session, options)
-        .map_err(|source| EvidenceError::Catalog { source })?;
+    let catalog_document =
+        super::catalog::document(session, options).map_err(|source| EvidenceError::Catalog {
+            source: Box::new(source),
+        })?;
     let catalog =
         serde_json::to_vec(&catalog_document).map_err(|source| EvidenceError::Serialize {
             file: CATALOG,
