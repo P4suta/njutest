@@ -1438,7 +1438,7 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
     }
 }
 
-/// What one run of a test binary establishes about its mutant, given what its harness said before it stopped: a failed test or a signal the process raised itself is a kill, a clean summary a survivor, and a signal sent from outside inconclusive.
+/// What one run of a test binary establishes about its mutant, given what its harness said before it stopped: a failed test or a signal the process raised itself is a kill, a clean summary a survivor, and a signal sent from outside inconclusive, as `docs/engine/verdicts.md` decides.
 #[must_use]
 pub fn outcome_of(
     observed: &Observation,

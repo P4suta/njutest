@@ -8,8 +8,9 @@ use std::path::{Path, PathBuf};
 
 use njutest_devkit::result::{ResultState::Returned, result_state};
 use rust_mutants::execute::{
-    Context, ExecRequest, Lines, Observation, StepLimitNotice, Stopped, Summary, TargetKind,
-    TestTarget, environment, outcome_of, parse_lines, parse_summary, target_id,
+    Context, ExecRequest, Lines, Observation, StartFailure, StepLimitNotice, StepProtocolFailure,
+    Stopped, Summary, TargetKind, TestTarget, environment, outcome_of, parse_lines, parse_summary,
+    target_id,
 };
 use rust_mutants::outcome::Outcome;
 use rust_mutants::runner::ProcessExit;
@@ -172,7 +173,7 @@ fn the_exit_status_is_read_in_one_fixed_order() {
     assert_eq!(
         outcome_of(
             &stopped(Stopped::NotStarted {
-                cause: rust_mutants::execute::StartFailure::Missing
+                cause: StartFailure::Missing
             }),
             None,
             (true, &[])
@@ -1095,10 +1096,10 @@ fn every_way_a_process_stops_reads_back_as_itself() {
     use rust_mutants::runner::ProcessExit;
     for stopped in [
         Stopped::NotStarted {
-            cause: rust_mutants::execute::StartFailure::Missing,
+            cause: StartFailure::Missing,
         },
         Stopped::NotStarted {
-            cause: rust_mutants::execute::StartFailure::Other {
+            cause: StartFailure::Other {
                 detail: "Operation not supported (os error 45)".to_owned(),
             },
         },
@@ -1149,7 +1150,7 @@ fn a_harness_that_never_started_says_why() {
     assert_eq!(
         result.stopped,
         Stopped::NotStarted {
-            cause: rust_mutants::execute::StartFailure::Missing
+            cause: StartFailure::Missing
         },
         "a test binary that is not there is named as missing, which is what a row that says \
          only `exit -1` left a person to guess"
@@ -1179,5 +1180,273 @@ fn a_harness_that_named_a_failure_is_heard_even_where_its_process_exited_zero() 
         Outcome::Inconclusive,
         "a summary that counts a failure it names nowhere, from a process that exited zero, \
          contradicts itself, and a contradiction is no survivor"
+    );
+}
+
+/// The specification of the decision, which the engine's `outcome_of` is one implementation of.
+const VERDICTS: &str = include_str!("../../../docs/engine/verdicts.md");
+
+/// Every row of the page's decision table, in the order it is read: six cells of what the decision reads and the verdict.
+fn verdict_table() -> Vec<[String; 7]> {
+    let mut rows = Vec::new();
+    let mut inside = false;
+    for line in VERDICTS.lines() {
+        if line.starts_with("| stopped |") {
+            inside = true;
+            continue;
+        }
+        if !inside || line.starts_with("| ---") {
+            continue;
+        }
+        if !line.starts_with('|') {
+            break;
+        }
+        let cells: Vec<String> = line
+            .trim_matches('|')
+            .split('|')
+            .map(|cell| cell.trim().to_owned())
+            .collect();
+        let row = <[String; 7]>::try_from(cells.clone());
+        assert!(
+            row.is_ok(),
+            "a row of the decision table has seven cells: {cells:?}"
+        );
+        if let Ok(row) = row {
+            rows.push(row);
+        }
+    }
+    rows
+}
+
+/// The first row of `table` whose cells all match `words`, by its place, and the verdict it gives.
+fn first_row<'t>(table: &'t [[String; 7]], words: [&str; 6]) -> Option<(usize, &'t str)> {
+    table.iter().enumerate().find_map(|(at, row)| {
+        let matched = row
+            .iter()
+            .zip(words)
+            .all(|(cell, word)| cell == "*" || cell.split(", ").any(|one| one == word));
+        matched.then(|| (at, row[6].as_str()))
+    })
+}
+
+/// A summary as the page names it.
+const fn summary_word(summary: Option<Summary>) -> &'static str {
+    match summary {
+        None => "none",
+        Some(said) if said.passed == 0 && said.failed == 0 => "ran-nothing",
+        Some(said) if said.ok && said.failed == 0 => "clean",
+        Some(_) => "failing",
+    }
+}
+
+/// Every way a process can stop that the decision tells apart, as the page names it and its exit.
+fn every_stop() -> Vec<(&'static str, &'static str, Stopped)> {
+    let mut stops = vec![
+        (
+            "not-started",
+            "*",
+            Stopped::NotStarted {
+                cause: StartFailure::Missing,
+            },
+        ),
+        ("wait-failed", "*", Stopped::WaitFailed),
+        (
+            "step-protocol-failed",
+            "*",
+            Stopped::StepProtocolFailed {
+                reason: StepProtocolFailure::Publication {},
+            },
+        ),
+        (
+            "step-limit-reached",
+            "*",
+            Stopped::StepLimitReached {
+                notice: step_notice(),
+            },
+        ),
+        ("timed-out", "*", Stopped::TimedOut { raised: None }),
+        ("timed-out", "*", Stopped::TimedOut { raised: Some(3) }),
+        ("stalled", "*", Stopped::Stalled { raised: None }),
+        ("cancelled", "*", Stopped::Cancelled { started: true }),
+        ("cancelled", "*", Stopped::Cancelled { started: false }),
+        ("answered", "*", Stopped::Answered),
+    ];
+    let mut exits = vec![
+        ("code-zero", ProcessExit::Code(0)),
+        ("code-other", ProcessExit::Code(1)),
+        ("code-other", ProcessExit::Code(101)),
+        ("unknown", ProcessExit::Unknown),
+        ("outside-signal", ProcessExit::Signal(9)),
+        ("outside-signal", ProcessExit::Signal(15)),
+    ];
+    if cfg!(unix) {
+        exits.push(("self-signal", ProcessExit::Signal(6)));
+        exits.push(("self-signal", ProcessExit::Signal(11)));
+    }
+    for (word, exit) in exits {
+        stops.push(("exited", word, Stopped::Exited { exit }));
+    }
+    stops
+}
+
+/// A summary line with these counts and nothing ignored or measured.
+const fn summary_line(ok: bool, passed: u32, failed: u32, filtered_out: u32) -> Summary {
+    Summary {
+        ok,
+        passed,
+        failed,
+        ignored: 0,
+        measured: 0,
+        filtered_out,
+    }
+}
+
+/// Every summary line the decision tells apart, twice over where two lines read the same.
+const fn every_summary() -> [Option<Summary>; 7] {
+    [
+        None,
+        Some(green()),
+        Some(summary_line(true, 0, 0, 3)),
+        Some(summary_line(false, 0, 0, 0)),
+        Some(summary_line(false, 1, 1, 0)),
+        Some(summary_line(true, 1, 1, 0)),
+        Some(summary_line(false, 2, 0, 0)),
+    ]
+}
+
+/// One combination of everything the decision reads: the page's words for it, and the engine's own arguments.
+struct Reading {
+    words: [&'static str; 6],
+    observed: Observation,
+    summary: Option<Summary>,
+    harness: bool,
+    named: bool,
+}
+
+/// Every combination of everything the decision reads, a harness that is not libtest naming nothing and printing no summary.
+fn every_reading() -> Vec<Reading> {
+    let mut readings = Vec::new();
+    for (stop, exit, stopped) in every_stop() {
+        for stale in [false, true] {
+            for (harness, named) in [(false, false), (true, false), (true, true)] {
+                let summaries: &[Option<Summary>] =
+                    if harness { &every_summary() } else { &[None] };
+                for summary in summaries {
+                    readings.push(Reading {
+                        words: [
+                            stop,
+                            exit,
+                            if harness { "yes" } else { "no" },
+                            if named { "yes" } else { "no" },
+                            summary_word(*summary),
+                            if stale { "yes" } else { "no" },
+                        ],
+                        observed: Observation {
+                            stopped: stopped.clone(),
+                            stale_catalog: stale,
+                        },
+                        summary: *summary,
+                        harness,
+                        named,
+                    });
+                }
+            }
+        }
+    }
+    readings
+}
+
+#[test]
+fn the_decision_is_the_page_s_table_for_everything_it_reads() {
+    let table = verdict_table();
+    assert!(!table.is_empty(), "docs/engine/verdicts.md holds a table");
+    let failed = ["noticed_it".to_owned()];
+    let mut used = vec![false; table.len()];
+    let mut differ = Vec::new();
+    let mut undecided = Vec::new();
+    for reading in every_reading() {
+        let heard: &[String] = if reading.named { &failed } else { &[] };
+        let engine =
+            outcome_of(&reading.observed, reading.summary, (reading.harness, heard)).name();
+        let Some((at, verdict)) = first_row(&table, reading.words) else {
+            undecided.push(reading.words.join(" | "));
+            continue;
+        };
+        if let Some(one) = used.get_mut(at) {
+            *one = true;
+        }
+        if verdict != engine {
+            differ.push(format!(
+                "{}: the page says {verdict}, the engine {engine}",
+                reading.words.join(" | ")
+            ));
+        }
+    }
+    differ.sort();
+    differ.dedup();
+    assert!(
+        undecided.is_empty(),
+        "no row of the page decides these: {undecided:#?}"
+    );
+    assert!(
+        differ.is_empty(),
+        "the engine decides otherwise than the page: {differ:#?}"
+    );
+    let dead: Vec<&[String; 7]> = table
+        .iter()
+        .zip(&used)
+        .filter(|(_, used)| !**used)
+        .map(|(row, _)| row)
+        .collect();
+    assert!(
+        dead.is_empty(),
+        "a row no combination reaches says nothing: {dead:#?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn the_signals_a_process_raises_by_itself_are_the_page_s() {
+    let marked = VERDICTS
+        .split("<!-- self-raised-signals -->")
+        .nth(1)
+        .and_then(|rest| rest.split("<!-- /self-raised-signals -->").next());
+    assert!(
+        marked.is_some(),
+        "the page marks its list of self-raised signals"
+    );
+    let listed: Vec<&str> = marked
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("- `"))
+        .filter_map(|line| line.strip_suffix('`'))
+        .collect();
+    let known = [
+        ("SIGABRT", rustix::process::Signal::ABORT),
+        ("SIGSEGV", rustix::process::Signal::SEGV),
+        ("SIGBUS", rustix::process::Signal::BUS),
+        ("SIGILL", rustix::process::Signal::ILL),
+        ("SIGFPE", rustix::process::Signal::FPE),
+        ("SIGTRAP", rustix::process::Signal::TRAP),
+        ("SIGSYS", rustix::process::Signal::SYS),
+    ];
+    let mut expected = Vec::new();
+    for name in &listed {
+        let number = known.iter().find(|(said, _)| said == name);
+        assert!(
+            number.is_some(),
+            "{name} is a signal this test knows the number of"
+        );
+        if let Some((_, signal)) = number {
+            expected.push(signal.as_raw());
+        }
+    }
+    expected.sort_unstable();
+    let raised: Vec<i32> = (1..=64)
+        .filter(|signal| ProcessExit::Signal(*signal).raised_by_itself())
+        .collect();
+    assert_eq!(
+        raised, expected,
+        "the engine's self-raised signals are the page's: {listed:?}"
     );
 }
