@@ -97,7 +97,7 @@ fn document(survivors: u32) -> RunDocument {
     let decided = survivors.saturating_add(1);
     RunDocument {
         document_type: "rust-mutants/run-report".to_owned(),
-        schema_version: 2,
+        schema_version: rust_mutants_cli::report::run::SCHEMA_VERSION,
         tool_version: "0.1.0".to_owned(),
         run: RunMeta {
             id: "20260905T120000000Z".to_owned(),
