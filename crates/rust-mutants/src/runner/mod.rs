@@ -1763,6 +1763,33 @@ mod tests {
     };
     use super::{MonitorState, classify_monitor, inspect_monitor};
 
+    #[cfg(unix)]
+    #[test]
+    fn a_gentle_stop_of_a_group_whose_leader_has_already_exited_is_no_failure() {
+        let mut command = std::process::Command::new("true");
+        let mut supervisor = super::sys::Supervisor::new().expect("a supervisor");
+        supervisor.configure(&mut command);
+        let mut child = super::SupervisedChild::launch(&mut command, super::Reaping::Normal)
+            .expect("true starts");
+        supervisor
+            .adopt(child.handle())
+            .expect("the group is adopted");
+        let started = std::time::Instant::now();
+        while !child.exit_observed().expect("the leader can be observed") {
+            assert!(started.elapsed() < Duration::from_secs(10), "true exits");
+            std::thread::yield_now();
+        }
+        let stopped = supervisor.terminate_gently();
+        let reaped = child.reap_observed();
+        assert!(
+            stopped.is_ok(),
+            "a test process that printed its failure and exited before the stop arrived leaves a \
+             group of one process that has ended and is not reaped yet, and macOS refuses a \
+             signal to it with EPERM; read as a failure, it turned a kill the harness had \
+             already named into an errored mutant: {stopped:?} {reaped:?}"
+        );
+    }
+
     #[test]
     fn monitor_inspection_distinguishes_absence_regular_files_and_invalid_types() {
         let directory = tempfile::tempdir();
