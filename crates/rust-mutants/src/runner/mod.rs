@@ -1838,15 +1838,14 @@ mod tests {
     use njutest_devkit::result::ResultState::Refused;
     use njutest_devkit::result::{ResultState::Returned, result_state};
 
-    #[cfg(unix)]
     use std::time::Duration;
 
     #[cfg(unix)]
     use super::{
-        Bound, Cancel, ProcessExit, Progress, RunResult, SIDE_CHANNEL_LIMIT, Spec, Termination,
+        Bound, Cancel, ProcessExit, RunResult, SIDE_CHANNEL_LIMIT, Spec, Termination,
         read_side_channel, run,
     };
-    use super::{MonitorState, classify_monitor, inspect_monitor};
+    use super::{MonitorState, Progress, classify_monitor, inspect_monitor};
 
     #[test]
     fn monitor_inspection_distinguishes_absence_regular_files_and_invalid_types() {
