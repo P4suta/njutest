@@ -15,7 +15,7 @@ use super::{
 };
 
 /// Reads a nullable value while leaving absence for serde to reject at the enclosing struct boundary.
-fn required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+pub(super) fn required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de>,
