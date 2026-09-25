@@ -704,7 +704,14 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
             answered: spec.stop_at_first_failure.then_some(answered.as_ref()),
         },
     );
-    let completed = complete(started, running, outcome);
+    let completed = complete(
+        started,
+        running,
+        (
+            outcome,
+            spec.stop_at_first_failure.then_some(answered.as_ref()),
+        ),
+    );
     if let Some(leaders) = &spec.leaders {
         leaders.finished(leader);
     }
@@ -724,7 +731,11 @@ fn deadline_of(
     }
 }
 
-fn complete(started: Instant, running: Started, outcome: Exit) -> RunResult {
+fn complete(
+    started: Instant,
+    running: Started,
+    (outcome, answered): (Exit, Option<&AtomicBool>),
+) -> RunResult {
     let Started {
         mut supervisor,
         merged,
@@ -739,7 +750,9 @@ fn complete(started: Instant, running: Started, outcome: Exit) -> RunResult {
     let structured_finish = head.map(JoinedReader::finish);
     child.finish();
     let duration = started.elapsed();
+    let named_a_failure = answered.is_some_and(|answered| answered.load(Ordering::SeqCst));
     let process_termination = match outcome {
+        Exit::Exited if named_a_failure => Termination::Answered,
         Exit::TimedOut => Termination::TimedOut,
         Exit::Stalled => Termination::Stalled,
         Exit::StoppedByMonitor => Termination::StoppedByMonitor,
@@ -1868,6 +1881,31 @@ mod tests {
             "refused",
         )));
         assert!(matches!(failure, MonitorState::InspectFailed(_)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_process_that_named_its_failure_is_answered_whichever_ending_arrives_first() {
+        let mut endings = Vec::new();
+        for _ in 0..30 {
+            let mut spec = Spec::new(
+                [
+                    "sh".to_owned(),
+                    "-c".to_owned(),
+                    "printf 'test planted ... FAILED\\n'; exit 101".to_owned(),
+                ],
+                Bound::After(Duration::from_secs(30)),
+            );
+            spec.stop_at_first_failure = true;
+            let ended = run(&spec, &Cancel::new());
+            endings.push(format!("{:?}", ended.termination));
+        }
+        assert!(
+            endings.iter().all(|ending| ending == "Answered"),
+            "a run that asked to end at the first failure has its answer once that failure is \
+             read, and whether the process then exited on its own or was stopped is a race whose \
+             winner a report recorded as an exit code: {endings:?}"
+        );
     }
 
     #[cfg(unix)]
