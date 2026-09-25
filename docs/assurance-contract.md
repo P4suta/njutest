@@ -525,6 +525,14 @@ It reads the latest run's report once, and again only when the store points at a
 `INSUFFICIENT` means execution completed but a survivor, flaky or inconclusive outcome, unpersisted fuzz kill, excluded boundary, unsupported Miri operation, or other evidence gap remains.
 `ERROR` covers incomplete accounting and toolchain, provider, filesystem, protocol, or workspace failures.
 
+Whatever a run holds, exactly one verdict is the one it supports:
+`DEFECT` exactly when a finding is a defect, whole or in part;
+otherwise `INSUFFICIENT` when anything was found, or a build observed nothing, asked nothing, or left a row unanswered, or a part's reach moved or a knob shook before the merge settled it;
+otherwise `PARTIAL` for one part of a divided catalog, and the assurance its scope names for the whole.
+A written report is never `ERROR`, which is what a run that came to no report says.
+The runner holds every verdict it writes to this before writing it, for each part, for a shard, and for the whole, and refuses to write one it does not support;
+`cargo xtask proofaudit` holds a recording's verdict to it again without asking the runner.
+
 A limitation is always structured with a stable code.
 Excludes, estimates,
 unavailable metadata, and skipped later phases must never be hidden behind an assured-looking percentage.

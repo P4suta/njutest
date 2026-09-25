@@ -11,7 +11,7 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
-use njutest::report::audit::{Violation, validate_for_persistence};
+use njutest::report::audit::{Grounds, Violation, held, validate_for_persistence};
 use njutest::report::{
     BuildReport, Finding, FindingKind, Git, Limitation, MutantAccounting, MutantRecord,
     ObserverAccounting, Outcome, Position, Report, RunKind, SCHEMA, SeamRecord, TargetAccounting,
@@ -1416,6 +1416,61 @@ fn a_survivor_this_run_established_was_asked_of_every_target_its_route_kept_and_
             refused.contains("survived in this run")
                 && refused.contains("every target that could notice ran it and did not"),
             "{why}, and the report is refused for saying two things about one mutation: {refused}"
+        );
+    }
+}
+
+/// Every combination of the facts a verdict rests on, each concluding `verdict`.
+fn every_ground(verdict: Verdict) -> Vec<Grounds> {
+    let mut all = Vec::new();
+    for run_kind in RunKind::ALL {
+        for shard in [None, Some("1/2".to_owned())] {
+            for (defects, findings) in [(0, 0), (0, 1), (1, 1)] {
+                for bits in 0_u8..16 {
+                    all.push(Grounds {
+                        verdict,
+                        run_kind,
+                        shard: shard.clone(),
+                        defects,
+                        findings,
+                        observed: bits & 1 != 0,
+                        asked: bits & 2 != 0,
+                        unanswered: if bits & 4 == 0 {
+                            Vec::new()
+                        } else {
+                            vec![
+                                "mutation a ended as survived; that row is not an answer"
+                                    .to_owned(),
+                            ]
+                        },
+                        unsettled: bits & 8 != 0,
+                    });
+                }
+            }
+        }
+    }
+    all
+}
+
+#[test]
+fn whatever_a_run_holds_exactly_one_verdict_is_held_free_of_violations() {
+    for grounds in every_ground(Verdict::Error) {
+        let free: Vec<Verdict> = Verdict::ALL
+            .into_iter()
+            .filter(|verdict| {
+                held(&Grounds {
+                    verdict: *verdict,
+                    ..grounds.clone()
+                })
+                .is_empty()
+            })
+            .collect();
+        assert_eq!(
+            free.len(),
+            1,
+            "{grounds:?} leaves {free:?} free of violations, and a check that lets two verdicts \
+             through, or none, cannot tell a report that says what its run established from one \
+             that says something else"
         );
     }
 }

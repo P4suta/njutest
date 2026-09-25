@@ -452,6 +452,134 @@ fn a_defect_that_names_nothing_a_reader_can_act_on_is_a_violation() {
 }
 
 #[test]
+fn a_run_that_found_a_defect_and_concludes_less_than_defect_is_a_violation() {
+    for (weaker, scope) in [
+        ("INSUFFICIENT", serde_json::json!({})),
+        ("PARTIAL", serde_json::json!({ "shard": "1/2" })),
+    ] {
+        let document = with(serde_json::json!({
+            "verdict": weaker,
+            "scope": scope,
+            "findings": [{ "kind": "failing-test", "subject": TARGET, "detail": "d", "position": null }]
+        }));
+        assert!(
+            violations(&document).contains(&"verdict".to_owned()),
+            "{weaker}: a run that found a defect says DEFECT, whole or in part"
+        );
+    }
+}
+
+#[test]
+fn a_part_that_carries_a_finding_is_a_violation() {
+    let document = with(serde_json::json!({
+        "verdict": "PARTIAL",
+        "scope": { "shard": "1/2" }
+    }));
+    assert!(
+        violations(&document).contains(&"verdict".to_owned()),
+        "a finding in a part is a finding, so a part that carries one is INSUFFICIENT"
+    );
+}
+
+#[test]
+fn an_assurance_from_one_part_is_a_violation() {
+    let mut document = assured();
+    merge(
+        &mut document,
+        serde_json::json!({ "scope": { "shard": "1/2" } }),
+    );
+    assert!(
+        violations(&document).contains(&"verdict".to_owned()),
+        "a part assures nothing on its own"
+    );
+}
+
+#[test]
+fn a_part_of_nothing_is_a_violation() {
+    let mut document = assured();
+    merge(&mut document, serde_json::json!({ "verdict": "PARTIAL" }));
+    assert!(
+        violations(&document).contains(&"verdict".to_owned()),
+        "PARTIAL is what a part concludes, and a run that records no shard is not one"
+    );
+}
+
+#[test]
+fn an_insufficient_run_that_established_everything_says_less_than_it_found() {
+    let mut document = assured();
+    merge(
+        &mut document,
+        serde_json::json!({ "verdict": "INSUFFICIENT" }),
+    );
+    assert!(
+        violations(&document).contains(&"verdict".to_owned()),
+        "a run that found nothing and answered every mutation it asked is assured, and saying \
+         INSUFFICIENT sends its reader looking for a gap that is not there"
+    );
+    merge(
+        &mut document,
+        serde_json::json!({ "scope": { "shard": "1/2" } }),
+    );
+    assert!(
+        violations(&document).contains(&"verdict".to_owned()),
+        "and one part of it is PARTIAL"
+    );
+}
+
+#[test]
+fn every_verdict_the_trace_can_carry_is_one_the_audit_holds_to_a_rule() {
+    let schema = xtask::strictjson::from_str(
+        &std::fs::read_to_string(gates::workspace_root().join("schema/njutest-trace-v1.json"))
+            .expect("the trace schema"),
+    )
+    .expect("the schema is JSON");
+    let mut published: Vec<String> = Vec::new();
+    verdict_enums(&schema, &mut published);
+    published.sort();
+    published.dedup();
+    let mut held: Vec<String> = xtask::proofaudit::Concluded::ALL
+        .iter()
+        .map(|verdict| verdict.name().to_owned())
+        .collect();
+    held.sort();
+    assert_eq!(
+        published, held,
+        "a verdict the trace can carry and the audit has no rule for passes unexamined"
+    );
+}
+
+fn verdict_enums(value: &serde_json::Value, found: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(names) = map
+                .get("verdict")
+                .and_then(|verdict| verdict.get("enum"))
+                .and_then(serde_json::Value::as_array)
+            {
+                found.extend(
+                    names
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_owned),
+                );
+            }
+            for child in map.values() {
+                verdict_enums(child, found);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for child in items {
+                verdict_enums(child, found);
+            }
+        }
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => {}
+    }
+}
+
+#[test]
 fn a_kill_that_names_no_target_at_all_is_refused_before_any_layer_reads_it() {
     assert!(
         off_schema(&with(
