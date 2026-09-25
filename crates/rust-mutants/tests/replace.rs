@@ -98,6 +98,20 @@ fn record(round: u64) -> rust_mutants::outcomes::Record {
             .map(|one| format!("cases::round_{round}::test_{one:04}"))
             .collect(),
         run_id: format!("run-{round}"),
+        keyed: keyed(),
+    }
+}
+
+/// What a sample record is keyed on beyond its mutant.
+fn keyed() -> rust_mutants::outcomes::Keyed {
+    rust_mutants::outcomes::Keyed {
+        closure: "c".repeat(64),
+        manifests: "m".repeat(64),
+        toolchain: "cargo 1.98.0 rustc 1.98.0 aarch64-apple-darwin".to_owned(),
+        args: Vec::new(),
+        timeout: "auto".to_owned(),
+        steps: 0,
+        build: Vec::new(),
     }
 }
 
@@ -107,18 +121,17 @@ fn an_answer_a_reader_takes_while_a_run_replaces_it_is_one_whole_answer() {
     assert!(dir.is_ok(), "tempdir: {dir:?}");
     let Ok(dir) = dir else { return };
     let store = rust_mutants::outcomes::Store::new(dir.path());
-    let key = digest(b'b');
+    let key = record(0).key();
     let mutant = digest(b'a');
-    let stored = store.put(&key, &record(0));
+    let stored = store.put(&record(0));
     assert!(stored.is_ok(), "initial record: {stored:?}");
     let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let writing = {
         let store = store.clone();
         let done = std::sync::Arc::clone(&done);
-        let key = key.clone();
         njutest_devkit::thread::JoinedThread::launch(move || {
             for round in 1..=ROUNDS {
-                let stored = store.put(&key, &record(round));
+                let stored = store.put(&record(round));
                 assert!(stored.is_ok(), "replace record: {stored:?}");
                 if stored.is_err() {
                     return;

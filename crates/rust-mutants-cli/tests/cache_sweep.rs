@@ -350,21 +350,26 @@ fn emptying_what_earlier_runs_established_says_how_much_was_in_it() {
     let fixture = Fixture::copy("fixture-simple");
     let environment = environment(&fixture);
     let store = rust_mutants::outcomes::Store::new(fixture.cache());
-    let key = rust_mutants::id::HexDigest::try_from("a".repeat(64)).expect("canonical key");
     let mutant = rust_mutants::id::HexDigest::try_from("b".repeat(64)).expect("canonical mutant");
     store
-        .put(
-            &key,
-            &rust_mutants::outcomes::Record {
-                schema: rust_mutants::outcomes::SCHEMA.to_owned(),
-                mutant,
-                outcome: rust_mutants::outcomes::CacheOutcome::Killed,
-                target: "fixture-simple/lib".to_owned(),
-                tests_run: Some(3),
-                failed_tests: vec!["adds".to_owned()],
-                run_id: "20260101T000000000Z".to_owned(),
+        .put(&rust_mutants::outcomes::Record {
+            schema: rust_mutants::outcomes::SCHEMA.to_owned(),
+            mutant,
+            outcome: rust_mutants::outcomes::CacheOutcome::Killed,
+            target: "fixture-simple/lib".to_owned(),
+            tests_run: Some(3),
+            failed_tests: vec!["adds".to_owned()],
+            run_id: "20260101T000000000Z".to_owned(),
+            keyed: rust_mutants::outcomes::Keyed {
+                closure: "c".repeat(64),
+                manifests: "m".repeat(64),
+                toolchain: "cargo 1.98.0 rustc 1.98.0 aarch64-apple-darwin".to_owned(),
+                args: Vec::new(),
+                timeout: "auto".to_owned(),
+                steps: 0,
+                build: Vec::new(),
             },
-        )
+        })
         .expect("the cache record is stored");
 
     let listed = asked(&environment, &["cache"]);

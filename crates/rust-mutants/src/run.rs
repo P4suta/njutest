@@ -1583,18 +1583,16 @@ fn keep(mutant: &Mutant, options: &Options<'_>, judged: &Judged) -> Result<(), E
         return Ok(());
     }
     let mutant_id = crate::id::HexDigest::try_from(mutant.id.as_str())?;
-    reusing.store.put(
-        &reusing.keyed.key(&mutant_id),
-        &crate::outcomes::Record {
-            schema: crate::outcomes::SCHEMA.to_owned(),
-            mutant: mutant_id,
-            outcome,
-            target: judged.target.clone(),
-            tests_run: judged.tests_run,
-            failed_tests: judged.failed_tests.clone(),
-            run_id: reusing.run_id.to_owned(),
-        },
-    )?;
+    reusing.store.put(&crate::outcomes::Record {
+        schema: crate::outcomes::SCHEMA.to_owned(),
+        mutant: mutant_id,
+        outcome,
+        target: judged.target.clone(),
+        tests_run: judged.tests_run,
+        failed_tests: judged.failed_tests.clone(),
+        run_id: reusing.run_id.to_owned(),
+        keyed: reusing.keyed.clone(),
+    })?;
     Ok(())
 }
 

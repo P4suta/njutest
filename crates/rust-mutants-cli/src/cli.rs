@@ -324,6 +324,12 @@ pub enum Command {
         /// Read and write the store under this directory rather than the user's cache directory.
         #[arg(long, value_name = "DIR")]
         cache_dir: Option<PathBuf>,
+        /// Write every record of the store to this file, each carrying what it was keyed on, for another checkout or a CI job to import.
+        #[arg(long, value_name = "FILE", conflicts_with_all = ["gc", "clear_outcomes", "import"])]
+        export: Option<PathBuf>,
+        /// File every record of an exported store under the key its own inputs name, refusing one keyed under another release's versions.
+        #[arg(long, value_name = "FILE", conflicts_with_all = ["gc", "clear_outcomes"])]
+        import: Option<PathBuf>,
     },
 }
 
