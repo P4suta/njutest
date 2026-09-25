@@ -1154,7 +1154,6 @@ fn a_file_is_drawn_as_the_run_measured_it_with_each_changed_line_marked_until_it
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn a_run_is_specified_item_by_item_and_a_subject_it_never_changed_is_refused() {
     let it = verified();
