@@ -2275,3 +2275,56 @@ fn hide_an_entered_item(store: &Path, mutated: (u64, &str), hidden: u64) -> usiz
     }
     planted
 }
+
+#[test]
+fn a_probe_in_a_crate_no_witness_check_compiled_is_never_vouched_for() {
+    let fixture = Fixture::copy("fixture-witness-downstream");
+    let recording = fixture.temp().join("recording");
+    let trace = format!("--trace={}", recording.display());
+    let output = against(
+        &fixture,
+        &["run", "--offline", "--locked", "--tier", "all", &trace],
+    );
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let report = stored(&fixture);
+    let refused: Vec<&serde_json::Value> = report["rejections"]
+        .as_array()
+        .expect("the report lists what the compiler refused")
+        .iter()
+        .collect();
+    assert!(
+        refused.is_empty(),
+        "both returned types have a `Default`, so both replacements compile; a probe the \
+         compiler cannot take costs the probe and never the mutant: {refused:#?}"
+    );
+    let text = std::fs::read_to_string(recording.join("trace.jsonl")).expect("the recording");
+    let events: Vec<serde_json::Value> = text
+        .lines()
+        .map(|line| {
+            njutest_devkit::strictjson::decode_str::<serde_json::Value>(line)
+                .expect("a recorded line is JSON")
+        })
+        .collect();
+    let bisections = events
+        .iter()
+        .filter(|event| event["payload"]["type"] == "bisect")
+        .count();
+    assert_eq!(
+        bisections, 0,
+        "the check that stopped at the upstream crate never compiled the downstream one, so it \
+         vouched for nothing there, and validation had no error it could not name a mutant for"
+    );
+    let witness = events
+        .iter()
+        .filter(|event| event["payload"]["type"] == "note")
+        .filter(|event| event["payload"]["note"]["kind"] == "witness")
+        .filter_map(|event| event["payload"]["note"]["detail"].as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        witness
+            .iter()
+            .any(|said| said.contains("2 values probed of which 0 vouched for")),
+        "neither probe is vouched for, the one the first check refused and the one only a later \
+         check reached: {witness:#?}"
+    );
+}
