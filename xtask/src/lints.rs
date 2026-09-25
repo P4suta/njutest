@@ -167,6 +167,11 @@ const WILDCARD_OVER_OUR_OWN_REMEDY: &str = "a catch-all over a set this reposito
 const HAND_PAINTED_REMEDY: &str = "ask for what the thing is rather than for a colour: \
     `Style::Gap`, `Style::Command`, or `Style::Limitation`. One module turns a style into bytes; \
     everything else names a meaning";
+const LONE_TEMPORARY_VARIABLE_REMEDY: &str = "name the directory in every variable a platform \
+    reads it from: `.envs(njutest_devkit::paths::temporary_directory(dir))`. \
+    `std::env::temp_dir` reads `TMP` and `TEMP` on Windows and `TMPDIR` elsewhere, so a child \
+    given one of them keeps writing into the parent's directory on the other platform, and what \
+    it leaves there is left where nothing owns it";
 const OPEN_AND_CLOSED_REMEDY: &str = "drop `#[non_exhaustive]`. A type that publishes its whole \
     list has promised to break callers when it grows, while the attribute promises not to. It \
     also disables `clippy::match_wildcard_for_single_variants`. Keep it only on an error whose \
@@ -249,6 +254,7 @@ declare_kinds! {
     TriStateBool => "tri-state-bool",
     OpenAndClosed => "open-and-closed",
     ForeignRemainder => "foreign-remainder",
+    LoneTemporaryVariable => "lone-temporary-variable",
 }
 
 impl Kind {
@@ -298,6 +304,7 @@ impl Kind {
             Self::TriStateBool => TRI_STATE_BOOL_REMEDY,
             Self::OpenAndClosed => OPEN_AND_CLOSED_REMEDY,
             Self::ForeignRemainder => FOREIGN_REMAINDER_REMEDY,
+            Self::LoneTemporaryVariable => LONE_TEMPORARY_VARIABLE_REMEDY,
         }
     }
 }
@@ -4613,6 +4620,15 @@ fn owned_spawn_boundaries(parsed: &syn::File) -> BTreeSet<SourcePoint> {
     allowed
 }
 
+/// Whether `argument` is a literal naming one of the variables a temporary directory is read from.
+fn names_a_temporary_variable(argument: &syn::Expr) -> bool {
+    matches!(
+        argument,
+        syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(name), .. })
+            if super::TEMPORARY_VARIABLES.contains(&name.value().as_str())
+    )
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum SourcePolicy {
     Reclaimer,
@@ -5323,6 +5339,9 @@ impl Visit<'_> for Scan {
         }
         if wrapping_counter_method(&call.method) {
             self.note(Kind::WrappingCounter, call.method.span());
+        }
+        if call.method == "env" && call.args.first().is_some_and(names_a_temporary_variable) {
+            self.note(Kind::LoneTemporaryVariable, call.method.span());
         }
         if call.method == "from_utf8_lossy" || call.method == "to_string_lossy" {
             self.note(Kind::LossyText, call.method.span());

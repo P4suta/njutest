@@ -101,6 +101,15 @@ fn beside(root: &Path, name: &str) -> std::io::Result<PathBuf> {
     Ok(dir)
 }
 
+/// Every variable a platform's standard library or a POSIX tool reads its temporary directory from.
+pub const TEMPORARY_VARIABLES: [&str; 3] = ["TMPDIR", "TMP", "TEMP"];
+
+/// `dir` as the temporary directory under each of [`TEMPORARY_VARIABLES`], for [`std::process::Command::envs`].
+#[must_use]
+pub fn temporary_directory(dir: &Path) -> [(&'static str, &Path); 3] {
+    TEMPORARY_VARIABLES.map(|name| (name, dir))
+}
+
 /// A project tree a test owns, rooted inside a temporary directory of its own so what a run puts beside the tree goes with it.
 #[derive(Debug)]
 pub struct Project {

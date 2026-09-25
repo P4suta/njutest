@@ -1127,7 +1127,7 @@ fn whole(
     let options = run::Options {
         quiet: &run::Quiet::default(),
         equivalence: asking.as_ref(),
-        jobs: settings.config.execution.jobs,
+        jobs: settings.config.execution.jobs_under(&environment.ci),
         expectations: &expectations,
         args,
         shard,

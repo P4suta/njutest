@@ -11,7 +11,7 @@ fn what_the_engine_plants_passes_every_lint_a_project_may_deny() {
     let fixture = Fixture::copy("fixture-strict-lints");
     let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command.env("NO_COLOR", "1");
-    command.env("TMPDIR", fixture.temp());
+    command.envs(njutest_devkit::paths::temporary_directory(fixture.temp()));
     command.env("XDG_CACHE_HOME", fixture.cache());
     command.arg("run");
     command.args(["--root", njutest_devkit::paths::utf8(fixture.root())]);

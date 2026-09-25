@@ -285,7 +285,7 @@ fn a_process_with_an_incomplete_touch_mode_is_refused_before_anything_runs() {
             njutest_devkit::paths::utf8(fixture.root()),
         ])
         .env("NO_COLOR", "1")
-        .env("TMPDIR", fixture.temp())
+        .envs(njutest_devkit::paths::temporary_directory(fixture.temp()))
         .env("XDG_CACHE_HOME", fixture.cache())
         .env_remove("RUST_MUTANTS_ACTIVE")
         .env_remove("RUST_MUTANTS_CATALOG")
@@ -1547,8 +1547,9 @@ fn a_run_says_how_wide_it_measured_in_its_report_and_its_lines() {
     let fixture = Fixture::copy("fixture-simple");
     let output = against(&fixture, &["run", "--offline", "--locked", "--jobs", "all"]);
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
-        "{}",
+        answered(&output),
+        "a width is recorded by a run that answered, whatever it found: {:?} {}",
+        output.status,
         stderr(&output)
     );
     let report = stored(&fixture);
@@ -1566,6 +1567,61 @@ fn a_run_says_how_wide_it_measured_in_its_report_and_its_lines() {
         stdout(&lines).contains(&format!("jobs      {used} (all)\n")),
         "a CI log says how wide the run measured without anybody opening the report: {}",
         stdout(&lines)
+    );
+}
+
+/// Whether a run ended with a verdict, whichever: every core of a machine another test is also using can leave a mutant waited, which says nothing about how wide the run was.
+fn answered(output: &Output) -> bool {
+    match output.status.code().and_then(rust_mutants::run::Exit::read) {
+        Some(
+            rust_mutants::run::Exit::Detected
+            | rust_mutants::run::Exit::Found
+            | rust_mutants::run::Exit::Unestablished,
+        ) => true,
+        Some(rust_mutants::run::Exit::Interrupted | rust_mutants::run::Exit::Terminated) | None => {
+            false
+        }
+    }
+}
+
+#[test]
+fn a_run_under_ci_measures_on_every_core_unless_somebody_said_otherwise() {
+    let fixture = Fixture::copy("fixture-simple");
+    let root = njutest_devkit::paths::utf8(fixture.root());
+    let asked_for = |ci: rust_mutants_cli::CiHost, extra: &[&str]| {
+        let environment = Environment {
+            ci,
+            ..environment(&fixture)
+        };
+        let mut args = vec!["run", "--offline", "--locked", "--root", root];
+        args.extend_from_slice(extra);
+        let output = asked(&environment, &args);
+        assert!(
+            answered(&output),
+            "a width is recorded by a run that answered, whatever it found: {:?} {}",
+            output.status,
+            stderr(&output)
+        );
+        stored(&fixture)
+            .pointer("/run/jobs/asked")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    };
+    assert_eq!(
+        asked_for(rust_mutants_cli::CiHost::GitLab, &[]).as_deref(),
+        Some("all"),
+        "a CI runner is a machine the job has to itself, so a run nobody sized uses every core \
+         of it rather than the four a shared workstation is held to"
+    );
+    assert_eq!(
+        asked_for(rust_mutants_cli::CiHost::None, &[]).as_deref(),
+        Some("auto"),
+        "and on a workstation it stays at what the machine can spare"
+    );
+    assert_eq!(
+        asked_for(rust_mutants_cli::CiHost::GitLab, &["--jobs", "auto"]).as_deref(),
+        Some("auto"),
+        "and a width somebody asked for is the width, under CI or not"
     );
 }
 

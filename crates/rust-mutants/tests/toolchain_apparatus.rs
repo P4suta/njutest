@@ -101,3 +101,52 @@ fn a_message_about_a_changed_apparatus_names_a_few_changes_and_counts_the_rest()
         "and a few changes are named whole"
     );
 }
+
+#[test]
+fn several_jobs_name_every_mutant_running_and_leave_the_callers_cancel_alone() {
+    let fixture = Fixture::copy("fixture-apparatus");
+    let session = prepare(&fixture);
+    let emptying: Vec<String> = session
+        .catalog()
+        .mutants()
+        .iter()
+        .filter(|mutant| {
+            ["negate-condition", "condition-to-true", "string-to-empty"]
+                .contains(&mutant.candidate.rule.name)
+        })
+        .map(|mutant| mutant.display_id.to_string())
+        .collect();
+    let cancel = Cancel::new();
+    let answered = rust_mutants::run::run(
+        &session,
+        &rust_mutants::run::Options {
+            expectations: &[],
+            quiet: &Quiet::default(),
+            equivalence: None,
+            jobs: rust_mutants::run::Jobs::count(4).expect("a positive count"),
+            args: &[],
+            shard: None,
+            outcomes: None,
+            filter: None,
+            fail_fast: false,
+        },
+        &cancel,
+        &mut Silent,
+    );
+    let said = match &answered {
+        Ok(_run) => "the run completed".to_owned(),
+        Err(error) => error.to_string(),
+    };
+    assert!(
+        !cancel.is_cancelled(),
+        "a run that stops its own workers after a failure has not been interrupted, and raising \
+         the caller's cancel made the command exit 130 as though somebody had: {said}"
+    );
+    assert!(
+        said.contains("RM5011") && emptying.iter().any(|mutant| said.contains(mutant.as_str())),
+        "with several jobs the mutant that noticed the change may not be the one that made it, so \
+         the run names every mutant that was running then, which includes the one that did: \
+         {said}"
+    );
+    session.close().expect("close");
+}
