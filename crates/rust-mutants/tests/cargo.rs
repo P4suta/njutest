@@ -548,3 +548,16 @@ fn a_run_told_not_to_touch_the_network_tells_every_command_it_starts() {
          the one that says so"
     );
 }
+
+#[test]
+fn a_dep_info_names_the_environment_it_read_set_or_not() {
+    let text = "target/debug/deps/lib.rmeta: src/lib.rs src/answer.txt\n\nsrc/lib.rs:\nsrc/answer.txt:\n\n# env-dep:OUT_DIR=/tmp/out\n# env-dep:NEVER_SET\n";
+    assert_eq!(
+        env_deps(text),
+        std::collections::BTreeMap::from([
+            ("NEVER_SET".to_owned(), None),
+            ("OUT_DIR".to_owned(), Some("/tmp/out".to_owned())),
+        ]),
+        "an `env!` a compilation read is an input to what it computes, and an unset one as much as a set one"
+    );
+}

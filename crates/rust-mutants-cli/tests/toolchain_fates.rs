@@ -324,6 +324,11 @@ fn fixture_edits() {
 }
 
 #[test]
+fn fixture_entered() {
+    holds("fixture-entered");
+}
+
+#[test]
 fn fixture_environment() {
     holds("fixture-environment");
 }

@@ -426,6 +426,15 @@ pub enum SessionError {
         /// The unrepresentable test count.
         count: usize,
     },
+    /// An item index of a dense catalog names no item, which says the catalog was not built the way its numbering assumes.
+    #[error(
+        "{}: item {index} of the item catalog names no item",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    ItemCatalogGap {
+        /// The index that named nothing.
+        index: u32,
+    },
     /// One expectation resolved to more mutants than its durable counter can represent.
     #[error(
         "{}: one expectation resolved to {count} mutants, which exceeds its durable counter",
@@ -659,6 +668,7 @@ impl SessionError {
             | Self::RoutingStatePoisoned
             | Self::RoutingCountTooLarge { .. }
             | Self::ExpectationCoverageTooLarge { .. }
+            | Self::ItemCatalogGap { .. }
             | Self::RunCountTooLarge { .. }
             | Self::RunCountOverflow
             | Self::RoutingCountExhausted
