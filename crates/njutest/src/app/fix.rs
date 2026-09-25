@@ -247,7 +247,7 @@ pub(crate) enum CandidateError {
     Rejected { path: String, reason: String },
     /// The fresh assurance run itself could not complete.
     #[error(transparent)]
-    Check(#[from] crate::error::RunnerError),
+    Check(Box<crate::error::RunnerError>),
     /// The checked content could not be installed.
     #[error("cannot write {}: {source}", path.display())]
     Write {
@@ -258,13 +258,6 @@ pub(crate) enum CandidateError {
 }
 
 /// One candidate, checked afresh: what a run recorded is where to look, never a reason to write.
-#[cfg_attr(
-    not(unix),
-    expect(
-        clippy::result_large_err,
-        reason = "the error carries the runner's own, which this platform lays out past the lint's threshold and unix does not; boxing a shared error type to answer a platform's layout would move the cost to every caller on both"
-    )
-)]
 pub(crate) fn one(
     candidate: &CandidateRecord,
     checking: &Checking<'_>,
@@ -310,18 +303,11 @@ pub(crate) fn one(
             path: proposal.path,
             reason: verdict.why.unwrap_or_else(|| "no reason given".to_owned()),
         }),
-        Err(error) => Err(CandidateError::Check(error)),
+        Err(error) => Err(CandidateError::Check(Box::new(error))),
     }
 }
 
 /// Writes one candidate into the tree a person is working in.
-#[cfg_attr(
-    not(unix),
-    expect(
-        clippy::result_large_err,
-        reason = "the error carries the runner's own, which this platform lays out past the lint's threshold and unix does not; boxing a shared error type to answer a platform's layout would move the cost to every caller on both"
-    )
-)]
 pub(crate) fn write(root: &Path, proposal: &crate::repair::Proposal) -> Result<(), CandidateError> {
     let path = root.join(&proposal.path);
     rust_mutants::replace::file(&path, &proposal.content).map_err(|failure| CandidateError::Write {

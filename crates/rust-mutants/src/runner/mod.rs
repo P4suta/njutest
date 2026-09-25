@@ -397,6 +397,13 @@ pub enum ProcessExit {
 impl ProcessExit {
     /// Whether the process ended of a signal it raised by what it did, which a mutation can make it do, rather than one sent from outside.
     #[must_use]
+    #[cfg_attr(
+        windows,
+        expect(
+            clippy::missing_const_for_fn,
+            reason = "only a POSIX signal can be one the process raised itself, so on Windows every arm is a constant, and on unix the answer reads a signal set"
+        )
+    )]
     pub fn raised_by_itself(self) -> bool {
         match self {
             #[cfg(unix)]
