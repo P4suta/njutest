@@ -105,6 +105,9 @@ enum Gate {
         /// Re-derive the census of the walk's own decisions from the recording.
         #[arg(long)]
         sites: bool,
+        /// The tree the run measured, which the carry evidence is read again from and proved against first.
+        #[arg(long, value_name = "DIR")]
+        root: Option<std::path::PathBuf>,
     },
     /// What changed between two stored assurance reports.
     ReportDiff {
@@ -187,6 +190,7 @@ where
             shards,
             ledger,
             sites,
+            root: measured,
         } => {
             return audit_engine(
                 &gates::EngineRun {
@@ -195,6 +199,7 @@ where
                     shards: &shards,
                     ledger: ledger.as_deref(),
                     sites,
+                    root: measured.as_deref(),
                 },
                 stdout,
                 stderr,

@@ -322,6 +322,8 @@ pub struct Perturbation {
     pub ledger: Option<String>,
     /// Documents the run keeps beside its report, by file name.
     pub beside: Vec<(&'static str, Value)>,
+    /// The tree the run measured, by workspace-relative path, which the carry layer reads again; empty lays no tree.
+    pub tree: Vec<(&'static str, String)>,
 }
 
 /// The clean specimen every perturbation starts from, on which no layer may find anything.
@@ -334,6 +336,7 @@ pub fn clean() -> Perturbation {
         shards: Vec::new(),
         ledger: Some(ledger(&[SURVIVED])),
         beside: Vec::new(),
+        tree: Vec::new(),
     }
 }
 
@@ -349,9 +352,16 @@ pub struct Laid {
     aside: TempDir,
     shards: Vec<PathBuf>,
     ledger: Option<PathBuf>,
+    root: Option<TempDir>,
 }
 
 impl Laid {
+    /// The tree the run measured, when the perturbation lays one.
+    #[must_use]
+    pub fn root(&self) -> Option<&Path> {
+        self.root.as_ref().map(TempDir::path)
+    }
+
     /// The run directory.
     #[must_use]
     pub fn run(&self) -> &Path {
@@ -403,14 +413,138 @@ impl Perturbation {
                 written(&path, text).map(|()| path)
             })
             .transpose()?;
+        let root = if self.tree.is_empty() {
+            None
+        } else {
+            let root = directory()?;
+            for (path, text) in &self.tree {
+                let file = root.path().join(path);
+                if let Some(parent) = file.parent() {
+                    std::fs::create_dir_all(parent).map_err(|source| {
+                        SpecimenError::Unwritable {
+                            path: parent.display().to_string(),
+                            source,
+                        }
+                    })?;
+                }
+                written(&file, text)?;
+            }
+            Some(root)
+        };
         Ok(Laid {
             run,
             trace,
             aside,
             shards,
             ledger,
+            root,
         })
     }
+}
+
+/// A function whose body is `body`, as a file of the measured tree.
+fn carried_source(body: &str) -> String {
+    format!("pub fn larger(a: u32, b: u32) -> u32 {body}\n")
+}
+
+/// The carry evidence for `source`: the guards' record of its one item's body span, and the skeletons document with `claims` laid over that item and `units` as the units.
+fn carry_beside(
+    path: &str,
+    source: &str,
+    claims: &Value,
+    units: &Value,
+) -> Vec<(&'static str, Value)> {
+    let braces = source
+        .find('{')
+        .zip(source.rfind('}').and_then(|at| at.checked_add(1)));
+    let Some((start, end)) = braces else {
+        return Vec::new();
+    };
+    let body = source.as_bytes().get(start..end).unwrap_or_default();
+    let mut item = json!({
+        "index": 0, "name": "larger",
+        "item": { "package": "demo", "path": path, "ordinal": 0 },
+        "body_digest": crate::engineaudit::carry::digest_of(body),
+        "sealed": true, "unsealed": null
+    });
+    merge(&mut item, claims.clone());
+    vec![
+        (
+            "touched-v1.json",
+            json!({
+                "targets": {}, "limitations": [],
+                "items": [{
+                    "index": 0, "package": "demo", "path": path, "name": "larger",
+                    "span": { "start": 0, "end": source.len() },
+                    "body": { "start": start, "end": end },
+                    "measurable": true
+                }]
+            }),
+        ),
+        (
+            "skeletons-v1.json",
+            json!({
+                "document_type": "rust-mutants/skeletons", "schema_version": 1,
+                "items": [item], "units": units
+            }),
+        ),
+    ]
+}
+
+/// The defects planted for the carry layer.
+fn carry_plants() -> Vec<Perturbation> {
+    let clean = clean();
+    let sealed = carried_source("{ if a > b { a } else { b } }");
+    let macro_body = carried_source("{ foo!(a, b) }");
+    vec![
+        Perturbation {
+            name: "a body called sealed that invokes a macro off the page's list",
+            beside: carry_beside("src/other.rs", &macro_body, &json!({}), &json!([])),
+            tree: vec![("src/other.rs", macro_body.clone())],
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a body digest its bytes do not hash to, in the file the run measured",
+            document: with(json!({ "mutants": [
+                { "source_digest": crate::engineaudit::carry::digest_of(sealed.as_bytes()) },
+                { "source_digest": crate::engineaudit::carry::digest_of(sealed.as_bytes()) }
+            ] })),
+            beside: carry_beside(
+                "src/lib.rs",
+                &sealed,
+                &json!({ "body_digest": "0".repeat(64) }),
+                &json!([]),
+            ),
+            tree: vec![("src/lib.rs", sealed.clone())],
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "an item named by another place than its own among its file's items",
+            beside: carry_beside(
+                "src/other.rs",
+                &sealed,
+                &json!({ "item": { "ordinal": 1 } }),
+                &json!([]),
+            ),
+            tree: vec![("src/other.rs", sealed.clone())],
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a skeleton that is not the fold of the entries it keeps",
+            beside: carry_beside(
+                "src/other.rs",
+                &sealed,
+                &json!({}),
+                &json!([{
+                    "package": "demo", "target": "demo", "kind": "lib", "test": false,
+                    "skeleton": "0".repeat(64),
+                    "entries": { "$env/NOTHING": "unset" }
+                }]),
+            ),
+            tree: vec![("src/other.rs", sealed)],
+            ..clean
+        },
+    ]
 }
 
 /// The clean recording with `overrides` laid over the event at `at`.
@@ -722,6 +856,7 @@ impl Layer {
                     ..clean
                 },
             ],
+            Self::Carry => carry_plants(),
         }
     }
 }

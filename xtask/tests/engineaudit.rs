@@ -38,6 +38,7 @@ const fn asked<'a>(
         shards: &[],
         ledger,
         sites: true,
+        root: None,
     }
 }
 
@@ -306,6 +307,7 @@ fn the_parts_of_one_catalog_recount_to_the_whole() {
         shards: &[path],
         ledger: None,
         sites: false,
+        root: None,
     })
     .expect("a report this audit can read");
     let found = violations(&audit, Layer::Merge);
@@ -578,6 +580,7 @@ fn every_explicit_evidence_path_must_be_readable() {
         shards: &shards,
         ledger: None,
         sites: false,
+        root: None,
     })
     .expect_err("an explicitly requested shard must exist");
     assert!(matches!(error, AuditError::Unreadable { .. }), "{error}");
@@ -608,6 +611,7 @@ fn malformed_explicit_evidence_is_neither_absent_nor_unaudited() {
         shards: &shards,
         ledger: None,
         sites: false,
+        root: None,
     })
     .expect_err("a corrupt shard must fail closed");
     assert!(
@@ -773,6 +777,8 @@ fn owned_evidence_is_exact_after_the_duplicate_key_boundary() {
             catalog: None,
             probe_logs: Vec::new(),
             touched: touched.map(|text| Source { path, text }),
+            skeletons: None,
+            root: None,
         };
         let error = xtask::engineaudit::audit("report.json", &report, &evidence)
             .expect_err("an owned evidence document must match its exact schema");
@@ -791,6 +797,9 @@ fn layers_of(name: &str) -> &'static [Layer] {
         "a row that ran a target its route never reached"
         | "a route narrowed by guards that kept no record"
         | "a test the guards say reached a mutation and the route dropped" => &[Layer::Trace],
+        "a body digest its bytes do not hash to, in the file the run measured" => {
+            &[Layer::Identity]
+        }
         _ => &[],
     }
 }
@@ -809,6 +818,7 @@ fn every_layer_is_silent_on_the_clean_run_and_loud_on_the_perturbations_that_are
                 shards: laid.shards(),
                 ledger: laid.ledger(),
                 sites: true,
+                root: laid.root(),
             })
             .expect("a report this audit can read");
             let spoke: Vec<Layer> = Layer::ALL
