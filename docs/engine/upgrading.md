@@ -10,6 +10,21 @@ A change that needs nothing is not listed.
 
 ## Unreleased
 
+**Stored outcomes are keyed on the engine that decided them.** The key now carries the digest of the running executable, because two builds of the engine may mean two different things by the same verdict, and a survival one build remembered was replayed by another that would have called it inconclusive.
+Every rebuild or upgrade starts from a cold cache; nothing is to be done about it, and an engine that cannot read its own executable remembers nothing.
+
+**A survival that a process escaped is `inconclusive` however the other targets answered.** An execution that passes while a process of the tree ran without the run's environment is `unobserved`, which gives way only to a kill, rather than being read as a harness that ran nothing (ADR 0029).
+A remembered survival is not believed while a target this run marks `uncontrolled-child` reaches the mutant.
+
+**`touched-v1.json` gained `items` and each target's `entered`.** Every function, method, closure and `async` block of a mutated file records, on the baseline run, the item it is written in,
+so the record says which tests entered which item as well as which reached which site.
+`items` is the catalog those indices name; a `const fn`, `const` or `static` is in it with `measurable: false`.
+The touch log gains an `e` record and the `touch` trace event an `entered` count; the versions stayed 1.
+A generated file carries one more call per body, on the line that already held the step checkpoint, so no line moves.
+See [item reach](item-reach.md).
+
+**A `#[should_panic]` test is named by its name.** libtest prints ` - should panic` after it, and that suffix is no longer part of the name a report, a route, or `killed_by` carries.
+
 **A finite step allowance is no longer a detection.** The former `runaway` outcome inferred nontermination from one execution crossing a finite count.
 That inference was stronger than the observation: a long finite computation can cross the same count.
 The new `step_limit_reached` outcome carries only the verified execution fact and contributes to neither side of the score.

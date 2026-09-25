@@ -146,6 +146,8 @@ pub struct Spec {
     pub(crate) stop_file: Option<PathBuf>,
     /// A private side-channel file the child rewrites as it makes progress, which turns [`Spec::timeout`] into a ceiling and ends the run early only when the file stays unchanged for a whole quiet window.
     pub(crate) progress: Option<Progress>,
+    /// Where the process that leads this run is recorded the moment it starts, so a child it leaves is known to be its own before anything else looks.
+    pub(crate) leaders: Option<crate::orphan::Leaders>,
     /// Test-only terminal ownership fault selected explicitly by the composition root.
     reaping: Reaping,
 }
@@ -167,6 +169,7 @@ impl Spec {
             structured_stdout: None,
             stop_file: None,
             progress: None,
+            leaders: None,
             reaping: Reaping::Normal,
         }
     }
@@ -524,6 +527,8 @@ pub struct RunResult {
     pub stdout: Vec<u8>,
     /// Whether `stdout` was cut at the cap.
     pub stdout_truncated: bool,
+    /// The id of the process the run started, which leads its group and is the parent of whatever it starts, or nothing where none started.
+    pub leader: Option<u32>,
 }
 
 impl RunResult {
@@ -623,6 +628,10 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
         Ok(started) => started,
         Err(Failed { error, output }) => return not_started(started, error, output),
     };
+    let leader = running.child.handle().id();
+    if let Some(leaders) = &spec.leaders {
+        leaders.started(leader, running.supervisor.membership());
+    }
     let outcome = await_exit(
         &running.supervisor,
         &running.child,
@@ -633,7 +642,11 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
             progress: spec.progress.as_ref(),
         },
     );
-    complete(started, running, outcome)
+    let completed = complete(started, running, outcome);
+    if let Some(leaders) = &spec.leaders {
+        leaders.finished(leader);
+    }
+    completed
 }
 
 fn deadline_of(
@@ -656,6 +669,7 @@ fn complete(started: Instant, running: Started, outcome: Exit) -> RunResult {
         head,
         mut child,
     } = running;
+    let leader = Some(child.handle().id());
     force_signal_or_abort(&supervisor, LeaderObservation::ExitedWaitable);
     let status = child.reap_observed();
     let released = release_supervisor(&mut supervisor);
@@ -699,6 +713,7 @@ fn complete(started: Instant, running: Started, outcome: Exit) -> RunResult {
         output,
         stdout,
         stdout_truncated,
+        leader,
     }
 }
 
@@ -766,6 +781,7 @@ fn preflight<'a>(spec: &'a Spec, cancel: &Cancel, started: Instant) -> Preflight
             output: Vec::new(),
             stdout: Vec::new(),
             stdout_truncated: false,
+            leader: None,
         });
     }
     Preflight::Ready(program)
@@ -778,6 +794,7 @@ fn not_started(started: Instant, error: RunnerError, output: Vec<u8>) -> RunResu
         output,
         stdout: Vec::new(),
         stdout_truncated: false,
+        leader: None,
     }
 }
 
@@ -1606,6 +1623,8 @@ fn terminal_process_ownership_failure() -> ! {
 use unix as sys;
 #[cfg(windows)]
 use windows as sys;
+
+pub use sys::Membership;
 
 /// How long a forceful end waits to see the child reaped before aborting the supervising process.
 pub const REAPING_GRACE: Duration = Duration::from_secs(10);

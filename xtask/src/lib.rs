@@ -8,12 +8,14 @@
 
 pub mod deps;
 pub mod devgates;
+pub mod docflows;
 pub mod drift;
 pub mod engineaudit;
 pub mod fixtures;
 pub mod fuzzclippy;
 pub mod gates;
 pub mod kaniaudit;
+pub mod knobs;
 pub mod lanes;
 pub mod lints;
 pub mod milestones;
@@ -21,6 +23,7 @@ pub mod modelaudit;
 pub mod prepush;
 pub mod proofaudit;
 pub mod release;
+pub mod remote;
 pub mod reportdiff;
 pub mod route;
 pub mod sbom;
@@ -86,6 +89,12 @@ enum Gate {
         #[arg(long, default_value_t = false, hide = true)]
         alternate: bool,
     },
+    /// Every workflow the documentation shows passes actionlint against this repository's own actions.
+    Docflows {
+        /// The actionlint to run; the lint lane is where it is installed, which keeps this gate out of `all`.
+        #[arg(long, value_name = "PROGRAM", default_value = "actionlint")]
+        actionlint: std::path::PathBuf,
+    },
     /// Version consistency between the workspace and the release manifest.
     ReleaseCheck,
     /// Fail closed unless Kani's raw law export proves every assertion reachable and every cover satisfiable.
@@ -141,6 +150,15 @@ enum Gate {
     /// A second opinion, by body shape alone, on every catch-all the ledger waives.
     /// Refuses nothing.
     Waivers,
+    /// The whole suite of this commit on the other machines, before it is pushed.
+    RemoteCheck {
+        /// The file that names the machines, how each is reached, and what each runs.
+        #[arg(long, value_name = "FILE")]
+        machines: std::path::PathBuf,
+        /// The worktree whose checked-out commit is put to them, where it is not this one.
+        #[arg(long, value_name = "DIR")]
+        worktree: Option<std::path::PathBuf>,
+    },
     /// Every gate, in order.
     All,
 }
@@ -209,6 +227,8 @@ where
         Gate::Tracked => gates::tracked(&root),
         Gate::FuzzClippy { alternate: _ } => fuzzclippy::check(&root, process.cargo)
             .map_err(|error| gates::GateFailure(error.to_string())),
+        Gate::Docflows { actionlint } => docflows::check(&root, actionlint.as_os_str())
+            .map_err(|error| gates::GateFailure(error.to_string())),
         Gate::ReleaseCheck => gates::release_check(&root),
         Gate::KaniLawsAudit { export } => kaniaudit::audit(&export, &root)
             .map(|()| "kani-laws: 15 production harnesses, every assertion reachable and every cover satisfiable".to_owned())
@@ -241,6 +261,8 @@ where
         Gate::ReportDiff { before, after } => gates::report_diff(&before, &after),
         Gate::Sbom { output } => gates::sbom(&root, output.as_deref()),
         Gate::Waivers => gates::waivers(&root),
+        Gate::RemoteCheck { machines, worktree } => remote::check(worktree.as_deref().unwrap_or(&root), &machines)
+            .map_err(|error| gates::GateFailure(error.to_string())),
         Gate::All => gates::all(&root),
     };
     match outcome {

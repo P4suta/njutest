@@ -56,6 +56,8 @@ impl Compile for CargoScripted {
                 comparable: &BTreeSet::default(),
                 probed: &BTreeMap::default(),
                 catalog_digest: self.catalog.digest(),
+                first_item: 0,
+                watched: "/watched",
             })
             .map_err(ValidateError::from)?;
             std::fs::write(self.root.join(path), &file.text).map_err(|error| {

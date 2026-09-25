@@ -46,6 +46,18 @@ pub(super) struct Supervisor {
     pgid: Option<Pid>,
 }
 
+/// What a process group would say about the processes it held, which on this platform is nothing: a child names its parent instead.
+#[derive(Debug, Clone, Copy)]
+pub enum Membership {}
+
+impl Membership {
+    /// Every process named since the last time it was asked; there is never one to ask.
+    #[must_use]
+    pub const fn drain(self) -> Vec<u32> {
+        match self {}
+    }
+}
+
 #[expect(
     clippy::unnecessary_wraps,
     clippy::unused_self,
@@ -190,6 +202,15 @@ impl Supervisor {
     }
 
     /// What the supervisor can say about the group it owns, for the note before an abort.
+    /// Where this group names the processes it holds: nowhere, since a child here names its parent.
+    #[expect(
+        clippy::unused_self,
+        reason = "the same signature as the Windows supervisor, whose job names its processes"
+    )]
+    pub(super) const fn membership(&self) -> Option<std::sync::Arc<Membership>> {
+        None
+    }
+
     pub(super) fn state(&self) -> String {
         let pgid = match self.pgid {
             Some(pgid) => pgid.as_raw_nonzero().get(),

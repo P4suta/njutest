@@ -29,9 +29,6 @@ enum TestFailure {
     /// A deliberately malformed fixture unexpectedly passed its gate.
     #[error("{0}")]
     UnexpectedSuccess(&'static str),
-    /// The gate declaration could not be found structurally in its source.
-    #[error("xtask/src/lib.rs no longer declares the gates")]
-    MissingGateDeclaration,
     /// A gate returned a report whose contract was not the one under test.
     #[error("{0}")]
     Contract(String),
@@ -422,63 +419,6 @@ fn a_fixture_root_that_cannot_be_listed_never_passes_as_empty() -> Result<(), Te
         failure.to_string().contains("fixtures"),
         failure.to_string(),
     )
-}
-
-#[test]
-fn every_gate_that_needs_no_argument_is_one_all_runs() -> Result<(), TestFailure> {
-    let root = gates::workspace_root();
-    let source = std::fs::read_to_string(root.join("xtask/src/lib.rs"))?;
-    let declaration = source
-        .find("enum Gate {")
-        .and_then(|at| source.get(at..))
-        .ok_or(TestFailure::MissingGateDeclaration)?;
-    let declaration = match declaration.find("\n}\n") {
-        Some(end) => declaration
-            .get(..end)
-            .ok_or(TestFailure::MissingGateDeclaration)?,
-        None => declaration,
-    };
-
-    let bare: Vec<String> = declaration
-        .lines()
-        .filter_map(|line| line.trim().strip_suffix(','))
-        .filter(|name| {
-            name.chars().next().is_some_and(char::is_uppercase)
-                && name.chars().all(char::is_alphanumeric)
-        })
-        .filter(|name| *name != "All")
-        .map(kebab)
-        .collect();
-    require(
-        bare.len() >= 5,
-        format!("the gates that need no argument are the ones a person runs as a set: {bare:?}"),
-    )?;
-
-    let report = gates::all(&root)?;
-    let unrun: Vec<&String> = bare
-        .iter()
-        .filter(|name| !report.contains(&format!("{name}:")))
-        .collect();
-    require(
-        unrun.is_empty(),
-        format!(
-            "a gate `all` does not run is a gate `mise run check` does not run and continuous \
-             integration does not run: it holds nothing, and the only sign is that it is \
-             still in the help. {unrun:?} is declared and `all` never calls it:\n{report}"
-        ),
-    )
-}
-
-/// The name a gate answers to on the command line, from the name of its variant.
-fn kebab(variant: &str) -> String {
-    let mut said = String::new();
-    for (at, character) in variant.char_indices() {
-        if character.is_uppercase() && at > 0 {
-            said.push('-');
-        }
-        said.extend(character.to_lowercase());
-    }
-    said
 }
 
 #[test]

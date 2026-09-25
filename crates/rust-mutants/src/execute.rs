@@ -48,6 +48,98 @@ pub const COMPOSED_ENV: [&str; 8] = [
     crate::coverage::PROFILE_ENV,
 ];
 
+/// A variable a control may be started with another value of: one the contract lets differ between machines, and never one the run composes to measure with.
+///
+/// A closed set, so that no perturbation can reach the variables that activate a mutant, record what a process reached, count its steps, or find its libraries: a control run with one of those changed would measure the apparatus rather than the suite.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, njutest_macros::AllVariants)]
+pub enum Variable {
+    /// The time zone.
+    Tz,
+    /// The locale every category reads.
+    LcAll,
+    /// The temporary directory, as unix names it.
+    Tmpdir,
+    /// The temporary directory, as Windows names it first.
+    Tmp,
+    /// The temporary directory, as Windows names it second.
+    Temp,
+    /// The home directory.
+    Home,
+    /// Where cargo keeps what it downloads, which follows the home directory unless set.
+    CargoHome,
+    /// Where rustup keeps toolchains, which follows the home directory unless set.
+    RustupHome,
+    /// How many columns a terminal has.
+    Columns,
+    /// How many lines a terminal has.
+    Lines,
+}
+
+impl Variable {
+    /// The name a process reads it by.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Tz => "TZ",
+            Self::LcAll => "LC_ALL",
+            Self::Tmpdir => "TMPDIR",
+            Self::Tmp => "TMP",
+            Self::Temp => "TEMP",
+            Self::Home => "HOME",
+            Self::CargoHome => "CARGO_HOME",
+            Self::RustupHome => "RUSTUP_HOME",
+            Self::Columns => "COLUMNS",
+            Self::Lines => "LINES",
+        }
+    }
+}
+
+/// A program a control is started through, from a closed set each of which replaces itself with the test binary, so the process is still the one the run started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Launcher {
+    /// A shell that sets the file-creation mask and then becomes the test binary.
+    Umask {
+        /// The mask, as `umask` takes it.
+        mask: u32,
+    },
+}
+
+impl Launcher {
+    /// The program and arguments that start the test binary this way, or nothing on a platform that has no such program.
+    #[must_use]
+    pub fn argv(self) -> Option<Vec<OsString>> {
+        match self {
+            Self::Umask { mask } => cfg!(unix).then(|| {
+                vec![
+                    OsString::from("sh"),
+                    OsString::from("-c"),
+                    OsString::from(format!("umask {mask:03o}; exec \"$0\" \"$@\"")),
+                ]
+            }),
+        }
+    }
+}
+
+/// How a control's harness schedules its tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum Schedule {
+    /// As the baseline did.
+    AsConfigured,
+    /// One test at a time, on one thread, which libtest does in name order.
+    OneThread,
+}
+
+impl Schedule {
+    /// The harness arguments that ask for it, which only libtest takes.
+    #[must_use]
+    pub const fn arguments(self) -> &'static [&'static str] {
+        match self {
+            Self::AsConfigured => &[],
+            Self::OneThread => &["--test-threads=1"],
+        }
+    }
+}
+
 /// How many quiet windows a step-counted execution may run for in all before the clock ends it anyway.
 pub const QUIET_WINDOWS_PER_CEILING: u32 = 10;
 
@@ -289,11 +381,14 @@ fn parse_lines_text(text: &str) -> Lines {
     lines
 }
 
+/// What libtest writes after the name of a test that expects a panic, which is not part of the name.
+const SHOULD_PANIC: &str = " - should panic";
+
 /// The name and verdict of one `test <name> ... <verdict>` line.
 fn verdict_of(line: &str) -> Option<(&str, &str)> {
     let rest = line.trim_end().strip_prefix("test ")?;
     let (name, verdict) = rest.rsplit_once(" ... ")?;
-    let name = name.trim();
+    let name = name.strip_suffix(SHOULD_PANIC).unwrap_or(name).trim();
     (!name.is_empty()).then_some((name, verdict.trim()))
 }
 
@@ -1399,6 +1494,10 @@ pub struct ExecRequest<'a> {
     scratch: Option<PathBuf>,
     /// Whether the process starts in its scratch directory rather than in the one cargo would give it.
     scratch_cwd: bool,
+    /// Variables set over the environment the process would otherwise have, each replacing one of the same name.
+    overlay: Vec<(Variable, OsString)>,
+    /// A program the process is started through.
+    launcher: Option<Launcher>,
 }
 
 impl<'a> ExecRequest<'a> {
@@ -1412,7 +1511,23 @@ impl<'a> ExecRequest<'a> {
             timeout: None,
             scratch: None,
             scratch_cwd: false,
+            overlay: Vec::new(),
+            launcher: None,
         }
+    }
+
+    /// Sets `overlay` over the environment the process would otherwise have, each variable replacing one of the same name.
+    #[must_use]
+    pub fn with_overlay(mut self, overlay: Vec<(Variable, OsString)>) -> Self {
+        self.overlay = overlay;
+        self
+    }
+
+    /// Starts the process through `launcher`, which replaces itself with it.
+    #[must_use]
+    pub const fn with_launcher(mut self, launcher: Option<Launcher>) -> Self {
+        self.launcher = launcher;
+        self
     }
 
     /// Runs exactly the named test.
@@ -1473,7 +1588,8 @@ impl<'a> ExecRequest<'a> {
     /// Every named test is passed as a filter with `--exact`, so a name that is a prefix of another cannot drag it in.
     #[must_use]
     pub fn argv(&self) -> Vec<OsString> {
-        let mut argv = vec![self.target.executable.clone().into_os_string()];
+        let mut argv = self.launcher.and_then(Launcher::argv).unwrap_or_default();
+        argv.push(self.target.executable.clone().into_os_string());
         if !self.target.through.is_empty() {
             argv.extend(self.target.through.iter().cloned());
             argv.push(OsString::from("--"));
@@ -1511,6 +1627,9 @@ pub struct Context<'a> {
     /// Where a coverage-instrumented process writes what it executed.
     /// `None` runs a process that measures nothing.
     pub profile: Option<&'a Path>,
+    /// Where the process leading this execution is recorded as it starts, so a child it leaves is never read as another execution's.
+    /// `None` runs one no other execution overlaps.
+    pub leaders: Option<&'a crate::orphan::Leaders>,
 }
 
 /// Where the guards of one process append what they reached, and the catalog the record is about.
@@ -1543,6 +1662,8 @@ pub enum MutantConclusion {
     Waited,
     /// The execution did not establish either side of the question.
     Inconclusive,
+    /// Every selected test passed while a process of the tree ran where the run could not see whether the mutant was active in it, so the survival is not one.
+    Unobserved,
     /// The execution apparatus failed.
     Errored,
 }
@@ -1557,7 +1678,7 @@ impl MutantConclusion {
             Self::Survived => Outcome::Survived,
             Self::StepLimitReached { .. } => Outcome::StepLimitReached,
             Self::Waited => Outcome::Waited,
-            Self::Inconclusive => Outcome::Inconclusive,
+            Self::Inconclusive | Self::Unobserved => Outcome::Inconclusive,
             Self::Errored => Outcome::Errored,
         }
     }
@@ -1572,6 +1693,7 @@ impl MutantConclusion {
             | Self::Survived
             | Self::Waited
             | Self::Inconclusive
+            | Self::Unobserved
             | Self::Errored => None,
         }
     }
@@ -1604,10 +1726,20 @@ impl MutantConclusion {
                 | Self::Survived
                 | Self::Waited
                 | Self::Inconclusive
+                | Self::Unobserved
                 | Self::Errored => Self::Errored,
             },
             Outcome::Waited => Self::Waited,
-            Outcome::Inconclusive => Self::Inconclusive,
+            Outcome::Inconclusive => match self {
+                Self::Unobserved => Self::Unobserved,
+                Self::NotRun
+                | Self::Killed
+                | Self::Survived
+                | Self::StepLimitReached { .. }
+                | Self::Waited
+                | Self::Inconclusive
+                | Self::Errored => Self::Inconclusive,
+            },
             Outcome::Errored => Self::Errored,
         }
     }
@@ -1639,6 +1771,8 @@ pub struct MutantResult {
     pub passed_tests: Vec<String>,
     /// Every test the harness was told to skip.
     pub ignored_tests: Vec<String>,
+    /// The id of the process the execution started, which is the parent of whatever it starts, or nothing where none started.
+    pub leader: Option<u32>,
 }
 
 /// The protocol a test process answered in.
@@ -1702,6 +1836,7 @@ impl MutantResult {
             failed_tests: Vec::new(),
             passed_tests: Vec::new(),
             ignored_tests: Vec::new(),
+            leader: None,
         }
     }
 
@@ -1753,6 +1888,13 @@ pub fn exec(
     trace: &Recorder,
 ) -> MutantResult {
     let target = request.target;
+    if let Some(launcher) = request.launcher
+        && launcher.argv().is_none()
+    {
+        let message = format!("{launcher:?} has no program to start through on this platform");
+        trace.note("execution-launcher", &message);
+        return MutantResult::apparatus_error(&target.id, message);
+    }
     let step = match ExpectedStep::new(context, request.scratch.as_deref()) {
         Ok(step) => step,
         Err(error) => {
@@ -1764,6 +1906,7 @@ pub fn exec(
     let (bound, progress) = watched(request.timeout, step.as_ref());
     let mut spec = Spec::new(request.argv(), bound);
     spec.progress = progress;
+    spec.leaders = context.leaders.cloned();
     spec.dir = Some(match (&request.scratch, request.scratch_cwd) {
         (Some(scratch), true) => scratch.clone(),
         _ => target.cwd.clone(),
@@ -1779,6 +1922,11 @@ pub fn exec(
     if let Some(step) = &step {
         step.add_environment(&mut env);
         spec.stop_file = Some(step.path.clone());
+    }
+    for (variable, value) in &request.overlay {
+        let name = OsStr::new(variable.name());
+        env.retain(|(held, _)| !crate::vars::same_name(held, name));
+        env.push((name.to_owned(), value.clone()));
     }
     spec.env = Some(env);
     let result = run(&spec, cancel);
@@ -1815,6 +1963,7 @@ pub fn exec(
         failed_tests: lines.failed,
         passed_tests: lines.passed,
         ignored_tests: lines.ignored,
+        leader: result.leader,
     }
 }
 
@@ -2194,6 +2343,7 @@ mod tests {
             output: Vec::new(),
             stdout: Vec::new(),
             stdout_truncated: false,
+            leader: None,
         }
     }
 
@@ -2251,6 +2401,7 @@ mod tests {
             return;
         };
         let context = Context {
+            leaders: None,
             base_env: &[],
             cargo: None,
             sysroot: None,
@@ -2270,6 +2421,7 @@ mod tests {
     fn step_setup_creates_one_exact_private_state_and_clear_removes_it() {
         let scratch = returned!(tempfile::tempdir(), "scratch");
         let context = Context {
+            leaders: None,
             base_env: &[],
             cargo: None,
             sysroot: None,

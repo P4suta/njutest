@@ -5,6 +5,7 @@
 //!
 //! [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md) ships a proof layer only against a re-implementation that never calls the runner's, so nothing here consults the code that wrote the report: every verdict is re-derived from the recording alone, and wherever the recording does not carry enough to re-derive one, that is said plainly rather than read as agreement.
 
+mod knobs;
 pub mod sentinel;
 
 use std::collections::BTreeMap;
@@ -157,6 +158,10 @@ pub enum Layer {
     Model,
     /// Which targets reached something different on a control than on their baseline, re-derived from the engine's touch records and held to what the report says of each.
     Drift,
+    /// What each control started under a knob established, re-derived from the engine's perturbed-control records and held to what the report says of each.
+    Knobs,
+    /// Each mutation's reported outcome, held to the executions of it the recording holds.
+    Executions,
 }
 
 impl Layer {
@@ -174,6 +179,8 @@ impl Layer {
             Self::Wire => "wire",
             Self::Model => "model",
             Self::Drift => "drift",
+            Self::Knobs => "knobs",
+            Self::Executions => "executions",
         }
     }
 }
@@ -437,12 +444,16 @@ pub fn audit_with(
         .engines
         .iter()
         .map(|(recording_path, text)| {
-            crate::drift::read(text).map_err(|source| AuditError::MalformedRecording {
+            let malformed = |source| AuditError::MalformedRecording {
                 path: recording_path.clone(),
                 source,
+            };
+            Ok(Engine {
+                touched: crate::drift::read(text).map_err(malformed)?,
+                perturbed: crate::knobs::read(text).map_err(malformed)?,
             })
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, AuditError>>()?;
     let mut audit = Audit {
         run_id: recording.run_id.clone(),
         mutants: recording.mutants.len(),
@@ -458,10 +469,12 @@ pub fn audit_with(
     acceptances(&recording, &mut audit);
     reuse(&recording, &mut audit);
     proofs(&recording, routing.as_ref(), &mut audit);
+    executions(&recording, routing.as_ref(), &mut audit);
     hollow(&recording, routing.as_ref(), &mut audit);
     wire(&recording, watched.as_ref(), &mut audit);
     models(&recording, run, &mut audit);
     drift(&recording, &engines, &mut audit);
+    knobs::audited(&recording, &engines, &mut audit);
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
@@ -508,6 +521,7 @@ fn projected(document: serde_json::Value) -> Result<serde_json::Value, Unproject
         "mutants",
         "limitations",
         "drift",
+        "knobs",
     ] {
         if let Some(value) = part.get(key) {
             flat.insert(key.to_owned(), value.clone());
@@ -535,7 +549,16 @@ const UNSTABLE_BASELINE: &str = "unstable-baseline";
 const DRIFT_NOT_MEASURED: &str = "drift-not-measured";
 
 /// Which targets moved between their baseline and a control, re-derived from the engine's touch records and held to the report's records, findings, and limitation.
-fn drift(recording: &Recording<'_>, engines: &[crate::drift::Touched], audit: &mut Audit) {
+/// What one engine recording holds, as the layers that re-derive from it read it.
+#[derive(Debug)]
+struct Engine {
+    /// Every touch record.
+    touched: crate::drift::Touched,
+    /// Every perturbed control.
+    perturbed: crate::knobs::Perturbations,
+}
+
+fn drift(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Drift);
     let recorded = recording.document.get("drift").map(|rows| {
         rows.as_array()
@@ -561,7 +584,7 @@ fn drift(recording: &Recording<'_>, engines: &[crate::drift::Touched], audit: &m
             );
             return;
         }
-        ([one], _) => one,
+        ([one], _) => &one.touched,
         (several, _) => {
             notes.unaudited(
                 "drift",
@@ -747,12 +770,18 @@ fn held_to_limitation(
     }
 }
 
-/// Whether a limitation's detail names `target` in its closing list, which is how a report names the targets a limitation is about.
+/// Whether a limitation's detail names `target` in its closing list.
 fn listed(detail: &str, target: &str) -> bool {
+    named(detail).contains(&target)
+}
+
+/// The targets a limitation's detail names in its closing list, which is how a report names the targets a limitation is about.
+fn named(detail: &str) -> Vec<&str> {
     detail
         .rsplit_once(" (")
         .and_then(|(_, list)| list.strip_suffix(')'))
-        .is_some_and(|list| list.split(", ").any(|one| one == target))
+        .map(|list| list.split(", ").collect())
+        .unwrap_or_default()
 }
 
 #[derive(Debug)]
@@ -1869,6 +1898,118 @@ fn gaps(
                     .to_owned(),
             );
         }
+    }
+}
+
+/// What the equivalence layer records when the compiler renders a mutation identically.
+const IDENTICAL: &str = "identical";
+
+/// What the engine calls a step-limit outcome in the executions it records.
+const STEP_LIMIT_EXEC: &str = "step_limit_reached";
+
+/// Every mutation's reported outcome against the executions of it the recording holds, so a report cannot say a test noticed what every recorded execution says survived.
+fn executions(
+    recording: &Recording<'_>,
+    routing: Option<&crate::route::Routing>,
+    audit: &mut Audit,
+) {
+    let mut notes = Notes::on(audit, Layer::Executions);
+    let Some(routing) = routing else {
+        notes.unaudited(
+            "mutant-exec",
+            "the run kept no recording of its executions, so no outcome can be held to what \
+             ran"
+            .to_owned(),
+        );
+        return;
+    };
+    if routing.execs.is_empty() {
+        notes.unaudited(
+            "mutant-exec",
+            "the recording holds no mutation execution, so no outcome can be held to what ran"
+                .to_owned(),
+        );
+        return;
+    }
+    let mut ran: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for exec in &routing.execs {
+        ran.entry(exec.mutant.as_str())
+            .or_default()
+            .push(exec.outcome.as_str());
+    }
+    for mutant in recording.mutants.iter().filter(|mutant| !mutant.reused) {
+        let mut recorded: Vec<&str> = Vec::new();
+        for key in [mutant.display_id.as_str(), mutant.id.as_str()] {
+            if let Some(outcomes) = ran.get(key) {
+                recorded.extend(outcomes.iter().copied());
+            }
+        }
+        if let Some(why) = contradicted(&mutant.outcome, &recorded) {
+            notes.violated(mutant.label(), why);
+        } else if mutant.outcome == EQUIVALENT
+            && !routing
+                .equivalences
+                .iter()
+                .any(|(display_id, answer)| display_id == &mutant.display_id && answer == IDENTICAL)
+        {
+            notes.violated(
+                mutant.label(),
+                "the report says the compiler renders this mutation identically to the code it \
+                 mutates, and the recording holds no equivalence answer saying so"
+                    .to_owned(),
+            );
+        }
+    }
+}
+
+/// Why `reported` is not an outcome the executions `recorded` could have come to, if it is not.
+fn contradicted(reported: &str, recorded: &[&str]) -> Option<String> {
+    let any = |outcome: &str| recorded.contains(&outcome);
+    let requires = |outcome: &str| {
+        (!any(outcome)).then(|| {
+            format!(
+                "the report says {reported}, and no recorded execution of it came to \
+                 {outcome}: {recorded:?}"
+            )
+        })
+    };
+    match reported {
+        KILLED | UNCONFIRMED => requires(KILLED),
+        WAITED => requires(WAITED),
+        STEP_LIMIT_REACHED => requires(STEP_LIMIT_EXEC),
+        SURVIVED => recorded.iter().any(|one| *one != SURVIVED).then(|| {
+            format!(
+                "the report says every reaching test ran and none noticed, and the recorded \
+                 executions of it came to {recorded:?}; a mutation a proof removed every \
+                 execution of has none, and the proofs layer holds that"
+            )
+        }),
+        UNREACHED | REJECTED => (!recorded.is_empty()).then(|| {
+            format!(
+                "the report says {reported}, which no test ever executes, and the recording holds \
+                 executions of it: {recorded:?}"
+            )
+        }),
+        EQUIVALENT | "model-noticed" | "model-proved" => any(KILLED).then(|| {
+            format!(
+                "the report says {reported}, and a recorded execution of it was killed: a test \
+                 told the programs apart"
+            )
+        }),
+        ERRORED => (!recorded.is_empty()
+            && recorded
+                .iter()
+                .all(|one| *one == SURVIVED || *one == KILLED))
+        .then(|| {
+            format!(
+                "the report says the harness failed, and every recorded execution of it came to \
+                 a verdict: {recorded:?}"
+            )
+        }),
+        other => Some(format!(
+            "the report says {other}, which is not an outcome this audit knows how to hold to \
+             an execution"
+        )),
     }
 }
 

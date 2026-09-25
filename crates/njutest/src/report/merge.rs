@@ -123,6 +123,7 @@ pub fn merge(
         findings: first_source.findings.clone(),
         limitations: first_source.limitations.clone(),
         drift: first_source.drift.clone(),
+        knobs: first_source.knobs.clone(),
     };
     let ledger = BuildLedger::try_from_vec(builds).map_err(|error| MergeError::Unsound {
         because: error.to_string(),

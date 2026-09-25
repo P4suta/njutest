@@ -24,6 +24,8 @@ pub enum Asked {
     Answered(Vec<Answered>),
     /// The suite ran and nothing about it could be measured, so the question stands unanswered.
     NotMeasured(rust_mutants::outcome::Outcome),
+    /// The suite ran with the fault in place and the exchange it names never came past, so nothing was asked.
+    NotPut,
 }
 
 /// What each target did before any fault went in.
@@ -96,7 +98,7 @@ pub struct Settled {
 pub fn settle(fault: &Fault, asked: &Asked, before: &Before) -> Settled {
     let answers = match asked {
         Asked::Answered(answers) => answers.as_slice(),
-        Asked::NotMeasured(_nothing_to_read) => &[],
+        Asked::NotMeasured(_) | Asked::NotPut => &[],
     };
     let noticed_by = answers
         .iter()

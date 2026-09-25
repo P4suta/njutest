@@ -809,6 +809,7 @@ fn validate_build_parts<'a>(
             findings: part.findings.clone(),
             limitations: part.limitations.clone(),
             drift: part.drift.clone(),
+            knobs: part.knobs.clone(),
         };
         flat.verdict = flat.concluded();
         for failure in validate_flat(&flat) {

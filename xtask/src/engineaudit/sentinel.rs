@@ -45,7 +45,7 @@ fn killed() -> Value {
         "not_run_reason": null,
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
-        "identical": null, "expected": false, "unreached": false,
+        "identical": "not-measured", "expected": false, "unreached": false,
         "source_run_id": null
     })
 }
@@ -65,7 +65,7 @@ fn survived() -> Value {
         "step_notice": null, "retried": false, "not_run_reason": null,
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
-        "identical": null, "expected": true, "unreached": false,
+        "identical": "not-measured", "expected": true, "unreached": false,
         "source_run_id": null
     })
 }
@@ -521,6 +521,26 @@ pub fn touched() -> Value {
     })
 }
 
+/// The record the guards left for the clean run, with the item both of its mutants sit in and `entered` as given.
+#[must_use]
+pub fn entered(entered: &Value, measurable: bool) -> Value {
+    json!({
+        "targets": {
+            TARGET: {
+                "reached": { "tests": { "larger_works": [0, 1] } },
+                "entered": entered,
+                "ran": ["larger_works", "smaller_works"]
+            }
+        },
+        "limitations": [],
+        "items": [{
+            "index": 0, "package": "demo", "path": "src/lib.rs", "name": "larger",
+            "span": { "start": 50, "end": 300 }, "body": { "start": 60, "end": 290 },
+            "measurable": measurable
+        }]
+    })
+}
+
 impl Layer {
     /// The defects planted for this layer, each of which it must report as a violation.
     #[must_use]
@@ -681,6 +701,24 @@ impl Layer {
                         document
                     },
                     beside: vec![("touched-v1.json", touched())],
+                    ..clean
+                },
+            ],
+            Self::Entry => vec![
+                Perturbation {
+                    name: "a test that noticed a mutation and never entered the item it is in",
+                    beside: vec![(
+                        "touched-v1.json",
+                        entered(&json!({ "tests": { "smaller_works": [0] } }), true),
+                    )],
+                    ..clean.clone()
+                },
+                Perturbation {
+                    name: "a site reached inside an item nothing can record entering",
+                    beside: vec![(
+                        "touched-v1.json",
+                        entered(&json!({ "tests": { "larger_works": [0] } }), false),
+                    )],
                     ..clean
                 },
             ],

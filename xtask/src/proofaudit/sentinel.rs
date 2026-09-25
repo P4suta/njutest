@@ -214,21 +214,58 @@ pub fn was_put(fault: &str, decision: &str) -> Value {
 /// One touch record the engine writes about `target`, measured on `measured` over the one test `lib::works`, having reached `reached`.
 #[must_use]
 pub fn touch(measured: &str, reached: &[u32]) -> Value {
+    json!({ "type": "touch", "touch": touched(measured, reached) })
+}
+
+/// The record of [`touch`] without its event.
+fn touched(measured: &str, reached: &[u32]) -> Value {
     json!({
-        "type": "touch",
-        "touch": {
+        "target": TARGET,
+        "measured": measured,
+        "tests": 1,
+        "sites": reached.len(),
+        "loose": 0,
+        "infected": 0,
+        "passed": ["lib::works"],
+        "summary": { "protocol": "libtest", "tests_run": 1 },
+        "reached_sites": reached,
+        "entered_bodies": [],
+        "infected_sites": [],
+        "entered_items": []
+    })
+}
+
+/// One control of [`TARGET`] the engine started with `TZ` set, which came to `outcome` with `failed` failing and `reach` becoming of its reach.
+#[must_use]
+pub fn perturbed(outcome: &str, failed: &[&str], reach: &Value) -> Value {
+    json!({
+        "type": "perturbed-control",
+        "perturbed": {
             "target": TARGET,
-            "measured": measured,
-            "tests": 1,
-            "sites": reached.len(),
-            "loose": 0,
-            "infected": 0,
-            "passed": ["lib::works"],
-            "summary": { "protocol": "libtest", "tests_run": 1 },
-            "reached_sites": reached,
-            "entered_bodies": [],
-            "infected_sites": []
+            "perturbation": {
+                "environment": [{ "name": "TZ", "value": "Australia/Lord_Howe" }],
+                "launcher": null,
+                "arguments": []
+            },
+            "outcome": outcome,
+            "failed_tests": failed,
+            "duration_ms": 5,
+            "reach": reach
         }
+    })
+}
+
+/// The reach of a control that recorded having reached `reached` over the one test `lib::works`.
+#[must_use]
+pub fn recorded_reach(reached: &[u32]) -> Value {
+    json!({ "state": "recorded", "touch": touched("control", reached) })
+}
+
+/// The report's knob record about [`TARGET`] under the time zone, in the standing `state` names.
+#[must_use]
+pub fn knobbed(state: &str) -> Value {
+    json!({
+        "knobs": [{ "target": TARGET, "knob": "timezone", "standing": { "state": state } }]
     })
 }
 
@@ -333,11 +370,17 @@ pub struct Perturbation {
 /// The clean specimen every perturbation starts from, on which no layer may find anything.
 #[must_use]
 pub fn clean() -> Perturbation {
+    let mut document = with(drifted("held"));
+    merge(&mut document, knobbed("stable"));
     Perturbation {
         name: "clean",
-        document: with(drifted("held")),
+        document,
         events: Some(routes()),
-        engine: Some(vec![touch("baseline", &[0, 1]), touch("control", &[0, 1])]),
+        engine: Some(vec![
+            touch("baseline", &[0, 1]),
+            touch("control", &[0, 1]),
+            perturbed("survived", &[], &recorded_reach(&[0, 1])),
+        ]),
     }
 }
 
@@ -411,6 +454,16 @@ fn discharged_then_killed() -> Vec<Value> {
     ]
 }
 
+/// The outcomes the executions layer is planted a report lying about, told consistently.
+const LIED_OUTCOMES: [&str; 6] = [
+    "killed",
+    "unconfirmed",
+    "waited",
+    "unreached",
+    "errored",
+    "equivalent",
+];
+
 impl Layer {
     /// The defects planted for this layer, each of which it must report as a violation.
     #[must_use]
@@ -477,6 +530,173 @@ impl Layer {
                 engine: Some(vec![touch("baseline", &[0]), touch("control", &[0, 1])]),
                 ..clean
             }],
+            Self::Knobs => vec![Perturbation {
+                name: "a control a knob broke, recorded as stable",
+                engine: Some(vec![
+                    touch("baseline", &[0, 1]),
+                    touch("control", &[0, 1]),
+                    perturbed("killed", &["lib::works"], &json!({ "state": "not-read" })),
+                ]),
+                ..clean
+            }],
+            Self::Executions => LIED_OUTCOMES.into_iter().filter_map(lie).collect(),
         }
     }
+}
+
+/// How one outcome is told about the specimen's survivor: the lie's name, whether a test is named, the column that counts it, and the finding it owes.
+type Telling = (
+    &'static str,
+    bool,
+    Option<&'static str>,
+    Option<&'static str>,
+);
+
+/// How [`lie`] tells `outcome`, or nothing where the schema has no such outcome.
+fn telling(outcome: &str) -> Option<Telling> {
+    Some(match outcome {
+        "killed" => ("a survivor reported as killed", true, Some("killed"), None),
+        "unconfirmed" => (
+            "a survivor reported as unconfirmed",
+            true,
+            None,
+            Some("failing-test"),
+        ),
+        "errored" => (
+            "a survivor reported as errored",
+            true,
+            None,
+            Some("failing-test"),
+        ),
+        "waited" => (
+            "a survivor reported as waited",
+            true,
+            Some("waited"),
+            Some("waited-mutant"),
+        ),
+        "step-limit-reached" => (
+            "a survivor reported as stopped at its step limit",
+            true,
+            Some("step_limit_reached"),
+            Some("step-limit-reached-mutant"),
+        ),
+        "unreached" => (
+            "a survivor reported as unreached",
+            false,
+            Some("unreached"),
+            Some("surviving-mutant"),
+        ),
+        "equivalent" => (
+            "a survivor reported as equivalent",
+            false,
+            Some("equivalent"),
+            None,
+        ),
+        "compile-rejected" => (
+            "a survivor reported as compile-rejected",
+            false,
+            Some("rejected"),
+            None,
+        ),
+        "model-noticed" => (
+            "a survivor reported as model-noticed",
+            false,
+            Some("model_noticed"),
+            None,
+        ),
+        "model-proved" => (
+            "a survivor reported as model-proved",
+            false,
+            Some("model_proved"),
+            None,
+        ),
+        _ => return None,
+    })
+}
+
+/// The clean run with its kill reported as a survivor, its columns and findings made to agree.
+fn kill_reported_as_survivor() -> Perturbation {
+    let clean = clean();
+    let mut document = clean.document.clone();
+    merge(
+        &mut document,
+        json!({
+            "accounting": { "mutants": { "killed": 0, "survived": 2 } },
+            "mutants": [{ "decision": { "outcome": "survived", "killed_by": null } }],
+            "findings": [
+                {
+                    "kind": "surviving-mutant",
+                    "subject": SURVIVED,
+                    "detail": "no test noticed return-ok-default@1 at src/lib.rs:11",
+                    "position": null
+                },
+                {
+                    "kind": "surviving-mutant",
+                    "subject": KILLED,
+                    "detail": "no test noticed negate-condition@1 at src/lib.rs:7",
+                    "position": null
+                }
+            ]
+        }),
+    );
+    Perturbation {
+        name: "a kill reported as a survivor",
+        document,
+        ..clean
+    }
+}
+
+/// The clean run with its survivor reported as `outcome`, every column, finding and the verdict made to agree, and the recording left saying it survived; nothing where the schema has no such outcome.
+///
+/// A lie told consistently is the one an audit that only counts cannot see: the report contradicts nothing but the executions it rests on.
+#[must_use]
+pub fn lie(outcome: &str) -> Option<Perturbation> {
+    if outcome == "survived" {
+        return Some(kill_reported_as_survivor());
+    }
+    let (name, noticed, column, finding) = telling(outcome)?;
+    let mut columns = serde_json::Map::new();
+    columns.insert("survived".to_owned(), json!(0));
+    if let Some(column) = column {
+        columns.insert(
+            column.to_owned(),
+            json!(if column == "killed" { 2 } else { 1 }),
+        );
+    }
+    if matches!(outcome, "unreached" | "equivalent" | "compile-rejected") {
+        columns.insert("executed".to_owned(), json!(1));
+    }
+    let clean = clean();
+    let mut document = clean.document.clone();
+    merge(
+        &mut document,
+        json!({
+            "verdict": if finding.is_some() { "INSUFFICIENT" } else { "SCOPE_ASSURED" },
+            "accounting": { "mutants": columns },
+            "mutants": [{}, {
+                "decision": {
+                    "outcome": outcome,
+                    "killed_by": if noticed { json!(TARGET) } else { json!(null) },
+                    "step_boundary": null
+                }
+            }],
+            "findings": []
+        }),
+    );
+    if let Some(kind) = finding {
+        merge(
+            &mut document,
+            json!({ "findings": [{
+                "kind": kind,
+                "subject": SURVIVED,
+                "detail": "planted",
+                "position": null
+            }] }),
+        );
+    }
+    Some(Perturbation {
+        name,
+        document,
+        ..clean
+    })
 }

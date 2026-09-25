@@ -150,6 +150,10 @@ pub enum Command {
     Fix(Fix),
     /// Put one finding back to the tests and say whether it is still there.
     Replay(Replay),
+    /// Record what each test target enters, for `njutest select` to read.
+    Measure(Measure),
+    /// Say which test targets can notice what changed since `njutest measure`.
+    Select(Select),
     /// Read what a run recorded.
     Trace {
         /// What to read.
@@ -409,6 +413,42 @@ pub struct Replay {
     /// The latest by default.
     #[arg(long, value_name = "RUN")]
     pub run: Option<String>,
+    /// Pass `--offline` to cargo.
+    #[arg(long)]
+    pub offline: bool,
+    /// Pass `--locked` to cargo.
+    #[arg(long)]
+    pub locked: bool,
+}
+
+/// `njutest measure`.
+#[derive(Debug, Clone, Copy, clap::Args)]
+pub struct Measure {
+    /// Pass `--offline` to cargo.
+    #[arg(long)]
+    pub offline: bool,
+    /// Pass `--locked` to cargo.
+    #[arg(long)]
+    pub locked: bool,
+}
+
+/// How `njutest select` says what it decided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, njutest_macros::AllVariants)]
+pub enum SelectFormat {
+    /// Every target, whether it runs, and why.
+    Human,
+    /// A nextest filterset that leaves out every target proved unable to notice the change.
+    Nextest,
+    /// The targets proved unable to notice the change, one per line.
+    Skippable,
+}
+
+/// `njutest select`.
+#[derive(Debug, Clone, Copy, clap::Args)]
+pub struct Select {
+    /// How to say what was decided.
+    #[arg(long, value_enum, default_value_t = SelectFormat::Human)]
+    pub format: SelectFormat,
     /// Pass `--offline` to cargo.
     #[arg(long)]
     pub offline: bool,
