@@ -313,13 +313,16 @@ pub enum SessionError {
     },
     /// A mutant's execution changed the test executables the run starts.
     #[error(
-        "{}: the test executables changed while {mutant} ran ({}); every answer after it would be read against a harness this run did not build, so the run stops here. With more than one job, a mutant running beside it may have made the change",
+        "{}: the test executables changed while {mutant} ran{} ({}); every answer after it would be read against a harness this run did not build, so the run stops here",
         error::SESSION_APPARATUS_CHANGED.code,
+        crate::apparatus::alongside(beside),
         crate::apparatus::summary(changes)
     )]
     ApparatusChanged {
         /// The mutant whose execution the change was found after.
         mutant: String,
+        /// Every other mutant whose execution ran at any moment that one did, any of which may have made the change.
+        beside: Vec<String>,
         /// What changed.
         changes: Vec<crate::apparatus::Change>,
     },

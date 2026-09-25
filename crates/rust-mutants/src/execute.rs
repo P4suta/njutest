@@ -644,12 +644,28 @@ pub enum StartFailure {
     },
 }
 
+/// Whether starting a program failed because another process still holds its file open: a sharing violation on Windows, which std names no kind for, and what `ExecutableFileBusy` already says elsewhere.
+#[cfg(windows)]
+fn held_by_a_writer(error: &std::io::Error) -> bool {
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    error.raw_os_error() == Some(ERROR_SHARING_VIOLATION)
+}
+
+/// Whether starting a program failed because another process still holds its file open, which outside Windows is the `ExecutableFileBusy` kind itself.
+#[cfg(not(windows))]
+const fn held_by_a_writer(_error: &std::io::Error) -> bool {
+    false
+}
+
 impl StartFailure {
     /// Why a supervised run that never started did not.
     #[must_use]
     pub fn of(error: &crate::runner::RunnerError) -> Self {
         use crate::runner::RunnerError;
         match error {
+            RunnerError::ProcessStartFailed { source, .. } if held_by_a_writer(source) => {
+                Self::Busy
+            }
             RunnerError::ProcessStartFailed { source, .. } => match source.kind() {
                 std::io::ErrorKind::NotFound => Self::Missing,
                 std::io::ErrorKind::PermissionDenied => Self::Denied,
@@ -2610,6 +2626,31 @@ fn version_parts(version: &str) -> (&str, &str, &str, &str) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_start_refused_for_want_of_room_or_a_writer_is_named_as_such() {
+        let refused = |source: std::io::Error| {
+            super::StartFailure::of(&crate::runner::RunnerError::ProcessStartFailed {
+                program: OsString::from("harness"),
+                source,
+            })
+        };
+        assert_eq!(
+            refused(std::io::Error::from(std::io::ErrorKind::WouldBlock)),
+            super::StartFailure::Exhausted
+        );
+        assert_eq!(
+            refused(std::io::Error::from(std::io::ErrorKind::NotFound)),
+            super::StartFailure::Missing
+        );
+        #[cfg(windows)]
+        assert_eq!(
+            refused(std::io::Error::from_raw_os_error(32)),
+            super::StartFailure::Busy,
+            "a binary the linker or a scanner still holds fails with a sharing violation, which \
+             is Windows' way of saying what ETXTBSY says"
+        );
+    }
+
     use std::ffi::OsString;
     use std::path::Path;
     use std::time::Duration;

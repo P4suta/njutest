@@ -894,7 +894,7 @@ impl Config {
         }
     }
 
-    /// Reads `.njutest.toml` from `root`, or the defaults when there is none.
+    /// Reads `.njutest.toml` from `root`, or [`Config::unwritten`] when there is none.
     ///
     /// # Errors
     /// See [`ConfigErrorKind`].
@@ -903,7 +903,7 @@ impl Config {
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self::default());
+                return Ok(Self::unwritten());
             }
             Err(error) => {
                 return Err(ConfigError::new(

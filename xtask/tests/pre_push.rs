@@ -214,7 +214,9 @@ impl Repository {
             .arg("pre-push")
             .current_dir(directory)
             .env("PATH", &self.path)
-            .env("TMPDIR", self.scratch.path())
+            .envs(njutest_devkit::paths::temporary_directory(
+                self.scratch.path(),
+            ))
             .env("NJUTEST_PRE_PUSH_CACHE", self.scratch.path().join("cache"))
             .env("NJUTEST_SLOT_DIR", &self.slots)
             .env_remove("NJUTEST_SLOT_HELD")
@@ -727,7 +729,9 @@ fn a_check_that_outlives_its_budget_is_stopped_with_everything_it_started() {
         .arg("pre-push")
         .current_dir(repository.directory.path())
         .env("PATH", &repository.path)
-        .env("TMPDIR", repository.scratch.path())
+        .envs(njutest_devkit::paths::temporary_directory(
+            repository.scratch.path(),
+        ))
         .env(
             "NJUTEST_PRE_PUSH_CACHE",
             repository.scratch.path().join("cache"),

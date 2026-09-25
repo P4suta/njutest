@@ -114,14 +114,6 @@ struct Located {
 }
 
 /// The function whose body's opening brace is at `start`, with the attributes of the item and of every inline module, `impl` or `trait` around it.
-/// A text field as a message quotes it, or what its absence is called there, so a message never passes an absent field off as an empty one.
-fn said(value: Option<&serde_json::Value>, absent: &'static str) -> String {
-    match value.and_then(serde_json::Value::as_str) {
-        Some(text) => text.to_owned(),
-        None => absent.to_owned(),
-    }
-}
-
 fn located(file: &syn::File, start: LineColumn) -> Option<Located> {
     let mut search = Search {
         start,
@@ -391,7 +383,10 @@ fn used(tree: &syn::UseTree, root: Option<&syn::Ident>, lists: Lists<'_>) -> Opt
     let listed_name = |ident: &syn::Ident| lists.macros.iter().any(|one| ident == one);
     let foreign = root.is_some_and(|root| !standard(root));
     match tree {
-        syn::UseTree::Path(path) => used(&path.tree, Some(root.unwrap_or(&path.ident)), lists),
+        syn::UseTree::Path(path) => match root {
+            Some(root) => used(&path.tree, Some(root), lists),
+            None => used(&path.tree, Some(&path.ident), lists),
+        },
         syn::UseTree::Name(name) => {
             (foreign && listed_name(&name.ident)).then_some(Unsealed::Shadowed)
         }
@@ -486,16 +481,201 @@ impl PageLists {
 pub fn line_column(text: &str, offset: usize) -> Option<LineColumn> {
     let before = text.get(..offset)?;
     let line = before.matches('\n').count().checked_add(1)?;
-    let column = before
-        .rsplit_once('\n')
-        .map_or(before, |(_, last)| last)
-        .chars()
-        .count();
+    let last = match before.rsplit_once('\n') {
+        Some((_, last)) => last,
+        None => before,
+    };
+    let column = last.chars().count();
     Some(LineColumn { line, column })
 }
 
 /// The page this audit reads its lists from, as this commit holds it.
 const PAGE: &str = include_str!("../../../docs/engine/carry.md");
+
+/// The skeletons document a run kept, as this audit reads it: closed, so a field the engine stopped writing is refused rather than read as absent.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Skeletons {
+    document_type: String,
+    schema_version: u64,
+    items: Vec<ItemClaim>,
+    units: Vec<Unit>,
+}
+
+/// What the run claims of one cataloged item's body.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ItemClaim {
+    index: u64,
+    item: NamedItem,
+    name: String,
+    body_digest: String,
+    sealed: bool,
+    #[serde(rename = "unsealed", deserialize_with = "super::wire::required_option")]
+    _unsealed: Option<serde_json::Value>,
+}
+
+/// One item as the carry evidence names it: its package, its file, and its place among that file's cataloged items.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NamedItem {
+    package: String,
+    path: String,
+    ordinal: u64,
+}
+
+impl std::fmt::Display for NamedItem {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}/{}#{}", self.package, self.path, self.ordinal)
+    }
+}
+
+/// One compiled unit's skeleton and every entry it folds.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Unit {
+    package: String,
+    target: String,
+    kind: String,
+    test: bool,
+    skeleton: String,
+    entries: std::collections::BTreeMap<String, String>,
+}
+
+/// Every carried record a run believed, as this audit reads it.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Believed {
+    document_type: String,
+    schema_version: u64,
+    records: Vec<BelievedRecord>,
+}
+
+/// One carried record a run believed, with the plan it was held to.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BelievedRecord {
+    mutant: String,
+    record: Carried,
+    plan: Vec<Planned>,
+}
+
+/// An answer from an earlier tree and every execution it rests on.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Carried {
+    #[serde(rename = "schema")]
+    _schema: String,
+    locus: Locus,
+    #[serde(rename = "keyed")]
+    _keyed: serde_json::Value,
+    outcome: String,
+    #[serde(rename = "target")]
+    _target: String,
+    #[serde(
+        rename = "tests_run",
+        deserialize_with = "super::wire::required_option"
+    )]
+    _tests_run: Option<u64>,
+    #[serde(rename = "failed_tests")]
+    _failed_tests: Vec<String>,
+    run_id: String,
+    executions: Vec<Execution>,
+}
+
+/// Where a mutation sits, by nothing outside the item it edits.
+#[derive(Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Locus {
+    item: NamedItem,
+    body_digest: String,
+    start: u64,
+    end: u64,
+    replacement: String,
+    rule: String,
+}
+
+/// One execution a carried answer rests on.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Execution {
+    target: String,
+    #[serde(deserialize_with = "super::wire::required_option")]
+    filter: Option<Vec<String>>,
+    skeleton: String,
+    entered: Vec<Entered>,
+    completeness: String,
+    detected: bool,
+}
+
+/// One item an execution entered, with the digest its body had.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Entered {
+    item: NamedItem,
+    body_digest: String,
+}
+
+/// One execution the run's route would have made.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Planned {
+    target: String,
+    #[serde(deserialize_with = "super::wire::required_option")]
+    filter: Option<Vec<String>>,
+}
+
+/// The tests a filter names, as a set.
+fn tests_of(filter: &[String]) -> std::collections::BTreeSet<&str> {
+    filter.iter().map(String::as_str).collect()
+}
+
+/// Every item's file and body span, by the item index the guards' record names it by.
+type Spans = std::collections::BTreeMap<u64, (String, std::ops::Range<u64>)>;
+
+/// Why the guards' record gives no body span to read an item by.
+#[derive(Debug, Clone, Copy)]
+enum Unspanned {
+    /// The record lists no items.
+    NoItems,
+    /// An item of it lacks an index, a file or a body span.
+    ItemWithoutSpan,
+}
+
+impl Unspanned {
+    /// The refusal as a sentence.
+    const fn said(self) -> &'static str {
+        match self {
+            Self::NoItems => "the guards' record names no items",
+            Self::ItemWithoutSpan => {
+                "an item of the guards' record names no index, file or body span"
+            }
+        }
+    }
+}
+
+/// The body span of every item the guards' record names, by item index, or why that record cannot say.
+fn spans(touched: &serde_json::Value) -> Result<Spans, Unspanned> {
+    let Some(items) = touched.get("items").and_then(serde_json::Value::as_array) else {
+        return Err(Unspanned::NoItems);
+    };
+    let mut spans = std::collections::BTreeMap::new();
+    for item in items {
+        let span = (|| {
+            let body = item.get("body")?;
+            Some((
+                item.get("index")?.as_u64()?,
+                item.get("path")?.as_str()?.to_owned(),
+                body.get("start")?.as_u64()?..body.get("end")?.as_u64()?,
+            ))
+        })();
+        let Some((index, path, body)) = span else {
+            return Err(Unspanned::ItemWithoutSpan);
+        };
+        spans.insert(index, (path, body));
+    }
+    Ok(spans)
+}
 
 /// One cataloged item, as the guards' record and the carry evidence name it.
 struct Cataloged {
@@ -508,48 +688,38 @@ struct Cataloged {
     sealed: bool,
 }
 
-/// Every item the carry evidence names, joined to the body span the guards' record gives it.
-fn cataloged(skeletons: &serde_json::Value, touched: &serde_json::Value) -> Vec<Cataloged> {
-    let spans: std::collections::BTreeMap<u64, (String, std::ops::Range<usize>)> = touched
-        .get("items")
-        .and_then(serde_json::Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|item| {
-            let index = item.get("index")?.as_u64()?;
-            let path = item.get("path")?.as_str()?.to_owned();
-            let body = item.get("body")?;
-            let start = offset(body.get("start"))?;
-            let end = offset(body.get("end"))?;
-            Some((index, (path, start..end)))
-        })
-        .collect();
-    skeletons
-        .get("items")
-        .and_then(serde_json::Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|item| {
-            let index = item.get("index")?.as_u64()?;
-            let (path, body) = spans.get(&index)?.clone();
-            let named = item.get("item")?;
-            let claimed = (
-                named.get("path")?.as_str()?.to_owned(),
-                named.get("ordinal")?.as_u64()?,
+/// Every item the carry evidence names, joined to the body span the guards' record gives it; an item it cannot be joined to is said.
+fn cataloged(skeletons: &Skeletons, spans: &Spans, notes: &mut super::Notes<'_>) -> Vec<Cataloged> {
+    let mut found = Vec::new();
+    for item in &skeletons.items {
+        let Some((path, body)) = spans.get(&item.index) else {
+            notes.violated(
+                &format!("{}#{}", item.item.path, item.index),
+                format!(
+                    "the carry evidence names item {} ({}), which the guards' record does not",
+                    item.index, item.name
+                ),
             );
-            Some(Cataloged {
-                index,
-                path,
-                claimed,
-                name: item.get("name")?.as_str()?.to_owned(),
-                body,
-                digest: item.get("body_digest")?.as_str()?.to_owned(),
-                sealed: item.get("sealed")?.as_bool()?,
-            })
-        })
-        .collect()
+            continue;
+        };
+        let (Ok(start), Ok(end)) = (usize::try_from(body.start), usize::try_from(body.end)) else {
+            notes.unaudited(
+                &format!("{path}#{}", item.index),
+                "the body span does not fit this platform's offsets".to_owned(),
+            );
+            continue;
+        };
+        found.push(Cataloged {
+            index: item.index,
+            path: path.clone(),
+            claimed: (item.item.path.clone(), item.item.ordinal),
+            name: item.name.clone(),
+            body: start..end,
+            digest: item.body_digest.clone(),
+            sealed: item.sealed,
+        });
+    }
+    found
 }
 
 /// Every item's name held to the guards' record: its file, and its place among that file's items in catalog order.
@@ -575,14 +745,6 @@ fn refs(items: &[Cataloged], notes: &mut super::Notes<'_>) {
     }
 }
 
-/// A byte offset the evidence keeps, where it is one this platform can index by.
-fn offset(value: Option<&serde_json::Value>) -> Option<usize> {
-    match usize::try_from(value?.as_u64()?) {
-        Ok(offset) => Some(offset),
-        Err(_too_wide) => None,
-    }
-}
-
 /// The lowercase hex SHA-256 of `bytes`, as every digest the carry evidence keeps is spelled.
 #[must_use]
 pub fn digest_of(bytes: &[u8]) -> String {
@@ -595,7 +757,56 @@ fn sha256(bytes: &[u8]) -> String {
     hex::encode(sha2::Sha256::digest(bytes))
 }
 
-/// The carry evidence against the tree the run measured: every body digest, every body the run calls sealed, every `$root` entry's placeholder rendering, and every skeleton's fold.
+/// One document the carry layer reads, decoded into the shape this audit expects, or the violation that it is not that shape.
+fn decoded<T: serde::de::DeserializeOwned>(
+    value: &serde_json::Value,
+    (named, document_type): (&str, &str),
+    notes: &mut super::Notes<'_>,
+) -> Option<T> {
+    match serde_json::from_value::<T>(value.clone()) {
+        Ok(document) => Some(document),
+        Err(error) => {
+            notes.violated(
+                named,
+                format!("{named} is not the {document_type} document this audit reads: {error}"),
+            );
+            None
+        }
+    }
+}
+
+/// The skeletons document as the shape this audit reads, and the guards' body spans where the run kept them; nothing where either says it is another document.
+fn documents(
+    skeletons: &serde_json::Value,
+    touched: Option<&serde_json::Value>,
+    notes: &mut super::Notes<'_>,
+) -> Option<(Skeletons, Option<Spans>)> {
+    let skeletons = decoded::<Skeletons>(
+        skeletons,
+        ("skeletons-v1.json", "rust-mutants/skeletons"),
+        notes,
+    )?;
+    if skeletons.document_type != "rust-mutants/skeletons" || skeletons.schema_version != 1 {
+        notes.violated(
+            "skeletons-v1.json",
+            format!(
+                "the document says it is {} version {}, not rust-mutants/skeletons version 1",
+                skeletons.document_type, skeletons.schema_version
+            ),
+        );
+        return None;
+    }
+    match touched.map(spans) {
+        None => Some((skeletons, None)),
+        Some(Ok(spans)) => Some((skeletons, Some(spans))),
+        Some(Err(why)) => {
+            notes.violated("touched-v1.json", why.said().to_owned());
+            None
+        }
+    }
+}
+
+/// The carry evidence against the tree the run measured: every body digest, every body the run calls sealed, every `$root` entry's placeholder rendering, every skeleton's fold, and every carried answer the run believed.
 pub(super) fn layer(
     report: &super::Report,
     evidence: &super::CheckedEvidence<'_>,
@@ -605,16 +816,34 @@ pub(super) fn layer(
     let Some(skeletons) = evidence.skeletons.as_ref() else {
         return notes.absent("the run kept no skeletons, so it carried no answer to read again");
     };
-    if let (Some(carried), Some(touched)) = (evidence.carried.as_ref(), evidence.touched.as_ref()) {
+    let Some((skeletons, spans)) = documents(skeletons, evidence.touched.as_ref(), &mut notes)
+    else {
+        return notes.looked();
+    };
+    if let (Some(carried), Some(touched), Some(spans)) = (
+        evidence.carried.as_ref(),
+        evidence.touched.as_ref(),
+        spans.as_ref(),
+    ) {
         let standings = evidence
             .recorded
             .as_ref()
             .map(|recorded| crate::drift::standings(&crate::drift::of_events(&recorded.events)));
-        believed(
-            report,
-            (carried, &Held::of(skeletons, touched), standings.as_ref()),
+        if let Some(carried) = decoded::<Believed>(
+            carried,
+            ("carried-v1.json", "rust-mutants/carried"),
             &mut notes,
-        );
+        ) {
+            believed(
+                report,
+                (
+                    &carried,
+                    &Held::of(&skeletons, touched, spans),
+                    standings.as_ref(),
+                ),
+                &mut notes,
+            );
+        }
     }
     let Some(root) = evidence.root else {
         notes.unaudited(
@@ -624,7 +853,7 @@ pub(super) fn layer(
         );
         return notes.looked();
     };
-    let Some(touched) = evidence.touched.as_ref() else {
+    let Some(spans) = spans else {
         notes.unaudited(
             "touched",
             "the run kept no record of its items' body spans, so no body can be read again"
@@ -644,13 +873,13 @@ pub(super) fn layer(
         .iter()
         .map(|row| (row.path.as_str(), row.source_digest.as_str()))
         .collect();
-    let items = cataloged(skeletons, touched);
+    let items = cataloged(&skeletons, &spans, &mut notes);
     let mut read = Tree::new(root, &measured);
     for item in &items {
-        bodies(item, &mut read, (page.lists(), skeletons), &mut notes);
+        bodies(item, &mut read, (page.lists(), &skeletons), &mut notes);
     }
     refs(&items, &mut notes);
-    skeleton_folds(skeletons, &items, &mut read, &mut notes);
+    skeleton_folds(&skeletons, &items, &mut read, &mut notes);
     notes.looked()
 }
 
@@ -695,7 +924,7 @@ impl<'a> Tree<'a> {
 fn bodies(
     item: &Cataloged,
     tree: &mut Tree<'_>,
-    (lists, skeletons): (Lists<'_>, &serde_json::Value),
+    (lists, skeletons): (Lists<'_>, &Skeletons),
     notes: &mut super::Notes<'_>,
 ) {
     let subject = format!("{}#{}", item.path, item.index);
@@ -775,47 +1004,29 @@ fn bodies(
 }
 
 /// Whether a unit that runs inside the compiler, a `proc-macro` or a `custom-build` one, read `path`.
-fn read_by_the_compiler(path: &str, skeletons: &serde_json::Value) -> bool {
+fn read_by_the_compiler(path: &str, skeletons: &Skeletons) -> bool {
     let named = format!("$root/{path}");
     skeletons
-        .get("units")
-        .and_then(serde_json::Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
+        .units
         .iter()
-        .filter(|unit| {
-            unit.get("entries")
-                .and_then(serde_json::Value::as_object)
-                .is_some_and(|entries| entries.contains_key(&named))
-        })
-        .filter_map(|unit| unit.get("kind").and_then(serde_json::Value::as_str))
-        .any(|kind| {
-            kind.split(',')
+        .filter(|unit| unit.entries.contains_key(&named))
+        .any(|unit| {
+            unit.kind
+                .split(',')
                 .any(|one| one == "proc-macro" || one == "custom-build")
         })
 }
 
 /// Every file read by any unit that read `path` that parses as a whole Rust file, whatever its extension, or `None` where one of them cannot be read: a `$target` entry, or a `$root` one --root does not hold.
-fn unit_files(
-    path: &str,
-    skeletons: &serde_json::Value,
-    tree: &mut Tree<'_>,
-) -> Option<Vec<syn::File>> {
+fn unit_files(path: &str, skeletons: &Skeletons, tree: &mut Tree<'_>) -> Option<Vec<syn::File>> {
     let named = format!("$root/{path}");
     let mut files = Vec::new();
     for unit in skeletons
-        .get("units")
-        .and_then(serde_json::Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
+        .units
+        .iter()
+        .filter(|unit| unit.entries.contains_key(&named))
     {
-        let Some(entries) = unit.get("entries").and_then(serde_json::Value::as_object) else {
-            continue;
-        };
-        if !entries.contains_key(&named) {
-            continue;
-        }
-        for entry in entries.keys() {
+        for entry in unit.entries.keys() {
             if !entry.starts_with("$root/") && !entry.starts_with("$target/") {
                 continue;
             }
@@ -832,53 +1043,43 @@ fn unit_files(
 
 /// Every unit's skeleton against the fold of its entries, and every `$root` entry against this audit's own placeholder rendering of the file.
 fn skeleton_folds(
-    skeletons: &serde_json::Value,
+    skeletons: &Skeletons,
     items: &[Cataloged],
     tree: &mut Tree<'_>,
     notes: &mut super::Notes<'_>,
 ) {
-    for unit in skeletons
-        .get("units")
-        .and_then(serde_json::Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-    {
-        let name = format!(
-            "{}/{}",
-            said(unit.get("package"), "<no package>"),
-            said(unit.get("target"), "<no target>")
-        );
-        let Some(entries) = unit.get("entries").and_then(serde_json::Value::as_object) else {
-            notes.unaudited(
-                &name,
-                "the unit keeps no entries, so its skeleton is not re-folded".to_owned(),
-            );
-            continue;
-        };
+    for unit in &skeletons.units {
+        let name = format!("{}/{}", unit.package, unit.target);
         let mut folded = String::new();
-        for (entry, digest) in entries {
+        for (entry, digest) in &unit.entries {
             folded.push_str(entry);
             folded.push('\0');
-            folded.push_str(digest.as_str().unwrap_or_default());
+            folded.push_str(digest);
             folded.push('\n');
         }
-        if unit.get("skeleton").and_then(serde_json::Value::as_str)
-            != Some(sha256(folded.as_bytes()).as_str())
-        {
+        if unit.skeleton != sha256(folded.as_bytes()) {
             notes.violated(
                 &name,
                 "the unit's skeleton is not the fold of the entries it keeps".to_owned(),
             );
         }
-        for (entry, digest) in entries {
+        for (entry, digest) in &unit.entries {
             let Some(path) = entry.strip_prefix("$root/") else {
                 continue;
             };
             let Some((text, _)) = tree.text(path) else {
                 continue;
             };
-            let rendered = rendering(entry, path, &text, items);
-            if digest.as_str() != Some(sha256(rendered.as_bytes()).as_str()) {
+            let Some(rendered) = rendering(entry, path, &text, items) else {
+                notes.violated(
+                    &name,
+                    format!(
+                        "a sealed body of {entry} lies outside the file, so it cannot be set aside"
+                    ),
+                );
+                continue;
+            };
+            if *digest != sha256(rendered.as_bytes()) {
                 notes.violated(
                     &name,
                     format!(
@@ -891,8 +1092,8 @@ fn skeleton_folds(
     }
 }
 
-/// `text` with every sealed body of the file at `path` replaced by the placeholder naming it, as the page defines it.
-fn rendering(entry: &str, path: &str, text: &str, items: &[Cataloged]) -> String {
+/// `text` with every sealed body of the file at `path` replaced by the placeholder naming it, as the page defines it, or nothing where a body's span is not in the text.
+fn rendering(entry: &str, path: &str, text: &str, items: &[Cataloged]) -> Option<String> {
     let mut ordered: Vec<&Cataloged> = items.iter().filter(|item| item.path == path).collect();
     ordered.sort_by_key(|item| item.index);
     let mut rendered = String::new();
@@ -901,9 +1102,12 @@ fn rendering(entry: &str, path: &str, text: &str, items: &[Cataloged]) -> String
         if !item.sealed {
             continue;
         }
-        rendered.push_str(text.get(at..item.body.start).unwrap_or_default());
-        let body = text.get(item.body.clone()).unwrap_or_default();
-        let last = body.rsplit('\n').next().unwrap_or_default();
+        rendered.push_str(text.get(at..item.body.start)?);
+        let body = text.get(item.body.clone())?;
+        let last = match body.rsplit_once('\n') {
+            Some((_, last)) => last,
+            None => body,
+        };
         rendered.push_str("{sealed:");
         rendered.push_str(entry);
         rendered.push('#');
@@ -917,63 +1121,38 @@ fn rendering(entry: &str, path: &str, text: &str, items: &[Cataloged]) -> String
         rendered.push('}');
         at = item.body.end;
     }
-    rendered.push_str(text.get(at..).unwrap_or_default());
-    rendered
+    rendered.push_str(text.get(at..)?);
+    Some(rendered)
 }
-
-/// One item as a carried record names it: its package, its file, and its place among that file's items.
-type Named = (String, String, u64);
 
 /// The evidence a believed record is held to, read once.
 struct Held<'a> {
     tree: String,
-    bodies: std::collections::BTreeMap<Named, (String, bool)>,
-    by_index: std::collections::BTreeMap<u64, (Named, String)>,
-    spans: Vec<(u64, String, std::ops::Range<u64>)>,
+    bodies: std::collections::BTreeMap<NamedItem, (String, bool)>,
+    by_index: std::collections::BTreeMap<u64, (NamedItem, String)>,
+    spans: &'a Spans,
     touched: &'a serde_json::Value,
 }
 
 impl<'a> Held<'a> {
-    fn of(skeletons: &serde_json::Value, touched: &'a serde_json::Value) -> Self {
-        let mut units: Vec<String> = array(skeletons, "units")
+    fn of(skeletons: &Skeletons, touched: &'a serde_json::Value, spans: &'a Spans) -> Self {
+        let mut units: Vec<String> = skeletons
+            .units
             .iter()
-            .filter_map(|unit| {
-                Some(format!(
+            .map(|unit| {
+                format!(
                     "{}\0{}\0{}\0{}\0{}\n",
-                    unit.get("package")?.as_str()?,
-                    unit.get("target")?.as_str()?,
-                    unit.get("kind")?.as_str()?,
-                    unit.get("test")?.as_bool()?,
-                    unit.get("skeleton")?.as_str()?
-                ))
+                    unit.package, unit.target, unit.kind, unit.test, unit.skeleton
+                )
             })
             .collect();
         units.sort();
         let mut bodies = std::collections::BTreeMap::new();
         let mut by_index = std::collections::BTreeMap::new();
-        for item in array(skeletons, "items") {
-            let (Some(named), Some(digest), Some(sealed), Some(index)) = (
-                item.get("item").and_then(named),
-                item.get("body_digest").and_then(serde_json::Value::as_str),
-                item.get("sealed").and_then(serde_json::Value::as_bool),
-                item.get("index").and_then(serde_json::Value::as_u64),
-            ) else {
-                continue;
-            };
-            bodies.insert(named.clone(), (digest.to_owned(), sealed));
-            by_index.insert(index, (named, digest.to_owned()));
+        for item in &skeletons.items {
+            bodies.insert(item.item.clone(), (item.body_digest.clone(), item.sealed));
+            by_index.insert(item.index, (item.item.clone(), item.body_digest.clone()));
         }
-        let spans = array(touched, "items")
-            .iter()
-            .filter_map(|item| {
-                let body = item.get("body")?;
-                Some((
-                    item.get("index")?.as_u64()?,
-                    item.get("path")?.as_str()?.to_owned(),
-                    body.get("start")?.as_u64()?..body.get("end")?.as_u64()?,
-                ))
-            })
-            .collect();
         Self {
             tree: sha256(units.concat().as_bytes()),
             bodies,
@@ -984,44 +1163,27 @@ impl<'a> Held<'a> {
     }
 }
 
-fn array<'v>(value: &'v serde_json::Value, key: &str) -> &'v [serde_json::Value] {
-    value
-        .get(key)
-        .and_then(serde_json::Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-}
-
-fn named(value: &serde_json::Value) -> Option<Named> {
-    Some((
-        value.get("package")?.as_str()?.to_owned(),
-        value.get("path")?.as_str()?.to_owned(),
-        value.get("ordinal")?.as_u64()?,
-    ))
-}
-
-/// A record's filter as a set of test names, or nothing for a whole target.
-fn filter_of(value: Option<&serde_json::Value>) -> Option<std::collections::BTreeSet<String>> {
-    value?.as_array().map(|tests| {
-        tests
-            .iter()
-            .filter_map(serde_json::Value::as_str)
-            .map(ToOwned::to_owned)
-            .collect()
-    })
-}
-
 /// Every carried answer the run believed, held to this run's own evidence: its report row, its locus, the tree's skeleton, what each execution entered, and the plan it was held to (ADR 0041).
 fn believed(
     report: &super::Report,
     (carried, held, standings): (
-        &serde_json::Value,
+        &Believed,
         &Held<'_>,
         Option<&std::collections::BTreeMap<String, crate::drift::Standing>>,
     ),
     notes: &mut super::Notes<'_>,
 ) {
-    if standings.is_none() && !array(carried, "records").is_empty() {
+    if carried.document_type != "rust-mutants/carried" || carried.schema_version != 1 {
+        notes.violated(
+            "carried-v1.json",
+            format!(
+                "the document says it is {} version {}, not rust-mutants/carried version 1",
+                carried.document_type, carried.schema_version
+            ),
+        );
+        return;
+    }
+    if standings.is_none() && !carried.records.is_empty() {
         notes.unaudited(
             "reach",
             "no recording was given, so whether each target a carried answer rests on held its \
@@ -1029,53 +1191,38 @@ fn believed(
                 .to_owned(),
         );
     }
-    for entry in array(carried, "records") {
-        let mutant = entry
-            .get("mutant")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
-        let Some(row) = report.mutants.iter().find(|row| row.id == mutant) else {
+    for entry in &carried.records {
+        let Some(row) = report.mutants.iter().find(|row| row.id == entry.mutant) else {
             notes.violated(
-                mutant,
+                &entry.mutant,
                 "the run believed a carried record about a mutant its report does not hold"
                     .to_owned(),
             );
             continue;
         };
         let subject = row.display_id.as_str();
-        let (Some(record), Some(plan)) = (
-            entry.get("record"),
-            entry.get("plan").and_then(serde_json::Value::as_array),
-        ) else {
-            notes.violated(
-                subject,
-                "a believed record holds no record or no plan".to_owned(),
-            );
-            continue;
-        };
-        let outcome = record.get("outcome").and_then(serde_json::Value::as_str);
-        if outcome != Some(row.outcome.as_str())
-            || record.get("run_id").and_then(serde_json::Value::as_str)
-                != row.source_run_id.as_deref()
+        let record = &entry.record;
+        if record.outcome != row.outcome.as_str()
+            || Some(record.run_id.as_str()) != row.source_run_id.as_deref()
         {
             notes.violated(
                 subject,
                 format!(
-                    "the report says {} from {:?}, and the record it carried says {outcome:?} from \
-                     {:?}",
+                    "the report says {} from {:?}, and the record it carried says {} from {}",
                     row.outcome.as_str(),
                     row.source_run_id,
-                    record.get("run_id")
+                    record.outcome,
+                    record.run_id
                 ),
             );
         }
-        if let Some(why) = locus_differs(row, record.get("locus"), held) {
+        if let Some(why) = locus_differs(row, &record.locus, held) {
             notes.violated(
                 subject,
                 format!("the record's locus is not the mutation's: {why}"),
             );
         }
-        if let Some(why) = premise_fails(outcome, record, plan, held) {
+        if let Some(why) = premise_fails(record, &entry.plan, held) {
             notes.violated(
                 subject,
                 format!("the run carried it though a premise of ADR 0041 fails: {why}"),
@@ -1084,28 +1231,25 @@ fn believed(
         if let Some(standings) = standings {
             reach_held(
                 subject,
-                resting_targets(outcome, record, plan),
+                resting_targets(record, &entry.plan),
                 standings,
                 notes,
             );
         }
-        planned_reach(subject, (row.index, plan), held, notes);
+        planned_reach(subject, (row.index, &entry.plan), held, notes);
     }
 }
 
 /// Whether every target the plan runs is one the guards' record says reaches the mutation at `index`, narrowed to the tests the plan names.
 fn planned_reach(
     subject: &str,
-    (index, plan): (u64, &[serde_json::Value]),
+    (index, plan): (u64, &[Planned]),
     held: &Held<'_>,
     notes: &mut super::Notes<'_>,
 ) {
     let reaching = super::evidence::reaching_targets(held.touched, index);
     for planned in plan {
-        let target = planned
-            .get("target")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
+        let target = planned.target.as_str();
         let Some(narrowed) = reaching.get(target) else {
             notes.violated(
                 subject,
@@ -1115,7 +1259,10 @@ fn planned_reach(
             );
             continue;
         };
-        let filter = filter_of(planned.get("filter"));
+        let filter: Option<std::collections::BTreeSet<String>> = planned
+            .filter
+            .as_ref()
+            .map(|tests| tests.iter().cloned().collect());
         if filter.is_some() && filter.as_ref() != narrowed.as_ref() {
             notes.violated(
                 subject,
@@ -1131,12 +1278,12 @@ fn planned_reach(
 /// Whether every target a carried answer rests on held its reach, re-derived from the control records the run kept (P7).
 fn reach_held(
     subject: &str,
-    targets: Vec<String>,
+    targets: Vec<&str>,
     standings: &std::collections::BTreeMap<String, crate::drift::Standing>,
     notes: &mut super::Notes<'_>,
 ) {
     for target in targets {
-        let standing = match standings.get(&target) {
+        let standing = match standings.get(target) {
             Some(crate::drift::Standing::Held) => continue,
             Some(other) => other.name(),
             None => "without a baseline to compare a control with",
@@ -1152,125 +1299,95 @@ fn reach_held(
 }
 
 /// Every target a carried answer rests on: the killer's for a kill, every planned one for a survival.
-fn resting_targets(
-    outcome: Option<&str>,
-    record: &serde_json::Value,
-    plan: &[serde_json::Value],
-) -> Vec<String> {
-    let target = |value: &serde_json::Value| {
-        value
-            .get("target")
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned)
-    };
-    match outcome {
-        Some("killed") => array(record, "executions")
+fn resting_targets<'r>(record: &'r Carried, plan: &'r [Planned]) -> Vec<&'r str> {
+    if record.outcome == "killed" {
+        return record
+            .executions
             .iter()
             .rev()
-            .find(|one| one.get("detected").and_then(serde_json::Value::as_bool) == Some(true))
-            .and_then(target)
+            .find(|one| one.detected)
+            .map(|killer| killer.target.as_str())
             .into_iter()
-            .collect(),
-        _ => plan.iter().filter_map(target).collect(),
+            .collect();
     }
+    plan.iter().map(|one| one.target.as_str()).collect()
 }
 
 /// Why a record's locus is not the mutation at `row`: another item, another body, another place in it, another edit, or another rule.
-fn locus_differs(
-    row: &super::Row,
-    locus: Option<&serde_json::Value>,
-    held: &Held<'_>,
-) -> Option<String> {
-    let locus = locus?;
-    let Some((index, _, body)) = held
+fn locus_differs(row: &super::Row, locus: &Locus, held: &Held<'_>) -> Option<String> {
+    let Some((index, (_, body))) = held
         .spans
         .iter()
-        .filter(|(_, path, body)| {
+        .filter(|(_, (path, body))| {
             *path == row.path && body.start <= row.start_byte && row.end_byte <= body.end
         })
-        .max_by_key(|(_, _, body)| body.start)
+        .max_by_key(|(_, (_, body))| body.start)
     else {
         return Some("the mutation is inside no item body, which has no locus".to_owned());
     };
     let Some((item, digest)) = held.by_index.get(index) else {
         return Some(format!("item {index} has no carry evidence"));
     };
-    let expected = (
-        Some(item.clone()),
-        Some(digest.as_str()),
+    let (Some(start), Some(end)) = (
         row.start_byte.checked_sub(body.start),
         row.end_byte.checked_sub(body.start),
-        Some(row.replacement.as_str()),
-        Some(format!("{}@{}", row.rule, row.rule_version)),
-    );
-    let claimed = (
-        locus.get("item").and_then(named),
-        locus.get("body_digest").and_then(serde_json::Value::as_str),
-        locus.get("start").and_then(serde_json::Value::as_u64),
-        locus.get("end").and_then(serde_json::Value::as_u64),
-        locus.get("replacement").and_then(serde_json::Value::as_str),
-        locus
-            .get("rule")
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned),
-    );
-    (claimed != expected)
-        .then(|| format!("it says {claimed:?}, and the evidence makes it {expected:?}"))
+    ) else {
+        return Some("the mutation starts before the body it is inside".to_owned());
+    };
+    let expected = Locus {
+        item: item.clone(),
+        body_digest: digest.clone(),
+        start,
+        end,
+        replacement: row.replacement.clone(),
+        rule: format!("{}@{}", row.rule, row.rule_version),
+    };
+    (*locus != expected)
+        .then(|| format!("it says {locus:?}, and the evidence makes it {expected:?}"))
 }
 
 /// The first premise of ADR 0041 a believed record fails against this run's evidence, in the words the trace uses.
-fn premise_fails(
-    outcome: Option<&str>,
-    record: &serde_json::Value,
-    plan: &[serde_json::Value],
-    held: &Held<'_>,
-) -> Option<String> {
-    let executions = array(record, "executions");
-    let resting: Vec<(&serde_json::Value, &[&str])> = match outcome {
-        Some("killed") => {
-            let Some(killer) = executions
-                .iter()
-                .rev()
-                .find(|one| one.get("detected").and_then(serde_json::Value::as_bool) == Some(true))
-            else {
+fn premise_fails(record: &Carried, plan: &[Planned], held: &Held<'_>) -> Option<String> {
+    let resting: Vec<(&Execution, &[&str])> = match record.outcome.as_str() {
+        "killed" => {
+            let Some(killer) = record.executions.iter().rev().find(|one| one.detected) else {
                 return Some("entry-incomplete: a kill no execution detected".to_owned());
             };
-            let target = killer.get("target");
-            let Some(planned) = plan.iter().find(|one| one.get("target") == target) else {
+            let Some(planned) = plan.iter().find(|one| one.target == killer.target) else {
                 return Some("filter-differs: the killer's target is not in the plan".to_owned());
             };
-            if filter_of(planned.get("filter")) != filter_of(killer.get("filter")) {
+            if planned.filter.as_deref().map(tests_of) != killer.filter.as_deref().map(tests_of) {
                 return Some("filter-differs: the killer named other tests".to_owned());
             }
             vec![(killer, &["whole", "up-to-first-failure"])]
         }
-        Some("survived") => {
+        "survived" => {
             let mut resting = Vec::new();
             for planned in plan {
-                let target = planned.get("target");
-                let mut ran = executions
+                let mut ran = record
+                    .executions
                     .iter()
-                    .filter(|one| one.get("target") == target)
+                    .filter(|one| one.target == planned.target)
                     .peekable();
                 if ran.peek().is_none() {
                     return Some(format!(
                         "route-grew: nothing recorded ran {}",
-                        said(target, "<no target>")
+                        planned.target
                     ));
                 }
-                let Some(execution) = ran
-                    .find(|one| filter_of(one.get("filter")) == filter_of(planned.get("filter")))
-                else {
+                let Some(execution) = ran.find(|one| {
+                    one.filter.as_deref().map(tests_of) == planned.filter.as_deref().map(tests_of)
+                }) else {
                     return Some(format!(
                         "filter-differs: {} ran other tests",
-                        said(target, "<no target>")
+                        planned.target
                     ));
                 };
                 resting.push((execution, ["whole"].as_slice()));
             }
             resting
         }
-        other => return Some(format!("a carried record says {other:?}")),
+        other => return Some(format!("a carried record says {other}")),
     };
     resting
         .into_iter()
@@ -1278,41 +1395,21 @@ fn premise_fails(
 }
 
 /// Why one execution would not do on this tree what it did on its own: its record does not reach far enough, its skeleton moved, or a body it entered changed or is no longer sealed.
-fn execution_fails(
-    execution: &serde_json::Value,
-    enough: &[&str],
-    held: &Held<'_>,
-) -> Option<String> {
-    let completeness = execution
-        .get("completeness")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    if !enough.contains(&completeness) {
-        return Some(format!("entry-incomplete: {completeness}"));
+fn execution_fails(execution: &Execution, enough: &[&str], held: &Held<'_>) -> Option<String> {
+    if !enough.contains(&execution.completeness.as_str()) {
+        return Some(format!("entry-incomplete: {}", execution.completeness));
     }
-    if execution
-        .get("skeleton")
-        .and_then(serde_json::Value::as_str)
-        != Some(held.tree.as_str())
-    {
+    if execution.skeleton != held.tree {
         return Some("skeleton-changed".to_owned());
     }
-    for entered in array(execution, "entered") {
-        let item = entered.get("item").and_then(named);
-        let digest = entered
-            .get("body_digest")
-            .and_then(serde_json::Value::as_str);
-        let label = item.as_ref().map_or_else(
-            || "an unnamed item".to_owned(),
-            |(package, path, ordinal)| format!("{package}/{path}#{ordinal}"),
-        );
-        match item.and_then(|item| held.bodies.get(&item)) {
-            Some((now, _)) if Some(now.as_str()) != digest => {
-                return Some(format!("item-changed: {label}"));
+    for entered in &execution.entered {
+        match held.bodies.get(&entered.item) {
+            Some((now, _)) if *now != entered.body_digest => {
+                return Some(format!("item-changed: {}", entered.item));
             }
-            Some((_, false)) => return Some(format!("unsealed: {label}")),
+            Some((_, false)) => return Some(format!("unsealed: {}", entered.item)),
             Some((_, true)) => {}
-            None => return Some(format!("item-changed: {label} is gone")),
+            None => return Some(format!("item-changed: {} is gone", entered.item)),
         }
     }
     None

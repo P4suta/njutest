@@ -1589,7 +1589,9 @@ mod pool {
         options: &Options<'_>,
         watching: (&Cancel, &mut O, usize),
     ) -> Result<Vec<Judged>, EngineError> {
-        let (cancel, observer, workers) = watching;
+        let (asked, observer, workers) = watching;
+        let stopping = asked.child();
+        let cancel = &stopping;
         let total =
             u32::try_from(places.len()).map_err(|_overflow| SessionError::WorkerQueueTooLarge {
                 workers: places.len(),

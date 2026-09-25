@@ -284,7 +284,7 @@ fn the_stream_opens_before_anything_is_prepared() {
     let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command
         .env("NO_COLOR", "1")
-        .env("TMPDIR", fixture.temp())
+        .envs(njutest_devkit::paths::temporary_directory(fixture.temp()))
         .env("XDG_CACHE_HOME", fixture.cache())
         .args(["run", "--json", "--offline", "--locked", "--no-coverage"])
         .args(["--root", njutest_devkit::paths::utf8(fixture.root())])
