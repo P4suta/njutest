@@ -673,6 +673,18 @@ fn believed_plants() -> Vec<Perturbation> {
             )
         },
         believed_beside(
+            "a kill carried by an execution whose record omits what it entered",
+            (0, "killed", "demo/test/other"),
+            |believed| {
+                if let Some(killer) = believed
+                    .pointer_mut("/record/executions/1")
+                    .and_then(Value::as_object_mut)
+                {
+                    killer.remove("entered");
+                }
+            },
+        ),
+        believed_beside(
             "a kill carried across a skeleton that has changed since",
             (0, "killed", "demo/test/other"),
             |believed| {
@@ -721,6 +733,25 @@ fn carry_plants() -> Vec<Perturbation> {
                 &json!({ "item": { "ordinal": 1 } }),
                 &json!([]),
             ),
+            tree: vec![("src/other.rs", sealed.clone())],
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "an item whose carry evidence omits whether its body is sealed",
+            beside: {
+                let mut beside = carry_beside("src/other.rs", &sealed, &json!({}), &json!([]));
+                for (file, document) in &mut beside {
+                    if let ("skeletons-v1.json", Some(item)) = (
+                        *file,
+                        document
+                            .pointer_mut("/items/0")
+                            .and_then(Value::as_object_mut),
+                    ) {
+                        item.remove("sealed");
+                    }
+                }
+                beside
+            },
             tree: vec![("src/other.rs", sealed.clone())],
             ..clean.clone()
         },
