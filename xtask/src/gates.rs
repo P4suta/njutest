@@ -2553,6 +2553,8 @@ pub struct EngineRun<'a> {
     pub ledger: Option<&'a Path>,
     /// Whether the census of the walk's own decisions is re-derived.
     pub sites: bool,
+    /// The tree the run measured, which the carry evidence is read again from.
+    pub root: Option<&'a Path>,
 }
 
 /// Re-decides one completed engine run from its own report, recording, and ledger.
@@ -2602,6 +2604,8 @@ pub fn engine_audit(asked: &EngineRun<'_>) -> Result<engineaudit::Audit, enginea
     let reached = read_optional_engine_document(&asked.run.join("reached-v1.json"))?;
     let touched = read_optional_engine_document(&asked.run.join("touched-v1.json"))?;
     let catalog = read_optional_engine_document(&asked.run.join("catalog-v1.json"))?;
+    let skeletons = read_optional_engine_document(&asked.run.join("skeletons-v1.json"))?;
+    let carried = read_optional_engine_document(&asked.run.join("carried-v1.json"))?;
     let probe_logs = read_probe_logs(&asked.run.join("probe"))?;
     engineaudit::audit(
         &label,
@@ -2628,6 +2632,13 @@ pub fn engine_audit(asked: &EngineRun<'_>) -> Result<engineaudit::Audit, enginea
                 .as_ref()
                 .map(|(path, text)| engineaudit::Source { path, text }),
             probe_logs,
+            skeletons: skeletons
+                .as_ref()
+                .map(|(path, text)| engineaudit::Source { path, text }),
+            carried: carried
+                .as_ref()
+                .map(|(path, text)| engineaudit::Source { path, text }),
+            root: asked.root,
         },
     )
 }
@@ -2704,6 +2715,7 @@ fn engine_audit_specimen(
         shards: laid.shards(),
         ledger: laid.ledger(),
         sites: true,
+        root: laid.root(),
     })
     .map_err(|error| GateFailure(format!("engine-audit: specimen `{name}`: {error}")))
 }

@@ -1019,6 +1019,8 @@ fn one_of_each_execution(recorder: &Recorder) {
         key: "d".repeat(64),
         hit: true,
         source_run_id: Some("20260907T000000000Z".to_owned()),
+        rule: "exact".to_owned(),
+        refused: None,
     });
     recorder.select(rust_mutants::trace::SelectRecord {
         mutant: "b".repeat(20),

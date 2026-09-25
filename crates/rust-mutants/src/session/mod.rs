@@ -3,10 +3,12 @@
 
 //! A prepared workspace: every accepted mutant instrumented into one build, and the test binaries that build produced.
 
+mod carry;
 pub(crate) mod prepare;
 mod route;
 mod verify;
 
+pub use carry::Tree as CarriedTree;
 pub use prepare::{prepare, rewrite_needed};
 use prepare::{pristine, selection};
 use verify::verify;
@@ -442,10 +444,10 @@ pub struct Request {
     /// How long the process may take.
     /// `None` uses the session's default.
     pub timeout: Option<Duration>,
-    /// A target to ask before the others, where one is known to have killed this mutant before; every target is still asked until one notices.
-    pub first: Option<String>,
     /// What each execution records of the items its process entered.
     pub entered: Recording,
+    /// A target to ask before the others, where one is known to have killed this mutant before; every target is still asked until one notices.
+    pub first: Option<String>,
 }
 
 /// What a mutant execution records of what its process entered.
@@ -571,6 +573,29 @@ pub struct Session {
     manifests: String,
 }
 
+/// What the carry rule has taken of a session so far: its tree, once, and each target's reach as it is first asked about.
+#[derive(Debug)]
+pub(crate) struct Carrying {
+    pub(crate) tree: std::sync::OnceLock<carry::Tree>,
+    pub(crate) held: std::sync::Mutex<BTreeMap<String, bool>>,
+    pub(crate) believed: std::sync::Mutex<BelievedRecords>,
+}
+
+impl Carrying {
+    /// Nothing taken yet.
+    pub(crate) const fn fresh() -> Self {
+        Self {
+            tree: std::sync::OnceLock::new(),
+            held: std::sync::Mutex::new(BTreeMap::new()),
+            believed: std::sync::Mutex::new(BTreeMap::new()),
+        }
+    }
+}
+
+/// Every carried record a run believed, with the plan it was held to, by the full identity of its mutant.
+pub(crate) type BelievedRecords =
+    BTreeMap<String, (crate::carry::Carried, Vec<crate::carry::Planned>)>;
+
 /// Everything the pristine build read, as the outcome store keys it and as each unit's skeleton is taken over.
 #[derive(Debug)]
 pub(crate) struct Closure {
@@ -578,6 +603,8 @@ pub(crate) struct Closure {
     pub(crate) digest: String,
     /// Each unit and what it read, spelled by class.
     pub(crate) units: Vec<crate::skeleton::UnitSource>,
+    /// What the carry rule has taken of it so far.
+    pub(crate) carrying: Carrying,
 }
 
 /// What narrowing a target's tests left: the ones that could still notice the mutation, or the proof that took the last of them away.
@@ -664,17 +691,22 @@ impl Session {
         &self,
         exec: &ExecRequest<'_>,
         context: &Context<'_>,
-        cancel: &Cancel,
+        (cancel, log): (&Cancel, Option<&std::path::Path>),
     ) -> Result<MutantResult, EngineError> {
         let before = self.orphans();
         let started = std::time::SystemTime::now();
         let mut result = execute::exec(exec, context, cancel, &self.workspace.trace);
+        result.entered = self.entered_by(log, &result, cancel);
         let ended = std::time::SystemTime::now();
-        if result.conclusion == MutantConclusion::Survived
-            && (self.uncontrolled(&exec.target().id)
-                || self.orphaned(before.as_ref(), (started, ended), result.leader)?)
-        {
-            result.conclusion = MutantConclusion::Unobserved;
+        let unseen = self.uncontrolled(&exec.target().id)
+            || self.orphaned(before.as_ref(), (started, ended), result.leader)?;
+        if unseen {
+            if result.conclusion == MutantConclusion::Survived {
+                result.conclusion = MutantConclusion::Unobserved;
+            }
+            if let Some(entered) = result.entered.as_mut() {
+                entered.completeness = crate::touch::Completeness::Cut;
+            }
         }
         Ok(result)
     }
@@ -1490,7 +1522,7 @@ impl Session {
         if let Some(test) = &request.test {
             exec = exec.with_test(test.clone());
         }
-        let result = self.observed(&exec, &context, cancel)?;
+        let result = self.observed(&exec, &context, (cancel, None))?;
         self.record_mutant_exec(Executed {
             mutant,
             target,
@@ -1636,8 +1668,7 @@ impl Session {
             } else if let Some(named) = self.filtering(target, chosen, cancel)? {
                 exec = exec.with_tests(named);
             }
-            let mut result = self.observed(&exec, &context, cancel)?;
-            result.entered = self.entered_by(log.as_deref(), &result, cancel);
+            let result = self.observed(&exec, &context, (cancel, log.as_deref()))?;
             self.record_mutant_exec(Executed {
                 mutant,
                 target,
