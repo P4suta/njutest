@@ -3,6 +3,7 @@
 
 //! The gates applied to this repository: each one reads the tree, hands it to the pure checker of its module, and renders the answer.
 
+use crate::error::Coded as _;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt::Arguments;
 use std::path::{Component, Path, PathBuf};
@@ -26,6 +27,12 @@ pub fn workspace_root() -> PathBuf {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
 pub struct GateFailure(pub String);
+
+impl crate::error::Coded for GateFailure {
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::GateRefused
+    }
+}
 
 fn append(output: &mut String, arguments: Arguments<'_>) {
     output.push_str(&arguments.to_string());
@@ -194,7 +201,8 @@ fn source_universe(
                     target: Some(target),
                     ..
                 } => {
-                    ALLOWED_PATH_REDIRECTS.contains(&(file.as_str(), target.as_str()))
+                    (ALLOWED_PATH_REDIRECTS.contains(&(file.as_str(), target.as_str()))
+                        || suite_member(file, &target))
                         && resolve_redirect(file, &target)
                             .is_some_and(|path| labels.contains(&path))
                 }
@@ -214,6 +222,17 @@ fn source_universe(
 
     validate_proc_macros(&proc_macros, &canonical_labels, sources, &mut found)?;
     Ok(found)
+}
+
+/// Whether `target` is a sibling test file a crate's one test suite, `file`, compiles as a module.
+fn suite_member(file: &str, target: &str) -> bool {
+    let path = Path::new(target);
+    file.ends_with("/tests/suite.rs")
+        && path.extension().is_some_and(|extension| extension == "rs")
+        && matches!(
+            path.components().collect::<Vec<_>>().as_slice(),
+            [Component::Normal(_)]
+        )
 }
 
 fn support_include(target: &str) -> bool {
@@ -1418,7 +1437,7 @@ pub fn devgates(root: &Path) -> Result<String, GateFailure> {
     let ledger_text = std::fs::read_to_string(&ledger_path)
         .map_err(|error| GateFailure(format!("{}: {error}", ledger_path.display())))?;
     let ledger =
-        devgates::parse_ledger(&ledger_text).map_err(|error| GateFailure(error.to_string()))?;
+        devgates::parse_ledger(&ledger_text).map_err(|error| GateFailure(error.coded()))?;
     devgates::compare(&found, &ledger)
         .map_err(|disagreement| GateFailure(disagreement.to_string()))?;
     let most = ceiling(root, "xtask/seam_ceiling.txt")?;
@@ -1551,9 +1570,11 @@ pub fn deps(root: &Path) -> Result<String, GateFailure> {
     ));
     prohibited.sort();
     prohibited.dedup();
+    built_as_tested(root, &metadata, &members)?;
     if violations.is_empty() && prohibited.is_empty() {
         return Ok(format!(
-            "deps: {} internal edges, all in the allowed direction; {census}",
+            "deps: {} internal edges, all in the allowed direction, and every shipped \
+             dependency is built as its tests build it; {census}",
             edges.len()
         ));
     }
@@ -1566,6 +1587,99 @@ pub fn deps(root: &Path) -> Result<String, GateFailure> {
     }
     append(&mut message, format_args!("{}", deps::RULE));
     Err(GateFailure(message))
+}
+
+/// Nothing, where every direct dependency of a shipped crate is built with the features its tests build it with.
+///
+/// # Errors
+/// A feature only a development edge turns on, or a `cargo tree` that could not be run.
+fn built_as_tested(
+    root: &Path,
+    metadata: &cargo_metadata::Metadata,
+    members: &[String],
+) -> Result<(), GateFailure> {
+    let direct: BTreeSet<String> = metadata
+        .workspace_packages()
+        .iter()
+        .filter(|package| deps::SHIPPED.contains(&package.name.as_str()))
+        .flat_map(|package| package.dependencies.iter())
+        .filter(|dependency| {
+            dependency.kind != cargo_metadata::DependencyKind::Development
+                && !members.contains(&dependency.name)
+        })
+        .map(|dependency| dependency.name.clone())
+        .collect();
+    let ships = metadata
+        .workspace_packages()
+        .iter()
+        .any(|package| deps::SHIPPED.contains(&package.name.as_str()));
+    let tested_only = if ships {
+        features_only_tests_build_with(root, &direct)?
+    } else {
+        Vec::new()
+    };
+    if !tested_only.is_empty() {
+        let mut message = String::from(
+            "deps: a shipped dependency is built with a feature only a development edge turns on, \
+             so every test reads with it and no release does:\n",
+        );
+        for (package, features) in &tested_only {
+            line(
+                &mut message,
+                format_args!("  {package}: {}", features.join(", ")),
+            );
+        }
+        append(
+            &mut message,
+            format_args!("turn the feature on where the shipped crate depends on it"),
+        );
+        return Err(GateFailure(message));
+    }
+    Ok(())
+}
+
+/// Every feature a shipped dependency is built with only because a development edge asks for it, on any target a release builds.
+///
+/// # Errors
+/// A `cargo tree` that could not be run or read.
+fn features_only_tests_build_with(
+    root: &Path,
+    direct: &BTreeSet<String>,
+) -> Result<Vec<(String, Vec<String>)>, GateFailure> {
+    let tree = |target: &str, edges: &str| -> Result<String, GateFailure> {
+        let mut args = vec![
+            "tree", "--locked", "--color", "never", "--prefix", "none", "--format", "{p}|{f}",
+            "--target", target, "--edges", edges,
+        ];
+        for shipped in deps::SHIPPED {
+            args.extend(["--package", shipped]);
+        }
+        let asked = std::process::Command::new("cargo")
+            .args(&args)
+            .current_dir(root)
+            .output()
+            .map_err(|error| GateFailure(format!("cargo tree: {error}")))?;
+        if !asked.status.success() {
+            let stderr = std::str::from_utf8(&asked.stderr)
+                .map_err(|error| GateFailure(format!("cargo tree stderr is not UTF-8: {error}")))?;
+            return Err(GateFailure(format!("cargo tree: {}", stderr.trim())));
+        }
+        String::from_utf8(asked.stdout)
+            .map_err(|error| GateFailure(format!("cargo tree stdout is not UTF-8: {error}")))
+    };
+    let mut found = Vec::new();
+    for target in deps::SHIPPED_TARGETS {
+        for (package, features) in deps::features_only_tests_build_with(
+            (
+                &tree(target, "normal,build")?,
+                &tree(target, "normal,build,dev")?,
+            ),
+            direct,
+        ) {
+            found.push((format!("{package} on {target}"), features));
+        }
+    }
+    Ok(found)
 }
 
 /// Every cargo manifest in the tree, classified, so a fourth kind cannot appear unnoticed.
@@ -2038,6 +2152,10 @@ pub fn proofaudit(
         .map(engine_recordings)
         .transpose()?
         .unwrap_or_default();
+    let outputs = match (trace, recorded.as_ref()) {
+        (Some(directory), Some((_path, text))) => kept_outputs(directory, text),
+        (None, _) | (_, None) => Vec::new(),
+    };
     proofaudit::audit_with(
         &label,
         &text,
@@ -2046,9 +2164,68 @@ pub fn proofaudit(
                 .as_ref()
                 .map(|(recording_path, text)| (recording_path.as_str(), text.as_str())),
             engines: &engines,
+            outputs: &outputs,
         },
         Some(run),
     )
+}
+
+/// What the recording kept of each interpreter run in the runner's recording `text`, read from beside it in `directory` and held to the size and digest its exec record gives; a copy that is cut, missing, or unreadable is left out, which the audit says it could not re-derive.
+fn kept_outputs(directory: &Path, text: &str) -> Vec<(String, proofaudit::soundness::Kept)> {
+    let mut kept = Vec::new();
+    for line in text.lines() {
+        let Ok(event) = crate::strictjson::from_str(line) else {
+            continue;
+        };
+        let Some(exec) = event.pointer("/payload/exec") else {
+            continue;
+        };
+        if !proofaudit::soundness::interprets(exec)
+            && !exec
+                .get("argv")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|argv| argv.iter().any(|word| word == "--version"))
+        {
+            continue;
+        }
+        if exec
+            .get("output_truncated")
+            .and_then(serde_json::Value::as_bool)
+            != Some(false)
+        {
+            continue;
+        }
+        let Some(relative) = exec.get("output_path").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        match std::fs::read(directory.join(relative)) {
+            Ok(bytes) => kept.push((relative.to_owned(), held_to(exec, bytes))),
+            Err(_not_kept) => {}
+        }
+    }
+    kept
+}
+
+/// A kept output held to the size and digest `exec` gives it.
+fn held_to(exec: &serde_json::Value, bytes: Vec<u8>) -> proofaudit::soundness::Kept {
+    use sha2::Digest as _;
+    let digest = hex::encode(sha2::Sha256::digest(&bytes));
+    let size = match u64::try_from(bytes.len()) {
+        Ok(size) => Some(size),
+        Err(_beyond_any_record) => None,
+    };
+    let described = exec
+        .get("output_sha256")
+        .and_then(serde_json::Value::as_str)
+        == Some(digest.as_str())
+        && exec.get("output_bytes").and_then(serde_json::Value::as_u64) == size;
+    if !described {
+        return proofaudit::soundness::Kept::Mismatched;
+    }
+    match String::from_utf8(bytes) {
+        Ok(text) => proofaudit::soundness::Kept::Whole(text),
+        Err(_not_text) => proofaudit::soundness::Kept::NotText,
+    }
 }
 
 /// Every configured build's engine recording under a runner recording, in namespace order, each as its path and its text.
@@ -2423,7 +2600,7 @@ pub fn sbom(root: &Path, output: Option<&Path>) -> Result<String, GateFailure> {
     let stdout = std::str::from_utf8(&asked.stdout)
         .map_err(|error| GateFailure(format!("cargo metadata stdout is not UTF-8: {error}")))?;
     let bom = crate::sbom::of(stdout, ("njutest", &version))
-        .map_err(|error| GateFailure(error.to_string()))?;
+        .map_err(|error| GateFailure(error.coded()))?;
     let document = serde_json::to_string_pretty(&bom)
         .map_err(|error| GateFailure(format!("the bill of materials: {error}")))?;
     match output {
@@ -2455,7 +2632,7 @@ pub fn report_diff(before: &Path, after: &Path) -> Result<String, GateFailure> {
         (&before.display().to_string(), &left),
         (&after.display().to_string(), &right),
     )
-    .map_err(|error| GateFailure(error.to_string()))?;
+    .map_err(|error| GateFailure(error.coded()))?;
 
     if changes.is_empty() {
         return Ok("reportdiff: the two reports claim the same thing".to_owned());

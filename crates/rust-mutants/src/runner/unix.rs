@@ -46,6 +46,18 @@ pub(super) struct Supervisor {
     pgid: Option<Pid>,
 }
 
+/// What a process group would say about the processes it held, which on this platform is nothing: a child names its parent instead.
+#[derive(Debug, Clone, Copy)]
+pub enum Membership {}
+
+impl Membership {
+    /// Every process named since the last time it was asked; there is never one to ask.
+    #[must_use]
+    pub const fn drain(self) -> Vec<u32> {
+        match self {}
+    }
+}
+
 #[expect(
     clippy::unnecessary_wraps,
     clippy::unused_self,
@@ -190,6 +202,15 @@ impl Supervisor {
     }
 
     /// What the supervisor can say about the group it owns, for the note before an abort.
+    /// Where this group names the processes it holds: nowhere, since a child here names its parent.
+    #[expect(
+        clippy::unused_self,
+        reason = "the same signature as the Windows supervisor, whose job names its processes"
+    )]
+    pub(super) const fn membership(&self) -> Option<std::sync::Arc<Membership>> {
+        None
+    }
+
     pub(super) fn state(&self) -> String {
         let pgid = match self.pgid {
             Some(pgid) => pgid.as_raw_nonzero().get(),
@@ -305,6 +326,21 @@ pub(super) fn exit_observed(child: &Child) -> io::Result<bool> {
     )
     .map(|status| status.is_some())
     .map_err(io::Error::from)
+}
+
+/// Whether `signal` is one a process raises by what it does (an abort, a bad access, a bad instruction, a trap) rather than one another process sends it.
+pub(super) fn raised_by_itself(signal: i32) -> bool {
+    [
+        Signal::ABORT,
+        Signal::SEGV,
+        Signal::BUS,
+        Signal::ILL,
+        Signal::FPE,
+        Signal::TRAP,
+        Signal::SYS,
+    ]
+    .iter()
+    .any(|raised| raised.as_raw() == signal)
 }
 
 /// The child's status, mapping a signal death to the shell's 128 + N convention: 137 for a SIGKILL is both distinguishable from "no status at all" and what every other tool on the machine prints.

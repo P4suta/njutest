@@ -34,6 +34,7 @@ fn mutant(id: &str) -> SavedMutant {
         id: id.to_owned(),
         disposition: SavedDisposition::Killed {
             by: "demo/lib/demo tests::works".to_owned(),
+            before: Vec::new(),
         },
         duration_ms: 3,
     }
@@ -261,6 +262,7 @@ fn a_resumed_run_carries_only_kills_and_reads_nothing_else_as_one() {
         id: "m1".to_owned(),
         disposition: SavedDisposition::Killed {
             by: "pkg/lib/pkg one".to_owned(),
+            before: Vec::new(),
         },
         duration_ms: 5,
     };
@@ -416,7 +418,7 @@ fn a_stored_checkpoint_requires_an_attempt_and_unique_canonical_ids() {
         ),
         (
             "mutants",
-            "[{\"id\":\"same\",\"disposition\":{\"kind\":\"killed\",\"by\":\"t\"},\"duration_ms\":1},{\"id\":\"same\",\"disposition\":{\"kind\":\"killed\",\"by\":\"t\"},\"duration_ms\":2}]",
+            "[{\"id\":\"same\",\"disposition\":{\"kind\":\"killed\",\"by\":\"t\",\"before\":[]},\"duration_ms\":1},{\"id\":\"same\",\"disposition\":{\"kind\":\"killed\",\"by\":\"t\",\"before\":[]},\"duration_ms\":2}]",
         ),
     ] {
         let (targets, mutants) = if member == "targets" {
@@ -513,5 +515,52 @@ fn untrusted_identities_and_paths_are_rejected_before_filesystem_use() {
     assert!(
         write(dir.path(), &state).is_err(),
         "accepted an empty target id"
+    );
+}
+
+#[test]
+fn a_kill_that_says_its_observer_was_asked_before_it_is_not_a_checkpoint() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let identity = "a".repeat(64);
+    let mut state = State::new(&identity);
+    let mut killed = mutant(&"1".repeat(64));
+    killed.disposition = SavedDisposition::Killed {
+        by: "demo/lib/demo".to_owned(),
+        before: vec![njutest::report::Answered {
+            target: "demo/lib/demo".to_owned(),
+            outcome: njutest::report::Outcome::Survived,
+        }],
+    };
+    state.attempts = 1;
+    state.record_mutant(killed);
+    let error = write(dir.path(), &state).expect_err("an observer asked twice");
+    assert!(
+        error.to_string().contains("was asked before it noticed"),
+        "the answers a resumed row carries are the ones a run gave, and no run asks the \
+         target that noticed before it notices: {error}"
+    );
+}
+
+#[test]
+fn a_kill_that_says_another_target_noticed_it_first_is_not_a_checkpoint() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut state = State::new(&"a".repeat(64));
+    state.attempts = 1;
+    let mut killed = mutant(&"1".repeat(64));
+    killed.disposition = SavedDisposition::Killed {
+        by: "demo/test/late".to_owned(),
+        before: vec![njutest::report::Answered {
+            target: "demo/lib/demo".to_owned(),
+            outcome: njutest::report::Outcome::Killed,
+        }],
+    };
+    state.record_mutant(killed);
+    let error = write(dir.path(), &state).expect_err("a kill before the kill");
+    assert!(
+        error
+            .to_string()
+            .contains("noticed it before the kill it records"),
+        "a run stops at the first kill it confirms, and one that did not reproduce is \
+         recorded unconfirmed, so no run leaves a kill among the answers before one: {error}"
     );
 }

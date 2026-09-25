@@ -3,6 +3,7 @@ $ rust-mutants run
 run       <run>
 workspace <workspace digest>
 catalog   <catalog digest>
+jobs      1 (1)
 
 discharged-mutant      every target that could have noticed f0d20edfda2959667ff1 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
 

@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 use rust_mutants::runner::Cancel;
 
 /// The exit code of a usage error or an infrastructure failure.
-pub const EXIT_USAGE: u8 = 2;
+pub const EXIT_USAGE: u8 = run::Exit::Unestablished.code();
 
 /// Everything the command line needs from the process it runs in.
 #[derive(Debug, Clone)]
@@ -57,6 +57,26 @@ pub struct Environment {
     pub stdout_is_terminal: bool,
     /// Whether what the command writes is painted, which `--color` settles from the two above.
     pub paints: bool,
+    /// The continuous integration service the command runs under.
+    pub ci: CiHost,
+}
+
+/// A continuous integration service, and where it takes what a step reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CiHost {
+    /// GitHub Actions.
+    GitHub {
+        /// The file a step appends its Markdown summary to, which `GITHUB_STEP_SUMMARY` names.
+        summary: PathBuf,
+        /// The file a step appends its `name=value` outputs to, which `GITHUB_OUTPUT` names.
+        output: PathBuf,
+        /// The checkout an annotation's path is relative to, which `GITHUB_WORKSPACE` names.
+        workspace: PathBuf,
+    },
+    /// GitLab CI.
+    GitLab,
+    /// No service this release writes for.
+    None,
 }
 
 impl Environment {
@@ -89,32 +109,14 @@ impl<'a> Composition<'a> {
 }
 
 /// The exit code of a run that was interrupted.
-pub const EXIT_INTERRUPTED: u8 = 130;
-
-/// The exit code of a run that was terminated, which is `SIGTERM` by the convention every shell reports.
-pub const EXIT_TERMINATED: u8 = 143;
+pub const EXIT_INTERRUPTED: u8 = run::Exit::Interrupted.code();
 
 /// What every exit code of this program means, as the lines `--help` ends with.
 #[must_use]
 pub fn exit_codes() -> String {
     let mut said = String::from("Exit codes:");
-    for (code, meaning) in [
-        (
-            run::EXIT_DETECTED,
-            "every mutant the run decided, the tests noticed",
-        ),
-        (
-            run::EXIT_UNDETECTED,
-            "there is a finding: a survivor, a stale claim, something the run could not decide",
-        ),
-        (
-            EXIT_USAGE,
-            "the run itself failed, or the command was used wrongly",
-        ),
-        (EXIT_INTERRUPTED, "interrupted"),
-        (EXIT_TERMINATED, "terminated"),
-    ] {
-        let written = write!(said, "\n  {code:<4} {meaning}");
+    for exit in run::Exit::ALL {
+        let written = write!(said, "\n  {:<4} {}", exit.code(), exit.meaning());
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
     said
@@ -146,6 +148,35 @@ impl Environment {
     pub fn no_color_of(vars: &[(OsString, OsString)]) -> bool {
         vars.iter()
             .any(|(key, value)| key == "NO_COLOR" && !value.is_empty())
+    }
+
+    /// The service `vars` says the command runs under: GitHub Actions only when it names every file a step reports through.
+    #[must_use]
+    pub fn ci_host_of(vars: &[(OsString, OsString)]) -> CiHost {
+        let named = |wanted: &str| {
+            vars.iter()
+                .rev()
+                .find(|(key, _)| key == wanted)
+                .map(|(_, value)| value)
+                .filter(|value| !value.is_empty())
+        };
+        if named("GITHUB_ACTIONS").is_some_and(|value| value == "true")
+            && let (Some(summary), Some(output), Some(workspace)) = (
+                named("GITHUB_STEP_SUMMARY"),
+                named("GITHUB_OUTPUT"),
+                named("GITHUB_WORKSPACE"),
+            )
+        {
+            return CiHost::GitHub {
+                summary: PathBuf::from(summary),
+                output: PathBuf::from(output),
+                workspace: PathBuf::from(workspace),
+            };
+        }
+        if named("GITLAB_CI").is_some_and(|value| value == "true") {
+            return CiHost::GitLab;
+        }
+        CiHost::None
     }
 }
 

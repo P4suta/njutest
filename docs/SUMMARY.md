@@ -70,3 +70,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0027 An item is entered where its body starts](adr/0027-an-item-is-entered-where-its-body-starts.md)
 - [0028 A change is placed by reading both versions](adr/0028-a-change-is-placed-by-reading-both-versions.md)
 - [0029 A process that loses the environment says so](adr/0029-a-process-that-loses-the-environment-says-so.md)
+- [0031 A knob is one control started differently](adr/0031-a-knob-is-one-control-started-differently.md)
+- [0036 What rested on a moved reach is run again](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)
+- [0038 A read-back row carries its answers](adr/0038-a-read-back-row-carries-its-answers.md)
+- [0041 An answer carries across an edit it never entered](adr/0041-an-answer-carries-across-an-edit-it-never-entered.md)

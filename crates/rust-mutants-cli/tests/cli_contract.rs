@@ -52,6 +52,7 @@ fn environment() -> Environment {
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        ci: rust_mutants_cli::CiHost::None,
     }
 }
 
@@ -136,7 +137,7 @@ fn an_unknown_subcommand_is_a_usage_error() {
 }
 
 /// Every subcommand, so a page and a golden both stay complete when one is added.
-const SUBCOMMANDS: [&str; 16] = [
+const SUBCOMMANDS: [&str; 17] = [
     "run",
     "list",
     "catalog",
@@ -153,16 +154,25 @@ const SUBCOMMANDS: [&str; 16] = [
     "trace",
     "report",
     "cache",
+    "ci",
 ];
+
+/// Every subcommand of a subcommand whose flags the page lists, as the words a person types.
+const NESTED: [[&str; 2]; 1] = [["ci", "gate"]];
 
 #[test]
 fn every_subcommand_has_the_recorded_help_text() {
     let mut recorded = String::new();
-    for name in SUBCOMMANDS {
-        let output = rust_mutants(&[name, "--help"]);
+    for words in SUBCOMMANDS
+        .iter()
+        .map(|name| vec![*name])
+        .chain(NESTED.iter().map(|path| path.to_vec()))
+    {
+        let name = words.join(" ");
+        let output = rust_mutants(&[words.as_slice(), &["--help"]].concat());
         assert_eq!(output.status.code(), Some(0), "{name} --help");
         recorded.push_str("$ rust-mutants ");
-        recorded.push_str(name);
+        recorded.push_str(&name);
         recorded.push_str(" --help\n");
         recorded.push_str(&njutest_devkit::process::strict_utf8(&output.stdout));
         recorded.push('\n');
@@ -178,12 +188,13 @@ fn the_command_line_page_and_the_help_texts_name_the_same_flags() {
     let page = std::fs::read_to_string(&at)
         .unwrap_or_else(|error| panic!("the command line page at {}: {error}", at.display()));
     let mut helped: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for name in SUBCOMMANDS.into_iter().chain(std::iter::once("")) {
-        let output = if name.is_empty() {
-            rust_mutants(&["--help"])
-        } else {
-            rust_mutants(&[name, "--help"])
-        };
+    for words in SUBCOMMANDS
+        .iter()
+        .map(|name| vec![*name])
+        .chain(NESTED.iter().map(|path| path.to_vec()))
+        .chain(std::iter::once(Vec::new()))
+    {
+        let output = rust_mutants(&[words.as_slice(), &["--help"]].concat());
         helped.extend(flags(&njutest_devkit::process::strict_utf8(&output.stdout)));
     }
     let missing: Vec<&String> = helped
@@ -218,8 +229,12 @@ fn the_flags_the_page_lists_beside_a_command_are_that_command_s_own() {
     );
     let mut wrong: Vec<String> = Vec::new();
     for (command, listed) in rows {
+        let words: Vec<&str> = command
+            .split(' ')
+            .chain(std::iter::once("--help"))
+            .collect();
         let helped = flags(&njutest_devkit::process::strict_utf8(
-            &rust_mutants(&[command.as_str(), "--help"]).stdout,
+            &rust_mutants(&words).stdout,
         ));
         wrong.extend(
             listed
@@ -256,15 +271,19 @@ fn beside_a_command(page: &str) -> Vec<(String, std::collections::BTreeSet<Strin
         let (Some(named), Some(listed)) = (cells.next(), cells.next()) else {
             continue;
         };
-        let Some(command) = named
+        let words: Vec<&str> = named
             .trim()
             .trim_matches('`')
             .split_whitespace()
-            .next()
-            .map(ToOwned::to_owned)
-        else {
+            .take_while(|word| {
+                word.chars()
+                    .all(|one| one.is_ascii_lowercase() || one == '-')
+            })
+            .collect();
+        if words.is_empty() {
             continue;
-        };
+        }
+        let command = words.join(" ");
         rows.push((command, flags(listed)));
     }
     rows
@@ -397,6 +416,7 @@ fn with(switch: Option<&str>, root: &Path) -> (rust_mutants_cli::config::Config,
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        ci: rust_mutants_cli::CiHost::None,
     };
     let settings = Settings::resolve(&scope, &environment).expect("a scope with nothing wrong");
     let opened = settings

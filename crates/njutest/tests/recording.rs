@@ -139,6 +139,7 @@ fn every_mutation_judged_is_a_row_that_says_what_became_of_it() {
         skips: BTreeMap::from([("macro-invocation".to_owned(), 7u64)]),
         drift: Vec::new(),
         sources: read_as_measured(),
+        repaired: BTreeMap::new(),
     };
 
     record(&mut report, &mutation, &BTreeSet::new())
@@ -214,6 +215,7 @@ fn a_ledger_entry_cannot_mark_an_outcome_that_is_not_answerable_as_accepted() {
         skips: BTreeMap::new(),
         drift: Vec::new(),
         sources: read_as_measured(),
+        repaired: BTreeMap::new(),
     };
     let mut report = blank();
 

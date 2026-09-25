@@ -355,3 +355,20 @@ pub fn mutant_document(
         }),
     })
 }
+
+impl MutantDocument {
+    /// Whether `asked` names this mutant: a prefix of its identity, or a locator as a reader writes it and as `explain` and a run print it.
+    #[must_use]
+    pub fn answers_to(&self, asked: &str) -> bool {
+        self.id.starts_with(asked)
+            || crate::session::Locator::parse(asked).is_some_and(|locator| {
+                locator.describes_place(&crate::session::Place {
+                    path: &self.path,
+                    rule: &self.rule,
+                    original: self.original.as_bytes(),
+                    item: Some(&self.item),
+                    line: self.line,
+                })
+            })
+    }
+}

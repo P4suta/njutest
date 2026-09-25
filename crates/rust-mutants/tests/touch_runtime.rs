@@ -997,13 +997,16 @@ fn a_process_that_lost_the_runs_environment_says_so_where_the_run_looks() {
 
 #[test]
 fn a_child_that_lost_the_environment_belongs_to_the_execution_that_started_it() {
-    use rust_mutants::orphan::{Orphan, ours};
+    use rust_mutants::orphan::{Known, Orphan, ours};
     let child = |parent: u32| Orphan {
         pid: 4_000_000,
         parent,
         at: None,
     };
-    let others = BTreeSet::from([4_100_000_u32]);
+    let others = Known {
+        leaders: BTreeSet::from([4_100_000_u32]),
+        members: BTreeMap::new(),
+    };
     assert!(
         ours(&child(4_200_000), Some(4_200_000), &others),
         "a child whose parent led this execution is this execution's"
@@ -1028,6 +1031,31 @@ fn a_child_that_lost_the_environment_belongs_to_the_execution_that_started_it() 
             && ours(&child(4_300_000), Some(4_200_000), &others),
         "a parent the platform does not name, or one that has gone and led nothing known, cannot \
          be told apart, so the survival is not read past it"
+    );
+    let named = Known {
+        leaders: BTreeSet::from([4_100_000_u32, 4_200_000]),
+        members: BTreeMap::from([
+            (4_100_000, BTreeSet::from([4_000_000_u32])),
+            (4_200_000, BTreeSet::from([4_000_001_u32])),
+        ]),
+    };
+    assert!(
+        !ours(&child(0), Some(4_200_000), &named),
+        "a child another execution's container named as its own is that execution's, even \
+         where the platform names no parent"
+    );
+    assert!(
+        ours(
+            &Orphan {
+                pid: 4_000_001,
+                parent: 4_100_000,
+                at: None
+            },
+            Some(4_200_000),
+            &named
+        ),
+        "and one this execution's container named is this execution's, whatever parent it \
+         names"
     );
 }
 
