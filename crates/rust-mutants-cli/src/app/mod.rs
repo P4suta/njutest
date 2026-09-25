@@ -138,6 +138,8 @@ fn kept_command(
             kept,
             clear_outcomes,
             cache_dir,
+            export,
+            import,
         } => sweep::cache(
             &sweep::Sweeping {
                 root: root.as_deref(),
@@ -146,6 +148,11 @@ fn kept_command(
                 kept: *kept,
                 clear_outcomes: *clear_outcomes,
                 cache_dir: cache_dir.as_deref(),
+                transport: match (export.as_deref(), import.as_deref()) {
+                    (Some(file), _) => sweep::StoreTransport::Export(file),
+                    (None, Some(file)) => sweep::StoreTransport::Import(file),
+                    (None, None) => sweep::StoreTransport::Stay,
+                },
             },
             environment,
             stdout,
@@ -1177,7 +1184,7 @@ fn measured_run(
         stdout,
         resolved(watched.ui),
         watched.paints,
-        run::jobs(watched.settings.config.execution.jobs),
+        watched.settings.config.execution.jobs.resolve(),
     );
     let result = run::run(session, watched.options, cancel, &mut display);
     display.finish()?;

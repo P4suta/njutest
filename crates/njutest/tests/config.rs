@@ -34,7 +34,7 @@ fn the_defaults_are_the_numbers_the_contract_states() {
     assert_eq!(config.version, 1);
     assert_eq!(config.contract, Contract::StandardV1);
     assert_eq!(config.execution.timeout, DEFAULT_TIMEOUT);
-    assert_eq!(config.execution.jobs, 0);
+    assert_eq!(config.execution.jobs, rust_mutants::run::Jobs::Auto);
     assert_eq!(config.cache.max_bytes, DEFAULT_CACHE_MAX_BYTES);
     assert_eq!(config.cache.ttl, DEFAULT_CACHE_TTL);
     assert_eq!(config.reports.keep, DEFAULT_REPORTS_KEEP);
@@ -386,7 +386,10 @@ ticket = "QA-123"
     assert_eq!(config.execution.features, ["postgres"]);
     assert!(config.execution.all_features && config.execution.no_default_features);
     assert_eq!(config.execution.timeout, Duration::from_secs(300));
-    assert_eq!(config.execution.jobs, 3);
+    assert_eq!(
+        config.execution.jobs,
+        rust_mutants::run::Jobs::count(3).expect("a positive count")
+    );
     assert_eq!(config.execution.skip_targets, ["fixture-app/test/cli"]);
     assert_eq!(config.cache.max_bytes, 1024);
     assert_eq!(config.cache.ttl, Duration::from_hours(24));

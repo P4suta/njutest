@@ -565,3 +565,70 @@ fn a_replay_told_to_read_a_run_that_is_not_there_says_so_rather_than_reading_not
         said(&unreadable)
     );
 }
+
+#[test]
+fn a_store_exported_at_one_root_answers_a_run_at_another() {
+    let first = Fixture::copy("fixture-simple");
+    measured(&first);
+    let decided = decided_rows(&first);
+    assert!(decided > 0, "the first run decided something to carry");
+    let exported = first.temp().join("outcomes-export.json");
+    let exported_text = njutest_devkit::paths::utf8(&exported).to_owned();
+    let export = against(&first, &["cache", "--export", &exported_text]);
+    assert_eq!(export.status.code(), Some(0), "{export:?}");
+
+    let document: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(&exported).expect("the export"),
+    )
+    .expect("the export is JSON");
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(
+            njutest_devkit::paths::workspace_root()
+                .join("schema")
+                .join("rust-mutants-outcomes-export-v1.json"),
+        )
+        .expect("the schema"),
+    )
+    .expect("the schema is a document");
+    let errors: Vec<String> = jsonschema::validator_for(&schema)
+        .expect("the schema compiles")
+        .iter_errors(&document)
+        .map(|error| format!("{}: {error}", error.instance_path()))
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "the export is the document its published schema describes: {errors:#?}"
+    );
+
+    let second = Fixture::copy("fixture-simple");
+    assert_ne!(
+        first.root(),
+        second.root(),
+        "a second checkout, somewhere else"
+    );
+    let import = against(&second, &["cache", "--import", &exported_text]);
+    assert_eq!(import.status.code(), Some(0), "{import:?}");
+    measured(&second);
+    assert_eq!(
+        reused(&second),
+        decided,
+        "a store carried to another checkout of the same tree answers for every mutant it \
+         decided there, because nothing about where the tree sits is part of what a mutant is"
+    );
+}
+
+/// How many of the newest run's rows the run itself decided.
+fn decided_rows(fixture: &Fixture) -> usize {
+    let directory = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    );
+    let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
+    let document: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&text).expect("the report is JSON");
+    document["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .filter(|row| row["outcome"] == "killed" || row["outcome"] == "survived")
+        .count()
+}

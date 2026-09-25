@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://njutest.dev/schema/rust-mutants-outcomes-export-v1.json",
+  "title": "rust-mutants outcomes export v1",
+  "description": "A store of what earlier runs established, as it travels between checkouts, machines and CI jobs. Every record carries everything it was keyed on beyond its mutant, so an importer recomputes the name it is filed under rather than trusting one; `abi` names the versions those keys are computed under, and an importer of another release refuses the document before filing anything.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "document_type",
+    "schema_version",
+    "abi",
+    "records"
+  ],
+  "properties": {
+    "document_type": {
+      "const": "rust-mutants/outcomes-export"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "abi": {
+      "description": "The rule, instrumentation, step-policy and cache versions the records were keyed under.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule",
+        "instrumentation",
+        "step_policy",
+        "cache"
+      ],
+      "properties": {
+        "rule": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "instrumentation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "step_policy": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "records": {
+      "description": "Every record, in key order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/record"
+      }
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "mutant",
+        "outcome",
+        "target",
+        "tests_run",
+        "run_id",
+        "keyed"
+      ],
+      "properties": {
+        "schema": {
+          "const": "rust-mutants-outcome-v2"
+        },
+        "mutant": {
+          "$ref": "#/$defs/digest"
+        },
+        "outcome": {
+          "enum": [
+            "killed",
+            "survived"
+          ]
+        },
+        "target": {
+          "type": "string"
+        },
+        "tests_run": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "failed_tests": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "keyed": {
+          "description": "Everything the record's key is computed from beyond its mutant.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "closure",
+            "manifests",
+            "toolchain",
+            "args",
+            "timeout",
+            "steps",
+            "build"
+          ],
+          "properties": {
+            "closure": {
+              "type": "string"
+            },
+            "manifests": {
+              "type": "string"
+            },
+            "toolchain": {
+              "type": "string"
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "timeout": {
+              "type": "string"
+            },
+            "steps": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "build": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

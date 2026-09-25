@@ -47,7 +47,7 @@ const fn options(evidence: Option<Evidence>) -> MutationOptions {
     MutationOptions {
         test_args: Vec::new(),
         evidence,
-        jobs: 1,
+        jobs: rust_mutants::run::Jobs::Count(std::num::NonZeroUsize::MIN),
         exclusive: false,
         shard: None,
     }

@@ -182,3 +182,10 @@ A file that could not be written is one an audit calls unaudited, which is the h
 
 `rust-mutants trace` writes JSON Lines rather than a document; its shape is `schema/rust-mutants-trace-v1.json` and its rules are in [trace](trace.md).
 A recording is never evidence, so nothing here reads one to decide anything.
+
+## The outcome store, as it travels
+
+`rust-mutants cache --export <file>` writes every record of the store as one `rust-mutants/outcomes-export` document (`schema/rust-mutants-outcomes-export-v1.json`), and `rust-mutants cache --import <file>` files them into another.
+Each record carries everything its key is computed from beyond its mutant, so an importer recomputes the name each is filed under rather than trusting one, and a read refuses a record filed under a name its own inputs do not derive.
+`abi` names the versions keys are computed under, and a store exported by a release that computes them differently is refused before anything is filed.
+Nothing about where a checkout sits is part of a key, so a store a run filled on one machine answers a run of the same tree on another: that is how one CI job reads what the last run on the default branch established.
