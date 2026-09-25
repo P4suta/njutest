@@ -236,6 +236,8 @@ pub struct Mutation {
     pub drift: Vec<Drift>,
     /// The SHA-256 of each file the catalog's mutants were read from, as the catalog read it.
     pub sources: BTreeMap<String, rust_mutants::id::HexDigest>,
+    /// How many dispositions resting on each moved target were decided again against it (ADR 0036).
+    pub repaired: BTreeMap<String, usize>,
 }
 
 impl Mutation {
@@ -594,8 +596,68 @@ pub fn run_resuming(
         session.touched().targets.keys().map(String::as_str),
         confirmed.into_iter().chain(compared),
     );
+    repaired(&judging, &mut mutation)?;
     phase.end();
     Ok(mutation)
+}
+
+/// Every disposition that rests on a target whose reach moved, run again against that target with its reach recorded, and replaced by what that run decides where it reached the site (ADR 0036).
+///
+/// # Errors
+/// The engine's refusals, and an interruption.
+fn repaired(
+    judging: &Judging<'_>,
+    mutation: &mut Mutation,
+) -> Result<(), crate::error::RunnerError> {
+    let session = judging.subject.session;
+    let moved: Vec<String> = mutation
+        .drift
+        .iter()
+        .filter_map(|one| match one {
+            Drift::Moved { target, .. } => Some(target.clone()),
+            Drift::Held { .. } | Drift::NotMeasured { .. } => None,
+        })
+        .collect();
+    for target in &moved {
+        let Some(measured) = judging
+            .subject
+            .baseline
+            .iter()
+            .find(|measured| measured.target.name() == *target)
+        else {
+            continue;
+        };
+        for judged in &mut mutation.judged {
+            let resting = matches!(
+                judged.disposition,
+                Disposition::Survived { .. } | Disposition::Unreached
+            ) && crate::report::drift::rests_on(judged.routing.as_ref(), target);
+            if !resting {
+                continue;
+            }
+            let Some(mutant) = session
+                .catalog()
+                .mutants()
+                .iter()
+                .find(|mutant| mutant.index == judged.catalog_index)
+            else {
+                continue;
+            };
+            if judging.watch.cancel.is_cancelled() {
+                return Err(crate::error::RunnerError::Interrupted);
+            }
+            if !repair(judging, (judged, mutant), target, measured)? {
+                continue;
+            }
+            let count = mutation.repaired.entry(target.clone()).or_insert(0);
+            *count = count
+                .checked_add(1)
+                .ok_or(crate::report::CountError::Overflow {
+                    field: "repaired dispositions",
+                })?;
+        }
+    }
+    Ok(())
 }
 
 /// Runs, once and whole, every target no control confirming a kill compared, so that every target's reach is compared with a second run of it whether or not it noticed anything.
@@ -1303,6 +1365,90 @@ fn against(
             },
         )?;
     }
+    Ok(fact_of(request, measured, &result))
+}
+
+/// Runs `judged` again against the moved `target`, records what it came to, and replaces its disposition where the run decided one; whether it did.
+fn repair(
+    judging: &Judging<'_>,
+    (judged, mutant): (&mut Judged, &Mutant),
+    target: &str,
+    measured: &Measured,
+) -> Result<bool, crate::error::RunnerError> {
+    let was = judged.disposition.name();
+    let (fact, reach) = against_reaching(judging, mutant, measured)?;
+    let mut aggregation = Aggregation::new();
+    let (now, answered) = match aggregation.observe(judging, target, fact)? {
+        Some(decided) => (decided, aggregation.answered),
+        None => aggregation.finish(judging, judging.subject.session.route(mutant))?,
+    };
+    let reached = match reach {
+        rust_mutants::session::SiteReach::Reached => crate::trace::SiteReached::Reached,
+        rust_mutants::session::SiteReach::NotReached => crate::trace::SiteReached::NotReached,
+        rust_mutants::session::SiteReach::Unrecorded => crate::trace::SiteReached::Unrecorded,
+    };
+    let replaced = reached == crate::trace::SiteReached::Reached
+        || !matches!(now, Disposition::Survived { .. });
+    judging.watch.trace.repair(crate::trace::RepairRecord {
+        mutant: judged.display_id.clone(),
+        target: target.to_owned(),
+        was: was.to_owned(),
+        now: if replaced { now.name() } else { was }.to_owned(),
+        reached,
+    });
+    if replaced {
+        judged.disposition = now;
+        if let Some(routing) = judged.routing.as_mut() {
+            routing.reaching.push(target.to_owned());
+            routing.answered.extend(answered);
+        }
+    }
+    Ok(replaced)
+}
+
+/// What one mutation comes to against one target whose reach moved, run with its guards recording, and whether that run reached the mutation's site (ADR 0036).
+fn against_reaching(
+    judging: &Judging<'_>,
+    mutant: &Mutant,
+    measured: &Measured,
+) -> Result<(TargetFact, rust_mutants::session::SiteReach), crate::error::RunnerError> {
+    let (session, options, watch) = (judging.subject.session, judging.options, judging.watch);
+    let request = request_for(mutant.id.as_str(), Some(measured), &options.test_args);
+    let mut alone = false;
+    let (mut result, mut reach) = judging
+        .quiet
+        .shared(|| session.exec_reaching(&request, watch.cancel))??;
+    record_exec(
+        watch,
+        &Ran {
+            mutant,
+            measured: Some(measured),
+            request: &request,
+            result: &result,
+            alone,
+        },
+    )?;
+    if quiet_measurement_due(result.outcome(), watch.cancel.is_cancelled()) {
+        alone = true;
+        (result, reach) = judging
+            .quiet
+            .alone(|| session.exec_reaching(&request, watch.cancel))??;
+        record_exec(
+            watch,
+            &Ran {
+                mutant,
+                measured: Some(measured),
+                request: &request,
+                result: &result,
+                alone,
+            },
+        )?;
+    }
+    Ok((fact_of(request, Some(measured), &result), reach))
+}
+
+/// What one execution of a mutation against one target says, before the route aggregates every target.
+fn fact_of(request: Request, measured: Option<&Measured>, result: &MutantResult) -> TargetFact {
     let name = measured.map_or_else(
         || {
             if result.target.is_empty() {
@@ -1314,37 +1460,37 @@ fn against(
         |one| one.target.name(),
     );
     match &result.conclusion {
-        MutantConclusion::Survived => Ok(TargetFact::Survived),
-        MutantConclusion::Killed => Ok(TargetFact::Killed {
+        MutantConclusion::Survived => TargetFact::Survived,
+        MutantConclusion::Killed => TargetFact::Killed {
             on: name,
             retry: narrowed(request, measured, &result.target),
-        }),
-        MutantConclusion::Waited => Ok(TargetFact::Waited {
+        },
+        MutantConclusion::Waited => TargetFact::Waited {
             on: name,
             retry: narrowed(request, measured, &result.target),
-        }),
+        },
         MutantConclusion::StepLimitReached { notice } => {
             let Some(boundary) =
                 crate::report::StepBoundary::new(notice.limit(), notice.observed())
             else {
-                return Ok(TargetFact::Errored {
+                return TargetFact::Errored {
                     on: name,
                     detail: "the engine supplied an invalid step boundary".to_owned(),
-                });
+                };
             };
-            Ok(TargetFact::StepLimitReached { on: name, boundary })
+            TargetFact::StepLimitReached { on: name, boundary }
         }
         MutantConclusion::Errored
         | MutantConclusion::Inconclusive
         | MutantConclusion::Unobserved
-        | MutantConclusion::NotRun => Ok(TargetFact::Errored {
+        | MutantConclusion::NotRun => TargetFact::Errored {
             on: name,
             detail: format!(
                 "the harness answered {}: {}",
                 result.outcome().name(),
                 tail(&result.output)
             ),
-        }),
+        },
     }
 }
 

@@ -245,6 +245,17 @@ pub struct Controlled {
     pub observed: Vec<Observed>,
 }
 
+/// Whether a run with one mutation active reached that mutation's own site, by its guards' own record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SiteReach {
+    /// The record shows the site reached.
+    Reached,
+    /// The record is whole and does not show the site.
+    NotReached,
+    /// The run could not record, or its record could not be read.
+    Unrecorded,
+}
+
 /// What one control established about one target's baseline reach.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -562,6 +573,48 @@ impl Session {
     #[must_use]
     pub fn targets(&self) -> &[TestTarget] {
         &self.targets
+    }
+
+    /// What bounds every index a touch log of this session may name: the catalog's mutants and its items.
+    fn touch_bounds(&self) -> Result<crate::touch::Bounds, EngineError> {
+        let mutants = self.catalog.mutants().len();
+        let cataloged = self.verified.touched.items.len();
+        Ok(crate::touch::Bounds {
+            mutants: u32::try_from(mutants).map_err(|_outside_range| {
+                SessionError::TraceCountTooLarge {
+                    subject: "catalog mutants in a touch record",
+                    count: mutants,
+                }
+            })?,
+            items: u32::try_from(cataloged).map_err(|_outside_range| {
+                SessionError::TraceCountTooLarge {
+                    subject: "cataloged items in a touch record",
+                    count: cataloged,
+                }
+            })?,
+        })
+    }
+
+    /// Runs one mutant execution, holding a survival it reports to what the run could see: a pass past an uncontrolled target, or past a process that lost the environment while it ran, is `Unobserved`, never `Survived`.
+    ///
+    /// Every mutant execution goes through here, so none of them can read a survival past a process it could not see into.
+    fn observed(
+        &self,
+        exec: &ExecRequest<'_>,
+        context: &Context<'_>,
+        cancel: &Cancel,
+    ) -> Result<MutantResult, EngineError> {
+        let before = self.orphans();
+        let started = std::time::SystemTime::now();
+        let mut result = execute::exec(exec, context, cancel, &self.workspace.trace);
+        let ended = std::time::SystemTime::now();
+        if result.conclusion == MutantConclusion::Survived
+            && (self.uncontrolled(&exec.target().id)
+                || self.orphaned(before.as_ref(), (started, ended), result.leader)?)
+        {
+            result.conclusion = MutantConclusion::Unobserved;
+        }
+        Ok(result)
     }
 
     /// Whether a process of the tree may have run without the environment the run gave it while something ran from the first time to the second, which a directory that cannot be read cannot rule out.
@@ -1316,6 +1369,98 @@ impl Session {
             .taken)
     }
 
+    /// Runs one mutant against the one target `request` names, with its guards recording what the run reached, and says whether the run reached the mutant's own site (ADR 0036).
+    ///
+    /// # Errors
+    /// [`SessionError::UnknownMutant`] and [`SessionError::UnknownTarget`], which is also what a request naming no target is.
+    pub fn exec_reaching(
+        &self,
+        request: &Request,
+        cancel: &Cancel,
+    ) -> Result<(MutantResult, SiteReach), EngineError> {
+        let mutant = self.executable(&request.mutant)?;
+        let name = request.target.as_deref().unwrap_or_default();
+        let target = self
+            .selected(Some(name))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                EngineError::from(SessionError::UnknownTarget {
+                    name: name.to_owned(),
+                    available: self.targets.iter().map(|one| one.id.clone()).collect(),
+                })
+            })?;
+        let (timeout, source) = self.timeout_for(request, &target.id)?;
+        let own = self.exec_scratch()?;
+        let log = own.join(CONTROL_TOUCH_LOG);
+        let context = Context {
+            base_env: &self.workspace.base_env,
+            cargo: Some(self.workspace.toolchain.cargo()),
+            sysroot: self.workspace.toolchain.sysroot(),
+            active: Some((mutant.id.as_str(), self.catalog.digest())),
+            touch: Some(execute::Touching {
+                log: &log,
+                catalog: self.catalog.digest(),
+            }),
+            steps: self.mutant_steps,
+            profile: None,
+            leaders: Some(&self.leaders),
+        };
+        let mut exec = ExecRequest::new(target)
+            .with_args(self.arguments(request))
+            .with_timeout(Some(timeout))
+            .with_scratch(own)
+            .in_scratch(self.scratch_working_directory);
+        if let Some(test) = &request.test {
+            exec = exec.with_test(test.clone());
+        }
+        let result = self.observed(&exec, &context, cancel)?;
+        self.record_mutant_exec(Executed {
+            mutant,
+            target,
+            result: &result,
+            timeout,
+            source,
+            alone: false,
+        })?;
+        let reach = self.site_reach(target, &log, (mutant.index, mutant.id.as_str(), &result))?;
+        Ok((result, reach))
+    }
+
+    /// Whether the run that wrote `log` reached the site at `index`, recording what it reached as a `repair` touch record.
+    fn site_reach(
+        &self,
+        target: &TestTarget,
+        log: &std::path::Path,
+        (index, mutant, result): (u32, &str, &MutantResult),
+    ) -> Result<SiteReach, EngineError> {
+        if result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT {
+            return Ok(SiteReach::Unrecorded);
+        }
+        let Ok(text) = crate::limitation::appended(std::fs::read_to_string(log)) else {
+            return Ok(SiteReach::Unrecorded);
+        };
+        let Ok(recorded) = crate::touch::read(&text, self.catalog.digest(), self.touch_bounds()?)
+        else {
+            return Ok(SiteReach::Unrecorded);
+        };
+        let reached = recorded.reached.any(index);
+        let gathered = crate::touch::TargetTouches::of(recorded, &result.passed_tests);
+        let mut record = verify::touch_record(
+            &target.id,
+            crate::trace::Measurement::Repair,
+            &gathered,
+            crate::trace::SummaryRecord::of(result),
+        )?;
+        record.mutant = Some(mutant.to_owned());
+        self.workspace.trace.touch(record);
+        Ok(if reached {
+            SiteReach::Reached
+        } else {
+            SiteReach::NotReached
+        })
+    }
+
     /// What one mutant is, decided: executed, and when a budget expired, confirmed with the machine to itself.
     ///
     /// # Errors
@@ -1416,16 +1561,7 @@ impl Session {
             } else if let Some(named) = self.filtering(target, chosen, cancel)? {
                 exec = exec.with_tests(named);
             }
-            let before = self.orphans();
-            let started = std::time::SystemTime::now();
-            let mut result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
-            let ended = std::time::SystemTime::now();
-            if result.conclusion == MutantConclusion::Survived
-                && (self.uncontrolled(&target.id)
-                    || self.orphaned(before.as_ref(), (started, ended), result.leader)?)
-            {
-                result.conclusion = MutantConclusion::Unobserved;
-            }
+            let result = self.observed(&exec, &context, cancel)?;
             self.record_mutant_exec(Executed {
                 mutant,
                 target,
@@ -1783,24 +1919,8 @@ impl Session {
             Ok(text) => text,
             Err(error) => return Ok((unreadable(&error), ReachRecord::Unreadable)),
         };
-        let mutants = self.catalog.mutants().len();
-        let count =
-            u32::try_from(mutants).map_err(|_outside_range| SessionError::TraceCountTooLarge {
-                subject: "catalog mutants in a touch record",
-                count: mutants,
-            })?;
-        let cataloged = self.verified.touched.items.len();
-        let items = u32::try_from(cataloged).map_err(|_outside_range| {
-            SessionError::TraceCountTooLarge {
-                subject: "cataloged items in a touch record",
-                count: cataloged,
-            }
-        })?;
-        let bounds = crate::touch::Bounds {
-            mutants: count,
-            items,
-        };
-        let recorded = match crate::touch::read(&text, self.catalog.digest(), bounds) {
+        let recorded = match crate::touch::read(&text, self.catalog.digest(), self.touch_bounds()?)
+        {
             Ok(recorded) => recorded,
             Err(error) => return Ok((unreadable(&error), ReachRecord::Unreadable)),
         };

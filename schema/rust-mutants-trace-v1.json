@@ -455,6 +455,7 @@
         "infected_sites",
         "loose",
         "measured",
+        "mutant",
         "passed",
         "reached_sites",
         "sites",
@@ -468,10 +469,18 @@
           "minLength": 1
         },
         "measured": {
-          "description": "Which whole run of the target with nothing active the record was measured on: the baseline routing rests on, or an original-code control run to confirm a kill.",
+          "description": "Which whole run of the target the record was measured on: the baseline routing rests on, an original-code control run to confirm a kill, or a repair, one mutation run against a target whose reach moved (ADR 0036).",
           "enum": [
             "baseline",
-            "control"
+            "control",
+            "repair"
+          ]
+        },
+        "mutant": {
+          "description": "The mutation a repair ran, in full; null on a baseline or a control, which run with nothing active.",
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^[0-9a-f]{64}$" }
           ]
         },
         "passed": {

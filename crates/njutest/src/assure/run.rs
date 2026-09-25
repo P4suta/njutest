@@ -1652,6 +1652,11 @@ pub fn record(
         let whole = crate::report::whole_catalog(&report.drift, &report.knobs, &report.mutants);
         report.findings.extend(whole.findings);
         report.limitations.extend(whole.limitations);
+        report.limitations.extend(crate::report::drift::repaired(
+            &report.drift,
+            &report.mutants,
+            &mutation.repaired,
+        ));
     }
     for (reason, count) in &mutation.skips {
         report.limitations.push(Limitation::new(

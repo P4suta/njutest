@@ -85,6 +85,7 @@ fn decisions() -> impl Strategy<Value = Vec<Decision>> {
 /// A run that judged these mutations, each under an identity of its own.
 fn judged_from(dispositions: Vec<Disposition>) -> Mutation {
     Mutation {
+        repaired: BTreeMap::new(),
         judged: dispositions
             .into_iter()
             .zip(0u32..)

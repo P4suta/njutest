@@ -21,8 +21,9 @@ use sha2::{Digest as _, Sha256};
 pub use event::SCHEMA;
 pub use event::{
     ArtifactRecord, AskedRecord, DischargeRecord, DriftRecord, Event, ExecRecord, MutantExecRecord,
-    NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RouteRecord,
-    RunAccounting, RunRecord, SentinelRecord, StartRecord, WireExchangeRecord, WireExecRecord,
+    NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RepairRecord,
+    RouteRecord, RunAccounting, RunRecord, SentinelRecord, SiteReached, StartRecord,
+    WireExchangeRecord, WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{DirSink, FILE_NAME, OUTPUT_DIRECTORY_NAME, Sink};
@@ -404,6 +405,11 @@ impl Recorder {
     /// Records what one control established about one target's baseline reach.
     pub fn drift(&self, record: DriftRecord) {
         self.emit(Payload::Drift { drift: record });
+    }
+
+    /// Records one disposition that rested on a moved target, run again against it.
+    pub fn repair(&self, record: RepairRecord) {
+        self.emit(Payload::Repair { repair: record });
     }
 
     /// Records what one control under one knob established about one target.
