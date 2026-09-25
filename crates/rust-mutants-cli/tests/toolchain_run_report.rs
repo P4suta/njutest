@@ -1568,3 +1568,38 @@ fn a_run_says_how_wide_it_measured_in_its_report_and_its_lines() {
         stdout(&lines)
     );
 }
+
+#[test]
+fn a_mutant_of_a_whole_condition_replaces_all_of_it_whatever_operators_it_holds() {
+    let fixture = Fixture::copy("fixture-guarded-or");
+    let output = against(
+        &fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-cache",
+        ],
+    );
+    assert!(
+        output.status.code() == Some(0) || output.status.code() == Some(1),
+        "{}",
+        stderr(&output)
+    );
+    let report = stored(&fixture);
+    let rows = report["mutants"].as_array().expect("the rows");
+    for rule in ["condition-to-false", "or-to-and"] {
+        let row = rows
+            .iter()
+            .find(|row| row["rule"] == rule)
+            .unwrap_or_else(|| panic!("the fixture catalogs {rule}: {rows:#?}"));
+        assert_eq!(
+            row["outcome"], "killed",
+            "{rule} of `over(left) || over(right)` makes `either_over(0, 10)` false, so the test \
+             that asks it kills it; a survivor here means part of the original stayed live beside \
+             the mutant: {row:#}"
+        );
+    }
+}
