@@ -363,8 +363,7 @@ pub enum MonitorFailure {
 }
 
 /// How a process that exited by itself did so.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(tag = "kind", content = "value", rename_all = "kebab-case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessExit {
     /// The process returned this status code.
     Code(i32),
@@ -389,12 +388,27 @@ impl ProcessExit {
     }
 }
 
-#[derive(serde::Deserialize)]
+/// How an exit is spelled in a recording, in both directions, so an exit the runner can report is one a reader can read.
+#[derive(serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 enum ProcessExitWire {
     Code { value: i32 },
     Signal { value: i32 },
     Unknown {},
+}
+
+impl serde::Serialize for ProcessExit {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match *self {
+            Self::Code(value) => ProcessExitWire::Code { value },
+            Self::Signal(value) => ProcessExitWire::Signal { value },
+            Self::Unknown => ProcessExitWire::Unknown {},
+        }
+        .serialize(serializer)
+    }
 }
 
 impl<'de> serde::Deserialize<'de> for ProcessExit {
