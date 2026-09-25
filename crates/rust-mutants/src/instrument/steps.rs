@@ -46,7 +46,7 @@ pub(super) fn plant(text: &str, module: &str, first_item: u32) -> Result<Planted
     let mut collector = Collector {
         base,
         module,
-        module_depth: 0,
+        scope: crate::syntax::ModuleScope::root(),
         runtime: RuntimeContext::Allowed,
         insertions: BTreeMap::new(),
         error: None,
@@ -88,7 +88,7 @@ struct Named {
 struct Collector<'a> {
     base: u32,
     module: &'a str,
-    module_depth: u32,
+    scope: crate::syntax::ModuleScope,
     runtime: RuntimeContext,
     insertions: BTreeMap<u32, Insertion>,
     error: Option<StepError>,
@@ -146,18 +146,12 @@ impl Collector<'_> {
         self.entering = previous;
     }
 
-    fn in_module(&mut self, walk: impl FnOnce(&mut Self)) {
-        let Some(depth) = self.module_depth.checked_add(1) else {
-            self.error = Some(StepError::OutOfRange);
-            return;
-        };
-        self.module_depth = depth;
+    fn in_module(&mut self, items: &[syn::Item], walk: impl FnOnce(&mut Self)) {
+        self.scope.enter(items);
         walk(self);
-        let Some(depth) = self.module_depth.checked_sub(1) else {
+        if !self.scope.leave() {
             self.error = Some(StepError::OutOfRange);
-            return;
-        };
-        self.module_depth = depth;
+        }
     }
 
     fn absolute(&mut self, relative: usize) -> Option<u32> {
@@ -185,7 +179,7 @@ impl Collector<'_> {
     }
 
     fn runtime_path(&mut self, function: &str) -> Option<String> {
-        let Ok(depth) = usize::try_from(self.module_depth) else {
+        let Some(depth) = self.scope.supers() else {
             self.error = Some(StepError::OutOfRange);
             return None;
         };
@@ -378,7 +372,7 @@ impl<'ast> Visit<'ast> for Collector<'_> {
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
         if let Some((_brace, items)) = &node.content {
             self.named(node.ident.to_string(), |collector| {
-                collector.in_module(|collector| {
+                collector.in_module(items, |collector| {
                     for item in items {
                         collector.visit_item(item);
                     }

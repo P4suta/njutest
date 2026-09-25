@@ -386,11 +386,12 @@ fn the_step_runtime_uses_one_locked_process_state_and_fails_closed_at_every_boun
     let (_, runtime) = split_runtime(&text);
 
     for required in [
-        "enum Budget",
+        "type Budget = __rm_std::result::Result<__rm_std::option::Option<StepLimit>, BudgetError>",
         "enum StepNoticeError",
         "StepPhase {",
         "enum StepStateError",
-        "Budget::Invalid(_) => protocol_failure()",
+        "__rm_std::result::Result::Ok(__rm_std::option::Option::None) => return,",
+        "__rm_std::result::Result::Err(_) => protocol_failure(),",
         "pub(crate) fn checkpoint()",
         "file.lock().map_err",
         "file.unlock().map_err",
