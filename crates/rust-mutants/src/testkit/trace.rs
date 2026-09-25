@@ -402,15 +402,70 @@ pub fn every_payload() -> Vec<Payload> {
     payloads
 }
 
+/// Every reason a process never started, named so extending the enum extends the specimen ledger at compile time.
+#[must_use]
+pub fn every_start_failure() -> [crate::execute::StartFailure; 9] {
+    use crate::execute::StartFailure;
+
+    let causes = [
+        StartFailure::Missing,
+        StartFailure::Denied,
+        StartFailure::Busy,
+        StartFailure::Exhausted,
+        StartFailure::Unsupervised,
+        StartFailure::Malformed,
+        StartFailure::Unprepared,
+        StartFailure::NotAsked,
+        StartFailure::Other {
+            detail: "Operation not supported (os error 45)".to_owned(),
+        },
+    ];
+    for one in &causes {
+        match one {
+            StartFailure::Missing
+            | StartFailure::Denied
+            | StartFailure::Busy
+            | StartFailure::Exhausted
+            | StartFailure::Unsupervised
+            | StartFailure::Malformed
+            | StartFailure::Unprepared
+            | StartFailure::NotAsked
+            | StartFailure::Other { .. } => {}
+        }
+    }
+    causes
+}
+
 /// Every way a process can stop, named so extending the enum extends the specimen ledger at compile time.
 #[must_use]
-pub fn every_stopped() -> [crate::execute::Stopped; 11] {
+pub fn every_stopped() -> [crate::execute::Stopped; 19] {
     use crate::execute::Stopped;
 
     let exits = every_process_exit();
     let protocol = every_step_protocol_failure();
+    let [
+        missing,
+        denied,
+        busy,
+        exhausted,
+        unsupervised,
+        malformed,
+        unprepared,
+        not_asked,
+        other,
+    ] = every_start_failure();
     let stopped = [
-        Stopped::NotStarted,
+        Stopped::NotStarted { cause: missing },
+        Stopped::NotStarted { cause: denied },
+        Stopped::NotStarted { cause: busy },
+        Stopped::NotStarted { cause: exhausted },
+        Stopped::NotStarted {
+            cause: unsupervised,
+        },
+        Stopped::NotStarted { cause: malformed },
+        Stopped::NotStarted { cause: unprepared },
+        Stopped::NotStarted { cause: not_asked },
+        Stopped::NotStarted { cause: other },
         Stopped::Exited { exit: exits[0] },
         Stopped::Exited { exit: exits[1] },
         Stopped::Exited { exit: exits[2] },
@@ -428,7 +483,7 @@ pub fn every_stopped() -> [crate::execute::Stopped; 11] {
     ];
     for one in &stopped {
         match one {
-            Stopped::NotStarted
+            Stopped::NotStarted { .. }
             | Stopped::Exited { .. }
             | Stopped::TimedOut { .. }
             | Stopped::Stalled { .. }

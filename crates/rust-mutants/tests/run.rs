@@ -22,6 +22,7 @@ fn judged(index: u32, outcome: Outcome) -> Judged {
         outcome,
         target: "demo/lib/demo".to_owned(),
         exit_code: 0,
+        start_failure: None,
         duration: Duration::from_millis(1),
         tests_run: Some(1),
         failed_tests: Vec::new(),
@@ -638,4 +639,22 @@ fn every_exit_a_caller_reads_back_is_one_of_the_table_and_no_other_code_is() {
             "and a code the table does not hold is no verdict at all, not the nearest one: {code}"
         );
     }
+}
+#[test]
+fn an_errored_mutant_whose_process_never_started_says_why_rather_than_an_exit_nobody_produced() {
+    let mut unstarted = judged(0, Outcome::Errored);
+    unstarted.exit_code = rust_mutants::runner::EXIT_CODE_UNAVAILABLE;
+    unstarted.start_failure = Some(rust_mutants::execute::StartFailure::Missing);
+    let said: Vec<String> = of(vec![unstarted])
+        .findings()
+        .into_iter()
+        .filter(|finding| finding.kind == FindingKind::ErroredMutant)
+        .map(|finding| finding.detail)
+        .collect();
+    assert!(
+        said.iter()
+            .any(|detail| detail.contains("its test binary was not there")
+                && !detail.contains("exit -1")),
+        "a row about a process that never started names why, which `exit -1` never did: {said:?}"
+    );
 }

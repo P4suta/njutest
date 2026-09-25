@@ -465,7 +465,10 @@ fn parse_summary_line(line: &str) -> Option<Summary> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stopped {
     /// The process could not be started at all.
-    NotStarted,
+    NotStarted {
+        /// Why, which is all a row about it can say, since no test ran to say anything.
+        cause: StartFailure,
+    },
     /// The process ended on its own.
     Exited {
         /// The one way it exited.
@@ -587,11 +590,108 @@ pub enum StepProtocolFailure {
     },
 }
 
+impl Stopped {
+    /// Why the process never started, where it did not.
+    #[must_use]
+    pub const fn start_failure(&self) -> Option<&StartFailure> {
+        match self {
+            Self::NotStarted { cause } => Some(cause),
+            Self::Exited { .. }
+            | Self::TimedOut { .. }
+            | Self::Stalled { .. }
+            | Self::Cancelled { .. }
+            | Self::WaitFailed
+            | Self::Answered
+            | Self::StepLimitReached { .. }
+            | Self::StepProtocolFailed { .. } => None,
+        }
+    }
+}
+
+/// Why a test process never started.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum StartFailure {
+    /// The program was not there.
+    Missing,
+    /// The operating system would not let this user run it.
+    Denied,
+    /// The file was still open for writing when it was run.
+    Busy,
+    /// The system had no room for another process.
+    Exhausted,
+    /// The process set could not be placed under supervision.
+    Unsupervised,
+    /// The command was not one: an empty argument vector.
+    Malformed,
+    /// The engine could not prepare what the process needed before starting it.
+    Unprepared,
+    /// No process was asked for.
+    NotAsked,
+    /// Any other refusal, in the words the operating system gave.
+    Other {
+        /// What it said.
+        detail: String,
+    },
+}
+
+impl StartFailure {
+    /// Why a supervised run that never started did not.
+    #[must_use]
+    pub fn of(error: &crate::runner::RunnerError) -> Self {
+        use crate::runner::RunnerError;
+        match error {
+            RunnerError::ProcessStartFailed { source, .. } => match source.kind() {
+                std::io::ErrorKind::NotFound => Self::Missing,
+                std::io::ErrorKind::PermissionDenied => Self::Denied,
+                std::io::ErrorKind::ExecutableFileBusy => Self::Busy,
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::OutOfMemory => Self::Exhausted,
+                _ => Self::Other {
+                    detail: source.to_string(),
+                },
+            },
+            RunnerError::SupervisionUnavailable { .. } => Self::Unsupervised,
+            RunnerError::SpecInvalid { .. } => Self::Malformed,
+            RunnerError::ProcessWaitFailed { .. }
+            | RunnerError::OutputReadFailed { .. }
+            | RunnerError::OutputCaptureFailed { .. }
+            | RunnerError::OutputDrainTimedOut { .. }
+            | RunnerError::OutputReaderDisconnected { .. }
+            | RunnerError::OutputReaderStartFailed { .. }
+            | RunnerError::OutputReaderPanicked { .. }
+            | RunnerError::OutputReaderOwnershipLost { .. }
+            | RunnerError::OutputReaderConfigurationFailed { .. }
+            | RunnerError::DeadlineOverflow { .. }
+            | RunnerError::ProcessControlFailed { .. }
+            | RunnerError::ProcessControlSequenceFailed { .. }
+            | RunnerError::SupervisorReleaseFailed { .. } => Self::Other {
+                detail: error.to_string(),
+            },
+        }
+    }
+
+    /// What a row about a mutant whose process never started says instead of an exit code nobody produced.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        match self {
+            Self::Missing => "its test binary was not there".to_owned(),
+            Self::Denied => "the operating system would not let it run its test binary".to_owned(),
+            Self::Busy => "its test binary was still open for writing".to_owned(),
+            Self::Exhausted => "the system had no room for another process".to_owned(),
+            Self::Unsupervised => "the process could not be placed under supervision".to_owned(),
+            Self::Malformed => "the command it was given was not one".to_owned(),
+            Self::Unprepared => "the run could not prepare what the process needed".to_owned(),
+            Self::NotAsked => "no process was asked for".to_owned(),
+            Self::Other { detail } => format!("the operating system refused it: {detail}"),
+        }
+    }
+}
+
 /// How a stop is spelled in a recording, in both directions, so a stop the engine can reach is one a reader can read.
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 enum StoppedWire {
-    NotStarted {},
+    NotStarted { cause: StartFailure },
     Exited { exit: ProcessExit },
     TimedOut { raised: Option<u64> },
     Stalled { raised: Option<u64> },
@@ -608,7 +708,7 @@ impl serde::Serialize for Stopped {
         S: serde::Serializer,
     {
         match self.clone() {
-            Self::NotStarted => StoppedWire::NotStarted {},
+            Self::NotStarted { cause } => StoppedWire::NotStarted { cause },
             Self::Exited { exit } => StoppedWire::Exited { exit },
             Self::TimedOut { raised } => StoppedWire::TimedOut { raised },
             Self::Stalled { raised } => StoppedWire::Stalled { raised },
@@ -629,7 +729,7 @@ impl<'de> serde::Deserialize<'de> for Stopped {
     {
         Ok(
             match <StoppedWire as serde::Deserialize>::deserialize(deserializer)? {
-                StoppedWire::NotStarted {} => Self::NotStarted,
+                StoppedWire::NotStarted { cause } => Self::NotStarted { cause },
                 StoppedWire::Exited { exit } => Self::Exited { exit },
                 StoppedWire::TimedOut { raised } => Self::TimedOut { raised },
                 StoppedWire::Stalled { raised } => Self::Stalled { raised },
@@ -798,7 +898,9 @@ impl Stopped {
     #[must_use]
     pub fn of(result: &RunResult) -> Self {
         match &result.termination {
-            Termination::NotStarted { .. } => Self::NotStarted,
+            Termination::NotStarted { error } => Self::NotStarted {
+                cause: StartFailure::of(error),
+            },
             Termination::Exited(exit) => Self::Exited { exit: *exit },
             Termination::TimedOut => Self::TimedOut { raised: None },
             Termination::Stalled => Self::Stalled { raised: None },
@@ -1315,7 +1417,7 @@ pub fn outcome_of(
     (harness, failed): (bool, &[String]),
 ) -> Outcome {
     let exit = match &observed.stopped {
-        Stopped::NotStarted | Stopped::WaitFailed | Stopped::StepProtocolFailed { .. } => {
+        Stopped::NotStarted { .. } | Stopped::WaitFailed | Stopped::StepProtocolFailed { .. } => {
             return Outcome::Errored;
         }
         Stopped::TimedOut { .. } | Stopped::Stalled { .. } if harness && !failed.is_empty() => {
@@ -1906,7 +2008,9 @@ impl MutantResult {
     pub(crate) fn apparatus_error(target: &str, message: String) -> Self {
         Self {
             entered: None,
-            stopped: Stopped::NotStarted,
+            stopped: Stopped::NotStarted {
+                cause: StartFailure::Unprepared,
+            },
             conclusion: MutantConclusion::Errored,
             target: target.to_owned(),
             exit_code: EXIT_CODE_UNAVAILABLE,
@@ -2959,7 +3063,12 @@ mod tests {
             },
         });
 
-        assert_eq!(observed_stop(&unstarted, Some(&step)), Stopped::NotStarted);
+        assert_eq!(
+            observed_stop(&unstarted, Some(&step)),
+            Stopped::NotStarted {
+                cause: super::StartFailure::Malformed
+            }
+        );
         assert_absent(&step.path);
     }
 
