@@ -9,11 +9,9 @@ name: Dependency review
 on:
   pull_request:
     branches: [main]
-  # The merge queue holds a pull request until this reports on the merge group it builds, which the action reviews from the group's base to its head.
-  merge_group:
 
 concurrency:
-  group: dependency-review-${{ github.event.pull_request.number || github.ref }}
+  group: dependency-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions:

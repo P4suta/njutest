@@ -65,8 +65,55 @@ pub struct SiteHint {
     pub site: Span,
     /// The bytes of `site`, verbatim.
     pub site_text: String,
-    /// How many `super::` segments separate the site's inline module from the file root, where the runtime module lives.
+    /// How many `super::` segments the site's call into the runtime module needs, which is none where every inline module around it glob-imports its parent.
     pub super_depth: u32,
+}
+
+/// Which inline modules between a site and its file root glob-import their parent, which decides how the site names the runtime module that lives at the root.
+#[derive(Debug, Clone)]
+pub(crate) struct ModuleScope {
+    globs: Vec<bool>,
+}
+
+impl ModuleScope {
+    /// The file root, inside no inline module.
+    pub(crate) const fn root() -> Self {
+        Self { globs: Vec::new() }
+    }
+
+    /// Walks into an inline module holding `items`.
+    pub(crate) fn enter(&mut self, items: &[syn::Item]) {
+        self.globs.push(globs_parent(items));
+    }
+
+    /// Walks back out of the innermost inline module, and says whether there was one.
+    pub(crate) fn leave(&mut self) -> bool {
+        self.globs.pop().is_some()
+    }
+
+    /// How many `super::` segments reach the runtime module: none where every module out to the file root glob-imports its parent, because the name is then already in scope and any qualification of it is one `unused_qualifications` refuses.
+    #[must_use]
+    pub(crate) fn supers(&self) -> Option<usize> {
+        let reached = self.globs.iter().take_while(|globbed| **globbed).count();
+        self.globs.len().checked_sub(reached)
+    }
+}
+
+/// Whether `items` hold an unconditional `use super::*;`, the one import that brings everything the parent sees into scope.
+fn globs_parent(items: &[syn::Item]) -> bool {
+    items.iter().any(|item| match item {
+        syn::Item::Use(used) => {
+            used.attrs
+                .iter()
+                .all(|attribute| !attribute.path().is_ident("cfg"))
+                && matches!(
+                    &used.tree,
+                    syn::UseTree::Path(path)
+                        if path.ident == "super" && matches!(*path.tree, syn::UseTree::Glob(_))
+                )
+        }
+        _ => false,
+    })
 }
 
 /// One candidate plus where a human would look for it.

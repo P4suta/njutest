@@ -242,6 +242,10 @@ The runtime is a private `mod __rm` appended after the last line of each instrum
 No lint attribute is put on user code.
 The private generated support module has one exact `#[allow(dead_code, unused_qualifications)]`: one shared runtime serves files that use different subsets of it, and its collision-proof standard-library paths are deliberately fully qualified.
 A crate that `forbid`s either lint (or its `unused`/`warnings` group) is refused before instrumentation because Rust does not permit the module to lower a `forbid`.
+Because no lint attribute is put on user code, every call planted into it — a guard, a body marker, a step checkpoint — has to be one that code passes on its own.
+Each names the runtime with the fewest `super::` segments that reach it: none where every inline module out to the file root does `use super::*`, since the name is then already in scope and a qualified call is one `unused_qualifications` calls unnecessary, and one per module out to the first that does not.
+The runtime's own code uses every value it computes, so a project that denies `unused_results` compiles it too.
+`fixtures/fixture-strict-lints` denies every lint this code could trip and is instrumented on every test run.
 
 ### What instrumentation writes
 

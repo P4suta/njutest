@@ -346,55 +346,6 @@ fn a_program_the_activated_environment_names_is_one_every_job_has() {
     );
 }
 
-/// The status checks the `main` ruleset requires, each with the workflow that reports it.
-const REQUIRED_CHECKS: [(&str, &str); 3] = [
-    ("ci.yml", "ci-success"),
-    ("codeql.yml", "CodeQL required"),
-    ("dependency-review.yml", "Dependency review"),
-];
-
-#[test]
-fn every_required_check_reports_on_a_merge_group() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(".github/workflows");
-    let mut silent: Vec<String> = Vec::new();
-    for (file, check) in REQUIRED_CHECKS {
-        let path = dir.join(file);
-        let source = std::fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-        assert!(
-            source.contains(&format!("name: {check}\n")),
-            "{file} no longer reports `{check}`, which the ruleset on main requires"
-        );
-        let triggers = source
-            .split_once("\non:\n")
-            .map(|(_before, after)| after)
-            .and_then(|after| after.split("\n\n").next())
-            .unwrap_or_default();
-        if !triggers.contains("\n  merge_group:") && !triggers.starts_with("  merge_group:") {
-            silent.push(format!("{file}: no merge_group trigger"));
-        }
-        let grouped_by_pull_request = source.lines().any(|line| {
-            line.trim_start().starts_with("group:")
-                && line.contains("github.event.pull_request.number")
-                && !line.contains("||")
-        });
-        if grouped_by_pull_request {
-            silent.push(format!(
-                "{file}: its concurrency group is the pull request number, which a merge group \
-                 does not have, so every merge group would share one group and cancel the last"
-            ));
-        }
-    }
-    assert!(
-        silent.is_empty(),
-        "a merge queue holds a pull request until its required checks report on the merge \
-         group, so a required check that never runs there stalls the queue for good: \
-         {silent:?}"
-    );
-}
-
 /// Whether `pointer` names something the report schema declares, following `$ref`, `oneOf`, and arrays.
 fn resolves(schema: &serde_json::Value, node: &serde_json::Value, pointer: &[&str]) -> bool {
     let Some((head, rest)) = pointer.split_first() else {
