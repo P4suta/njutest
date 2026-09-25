@@ -958,6 +958,7 @@ fn one_of_each_measurement(recorder: &Recorder) {
 /// The last of it: what a run says about the mutants it put to the tests.
 fn one_of_each_execution(recorder: &Recorder) {
     recorder.mutant_exec(rust_mutants::trace::MutantExecRecord {
+        entered_records: None,
         id: "b".repeat(64),
         index: 1,
         target: "demo/lib/demo".to_owned(),
@@ -1097,7 +1098,8 @@ fn the_trace_schema_ties_step_evidence_to_exactly_the_step_outcome() {
                 "failed_tests": [],
                 "timeout_ms": 1000,
                 "timeout_source": "configured",
-                "alone": true
+                "alone": true,
+                "entered_records": null
             }
         }
     });
