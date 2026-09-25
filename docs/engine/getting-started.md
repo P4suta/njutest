@@ -180,10 +180,33 @@ $ rust-mutants rules                                 # what there is to name
 ## Continuous integration
 
 ```yaml
-- run: rust-mutants run --jobs 4 --shard ${{ matrix.shard }}/4 --run-id "${{ github.run_id }}-${{ matrix.shard }}"
-- run: rust-mutants merge --runs "${{ github.run_id }}-*" --output mutants.json
-- run: rust-mutants report --format junit --output mutants.xml
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v5
+      - run: rust-mutants run --jobs 4 --shard ${{ matrix.shard }}/4 --run-id "${{ github.run_id }}-${{ matrix.shard }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mutants-${{ matrix.shard }}
+          path: reports/mutation/
+  report:
+    needs: measure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          path: reports/mutation/
+          merge-multiple: true
+      - run: rust-mutants merge --runs "${{ github.run_id }}-*" --output mutants.json
+      - run: rust-mutants report --format junit --output mutants.xml
 ```
+
+Each part is measured on its own runner and carried to the merge as an artifact; [continuous integration](../ci.md) has the whole workflow, with the toolchain, the install, and the SARIF upload.
 
 The exit code is the gate: `1` means there is a finding.
 `--json` streams one object per line while the run happens, `--format junit` and `--format sarif` feed the views your CI already has, and `--format markdown` appended to `$GITHUB_STEP_SUMMARY` puts the survivors in front of whoever opened the pull request.

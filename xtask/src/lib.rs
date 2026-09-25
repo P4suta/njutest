@@ -8,6 +8,7 @@
 
 pub mod deps;
 pub mod devgates;
+pub mod docflows;
 pub mod drift;
 pub mod engineaudit;
 pub mod fixtures;
@@ -59,6 +60,12 @@ enum Gate {
         /// Reserved for a future alternate manifest; keeps this execution gate out of `all`.
         #[arg(long, default_value_t = false, hide = true)]
         alternate: bool,
+    },
+    /// Every workflow the documentation shows passes actionlint against this repository's own actions.
+    Docflows {
+        /// The actionlint to run; the lint lane is where it is installed, which keeps this gate out of `all`.
+        #[arg(long, value_name = "PROGRAM", default_value = "actionlint")]
+        actionlint: std::path::PathBuf,
     },
     /// Version consistency between the workspace and the release manifest.
     ReleaseCheck,
@@ -162,6 +169,8 @@ where
         Gate::FuzzClippy { alternate: _ } => {
             fuzzclippy::check(&root, cargo).map_err(|error| gates::GateFailure(error.to_string()))
         }
+        Gate::Docflows { actionlint } => docflows::check(&root, actionlint.as_os_str())
+            .map_err(|error| gates::GateFailure(error.to_string())),
         Gate::ReleaseCheck => gates::release_check(&root),
         Gate::KaniLawsAudit { export } => kaniaudit::audit(&export, &root)
             .map(|()| "kani-laws: 15 production harnesses, every assertion reachable and every cover satisfiable".to_owned())
