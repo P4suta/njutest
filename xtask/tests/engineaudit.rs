@@ -1915,3 +1915,39 @@ fn undecided(audit: &Audit) -> u8 {
         0
     }
 }
+
+#[test]
+fn a_claim_the_run_did_not_judge_here_names_no_mutant() {
+    let with_claim = |mutant: serde_json::Value| {
+        with(serde_json::json!({
+            "expectations": [
+                {
+                    "id": SURVIVED, "reason": "the bound is equivalent under the invariant",
+                    "outcome": "survived", "mutant": SURVIVED,
+                    "locator": null, "covered": null,
+                    "standing": "met", "actual": "survived", "why": null
+                },
+                {
+                    "id": "src/elsewhere.rs seven return-default", "reason": "a number nothing reads",
+                    "outcome": "survived", "mutant": mutant,
+                    "locator": null, "covered": null,
+                    "standing": "inapplicable", "actual": null,
+                    "why": "no unit of this build compiled the file it names"
+                }
+            ]
+        }))
+    };
+    let quiet = audited(&with_claim(serde_json::Value::Null));
+    assert!(
+        violations(&quiet, Layer::Expectations).is_empty(),
+        "an inapplicable claim that names nothing is what a run writes for one it did not judge: \
+         {quiet}"
+    );
+    let planted = audited(&with_claim(serde_json::json!(SURVIVED)));
+    assert!(
+        violations(&planted, Layer::Expectations)
+            .iter()
+            .any(|said| said.contains("inapplicable and names a mutant")),
+        "a claim the run did not judge accounted for a mutation anyway: {planted}"
+    );
+}

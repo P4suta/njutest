@@ -61,6 +61,61 @@ pub struct Expectation {
     pub reason: String,
     /// The outcome the run must confirm.
     pub outcome: Outcome,
+    /// Where the claim is judged, which is everywhere unless it names facts (ADR 0042).
+    pub under: Where,
+}
+
+/// The facts a claim was established under: a `cfg` over the target and exact values of the tests' environment.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Where {
+    /// The predicate over the target that must hold, when the claim names one.
+    pub cfg: Option<crate::facts::Predicate>,
+    /// Each name of the environment the tests are given, with the value it must have.
+    pub env: std::collections::BTreeMap<String, String>,
+}
+
+/// Why a claim was not judged in this run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unheld {
+    /// The file it names is one no unit of this build read.
+    NotCompiled,
+    /// The target does not satisfy the `cfg` it names.
+    Cfg {
+        /// The predicate, as the claim wrote it.
+        predicate: String,
+    },
+    /// The environment the tests are given does not hold a value the claim names.
+    Env {
+        /// The name.
+        name: String,
+        /// The value the claim names.
+        wanted: String,
+        /// The value the tests are given, if any.
+        found: Option<String>,
+    },
+}
+
+impl Unheld {
+    /// The fact that did not hold, as a reader reads it.
+    #[must_use]
+    pub fn said(&self) -> String {
+        match self {
+            Self::NotCompiled => "no unit of this build compiled the file it names".to_owned(),
+            Self::Cfg { predicate } => format!("the target does not satisfy cfg({predicate})"),
+            Self::Env {
+                name,
+                wanted,
+                found: Some(found),
+            } => format!(
+                "the tests are given {name}={found:?}, and the claim holds under {wanted:?}"
+            ),
+            Self::Env {
+                name,
+                wanted,
+                found: None,
+            } => format!("the tests are given no {name}, and the claim holds under {wanted:?}"),
+        }
+    }
 }
 
 impl Expectation {
@@ -186,6 +241,11 @@ pub enum Standing {
     },
     /// The claim names mutations of this catalog, and this run decided none of them: a selection left them out, another shard holds them, or the run stopped first.
     Unjudged,
+    /// The claim is not judged here, because a fact it was established under does not hold (ADR 0042).
+    Inapplicable {
+        /// The fact.
+        because: Unheld,
+    },
 }
 
 /// One declared expectation, as the run left it.
@@ -567,7 +627,10 @@ impl Run {
         }
         for expectation in &self.expectations {
             match &expectation.standing {
-                Standing::Met | Standing::Moved { .. } | Standing::Unjudged => {}
+                Standing::Met
+                | Standing::Moved { .. }
+                | Standing::Unjudged
+                | Standing::Inapplicable { .. } => {}
                 Standing::Stale { actual } => findings.push(Finding {
                     kind: FindingKind::StaleExpectation,
                     mutant: expectation.mutant.clone(),
@@ -1077,6 +1140,34 @@ fn addressed<'s>(
         (to != from).then_some(Standing::Moved { from, to })
     });
     Ok((mutants, moved))
+}
+
+/// What a claim the catalog does not answer for stands as: not judged here where it names something in a file no unit read, unjudged where a narrowed run left its file out, and otherwise unmatched.
+fn unresolved(
+    session: &Session,
+    expectation: &Expectation,
+    narrowed: bool,
+    why: &AddressError,
+) -> Standing {
+    if uncompiled(session, expectation) {
+        Standing::Inapplicable {
+            because: Unheld::NotCompiled,
+        }
+    } else if narrowed && !scanned(session, expectation) {
+        Standing::Unjudged
+    } else {
+        Standing::Unmatched {
+            why: why.to_string(),
+        }
+    }
+}
+
+/// Whether a claim names something in a file no unit of this build read, found by walking that file as discovery walks the ones it did.
+fn uncompiled(session: &Session, expectation: &Expectation) -> bool {
+    expectation
+        .locator
+        .as_ref()
+        .is_some_and(|locator| session.unread(locator) == crate::session::Unread::Named)
 }
 
 /// Whether the file a claim names is one this run's catalog was built from rather than one its selection left out; a claim by identity names no file, so a narrowed run cannot say.
@@ -2199,16 +2290,7 @@ pub fn verify(
             }
         }
         let (covered, mutant, standing) = match resolved {
-            Err(_beyond) if narrowed && !scanned(session, expectation) => {
-                (0, None, Standing::Unjudged)
-            }
-            Err(why) => (
-                0,
-                None,
-                Standing::Unmatched {
-                    why: why.to_string(),
-                },
-            ),
+            Err(why) => (0, None, unresolved(session, expectation, narrowed, &why)),
             Ok((mutants, moved)) => {
                 let every: Vec<String> =
                     mutants.iter().map(|mutant| mutant.id.to_string()).collect();
@@ -2228,7 +2310,8 @@ pub fn verify(
                     held @ (Standing::Moved { .. }
                     | Standing::Stale { .. }
                     | Standing::Unmatched { .. }
-                    | Standing::Unjudged) => held,
+                    | Standing::Unjudged
+                    | Standing::Inapplicable { .. }) => held,
                 };
                 if matches!(standing, Standing::Met | Standing::Moved { .. }) {
                     for one in judged.iter_mut().filter(|one| ids.contains(&one.id)) {

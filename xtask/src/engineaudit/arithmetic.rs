@@ -9,10 +9,10 @@ use sha2::{Digest as _, Sha256};
 
 use super::{
     Audit, DISCHARGED, DISCHARGED_MUTANT, DISPLAY_ID_LENGTH, Decided, ERRORED, ERRORED_MUTANT,
-    ID_DOMAIN, INCONCLUSIVE, INCONCLUSIVE_MUTANT, KILLED, Layer, MET, NOT_RUN, NOT_RUN_MUTANT,
-    Notes, Report, Row, STALE, STALE_EXPECTATION, STEP_LIMIT_REACHED, STEP_LIMIT_REACHED_MUTANT,
-    STOPPED_EARLY, SURVIVED, SURVIVING_MUTANT, UNJUDGED, UNMATCHED, UNMATCHED_EXPECTATION,
-    UNREACHED, UNREACHED_MUTANT, UNSELECTED, WAITED, WAITED_MUTANT, count,
+    ID_DOMAIN, INAPPLICABLE, INCONCLUSIVE, INCONCLUSIVE_MUTANT, KILLED, Layer, MET, NOT_RUN,
+    NOT_RUN_MUTANT, Notes, Report, Row, STALE, STALE_EXPECTATION, STEP_LIMIT_REACHED,
+    STEP_LIMIT_REACHED_MUTANT, STOPPED_EARLY, SURVIVED, SURVIVING_MUTANT, UNJUDGED, UNMATCHED,
+    UNMATCHED_EXPECTATION, UNREACHED, UNREACHED_MUTANT, UNSELECTED, WAITED, WAITED_MUTANT, count,
 };
 
 /// Every identity re-minted from the row that carries it.
@@ -523,6 +523,13 @@ fn named(report: &Report, notes: &mut Notes<'_>) {
     }
 }
 
+/// Every standing of a claim that names no mutation, with why it names none.
+const NAMELESS: [(&str, &str); 3] = [
+    (UNMATCHED, "a claim that matched nothing names nothing"),
+    (UNJUDGED, "a claim the run decided none of names none"),
+    (INAPPLICABLE, "a claim this run did not judge names none"),
+];
+
 /// The claims a reviewer declared, as the run left them.
 pub(super) fn expectations(report: &Report, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Expectations);
@@ -575,30 +582,20 @@ pub(super) fn expectations(report: &Report, audit: &mut Audit) -> Decided {
                     );
                 }
             }
-            UNMATCHED => {
-                if claim.mutant.is_some() {
-                    notes.violated(
-                        &claim.id,
-                        "the claim is unmatched and names a mutant; a claim that matched \
-                         nothing names nothing"
-                            .to_owned(),
-                    );
+            other => match NAMELESS.iter().find(|(standing, _)| *standing == other) {
+                Some((nameless, because)) => {
+                    if claim.mutant.is_some() {
+                        notes.violated(
+                            &claim.id,
+                            format!("the claim is {nameless} and names a mutant; {because}"),
+                        );
+                    }
                 }
-            }
-            UNJUDGED => {
-                if claim.mutant.is_some() {
-                    notes.violated(
-                        &claim.id,
-                        "the claim is unjudged and names a mutant; a claim the run decided none \
-                         of names none"
-                            .to_owned(),
-                    );
-                }
-            }
-            other => notes.unaudited(
-                &claim.id,
-                format!("the claim stands as {other:?}, which this audit does not know"),
-            ),
+                None => notes.unaudited(
+                    &claim.id,
+                    format!("the claim stands as {other:?}, which this audit does not know"),
+                ),
+            },
         }
     }
     accounted(report, &met, &mut notes);

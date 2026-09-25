@@ -186,6 +186,7 @@ compares the outcome, and says which of three things happened.
 | `met` | The run established the declared outcome | The mutant is accounted for and is not a finding |
 | `stale` | The run established something else | A `stale-expectation` finding; the run is not clean |
 | `unmatched` | No mutant of this catalog answers to the identity | An `unmatched-expectation` finding; the claim verifies nothing |
+| `inapplicable` | A fact the claim was established under does not hold in this run | None; the mutant is reported as though no claim named it, and the report says which fact |
 
 `reason` is required by the shape itself.
 An expectation without one is a suppression, and a report cannot audit a suppression.
@@ -202,6 +203,9 @@ line = 42                      # which of them, when the rest names more than on
 reason = "the bound is equivalent under the invariant the type carries"
 outcome = "survived"
 ```
+
+A claim on a file no unit of this build compiled — a module gated to another platform, say — is `inapplicable` without anything written, because discovery walks only the files a unit read ([ADR 0042](../adr/0042-a-claim-holds-where-its-facts-do.md)).
+That file is walked on its own to resolve the locator, so a locator that names nothing in it, or a file that is not there, is `unmatched` on every host.
 
 Never both: an identity and a locator are two ways of naming one mutant and two chances to name different ones.
 A locator whose line has moved still holds, and the report says where the mutation is now.

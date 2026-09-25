@@ -253,6 +253,7 @@ impl Expect {
             }),
             reason: self.reason.clone(),
             outcome: self.outcome().unwrap_or(Outcome::Survived),
+            under: rust_mutants::run::Where::default(),
         }
     }
 }

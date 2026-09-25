@@ -488,6 +488,7 @@ fn a_claim_is_written_back_by_the_way_it_named_its_mutant() {
         locator: None,
         reason: "the bound is equivalent".to_owned(),
         outcome: Outcome::Survived,
+        under: rust_mutants::run::Where::default(),
     };
     assert_eq!(
         by_id.name(),

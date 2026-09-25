@@ -1073,6 +1073,7 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
         locator: Some(locator),
         reason: "the reason one reviewer wrote for all of them".to_owned(),
         outcome: Outcome::Survived,
+        under: rust_mutants::run::Where::default(),
     };
     let judged = |at: usize, outcome: Outcome| {
         let mutant = session
@@ -1433,4 +1434,63 @@ fn a_target_the_configuration_skips_is_not_started_by_the_coverage_measurement()
          build messages and runs before the skip list is applied, so a target somebody \
          took out ran anyway -- once, to the end, under coverage"
     );
+}
+
+#[test]
+fn a_claim_on_a_file_no_unit_compiled_is_inapplicable_and_one_that_names_nothing_is_unmatched() {
+    let fixture = Fixture::copy("fixture-uncompiled");
+    let session = prepare(&fixture);
+    let claim = |path: &str, item: &str, original: &str| rust_mutants::run::Expectation {
+        id: None,
+        locator: Some(rust_mutants::session::Locator {
+            path: path.to_owned(),
+            item: item.to_owned(),
+            rule: "return-default".to_owned(),
+            original: original.to_owned(),
+            line: None,
+            count: None,
+        }),
+        reason: "a number nothing reads".to_owned(),
+        outcome: Outcome::Survived,
+        under: rust_mutants::run::Where::default(),
+    };
+    let verified = rust_mutants::run::verify(
+        &session,
+        &[
+            claim("src/elsewhere.rs", "seven", "7"),
+            claim("src/elsewhere.rs", "eight", "8"),
+            claim("src/nowhere.rs", "seven", "7"),
+        ],
+        &mut [],
+        rust_mutants::run::Scope {
+            shard: None,
+            narrowed: false,
+        },
+    )
+    .expect("three claims are representable");
+    assert!(
+        matches!(
+            verified[0].standing,
+            rust_mutants::run::Standing::Inapplicable {
+                because: rust_mutants::run::Unheld::NotCompiled
+            }
+        ),
+        "a claim on a module this build never compiles, as one gated to another platform, is not \
+         judged here rather than unmatched: {:?}",
+        verified[0].standing
+    );
+    for (at, what) in [
+        (1, "a locator that names nothing in the file"),
+        (2, "a file that is not there"),
+    ] {
+        assert!(
+            matches!(
+                verified[at].standing,
+                rust_mutants::run::Standing::Unmatched { .. }
+            ),
+            "{what} is unmatched on every host, so a locator that rotted is never silent: {:?}",
+            verified[at].standing
+        );
+    }
+    session.close().expect("the session closes");
 }

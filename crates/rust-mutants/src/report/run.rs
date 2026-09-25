@@ -1092,10 +1092,12 @@ fn expectation_document(verified: &crate::run::Verified) -> ExpectationDocument 
             Standing::Met
             | Standing::Moved { .. }
             | Standing::Unmatched { .. }
-            | Standing::Unjudged => None,
+            | Standing::Unjudged
+            | Standing::Inapplicable { .. } => None,
         },
         why: match &verified.standing {
             Standing::Unmatched { why } => Some(why.clone()),
+            Standing::Inapplicable { because } => Some(because.said()),
             Standing::Moved { from, to } => {
                 Some(format!("the mutation moved from line {from} to line {to}"))
             }
@@ -1110,6 +1112,7 @@ const fn standing_name(standing: &Standing) -> &'static str {
         Standing::Stale { .. } => "stale",
         Standing::Unmatched { .. } => "unmatched",
         Standing::Unjudged => "unjudged",
+        Standing::Inapplicable { .. } => "inapplicable",
     }
 }
 
@@ -1511,6 +1514,9 @@ mod tests {
                 why: "the identity names nothing".to_owned(),
             },
             Standing::Unjudged,
+            Standing::Inapplicable {
+                because: crate::run::Unheld::NotCompiled,
+            },
         ];
         for standing in &every {
             match standing {
@@ -1518,7 +1524,8 @@ mod tests {
                 | Standing::Moved { .. }
                 | Standing::Stale { .. }
                 | Standing::Unmatched { .. }
-                | Standing::Unjudged => {}
+                | Standing::Unjudged
+                | Standing::Inapplicable { .. } => {}
             }
         }
         every

@@ -68,11 +68,12 @@ const NOT_RUN_MUTANT: &str = "not-run-mutant";
 const STALE_EXPECTATION: &str = "stale-expectation";
 const UNMATCHED_EXPECTATION: &str = "unmatched-expectation";
 /// Every standing a claim can have, as a report writes it.
-pub const CLAIM_STANDINGS: [&str; 4] = ["met", "stale", "unmatched", "unjudged"];
+pub const CLAIM_STANDINGS: [&str; 5] = ["met", "stale", "unmatched", "unjudged", "inapplicable"];
 const MET: &str = CLAIM_STANDINGS[0];
 const STALE: &str = CLAIM_STANDINGS[1];
 const UNMATCHED: &str = CLAIM_STANDINGS[2];
 const UNJUDGED: &str = CLAIM_STANDINGS[3];
+const INAPPLICABLE: &str = CLAIM_STANDINGS[4];
 
 /// Why a run could not be re-decided at all.
 #[derive(Debug, thiserror::Error)]
@@ -873,6 +874,7 @@ enum ClaimStanding {
     Stale,
     Unmatched,
     Unjudged,
+    Inapplicable,
 }
 
 impl ClaimStanding {
@@ -882,6 +884,7 @@ impl ClaimStanding {
             Self::Stale => STALE,
             Self::Unmatched => UNMATCHED,
             Self::Unjudged => UNJUDGED,
+            Self::Inapplicable => INAPPLICABLE,
         }
     }
 }
@@ -1060,13 +1063,15 @@ mod tests {
             ClaimStanding::Stale,
             ClaimStanding::Unmatched,
             ClaimStanding::Unjudged,
+            ClaimStanding::Inapplicable,
         ];
         for standing in every {
             match standing {
                 ClaimStanding::Met
                 | ClaimStanding::Stale
                 | ClaimStanding::Unmatched
-                | ClaimStanding::Unjudged => {}
+                | ClaimStanding::Unjudged
+                | ClaimStanding::Inapplicable => {}
             }
             assert!(
                 CLAIM_STANDINGS.contains(&standing.as_str()),

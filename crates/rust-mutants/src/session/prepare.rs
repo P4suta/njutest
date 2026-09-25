@@ -932,6 +932,7 @@ pub fn prepare(
     let item_refs = item_refs(&instrumented.items)?;
     let verified = narrowed(verified, instrumented.narrowing, instrumented.items.items);
     Ok(Session {
+        selection: selection(options)?,
         apparatus,
         item_refs,
         catalog: discovery.catalog,

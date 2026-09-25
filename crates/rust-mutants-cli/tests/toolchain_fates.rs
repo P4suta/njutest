@@ -544,6 +544,11 @@ fn fixture_two_bodies() {
 }
 
 #[test]
+fn fixture_uncompiled() {
+    holds("fixture-uncompiled");
+}
+
+#[test]
 fn fixture_unicode() {
     holds("fixture-unicode");
 }

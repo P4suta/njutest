@@ -82,3 +82,4 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0038 A read-back row carries its answers](adr/0038-a-read-back-row-carries-its-answers.md)
 - [0039 A step is spent in memory](adr/0039-a-step-is-spent-in-memory.md)
 - [0041 An answer carries across an edit it never entered](adr/0041-an-answer-carries-across-an-edit-it-never-entered.md)
+- [0042 A claim holds where its facts do](adr/0042-a-claim-holds-where-its-facts-do.md)

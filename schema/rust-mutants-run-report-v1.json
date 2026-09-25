@@ -835,7 +835,8 @@
               "met",
               "stale",
               "unmatched",
-              "unjudged"
+              "unjudged",
+              "inapplicable"
             ]
           },
           "actual": {
