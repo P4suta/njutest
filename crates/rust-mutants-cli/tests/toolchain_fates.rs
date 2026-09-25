@@ -269,6 +269,21 @@ fn fixture_build_script() {
 }
 
 #[test]
+fn fixture_child_refuses() {
+    holds("fixture-child-refuses");
+}
+
+#[test]
+fn fixture_cleared_child() {
+    holds("fixture-cleared-child");
+}
+
+#[test]
+fn fixture_cleared_under_mutant() {
+    holds("fixture-cleared-under-mutant");
+}
+
+#[test]
 fn fixture_climbs_dep_lib() {
     holds("fixture-climbs-dep-lib");
 }
@@ -299,8 +314,18 @@ fn fixture_edits() {
 }
 
 #[test]
+fn fixture_environment() {
+    holds("fixture-environment");
+}
+
+#[test]
 fn fixture_equivalent() {
     holds("fixture-equivalent");
+}
+
+#[test]
+fn fixture_fails_then_hangs() {
+    holds("fixture-fails-then-hangs");
 }
 
 #[test]
@@ -316,6 +341,11 @@ fn fixture_features() {
 #[test]
 fn fixture_forbid() {
     holds("fixture-forbid");
+}
+
+#[test]
+fn fixture_guarded_or() {
+    holds("fixture-guarded-or");
 }
 
 #[test]
@@ -336,6 +366,11 @@ fn fixture_ignored() {
 #[test]
 fn fixture_include() {
     holds("fixture-include");
+}
+
+#[test]
+fn fixture_item_reach() {
+    holds("fixture-item-reach");
 }
 
 #[test]
@@ -394,8 +429,18 @@ fn fixture_probeable() {
 }
 
 #[test]
+fn fixture_reads_tree() {
+    holds("fixture-reads-tree");
+}
+
+#[test]
 fn fixture_rejectable() {
     holds("fixture-rejectable");
+}
+
+#[test]
+fn fixture_scripted() {
+    holds("fixture-scripted");
 }
 
 #[test]
@@ -406,6 +451,11 @@ fn fixture_shared_path() {
 #[test]
 fn fixture_simple() {
     holds("fixture-simple");
+}
+
+#[test]
+fn fixture_strict_lints() {
+    holds("fixture-strict-lints");
 }
 
 #[test]
