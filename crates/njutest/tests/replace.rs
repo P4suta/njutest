@@ -99,6 +99,7 @@ fn put_checkpoint(root: &Path, round: u64) -> Option<String> {
             id: format!("{one:064x}"),
             disposition: njutest::checkpoint::SavedDisposition::Killed {
                 by: format!("demo/lib/demo tests::round_{round}"),
+                before: Vec::new(),
             },
             duration_ms: 3,
         })

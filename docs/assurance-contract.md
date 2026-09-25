@@ -320,6 +320,9 @@ A run that kept no store of earlier answers records neither, which is what parts
 #### A kill
 
 Reused when: the mutant has the same content-addressed identity; the recorded killer is a target this run's own coverage still routes to the mutant, after every discharge; that target has the same behaviour key; and this run's own baseline ran that target on the original tree and saw it pass.
+Every behaviour key, and the identity of the run itself, carries the digest of the njutest executable that decided, so an answer one build kept is never believed by another that may mean something else by it; a njutest that cannot read its own executable runs as `--no-cache`.
+The record also carries every target asked before the killer, with its key and what it answered, and is reused only when those are exactly the targets this run would ask before the killer, each with the same key and seen to pass.
+A reused row then carries the answers the recording run was given, so what the whole catalog decides from answers — `hollow-target` among them — is the same whether a run asked again or read back ([ADR 0038](adr/0038-a-read-back-row-carries-its-answers.md)).
 
 #### A survival
 

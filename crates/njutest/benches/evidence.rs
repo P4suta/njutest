@@ -27,6 +27,7 @@ fn inputs(packages: u32) -> digest::Inputs {
         dependencies: "c".repeat(64),
         toolchain: "rustc 1.98.0".to_owned(),
         platform: "x86_64-unknown-linux-gnu".to_owned(),
+        engine: "e".repeat(64),
         environment: environment(packages),
         contract: Contract::StandardV1,
         configuration: "d".repeat(64),
@@ -54,6 +55,7 @@ fn common() -> key::Common {
     key::Common {
         toolchain: "rustc 1.98.0".to_owned(),
         platform: "x86_64-unknown-linux-gnu".to_owned(),
+        engine: "e".repeat(64),
         environment: environment(20),
         contract: "standard-v1".to_owned(),
         test_args: Vec::new(),

@@ -701,36 +701,38 @@ fn establish(
     });
     let mut source: Option<String> = None;
     let mut routing: Option<crate::report::Routing> = None;
-    let disposition = if let Some(saved) = state
-        .and_then(|state| state.mutant(mutant.id.as_str()))
-        .map(inherited)
+    let disposition = if let Some(saved) = state.and_then(|state| state.mutant(mutant.id.as_str()))
     {
-        saved
+        let crate::checkpoint::SavedDisposition::Killed { by, before } = &saved.disposition;
+        routing = Some(crate::report::Routing::of(
+            &session.route(mutant),
+            through(before.iter().cloned(), by),
+        ));
+        inherited(saved)
     } else if let Some(diagnostic) = rejected.get(mutant.id.as_str()) {
         Disposition::Rejected {
             diagnostic: (*diagnostic).to_owned(),
         }
     } else {
         let route = session.route(mutant);
-        routing = Some(crate::report::Routing::of(&route));
         let consulted = reuse(options, &route, mutant.id.as_str());
         record_route(watch, mutant, &route, &consulted);
         if let Consulted::Believed {
             disposition,
+            answered,
             run_id,
         } = consulted
         {
             source = Some(run_id);
+            routing = Some(crate::report::Routing::of(&route, answered));
             disposition
         } else {
             let (established, asked) = judge(judging, mutant, route.clone())?;
-            if let Some(routed) = routing.as_mut() {
-                routed.answered = asked;
-            }
-            match keep(options, mutant.id.as_str(), &route, &established)? {
+            match keep(options, mutant.id.as_str(), (&route, &asked), &established)? {
                 Kept::Written => {}
                 Kept::NotKept(_costs_the_next_run_its_time_and_this_one_no_verdict) => {}
             }
+            routing = Some(crate::report::Routing::of(&route, asked));
             established
         }
     };
@@ -846,6 +848,8 @@ pub enum Consulted {
     Believed {
         /// What that run established about the mutant.
         disposition: Disposition,
+        /// The targets that run asked, in order, with what each answered.
+        answered: Vec<crate::report::Answered>,
         /// The run that established it.
         run_id: String,
     },
@@ -876,29 +880,71 @@ pub fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Consulte
             });
         }
     };
-    let reaching: BTreeSet<String> = match answered(route, evidence) {
-        Ok(named) => named.into_iter().collect(),
+    let asking = match asking(route, evidence) {
+        Ok(named) => named,
         Err(refusal) => return Consulted::Refused(refusal),
     };
-    if let Err(refusal) = record.believable(&reaching, &evidence.standing) {
+    if let Err(refusal) = record.believable(&asking, &evidence.standing) {
         return Consulted::Refused(refusal);
     }
-    let disposition = match &record.outcome {
-        store::Outcome::Killed { target, .. } => Disposition::Killed {
-            by: evidence
-                .names
-                .get(target)
-                .cloned()
-                .unwrap_or_else(|| target.clone()),
-        },
-        store::Outcome::Survived { .. } => Disposition::Survived {
-            route: route.clone(),
-        },
+    let named = |target: &String| {
+        evidence
+            .names
+            .get(target)
+            .cloned()
+            .unwrap_or_else(|| target.clone())
+    };
+    let (disposition, answered) = match &record.outcome {
+        store::Outcome::Killed { target, before, .. } => (
+            Disposition::Killed { by: named(target) },
+            through(
+                before.iter().map(|answer| crate::report::Answered {
+                    target: named(&answer.target),
+                    outcome: answer.outcome,
+                }),
+                &named(target),
+            ),
+        ),
+        store::Outcome::Survived { .. } => (
+            Disposition::Survived {
+                route: route.clone(),
+            },
+            asking
+                .iter()
+                .map(|target| crate::report::Answered {
+                    target: named(target),
+                    outcome: Recorded::Survived,
+                })
+                .collect(),
+        ),
     };
     Consulted::Believed {
         disposition,
+        answered,
         run_id: record.run_id,
     }
+}
+
+/// The answers a run gave up to and including the kill by `by`, from the ones it gave `before`.
+fn through(
+    before: impl Iterator<Item = crate::report::Answered>,
+    by: &str,
+) -> Vec<crate::report::Answered> {
+    before
+        .chain(std::iter::once(crate::report::Answered {
+            target: by.to_owned(),
+            outcome: Recorded::Killed,
+        }))
+        .collect()
+}
+
+/// The identities of the targets a route names, in the order a run asks them.
+///
+/// # Errors
+/// Names the first target this run's baseline has no identity for.
+fn asking(route: &Route, evidence: &Evidence) -> Result<Vec<String>, store::Refusal> {
+    let names: BTreeSet<&str> = route.reaching().into_iter().collect();
+    evidence.identities(&names.into_iter().collect::<Vec<_>>())
 }
 
 /// What became of one run's attempt to record what it established for the next one.
@@ -953,7 +999,7 @@ pub enum NotKept {
 pub fn keep(
     options: &MutationOptions,
     mutant: &str,
-    route: &Route,
+    (route, asked): (&Route, &[crate::report::Answered]),
     disposition: &Disposition,
 ) -> Result<Kept, store::StoreError> {
     let Some(evidence) = options.evidence.as_ref() else {
@@ -975,9 +1021,28 @@ pub fn keep(
                     target: target.to_owned(),
                 }));
             };
+            let mut before = Vec::new();
+            for answer in asked.iter().take_while(|answer| answer.target != *by) {
+                let Some(identity) = evidence.identity(&answer.target) else {
+                    return Ok(Kept::NotKept(NotKept::TargetUnknown {
+                        target: answer.target.clone(),
+                    }));
+                };
+                let Some(key) = evidence.standing.passing.get(identity) else {
+                    return Ok(Kept::NotKept(NotKept::NotPassing {
+                        target: identity.to_owned(),
+                    }));
+                };
+                before.push(store::Answer {
+                    target: identity.to_owned(),
+                    key: key.clone(),
+                    outcome: answer.outcome,
+                });
+            }
             store::Outcome::Killed {
                 target: target.to_owned(),
                 key: key.clone(),
+                before,
             }
         }
         Disposition::Survived { .. } => {
@@ -1030,7 +1095,7 @@ pub fn answered(route: &Route, evidence: &Evidence) -> Result<Vec<String>, store
 #[must_use]
 pub fn inherited(saved: &crate::checkpoint::SavedMutant) -> Disposition {
     match &saved.disposition {
-        crate::checkpoint::SavedDisposition::Killed { by } => {
+        crate::checkpoint::SavedDisposition::Killed { by, .. } => {
             Disposition::Killed { by: by.clone() }
         }
     }
