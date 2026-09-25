@@ -53,6 +53,8 @@ pub struct Touch {
     pub bodies: BTreeSet<u64>,
     /// Every mutation anything of it saw its guard's two branches differ over.
     pub infected: BTreeSet<u64>,
+    /// Every item anything of it entered the body of.
+    pub entered: BTreeSet<u64>,
 }
 
 impl Touch {
@@ -64,6 +66,7 @@ impl Touch {
         self.reached == other.reached
             && self.bodies == other.bodies
             && self.infected == other.infected
+            && self.entered == other.entered
     }
 }
 
@@ -164,6 +167,7 @@ fn touch(record: &Value) -> Option<Touch> {
         reached: indices(record.get("reached_sites")?)?,
         bodies: indices(record.get("entered_bodies")?)?,
         infected: indices(record.get("infected_sites")?)?,
+        entered: indices(record.get("entered_items")?)?,
     })
 }
 

@@ -228,7 +228,8 @@ pub fn touch(measured: &str, reached: &[u32]) -> Value {
             "summary": { "protocol": "libtest", "tests_run": 1 },
             "reached_sites": reached,
             "entered_bodies": [],
-            "infected_sites": []
+            "infected_sites": [],
+            "entered_items": []
         }
     })
 }

@@ -2465,3 +2465,26 @@ fn a_second_repair_starts_from_what_the_first_one_made_it() {
          {said:?}"
     );
 }
+
+#[test]
+fn a_control_that_entered_an_item_its_baseline_did_not_is_owed_the_finding() {
+    let mut control = sentinel::touch("control", &[0]);
+    merge(
+        &mut control,
+        serde_json::json!({ "touch": { "entered_items": [4, 5] } }),
+    );
+    let mut baseline = sentinel::touch("baseline", &[0]);
+    merge(
+        &mut baseline,
+        serde_json::json!({ "touch": { "entered_items": [4] } }),
+    );
+    let said = drift_violations(&drift_audit(
+        with(sentinel::drifted("held")),
+        vec![baseline, control],
+    ));
+    assert!(
+        !said.is_empty(),
+        "every site agrees and the control entered item 5 the baseline never did, which is the \
+         union `select` narrows by; a report that calls it held is refused: {said:?}"
+    );
+}

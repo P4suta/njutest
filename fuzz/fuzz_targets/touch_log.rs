@@ -6,7 +6,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use rust_mutants::touch::read;
+use rust_mutants::touch::{Bounds, read};
 
 fuzz_target!(|data: &[u8]| {
     let Ok(text) = std::str::from_utf8(data) else {
@@ -14,10 +14,19 @@ fuzz_target!(|data: &[u8]| {
     };
     let catalog = "0".repeat(64);
     for count in [0u32, 1, 7, 4096] {
-        let Ok(touches) = read(text, &catalog, count) else {
+        let bounds = Bounds {
+            mutants: count,
+            items: count,
+        };
+        let Ok(touches) = read(text, &catalog, bounds) else {
             continue;
         };
-        for seen in [&touches.reached, &touches.bodies, &touches.infected] {
+        for seen in [
+            &touches.reached,
+            &touches.bodies,
+            &touches.infected,
+            &touches.entered,
+        ] {
             for index in seen
                 .loose
                 .iter()

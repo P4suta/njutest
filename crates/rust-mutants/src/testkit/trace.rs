@@ -236,6 +236,8 @@ pub fn every_payload() -> Vec<Payload> {
                 sites: 3,
                 loose: 1,
                 infected: 1,
+                entered: 2,
+                entered_items: vec![0, 1],
             },
         },
         Payload::Witness {
