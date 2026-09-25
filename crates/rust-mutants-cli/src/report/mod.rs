@@ -3,6 +3,7 @@
 
 //! Rendering what the engine established, for a person and for a program.
 
+pub mod annotations;
 pub mod candidates;
 pub mod doctor;
 pub mod html;
@@ -575,6 +576,25 @@ fn survivors(document: &run::RunDocument) -> String {
     text
 }
 
+/// How many survivors no claim accounts for, which is what is left to do once the claims are counted; nothing when no claim accounted for any.
+fn left_line(document: &run::RunDocument) -> String {
+    let survivors = || {
+        document
+            .mutants
+            .iter()
+            .filter(|row| row.outcome == rust_mutants::outcome::Outcome::Survived)
+    };
+    if !survivors().any(|row| row.expected) {
+        return String::new();
+    }
+    let left = survivors().filter(|row| !row.expected).count();
+    let verb = if left == 1 { "is" } else { "are" };
+    format!(
+        "LEFT      {left} of {} survivors {verb} accounted for by no claim\n",
+        survivors().count()
+    )
+}
+
 /// What the run came to, in the four lines a reader takes away from it.
 fn totals(document: &run::RunDocument) -> Result<String, rust_mutants::work::WorkError> {
     let tally = tally::Tally::of(document);
@@ -601,6 +621,7 @@ fn totals(document: &run::RunDocument) -> Result<String, rust_mutants::work::Wor
         }
         None => text.push_str("SCORE     none; the run decided nothing\n"),
     }
+    text.push_str(&left_line(document));
     text.push_str(&work_line(document)?);
     Ok(text)
 }

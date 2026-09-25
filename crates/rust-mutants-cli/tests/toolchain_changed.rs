@@ -38,6 +38,7 @@ fn environment(fixture: &Fixture) -> Environment {
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        ci: rust_mutants_cli::CiHost::None,
     }
 }
 
@@ -80,6 +81,28 @@ fn a_change_set_that_names_no_rust_file_selects_nothing_rather_than_everything()
     assert!(
         !listed.contains(".rs:"),
         "a run about nothing changing must mutate nothing: {listed}"
+    );
+}
+
+#[test]
+fn a_run_about_a_change_that_touches_nothing_measured_says_so_and_passes() {
+    let fixture = Fixture::copy("fixture-workspace");
+    njutest_devkit::repo::commit_tree(fixture.root());
+    std::fs::write(fixture.root().join("README.md"), "changed\n").expect("write");
+
+    let output = against(&fixture, &["run", "--changed", "--offline", "--locked"]);
+    let said = stdout(&output);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "a pull request that changed nothing this configuration measures has nothing to \
+         answer for, and a gate built on --changed must be able to tell that from a failure: \
+         {output:?}"
+    );
+    assert!(
+        said.contains("NOTHING") && said.contains("README.md"),
+        "it says there was nothing to measure and names what changed instead, so a \
+         configuration that measures too little is visible rather than silently green: {said}"
     );
 }
 

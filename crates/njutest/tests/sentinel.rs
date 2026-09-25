@@ -5,14 +5,14 @@
 
 use njutest::error::RunnerError;
 use rust_mutants::probe::Question;
-use rust_mutants::sentinel::{Expected, Infection, Planted, Sighted, Sighting};
+use rust_mutants::sentinel::{Answer, Compared, Expected, Infection, Planted, Sighted, Sighting};
 use rust_mutants::session::{Asked, Discharge, Proof, Reaches, Route};
 
-/// The route a layer that works gives the mutant planted for it.
+/// The route a layer that works gives the mutant planted for it, and for a comparison, which no route answers, the route nothing takes.
 fn routed_as(expected: Expected) -> Route {
     let target = "sentinel/test/planted".to_owned();
     match expected {
-        Expected::Unreached => Route::Unreached {
+        Expected::Unreached | Expected::Identical | Expected::Rendered => Route::Unreached {
             considered: vec![target],
         },
         Expected::Discharged(proof) => Route::Discharged {
@@ -29,7 +29,24 @@ fn routed_as(expected: Expected) -> Route {
     }
 }
 
-/// Every planted mutant, routed the way its layer must route it.
+/// What a layer that works does with the mutant planted for it: routes it, or compares it.
+fn answered_as(expected: Expected) -> Answer {
+    match expected {
+        Expected::Identical => Answer::Compared(Compared {
+            identity: rust_mutants::equivalence::Identity::Identical,
+            withdrawn: false,
+        }),
+        Expected::Rendered => Answer::Compared(Compared {
+            identity: rust_mutants::equivalence::Identity::Differs,
+            withdrawn: false,
+        }),
+        Expected::Unreached | Expected::Discharged(_) | Expected::Kept(_) => {
+            Answer::Routed(Ok(routed_as(expected)))
+        }
+    }
+}
+
+/// Every planted mutant, answered the way its layer must answer it.
 fn all_sighted() -> Sighted {
     Sighted {
         sightings: Planted::every()
@@ -37,7 +54,7 @@ fn all_sighted() -> Sighted {
             .flat_map(Planted::expectations)
             .map(|expectation| Sighting {
                 expectation,
-                route: Ok(routed_as(expectation.expected)),
+                answer: answered_as(expectation.expected),
             })
             .collect(),
         kept: Vec::new(),
@@ -65,9 +82,9 @@ fn a_layer_that_did_not_route_its_planted_mutant_ends_the_run_and_says_what_is_n
                 && one.expectation.expected == Expected::Discharged(Proof::NeverInfected)
         })
         .expect("never-infected has a planted mutant");
-    uninfected.route = Ok(routed_as(Expected::Kept(
+    uninfected.answer = Answer::Routed(Ok(routed_as(Expected::Kept(
         rust_mutants::sentinel::KeptFor::Tests,
-    )));
+    ))));
 
     let error = njutest::assure::sentinel::believed(&sighted)
         .expect_err("a blind layer is not one a run may believe");
@@ -110,7 +127,7 @@ fn a_layer_that_removes_the_mutant_it_must_leave_is_as_blind_as_one_that_removes
                 && matches!(one.expectation.expected, Expected::Kept(_))
         })
         .expect("reach has a mutant it must leave");
-    reached.route = Ok(routed_as(Expected::Unreached));
+    reached.answer = Answer::Routed(Ok(routed_as(Expected::Unreached)));
 
     let error = njutest::assure::sentinel::believed(&sighted)
         .expect_err("a layer that removes what the tests reach removes findings");

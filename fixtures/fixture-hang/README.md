@@ -29,6 +29,10 @@ at the allowance and is never asked twice. The fates below
 are the ones without the marker set, so the fixture's ordinary run stays
 ordinary; `crates/rust-mutants-cli/tests/toolchain_hang.rs` sets it.
 
+`walked` is the mutation outside the loop it stops ending.
+Its stride is the mutation's site, and the loop that walks it is in `src/walk.rs`, which a `rust-mutants: skip` marker keeps the run from mutating.
+Decrementing the stride to zero never ends that loop, and the checkpoints the instrumenter places across every mutable file, this one included, count it: the mutation is `step_limit_reached` at exactly one past the allowance and never `waited`, which `toolchain_hang.rs` holds.
+
 The two halves used to want `.rust-mutants.toml`'s bound pulled in opposite directions, and no longer do.
 `clamp_positive` needs the bound low enough that a sleep of a few seconds outlasts it, or nothing times out and there is no `inconclusive` to observe.
 `count_to` once needed it high enough that the count got there first, because the bound was on the whole execution and a slow enough machine let the clock stop a mutation the allowance was about to catch.
@@ -67,4 +71,7 @@ src/lib.rs:25:10 gt-to-ge survived
 src/lib.rs:25:12 int-increment survived
 src/lib.rs:25:16 return-default killed
 src/lib.rs:25:27 int-increment killed
+src/lib.rs:33:18 int-decrement step_limit_reached
+src/lib.rs:33:18 int-increment killed
+src/lib.rs:34:5 return-default killed
 ```

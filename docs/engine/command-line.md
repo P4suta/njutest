@@ -30,7 +30,7 @@ These narrow a run, and `list`, `catalog`, `why-skipped` and `instrument` read t
 | `--package NAME` | only these packages; repeatable |
 | `--include GLOB`, `--exclude GLOB` | workspace-relative globs naming what is and is not mutated; repeatable |
 | `--omit GLOB` | workspace-relative globs the copy does not carry at all; repeatable |
-| `--changed`, `--changed-from REV` | only the files that differ from `HEAD` or from a revision |
+| `--changed`, `--changed-from REV` | only the files that differ from `HEAD` or from a revision; a change that touches no Rust file the configuration measures prints `NOTHING`, names what did change, and exits 0 without opening the workspace |
 | `--tier balanced\|strong\|all` | which operators the run asks |
 | `--operator NAME` | exactly these rules, whatever the tier says |
 | `--rule NAME`, `--family NAME` | keep only these; repeatable |
@@ -85,19 +85,35 @@ These narrow a run, and `list`, `catalog`, `why-skipped` and `instrument` read t
 | `doctor` | `--json` |
 | `init` | `--force` |
 | `cache` | `--gc`, `--all`, `--kept`, `--clear-outcomes`, `--cache-dir DIR` |
+| `ci gate` | `--run ID`, `--report FILE`, `--sarif FILE`, `--host github\|gitlab\|plain`, `--changed-from REV` |
 
 `--run` names a stored run, and the newest is read when nothing is named.
 A name no directory answers to is refused (`RM0007`) rather than answered from another run: a reader who mistyped it would otherwise be told confidently about a run they did not ask for, and `replay` would report the stored answer as having changed when what changed was which run it read.
+
+## In a continuous integration job
+
+`ci gate` reads one run, a stored one or the report `--report` names, writes it where the job shows it, and exits with the run's own code.
+The host is the one the environment names, or the one `--host` asks for; asking for GitHub outside a GitHub Actions step is refused (`RM0014`).
+
+On GitHub Actions it appends the Markdown report to the step summary, appends `verdict=`, `report=` and, with `--sarif`, `sarif=` to the step outputs, and writes one `::error` annotation per survivor no claim accounts for.
+`verdict` is `detected`, `found`, `failed` or `interrupted`, the words for exit codes 0, 1, 2 and 130.
+A runner shows ten error annotations per step; past that the summary says how many were shown of how many, and where all of them are.
+An annotation's file is named from the checkout `GITHUB_WORKSPACE` names, so a root outside it is refused (`RM0015`) rather than annotated where the runner cannot place it.
+With `--changed-from REV`, only the survivors on lines that differ from that revision, committed and not, are annotated, and the summary says how many others there are; a revision git cannot answer about is refused (`RM0010`).
+Every line of a file git does not track counts as changed.
+On GitLab CI, and with `--host plain`, it writes the lines `report` writes.
 
 ## What a run's exit code says
 
 | Code | What it means |
 | --- | --- |
 | 0 | every mutant the run decided, the tests noticed |
-| 1 | there is a finding: a survivor, a stale claim, something the run could not decide |
-| 2 | the run itself failed, or the command was used wrongly |
+| 1 | there is a finding about the tests: a survivor, a mutation no test reached or a proof removed, a mutation the run could not decide either way, or a stale or unmatched claim |
+| 2 | the run could not measure a mutation it ran — it waited, reached its step limit, errored or was not run — or the run itself failed, or the command was used wrongly |
 | 130 | it was interrupted |
 | 143 | it was terminated, which is what a cancelled job sends |
+
+The table is `rust_mutants::run::Exit`, which is also what a run decides its code with and what `--help` prints, so the three cannot say different things; a test holds this page to it.
 
 An exit code is about what was established, never about a percentage.
 There is no threshold flag; see [ADR 0004](../adr/0004-proof-layers-not-budgets.md).

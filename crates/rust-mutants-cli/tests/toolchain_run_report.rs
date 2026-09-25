@@ -1187,6 +1187,7 @@ fn environment(fixture: &Fixture) -> Environment {
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        ci: rust_mutants_cli::CiHost::None,
     }
 }
 
@@ -1220,6 +1221,7 @@ fn environment_at(root: &Path, temp: &Path, cache: &Path) -> Environment {
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        ci: rust_mutants_cli::CiHost::None,
     }
 }
 
@@ -1317,5 +1319,27 @@ fn a_glob_that_names_the_same_part_twice_is_still_the_same_part_twice() {
         stderr(&merged).contains("more than one"),
         "{}",
         stderr(&merged)
+    );
+}
+
+#[test]
+fn a_test_that_fails_because_its_child_was_refused_noticed_the_mutation() {
+    let fixture = Fixture::copy("fixture-child-refuses");
+    let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    assert!(
+        output.status.code() == Some(0) || output.status.code() == Some(1),
+        "{}",
+        stderr(&output)
+    );
+    let report = stored(&fixture);
+    let rows = report["mutants"].as_array().expect("the rows");
+    assert!(
+        rows.iter().all(|row| row["outcome"] != "errored"),
+        "a runtime's refusal is the process's own only when the process exits with the \
+         refusal's code; here a child was refused and the test that ran it failed: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| row["outcome"] == "killed"),
+        "{rows:#?}"
     );
 }

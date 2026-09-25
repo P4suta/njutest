@@ -1331,19 +1331,9 @@ fn score_of(accounting: &Accounting) -> Result<Option<ScoreDocument>, CountOverf
 
 /// The exit code the whole earns, which is the code the whole would have earned rather than the worst of its parts.
 fn exit_code_of(merged: &RunDocument) -> u8 {
-    if merged.run.interrupted {
-        return crate::run::EXIT_INTERRUPTED;
-    }
-    if merged
-        .findings
-        .iter()
-        .any(|finding| finding.kind.is_infrastructure())
-    {
-        return crate::run::EXIT_FAILED;
-    }
-    if merged.findings.is_empty() {
-        crate::run::EXIT_DETECTED
-    } else {
-        crate::run::EXIT_UNDETECTED
-    }
+    crate::run::Exit::of(
+        merged.run.interrupted,
+        merged.findings.iter().map(|finding| finding.kind),
+    )
+    .code()
 }

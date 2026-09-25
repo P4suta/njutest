@@ -949,3 +949,35 @@ fn survivors_of_one_unexercised_path_are_counted_as_one_and_the_rest_are_not() {
          them: {said}"
     );
 }
+
+#[test]
+fn the_score_is_followed_by_how_many_survivors_no_claim_accounts_for() {
+    let accounted = mutant(0, Outcome::Survived, true);
+    let left = mutant(1, Outcome::Survived, false);
+    let killed = mutant(2, Outcome::Killed, false);
+    let mut claimed_run = part(vec![accounted.clone(), left, killed], 1, "1/1");
+    claimed_run.run.shard = None;
+    claimed_run.expectations = vec![claimed("an equivalent mutant", &accounted)];
+    cohere(&mut claimed_run);
+    let text = rust_mutants_cli::report::lines(&claimed_run).expect("valid work ledger");
+    assert!(
+        text.contains("LEFT      1 of 2 survivors is accounted for by no claim\n"),
+        "a reader sees at a glance what is left to do once the claims are counted: {text}"
+    );
+
+    let mut unclaimed_run = part(
+        vec![
+            mutant(0, Outcome::Survived, false),
+            mutant(1, Outcome::Killed, false),
+        ],
+        1,
+        "1/1",
+    );
+    unclaimed_run.run.shard = None;
+    cohere(&mut unclaimed_run);
+    let text = rust_mutants_cli::report::lines(&unclaimed_run).expect("valid work ledger");
+    assert!(
+        !text.contains("LEFT"),
+        "a run with no claims has nothing a claim accounts for: {text}"
+    );
+}

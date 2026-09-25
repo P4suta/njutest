@@ -395,3 +395,23 @@ fn suites() -> String {
     assert!(read.len() > 100_000, "the suites are read: {}", read.len());
     read
 }
+
+#[test]
+fn the_page_says_what_each_exit_code_means_in_the_words_the_run_decides_it_with() {
+    let text = page("docs/engine/command-line.md");
+    let rows: Vec<String> = rust_mutants::run::Exit::ALL
+        .iter()
+        .map(|exit| format!("| {} | {} |", exit.code(), exit.meaning()))
+        .collect();
+    let missing: Vec<&String> = rows
+        .iter()
+        .filter(|row| !text.contains(row.as_str()))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "the command-line page's exit table is rendered from `rust_mutants::run::Exit`, which is \
+         what a run decides its code with; a meaning written by hand beside it drifted once, \
+         calling a mutation the run could not measure a finding about the tests. Rows the page \
+         does not carry: {missing:#?}"
+    );
+}

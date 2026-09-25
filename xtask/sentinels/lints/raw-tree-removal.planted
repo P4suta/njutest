@@ -1,0 +1,4 @@
+=== one-tree-removed-plainly source crates/app/src/lib.rs
+fn close(dir: &std::path::Path) -> std::io::Result<()> {
+    std::fs::remove_dir_all(dir)
+}
