@@ -37,6 +37,8 @@ mod lines_around;
 mod progress;
 #[path = "projections.rs"]
 mod projections;
+#[path = "remedies.rs"]
+mod remedies;
 #[path = "run_lines.rs"]
 mod run_lines;
 #[path = "run_report.rs"]

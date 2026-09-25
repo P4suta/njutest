@@ -20,5 +20,9 @@ Options:
           
           [default: auto]
 
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
+
   -h, --help
           Print help (see a summary with '-h')

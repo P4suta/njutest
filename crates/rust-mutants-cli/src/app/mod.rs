@@ -1943,7 +1943,7 @@ fn listed(selected: &[rust_mutants::rule::Rule]) -> Result<String, CliError> {
 /// How every command here looks for a toolchain.
 fn locating(environment: &Environment) -> rust_mutants::cargo::LocateOptions {
     rust_mutants::cargo::LocateOptions {
-        cargo: None,
+        cargo: environment.cargo.clone(),
         search_path: rust_mutants::vars::search_path(&environment.vars),
         env: Some(environment.vars.clone()),
     }

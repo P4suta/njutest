@@ -186,7 +186,7 @@ mod table {
                 Self::EvidenceUnreadable => ErrorCode {
                     code: "NJ2001",
                     summary: "the tree a run is about could not be read",
-                    remedy: "run this inside the tree you mean to verify, or pass --root at it",
+                    remedy: "run this inside the tree you mean to verify, or pass --directory at it",
                     sealed: Sealed,
                 },
                 Self::TreeWrittenDuringMeasurement => ErrorCode {
