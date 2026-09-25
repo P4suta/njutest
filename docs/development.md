@@ -171,7 +171,7 @@ Before it, a report that called its survivor killed, and made its columns, findi
 Its planted defects are that kind of lie, told consistently, and a law in `xtask/tests/sentinel.rs` reads every outcome the report schema allows and requires a planted lie for each (`proofaudit::sentinel::lie`) that some layer refuses, so an outcome added to the schema is audited against its executions the day it arrives.
 
 `cargo xtask engine-audit <run-directory> [--trace <recording>] [--shard <report>…] [--ledger .rust-mutants.toml]` is the same rule for the engine's own runs.
-It reads that run's `run-report-v1.json` and re-decides it in nine layers, none of which calls the engine's code:
+It reads that run's `run-report-v1.json` and re-decides it in fourteen layers, none of which calls the engine's code; among them:
 
 | Layer | Re-derives |
 | --- | --- |
@@ -185,6 +185,7 @@ It reads that run's `run-report-v1.json` and re-decides it in nine layers, none 
 | `proofs` | every discharge against the measurement and the catalog the run kept: a target that covered the body it was discharged from, a discharge whose premises are missing, a discharged pair that then ran, the `discharged` column, and a mutant that never ran and whose reason the recording does not give |
 | `trace` | every row against the recording of what actually ran: the target it names ran, its outcome is that execution's, a believed timeout repeated and a step-limit stop carried the notice that established it, instrumenting moved no line, every refusal was condemned by a round, a discharged target did not then run, an unreached route ran nothing, and every target the build produced was verified |
 | `ledger` | every survivor as one the ledger accepts with a reason, and every acceptance as one the run still holds |
+| `entry` | every site a test reached and every mutation a test noticed as lying in an item that test entered, by the item catalog and `entered` of `touched-v1.json`; every mutation as sitting in a measurable item whose name is the row's `item` |
 
 Its output and exit codes are `proofaudit`'s: one line per remark, a summary line, and 0, 1, or 2.
 Before it reads the run, it re-decides a clean synthetic run (`xtask::engineaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each layer, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.

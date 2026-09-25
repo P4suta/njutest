@@ -52,6 +52,7 @@ fn instrument_with_catalog(source: &str) -> (String, Catalog) {
         comparable: &offered(&discovery, &catalog),
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
     })
     .expect("instrument");
     (file.text, catalog)
@@ -166,6 +167,7 @@ fn a_guard_the_compiler_vouched_for_answers_what_it_replaces_and_says_where_the_
         comparable: &compared,
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
     })
     .expect("instrument");
     assert_eq!(
@@ -182,6 +184,7 @@ fn a_guard_the_compiler_vouched_for_answers_what_it_replaces_and_says_where_the_
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
     })
     .expect("instrument");
     assert!(
@@ -215,6 +218,7 @@ fn a_site_whose_form_cannot_compare_reports_no_comparison_however_it_is_offered(
         comparable: &every,
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
     })
     .expect("instrument");
     let value_sites: Vec<u32> = file
@@ -257,6 +261,7 @@ fn instrumented_with_markers(
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
     })
     .expect("instrument")
 }
@@ -381,11 +386,12 @@ fn the_step_runtime_uses_one_locked_process_state_and_fails_closed_at_every_boun
     let (_, runtime) = split_runtime(&text);
 
     for required in [
-        "enum Budget",
+        "type Budget = __rm_std::result::Result<__rm_std::option::Option<StepLimit>, BudgetError>",
         "enum StepNoticeError",
         "StepPhase {",
         "enum StepStateError",
-        "Budget::Invalid(_) => protocol_failure()",
+        "__rm_std::result::Result::Ok(__rm_std::option::Option::None) => return,",
+        "__rm_std::result::Result::Err(_) => protocol_failure(),",
         "pub(crate) fn checkpoint()",
         "file.lock().map_err",
         "file.unlock().map_err",
@@ -435,6 +441,7 @@ fn a_file_without_a_mutant_still_carries_the_process_wide_checkpoint_runtime() {
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
     })
     .expect("instrument");
     assert!(file.text.starts_with(source), "{}", file.text);
@@ -455,11 +462,11 @@ fn a_checkpoint_inside_a_mutant_edit_stays_in_the_original_branch() {
     let text = instrument(source);
     syn::parse_file(&text).expect("the checkpointed mutant file parses");
     assert!(
-        text.contains("filter(|one| { __rm::checkpoint(); within(**one, bound) })"),
+        text.contains("filter(|one| { __rm::item(2); __rm::checkpoint(); within(**one, bound) })"),
         "the expression closure remains bounded in the original branch: {text}"
     );
     assert!(
-        text.contains("map(|one| { __rm::checkpoint();"),
+        text.contains("map(|one| { __rm::item(2); __rm::checkpoint();"),
         "every expression closure enclosed by the mutation stays bounded: {text}"
     );
 }
@@ -630,6 +637,7 @@ fn a_source_that_is_not_the_one_the_candidates_came_from_is_refused() {
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
     })
     .expect_err("the source must be the one the candidates came from");
     assert_eq!(error.kind(), InstrumentErrorKind::SourceMismatch);
@@ -705,6 +713,7 @@ fn every_alternative_reports_where_its_own_text_landed() {
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
     })
     .expect("instrument");
 
@@ -984,6 +993,7 @@ fn instrumented(path: &str, source: &str) -> Option<(String, Catalog)> {
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
     }) {
         Ok(file) => file,
         Err(_) => return None,
@@ -1032,6 +1042,7 @@ fn instrument_probing(source: &str) -> String {
         comparable: &offered(&discovery, &catalog),
         probed: &probeable(&discovery, &catalog),
         catalog_digest: catalog.digest(),
+        first_item: 0,
     })
     .expect("instrument");
     assert!(
@@ -1104,6 +1115,7 @@ fn a_tree_holds_the_call_for_a_probe_only_where_the_compiler_vouched_for_one() {
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
     })
     .expect("instrument");
     assert!(
@@ -1151,6 +1163,7 @@ fn a_form_that_cannot_hold_the_call_writes_no_probe_however_many_it_was_offered(
         comparable: &BTreeSet::default(),
         probed: &statements,
         catalog_digest: catalog.digest(),
+        first_item: 0,
     })
     .expect("instrument");
     assert!(
@@ -1213,6 +1226,7 @@ fn a_probe_around_the_original_leaves_every_nested_branch_where_it_says_it_is() 
         comparable: &offered(&discovery, &catalog),
         probed: &probes,
         catalog_digest: catalog.digest(),
+        first_item: 0,
     })
     .expect("instrument");
     let kept = file
