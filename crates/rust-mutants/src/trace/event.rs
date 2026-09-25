@@ -699,6 +699,8 @@ pub struct TouchRecord {
     pub loose: u32,
     /// How many distinct mutations anything of it saw its guard's two branches differ over, which is what could have noticed them.
     pub infected: u32,
+    /// How many distinct items anything of it entered the body of, which is the union a change to one of them is routed by.
+    pub entered: u32,
 }
 
 /// What a run's own summary said, in the protocol it answered in.

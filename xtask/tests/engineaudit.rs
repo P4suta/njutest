@@ -939,7 +939,7 @@ fn a_run_the_interruption_stopped_is_not_a_run_that_lost_its_routes() {
             "outcome": "not_run", "target": "", "exit_code": 0,
             "duration_ms": 0, "tests_run": null, "killed_by": [], "signal": null,
             "step_notice": null, "retried": false, "lingered": false, "not_run_reason": "interrupted",
-            "route": null, "identical": null,
+            "route": null, "identical": "not-measured",
             "expected": false, "unreached": false, "source_run_id": null
         }]
     }));
@@ -1717,5 +1717,95 @@ fn a_filter_decision_needs_a_select_record_and_no_route_for_an_unvalidated_mutan
     assert!(
         violations(&audit, Layer::Proofs).is_empty(),
         "the select record agrees with the report: {audit}"
+    );
+}
+
+/// The committed simple run, with its touched record rewritten by `edit`, re-decided.
+fn simple_with_touched(edit: impl FnOnce(&mut serde_json::Value)) -> Audit {
+    let committed = sample("engine-run-simple");
+    let run = tempfile::tempdir().expect("a temporary directory");
+    for name in [
+        "run-report-v1.json",
+        "catalog-v1.json",
+        "reached-v1.json",
+        "touched-v1.json",
+    ] {
+        std::fs::copy(committed.join(name), run.path().join(name)).expect("a committed document");
+    }
+    let path = run.path().join("touched-v1.json");
+    let mut touched: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(&path).expect("the touched record"),
+    )
+    .expect("a touched document");
+    edit(&mut touched);
+    std::fs::write(&path, touched.to_string()).expect("the edited record");
+    gates::engine_audit(&asked(run.path(), Some(&committed.join("trace")), None))
+        .expect("a report this audit can read")
+}
+
+#[test]
+fn a_committed_run_is_held_to_the_items_its_tests_entered() {
+    let whole = simple_with_touched(|_| {});
+    assert!(violations(&whole, Layer::Entry).is_empty(), "{whole}");
+    assert!(
+        whole.of(Layer::Entry).is_empty(),
+        "the committed run keeps its item catalog, so nothing about entry is left unaudited: \
+         {whole}"
+    );
+    let lost = simple_with_touched(|touched| {
+        let targets = touched["targets"]
+            .as_object_mut()
+            .expect("the record names targets");
+        for target in targets.values_mut() {
+            target["entered"] = serde_json::json!({});
+        }
+    });
+    let found = violations(&lost, Layer::Entry);
+    assert!(
+        found
+            .iter()
+            .any(|remark| remark.contains("reached it, and the entry markers say")),
+        "a site the guards saw reached inside an item nobody entered: {lost}"
+    );
+    assert!(
+        found
+            .iter()
+            .any(|remark| remark.contains("noticed it, and the entry markers say")),
+        "and a kill by a test that never entered the item: {lost}"
+    );
+}
+
+#[test]
+fn a_committed_run_whose_item_catalog_is_gone_leaves_entry_unaudited_rather_than_passed() {
+    let audit = simple_with_touched(|touched| {
+        touched["items"] = serde_json::json!([]);
+    });
+    assert!(violations(&audit, Layer::Entry).is_empty(), "{audit}");
+    assert!(
+        audit
+            .of(Layer::Entry)
+            .iter()
+            .any(|remark| remark.standing == Standing::Unaudited),
+        "{audit}"
+    );
+}
+
+#[test]
+fn a_mutant_named_after_an_item_the_catalog_does_not_hold_it_in_is_a_violation() {
+    let audit = simple_with_touched(|touched| {
+        let items = touched["items"]
+            .as_array_mut()
+            .expect("the record keeps an item catalog");
+        for item in items {
+            if item["name"] == "max" {
+                item["name"] = serde_json::json!("min");
+            }
+        }
+    });
+    assert!(
+        violations(&audit, Layer::Entry)
+            .iter()
+            .any(|remark| remark.contains("the catalog names the item holding it min")),
+        "{audit}"
     );
 }

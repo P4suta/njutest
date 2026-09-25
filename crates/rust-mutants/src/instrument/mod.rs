@@ -60,6 +60,103 @@ const fn conflicting() -> [&'static str; 4] {
 /// It never decorates user-authored code.
 pub const GENERATED_MODULE_ALLOW_ATTRIBUTE: &str = "#[allow(dead_code, unused_qualifications)]";
 
+/// One item of a file whose body a test can enter: a function, a method, or a constant, as the instrumenter found it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ItemBody {
+    /// The item index its entry marker names.
+    pub index: u32,
+    /// The item as a reader writes it: `mod::path::Type::method`, the same path a mutant inside it names.
+    pub name: String,
+    /// The bytes the whole item covers in the pristine file.
+    pub span: Span,
+    /// The bytes its body covers in the pristine file.
+    pub body: Span,
+    /// Whether the instrumenter wrote an entry marker into it, which it cannot do into a body the compiler may evaluate at compile time.
+    pub measurable: bool,
+}
+
+/// Every item of one file, numbered from `first_item` in the order the instrumenter plants their entry markers.
+///
+/// # Errors
+/// [`InstrumentErrorKind::SourceMismatch`] when the source is not UTF-8 or not a Rust file, or an item index would not fit the runtime's window.
+pub fn items(path: &str, source: &[u8], first_item: u32) -> Result<Vec<ItemBody>, InstrumentError> {
+    let text = std::str::from_utf8(source).map_err(|error| {
+        InstrumentError::new(
+            InstrumentErrorKind::SourceMismatch,
+            path,
+            format!("the source is not valid UTF-8: {error}"),
+        )
+    })?;
+    steps::plant(text, MODULE_STEM, first_item)
+        .map(|planted| planted.items)
+        .map_err(|error| {
+            InstrumentError::new(
+                InstrumentErrorKind::SourceMismatch,
+                path,
+                format!("the items cannot be numbered: {error}"),
+            )
+        })
+}
+
+/// One file whose items are to be numbered: where it is, who compiles it, and its pristine bytes.
+#[derive(Debug, Clone, Copy)]
+pub struct ItemSource<'a> {
+    /// The workspace-relative path.
+    pub path: &'a str,
+    /// The package whose unit compiled it.
+    pub package: &'a str,
+    /// The pristine bytes.
+    pub source: &'a [u8],
+}
+
+/// Every item of a tree, numbered, and the index each file's items start from.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ItemCatalog {
+    /// Every item, by item index.
+    pub items: Vec<crate::touch::Item>,
+    /// The item index each file's first item takes, by workspace-relative path.
+    pub first: BTreeMap<String, u32>,
+}
+
+/// Numbers every item of `files` densely, in the order the files are given, so a marker's index names one item of the whole tree.
+///
+/// # Errors
+/// What [`items`] refuses about any one file, or a tree whose items do not fit the runtime's window.
+pub fn catalog_items(files: &[ItemSource<'_>]) -> Result<ItemCatalog, InstrumentError> {
+    let mut catalog = ItemCatalog::default();
+    let mut next: u32 = 0;
+    for file in files {
+        catalog.first.insert(file.path.to_owned(), next);
+        let found = items(file.path, file.source, next)?;
+        let overflow = || {
+            InstrumentError::new(
+                InstrumentErrorKind::IndexReserved,
+                file.path,
+                format!("{} more items do not fit the runtime's window", found.len()),
+            )
+        };
+        let count = match u32::try_from(found.len()) {
+            Ok(count) => count,
+            Err(_too_many) => return Err(overflow()),
+        };
+        next = next.checked_add(count).ok_or_else(overflow)?;
+        catalog
+            .items
+            .extend(found.into_iter().map(|body| crate::touch::Item {
+                index: body.index,
+                package: file.package.to_owned(),
+                path: file.path.to_owned(),
+                name: body.name,
+                span: body.span,
+                body: body.body,
+                measurable: body.measurable,
+            }));
+    }
+    Ok(catalog)
+}
+
 /// One mutant placed at its rewrite site.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Placement {
@@ -294,6 +391,8 @@ pub struct Instrumenting<'a> {
     pub probed: &'a BTreeMap<u32, crate::probe::Question>,
     /// The catalog every guard names, which the runtime refuses to be activated under another of.
     pub catalog_digest: &'a str,
+    /// The item index the first item of this file takes, which is where its entry markers start counting.
+    pub first_item: u32,
 }
 
 /// The pristine source after process-wide checkpoints have been inserted and every catalog position has been mapped into that intermediate source.
@@ -302,6 +401,7 @@ struct Checkpointed {
     module: String,
     placements: Vec<Placement>,
     markers: Vec<Marker>,
+    items: u32,
 }
 
 fn guards_of(placements: &[Placement]) -> Vec<Guard> {
@@ -331,15 +431,26 @@ fn checkpointed(
         comparable: _comparable,
         probed: _probed,
         catalog_digest: _catalog_digest,
+        first_item,
     } = *file;
-    let boundaries = steps::splices(text, &module).map_err(|error| {
+    let planted = steps::plant(text, &module, first_item).map_err(|error| {
         InstrumentError::new(
             InstrumentErrorKind::SourceMismatch,
             path,
             format!("the step checkpoints cannot be placed: {error}"),
         )
     })?;
-    let (source, offsets) = apply(source, &boundaries).map_err(|error| {
+    let items = u32::try_from(planted.items.len()).map_err(|_overflow| {
+        InstrumentError::new(
+            InstrumentErrorKind::IndexReserved,
+            path,
+            format!(
+                "{} items do not fit the runtime's window",
+                planted.items.len()
+            ),
+        )
+    })?;
+    let (source, offsets) = apply(source, &planted.splices).map_err(|error| {
         InstrumentError::new(
             InstrumentErrorKind::SpliceFailed,
             path,
@@ -377,6 +488,7 @@ fn checkpointed(
         module,
         placements,
         markers,
+        items,
     })
 }
 
@@ -393,6 +505,7 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
         comparable,
         probed,
         catalog_digest,
+        first_item,
     } = *file;
     let text = std::str::from_utf8(source).map_err(|error| {
         InstrumentError::new(
@@ -449,6 +562,8 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
             catalog_digest,
             placements: &checkpointed.placements,
             markers: &markers,
+            first_item,
+            item_count: checkpointed.items,
             newline: worker.newline(),
         },
     )?;

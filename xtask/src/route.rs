@@ -308,7 +308,10 @@ fn exec(record: &Value) -> Exec {
         index: number(record, "index"),
         target: text(record, "target").unwrap_or_default(),
         outcome: text(record, "outcome").unwrap_or_default(),
-        step_notice: record.get("step_notice").cloned(),
+        step_notice: record
+            .get("step_notice")
+            .filter(|notice| !notice.is_null())
+            .cloned(),
         tests_run: number(record, "tests_run"),
         duration_ms: number(record, "duration_ms"),
         alone: Isolation::recorded(record.get("alone")),
