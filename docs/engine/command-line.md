@@ -30,7 +30,7 @@ These narrow a run, and `list`, `catalog`, `why-skipped` and `instrument` read t
 | `--package NAME` | only these packages; repeatable |
 | `--include GLOB`, `--exclude GLOB` | workspace-relative globs naming what is and is not mutated; repeatable |
 | `--omit GLOB` | workspace-relative globs the copy does not carry at all; repeatable |
-| `--changed`, `--changed-from REV` | only the files that differ from `HEAD` or from a revision |
+| `--changed`, `--changed-from REV` | only the files that differ from `HEAD` or from a revision; a change that touches no Rust file the configuration measures prints `NOTHING`, names what did change, and exits 0 without opening the workspace |
 | `--tier balanced\|strong\|all` | which operators the run asks |
 | `--operator NAME` | exactly these rules, whatever the tier says |
 | `--rule NAME`, `--family NAME` | keep only these; repeatable |

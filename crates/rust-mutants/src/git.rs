@@ -123,11 +123,36 @@ pub fn changed<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Change> {
     })
 }
 
-/// The Rust files a change set names, as the patterns a run mutates within, keeping only what `include` already admits when it admits anything.
+/// What a change set leaves to mutate within what a configuration includes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Within {
+    /// The changed Rust files the configuration includes, as the patterns a run mutates within.
+    Changed(Vec<Pattern>),
+    /// No changed file is a Rust file the configuration includes; these are the files that did change.
+    Nothing {
+        /// Every changed path, none of them one the configuration measures.
+        changed: Vec<String>,
+    },
+}
+
+impl Within {
+    /// The patterns a run mutates within, where a change that touched nothing measured is a pattern no file matches.
+    ///
+    /// # Errors
+    /// The sentinel pattern failing to compile, which it does not.
+    pub fn patterns(self) -> Result<Vec<Pattern>, GlobError> {
+        match self {
+            Self::Changed(patterns) => Ok(patterns),
+            Self::Nothing { .. } => Pattern::compile(NOTHING_CHANGED).map(|pattern| vec![pattern]),
+        }
+    }
+}
+
+/// The Rust files a change set names, keeping only what `include` already admits when it admits anything, or that it names none.
 /// # Errors
 /// Refuses a changed path which cannot be represented by the mutation glob language.
 /// Silently omitting such a path would make a partial change set indistinguishable from the complete one the caller asked for.
-pub fn within(change: &Change, include: &[Pattern]) -> Result<Vec<Pattern>, GlobError> {
+pub fn within(change: &Change, include: &[Pattern]) -> Result<Within, GlobError> {
     let sources: Vec<&String> = change
         .files
         .iter()
@@ -135,12 +160,15 @@ pub fn within(change: &Change, include: &[Pattern]) -> Result<Vec<Pattern>, Glob
         .filter(|path| include.is_empty() || include.iter().any(|pattern| pattern.matches(path)))
         .collect();
     if sources.is_empty() {
-        return Pattern::compile(NOTHING_CHANGED).map(|pattern| vec![pattern]);
+        return Ok(Within::Nothing {
+            changed: change.files.clone(),
+        });
     }
     sources
         .into_iter()
         .map(|path| Pattern::compile(path))
-        .collect()
+        .collect::<Result<Vec<Pattern>, GlobError>>()
+        .map(Within::Changed)
 }
 
 /// Whether an empty answer is an answer.
