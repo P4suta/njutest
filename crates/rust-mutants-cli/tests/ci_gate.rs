@@ -111,6 +111,10 @@ fn document(survivors: u32) -> RunDocument {
                 rust_mutants::run::EXIT_UNDETECTED
             },
             shard: None,
+            jobs: rust_mutants_cli::report::run::JobsDocument {
+                asked: "auto".to_owned(),
+                used: 1,
+            },
         },
         workspace: WorkspaceDocument {
             root_name: "demo".to_owned(),
