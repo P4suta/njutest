@@ -341,6 +341,12 @@ impl Summary {
     pub const fn ran_nothing(&self) -> bool {
         self.passed == 0 && self.failed == 0
     }
+
+    /// Whether the line says every test that ran passed and at least one ran, which is the only summary a survivor can rest on.
+    #[must_use]
+    pub const fn clean(&self) -> bool {
+        self.ok && self.failed == 0 && !self.ran_nothing()
+    }
 }
 
 /// What each test of one run said, by name.
@@ -1432,7 +1438,7 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
     }
 }
 
-/// What one run of a test binary establishes about its mutant, given what its harness said before it stopped: a failed test or a signal the process raised itself is a kill, a complete summary with none failed a survivor, and a signal sent from outside inconclusive.
+/// What one run of a test binary establishes about its mutant, given what its harness said before it stopped: a failed test or a signal the process raised itself is a kill, a clean summary a survivor, and a signal sent from outside inconclusive, as `docs/engine/verdicts.md` decides.
 #[must_use]
 pub fn outcome_of(
     observed: &Observation,
@@ -1447,8 +1453,7 @@ pub fn outcome_of(
             return Outcome::Killed;
         }
         Stopped::TimedOut { .. } | Stopped::Stalled { .. }
-            if harness
-                && matches!(summary, Some(said) if said.ok && said.failed == 0 && !said.ran_nothing()) =>
+            if harness && matches!(summary, Some(said) if said.clean()) =>
         {
             return Outcome::Survived;
         }
@@ -1475,8 +1480,11 @@ pub fn outcome_of(
     if !harness {
         return Outcome::Survived;
     }
+    if !failed.is_empty() {
+        return Outcome::Killed;
+    }
     match summary {
-        Some(summary) if !summary.ran_nothing() => Outcome::Survived,
+        Some(summary) if summary.clean() => Outcome::Survived,
         _ => Outcome::Inconclusive,
     }
 }
