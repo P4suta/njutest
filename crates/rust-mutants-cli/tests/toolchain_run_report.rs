@@ -1603,3 +1603,42 @@ fn a_mutant_of_a_whole_condition_replaces_all_of_it_whatever_operators_it_holds(
         );
     }
 }
+
+#[test]
+fn an_edit_to_a_file_the_build_read_misses_the_outcome_store() {
+    let fixture = Fixture::copy("fixture-carry");
+    let asked = ["run", "--offline", "--locked", "--tier", "all"];
+    let first = against(&fixture, &asked);
+    assert!(
+        first.status.code() == Some(0) || first.status.code() == Some(1),
+        "{}",
+        stderr(&first)
+    );
+    for (edited, text) in [
+        ("src/answer.txt", "30\n"),
+        (
+            "build.rs",
+            "fn main() {\n    let out = std::env::var_os(\"OUT_DIR\").expect(\"cargo sets OUT_DIR\");\n    std::fs::write(std::path::Path::new(&out).join(\"limit.rs\"), \"1\").expect(\"write the limit\");\n    println!(\"cargo::rerun-if-changed=build.rs\");\n}\n",
+        ),
+    ] {
+        std::fs::write(fixture.root().join(edited), text).expect("edit the input");
+        let again = against(&fixture, &asked);
+        assert!(
+            again.status.code() == Some(0) || again.status.code() == Some(1),
+            "{}",
+            stderr(&again)
+        );
+        let report = stored(&fixture);
+        let read_back: Vec<&serde_json::Value> = report["mutants"]
+            .as_array()
+            .expect("the rows")
+            .iter()
+            .filter(|row| !row["source_run_id"].is_null())
+            .collect();
+        assert!(
+            read_back.is_empty(),
+            "{edited} changed what the compiled code computes, so no answer from before the \
+             edit may be read back as though the program were the same: {read_back:#?}"
+        );
+    }
+}
