@@ -24,6 +24,8 @@ const SAYS_A_GREAT_DEAL: &str = "printf '%s\\n' \"$*\" >> \"$CALLS\"; case \"$*\
 const ACCEPTS_THE_CHECK: &str =
     "printf '%s\\n' \"$*\" >> \"$CALLS\"; case \"$*\" in 'run check') ;; *) exit 99 ;; esac";
 
+const LOOKS_AT_ITS_OWNER: &str = "printf '%s\\n' \"$*\" >> \"$CALLS\"; case \"$*\" in 'run check') cp ../owner.json \"$OWNED\"; perl -MFcntl=:flock -e 'open(my $f, \"<\", \"../owner.lock\") or exit 2; exit(flock($f, LOCK_EX | LOCK_NB) ? 1 : 0)' || exit 97 ;; *) exit 99 ;; esac";
+
 struct Repository {
     directory: tempfile::TempDir,
     _commands: tempfile::TempDir,
@@ -217,6 +219,7 @@ impl Repository {
             .env("NJUTEST_SLOT_DIR", &self.slots)
             .env_remove("NJUTEST_SLOT_HELD")
             .env("CALLS", self.scratch.path().join("calls"))
+            .env("OWNED", self.scratch.path().join("owned"))
             .env("TURNS", &self.turns)
             .env("EXPECTED_HEAD", &self.head)
             .envs(handed.iter().copied())
@@ -968,5 +971,50 @@ fn a_hook_whose_stderr_takes_no_more_still_answers_for_the_check() {
             .filter(|line| line.starts_with("pre-push:"))
             .collect::<Vec<_>>()
             .join(" / ")
+    );
+}
+
+#[test]
+fn the_gate_owns_the_cache_it_builds_in_for_as_long_as_it_runs() {
+    let repository = Repository::new(LOOKS_AT_ITS_OWNER);
+    let output = repository.push(&repository.head);
+    assert!(
+        output.status.success(),
+        "a check that finds the gate's directory unclaimed, or its lock free while the gate \
+         runs, is one a collector may empty under it: {}",
+        stderr(&output)
+    );
+    let marker: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(repository.scratch.path().join("owned"))
+            .expect("the owner marker the check saw"),
+    )
+    .expect("the owner marker is JSON");
+    let common = std::fs::canonicalize(repository.directory.path().join(".git"))
+        .expect("the repository's common directory");
+    assert_eq!(
+        (
+            marker.get("schema"),
+            marker.get("kept"),
+            marker.get("role"),
+            marker.get("keyed_to"),
+        ),
+        (
+            Some(&serde_json::json!("njutest-temp-owner-v1")),
+            Some(&serde_json::json!(false)),
+            Some(&serde_json::json!("cache")),
+            Some(&serde_json::json!(common.to_str().expect("a UTF-8 path"))),
+        ),
+        "the gate's directory is a cache the next push wants, kept for as long as the repository \
+         it is keyed to exists: {marker}"
+    );
+    let trees = gate_trees(repository.scratch.path());
+    let home = trees
+        .first()
+        .and_then(|tree| tree.parent())
+        .expect("the gate's directory");
+    let lock = std::fs::File::open(home.join("owner.lock")).expect("the owner lock");
+    assert!(
+        lock.try_lock().is_ok(),
+        "and a gate that has ended holds nothing, so a collector may prune what it left"
     );
 }

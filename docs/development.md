@@ -271,6 +271,8 @@ Two of them together do not finish sooner than one after the other: each takes a
 **One gate tree per repository.** `cargo xtask pre-push` keys its tree by the repository's common Git directory, not by the worktree, and keeps it under the user's cache directory (`~/Library/Caches/njutest/pre-push` on macOS, `$XDG_CACHE_HOME/njutest/pre-push` elsewhere, or `NJUTEST_PRE_PUSH_CACHE`).
 Cargo writes each package's absolute path into its fingerprints, so a tree per worktree made every push from a fresh worktree — which is every push the merge queue makes — a build from nothing.
 The tree is checked out in place, so only the files that differ from the last push get a new modification time and only what they feed is compiled again.
+The gate owns that directory the way [ADR 0006](adr/0006-every-temporary-directory-has-an-owner.md) says every temporary directory is owned: it holds `owner.lock` for as long as it runs, and `owner.json` marks the directory a cache keyed to the repository's common Git directory.
+A collector reading the pair leaves the directory alone while the lock is held and keeps it for as long as the repository exists, which is what a directory the next push wants warm needs.
 
 **One whole-workspace run at a time.** `cargo xtask slot heavy -- <command>` runs a command once this machine's `heavy` lane is free and holds the lane until the command ends; the pre-push gate takes the same lane before it touches its tree.
 A run that has to wait says whom it is waiting for — pid, worktree, revision, command, and the load when that run started — and repeats it every thirty seconds.
