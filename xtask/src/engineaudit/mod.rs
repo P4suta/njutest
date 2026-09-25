@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 mod arithmetic;
+#[cfg(feature = "testkit")]
+pub mod carry;
 mod evidence;
 mod ledger;
 mod recording;
