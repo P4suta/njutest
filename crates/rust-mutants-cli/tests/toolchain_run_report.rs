@@ -2162,6 +2162,16 @@ fn the_differential_names_an_answer_carried_on_a_record_that_hides_an_entered_it
         stderr(&carried)
     );
     let with_carry = by_place(&stored(&fixture));
+    let lied = with_carry
+        .iter()
+        .find(|((line, rule, _, _), _)| *line == 8 && rule == "return-default")
+        .map(|(_, row)| row.clone())
+        .expect("the fixture mutates `total` to its default");
+    assert!(
+        !lied["source_run_id"].is_null(),
+        "the planted record has to be believed before the differential can be asked about it; \
+         an engine that refuses it has found the lie itself, which is a different law: {lied:#}"
+    );
     let fresh = against(
         &fixture,
         &[
