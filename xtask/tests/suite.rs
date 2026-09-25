@@ -55,6 +55,8 @@ mod sbom;
 mod sentinel;
 #[path = "shapes.rs"]
 mod shapes;
+#[path = "slot.rs"]
+mod slot;
 #[path = "suites.rs"]
 mod suites;
 #[path = "surface.rs"]

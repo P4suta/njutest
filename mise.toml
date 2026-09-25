@@ -147,10 +147,10 @@ run = "cargo build --locked --examples --workspace --all-features --profile test
 [tasks."test:fast"]
 description = "Run every test that starts no toolchain: the inner loop, seconds rather than a minute"
 depends = ["build:examples"]
-run = "cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E 'not binary(/^toolchain_/)'"
+run = "cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E 'not binary(/^toolchain_/)'"
 # cmd.exe is not a POSIX shell: it leaves single quotes in the argument rather than taking them off, so the filterset reaches nextest as `'not` and the task dies parsing it before a single test runs.
 # Double quotes are what this shell spells the same intent with.
-run_windows = 'cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E "not binary(/^toolchain_/)"'
+run_windows = 'cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E "not binary(/^toolchain_/)"'
 
 # Each test in these binaries drives its own Cargo. CI adds `--test-threads 2`
 # on top of this, because a hosted runner multiplies those build jobs into
@@ -163,8 +163,8 @@ run = "bash scripts/exec-tax.sh"
 [tasks."test:slow"]
 description = "Run the suites that drive a real cargo against the fixture projects"
 depends = ["exec-tax", "build:examples"]
-run = "cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'"
-run_windows = 'cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2 -E "binary(/^toolchain_/)"'
+run = "cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'"
+run_windows = 'cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2 -E "binary(/^toolchain_/)"'
 
 [tasks."test:doc"]
 description = "Run the doctests, which nextest does not"
@@ -199,8 +199,8 @@ cargo clean
 cargo llvm-cov clean --workspace
 eval "$(cargo llvm-cov show-env --export-prefix)"
 cargo build --locked --examples --workspace --all-features --profile test
-cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E 'not binary(/^toolchain_/)'
-cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
+cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E 'not binary(/^toolchain_/)'
+cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
 cargo llvm-cov report --summary-only --fail-under-regions 80 \
   --ignore-filename-regex 'compiler-surfaces/'
 cargo llvm-cov report --summary-only --fail-under-regions 87 \
@@ -296,21 +296,12 @@ done
 description = "Run cargo-mutants, the external mutation tester, against this workspace"
 run = "cargo mutants --config .cargo/mutants.toml --workspace"
 
-# The order is cheapest refusal first, which is not the order CI runs them in:
-# CI runs the jobs at once and waits for all of them, and a person waits for
-# each in turn. Formatting answers in seconds, rustdoc and clippy and the
-# repository gates in tens of them, the suite in minutes. Two broken
-# documentation links and two fuzz targets naming code that had been deleted
-# all lived behind a three-minute suite, and every one of them is something
-# `lint` says in seventeen seconds.
-# What this leaves to CI is what this machine cannot answer: the suite on the
-# other two platforms, the coverage ratchets (a second instrumented run of
-# everything), the suite under the interpreter, and the composite action driven
-# the way another repository drives it. Everything else CI asks is asked here
-# first, because a push that has to wait twenty minutes to be told about a
-# stale golden is a push nobody waits for.
-# The pre-push gate isolates the tree and not the build cache: it symlinks the developer's target/debug in, which is minutes per push and the reason every earlier "green" in this campaign was about artifacts compiled before the field they were meant to prove existed.
-# CI is always cold and never had the problem; this is the one place that needs asking.
+# The order is cheapest refusal first, which is not the order CI runs them in: CI runs the jobs at once and waits for all of them, and a person waits for each in turn.
+# Formatting answers in seconds, rustdoc and clippy and the repository gates in tens of them, the suite in minutes.
+# Two broken documentation links and two fuzz targets naming code that had been deleted all lived behind a three-minute suite, and every one of them is something `lint` says in seventeen seconds.
+# What this leaves to CI is what this machine cannot answer: the suite on the other two platforms, the coverage ratchets (a second instrumented run of everything), the suite under the interpreter, and the composite action driven the way another repository drives it.
+# Everything else CI asks is asked here first, because a push that has to wait twenty minutes to be told about a stale golden is a push nobody waits for.
+# The pre-push gate (`cargo xtask pre-push`) checks the pushed object in the repository's one gate tree, with a build of its own that every worktree shares and nobody's `target/debug` feeds; docs/adr/0030-one-machine-several-sessions.md says why.
 [tasks."build:release"]
 description = "Build the njutest binary this commit would ship, which is what a smoke test of the action runs"
 run = "cargo build --locked --release --bin njutest"

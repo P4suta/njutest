@@ -70,6 +70,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0027 An item is entered where its body starts](adr/0027-an-item-is-entered-where-its-body-starts.md)
 - [0028 A change is placed by reading both versions](adr/0028-a-change-is-placed-by-reading-both-versions.md)
 - [0029 A process that loses the environment says so](adr/0029-a-process-that-loses-the-environment-says-so.md)
+- [0030 One machine, several sessions](adr/0030-one-machine-several-sessions.md)
 - [0031 A knob is one control started differently](adr/0031-a-knob-is-one-control-started-differently.md)
 - [0036 What rested on a moved reach is run again](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)
 - [0037 The report store has one capability directory](adr/0037-the-report-store-has-one-capability-directory.md)
