@@ -146,6 +146,8 @@ pub struct Spec {
     pub(crate) stop_file: Option<PathBuf>,
     /// A private side-channel file the child rewrites as it makes progress, which turns [`Spec::timeout`] into a ceiling and ends the run early only when the file stays unchanged for a whole quiet window.
     pub(crate) progress: Option<Progress>,
+    /// Whether the run ends at the first line in which libtest says a test failed, because that one failure is the whole answer the caller wants.
+    pub(crate) stop_at_first_failure: bool,
     /// Test-only terminal ownership fault selected explicitly by the composition root.
     reaping: Reaping,
 }
@@ -167,6 +169,7 @@ impl Spec {
             structured_stdout: None,
             stop_file: None,
             progress: None,
+            stop_at_first_failure: false,
             reaping: Reaping::Normal,
         }
     }
@@ -455,6 +458,8 @@ pub enum Termination {
     Stalled,
     /// An execution-specific monitor observed its stop request and the supervised process set was ended.
     StoppedByMonitor,
+    /// The harness said a test failed, which was the whole answer asked for, and the supervised process set was ended.
+    Answered,
     /// The execution-specific monitor could not establish whether a valid stop request existed.
     MonitorFailed {
         /// Why the monitor could not be trusted.
@@ -500,6 +505,7 @@ impl Termination {
             | Self::TimedOut
             | Self::Stalled
             | Self::StoppedByMonitor
+            | Self::Answered
             | Self::Cancelled { .. }
             | Self::WaitFailed { .. }
             | Self::MonitorFailed { .. } => None,
@@ -518,6 +524,7 @@ impl Termination {
             | Self::TimedOut
             | Self::Stalled
             | Self::StoppedByMonitor
+            | Self::Answered
             | Self::Cancelled { .. } => None,
         }
     }
@@ -577,6 +584,7 @@ impl RunResult {
             | Termination::TimedOut
             | Termination::Stalled
             | Termination::StoppedByMonitor
+            | Termination::Answered
             | Termination::MonitorFailed { .. }
             | Termination::Cancelled { .. }
             | Termination::WaitFailed { .. } => None,
@@ -633,7 +641,8 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
         Ok(deadline) => deadline,
         Err(error) => return not_started(started, error, Vec::new()),
     };
-    let running = match start(spec, program) {
+    let answered = Arc::new(AtomicBool::new(false));
+    let running = match start(spec, program, &answered) {
         Ok(started) => started,
         Err(Failed { error, output }) => return not_started(started, error, output),
     };
@@ -645,6 +654,7 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
             cancel,
             monitor: spec.stop_file.as_deref(),
             progress: spec.progress.as_ref(),
+            answered: spec.stop_at_first_failure.then_some(answered.as_ref()),
         },
     );
     complete(started, running, outcome)
@@ -681,6 +691,7 @@ fn complete(started: Instant, running: Started, outcome: Exit) -> RunResult {
         Exit::TimedOut => Termination::TimedOut,
         Exit::Stalled => Termination::Stalled,
         Exit::StoppedByMonitor => Termination::StoppedByMonitor,
+        Exit::Answered => Termination::Answered,
         Exit::MonitorFailed(failure) => Termination::MonitorFailed { failure },
         Exit::Cancelled => Termination::Cancelled { started: true },
         Exit::Exited => Termination::Exited(sys::process_exit(status)),
@@ -875,7 +886,7 @@ struct Failed {
 
 /// The first half of [`run`]: supervision, the pipes, the spawn, the reader threads, and adoption.
 /// On any failure the child, if any, is dead.
-fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
+fn start(spec: &Spec, program: &OsString, answered: &Arc<AtomicBool>) -> Result<Started, Failed> {
     let failed = |error: RunnerError| Failed {
         error,
         output: Vec::new(),
@@ -909,6 +920,7 @@ fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
         merged,
         structured,
         spec.output_limit.unwrap_or(DEFAULT_OUTPUT_LIMIT),
+        spec.stop_at_first_failure.then(|| Arc::clone(answered)),
     ) {
         Ok(readers) => readers,
         Err(error) => {
@@ -976,6 +988,7 @@ fn launch_readers(
     merged: io::PipeReader,
     structured: Option<(usize, io::PipeReader)>,
     output_limit: usize,
+    answered: Option<Arc<AtomicBool>>,
 ) -> Result<StartingReaders, RunnerError> {
     let head = match structured {
         Some((limit, reader)) => Some(JoinedReader::launch(
@@ -985,11 +998,19 @@ fn launch_readers(
         )?),
         None => None,
     };
-    let merged = JoinedReader::launch(
-        merged,
-        "combined stdout/stderr",
-        TailCapture(TailBuffer::new(output_limit)),
-    )?;
+    let tail = TailCapture(TailBuffer::new(output_limit));
+    let merged = match answered {
+        None => JoinedReader::launch(merged, "combined stdout/stderr", tail)?,
+        Some(answered) => JoinedReader::launch(
+            merged,
+            "combined stdout/stderr",
+            FirstFailure {
+                inner: tail,
+                partial: Vec::new(),
+                answered,
+            },
+        )?,
+    };
     Ok(StartingReaders { merged, head })
 }
 
@@ -1082,6 +1103,40 @@ impl ReaderCapture for TailCapture {
     fn finish(self) -> Result<Self::Output, OutputError> {
         self.0.capture()
     }
+}
+
+/// A capture that also raises `answered` at the first whole line in which libtest says a test failed.
+struct FirstFailure<C> {
+    inner: C,
+    partial: Vec<u8>,
+    answered: Arc<AtomicBool>,
+}
+
+impl<C: ReaderCapture> ReaderCapture for FirstFailure<C> {
+    type Output = C::Output;
+
+    fn write(&mut self, bytes: &[u8]) -> Result<(), OutputError> {
+        self.partial.extend_from_slice(bytes);
+        while let Some(end) = self.partial.iter().position(|byte| *byte == b'\n') {
+            let line: Vec<u8> = self.partial.drain(..=end).collect();
+            if says_a_test_failed(&line) {
+                self.answered.store(true, Ordering::SeqCst);
+            }
+        }
+        self.inner.write(bytes)
+    }
+
+    fn finish(self) -> Result<Self::Output, OutputError> {
+        self.inner.finish()
+    }
+}
+
+/// Whether `line` is libtest's report of one test that failed: `test <name> ... FAILED`, and never its closing `test result: FAILED.`.
+#[must_use]
+pub fn says_a_test_failed(line: &[u8]) -> bool {
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    line.starts_with(b"test ") && line.ends_with(b" ... FAILED")
 }
 
 struct HeadCapture(HeadBuffer);
@@ -1289,6 +1344,8 @@ enum Exit {
     Cancelled,
     /// An execution-specific monitor asked the declared process set to stop.
     StoppedByMonitor,
+    /// The harness said a test failed, and the declared process set was ended there.
+    Answered,
     /// The execution-specific monitor could not be inspected safely.
     MonitorFailed(MonitorFailure),
     /// Stopping or reaping the child failed, so the triggering event cannot be reported as a trustworthy termination.
@@ -1304,6 +1361,7 @@ struct Stops<'a> {
     cancel: &'a Cancel,
     monitor: Option<&'a Path>,
     progress: Option<&'a Progress>,
+    answered: Option<&'a AtomicBool>,
 }
 
 /// What the wait loop last saw of the progress file, and when it last saw it change.
@@ -1423,6 +1481,20 @@ fn held_by_writer(error: &io::Error) -> bool {
     }
 }
 
+/// The stop a harness's first failing test asks for, where the run asked to end there and it has.
+fn answered(
+    supervisor: &sys::Supervisor,
+    child: &SupervisedChild,
+    answered: Option<&AtomicBool>,
+) -> Option<Exit> {
+    answered
+        .is_some_and(|answered| answered.load(Ordering::SeqCst))
+        .then(|| match terminate(supervisor, child) {
+            Ok(()) => Exit::Answered,
+            Err(error) => Exit::SupervisionFailed(error),
+        })
+}
+
 /// Waits for the child to exit, the deadline to pass, or the cancellation flag to be raised — and in the latter two cases ends the declared process set.
 fn await_exit(supervisor: &sys::Supervisor, child: &SupervisedChild, stops: Stops<'_>) -> Exit {
     let mut watching = stops
@@ -1456,6 +1528,9 @@ fn await_exit(supervisor: &sys::Supervisor, child: &SupervisedChild, stops: Stop
                 Ok(()) => Exit::Cancelled,
                 Err(error) => Exit::SupervisionFailed(error),
             };
+        }
+        if let Some(answered) = answered(supervisor, child, stops.answered) {
+            return answered;
         }
         if let Some(path) = stops.monitor {
             match inspect_monitor(path) {

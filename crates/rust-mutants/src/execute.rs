@@ -396,6 +396,8 @@ pub enum Stopped {
     },
     /// The operating system did not yield a trustworthy final status.
     WaitFailed,
+    /// The harness said a test failed, which is the whole answer about the mutant, and the run ended the process there.
+    Answered,
     /// The execution monitor stopped the tree and its notice was verified.
     StepLimitReached {
         /// The verified notice that caused the stop.
@@ -689,6 +691,7 @@ impl Stopped {
             },
             Termination::Cancelled { started } => Self::Cancelled { started: *started },
             Termination::WaitFailed { .. } => Self::WaitFailed,
+            Termination::Answered => Self::Answered,
         }
     }
 }
@@ -1116,6 +1119,14 @@ fn remove_notice(path: &Path) -> Result<(), NoticeError> {
     }
 }
 
+/// Whether one failing test is the whole answer this process is run for: a libtest target with a mutant active and nothing being measured, so ending it at that failure loses no evidence.
+const fn answered_by_one_failure(target: &TestTarget, context: &Context<'_>) -> bool {
+    target.harness
+        && context.active.is_some()
+        && context.touch.is_none()
+        && context.profile.is_none()
+}
+
 fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
     if matches!(
         result.termination,
@@ -1192,6 +1203,8 @@ pub fn outcome_of(
         }
         Stopped::TimedOut { .. } | Stopped::Stalled { .. } => return Outcome::Waited,
         Stopped::Cancelled { .. } => return Outcome::NotRun,
+        Stopped::Answered if harness && !failed.is_empty() => return Outcome::Killed,
+        Stopped::Answered => return Outcome::Inconclusive,
         Stopped::StepLimitReached { .. } => return Outcome::StepLimitReached,
         Stopped::Exited { exit } => *exit,
     };
@@ -1777,6 +1790,7 @@ pub fn exec(
     let (bound, progress) = watched(request.timeout, step.as_ref());
     let mut spec = Spec::new(request.argv(), bound);
     spec.progress = progress;
+    spec.stop_at_first_failure = answered_by_one_failure(target, context);
     spec.dir = Some(match (&request.scratch, request.scratch_cwd) {
         (Some(scratch), true) => scratch.clone(),
         _ => target.cwd.clone(),

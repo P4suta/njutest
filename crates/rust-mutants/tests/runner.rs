@@ -647,3 +647,19 @@ proptest::proptest! {
         }
     }
 }
+
+#[test]
+fn only_libtests_line_for_one_failing_test_is_read_as_its_answer() {
+    use rust_mutants::runner::says_a_test_failed;
+    assert!(says_a_test_failed(b"test tests::caught ... FAILED\n"));
+    assert!(says_a_test_failed(b"test tests::caught ... FAILED\r\n"));
+    assert!(
+        !says_a_test_failed(b"test result: FAILED. 1 passed; 1 failed\n"),
+        "the closing summary comes after every test ran, so it is no reason to stop early"
+    );
+    assert!(!says_a_test_failed(b"test tests::caught ... ok\n"));
+    assert!(
+        !says_a_test_failed(b"a program printing test x ... FAILED somewhere\n"),
+        "a line that only contains the words is not libtest's report"
+    );
+}
