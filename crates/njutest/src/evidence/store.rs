@@ -10,10 +10,10 @@ use rust_mutants::id::HexDigest;
 use serde::{Deserialize, Serialize};
 
 /// The name of the shape.
-pub const SCHEMA: &str = "njutest-mutation-evidence-v1";
+pub const SCHEMA: &str = "njutest-mutation-evidence-v2";
 
 /// The directory records live in, below the store of answers.
-pub const LAYOUT: &str = "mutants-v1";
+pub const LAYOUT: &str = "mutants-v2";
 
 /// What one earlier run established about one mutant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
