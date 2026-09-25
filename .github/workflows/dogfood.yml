@@ -54,7 +54,7 @@ jobs:
           cargo build --locked --release --bin rust-mutants -p xtask
           echo "$PWD/target/release" >> "$GITHUB_PATH"
       # The store the action restores and saves is what makes this one job: a run reads back every answer the last one established that still holds, and a run the clock ends keeps what it established for the next.
-      # A survivor is the audit's business, not this step's, so its verdict is read below rather than failing here.
+      # A survivor is the audit's business, not this step's, so the step's outcome and verdict are decided on below rather than failing here.
       - name: Measure the whole catalog
         id: mutation
         continue-on-error: true
@@ -67,14 +67,15 @@ jobs:
           upload-sarif: "false"
       - name: Say whether the recording is complete, and re-decide the run against the ledger
         env:
+          OUTCOME: ${{ steps.mutation.outcome }}
           VERDICT: ${{ steps.mutation.outputs.verdict }}
           REPORT: ${{ steps.mutation.outputs.report }}
         run: |
           set -euo pipefail
-          case "$VERDICT" in
-            detected | found | interrupted) ;;
+          case "$OUTCOME/$VERDICT" in
+            success/detected | failure/found | failure/interrupted) ;;
             *)
-              echo "the run concluded '$VERDICT', which is not a measurement to audit"
+              echo "the step ended $OUTCOME and the run concluded '$VERDICT', which is not a measurement to audit"
               exit 1
               ;;
           esac
