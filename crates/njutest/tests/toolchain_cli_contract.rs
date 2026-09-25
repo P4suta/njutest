@@ -54,7 +54,7 @@ fn environment(directory: &Path, named: &[(&str, &str)]) -> Environment {
         cache_directory: directory.join("njutest-cache"),
         working_directory: directory.to_path_buf(),
         temp_directory: directory.join("njutest-temp"),
-        program: std::path::PathBuf::from("this test never runs it"),
+        program: std::path::PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         vars,
         cancel: Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),
@@ -327,7 +327,7 @@ fn init_writes_a_skeleton_that_loads_as_exactly_the_defaults() {
     assert_eq!(written, njutest::config::skeleton());
     assert_eq!(
         njutest::config::Config::load(dir.path()).expect("it loads"),
-        njutest::config::Config::default(),
+        njutest::config::Config::unwritten(),
         "the untouched skeleton is the defaults, written down"
     );
     assert!(

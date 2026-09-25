@@ -70,7 +70,7 @@ pub(crate) enum Harness {
 }
 
 impl Harness {
-    const fn name(self) -> &'static str {
+    pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::CountingCounts => "instrument::runtime::kani_laws::a_counting_checkpoint_counts",
             Self::CountingNeverStops => {

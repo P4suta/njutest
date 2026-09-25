@@ -78,9 +78,18 @@ fn the_tiers_are_a_chain_and_the_widest_of_them_is_the_whole_table() {
         );
         previous = selected;
     }
+    let chosen: Vec<String> = whole
+        .iter()
+        .filter(|row| !row.contains(" named "))
+        .cloned()
+        .collect();
+    assert!(
+        whole.iter().any(|row| row.contains(" named ")),
+        "a rule no tier chooses is listed as asked for by name"
+    );
     assert_eq!(
-        previous, whole,
-        "and the widest of them is the table itself, or `rules` and `rules --tier all` \
+        previous, chosen,
+        "and the widest of them is the table itself less the rules asked for by name, or `rules` and `rules --tier all` \
          describe two different releases"
     );
 }

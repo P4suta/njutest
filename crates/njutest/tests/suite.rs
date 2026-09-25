@@ -15,12 +15,20 @@ mod changed;
 mod checkpoint;
 #[path = "commands_without_a_run.rs"]
 mod commands_without_a_run;
+#[path = "concurrency_explore.rs"]
+mod concurrency_explore;
+#[path = "concurrency_proof.rs"]
+mod concurrency_proof;
+#[path = "concurrency_scan.rs"]
+mod concurrency_scan;
 #[path = "config.rs"]
 mod config;
 #[path = "configured.rs"]
 mod configured;
 #[path = "coverage.rs"]
 mod coverage;
+#[path = "crash_decided.rs"]
+mod crash_decided;
 #[path = "deep.rs"]
 mod deep;
 #[path = "derive.rs"]
@@ -49,6 +57,8 @@ mod evidence_key;
 mod evidence_store;
 #[path = "evidence_tree.rs"]
 mod evidence_tree;
+#[path = "fault_decided.rs"]
+mod fault_decided;
 #[path = "fuzz.rs"]
 mod fuzz;
 #[path = "fuzz_seeds.rs"]
@@ -57,6 +67,8 @@ mod fuzz_seeds;
 mod gallery;
 #[path = "git.rs"]
 mod git;
+#[path = "guard.rs"]
+mod guard;
 #[path = "hollow.rs"]
 mod hollow;
 #[path = "identity.rs"]
@@ -73,16 +85,22 @@ mod kept;
 mod knobs;
 #[path = "laws.rs"]
 mod laws;
+#[path = "libtest_options.rs"]
+mod libtest_options;
 #[path = "limitations.rs"]
 mod limitations;
 #[path = "lsp.rs"]
 mod lsp;
+#[path = "matrix.rs"]
+mod matrix;
 #[path = "measured_sources.rs"]
 mod measured_sources;
 #[path = "moved.rs"]
 mod moved;
 #[path = "mutation_evidence.rs"]
 mod mutation_evidence;
+#[path = "next.rs"]
+mod next;
 #[path = "plan_failures.rs"]
 mod plan_failures;
 #[path = "presentation.rs"]

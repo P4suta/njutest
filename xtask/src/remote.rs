@@ -77,6 +77,22 @@ pub enum RemoteError {
     },
 }
 
+impl crate::error::Coded for RemoteError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Read { .. }
+            | Self::Parse { .. }
+            | Self::NoMachine { .. }
+            | Self::Start { .. }
+            | Self::Git { .. }
+            | Self::NotText { .. }
+            | Self::Log { .. }
+            | Self::Lost { .. } => crate::error::XtCode::RemoteUnrun,
+            Self::Refused { .. } => crate::error::XtCode::RemoteRefused,
+        }
+    }
+}
+
 /// How a machine is spoken to once it is reached.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]

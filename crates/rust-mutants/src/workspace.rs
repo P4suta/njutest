@@ -265,6 +265,16 @@ pub enum SessionError {
         /// What was wrong with the prefix.
         message: String,
     },
+    /// A fault was asked to run beside something that is not a mutation, or what was named beside it is not a fault.
+    #[error("{}: {fault} cannot run beside {mutant}: {why}", error::SESSION_NOT_BESIDE.code)]
+    NotBeside {
+        /// What was asked to run.
+        mutant: String,
+        /// What was named beside it.
+        fault: String,
+        /// Which half is not what it has to be.
+        why: &'static str,
+    },
     /// The named target is not one this session built.
     #[error(
         "{}: no test target is named {name:?}; this session built {}",
@@ -300,6 +310,18 @@ pub enum SessionError {
     NoTargets {
         /// The packages the run was about, which is where a reader looks for a test to write.
         packages: Vec<String>,
+    },
+    /// A mutant's execution changed the test executables the run starts.
+    #[error(
+        "{}: the test executables changed while {mutant} ran ({}); every answer after it would be read against a harness this run did not build, so the run stops here. With more than one job, a mutant running beside it may have made the change",
+        error::SESSION_APPARATUS_CHANGED.code,
+        crate::apparatus::summary(changes)
+    )]
+    ApparatusChanged {
+        /// The mutant whose execution the change was found after.
+        mutant: String,
+        /// What changed.
+        changes: Vec<crate::apparatus::Change>,
     },
     /// The instrumented tree could not be written.
     #[error("{}: cannot write {path} into the snapshot: {source}", error::SESSION_WRITE_FAILED.code)]
@@ -417,6 +439,12 @@ pub enum SessionError {
         error::SESSION_WRITE_FAILED.code
     )]
     RoutingStatePoisoned,
+    /// What the carry rule took of the tree was poisoned by a panic while holding it.
+    #[error(
+        "{}: the carry rule's record of which targets held their reach is poisoned, so it cannot be trusted",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    CarryStatePoisoned,
     /// A filtered-test establishment named more tests than the durable counter can represent.
     #[error(
         "{}: one filtered-test establishment named {count} tests, which exceeds the routing counter",
@@ -425,6 +453,15 @@ pub enum SessionError {
     RoutingCountTooLarge {
         /// The unrepresentable test count.
         count: usize,
+    },
+    /// An item index of a dense catalog names no item, which says the catalog was not built the way its numbering assumes.
+    #[error(
+        "{}: item {index} of the item catalog names no item",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    ItemCatalogGap {
+        /// The index that named nothing.
+        index: u32,
     },
     /// One expectation resolved to more mutants than its durable counter can represent.
     #[error(
@@ -604,6 +641,27 @@ pub enum SessionError {
         #[source]
         source: std::io::Error,
     },
+    /// A run's scratch directory could not be walked for what it left.
+    #[error(
+        "{}: cannot read what a run left in its scratch directory {}: {source}",
+        error::SESSION_WRITE_FAILED.code,
+        path.display()
+    )]
+    ScratchUnreadable {
+        /// The directory, or the entry of it, that could not be read.
+        path: PathBuf,
+        /// What reading it said.
+        source: std::io::Error,
+    },
+    /// The system gave no randomness for the nonce that ties a crash's notice to its execution.
+    #[error(
+        "{}: cannot draw the nonce a crash's notice must carry: {error}",
+        error::SESSION_NONCE_UNAVAILABLE.code
+    )]
+    CrashNonceUnavailable {
+        /// What the system said.
+        error: getrandom::Error,
+    },
     /// A fresh execution scratch directory could not be created exclusively.
     #[error(
         "{}: cannot reserve the fresh execution scratch directory {}: {source}",
@@ -648,17 +706,22 @@ impl SessionError {
             Self::PristineBroken { .. } => error::SESSION_PRISTINE_BROKEN,
             Self::VerifyFailed { .. } => error::SESSION_VERIFY_FAILED,
             Self::UnknownMutant { .. } => error::SESSION_UNKNOWN_MUTANT,
+            Self::NotBeside { .. } => error::SESSION_NOT_BESIDE,
+            Self::CrashNonceUnavailable { .. } => error::SESSION_NONCE_UNAVAILABLE,
             Self::UnknownTarget { .. } | Self::SkippedTargetUnknown { .. } => {
                 error::SESSION_UNKNOWN_TARGET
             }
             Self::NoTargets { .. } => error::SESSION_NO_TARGETS,
+            Self::ApparatusChanged { .. } => error::SESSION_APPARATUS_CHANGED,
             Self::ExpectationsOverlap { .. } => error::CONFIG_INVALID,
             Self::WriteFailed { .. }
             | Self::TemporaryRootUnavailable { .. }
             | Self::ScratchStatePoisoned
             | Self::RoutingStatePoisoned
+            | Self::CarryStatePoisoned
             | Self::RoutingCountTooLarge { .. }
             | Self::ExpectationCoverageTooLarge { .. }
+            | Self::ItemCatalogGap { .. }
             | Self::RunCountTooLarge { .. }
             | Self::RunCountOverflow
             | Self::RoutingCountExhausted
@@ -679,6 +742,7 @@ impl SessionError {
             | Self::ScratchSequenceExhausted
             | Self::ScratchUnclaimed { .. }
             | Self::ScratchCreateFailed { .. }
+            | Self::ScratchUnreadable { .. }
             | Self::WorkspacePathNotUtf8 { .. }
             | Self::CatalogTextNotUtf8 { .. } => error::SESSION_WRITE_FAILED,
             Self::SelectionSourceMissing { .. }

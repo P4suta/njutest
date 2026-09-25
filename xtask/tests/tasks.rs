@@ -62,42 +62,9 @@ fn the_gates_a_person_runs_are_the_gates_the_pipeline_runs() {
     );
     let hooks = repository("lefthook.yml");
     assert!(
-        hooks.contains("scripts/pre-push-check.sh"),
-        "the pre-push hook runs something other than every local gate: {hooks}"
-    );
-    assert!(
-        hooks.contains("run: scripts/pre-push-check.sh\n      use_stdin: true"),
-        "the exact-SHA gate does not receive git's ref updates on stdin: {hooks}"
-    );
-    let pre_push = repository("scripts/pre-push-check.sh");
-    for held in [
-        "git rev-parse --verify HEAD",
-        "git -C \"${repository}\" worktree add --quiet --detach",
-        "git -C \"${checkout}\" status --porcelain=v1 --untracked-files=all",
-        "mise run check",
-        "within_budget",
-        "NJUTEST_PUSH_BUDGET_SECONDS",
-        "NJUTEST_PUSH_EXPECTED_SECONDS",
-    ] {
-        assert!(
-            pre_push.contains(held),
-            "the pre-push gate no longer constructs and proves the checked tree around the full \
-             check ({held:?} is absent): {pre_push}"
-        );
-    }
-    let proven_before = pre_push
-        .find("require_exact_tree\n")
-        .unwrap_or_else(|| panic!("the gate proves the tree before it reads it: {pre_push}"));
-    let checked = pre_push
-        .find("mise run check'")
-        .unwrap_or_else(|| panic!("the gate runs the full check: {pre_push}"));
-    let proven_after = pre_push
-        .rfind("require_exact_tree\n")
-        .unwrap_or_else(|| panic!("the gate proves the tree after it reads it: {pre_push}"));
-    assert!(
-        proven_before < checked && checked < proven_after,
-        "the full check no longer runs between two proofs that the tree is the pushed object, \
-         so an edit made while it ran could go unnoticed: {pre_push}"
+        hooks.contains("run: cargo xtask pre-push\n      use_stdin: true"),
+        "the pre-push hook runs something other than the exact-object gate, or does not hand it \
+         git's ref updates on stdin; what the gate does with them is held by pre_push.rs: {hooks}"
     );
 }
 
@@ -118,17 +85,12 @@ fn committed_checks_the_same_unique_to_head_range_locally_in_hooks_and_ci() {
         task("lint").contains("committed:range"),
         "the local lint gate does not run the commit-range check"
     );
-    let hook = repository("scripts/pre-push-check.sh");
-    let binds = hook.lines().any(|line| {
-        line.contains("mise run check'")
-            && line.contains("NJUTEST_COMMITTED_HEAD=")
-            && line.contains("\"${head}\"")
-    });
+    let hooks = repository("lefthook.yml");
     assert!(
-        binds,
-        "pre-push does not bind the commit check to the exact object being pushed: the line \
-         that runs the full check must carry NJUTEST_COMMITTED_HEAD and be given ${{head}}, \
-         however it is wrapped: {hook}"
+        hooks.contains("run: cargo xtask pre-push"),
+        "pre-push no longer runs the gate that binds the commit check to the exact object being \
+         pushed; `a_check_is_told_which_commit_it_answers_for` in pre_push.rs holds what that \
+         gate hands the check: {hooks}"
     );
 
     let workflow = repository(".github/workflows/ci.yml");
@@ -758,9 +720,10 @@ fn every_task_a_page_or_a_workflow_names_is_one_mise_declares() {
 }
 
 /// The commands a workflow runs that are the pipeline's own plumbing rather than a gate.
-const PLUMBING: [&str; 4] = [
+const PLUMBING: [&str; 5] = [
     "cargo fetch --locked",
     "rustup toolchain install",
+    "cargo +nightly miri setup",
     "cargo llvm-cov report",
     "cargo xtask sbom",
 ];
@@ -1007,6 +970,27 @@ fn the_mutation_matrix_is_every_crate_that_holds_rust_of_its_own() {
          njutest-devkit not at all, so one leg did the same work as another and one \
          crate was never measured"
     );
+}
+
+#[test]
+fn every_suite_leaves_nothing_in_a_temporary_directory_nobody_owns() {
+    for place in ["mise.toml", ".github/workflows/ci.yml"] {
+        let text = repository(place);
+        let bare: Vec<&str> = text
+            .lines()
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .filter(|line| line.contains("cargo nextest run"))
+            .filter(|line| !line.contains("cargo xtask tidy -- cargo nextest run"))
+            .collect();
+        assert!(
+            bare.is_empty(),
+            "{place} runs a suite without `cargo xtask tidy`, so a test that leaves a directory \
+             in the shared temporary directory passes: 1,545 of them in one day on this machine \
+             before the rule existed, and the slow lane's toolchain tests leave the most \
+             (ADR 0006):\n  {}",
+            bare.join("\n  ")
+        );
+    }
 }
 
 #[test]

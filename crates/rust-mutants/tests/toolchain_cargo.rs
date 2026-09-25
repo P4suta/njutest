@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use njutest_devkit::fixture::copy_tree;
 use rust_mutants::cargo::{
     CargoErrorKind, Diagnostic, Driver, LocateOptions, Message, Metadata, MetadataOptions,
-    Toolchain, parse_messages, resolve_executable, units_of,
+    Toolchain, compile_time_inputs, emitted_of, parse_messages, resolve_executable, units_of,
 };
 use rust_mutants::runner::{Cancel, run};
 use rust_mutants::trace::Recorder;
@@ -399,4 +399,70 @@ fn a_check_that_fails_to_compile_still_yields_its_messages() {
         messages.last(),
         Some(Message::BuildFinished { success: false })
     ));
+}
+
+/// What fixture-carry's build script emitted when checked in `copy`, by package.
+fn emitted_in(copy: &Path, target: &Path) -> Vec<Vec<rust_mutants::cargo::Emitted>> {
+    let tc = toolchain(copy);
+    let mut spec = tc.command(
+        copy,
+        [
+            "check",
+            "--lib",
+            "--message-format=json",
+            "--offline",
+            "--locked",
+        ],
+    );
+    spec.argv.push("--target-dir".into());
+    spec.argv.push(target.into());
+    spec.structured_stdout = Some(64 << 20);
+    let result = run(&spec, &Cancel::new());
+    assert!(
+        result.succeeded(),
+        "{}",
+        std::str::from_utf8(&result.output).expect("the fixture writes exact UTF-8")
+    );
+    let messages = parse_messages(&result.stdout).expect("messages");
+    let compile_time = compile_time_inputs(&messages, copy).expect("compile-time inputs");
+    let copy = copy
+        .canonicalize()
+        .expect("the copy has a physical spelling");
+    assert!(
+        compile_time.iter().any(|path| path
+            .canonicalize()
+            .is_ok_and(|path| path == copy.join("build.rs"))),
+        "the build script's own source is read for the build: {compile_time:?}"
+    );
+    emitted_of(&messages).into_values().collect()
+}
+
+#[test]
+fn what_a_build_script_emitted_is_kept_for_the_package_it_builds_for() {
+    let snapshot = tempfile::tempdir().expect("tempdir");
+    let copy = snapshot.path().join("fixture-carry");
+    copy_tree(&fixture("fixture-carry"), &copy);
+    let target = scratch_target("emitted");
+    let before = emitted_in(&copy, target.path());
+    let [told] = before.as_slice() else {
+        panic!("one package ran a build script: {before:?}");
+    };
+    let [told] = told.as_slice() else {
+        panic!("it ran once: {told:?}");
+    };
+    assert!(
+        told.out_dir.is_some() && told.cfgs.is_empty(),
+        "the directory it wrote into, and no configuration yet: {told:?}"
+    );
+    std::fs::write(copy.join("waive"), "").expect("waive the limit");
+    let after = emitted_in(&copy, target.path());
+    assert_eq!(
+        after
+            .concat()
+            .into_iter()
+            .map(|told| told.cfgs)
+            .collect::<Vec<_>>(),
+        [vec!["waived".to_owned()]],
+        "a configuration the build script sets is in no dep-info, and changes what compiles"
+    );
 }

@@ -38,6 +38,7 @@ fn fixture(name: &str) -> Fixture {
         .expect("a temporary directory");
     let root = dir.path().join(name);
     copy_tree(&source, &root);
+    njutest_devkit::fixture::pin_contract(&root, "standard-v1");
     Fixture { root, _dir: dir }
 }
 
@@ -72,7 +73,7 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
         cache_directory: cache.to_path_buf(),
         working_directory: root.to_path_buf(),
         temp_directory: njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
-        program: PathBuf::from("this test never runs it"),
+        program: PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         vars,
         cancel: Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),
@@ -214,7 +215,7 @@ fn a_mutant_a_reviewer_accepted_stops_being_a_finding() {
         .collect();
     assert_eq!(survivors.len(), 4);
 
-    let mut configuration = String::from("version = 1\n");
+    let mut configuration = String::from("version = 1\ncontract = \"standard-v1\"\n");
     for id in &survivors {
         let prefix = id.get(..12).expect("a long unique prefix");
         configuration.push_str(&format!(
@@ -247,7 +248,7 @@ fn an_acceptance_that_names_no_single_catalog_entry_suppresses_nothing() {
     verify(&fixture, &[]);
     std::fs::write(
         fixture.root.join(".njutest.toml"),
-        "version = 1\n\n[[acceptance]]\nid = \"not-a-mutant\"\nreason = \"stale review\"\n",
+        "version = 1\ncontract = \"standard-v1\"\n\n[[acceptance]]\nid = \"not-a-mutant\"\nreason = \"stale review\"\n",
     )
     .expect("a configuration");
 
@@ -1089,7 +1090,7 @@ fn an_acceptance_whose_expiry_has_passed_answers_for_nothing() {
         .collect();
     assert_eq!(survivors.len(), 4);
 
-    let mut configuration = String::from("version = 1\n");
+    let mut configuration = String::from("version = 1\ncontract = \"standard-v1\"\n");
     for id in &survivors {
         configuration.push_str(&format!(
             "\n[[acceptance]]\nid = \"{id}\"\nreason = \"the boundary is checked by an ignored test\"\nexpires = \"2020-01-01T00:00:00Z\"\n"

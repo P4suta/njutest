@@ -641,6 +641,10 @@ fn every_closed_set_the_schema_declares_is_one_this_release_produces() {
         "/$defs/drift/oneOf/2/properties/why",
         names(&njutest::report::drift::Unmeasured::ALL),
     ));
+    rows.push((
+        "/$defs/beside/properties/failed",
+        names(&njutest::report::faults::Failed::ALL),
+    ));
     rows.push(("/$defs/knob", names(&njutest::report::knobs::Knob::ALL)));
     rows.push((
         "/$defs/knobStanding/oneOf/4/properties/why",
@@ -653,6 +657,14 @@ fn every_closed_set_the_schema_declares_is_one_this_release_produces() {
     rows.push((
         "/$defs/knobStanding/oneOf/6/properties/why",
         names(&njutest::report::knobs::NotPut::ALL),
+    ));
+    rows.push((
+        "/$defs/concurrencyStarts",
+        names(&njutest::concurrency::scan::Starts::ALL),
+    ));
+    rows.push((
+        "/$defs/concurrencyExploration/oneOf/0/properties/why",
+        names(&njutest::report::concurrency::Unexplored::ALL),
     ));
     let borrowed: Vec<(&str, Vec<&str>)> = rows
         .iter()
@@ -783,5 +795,152 @@ fn the_sections_the_contract_says_a_specification_lists_are_the_ones_it_draws() 
         "the contract's table of what a specification lists is the page's headings, each with \
          the decisions that land under it, in both directions: a decision the table puts in the \
          wrong row tells a reader a change stands where the page will not show it"
+    );
+}
+
+#[test]
+fn every_record_type_the_trace_schema_declares_has_a_specimen() {
+    let schema: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&page("schema/njutest-trace-v1.json"))
+            .expect("the trace schema is JSON");
+    let declared: std::collections::BTreeSet<String> = schema
+        .pointer("/properties/payload/oneOf")
+        .and_then(serde_json::Value::as_array)
+        .expect("the payload is one of a closed list of records")
+        .iter()
+        .filter_map(|arm| arm.pointer("/properties/type/const"))
+        .filter_map(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    let specimens: std::collections::BTreeSet<String> = njutest::testkit::every_payload()
+        .iter()
+        .map(|payload| payload.type_name().to_owned())
+        .collect();
+    assert_eq!(
+        declared, specimens,
+        "the field ledger is compared against specimens, so a record type with none is a row \
+         the page can leave out and a reader can never see checked"
+    );
+}
+
+#[test]
+fn every_fault_decision_is_one_the_schema_publishes_and_the_page_documents() {
+    let schema: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&page("schema/njutest-assurance-report-v1.json"))
+            .expect("the report schema is JSON");
+    let published: std::collections::BTreeSet<&str> = schema
+        .pointer("/$defs/faultDecision/oneOf")
+        .and_then(serde_json::Value::as_array)
+        .expect("a fault decision is one of a closed list")
+        .iter()
+        .filter_map(|arm| arm.pointer("/properties/decision/const"))
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    let every = njutest::report::faults::FaultDecision::every();
+    let produced: std::collections::BTreeSet<&str> = every
+        .iter()
+        .map(njutest::report::faults::FaultDecision::name)
+        .collect();
+    assert_eq!(
+        published, produced,
+        "the schema and the set it publishes are one list"
+    );
+    let text = page("docs/report-v1.md");
+    let undocumented: Vec<&&str> = produced
+        .iter()
+        .filter(|name| !text.contains(&format!("| `{name}` |")))
+        .collect();
+    assert!(
+        undocumented.is_empty(),
+        "docs/report-v1.md has no row for {undocumented:?}"
+    );
+    for decision in &every {
+        let wire = serde_json::to_value(decision).expect("a decision serialises");
+        assert_eq!(
+            wire.get("decision").and_then(serde_json::Value::as_str),
+            Some(decision.name()),
+            "the wire tag is the name"
+        );
+    }
+}
+
+#[test]
+fn every_crash_decision_is_one_the_schema_publishes_and_the_page_documents() {
+    let schema: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&page("schema/njutest-assurance-report-v1.json"))
+            .expect("the report schema is JSON");
+    let published: std::collections::BTreeSet<&str> = schema
+        .pointer("/$defs/crashDecision/oneOf")
+        .and_then(serde_json::Value::as_array)
+        .expect("a crash decision is one of a closed list")
+        .iter()
+        .filter_map(|arm| arm.pointer("/properties/decision/const"))
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    let every = njutest::report::crashes::CrashDecision::every();
+    let produced: std::collections::BTreeSet<&str> = every
+        .iter()
+        .map(njutest::report::crashes::CrashDecision::name)
+        .collect();
+    assert_eq!(
+        published, produced,
+        "the schema and the set it publishes are one list"
+    );
+    let text = page("docs/report-v1.md");
+    let undocumented: Vec<&&str> = produced
+        .iter()
+        .filter(|name| !text.contains(&format!("| `{name}` |")))
+        .collect();
+    assert!(
+        undocumented.is_empty(),
+        "docs/report-v1.md has no row for {undocumented:?}"
+    );
+    for decision in &every {
+        let wire = serde_json::to_value(decision).expect("a decision serialises");
+        assert_eq!(
+            wire.get("decision").and_then(serde_json::Value::as_str),
+            Some(decision.name()),
+            "the wire tag is the name"
+        );
+    }
+}
+
+#[test]
+fn the_marks_the_contract_says_a_guard_draws_are_the_ones_it_draws() {
+    let text = page("docs/assurance-contract.md");
+    let (_, after) = text
+        .split_once("## What a guard marks")
+        .expect("the contract says what a guard marks");
+    let said = after.split("\n## ").next().unwrap_or_default();
+    let plain = njutest::presentation::Terminal::plain(80);
+    let drawn = njutest::presentation::Telling::of(njutest::presentation::Terminal {
+        unicode: true,
+        ..plain
+    })
+    .strokes();
+    let ascii = njutest::presentation::Telling::of(plain).strokes();
+    for section in njutest::spec::Section::ALL {
+        let named = njutest::presentation::spec::named(section);
+        let mark = njutest::presentation::guard::mark(section, &drawn);
+        assert!(
+            said.contains(&format!("`{mark}` {named}")),
+            "the contract names `{mark}` as what a line {named} is marked with, as the page and \
+             the editor mark it"
+        );
+    }
+    let fallbacks: Vec<String> = njutest::spec::Section::ALL
+        .into_iter()
+        .map(|section| format!("`{}`", njutest::presentation::guard::mark(section, &ascii)))
+        .collect();
+    assert!(
+        said.contains(&format!(
+            "({} where the terminal has only ASCII)",
+            fallbacks.join(", ")
+        )),
+        "the contract lists the ASCII marks in the order of the sections they stand for"
+    );
+    assert!(
+        said.contains(&format!("`{}` not yet asked", drawn.unasked)),
+        "the contract names the mark of a file no run has asked about as it is now"
     );
 }

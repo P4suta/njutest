@@ -4,6 +4,7 @@
 //! `njutest why`: everything a recording says stands behind one claim, drawn for a person.
 
 use super::{Style, Telling, Terminal};
+use crate::report::faults::FaultDecision;
 use crate::report::{Decided, SeamDecision};
 use crate::trace::Read;
 use crate::why::{Chain, Claim, Step, Why};
@@ -13,6 +14,7 @@ const fn kind(claim: &Claim) -> &'static str {
     match claim {
         Claim::Mutation(_) => "mutation",
         Claim::Seam(_) => "seam question",
+        Claim::Fault(_) => "fault",
     }
 }
 
@@ -46,6 +48,22 @@ fn settled(decision: &SeamDecision) -> String {
         SeamDecision::Unnoticed => "the suite ran with it in place and nothing noticed".to_owned(),
         SeamDecision::Unreached => {
             "the question could not be put, so the run established nothing".to_owned()
+        }
+    }
+}
+
+/// What the run finally established about a failed call.
+fn failed(decision: &FaultDecision) -> String {
+    match decision {
+        FaultDecision::Noticed { by } => format!("{by} noticed the call failing"),
+        FaultDecision::Unnoticed => {
+            "every test that reached it passed with the call failing".to_owned()
+        }
+        FaultDecision::Unreached => "no test reached it".to_owned(),
+        FaultDecision::Waited { on } => format!("this machine stopped waiting for {on}"),
+        FaultDecision::Undecided { on, why } => format!("{on} could not be decided: {why}"),
+        FaultDecision::NotPut { diagnostic } => {
+            format!("the compiler refused the fault: {diagnostic}")
         }
     }
 }
@@ -171,6 +189,7 @@ pub fn page(claim: &Claim, why: &Why, terminal: Terminal) -> String {
             let answer = match chain {
                 Chain::Mutation { came_to: to, .. } => came_to(to),
                 Chain::Seam { came_to: to, .. } => settled(to),
+                Chain::Fault { came_to: to, .. } => failed(to),
             };
             let drawn = chain
                 .steps()

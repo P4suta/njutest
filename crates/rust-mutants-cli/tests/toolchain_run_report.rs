@@ -1603,3 +1603,512 @@ fn a_mutant_of_a_whole_condition_replaces_all_of_it_whatever_operators_it_holds(
         );
     }
 }
+
+#[test]
+fn a_mutant_a_test_noticed_before_another_hung_is_killed_and_names_that_test() {
+    let fixture = Fixture::copy("fixture-fails-then-hangs");
+    let recording = fixture.temp().join("recording");
+    let trace = format!("--trace={}", recording.display());
+    let output = against(
+        &fixture,
+        &["run", "--offline", "--locked", "--tier", "all", &trace],
+    );
+    assert!(
+        output.status.code() == Some(0) || output.status.code() == Some(1),
+        "{}",
+        stderr(&output)
+    );
+    let report = stored(&fixture);
+    assert_eq!(
+        against_schema("rust-mutants-run-report-v1.json", &report),
+        Vec::<String>::new()
+    );
+    let rows = report["mutants"].as_array().expect("the rows");
+    let waited_naming: Vec<&serde_json::Value> = rows
+        .iter()
+        .filter(|row| {
+            row["outcome"] == "waited"
+                && row["killed_by"]
+                    .as_array()
+                    .is_some_and(|named| !named.is_empty())
+        })
+        .collect();
+    assert!(
+        waited_naming.is_empty(),
+        "a row that names the test that noticed it is not one the clock decided: {waited_naming:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row["outcome"] == "killed"
+                && row["killed_by"].as_array().is_some_and(|named| {
+                    named.iter().any(|one| one == "a_says_the_answer_is_ready")
+                })
+        }),
+        "the mutation that made one test fail and the other hang was noticed by the one that \
+         failed: {rows:#?}"
+    );
+    let text = std::fs::read_to_string(recording.join("trace.jsonl")).expect("the recording");
+    let outlived: std::collections::BTreeSet<u64> = text
+        .lines()
+        .map(|line| {
+            njutest_devkit::strictjson::decode_str::<serde_json::Value>(line)
+                .expect("a recorded line is JSON")
+        })
+        .filter(|event| event["payload"]["type"] == "mutant-exec")
+        .filter(|event| event["payload"]["mutant"]["lingered"] == true)
+        .filter_map(|event| event["payload"]["mutant"]["index"].as_u64())
+        .collect();
+    let claimed: std::collections::BTreeSet<u64> = rows
+        .iter()
+        .filter(|row| row["lingered"] == true)
+        .filter_map(|row| row["index"].as_u64())
+        .collect();
+    assert_eq!(
+        claimed, outlived,
+        "a row says it lingered exactly where the recording says an execution of it did"
+    );
+}
+
+#[test]
+fn a_kill_is_taken_at_the_first_failing_test_rather_than_after_the_rest_hang() {
+    let fixture = Fixture::copy("fixture-fails-then-hangs");
+    let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    assert!(
+        output.status.code() == Some(0) || output.status.code() == Some(1),
+        "{}",
+        stderr(&output)
+    );
+    let report = stored(&fixture);
+    let rows = report["mutants"].as_array().expect("the rows");
+    let waited_out: Vec<&serde_json::Value> = rows
+        .iter()
+        .filter(|row| row["outcome"] == "killed" && row["lingered"] == true)
+        .collect();
+    assert!(
+        waited_out.is_empty(),
+        "one failing test is the whole answer to whether the tests noticed a mutation, so the \
+         process is stopped there rather than kept running until the clock ends a test that \
+         hangs: {waited_out:#?}"
+    );
+}
+#[test]
+fn an_edit_to_a_file_the_build_read_misses_the_outcome_store() {
+    let fixture = Fixture::copy("fixture-carry");
+    let asked = ["run", "--offline", "--locked", "--tier", "all"];
+    let first = against(&fixture, &asked);
+    assert!(
+        first.status.code() == Some(0) || first.status.code() == Some(1),
+        "{}",
+        stderr(&first)
+    );
+    for (edited, text) in [
+        ("src/answer.txt", "30\n"),
+        ("waive", ""),
+        (
+            "build.rs",
+            "fn main() {\n    let out = std::env::var_os(\"OUT_DIR\").expect(\"cargo sets OUT_DIR\");\n    std::fs::write(std::path::Path::new(&out).join(\"limit.rs\"), \"1\").expect(\"write the limit\");\n    println!(\"cargo::rerun-if-changed=build.rs\");\n}\n",
+        ),
+        (
+            "build.rs",
+            "fn main() {\n    let out = std::env::var_os(\"OUT_DIR\").expect(\"cargo sets OUT_DIR\");\n    std::fs::write(std::path::Path::new(&out).join(\"limit.rs\"), \"1\").expect(\"write the limit\");\n    println!(\"cargo::rustc-check-cfg=cfg(waived)\");\n    println!(\"cargo::rustc-cfg=waived\");\n    println!(\"cargo::rerun-if-changed=build.rs\");\n}\n",
+        ),
+    ] {
+        std::fs::write(fixture.root().join(edited), text).expect("edit the input");
+        let again = against(&fixture, &asked);
+        assert!(
+            again.status.code() == Some(0) || again.status.code() == Some(1),
+            "{}",
+            stderr(&again)
+        );
+        let report = stored(&fixture);
+        let read_back: Vec<&serde_json::Value> = report["mutants"]
+            .as_array()
+            .expect("the rows")
+            .iter()
+            .filter(|row| !row["source_run_id"].is_null())
+            .collect();
+        assert!(
+            read_back.is_empty(),
+            "{edited} changed what the compiled code computes, so no answer from before the \
+             edit may be read back as though the program were the same: {read_back:#?}"
+        );
+    }
+}
+
+fn executions(directory: &Path) -> std::collections::BTreeMap<String, Vec<String>> {
+    let text = std::fs::read_to_string(directory.join("trace.jsonl")).expect("the recording");
+    let mut found: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for line in text.lines() {
+        let event: serde_json::Value =
+            njutest_devkit::strictjson::decode_str(line).expect("a recorded line is JSON");
+        if event["payload"]["type"] == "mutant-exec" {
+            let mutant = &event["payload"]["mutant"];
+            found
+                .entry(mutant["id"].as_str().unwrap_or_default().to_owned())
+                .or_default()
+                .push(mutant["target"].as_str().unwrap_or_default().to_owned());
+        }
+    }
+    found
+}
+
+#[test]
+fn a_mutant_goes_first_to_the_target_that_killed_it_before() {
+    let fixture = Fixture::copy("fixture-killer-last");
+    let first_trace = fixture.temp().join("first");
+    let second_trace = fixture.temp().join("second");
+    let run = |trace: &Path| {
+        let flag = format!("--trace={}", trace.display());
+        let output = against(
+            &fixture,
+            &["run", "--offline", "--locked", "--tier", "all", &flag],
+        );
+        assert!(
+            output.status.code() == Some(0) || output.status.code() == Some(1),
+            "{}",
+            stderr(&output)
+        );
+    };
+    run(&first_trace);
+    std::fs::write(
+        fixture.root().join("src/unrelated.rs"),
+        "/// A constant nothing else reads.\n#[must_use]\npub const fn unrelated() -> u32 {\n    8\n}\n",
+    )
+    .expect("edit a file no mutation of `double` depends on");
+    run(&second_trace);
+    let before = executions(&first_trace);
+    let after = executions(&second_trace);
+    let late: Vec<(&String, &Vec<String>)> = before
+        .iter()
+        .filter(|(_, targets)| targets.len() > 1)
+        .collect();
+    assert!(
+        !late.is_empty(),
+        "the fixture exists to have a mutant its first target passes and a later one kills: \
+         {before:#?}"
+    );
+    let report = stored(&fixture);
+    for (mutant, targets) in late {
+        let killer = targets.last().expect("a last target");
+        assert_eq!(
+            after.get(mutant),
+            Some(&vec![killer.clone()]),
+            "{mutant} was killed by {killer} after {} passed, so the next run asks {killer} \
+             first and has its answer from one process",
+            targets.first().map_or("", String::as_str)
+        );
+        let row = report["mutants"]
+            .as_array()
+            .expect("the rows")
+            .iter()
+            .find(|row| row["id"] == mutant.as_str())
+            .expect("the row of the mutant");
+        assert_eq!(
+            row["route"]["executed"],
+            serde_json::json!([killer]),
+            "the report says which targets ran, and on the second run only {killer} did: {row:#}"
+        );
+    }
+}
+
+/// The carried records the newest run of `fixture` believed.
+fn carried_of(fixture: &Fixture) -> serde_json::Value {
+    let directory = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    );
+    document_at(&directory.join(rust_mutants::carry::FILE))
+}
+
+/// The skeletons the newest run of `fixture` kept.
+fn skeletons_of(fixture: &Fixture) -> serde_json::Value {
+    let directory = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    );
+    document_at(&directory.join("skeletons-v1.json"))
+}
+
+/// The evidence of the item whose name ends in `name`.
+fn item_named<'a>(skeletons: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
+    skeletons["items"]
+        .as_array()
+        .expect("the items")
+        .iter()
+        .find(|item| {
+            item["name"]
+                .as_str()
+                .is_some_and(|named| named == name || named.ends_with(&format!("::{name}")))
+        })
+        .expect("the item is cataloged")
+}
+
+/// Runs fixture-carry as it stands and reads the skeletons the run kept.
+fn carried(fixture: &Fixture) -> serde_json::Value {
+    let ran = against(fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    assert!(
+        ran.status.code().is_some_and(|code| code < 2),
+        "{}",
+        stderr(&ran)
+    );
+    skeletons_of(fixture)
+}
+
+/// Rewrites `from` as `to` in fixture-carry's library.
+fn edited(fixture: &Fixture, from: &str, to: &str) {
+    let lib = fixture.root().join("src/lib.rs");
+    let source = std::fs::read_to_string(&lib).expect("the library");
+    assert!(source.contains(from), "{from} is in the library");
+    std::fs::write(&lib, source.replace(from, to)).expect("the edit");
+}
+
+#[test]
+fn a_run_keeps_the_skeletons_an_answer_would_be_carried_by() {
+    let fixture = Fixture::copy("fixture-carry");
+    let kept = carried(&fixture);
+    let errors = against_schema("rust-mutants-skeletons-v1.json", &kept);
+    assert!(
+        errors.is_empty(),
+        "whoever carries an answer reads these, and the schema says how: {errors:#?}"
+    );
+    assert_eq!(
+        item_named(&kept, "over")["sealed"],
+        true,
+        "a body that only compares is sealed: {kept:#}"
+    );
+    assert_eq!(
+        (
+            &item_named(&kept, "recorded")["unsealed"]["why"],
+            &item_named(&kept, "recorded")["unsealed"]["name"]
+        ),
+        (
+            &serde_json::json!("macro"),
+            &serde_json::json!("include_str")
+        ),
+        "a body that reads a file is not: {kept:#}"
+    );
+    assert_eq!(
+        item_named(&kept, "WAIVED")["unsealed"]["why"],
+        "evaluated",
+        "and a constant is evaluated where nothing enters it: {kept:#}"
+    );
+    let units: Vec<(String, String, bool)> = kept["units"]
+        .as_array()
+        .expect("the units")
+        .iter()
+        .map(|unit| {
+            (
+                unit["target"].as_str().expect("a target").to_owned(),
+                unit["kind"].as_str().expect("a kind").to_owned(),
+                unit["test"].as_bool().expect("a flag"),
+            )
+        })
+        .collect();
+    for unit in [
+        ("build-script-build", "custom-build", false),
+        ("fixture_carry", "lib", false),
+        ("fixture_carry", "lib", true),
+    ] {
+        assert!(
+            units.contains(&(unit.0.to_owned(), unit.1.to_owned(), unit.2)),
+            "{unit:?} is a unit of the build: {units:?}"
+        );
+    }
+}
+
+#[test]
+fn a_unit_names_every_entry_its_skeleton_folds() {
+    let fixture = Fixture::copy("fixture-carry");
+    let kept = carried(&fixture);
+    let library = kept["units"]
+        .as_array()
+        .expect("the units")
+        .iter()
+        .find(|unit| unit["target"] == "fixture_carry" && unit["test"] == false)
+        .expect("the library unit");
+    let names: Vec<&str> = library["entries"]
+        .as_object()
+        .expect("the entries")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    for wanted in ["$root/src/lib.rs", "$root/src/answer.txt", "$env/OUT_DIR"] {
+        assert!(
+            names.contains(&wanted),
+            "{wanted} is something the library compiled: {names:?}"
+        );
+    }
+    assert!(
+        names
+            .iter()
+            .any(|name| name.starts_with("$target/") && name.ends_with("/limit.rs"))
+            && names
+                .iter()
+                .any(|name| name.starts_with("$emitted/$target/")),
+        "and so are the file its build script generated and what that script emitted, named \
+         from the target directory rather than from wherever this run put it: {names:?}"
+    );
+}
+
+#[test]
+fn an_edit_inside_a_sealed_body_moves_only_its_digest_and_one_outside_moves_the_skeleton() {
+    let fixture = Fixture::copy("fixture-carry");
+    let then = carried(&fixture);
+    edited(
+        &fixture,
+        "recorded() > LIMIT || WAIVED",
+        "WAIVED || recorded() > LIMIT",
+    );
+    let now = carried(&fixture);
+    assert_ne!(
+        item_named(&then, "over")["body_digest"],
+        item_named(&now, "over")["body_digest"],
+        "the edited body is another body"
+    );
+    assert_eq!(
+        then["units"], now["units"],
+        "and nothing outside a sealed body moved, so no unit's skeleton did"
+    );
+    edited(
+        &fixture,
+        "const WAIVED: bool = cfg!(waived);",
+        "const WAIVED: bool = cfg!(waived) && true;",
+    );
+    let constant = carried(&fixture);
+    assert_ne!(
+        now["units"], constant["units"],
+        "a constant is outside every sealed body, so an edit to it moves the skeleton"
+    );
+}
+
+/// Every row of a stored report by where and what it mutates, which an edit elsewhere in the file leaves unchanged where an identity does not.
+fn by_place(
+    report: &serde_json::Value,
+) -> std::collections::BTreeMap<(u64, String, String, String), serde_json::Value> {
+    report["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .map(|row| {
+            (
+                (
+                    row["line"].as_u64().unwrap_or_default(),
+                    row["rule"].as_str().unwrap_or_default().to_owned(),
+                    row["original"].as_str().unwrap_or_default().to_owned(),
+                    row["replacement"].as_str().unwrap_or_default().to_owned(),
+                ),
+                row.clone(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
+    let fixture = Fixture::copy("fixture-two-bodies");
+    let asked = ["run", "--offline", "--locked", "--tier", "all"];
+    let first = against(&fixture, &asked);
+    assert!(
+        first.status.code() == Some(0) || first.status.code() == Some(1),
+        "{}",
+        stderr(&first)
+    );
+    let source = fixture.root().join("src/lib.rs");
+    let text = std::fs::read_to_string(&source).expect("the library");
+    std::fs::write(&source, text.replace("left + right", "right + left"))
+        .expect("edit inside the body of `total` alone");
+    let carried = against(&fixture, &asked);
+    assert!(
+        carried.status.code() == Some(0) || carried.status.code() == Some(1),
+        "{}",
+        stderr(&carried)
+    );
+    let with_carry = by_place(&stored(&fixture));
+    let believed = carried_of(&fixture);
+    let errors = against_schema("rust-mutants-carried-v1.json", &believed);
+    assert!(errors.is_empty(), "{errors:#?}");
+    assert!(
+        believed["records"]
+            .as_array()
+            .is_some_and(|records| !records.is_empty()),
+        "a run that carried answers keeps every record it believed: {believed:#}"
+    );
+    let fresh = against(
+        &fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-cache",
+        ],
+    );
+    assert!(
+        fresh.status.code() == Some(0) || fresh.status.code() == Some(1),
+        "{}",
+        stderr(&fresh)
+    );
+    let without = by_place(&stored(&fixture));
+    for (place, row) in &with_carry {
+        assert_eq!(
+            row["outcome"],
+            without
+                .get(place)
+                .map_or(serde_json::Value::Null, |fresh| fresh["outcome"].clone()),
+            "a carried answer must be the answer running it gives: {place:?}"
+        );
+    }
+    let over: Vec<&serde_json::Value> = with_carry
+        .iter()
+        .filter(|(place, _)| place.0 >= 12)
+        .map(|(_, row)| row)
+        .collect();
+    assert!(
+        !over.is_empty(),
+        "the fixture mutates `over`: {with_carry:#?}"
+    );
+    let ran: Vec<&&serde_json::Value> = over
+        .iter()
+        .filter(|row| row["source_run_id"].is_null())
+        .collect();
+    assert!(
+        ran.is_empty(),
+        "the edit was inside `total`, which no execution of a mutant of `over` entered, so \
+         every such answer carries rather than running again: {ran:#?}"
+    );
+}
+
+#[test]
+fn an_execution_a_silent_process_ran_inside_records_what_it_entered_as_cut() {
+    let fixture = Fixture::copy("fixture-silent-kill");
+    let ran = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    assert!(
+        ran.status.code() == Some(0) || ran.status.code() == Some(1),
+        "{}",
+        stderr(&ran)
+    );
+    let carried = fixture.cache().join(rust_mutants::carry::LAYOUT);
+    let records: Vec<serde_json::Value> = std::fs::read_dir(&carried)
+        .expect("a run that keeps outcomes keeps carried records")
+        .map(|entry| {
+            let path = entry.expect("an entry").path();
+            njutest_devkit::strictjson::decode_str(
+                &std::fs::read_to_string(&path).expect("a record"),
+            )
+            .expect("a carried record")
+        })
+        .collect();
+    assert!(
+        !records.is_empty(),
+        "every mutant of `limit` is killed and kept"
+    );
+    for record in &records {
+        for execution in record["executions"].as_array().expect("its executions") {
+            assert_eq!(
+                execution["completeness"], "cut",
+                "a child with a cleared environment ran inside this execution and recorded \
+                 nothing it entered, so the union is not the whole of it: {record:#}"
+            );
+        }
+    }
+}

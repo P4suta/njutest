@@ -393,6 +393,150 @@ Written by crates/njutest/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
   ✓ ASSURED   4 killed  0 survived  0 unreached  1.9s
   reports/runs/20260101T000000Z-aaaaaa
 
+=== a failed call nothing noticed — eighty columns, no colour
+
+gap[NJ-UNNOTICED-FAULT]: a call failed here and no test noticed
+   --> src/lib.rs:13:16
+   |
+13 |     let text = std::fs::read_to_string(path)?;
+   |                ^ failed here
+   = the call the `?` at src/lib.rs:13 asks about failed and every test that
+     reached it passed: no test asserts what `measured` does when it fails
+   = why  njutest why fault 5cbe8a6f76c39a620356
+
+  | fault-not-put the compiler refused 2 fault(s), because the engine makes only
+    the standard error types it can build without guessing and these sites
+    propagate another, so nothing is claimed about their failures: E0277 at
+    src/lib.rs:46; E0308 at src/lib.rs:57
+
+  INSUFFICIENT   4 killed  0 survived  0 unreached  1.9s
+  1 gap in 1 file   reports/runs/20260101T000000Z-aaaaaa
+
+=== a failed call nothing noticed — forty columns, no colour
+
+gap[NJ-UNNOTICED-FAULT]: a call failed
+                         here and no
+                         test noticed
+   --> src/lib.rs:13:16
+   |
+13 |     let text = std::fs::read_to_string(path)?;
+   |                ^
+   |   failed here
+   = the call the `?` at src/lib.rs:13
+     asks about failed and every test
+     that reached it passed: no test
+     asserts what `measured` does when
+     it fails
+   = why
+     njutest why fault 5cbe8a6f76c39a620356
+
+  | fault-not-put the compiler refused 2
+    fault(s), because the engine makes
+    only the standard error types it can
+    build without guessing and these
+    sites propagate another, so nothing
+    is claimed about their failures:
+    E0277 at src/lib.rs:46; E0308 at
+    src/lib.rs:57
+
+  INSUFFICIENT   4 killed  0 survived  0
+    unreached  1.9s
+  1 gap in 1 file
+    reports/runs/20260101T000000Z-aaaaaa
+
+=== a failed call nothing noticed — eighty columns, colour
+
+[1;38;5;214mgap[0m[38;5;244m[[0m[1;38;5;214mNJ-UNNOTICED-FAULT[38;5;244m][0m[0m: [1;38;5;253ma call failed here and no test noticed[0m
+   [38;5;244m-->[0m[38;5;244m [0m[1;38;5;253m]8;;file://src/lib.rssrc/lib.rs:13:16]8;;[0m[38;5;244m[0m
+   [38;5;244m|[0m
+[38;5;244m13[0m [38;5;244m|[0m     let text = std::fs::read_to_string(path)?;
+   [38;5;244m|[0m                [1;38;5;214m^[0m failed here
+   [38;5;244m=[0m the call the `?` at src/lib.rs:13 asks about failed and every test that
+     reached it passed: no test asserts what `measured` does when it fails
+   [38;5;244m=[0m why  [38;5;252mnjutest why fault 5cbe8a6f76c39a620356[0m
+
+  [38;5;244m|[0m [38;5;73mfault-not-put[0m [38;5;244mthe compiler refused 2 fault(s), because the engine makes only
+    the standard error types it can build without guessing and these sites
+    propagate another, so nothing is claimed about their failures: E0277 at
+    src/lib.rs:46; E0308 at src/lib.rs:57[0m
+
+  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m4 killed  0 survived  0 unreached  1.9s[0m
+  [1;38;5;214m1 gap in 1 file[0m   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
+
+=== a failed call nothing noticed — eighty columns, unicode
+
+gap[NJ-UNNOTICED-FAULT]: a call failed here and no test noticed
+   ╭─[src/lib.rs:13:16]
+   │
+13 │     let text = std::fs::read_to_string(path)?;
+   ·                ▲ failed here
+   ├─ the call the `?` at src/lib.rs:13 asks about failed and every test that
+      reached it passed: no test asserts what `measured` does when it fails
+   ╰─ why  njutest why fault 5cbe8a6f76c39a620356
+
+  · fault-not-put the compiler refused 2 fault(s), because the engine makes only
+    the standard error types it can build without guessing and these sites
+    propagate another, so nothing is claimed about their failures: E0277 at
+    src/lib.rs:46; E0308 at src/lib.rs:57
+
+  ✗ INSUFFICIENT   4 killed  0 survived  0 unreached  1.9s
+  1 gap in 1 file   reports/runs/20260101T000000Z-aaaaaa
+
+=== a whole run, every dimension one line — eighty columns, no colour
+
+  mutation measured  13 catalogued, 13 answered, 0 holes
+  repeatable measured  14 catalogued, 12 answered, 2 holes
+  fault measured  3 catalogued, 3 answered, 0 holes
+  schedule measured  2 catalogued, 1 answered, 1 holes
+  wire measured  0 catalogued, 0 answered, 0 holes
+  durable measured  5 catalogued, 5 answered, 0 holes
+
+  INSUFFICIENT   4 killed  0 survived  0 unreached  1.9s
+  reports/runs/20260101T000000Z-aaaaaa
+
+=== a whole run, every dimension one line — forty columns, no colour
+
+  mutation measured  13 catalogued, 13
+    answered, 0 holes
+  repeatable measured  14 catalogued,
+    12 answered, 2 holes
+  fault measured  3 catalogued, 3
+    answered, 0 holes
+  schedule measured  2 catalogued, 1
+    answered, 1 holes
+  wire measured  0 catalogued, 0
+    answered, 0 holes
+  durable measured  5 catalogued, 5
+    answered, 0 holes
+
+  INSUFFICIENT   4 killed  0 survived  0
+    unreached  1.9s
+  reports/runs/20260101T000000Z-aaaaaa
+
+=== a whole run, every dimension one line — eighty columns, colour
+
+  [1;38;5;253mmutation[0m [38;5;176mmeasured[0m  [38;5;244m13 catalogued, 13 answered, 0 holes[0m
+  [1;38;5;253mrepeatable[0m [38;5;176mmeasured[0m  [38;5;244m14 catalogued, 12 answered, 2 holes[0m
+  [1;38;5;253mfault[0m [38;5;176mmeasured[0m  [38;5;244m3 catalogued, 3 answered, 0 holes[0m
+  [1;38;5;253mschedule[0m [38;5;176mmeasured[0m  [38;5;244m2 catalogued, 1 answered, 1 holes[0m
+  [1;38;5;253mwire[0m [38;5;176mmeasured[0m  [38;5;244m0 catalogued, 0 answered, 0 holes[0m
+  [1;38;5;253mdurable[0m [38;5;176mmeasured[0m  [38;5;244m5 catalogued, 5 answered, 0 holes[0m
+
+  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m4 killed  0 survived  0 unreached  1.9s[0m
+  [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
+
+=== a whole run, every dimension one line — eighty columns, unicode
+
+  mutation measured  13 catalogued, 13 answered, 0 holes
+  repeatable measured  14 catalogued, 12 answered, 2 holes
+  fault measured  3 catalogued, 3 answered, 0 holes
+  schedule measured  2 catalogued, 1 answered, 1 holes
+  wire measured  0 catalogued, 0 answered, 0 holes
+  durable measured  5 catalogued, 5 answered, 0 holes
+
+  ✗ INSUFFICIENT   4 killed  0 survived  0 unreached  1.9s
+  reports/runs/20260101T000000Z-aaaaaa
+
 === a run that could not proceed — eighty columns, no colour
 
 refused[NJ5001]: the workspace does not compile before anything is instrumented
@@ -904,6 +1048,28 @@ There is nothing to do.
 - `skipped-test-code` — 1 place was not mutated: test-code
 
 These are not gaps in the tests. They bound what the verdict above claims.
+
+=== a failed call nothing noticed — as a briefing
+
+# njutest: INSUFFICIENT — 0 places the tests do not see
+
+A mutation run changed the code in 4 places and ran the tests each time. 4 of those changes were noticed and 0 were not.
+
+There is nothing to do.
+
+## What this run could not establish
+
+- `fault-not-put` — the compiler refused 2 fault(s), because the engine makes only the standard error types it can build without guessing and these sites propagate another, so nothing is claimed about their failures: E0277 at src/lib.rs:46; E0308 at src/lib.rs:57
+
+These are not gaps in the tests. They bound what the verdict above claims.
+
+=== a whole run, every dimension one line — as a briefing
+
+# njutest: INSUFFICIENT — 0 places the tests do not see
+
+A mutation run changed the code in 4 places and ran the tests each time. 4 of those changes were noticed and 0 were not.
+
+There is nothing to do.
 
 === a run that could not proceed — as a briefing
 
@@ -1455,3 +1621,115 @@ src/parser.rs  Parser::new
     - `Vec::new()` ⇢ `Default::default()`
       njutest explain src/parser.rs:Parser::new:return-default@3
         the compiler renders it identically
+
+=== guard: a file with a line in every section — eighty columns, no colour
+
+src/lib.rs as run the-run measured it, 1 build, default
+
+   1  pub fn sign(n: i32) -> bool {
+*  2      n > 0
+o  3          && n < 7
+   4  }
+   5  pub fn same(n: i32) -> i32 {
+=  6      n + 0
+   7  }
+   8  pub fn slow(n: u64) -> u64 {
+?  9      (0..n).sum()
+  10  }
+  11  pub fn log(n: i32) {
+o 12      println!(
+  13          "{n}");
+  14  }
+
+* pinned   o left free   = the same program   ? could not tell
+
+=== guard: a file with a line in every section — forty columns, no colour
+
+src/lib.rs as run the-run measured it, 1
+build, default
+
+   1  pub fn sign(n: i32) -> bool {
+*  2      n > 0
+o  3          && n < 7
+   4  }
+   5  pub fn same(n: i32) -> i32 {
+=  6      n + 0
+   7  }
+   8  pub fn slow(n: u64) -> u64 {
+?  9      (0..n).sum()
+  10  }
+  11  pub fn log(n: i32) {
+o 12      println!(
+  13          "{n}");
+  14  }
+
+* pinned   o left free
+= the same program   ? could not tell
+
+=== guard: a file with a line in every section — eighty columns, colour
+
+[38;5;244msrc/lib.rs as run the-run measured it, 1 build, default[0m
+
+  [38;5;244m 1[0m  pub fn sign(n: i32) -> bool {
+[1;38;5;114m*[0m [38;5;244m 2[0m      n > 0
+[1;38;5;214mo[0m [38;5;244m 3[0m          && n < 7
+  [38;5;244m 4[0m  }
+  [38;5;244m 5[0m  pub fn same(n: i32) -> i32 {
+[38;5;244m=[0m [38;5;244m 6[0m      n + 0
+  [38;5;244m 7[0m  }
+  [38;5;244m 8[0m  pub fn slow(n: u64) -> u64 {
+[38;5;73m?[0m [38;5;244m 9[0m      (0..n).sum()
+  [38;5;244m10[0m  }
+  [38;5;244m11[0m  pub fn log(n: i32) {
+[1;38;5;214mo[0m [38;5;244m12[0m      println!(
+  [38;5;244m13[0m          "{n}");
+  [38;5;244m14[0m  }
+
+[1;38;5;114m*[0m pinned   [1;38;5;214mo[0m left free   [38;5;244m=[0m the same program   [38;5;73m?[0m could not tell
+
+=== guard: a file with a line in every section — eighty columns, unicode
+
+src/lib.rs as run the-run measured it, 1 build, default
+
+   1  pub fn sign(n: i32) -> bool {
+●  2      n > 0
+○  3          && n < 7
+   4  }
+   5  pub fn same(n: i32) -> i32 {
+◎  6      n + 0
+   7  }
+   8  pub fn slow(n: u64) -> u64 {
+◇  9      (0..n).sum()
+  10  }
+  11  pub fn log(n: i32) {
+○ 12      println!(
+  13          "{n}");
+  14  }
+
+● pinned   ○ left free   ◎ the same program   ◇ could not tell
+
+=== guard: a file edited since the run read it — eighty columns, no colour
+
+. src/lib.rs is not yet asked: the file has changed since the run read it, so
+its source is not shown; nothing run the-run found in this file is shown until a
+run measures it again
+
+=== guard: a file edited since the run read it — forty columns, no colour
+
+. src/lib.rs is not yet asked: the file
+has changed since the run read it, so
+its source is not shown; nothing run
+the-run found in this file is shown
+until a run measures it again
+
+=== guard: a file edited since the run read it — eighty columns, colour
+
+[38;5;73m. src/lib.rs is not yet asked: the file has changed since the run read it, so[0m
+[38;5;73mits source is not shown; nothing run the-run found in this file is shown until a[0m
+[38;5;73mrun measures it again[0m
+
+=== guard: a file edited since the run read it — eighty columns, unicode
+
+◌ src/lib.rs is not yet asked: the file has changed since the run read it, so
+its source is not shown; nothing run the-run found in this file is shown until a
+run measures it again

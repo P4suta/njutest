@@ -186,3 +186,7 @@ mod tests {
         assert!(super::literals(true));
     }
 }
+
+pub fn keep(path: &std::path::Path) -> std::io::Result<()> {
+    std::fs::write(path, "kept")
+}

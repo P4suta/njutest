@@ -34,10 +34,11 @@ The suite is itself mutation-tested twice — weekly by cargo-mutants, and from 
 `mise run check` runs every local gate, the ones that answer quickest first.
 That is not the order CI runs them in, because CI runs the jobs at once and waits for all of them while a person waits for each in turn: formatting answers in seconds, `lint` — clippy, rustdoc, the repository gates, the fuzz crate's own type check, spelling, TOML, workflows — in tens of them, and the suite in minutes.
 
-It is also what the pre-push hook runs.
+It is also what the pre-push hook runs, through `cargo xtask pre-push` (`xtask/src/prepush.rs`).
 The hook refuses a ref whose object is not the checked-out `HEAD`, and an update of an existing remote ref unless its old commit is present locally and is an ancestor of that `HEAD`.
-It then asks Git to render the object into a fresh detached worktree and checks the isolated tree again afterwards.
+It then checks the object out into the repository's one gate tree and checks that tree again afterwards.
 Adjacent edits, ignored local files, and a mistaken non-fast-forward command therefore cannot become inputs to an answer attributed to the commit going out.
+How that tree is shared between worktrees and sessions is [One machine, several sessions](#one-machine-several-sessions).
 A push that goes out has already answered everything CI asks but four things this machine cannot answer: the suite on Linux and Windows, the coverage ratchets, the suite under Miri, and the composite action driven the way another repository drives it.
 `xtask/tests/tasks.rs` holds the correspondence — a job added to `ci-success` has to name the local task that answers it first, or say why none can.
 
@@ -62,8 +63,10 @@ Among them, `cargo xtask all` is this repository's own:
 | `tracked` | a committed path under a directory named `target`, which is build output: the next build writes it again, and `git add -A` picked up 196 files of trybuild's output from a crate-level `target/` that `.gitignore`, anchored at the root, did not name. `.gitignore` now names every `target/`, and the gate refuses a force-added one too. It reads what git tracks, so it runs git with every variable that could point it at another repository removed, and it finds three planted build outputs and passes three lookalikes before its silence about the tree is believed |
 | `release-check` | a workspace version that disagrees with the release manifest, or a member that does not inherit it |
 | `milestones` | a milestone-shaped reference in the book that has no unique row in the roadmap |
+| `adrs` | a file under `docs/adr/` not named `NNNN-slug.md`, two decision records of one number, a heading that does not carry its own number, a record the book lists under another number, twice, or not at all, and a name of a decision record, anywhere in the tree, that no record has |
 | `surfaces` | a workspace crate that does not declare its Rust visibility as `public`, `incidental`, or `test-support`; an incidental crate absent from the actual `surface-*` binary targets; a harness binary that names no incidental crate; publishable test apparatus |
 | `reached` | a public function of a crate whose surface is `incidental` that a test names and nothing shipping does, ratcheted against `xtask/reached_ceiling.txt`. A capability with a test is a capability somebody believed shipped ([ADR 0023](adr/0023-a-run-may-not-conclude-from-how-it-measured.md)): `Interposer::during()` had a test, passed it, and production never called it, so the test was evidence about a function nothing used. Where a crate's surface is an API the rule says nothing, because a function with no caller here is what an API is for; where it is public only because Rust needed it to be, a function only a test reaches is a function nothing reaches. Anything a `cfg` puts behind a test is test support and outside the rule, `cfg(feature = "testkit")` included — reading only `cfg(test)` reported sixteen of those, which was the gate believing its own omission |
+| `defaulted` | a call in an audit reader (`proofaudit`, `engineaudit`, `route`, `wire`, `drift`, `crashes`, `faults`, `knobs`, `concurrency`) that answers for an absent value with one its input never gave — `unwrap_or`, `unwrap_or_default`, `unwrap_or_else`, `map_or`, `map_or_else` — counted per file and held to exactly `xtask/defaulted_ceiling.txt`, which only falls. Every input is held to its producer's schema before a reader runs, so a required field is never absent by then, and a reader that still supplies one answers a question the recording never asked; a fall is kept by lowering the ceiling in the same change |
 
 The `implicit-scalar-erasure` lint keeps scalar and domain newtypes nominal:
 they may not implement or rename `Deref`, `AsRef`, `Borrow`, `Into`, or a representation-side `From` into strings and paths.
@@ -151,8 +154,15 @@ whether the mutations nothing noticed and the `surviving-mutant` findings are th
 Given the run's recording as well, it holds the proof layers to what the run wrote down: no target a proof removed from what could notice a mutation may then be the target that killed it, a route that says no measured target reaches a mutation may not then run one against it, a route the measurement widened has to run something, and a route may not say both that it read an answer back and that it refused one.
 The reach layer is re-derived rather than confirmed, because a route names the targets it removed every execution from: each of those names is held to the targets the run reports, to the targets the same route kept, and to the proofs that route names — and a route that removed every execution while naming nobody is a violation, since nothing reaches a place only if somebody was in a position to notice and did not.
 It reads the recording as lines of JSON rather than through the code that wrote them, and a run recorded without `--trace` leaves the layers `unaudited` rather than passed.
-A complete report holds its facts per configured build and per catalog part; the audit re-decides the one part of a report that measured one build whole, and refuses a report of several builds or of shards with exit code 2 rather than reading one of them as the whole.
-Such a report states no verdict — the verdict is derived from its records — so the verdict is `unaudited` there, since one this audit derived would be a verdict it agreed with by construction.
+A complete report holds its facts per configured build and per catalog part; the audit re-decides the one part of a report that measured one build whole, and refuses a report of several builds with exit code 2 rather than reading one of them as the whole.
+A report states no verdict — the verdict is derived from its records — so the verdict is re-decided against the `run-end` the runner recorded, and is `unaudited` where the recording holds none.
+Every document is validated against its published schema before any layer reads it.
+
+A sharded run is audited the way it was measured: each `verify --shard K/N` run is its own run directory and its own recording, and `cargo xtask proofaudit <shard-run-directory> --trace <its-recording>` re-decides that shard's one part, leaving to the merge what only the whole catalog decides.
+`cargo xtask proofaudit <merged-report> --shard <shard> … --traces <directory>` then re-decides each shard against its recording under `<directory>/<its run>` — the layout `.njutest/trace` already has — and holds the merged report to them, each violation named by the `MergeRule` it breaks:
+the composition is one division of the catalog, every shard of one count once and in order (`division`); every build holds one part per shard (`parts`); each shard sits where its document says it measured (`placement`); the report is measured under what each shard was (`agreement`) and holds the builds each measured (`builds`); each part is byte for byte the part its shard measured (`bytes`); the merged run is none of its inputs (`identity`); a merge completes no model batch (`models`); and every shard, re-decided on its own, holds (`shards`), whose own remarks are carried under its run.
+Each rule has a defect planted for it that the gate must find by name before any run is read.
+A shard the composition names and nobody gave is `unaudited`, a shard given twice or one the report was not merged from is refused, and what only the whole catalog decides is `unaudited` in each shard, since a merged report stores none of it and its reader derives it.
 This is [ADR 0004](adr/0004-proof-layers-not-budgets.md) decision 5,
 which ships a proof layer only against a re-implementation that is not asked whether it agrees with itself.
 
@@ -176,6 +186,12 @@ The `executions` layer holds every mutation's reported outcome to the executions
 Before it, a report that called its survivor killed, and made its columns, findings, and verdict agree, drew no violation from any layer.
 Its planted defects are that kind of lie, told consistently, and a law in `xtask/tests/sentinel.rs` reads every outcome the report schema allows and requires a planted lie for each (`proofaudit::sentinel::lie`) that some layer refuses, so an outcome added to the schema is audited against its executions the day it arrives.
 
+The `soundness` layer re-derives what interpreting the suite came to from the interpreter's recorded run and the output the recording kept of it, and holds the report's `accounting.soundness.executed` and its findings about soundness to that in both directions.
+It reads that output as `schema/miri-output.json` publishes it, and the runner reads it the same way: each keeps its own copy of the markers, and a test in each crate holds that copy to the contract, so a marker changed in one reading and not the other fails a gate rather than a run.
+A kept output is read only once its size and SHA-256 are the ones its exec record gives, so a copy rewritten after the run is a violation rather than a reading.
+Output is read by its structure and never by a phrase anywhere in it: a failing test's captured output says nothing, a diagnostic is the interpreter's own `error: ` line, a result is libtest's exact summary, and a pass needs one for every binary that started; the contract's `cases` are outputs the runner and the audit must each come to the same verdict on.
+A report that says the suite was interpreted with no run of the interpreter recorded, or names a failing test under one that ran no test to a result, is a violation; an output that was cut or not kept is unaudited.
+
 `cargo xtask engine-audit <run-directory> [--trace <recording>] [--shard <report>…] [--ledger .rust-mutants.toml]` is the same rule for the engine's own runs.
 It reads that run's `run-report-v1.json` and re-decides it in fourteen layers, none of which calls the engine's code; among them:
 
@@ -193,9 +209,10 @@ It reads that run's `run-report-v1.json` and re-decides it in fourteen layers, n
 | `ledger` | every survivor as one the ledger accepts with a reason, and every acceptance as one the run still holds |
 | `entry` | every site a test reached and every mutation a test noticed as lying in an item that test entered, by the item catalog and `entered` of `touched-v1.json`; every mutation as sitting in a measurable item whose name is the row's `item` |
 
-Its output and exit codes are `proofaudit`'s: one line per remark, a summary line, and 0, 1, or 2.
+Its output and exit codes are `proofaudit`'s: one line per remark, one `layer:` line per layer, a summary line, and 0, 1, or 2.
 Before it reads the run, it re-decides a clean synthetic run (`xtask::engineaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each layer, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
 Three runs of the fixtures are committed under `xtask/tests/testdata/engine-run-*/` and a test re-decides all three, so a change that makes the engine disagree with itself fails here rather than in a weekly job.
+They are recorded, not written: `crates/rust-mutants-cli/tests/toolchain_engine_runs.rs` runs each fixture again as they were recorded — every tier, offline, locked, with its recording, under an empty cache and the least environment a nested run needs — and refuses a committed run whose documents or events have a shape today's engine no longer records; `UPDATE_ENGINE_RUNS=1` records them again, and the diff is the review.
 
 `mise run dogfood:audit` and `mise run dogfood:engine:audit` are those rules as one command each: they run this workspace through the release build, keep the recording, and re-decide it.
 
@@ -208,7 +225,11 @@ proofaudit: 20260906T052111Z-047fc6: 39 mutants and 16 targets re-decided; 0 vio
 Where the recording does not carry enough to decide something again — which survivors a reviewer accepted, what a reused disposition was routed under,
 which regions a route was decided from —
 the gate says `unaudited` and counts it apart from the violations, because fail-closed is never turning "I cannot check this" into "this is fine", and equally never into "this is broken".
-One line per remark names its layer and its subject, a summary line closes the report, and the exit code is 0 with no violations, 1 with them, and 2 when the run directory could not be read at all.
+One line per remark names its layer and its subject.
+Then every layer says how far it got in one `layer:` line: `re-decided`, `partly re-decided` where an `unaudited` line says what was not, or `nothing to re-decide` and why, so a layer that had nothing to look at is never read as one that looked and agreed.
+A layer returns a `Decided` that only those three outcomes make, and the audit calls every layer through an exhaustive match over `Layer`, so a layer cannot end without saying which.
+A merge's layers are re-decided only where every shard was given and none fell short.
+A summary line closes the report, and the exit code is 1 with violations, 3 with none and something left `unaudited`, 0 only when every layer was decided, and 2 when the run directory could not be read at all, so a step that reads only the code cannot take an audit that looked at part of a run for one that looked at all of it.
 Before it reads the run, `proofaudit` re-decides a clean synthetic run (`xtask::proofaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each of its eleven layers, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
 
 ### A gate finds what was planted for it before it is believed
@@ -241,6 +262,43 @@ When a rule learns a new form, the form gets a shape of its own beside the test 
 A shape proves that its form is found, not which reader found it.
 With the guard reader removed, a guarded arm over a typed parameter was still found, because the parameter's type named the set; only a scrutinee with no typed binding leaves the guarded arm as the one thing naming the set, and that is the shape that went red.
 So a shape is written against the reader it exists for, and checked by removing that reader and watching the gate refuse.
+
+## One machine, several sessions
+
+Several sessions develop this repository on one machine at once, each in a worktree of its own, and a run that compiles or tests the whole workspace uses all of the machine.
+Two of them together do not finish sooner than one after the other: each takes about twice as long, and a test with a bound starts failing for a reason that is about the machine and not the code.
+[ADR 0030](adr/0030-one-machine-several-sessions.md) records the decision; what it means in practice is below.
+
+**One gate tree per repository.** `cargo xtask pre-push` keys its tree by the repository's common Git directory, not by the worktree, and keeps it under the user's cache directory (`~/Library/Caches/njutest/pre-push` on macOS, `$XDG_CACHE_HOME/njutest/pre-push` elsewhere, or `NJUTEST_PRE_PUSH_CACHE`).
+Cargo writes each package's absolute path into its fingerprints, so a tree per worktree made every push from a fresh worktree — which is every push the merge queue makes — a build from nothing.
+The tree is checked out in place, so only the files that differ from the last push get a new modification time and only what they feed is compiled again.
+The gate owns that directory the way [ADR 0006](adr/0006-every-temporary-directory-has-an-owner.md) says every temporary directory is owned: it holds `owner.lock` for as long as it runs, and `owner.json` marks the directory a cache keyed to the repository's common Git directory.
+A collector reading the pair leaves the directory alone while the lock is held and keeps it for as long as the repository exists, which is what a directory the next push wants warm needs.
+
+**One whole-workspace run at a time.** `cargo xtask slot heavy -- <command>` runs a command once this machine's `heavy` lane is free and holds the lane until the command ends; the pre-push gate takes the same lane before it touches its tree.
+A run that has to wait says whom it is waiting for — pid, worktree, revision, command, and the load when that run started — and repeats it every thirty seconds.
+The lane is an operating-system lock held by the xtask process and closed on exec, so a daemon started along the way (the compilation cache's server, Git's file monitor) cannot carry it off, and a holder that dies, however it dies, lets the next run in.
+Inside a held lane `NJUTEST_SLOT_HELD` names it, and asking for it again passes straight through: the gate hands it to its check, so a `cargo xtask slot heavy` somewhere inside the check does not wait for the gate.
+The gate's tree has a lane of its own, taken whatever `NJUTEST_SLOT_HELD` says, so two gates never write one tree at once.
+The work a lane admits runs in a process group of its own; `SIGINT`, `SIGTERM` and `SIGHUP` stop that whole group before the holder ends, and a bound stops it with `SIGTERM`, then `SIGKILL` after five seconds.
+
+**One pass, bounded by quiet.** The gate runs `mise run check` once, with its output passed on as it arrives.
+Following [ADR 0026](adr/0026-a-bound-measures-quiet-not-duration.md), what stops it is quiet rather than duration: a check that says nothing for `NJUTEST_PUSH_QUIET_SECONDS` (600 by default) is stopped, and `NJUTEST_PUSH_BUDGET_SECONDS` (3600) is only the ceiling behind it.
+A check that is slow because the machine is loaded keeps talking, so it is not stopped for how long it took.
+The lane's record names the work's leader and when it started, and the next run waits for that leader to end, so a holder killed outright still keeps its work from sharing the machine.
+A narrowed run — one crate, one test binary, one filter — does not take the lane: it is the inner loop, and queueing it behind a push would cost more than it saves.
+Run a whole-workspace command by hand as `cargo xtask slot heavy -- cargo nextest run --workspace --all-targets --all-features`.
+
+**A pass is remembered for an hour.** A commit that passed the gate against the same base is not checked again within the hour, so pushing it to the hub and then to origin costs one gate rather than two.
+What is remembered is the commit, the base the commit-message check reads, and the bytes of the gate that passed it; a moved base or a changed gate is a question nobody has answered yet.
+
+**Every temporary directory has an owner.** `mise run test:fast` and CI's fast suite run under `cargo xtask tidy`, which hands the suite an empty temporary directory and fails naming whatever it finds there afterwards ([ADR 0006](adr/0006-every-temporary-directory-has-an-owner.md)).
+Before the rule, one day's runs left 1,545 directories in the machine's shared one.
+A test that needs a project tree takes `njutest_devkit::paths::Project`, whose root sits inside a directory of its own, and `temp_beside` refuses a root that sits directly in the shared temporary directory.
+
+**The machine has to let a new executable run.** macOS evaluates every newly written executable before its first run, and under the load several sessions make that cost seconds per file — see [the limitation](limitations.md#on-macos-measure-what-an-execution-costs-before-measuring-anything-else).
+Every relinked test binary, fixture build, and mutant pays it.
+Switch the applications that start the sessions on under System Settings → Privacy & Security → Developer Tools; on the development machine that is the terminal and the multiplexer running in it.
 
 ## Test harness
 

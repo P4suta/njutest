@@ -644,3 +644,64 @@ proptest::proptest! {
         }
     }
 }
+
+#[test]
+fn a_child_s_output_is_never_painted_or_reshaped_whatever_the_environment_asks() {
+    let script = "echo \"$CARGO_TERM_COLOR|$CARGO_TERM_QUIET|$CARGO_TERM_VERBOSE\"";
+    let asked = [
+        (OsString::from("CARGO_TERM_COLOR"), OsString::from("always")),
+        (OsString::from("CARGO_TERM_QUIET"), OsString::from("true")),
+        (OsString::from("CARGO_TERM_VERBOSE"), OsString::from("true")),
+        (
+            OsString::from("PATH"),
+            std::env::var_os("PATH").unwrap_or_default(),
+        ),
+    ];
+    let mut named = sh(script);
+    named.env = Some(asked.to_vec());
+    let result = run(&named, &Cancel::new());
+    let output = std::str::from_utf8(&result.output);
+    assert_eq!(
+        result_state(&output),
+        Returned,
+        "the shell writes exact UTF-8"
+    );
+    let Ok(output) = output else { return };
+    assert_eq!(
+        output.trim(),
+        "never|false|false",
+        "the engine reads what every child writes, so a painted, silenced, or verbose cargo \
+         would be read as a different run: the presentation is the runner's, not the caller's"
+    );
+    let inherited = run(&sh(script), &Cancel::new());
+    let inherited_output = std::str::from_utf8(&inherited.output);
+    assert_eq!(
+        result_state(&inherited_output),
+        Returned,
+        "the shell writes exact UTF-8"
+    );
+    let Ok(inherited_output) = inherited_output else {
+        return;
+    };
+    assert_eq!(
+        inherited_output.trim(),
+        "never|false|false",
+        "an inherited environment is pinned the same way as a named one"
+    );
+}
+
+#[test]
+fn only_libtests_line_for_one_failing_test_is_read_as_its_answer() {
+    use rust_mutants::runner::says_a_test_failed;
+    assert!(says_a_test_failed(b"test tests::caught ... FAILED\n"));
+    assert!(says_a_test_failed(b"test tests::caught ... FAILED\r\n"));
+    assert!(
+        !says_a_test_failed(b"test result: FAILED. 1 passed; 1 failed\n"),
+        "the closing summary comes after every test ran, so it is no reason to stop early"
+    );
+    assert!(!says_a_test_failed(b"test tests::caught ... ok\n"));
+    assert!(
+        !says_a_test_failed(b"a program printing test x ... FAILED somewhere\n"),
+        "a line that only contains the words is not libtest's report"
+    );
+}

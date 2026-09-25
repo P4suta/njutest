@@ -266,6 +266,7 @@ fn accounting(report: &Conclusion, out: &mut String) {
         ],
     );
     out.push('\n');
+    dimensions(report, out);
     for measured in &report.accounting.soundness_by_build {
         let soundness = measured.accounting();
         record(
@@ -279,6 +280,63 @@ fn accounting(report: &Conclusion, out: &mut String) {
             ],
         );
         out.push('\n');
+    }
+}
+
+/// What the run counted along every dimension beside the mutations: the faults it put, and one record for each column of the matrix.
+fn dimensions(report: &Conclusion, out: &mut String) {
+    let faults = report.accounting.faults;
+    if faults.sites > 0 {
+        record(
+            out,
+            "FAULTS",
+            &[
+                &format!("sites={}", faults.sites),
+                &format!("noticed={}", faults.noticed),
+                &format!("unnoticed={}", faults.unnoticed),
+                &format!("unreached={}", faults.unreached),
+                &format!("waited={}", faults.waited),
+                &format!("undecided={}", faults.undecided),
+                &format!("not_put={}", faults.not_put),
+            ],
+        );
+        out.push('\n');
+    }
+    for row in &report.matrix {
+        dimension(row, out);
+    }
+}
+
+/// One column of the matrix: the dimension, its state, and what it counted or why it counted nothing.
+fn dimension(row: &super::matrix::Row, out: &mut String) {
+    record(
+        out,
+        "DIMENSION",
+        &[row.dimension.name(), row.column.state()],
+    );
+    match &row.column {
+        super::matrix::Column::Measured {
+            catalogued,
+            answered,
+            holes,
+            speaks_not_about,
+        } => {
+            append(out, &format!("catalogued={catalogued}"));
+            append(out, &format!("answered={answered}"));
+            append(out, &format!("holes={holes}"));
+            append_optional(
+                out,
+                (!speaks_not_about.is_empty())
+                    .then(|| format!("speaks_not_about={}", speaks_not_about.join("; ")))
+                    .as_deref(),
+            );
+        }
+        super::matrix::Column::Unmeasured { why } | super::matrix::Column::NothingToAsk { why } => {
+            append_optional(out, Some(why));
+        }
+        super::matrix::Column::NotAsked => {
+            out.push('\n');
+        }
     }
 }
 

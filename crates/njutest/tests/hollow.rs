@@ -113,15 +113,27 @@ fn a_target_outranked_every_time_is_never_called_hollow() {
 }
 
 #[test]
-fn a_run_that_reused_every_answer_asked_nobody_and_accuses_nobody() {
-    let mut reused = record("a", "survived", &[]);
-    reused.reuse = njutest::report::Reuse(njutest::report::Established::ReadBackFrom(
-        "20260905T081500Z-000000".to_owned(),
-    ));
-    assert!(
-        found(&[reused]).is_empty(),
-        "a run that read its answers back asked no target anything, and the empty \
-         list says so rather than reading as everybody staying silent"
+fn a_row_read_back_from_an_earlier_run_is_judged_by_the_answers_that_run_was_given() {
+    let asked = [
+        record("a", "survived", &[("blunt", "survived")]),
+        record("b", "killed", &[("blunt", "survived"), ("sharp", "killed")]),
+    ];
+    let mut read_back = asked.clone();
+    for row in &mut read_back {
+        row.reuse = njutest::report::Reuse(njutest::report::Established::ReadBackFrom(
+            "20260905T081500Z-000000".to_owned(),
+        ));
+    }
+    assert_eq!(
+        found(&read_back),
+        found(&asked),
+        "a read-back row carries what the run it came from was answered, so reading the \
+         answers back rather than asking again cannot change which target noticed nothing"
+    );
+    assert_eq!(
+        found(&asked).len(),
+        1,
+        "`blunt` answered twice and noticed nothing"
     );
 }
 

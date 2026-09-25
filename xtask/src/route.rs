@@ -6,20 +6,77 @@
 use serde::de::Error as _;
 use serde_json::Value;
 
-/// A line in a recording that is not JSON.
+/// A line of a recording this audit will not read, and why.
 #[derive(Debug, thiserror::Error)]
-#[error("recording line {line} is not JSON: {source}")]
+#[error("recording line {line}: {cause}")]
 pub struct ReadError {
-    /// The one-based non-empty line number in the recording.
+    /// The one-based non-empty line number in the recording, or 0 where the recording as a whole could not be held to its schema.
     pub line: usize,
-    /// What the JSON reader found there.
+    /// Why.
     #[source]
-    pub source: serde_json::Error,
+    pub cause: ReadCause,
+}
+
+/// Why a line of a recording is not read.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ReadCause {
+    /// It is not JSON, or not the current envelope.
+    #[error("not JSON this audit reads: {source}")]
+    Json {
+        /// What serde said.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// It is JSON and departs from its producer's published schema, so a reader could meet an absent required field.
+    #[error("off its producer's published schema: {source}")]
+    OffSchema {
+        /// Where and how.
+        #[source]
+        source: crate::schemas::OffSchema,
+    },
+    /// The published schema itself does not compile.
+    #[error(transparent)]
+    Schema(#[from] crate::schemas::SchemaError),
+    /// A field a reader needs is not there, or is not the type it reads, although the line passed its schema.
+    #[error("the record has no {field} a reader can read")]
+    Absent {
+        /// The field, as a path from the record.
+        field: String,
+    },
+}
+
+/// The field `key` of `record`, which every line on its schema carries.
+///
+/// # Errors
+/// [`ReadCause::Absent`] where it is not there or is not what `read` takes.
+pub(crate) fn required<'a, T>(
+    record: &'a Value,
+    key: &str,
+    read: impl FnOnce(&'a Value) -> Option<T>,
+) -> Result<T, ReadCause> {
+    record
+        .get(key)
+        .and_then(read)
+        .ok_or_else(|| ReadCause::Absent {
+            field: key.to_owned(),
+        })
+}
+
+impl crate::error::Coded for ReadCause {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Json { .. } => crate::error::XtCode::RecordingLine,
+            Self::OffSchema { .. } => crate::error::XtCode::RecordingOffSchema,
+            Self::Schema(schema) => crate::error::Coded::code(schema),
+            Self::Absent { .. } => crate::error::XtCode::RecordingUnread,
+        }
+    }
 }
 
 impl crate::error::Coded for ReadError {
     fn code(&self) -> crate::error::XtCode {
-        crate::error::XtCode::RecordingLine
+        crate::error::Coded::code(&self.cause)
     }
 }
 
@@ -104,6 +161,34 @@ pub struct Exec {
     pub duration_ms: Option<u64>,
     /// Whether the recording says the machine was given to this execution alone.
     pub alone: Isolation,
+    /// Whether the harness had answered before the clock ended the process, which only the engine records.
+    pub lingered: Linger,
+    /// The signal the process died of, where the producer recorded one.
+    pub signal: Option<i64>,
+    /// Every test the harness said failed, which only the engine records.
+    pub failed_tests: Vec<String>,
+}
+
+/// What a recording establishes about whether a process outlived its harness's answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum Linger {
+    /// This producer did not record it.
+    Unrecorded,
+    /// The process ended with its harness's answer, or the harness never answered.
+    Ended,
+    /// The harness had answered and the clock ended the process after it.
+    Outlived,
+}
+
+impl Linger {
+    /// What `recorded` says, where the field is a boolean or absent.
+    fn recorded(recorded: Option<&Value>) -> Self {
+        match recorded.and_then(Value::as_bool) {
+            None => Self::Unrecorded,
+            Some(false) => Self::Ended,
+            Some(true) => Self::Outlived,
+        }
+    }
 }
 
 /// What a recording establishes about whether an execution had the machine to itself.
@@ -183,24 +268,26 @@ impl Routing {
 /// # Errors
 /// A non-empty line that is not JSON is rejected.
 /// An audit must never turn a corrupt evidence stream into an apparently empty one.
-pub fn read(recorded: &str) -> Result<Routing, ReadError> {
-    Ok(from_events(&events(recorded)?))
+pub fn read(recorded: &str, producer: crate::schemas::Producer) -> Result<Routing, ReadError> {
+    from_events(&events(recorded, producer)?)
 }
 
 /// Reads routing records from events that have already passed the JSONL boundary.
-pub(crate) fn from_events(events: &[Value]) -> Routing {
+pub(crate) fn from_events(events: &[Value]) -> Result<Routing, ReadError> {
     let mut routing = Routing::default();
-    for event in events {
+    for (at, event) in events.iter().enumerate() {
+        let placed = |cause| ReadError {
+            line: at.saturating_add(1),
+            cause,
+        };
         match text(event, "type").as_deref() {
             Some("route") => {
-                if let Some(record) = event.get("route") {
-                    routing.routes.push(route(record));
-                }
+                let record = required(event, "route", Some).map_err(placed)?;
+                routing.routes.push(route(record).map_err(placed)?);
             }
             Some("mutant-exec") => {
-                if let Some(record) = event.get("mutant") {
-                    routing.execs.push(exec(record));
-                }
+                let record = required(event, "mutant", Some).map_err(placed)?;
+                routing.execs.push(exec(record).map_err(placed)?);
             }
             Some("note") => {
                 let noted = event.get("note");
@@ -217,25 +304,37 @@ pub(crate) fn from_events(events: &[Value]) -> Routing {
             _ => {}
         }
     }
-    routing
+    Ok(routing)
 }
 
-/// Parses every non-empty event in a recording without discarding a corrupt line.
-pub(crate) fn events(recorded: &str) -> Result<Vec<Value>, ReadError> {
+/// Parses every non-empty event in a recording without discarding a corrupt line, holding each to `producer`'s published schema first.
+///
+/// # Errors
+/// [`ReadError`] for the first line that is not JSON or not on its schema.
+pub(crate) fn events(
+    recorded: &str,
+    producer: crate::schemas::Producer,
+) -> Result<Vec<Value>, ReadError> {
+    let checker = crate::schemas::Checker::of(producer).map_err(|source| ReadError {
+        line: 0,
+        cause: ReadCause::Schema(source),
+    })?;
     recorded
         .lines()
         .enumerate()
         .filter(|(_, line)| !line.trim().is_empty())
         .map(|(index, line)| {
             let line_number = index.saturating_add(1);
-            let parsed = crate::strictjson::from_str(line).map_err(|source| ReadError {
+            let json = |source| ReadError {
                 line: line_number,
-                source,
+                cause: ReadCause::Json { source },
+            };
+            let parsed = crate::strictjson::from_str(line).map_err(json)?;
+            checker.check(&parsed).map_err(|source| ReadError {
+                line: line_number,
+                cause: ReadCause::OffSchema { source },
             })?;
-            nested_event(parsed).map_err(|source| ReadError {
-                line: line_number,
-                source,
-            })
+            nested_event(parsed).map_err(json)
         })
         .collect()
 }
@@ -268,60 +367,73 @@ fn nested_event(event: Value) -> Result<Value, serde_json::Error> {
 }
 
 /// One route record, from whichever producer wrote it.
-fn route(record: &Value) -> Route {
-    Route {
-        mutant: named(record),
+fn route(record: &Value) -> Result<Route, ReadCause> {
+    Ok(Route {
+        mutant: named(record)?,
         index: number(record, "index"),
-        granularity: text(record, "granularity").unwrap_or_default(),
+        granularity: required(record, "granularity", owned)?,
         fallback: text(record, "fallback"),
         reaching: strings(record, "reaching"),
-        discharged: discharges(record),
+        discharged: discharges(record)?,
         executed: strings(record, "executed"),
         considered: strings(record, "considered"),
         reused: text(record, "reused"),
         refused: text(record, "refused"),
-    }
+    })
 }
 
 /// One execution record, from whichever producer wrote it.
-fn exec(record: &Value) -> Exec {
-    Exec {
-        mutant: named(record),
+fn exec(record: &Value) -> Result<Exec, ReadCause> {
+    Ok(Exec {
+        mutant: named(record)?,
         index: number(record, "index"),
-        target: text(record, "target").unwrap_or_default(),
-        outcome: text(record, "outcome").unwrap_or_default(),
-        step_notice: record
-            .get("step_notice")
-            .filter(|notice| !notice.is_null())
-            .cloned(),
+        target: required(record, "target", owned)?,
+        outcome: required(record, "outcome", owned)?,
+        step_notice: match record.get("step_notice") {
+            None | Some(Value::Null) => None,
+            Some(notice) => Some(notice.clone()),
+        },
         tests_run: number(record, "tests_run"),
         duration_ms: number(record, "duration_ms"),
         alone: Isolation::recorded(record.get("alone")),
-    }
+        lingered: Linger::recorded(record.get("lingered")),
+        signal: record.get("signal").and_then(Value::as_i64),
+        failed_tests: strings(record, "failed_tests"),
+    })
 }
 
 /// The mutant a record is about: the runner writes `mutant`, the engine writes `id`.
-fn named(record: &Value) -> String {
+fn named(record: &Value) -> Result<String, ReadCause> {
     text(record, "mutant")
         .or_else(|| text(record, "id"))
-        .unwrap_or_default()
+        .ok_or_else(|| ReadCause::Absent {
+            field: "mutant or id".to_owned(),
+        })
 }
 
-/// Every target a proof removed, with the proof.
-fn discharges(record: &Value) -> Vec<Discharge> {
+/// Every target a proof removed, with the proof; none where the producer writes no such list.
+fn discharges(record: &Value) -> Result<Vec<Discharge>, ReadCause> {
     record
         .get("discharged")
         .and_then(Value::as_array)
         .map(|entries| {
             entries
                 .iter()
-                .map(|entry| Discharge {
-                    target: text(entry, "target").unwrap_or_default(),
-                    proof: text(entry, "proof").unwrap_or_default(),
+                .map(|entry| {
+                    Ok(Discharge {
+                        target: required(entry, "target", owned)?,
+                        proof: required(entry, "proof", owned)?,
+                    })
                 })
-                .collect()
+                .collect::<Result<Vec<Discharge>, ReadCause>>()
         })
-        .unwrap_or_default()
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+
+/// A string, owned.
+fn owned(value: &Value) -> Option<String> {
+    value.as_str().map(str::to_owned)
 }
 
 /// One string field, absent when it is absent or null.

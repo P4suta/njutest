@@ -193,3 +193,26 @@ fn a_knob_asked_for_and_not_put_or_compared_is_a_limitation_that_says_why() {
         );
     }
 }
+
+#[test]
+fn the_runner_knows_exactly_the_knobs_the_published_schema_names() {
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(
+            njutest_devkit::paths::workspace_root().join("schema/njutest-assurance-report-v1.json"),
+        )
+        .expect("the published report schema"),
+    )
+    .expect("the schema is JSON");
+    let published: Vec<&str> = schema
+        .pointer("/$defs/knob/enum")
+        .and_then(serde_json::Value::as_array)
+        .expect("the schema names its knobs")
+        .iter()
+        .map(|knob| knob.as_str().expect("a knob is a name"))
+        .collect();
+    let ours: Vec<&str> = Knob::ALL.iter().map(|knob| knob.name()).collect();
+    assert_eq!(
+        ours, published,
+        "the runner's knobs and the contract's are one list, in one order"
+    );
+}

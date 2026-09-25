@@ -3,6 +3,7 @@
 
 //! Driving a session: judging every mutant it holds, and what a run shares between the ones it is measuring at once.
 
+use std::collections::BTreeSet;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
@@ -77,8 +78,8 @@ impl Expectation {
 /// The exit code of a run that established detection for everything it executed.
 pub const EXIT_DETECTED: u8 = Exit::Detected.code();
 
-/// The exit code of a run that left something the tests did not notice.
-pub const EXIT_UNDETECTED: u8 = Exit::Undetected.code();
+/// The exit code of a run that reported a finding about the tests.
+pub const EXIT_FOUND: u8 = Exit::Found.code();
 
 /// The exit code of a run that was interrupted.
 pub const EXIT_INTERRUPTED: u8 = Exit::Interrupted.code();
@@ -113,6 +114,10 @@ pub enum CodegenIdentity {
 
 /// What one mutant's execution established.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is an independent fact about one judged mutant that the published report states"
+)]
 pub struct Judged {
     /// The dense catalog index the guards name.
     pub index: u32,
@@ -128,6 +133,8 @@ pub struct Judged {
     pub target: String,
     /// The exit status of the last execution.
     pub exit_code: i32,
+    /// Why the last execution's process never started, where it did not.
+    pub start_failure: Option<crate::execute::StartFailure>,
     /// How long every execution of this mutant took together.
     pub duration: Duration,
     /// How many tests ran, when the harness said.
@@ -138,6 +145,8 @@ pub struct Judged {
     pub signal: Option<i32>,
     /// Whether a first timeout was retried serially before the outcome was believed.
     pub retried: bool,
+    /// Whether the harness had already answered when the clock ended the process.
+    pub lingered: bool,
     /// The run that established this, when it was not this one.
     pub source_run_id: Option<String>,
     /// Whether a reviewer declared this outcome in advance and the run confirmed the claim.
@@ -280,7 +289,7 @@ impl FindingKind {
             | Self::DischargedMutant
             | Self::StaleExpectation
             | Self::UnmatchedExpectation
-            | Self::UnmatchedSkip => Exit::Undetected,
+            | Self::UnmatchedSkip => Exit::Found,
             Self::StepLimitReachedMutant
             | Self::WaitedMutant
             | Self::ErroredMutant
@@ -301,7 +310,7 @@ pub enum Exit {
     /// Every mutant the run decided, the tests noticed.
     Detected,
     /// There is a finding about the tests.
-    Undetected,
+    Found,
     /// The run could not measure something it ran, or failed, or was used wrongly.
     Unestablished,
     /// The run was interrupted.
@@ -311,12 +320,20 @@ pub enum Exit {
 }
 
 impl Exit {
+    /// The exit a process that ended with `code` meant, or nothing where the table holds no such code, which is a failure rather than any verdict.
+    #[must_use]
+    pub fn read(code: i32) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|exit| i32::from(exit.code()) == code)
+    }
+
     /// The code the process ends with.
     #[must_use]
     pub const fn code(self) -> u8 {
         match self {
             Self::Detected => 0,
-            Self::Undetected => 1,
+            Self::Found => 1,
             Self::Unestablished => 2,
             Self::Interrupted => 130,
             Self::Terminated => 143,
@@ -328,7 +345,7 @@ impl Exit {
     pub const fn meaning(self) -> &'static str {
         match self {
             Self::Detected => "every mutant the run decided, the tests noticed",
-            Self::Undetected => {
+            Self::Found => {
                 "there is a finding about the tests: a survivor, a mutation no test reached or a \
                  proof removed, a mutation the run could not decide either way, or a stale or \
                  unmatched claim"
@@ -649,11 +666,18 @@ fn detail(kind: FindingKind, one: &Judged) -> String {
                 &one.target
             }
         ),
-        FindingKind::ErroredMutant => format!(
-            "the harness itself failed on {} with exit {}, so nothing about the tests was \
-             established",
-            one.display_id, one.exit_code
-        ),
+        FindingKind::ErroredMutant => match &one.start_failure {
+            Some(cause) => format!(
+                "the harness never started on {}: {}, so nothing about the tests was established",
+                one.display_id,
+                cause.sentence()
+            ),
+            None => format!(
+                "the harness itself failed on {} with exit {}, so nothing about the tests was \
+                 established",
+                one.display_id, one.exit_code
+            ),
+        },
         FindingKind::UnreachedMutant => format!(
             "no measured test reaches {}: the mutation lives in code the tests never execute",
             one.display_id
@@ -789,6 +813,10 @@ pub struct Reusing<'a> {
     pub keyed: &'a crate::outcomes::Keyed,
     /// This run, which is what a record it writes names.
     pub run_id: &'a str,
+    /// The records an answer is carried across an edit by (ADR 0041).
+    pub carried: &'a crate::carry::Store,
+    /// Which target last killed each mutant, which decides only the order targets are asked in.
+    pub killers: &'a crate::killers::Killers,
 }
 
 /// The part of a catalog one run answers for: the part a shard holds, and whether the run's own selection narrowed the catalog to some of the project's files.
@@ -1337,11 +1365,12 @@ fn one_mutant(
     options: &Options<'_>,
     cancel: &Cancel,
 ) -> Result<Judged, EngineError> {
-    if let Some(one) = reuse(session, mutant, options)? {
+    if let Some(one) = reuse(session, mutant, options, cancel)? {
         return Ok(one);
     }
-    let established = execute(session, mutant, options, cancel)?;
+    let (established, asked) = execute(session, mutant, options, cancel)?;
     keep(mutant, options, &established)?;
+    carry(session, mutant, (options, cancel), (&established, &asked))?;
     Ok(established)
 }
 
@@ -1639,20 +1668,15 @@ fn route(session: &Session, mutant: &Mutant, judged: &mut Judged) {
             reason: reason.name().to_owned(),
         });
     }
-    let decided = session.route(mutant);
-    let executed = if judged.source_run_id.is_some() || judged.outcome == Outcome::NotRun {
-        Vec::new()
-    } else {
-        decided.executed(&judged.target, judged.outcome.detected())
-    };
-    judged.route = Some(crate::report::run::route_document(
-        &decided,
-        executed.clone(),
-    ));
-    if !session.trace().is_enabled() || judged.measured {
+    if judged.measured {
         return;
     }
-    let mut record = decided.record(mutant, executed);
+    let decided = session.route(mutant);
+    judged.route = Some(crate::report::run::route_document(&decided, Vec::new()));
+    if !session.trace().is_enabled() {
+        return;
+    }
+    let mut record = decided.record(mutant, Vec::new());
     record.reused.clone_from(&judged.source_run_id);
     session.trace().route(record);
 }
@@ -1742,18 +1766,33 @@ fn execute(
     mutant: &Mutant,
     options: &Options<'_>,
     cancel: &Cancel,
-) -> Result<Judged, EngineError> {
-    let request = Request::new(mutant.id.to_string()).with_args(options.args.to_vec());
+) -> Result<(Judged, Vec<crate::execute::MutantResult>), EngineError> {
+    let first = match options.outcomes.as_ref() {
+        Some(reusing) => reusing.killers.of(mutant.id.as_str())?,
+        None => None,
+    };
+    let recording = match options.outcomes {
+        Some(_) => crate::session::Recording::Items,
+        None => crate::session::Recording::Off,
+    };
+    let request = Request::new(mutant.id.to_string())
+        .with_args(options.args.to_vec())
+        .trying_first(first)
+        .recording(recording);
     let judgement = session.judge(&request, options.quiet, cancel)?;
     let duration = judgement.duration();
     let retried = judgement.retried();
     let crate::session::Judgement {
-        attempts, route, ..
+        attempts,
+        route,
+        asked,
+        executed,
+        ..
     } = judgement;
     let result = attempts.into_result();
     let outcome = result.outcome();
     let tests_run = result.tests_run();
-    Ok(Judged {
+    let judged = Judged {
         index: mutant.index,
         id: mutant.id.to_string(),
         display_id: mutant.display_id.to_string(),
@@ -1761,18 +1800,21 @@ fn execute(
         step_notice: result.step_notice().cloned(),
         target: result.target,
         exit_code: result.exit_code,
+        start_failure: result.stopped.start_failure().cloned(),
         duration,
         tests_run,
         failed_tests: result.failed_tests,
         signal: result.signal,
         retried,
+        lingered: result.lingered,
         expected: false,
         not_run_reason: not_run_because(outcome, &route),
-        route: None,
+        route: Some(crate::report::run::route_document(&route, executed)),
         measured: true,
         identical: CodegenIdentity::NotMeasured,
         source_run_id: None,
-    })
+    };
+    Ok((judged, asked))
 }
 
 /// Why a mutant that was never executed was not, when it was not.
@@ -1843,6 +1885,7 @@ fn reuse(
     session: &Session,
     mutant: &Mutant,
     options: &Options<'_>,
+    cancel: &Cancel,
 ) -> Result<Option<Judged>, EngineError> {
     let Some(reusing) = options.outcomes else {
         return Ok(None);
@@ -1862,12 +1905,53 @@ fn reuse(
             key: key.to_string(),
             hit: found.is_some(),
             source_run_id: found.as_ref().map(|(_, record)| record.run_id.clone()),
+            rule: CacheRule::Exact.name().to_owned(),
+            refused: None,
         });
     }
     let Some((outcome, record)) = found else {
-        return Ok(None);
+        return carried(session, mutant, options, (reusing, cancel));
     };
-    Ok(Some(Judged {
+    Ok(Some(remembered(
+        mutant,
+        outcome,
+        Remembered {
+            target: record.target,
+            tests_run: record.tests_run,
+            failed_tests: record.failed_tests,
+            run_id: record.run_id,
+        },
+    )))
+}
+
+/// How an answer from an earlier run was looked up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+enum CacheRule {
+    /// Under the whole compiled closure, which any edit moves.
+    Exact,
+    /// Under the mutation's locus, across an edit its executions never entered (ADR 0041).
+    Carried,
+}
+
+impl CacheRule {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::Carried => "carried",
+        }
+    }
+}
+
+/// What an earlier run established about one mutant, as a judgement carries it.
+struct Remembered {
+    target: String,
+    tests_run: Option<u32>,
+    failed_tests: Vec<String>,
+    run_id: String,
+}
+
+fn remembered(mutant: &Mutant, outcome: Outcome, record: Remembered) -> Judged {
+    Judged {
         index: mutant.index,
         id: mutant.id.to_string(),
         display_id: mutant.display_id.to_string(),
@@ -1875,18 +1959,132 @@ fn reuse(
         step_notice: None,
         target: record.target,
         exit_code: 0,
+        start_failure: None,
         duration: Duration::ZERO,
         tests_run: record.tests_run,
         failed_tests: record.failed_tests,
         signal: None,
         retried: false,
+        lingered: false,
         expected: false,
         not_run_reason: None,
         route: None,
         measured: false,
         identical: CodegenIdentity::NotMeasured,
         source_run_id: Some(record.run_id),
-    }))
+    }
+}
+
+/// What an earlier run established about this mutation on another tree, where every premise of ADR 0041 carries it here.
+fn carried(
+    session: &Session,
+    mutant: &Mutant,
+    options: &Options<'_>,
+    (reusing, cancel): (Reusing<'_>, &Cancel),
+) -> Result<Option<Judged>, EngineError> {
+    let Some(locus) = session.locus(mutant) else {
+        return Ok(None);
+    };
+    let key = crate::carry::key(reusing.keyed, &locus);
+    let record = reusing.carried.get(&key)?;
+    let plan = match &record {
+        None => Vec::new(),
+        Some(_) => session.plan(mutant, options.args, cancel)?,
+    };
+    let decided = match &record {
+        None => None,
+        Some(record) => {
+            let targets: BTreeSet<String> = record
+                .executions
+                .iter()
+                .map(|one| one.target.clone())
+                .chain(plan.iter().map(|one| one.target.clone()))
+                .collect();
+            let now = session.now(&targets, cancel)?;
+            let believed = crate::carry::believe(record, &now, &plan).and_then(|()| {
+                if believable(session, mutant, record.outcome) {
+                    Ok(())
+                } else {
+                    Err(crate::carry::Refusal::Uncontrolled)
+                }
+            });
+            Some(believed)
+        }
+    };
+    if session.trace().is_enabled() {
+        session.trace().cache(crate::trace::CacheRecord {
+            mutant: mutant.display_id.to_string(),
+            key: key.to_string(),
+            hit: matches!(decided, Some(Ok(()))),
+            source_run_id: record.as_ref().map(|one| one.run_id.clone()),
+            rule: CacheRule::Carried.name().to_owned(),
+            refused: match decided {
+                Some(Err(refusal)) => Some(refusal.name().to_owned()),
+                Some(Ok(())) | None => None,
+            },
+        });
+    }
+    let (Some(record), Some(Ok(()))) = (record, decided) else {
+        return Ok(None);
+    };
+    session.believed(mutant.id.as_str(), record.clone(), plan)?;
+    Ok(Some(remembered(
+        mutant,
+        record.outcome.into(),
+        Remembered {
+            target: record.target,
+            tests_run: record.tests_run,
+            failed_tests: record.failed_tests,
+            run_id: record.run_id,
+        },
+    )))
+}
+
+/// Records what this run established under the mutation's locus, with every execution it rests on, so a later tree that differs only where none of them went can carry it.
+fn carry(
+    session: &Session,
+    mutant: &Mutant,
+    (options, cancel): (&Options<'_>, &Cancel),
+    (judged, asked): (&Judged, &[crate::execute::MutantResult]),
+) -> Result<(), EngineError> {
+    let Some(reusing) = options.outcomes else {
+        return Ok(());
+    };
+    let outcome = match judged.outcome {
+        Outcome::Killed => crate::outcomes::CacheOutcome::Killed,
+        Outcome::Survived => crate::outcomes::CacheOutcome::Survived,
+        Outcome::NotRun
+        | Outcome::StepLimitReached
+        | Outcome::Waited
+        | Outcome::Inconclusive
+        | Outcome::Errored => return Ok(()),
+    };
+    if cancel.is_cancelled() {
+        return Ok(());
+    }
+    let Some(locus) = session.locus(mutant) else {
+        return Ok(());
+    };
+    let plan = session.plan(mutant, options.args, cancel)?;
+    let Some(executions) = session.executions(asked, &plan) else {
+        return Ok(());
+    };
+    let record = crate::carry::Carried {
+        schema: crate::carry::SCHEMA.to_owned(),
+        locus,
+        keyed: reusing.keyed.clone(),
+        outcome,
+        target: judged.target.clone(),
+        tests_run: judged.tests_run,
+        failed_tests: judged.failed_tests.clone(),
+        run_id: reusing.run_id.to_owned(),
+        executions,
+    };
+    if record.validate().is_err() {
+        return Ok(());
+    }
+    reusing.carried.put(&record)?;
+    Ok(())
 }
 
 /// Whether this run may believe a remembered `outcome`: a survival is a claim about every target that reaches the mutant, and one that reaches it through a process this run cannot see into is a claim this run could not make.
@@ -1904,6 +2102,13 @@ fn believable(session: &Session, mutant: &Mutant, outcome: crate::outcomes::Cach
 /// Records what this run established, for the next run of this exact tree.
 /// Only an outcome about the mutant is kept: a run that could not decide, or that never ran, says nothing the next run could inherit.
 fn keep(mutant: &Mutant, options: &Options<'_>, judged: &Judged) -> Result<(), EngineError> {
+    if let Some(reusing) = options.outcomes.as_ref()
+        && judged.outcome == Outcome::Killed
+    {
+        reusing
+            .killers
+            .remember(mutant.id.as_str(), &judged.target)?;
+    }
     let Some(reusing) = options.outcomes else {
         return Ok(());
     };
@@ -1942,11 +2147,13 @@ fn unexecuted(mutant: &Mutant, reason: NotRunReason) -> Judged {
         step_notice: None,
         target: String::new(),
         exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
+        start_failure: None,
         duration: Duration::ZERO,
         tests_run: None,
         failed_tests: Vec::new(),
         signal: None,
         retried: false,
+        lingered: false,
         expected: false,
         not_run_reason: Some(reason),
         route: None,

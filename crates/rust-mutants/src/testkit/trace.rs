@@ -219,6 +219,7 @@ pub fn every_payload() -> Vec<Payload> {
                 outcome: "passed".to_owned(),
                 tests_run: Some(5),
                 duration_ms: 6,
+                args: vec!["--test-threads=1".to_owned()],
                 remembered: true,
                 retried: true,
             },
@@ -233,6 +234,8 @@ pub fn every_payload() -> Vec<Payload> {
                     }],
                     launcher: Some("umask 077".to_owned()),
                     arguments: vec!["--test-threads=1".to_owned()],
+                    delay: None,
+                    confirms: None,
                 },
                 outcome: "survived".to_owned(),
                 failed_tests: Vec::new(),
@@ -319,6 +322,8 @@ pub fn every_payload() -> Vec<Payload> {
                 key: "key".to_owned(),
                 hit: true,
                 source_run_id: Some("earlier-run".to_owned()),
+                rule: "exact".to_owned(),
+                refused: None,
             },
         },
         Payload::Select {
@@ -343,6 +348,7 @@ pub fn every_payload() -> Vec<Payload> {
         },
         Payload::MutantExec {
             mutant: MutantExecRecord {
+                entered_records: None,
                 id: "abcdef".to_owned(),
                 index: 1,
                 target: "demo/lib/demo".to_owned(),
@@ -356,6 +362,7 @@ pub fn every_payload() -> Vec<Payload> {
                 timeout_ms: 30_000,
                 timeout_source: "configured".to_owned(),
                 alone: true,
+                lingered: true,
             },
         },
         Payload::Note {
@@ -366,7 +373,7 @@ pub fn every_payload() -> Vec<Payload> {
         },
         Payload::RunEnd {
             run: RunRecord {
-                outcome: "failed".to_owned(),
+                outcome: crate::trace::RunOutcome::Failed,
                 error: Some("one failure".to_owned()),
                 events_emitted: 22,
                 events_dropped: 1,
@@ -398,15 +405,70 @@ pub fn every_payload() -> Vec<Payload> {
     payloads
 }
 
+/// Every reason a process never started, named so extending the enum extends the specimen ledger at compile time.
+#[must_use]
+pub fn every_start_failure() -> [crate::execute::StartFailure; 9] {
+    use crate::execute::StartFailure;
+
+    let causes = [
+        StartFailure::Missing,
+        StartFailure::Denied,
+        StartFailure::Busy,
+        StartFailure::Exhausted,
+        StartFailure::Unsupervised,
+        StartFailure::Malformed,
+        StartFailure::Unprepared,
+        StartFailure::NotAsked,
+        StartFailure::Other {
+            detail: "Operation not supported (os error 45)".to_owned(),
+        },
+    ];
+    for one in &causes {
+        match one {
+            StartFailure::Missing
+            | StartFailure::Denied
+            | StartFailure::Busy
+            | StartFailure::Exhausted
+            | StartFailure::Unsupervised
+            | StartFailure::Malformed
+            | StartFailure::Unprepared
+            | StartFailure::NotAsked
+            | StartFailure::Other { .. } => {}
+        }
+    }
+    causes
+}
+
 /// Every way a process can stop, named so extending the enum extends the specimen ledger at compile time.
 #[must_use]
-pub fn every_stopped() -> [crate::execute::Stopped; 10] {
+pub fn every_stopped() -> [crate::execute::Stopped; 19] {
     use crate::execute::Stopped;
 
     let exits = every_process_exit();
     let protocol = every_step_protocol_failure();
+    let [
+        missing,
+        denied,
+        busy,
+        exhausted,
+        unsupervised,
+        malformed,
+        unprepared,
+        not_asked,
+        other,
+    ] = every_start_failure();
     let stopped = [
-        Stopped::NotStarted,
+        Stopped::NotStarted { cause: missing },
+        Stopped::NotStarted { cause: denied },
+        Stopped::NotStarted { cause: busy },
+        Stopped::NotStarted { cause: exhausted },
+        Stopped::NotStarted {
+            cause: unsupervised,
+        },
+        Stopped::NotStarted { cause: malformed },
+        Stopped::NotStarted { cause: unprepared },
+        Stopped::NotStarted { cause: not_asked },
+        Stopped::NotStarted { cause: other },
         Stopped::Exited { exit: exits[0] },
         Stopped::Exited { exit: exits[1] },
         Stopped::Exited { exit: exits[2] },
@@ -420,17 +482,19 @@ pub fn every_stopped() -> [crate::execute::Stopped; 10] {
         Stopped::StepProtocolFailed {
             reason: protocol[0].clone(),
         },
+        Stopped::Answered,
     ];
     for one in &stopped {
         match one {
-            Stopped::NotStarted
+            Stopped::NotStarted { .. }
             | Stopped::Exited { .. }
             | Stopped::TimedOut { .. }
             | Stopped::Stalled { .. }
             | Stopped::Cancelled { .. }
             | Stopped::WaitFailed
             | Stopped::StepLimitReached { .. }
-            | Stopped::StepProtocolFailed { .. } => {}
+            | Stopped::StepProtocolFailed { .. }
+            | Stopped::Answered => {}
         }
     }
     stopped

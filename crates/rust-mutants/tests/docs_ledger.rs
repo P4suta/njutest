@@ -144,6 +144,24 @@ fn the_operators_page_names_every_rule_and_counts_them_as_the_table_does() {
         missing.is_empty(),
         "docs/engine/operators.md does not name the families {missing:?}"
     );
+    for family in rust_mutants::rule::Family::ALL {
+        let rules: Vec<&rust_mutants::rule::Rule> = rust_mutants::rule::CANONICAL_TABLE
+            .iter()
+            .filter(|rule| rule.family == family)
+            .collect();
+        let chosen: BTreeSet<&str> = rules.iter().map(|rule| rule.chosen_by()).collect();
+        let row = text
+            .lines()
+            .find(|line| line.starts_with(&format!("| `{}` |", family.name())));
+        let said = row
+            .and_then(|row| row.trim_end_matches('|').rsplit('|').next())
+            .map(str::trim);
+        assert!(
+            chosen.len() == 1 && said.is_some_and(|said| chosen.contains(said)),
+            "the row of {} says its rules are chosen by {said:?}, and the table by {chosen:?}",
+            family.name()
+        );
+    }
     for (many, noun) in [
         (rust_mutants::rule::CANONICAL_FAMILY_COUNT, "families"),
         (rust_mutants::rule::CANONICAL_RULE_COUNT, "rules"),

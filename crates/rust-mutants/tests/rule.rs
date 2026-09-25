@@ -62,9 +62,9 @@ fn the_canonical_table_has_the_documented_shape() {
         "the canonical table satisfies every registry invariant: {valid:?}"
     );
     assert_eq!(registry.len(), CANONICAL_RULE_COUNT);
-    assert_eq!(CANONICAL_RULE_COUNT, 74);
+    assert_eq!(CANONICAL_RULE_COUNT, 76);
     assert_eq!(registry.families().len(), CANONICAL_FAMILY_COUNT);
-    assert_eq!(CANONICAL_FAMILY_COUNT, 17);
+    assert_eq!(CANONICAL_FAMILY_COUNT, 19);
     let expected: Vec<(Family, Tier, Vec<&str>)> = vec![
         (
             Family::BooleanLiteral,
@@ -217,6 +217,8 @@ fn the_canonical_table_has_the_documented_shape() {
                 "saturating-mul-to-wrapping-mul",
             ],
         ),
+        (Family::Fault, Tier::All, vec!["inject-error"]),
+        (Family::Durable, Tier::All, vec!["crash-after-write"]),
     ];
     let mut position = 0;
     for (index, (family, tier, names)) in expected.iter().enumerate() {
@@ -270,6 +272,10 @@ fn select_tier_returns_every_rule_at_or_below_the_tier_in_table_order() {
     assert_eq!(balanced.len(), 35);
     assert_eq!(strong.len(), 64);
     assert_eq!(all.len(), 74);
+    assert!(
+        all.iter().all(|rule| rule.family != Family::Fault),
+        "no tier chooses a fault: it asks another question of the suite than a mutant does"
+    );
     assert!(balanced.iter().all(|r| r.tier == Tier::Balanced));
     assert_eq!(
         &strong[..balanced.len()],
@@ -281,7 +287,15 @@ fn select_tier_returns_every_rule_at_or_below_the_tier_in_table_order() {
         &strong[..],
         "strong ⊂ all, in table order"
     );
-    assert_eq!(all, registry.rules().to_vec());
+    assert_eq!(
+        all,
+        registry
+            .rules()
+            .iter()
+            .copied()
+            .filter(|rule| rule.family.chosen_by_tiers())
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -492,4 +506,24 @@ fn the_declared_order_of_a_family_is_the_order_the_table_first_names_it() {
          table. Nothing reads `ALL` for its order today, which is exactly when two \
          declarations of one fact are cheapest to bring together"
     );
+}
+
+#[test]
+fn a_fault_is_chosen_by_name_alone_and_no_proof_removes_a_target_from_it() {
+    for family in Family::ALL {
+        let fault = family == Family::Fault || family == Family::Durable;
+        assert_eq!(
+            family.chosen_by_tiers(),
+            !fault,
+            "{}: a tier chooses every mutation family and no fault",
+            family.name()
+        );
+        assert_eq!(
+            family.proofs_apply(),
+            !fault,
+            "{}: a proof read off the unperturbed program speaks past a mutant's site and not \
+             past a fault's",
+            family.name()
+        );
+    }
 }

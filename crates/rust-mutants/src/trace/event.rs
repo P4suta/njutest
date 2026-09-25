@@ -664,6 +664,8 @@ pub struct VerifyRecord {
     pub tests_run: Option<u32>,
     /// How long it took, which is what a derived timeout is five times.
     pub duration_ms: u64,
+    /// The harness arguments it was run with, verbatim, which is how many threads libtest ran its tests on.
+    pub args: Vec<String>,
     /// Whether this exact passing measurement was read back instead of running the target again.
     pub remembered: bool,
     /// Whether the target had to be run a second time, because the first run did not pass.
@@ -704,6 +706,22 @@ pub struct PerturbationRecord {
     pub launcher: Option<String>,
     /// The harness arguments its schedule added after the baseline's.
     pub arguments: Vec<String>,
+    /// The guard each thread paused at the first time it reached it, or nothing.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub delay: Option<DelayRecord>,
+    /// The guard whose delayed failure this undelayed control confirms, or nothing.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub confirms: Option<u32>,
+}
+
+/// The one guard a control paused each of its threads at, once: which schedule it ran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DelayRecord {
+    /// The catalog index of the guard.
+    pub site: u32,
+    /// How many milliseconds each thread paused there.
+    pub pause_ms: u64,
 }
 
 /// What one control started under a perturbation came to, and what became of the reach it could have recorded.
@@ -917,6 +935,11 @@ pub struct MutantExecRecord {
     pub timeout_source: String,
     /// Whether it ran with nothing else this run started running beside it, which is what a confirming retry does.
     pub alone: bool,
+    /// How many records the process wrote naming the items it entered, when it was asked to record them (ADR 0027 measures what recording costs by this).
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub entered_records: Option<u32>,
+    /// Whether the harness had already answered when the clock ended the process, so the verdict is the harness's.
+    pub lingered: bool,
 }
 
 /// What the outcome store was asked about one mutant.
@@ -932,6 +955,11 @@ pub struct CacheRecord {
     /// The run that established it, when one did.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub source_run_id: Option<String>,
+    /// How the key was taken: `exact`, under the whole compiled closure, or `carried`, under the mutation's locus (ADR 0041).
+    pub rule: String,
+    /// The premise a carried record failed, in the closed words of ADR 0041, where one did.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub refused: Option<String>,
 }
 
 /// Why one mutant was never executed.
@@ -940,7 +968,7 @@ pub struct CacheRecord {
 pub struct SelectRecord {
     /// The mutant's display identity.
     pub mutant: String,
-    /// `unreached`, `discharged`, or `interrupted`.
+    /// Why it did not run: the name of one [`crate::run::NotRunReason`].
     pub reason: String,
 }
 
@@ -979,12 +1007,44 @@ pub struct NoteRecord {
     pub detail: String,
 }
 
+/// How a recorded run ended.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, njutest_macros::AllVariants,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum RunOutcome {
+    /// Every mutation the run judged was noticed.
+    Detected,
+    /// The run reported a finding a person has to act on: a survivor, a stale claim, or something it could not decide.
+    Found,
+    /// The run was cancelled before it finished.
+    Interrupted,
+    /// The run stopped on an error.
+    Failed,
+    /// The run finished and left judging what it measured to the program that embedded it.
+    Completed,
+}
+
+impl RunOutcome {
+    /// The name a recording spells it with.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Detected => "detected",
+            Self::Found => "found",
+            Self::Interrupted => "interrupted",
+            Self::Failed => "failed",
+            Self::Completed => "completed",
+        }
+    }
+}
+
 /// The accounting that closes a recording.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunRecord {
-    /// How the run ended, in the caller's words.
-    pub outcome: String,
+    /// How the run ended.
+    pub outcome: RunOutcome,
     /// The error that ended it, rendered, if one did.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub error: Option<String>,

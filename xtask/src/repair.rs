@@ -26,7 +26,7 @@ pub struct Repair {
 /// A corrupt non-empty line is rejected rather than disappearing from the evidence.
 pub fn read(recorded: &str) -> Result<Vec<Repair>, crate::route::ReadError> {
     let mut repairs = Vec::new();
-    for event in crate::route::events(recorded)? {
+    for event in crate::route::events(recorded, crate::schemas::Producer::Runner)? {
         if event.get("type").and_then(Value::as_str) != Some("repair") {
             continue;
         }
@@ -75,6 +75,14 @@ pub enum Contradiction {
         /// What it said.
         outcome: String,
     },
+}
+
+impl crate::error::Coded for Contradiction {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::NotRun { .. } | Self::Outcome { .. } => crate::error::XtCode::RepairContradicted,
+        }
+    }
 }
 
 /// What a repair of a mutation at `index` whose last execution came to `outcome`, with the repair touch record `touch`, decides, `was` being what it had.

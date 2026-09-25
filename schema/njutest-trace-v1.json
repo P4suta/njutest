@@ -4,6 +4,30 @@
   "title": "njutest trace v1",
   "description": "One line of the current diagnostic trace. Every owned object is closed and every nullable field is explicitly present.",
   "$defs": {
+    "startFailure": {
+      "description": "Why the process never started.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "enum": ["missing", "denied", "busy", "exhausted", "unsupervised", "malformed", "unprepared", "not-asked"]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "detail"],
+          "properties": {
+            "kind": { "const": "other" },
+            "detail": { "type": "string" }
+          }
+        }
+      ]
+    },
     "processExit": {
       "oneOf": [
         {
@@ -37,8 +61,11 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind"],
-          "properties": { "kind": { "const": "not-started" } }
+          "required": ["kind", "cause"],
+          "properties": {
+            "kind": { "const": "not-started" },
+            "cause": { "$ref": "#/$defs/startFailure" }
+          }
         },
         {
           "type": "object",
@@ -89,6 +116,12 @@
           "additionalProperties": false,
           "required": ["kind"],
           "properties": { "kind": { "const": "wait-failed" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "answered" } }
         },
         {
           "type": "object",
@@ -154,7 +187,7 @@
                 "rust_mutants": { "type": "string", "minLength": 1 },
                 "run_id": { "type": "string", "minLength": 1 },
                 "run_kind": { "enum": ["full", "changed", "scoped"] },
-                "contract": { "enum": ["standard-v1", "deep-v1", "verified-v1"] }
+                "contract": { "enum": ["standard-v1", "deep-v1", "verified-v1", "whole-v1"] }
               }
             }
           }
@@ -330,6 +363,239 @@
                 }
               ]
             }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "fault"],
+          "properties": {
+            "type": { "const": "fault-exec" },
+            "fault": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fault", "role", "target", "args", "outcome", "duration_ms", "alone"],
+              "properties": {
+                "fault": { "type": "string", "minLength": 1 },
+                "role": { "enum": ["first", "confirmation", "attribution", "attribution-control"] },
+                "target": { "type": "string", "minLength": 1 },
+                "args": { "type": "array", "items": { "type": "string" } },
+                "outcome": { "enum": ["not_run", "killed", "survived", "step_limit_reached", "waited", "inconclusive", "errored"] },
+                "duration_ms": { "type": "integer", "minimum": 0 },
+                "alone": { "type": "boolean" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "attribution"],
+          "properties": {
+            "type": { "const": "fault-attribution" },
+            "attribution": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fault", "target", "path", "faulted", "passed", "unfaulted"],
+              "properties": {
+                "fault": { "type": "string", "minLength": 1 },
+                "target": { "type": "string", "minLength": 1 },
+                "path": { "type": "string", "minLength": 1 },
+                "faulted": { "type": "boolean" },
+                "passed": { "type": "boolean" },
+                "unfaulted": { "enum": ["not-asked", "wrote", "did-not-write"] }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "route"],
+          "properties": {
+            "type": { "const": "fault-route" },
+            "route": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fault", "reaching"],
+              "properties": {
+                "fault": { "type": "string", "minLength": 1 },
+                "reaching": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "rejected"],
+          "properties": {
+            "type": { "const": "fault-rejected" },
+            "rejected": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fault", "diagnostic"],
+              "properties": {
+                "fault": { "type": "string", "minLength": 1 },
+                "diagnostic": { "type": "string" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "control"],
+          "properties": {
+            "type": { "const": "fault-control" },
+            "control": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fault", "target", "passed"],
+              "properties": {
+                "fault": { "type": "string", "minLength": 1 },
+                "target": { "type": "string", "minLength": 1 },
+                "passed": { "type": "boolean" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "fault"],
+          "properties": {
+            "type": { "const": "fault" },
+            "fault": { "$ref": "njutest-assurance-report-v1.json#/$defs/fault" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "beside"],
+          "properties": {
+            "type": { "const": "beside" },
+            "beside": { "$ref": "njutest-assurance-report-v1.json#/$defs/beside" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "pair"],
+          "properties": {
+            "type": { "const": "beside-run" },
+            "pair": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["mutant", "fault", "target", "alone", "with"],
+              "properties": {
+                "mutant": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
+                "fault": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
+                "target": { "type": "string", "minLength": 1 },
+                "alone": { "enum": ["not_run", "killed", "survived", "step_limit_reached", "waited", "inconclusive", "errored"] },
+                "with": { "enum": ["not_run", "killed", "survived", "step_limit_reached", "waited", "inconclusive", "errored"] }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "crash"],
+          "properties": {
+            "type": { "const": "crash-exec" },
+            "crash": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["crash", "target", "test", "stage", "exit_code", "outcome", "noticed", "issued", "left", "failed"],
+              "properties": {
+                "crash": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
+                "target": { "type": "string", "minLength": 1 },
+                "test": { "type": "string", "minLength": 1 },
+                "stage": { "enum": ["crash", "next", "fresh"] },
+                "exit_code": { "type": "integer" },
+                "noticed": { "type": "boolean" },
+                "issued": {
+                  "oneOf": [
+                    { "type": "null" },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["mutant", "catalog", "nonce", "read"],
+                      "properties": {
+                        "mutant": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                        "catalog": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                        "nonce": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+                        "read": { "oneOf": [{ "type": "null" }, { "type": "string" }] }
+                      }
+                    }
+                  ]
+                },
+                "outcome": { "enum": ["not_run", "killed", "survived", "step_limit_reached", "waited", "inconclusive", "errored"] },
+                "left": { "type": "array", "items": { "type": "string" } },
+                "failed": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "step"],
+          "properties": {
+            "type": { "const": "crash-step" },
+            "step": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["crash", "taken"],
+              "properties": {
+                "crash": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
+                "taken": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["kind"],
+                      "properties": { "kind": { "enum": ["rejected", "tainted", "outside"] } }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["kind", "asked"],
+                      "properties": {
+                        "kind": { "const": "route" },
+                        "asked": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["target", "tests"],
+                            "properties": {
+                              "target": { "type": "string", "minLength": 1 },
+                              "tests": {
+                                "oneOf": [
+                                  { "type": "null" },
+                                  { "type": "array", "items": { "type": "string", "minLength": 1 } }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "crash"],
+          "properties": {
+            "type": { "const": "crash" },
+            "crash": { "$ref": "njutest-assurance-report-v1.json#/$defs/crash" }
           }
         },
         {

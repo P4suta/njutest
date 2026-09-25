@@ -907,6 +907,9 @@ fn every_survivor_and_affirmative_model_outcome_has_exactly_one_model_record() {
                     &source.mutants[0].display_id.clone(),
                     "no test noticed it",
                 )];
+                source
+                    .findings
+                    .extend(njutest::report::derived::findings(source));
             }
         })
         .expect_err("verified-v1 cannot complete without its model batch");
@@ -1170,7 +1173,7 @@ fn every_standing() -> Vec<njutest::report::knobs::KnobRecord> {
     ]
     .into_iter()
     .map(|(knob, standing)| KnobRecord {
-        target: "core/lib/core".to_owned(),
+        target: "core/lib/adds::works".to_owned(),
         knob,
         standing,
     })
@@ -1213,16 +1216,16 @@ fn knob_records_that_repeat_or_cover_different_targets_are_refused() {
     for (records, said) in [
         (
             vec![
-                record(Knob::Timezone, "core/lib/core"),
-                record(Knob::Timezone, "core/lib/core"),
+                record(Knob::Timezone, "core/lib/adds::works"),
+                record(Knob::Timezone, "core/lib/adds::works"),
             ],
-            "timezone is recorded twice for core/lib/core",
+            "timezone is recorded twice for core/lib/adds::works",
         ),
         (
             vec![
-                record(Knob::Timezone, "core/lib/core"),
+                record(Knob::Timezone, "core/lib/adds::works"),
                 record(Knob::Timezone, "core/test/it"),
-                record(Knob::Locale, "core/lib/core"),
+                record(Knob::Locale, "core/lib/adds::works"),
             ],
             "locale was put on other targets than timezone",
         ),
@@ -1234,5 +1237,112 @@ fn knob_records_that_repeat_or_cover_different_targets_are_refused() {
             refused.to_string().contains(said),
             "a knob asked for is put on every target whose baseline passed, once: {refused}"
         );
+    }
+}
+
+#[test]
+fn a_whole_report_whose_dimension_findings_were_deleted_is_still_not_assured() {
+    let refused = populated_varying(&|source: &mut BuildReport| {
+        source.contract = njutest::config::Contract::WholeV1;
+        source
+            .findings
+            .retain(|finding| finding.kind != FindingKind::DimensionNotMeasured);
+    })
+    .expect_err("a whole-v1 report with no dimension finding stored");
+    let said = format!("{refused:?}");
+    assert!(
+        ["durable", "fault", "repeatable"]
+            .iter()
+            .all(|dimension| said.contains(dimension)),
+        "the holes are derived from the records a report holds, so a report that drops the \
+         findings naming them is refused: {said}"
+    );
+}
+
+#[test]
+fn a_report_whose_thread_records_were_deleted_has_a_schedule_hole_and_not_nothing_to_ask() {
+    let refused = populated_varying(&|source: &mut BuildReport| {
+        source.contract = njutest::config::Contract::WholeV1;
+        source.concurrency.clear();
+    })
+    .expect_err("a whole-v1 report with no thread record and no finding saying so");
+    assert!(
+        format!("{refused:?}")
+            .contains("dimension-not-measured findings disagree with the records")
+            && format!("{refused:?}").contains("schedule"),
+        "a target passed its baseline and nothing says whether it runs one thread, which is a \
+         schedule hole the report has to name: {refused:?}"
+    );
+}
+
+#[test]
+fn knob_records_that_leave_out_a_target_whose_baseline_passed_are_refused() {
+    use njutest::report::knobs::{Knob, KnobRecord, Standing};
+    let refused = populated_varying(&|source| {
+        source.knobs = vec![KnobRecord {
+            target: "core/test/it::slow".to_owned(),
+            knob: Knob::Timezone,
+            standing: Standing::Stable,
+        }];
+    })
+    .expect_err("the target that passed has no knob record");
+    assert!(
+        refused.to_string().contains("core/lib/adds::works"),
+        "a knob asked for is put on every target whose baseline passed, so a report that drops \
+         one target's rows is refused rather than read as that target being repeatable: {refused}"
+    );
+}
+
+#[test]
+fn a_finding_the_records_decide_can_be_neither_invented_nor_dropped() {
+    let refused = |vary: &dyn Fn(&mut BuildReport)| match populated_varying(vary) {
+        Ok(_) => String::new(),
+        Err(error) => format!("{error:?}"),
+    };
+    let invented = refused(&|source: &mut BuildReport| {
+        source.findings.push(Finding::new(
+            FindingKind::EnvironmentDependent,
+            "pkg/test/it",
+            "planted: no knob record says anything broke",
+        ));
+    });
+    assert!(
+        invented.contains("environment-dependent findings disagree with the records"),
+        "a finding the knob records decide, stored where no record raises it, is refused: \
+         {invented}"
+    );
+    let dropped = refused(&|source: &mut BuildReport| {
+        source.contract = njutest::config::Contract::WholeV1;
+        let rows = njutest::report::matrix::rows(&njutest::report::matrix::Evidence::of(source));
+        source
+            .findings
+            .extend(njutest::report::matrix::holes(&rows));
+        source.findings.retain(|finding| finding.subject != "fault");
+    });
+    assert!(
+        dropped.contains("dimension-not-measured findings disagree with the records"),
+        "a finding the records raise, dropped from the report, is refused rather than read \
+         past: {dropped}"
+    );
+}
+
+#[test]
+fn every_kind_the_records_decide_is_refused_where_no_record_raises_it() {
+    for kind in FindingKind::ALL {
+        let planted = populated_varying(&|source: &mut BuildReport| {
+            source
+                .findings
+                .push(Finding::new(kind, "planted", "no record raises this"));
+        });
+        match kind.derivation() {
+            njutest::report::Derivation::Records => assert!(
+                format!("{planted:?}").contains("disagree with the records"),
+                "{} is decided by the records, so one no record raises is refused: {planted:?}",
+                kind.name()
+            ),
+            njutest::report::Derivation::Row
+            | njutest::report::Derivation::Shared
+            | njutest::report::Derivation::Observed => {}
+        }
     }
 }
