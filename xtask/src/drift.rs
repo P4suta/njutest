@@ -48,6 +48,8 @@ pub struct Touch {
     pub bodies: BTreeSet<u64>,
     /// Every mutation anything of it saw its guard's two branches differ over.
     pub infected: BTreeSet<u64>,
+    /// Every item anything of it entered the body of.
+    pub entered: BTreeSet<u64>,
 }
 
 impl Touch {
@@ -59,6 +61,7 @@ impl Touch {
         self.reached == other.reached
             && self.bodies == other.bodies
             && self.infected == other.infected
+            && self.entered == other.entered
     }
 }
 
@@ -127,7 +130,8 @@ pub fn read(recorded: &str) -> Result<Touched, crate::route::ReadError> {
     Ok(touched)
 }
 
-fn touch(record: &Value) -> Option<Touch> {
+/// One touch record, or nothing where it lacks what a re-derivation needs.
+pub(crate) fn touch(record: &Value) -> Option<Touch> {
     let named = record.get("passed")?.as_array()?.len();
     let summary = record.get("summary")?;
     let whole = match summary.get("protocol")?.as_str()? {
@@ -152,6 +156,7 @@ fn touch(record: &Value) -> Option<Touch> {
         reached: indices(record.get("reached_sites")?)?,
         bodies: indices(record.get("entered_bodies")?)?,
         infected: indices(record.get("infected_sites")?)?,
+        entered: indices(record.get("entered_items")?)?,
     })
 }
 

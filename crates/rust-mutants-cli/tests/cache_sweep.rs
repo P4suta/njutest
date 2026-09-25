@@ -360,15 +360,7 @@ fn emptying_what_earlier_runs_established_says_how_much_was_in_it() {
             tests_run: Some(3),
             failed_tests: vec!["adds".to_owned()],
             run_id: "20260101T000000000Z".to_owned(),
-            keyed: rust_mutants::outcomes::Keyed {
-                closure: "c".repeat(64),
-                manifests: "m".repeat(64),
-                toolchain: "cargo 1.98.0 rustc 1.98.0 aarch64-apple-darwin".to_owned(),
-                args: Vec::new(),
-                timeout: "auto".to_owned(),
-                steps: 0,
-                build: Vec::new(),
-            },
+            keyed: rust_mutants::testkit::stored::keyed(),
         })
         .expect("the cache record is stored");
 

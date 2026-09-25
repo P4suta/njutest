@@ -19,6 +19,8 @@ Commands:
   review       Go through one run's gaps, one at a time, deciding as you read
   fix          Say what repairs a run was offered, and write the ones that hold up
   replay       Put one finding back to the tests and say whether it is still there
+  measure      Record what each test target enters, for `njutest select` to read
+  select       Say which test targets can notice what changed since `njutest measure`
   trace        Read what a run recorded
   diagnostics  Bundle everything about one run into one directory
   doctor       Report the toolchain and the tools a run needs

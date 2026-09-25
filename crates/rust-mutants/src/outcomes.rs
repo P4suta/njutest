@@ -102,13 +102,16 @@ pub struct Keyed {
     pub steps: u64,
     /// The cargo arguments the tree was compiled with, because the same tree compiled two ways is two programs.
     pub build: Vec<String>,
+    /// The digest of the engine that decided, because two builds of it may mean two different things by the same verdict.
+    /// Empty where the engine could not be read, which remembers nothing.
+    pub engine: String,
 }
 
 impl Keyed {
     /// Whether this names enough to remember anything by.
     #[must_use]
     pub const fn usable(&self) -> bool {
-        !self.closure.is_empty()
+        !self.closure.is_empty() && !self.engine.is_empty()
     }
 
     /// The key one mutant's record is filed under.
@@ -127,6 +130,7 @@ impl Keyed {
             mutant.as_str(),
             &self.timeout,
             &self.steps.to_string(),
+            &self.engine,
         ] {
             hash_length(&mut hasher, field.len());
             hasher.update(field.as_bytes());
@@ -184,6 +188,23 @@ pub struct Exported {
     pub abi: Abi,
     /// Every record, each carrying what it was keyed on, in key order.
     pub records: Vec<Record>,
+}
+
+/// The digest of the engine executable at `program`, which is what a remembered verdict was decided by.
+///
+/// # Errors
+/// The file could not be read.
+pub fn engine_of(program: &Path) -> io::Result<String> {
+    let mut file = std::fs::File::open(program)?;
+    let mut hasher = Sha256::new();
+    let mut chunk = vec![0_u8; 1 << 16];
+    loop {
+        let read = io::Read::read(&mut file, &mut chunk)?;
+        let Some(held) = chunk.get(..read).filter(|held| !held.is_empty()) else {
+            return Ok(HexDigest::finish(hasher).to_string());
+        };
+        hasher.update(held);
+    }
 }
 
 /// Why a durable outcome could not be read or written exactly.

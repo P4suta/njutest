@@ -1646,7 +1646,10 @@ fn reuse(
     }
     let mutant_id = crate::id::HexDigest::try_from(mutant.id.as_str())?;
     let key = reusing.keyed.key(&mutant_id);
-    let found = reusing.store.get(&key, &mutant_id)?;
+    let found = reusing
+        .store
+        .get(&key, &mutant_id)?
+        .filter(|(_, record)| believable(session, mutant, record.outcome));
     if session.trace().is_enabled() {
         session.trace().cache(crate::trace::CacheRecord {
             mutant: mutant.display_id.to_string(),
@@ -1678,6 +1681,18 @@ fn reuse(
         identical: CodegenIdentity::NotMeasured,
         source_run_id: Some(record.run_id),
     }))
+}
+
+/// Whether this run may believe a remembered `outcome`: a survival is a claim about every target that reaches the mutant, and one that reaches it through a process this run cannot see into is a claim this run could not make.
+fn believable(session: &Session, mutant: &Mutant, outcome: crate::outcomes::CacheOutcome) -> bool {
+    match outcome {
+        crate::outcomes::CacheOutcome::Killed => true,
+        crate::outcomes::CacheOutcome::Survived => !session
+            .route(mutant)
+            .reaching()
+            .into_iter()
+            .any(|target| session.uncontrolled(target)),
+    }
 }
 
 /// Records what this run established, for the next run of this exact tree.

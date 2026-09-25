@@ -98,20 +98,7 @@ fn record(round: u64) -> rust_mutants::outcomes::Record {
             .map(|one| format!("cases::round_{round}::test_{one:04}"))
             .collect(),
         run_id: format!("run-{round}"),
-        keyed: keyed(),
-    }
-}
-
-/// What a sample record is keyed on beyond its mutant.
-fn keyed() -> rust_mutants::outcomes::Keyed {
-    rust_mutants::outcomes::Keyed {
-        closure: "c".repeat(64),
-        manifests: "m".repeat(64),
-        toolchain: "cargo 1.98.0 rustc 1.98.0 aarch64-apple-darwin".to_owned(),
-        args: Vec::new(),
-        timeout: "auto".to_owned(),
-        steps: 0,
-        build: Vec::new(),
+        keyed: rust_mutants::testkit::stored::keyed(),
     }
 }
 

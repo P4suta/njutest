@@ -118,6 +118,8 @@ jobs:
         run: taplo fmt --check && taplo lint
       - name: actionlint
         run: actionlint
+      - name: every workflow the documentation shows passes actionlint against this repository's actions
+        run: cargo xtask docflows
       # Dependabot writes the body of a commit as the changelog it copied, and neither it nor anybody here wraps that at a hundred columns.
       # The rule is about a message somebody wrote, and what lands on `main` from one of those pull requests is the squash subject, which is its own `chore:` line and conventional already.
       - name: committed (pull request commits)
@@ -404,13 +406,18 @@ jobs:
           working-directory: fixtures/fixture-assured
           args: --offline --locked --ui=plain
           upload-sarif: "false"
-      - name: The verdict the action reports is the one the run reached
+      - name: The verdict is the one the run reached, and every path the action reports is a file
         env:
-          VERDICT: ${{ steps.njutest.outputs.verdict }}
-          REPORT: ${{ steps.njutest.outputs.report }}
+          OUTPUTS: ${{ toJSON(steps.njutest.outputs) }}
         run: |
-          test "$VERDICT" = ASSURED || { echo "verdict was '$VERDICT'"; exit 1; }
-          test -f "fixtures/fixture-assured/$REPORT"
+          verdict=$(jq -r .verdict <<<"$OUTPUTS")
+          test "$verdict" = ASSURED || { echo "verdict was '$verdict'"; exit 1; }
+          named=$(jq -r 'keys - ["verdict"] | join(",")' <<<"$OUTPUTS")
+          test "$named" = "junit,report,sarif" || { echo "the action reported the paths '$named'"; exit 1; }
+          for name in $(jq -r 'keys - ["verdict"] | .[]' <<<"$OUTPUTS"); do
+            path=$(jq -r --arg name "$name" '.[$name]' <<<"$OUTPUTS")
+            test -f "fixtures/fixture-assured/$path" || { echo "$name names '$path', which is not a file"; exit 1; }
+          done
 
   ci-success:
     name: ci-success

@@ -120,7 +120,8 @@
             "args",
             "timeout",
             "steps",
-            "build"
+            "build",
+            "engine"
           ],
           "properties": {
             "closure": {
@@ -150,6 +151,9 @@
               "items": {
                 "type": "string"
               }
+            },
+            "engine": {
+              "type": "string"
             }
           }
         }

@@ -18,9 +18,10 @@ pub use event::{
     AttributionRecord, BisectRecord, BuildRecord, CacheRecord, DischargeRecord, DiscoverFileRecord,
     EVERY_TYPE, Event, EvidenceRecord, ExecRecord, IdenticalRecord, InstrumentRecord, KeptRecord,
     Measurement, MutantExecRecord, NjutestBuild, NjutestBuildError, NoteRecord, OpenRecord,
-    Payload, PhaseRecord, RouteRecord, RunRecord, SCHEMA, SelectRecord, SiteRecord,
-    SkipClaimRecord, SkipCount, SnapshotRecord, SummaryRecord, SweepRecord, TargetRecord,
-    TouchRecord, TraceContext, ValidateRoundRecord, VerifyRecord, WitnessRecord,
+    Payload, PerturbationRecord, PerturbedRecord, PhaseRecord, ReachRecord, RouteRecord, RunRecord,
+    SCHEMA, SelectRecord, SetRecord, SiteRecord, SkipClaimRecord, SkipCount, SnapshotRecord,
+    SummaryRecord, SweepRecord, TargetRecord, TouchRecord, TraceContext, ValidateRoundRecord,
+    VerifyRecord, WitnessRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{
@@ -409,6 +410,11 @@ impl Recorder {
     /// Records what one target's guards said they reached.
     pub fn touch(&self, record: TouchRecord) {
         self.emit(Payload::Touch { touch: record });
+    }
+
+    /// Records what one control started under a perturbation came to.
+    pub fn perturbed(&self, record: PerturbedRecord) {
+        self.emit(Payload::PerturbedControl { perturbed: record });
     }
 
     /// Records one branch claim put to the compiler.

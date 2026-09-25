@@ -21,13 +21,8 @@ fn record(byte: char) -> Record {
         failed_tests: vec!["noticed".to_owned()],
         run_id: "20260101T000000000Z".to_owned(),
         keyed: Keyed {
-            closure: "c".repeat(64),
             manifests: "d".repeat(64),
-            toolchain: "cargo 1.98.0 rustc 1.98.0 aarch64-apple-darwin".to_owned(),
-            args: Vec::new(),
-            timeout: "auto".to_owned(),
-            steps: 0,
-            build: Vec::new(),
+            ..rust_mutants::testkit::stored::keyed()
         },
     }
 }

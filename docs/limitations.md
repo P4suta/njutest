@@ -56,6 +56,9 @@ Pure computation that does not open or mutate a report store remains available.
   Three things a reader has to tell apart used to arrive as one refusal: a target that is broken, a target that lost a race with something outside the code, and a target that passed.
   The middle one is a finding about the run's footing, not a reason to throw away the work already done, and the run says which target it was so that a later reader knows a single result against it rests on a measurement that once came out differently.
 - A target whose guards recorded nothing this run can route by keeps every test of it in every route (`touch-not-recorded`), and one whose record did not read back is believed about nothing (`touch-log-unreadable`).
+- A target whose tree started a process without the environment the run gave it — a test that calls `env_clear()` on a child — is `uncontrolled-child`: no mutant can be active in that process and nothing records what it entered, so the target stays in every route and a survival it reports is inconclusive ([ADR 0029](adr/0029-a-process-that-loses-the-environment-says-so.md)).
+  A process that lost the environment under one mutant only is attributed to the execution whose process started it, by the parent it names, and a survival of that execution is inconclusive too; where the parent cannot be told apart, the survival is not read past it.
+  The escape is to pass the run's variables through to the child: a test that clears the environment and then adds back every `RUST_MUTANTS_*` variable it was given (`command.env_clear().envs(std::env::vars().filter(|(name, _)| name.starts_with("RUST_MUTANTS_")))`) starts a child the run can activate a mutant in and see, and the limitation goes.
 - **Which items a test entered is measured where a body starts, and not everywhere code runs.** A `const fn`, a `const`, and a `static` are cataloged as items nothing records entering.
   A closure written inside a macro invocation takes no entry marker, and an `async` body resumed on another test's thread is recorded on the thread that first polled it.
   A change to any of these has to be routed to every test; [item reach](engine/item-reach.md) says which is which.
@@ -242,12 +245,23 @@ They are what the run says about its own footing, and each is stated fail-closed
 
 Every proof layer reads one baseline run of each target: what its tests reached, which bodies they entered, which sites they saw infected.
 That is sound only where what a target reaches is a function of the target, and a suite that reads a clock, a hash seed, the order its threads were scheduled in, or state an earlier process left behind can reach something different on the next run of the same tests.
-A run checks it the one time it already runs a target again: the original-code control that confirms a kill records what it reached too, and a union that moved over the same passing tests is a counterexample, raised as `unstable-baseline` about the target ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)).
+A run checks it by running every target again: the original-code control that confirms a kill records what it reached too, a target no kill was confirmed on is run whole once more after the mutation phase for the comparison alone, and a union that moved over the same passing tests is a counterexample, raised as `unstable-baseline` about the target ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)).
 
 Three things follow and are not hidden.
-A target nothing was killed on is never confirmed, so it is never compared: `drift-not-measured` names it, and every proof read off its baseline rests on one run.
+A target whose second run cannot be compared — it failed, passed other tests than its baseline, or could not record — is `drift-not-measured`, and every proof read off its baseline rests on one run.
 The comparison sees what the guards see, so a suite whose behaviour moves where no mutant sits moves without this noticing.
 And this release reports a moved target without running again what rested on it: the `unreached` claims and the executions a proof removed are counted in the finding, and re-executing them without those proofs is the next change.
+
+## What a run asks of a suite that depends on where it runs
+
+A suite can pass on one machine and fail on the next because of something the contract lets differ between them: the time zone, the locale, the temporary directory, the home directory, the umask, the terminal width, or how many tests the harness runs at once.
+Asked for with `[repeatable] knobs`, a run starts one more control of each measured target per knob, with that one thing set to a value chosen to differ, and compares its verdict and its reach with the baseline's as drift compares a control's.
+A target the knob broke is `environment-dependent`, a defect; one whose reach moved over the same passing tests is `environment-dependent-reach`, and every proof read off its baseline is unfounded where that differs.
+
+Three things follow and are not hidden.
+A knob asked for and not put — no such zone in the time zone database, no such locale installed, no shell to set the mask through, a target that runs through cargo, a target that does not run under libtest, a platform with no way to put it — is `knob-not-put`, naming the knob, the targets, and why, because a pass under a knob that was never put says nothing.
+A knob whose controls established nothing to compare — a record that did not read back, other tests passing, a baseline that passed only on retry, a control that errored or ran out of time — is `knob-not-compared`, one per knob and reason, naming the targets.
+And the working directory and the order of the tests are not knobs: cargo's contract fixes the first at the package root, and stable libtest cannot reorder the second.
 
 ## What a run asks of a suite that talks about time
 

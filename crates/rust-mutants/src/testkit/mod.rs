@@ -7,5 +7,6 @@ pub mod compile;
 pub mod measuring;
 pub mod opening;
 pub mod source;
+pub mod stored;
 pub mod trace;
 pub mod workspace;
