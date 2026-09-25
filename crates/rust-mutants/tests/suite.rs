@@ -11,6 +11,8 @@ mod branch;
 mod build_identity;
 #[path = "canonical.rs"]
 mod canonical;
+#[path = "capdir.rs"]
+mod capdir;
 #[path = "cargo.rs"]
 mod cargo;
 #[path = "cargo_config.rs"]

@@ -6,6 +6,7 @@
 #![deny(unsafe_code)]
 
 pub mod canonical;
+pub mod capdir;
 pub mod cargo;
 pub mod catalog;
 pub mod count;
