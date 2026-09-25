@@ -755,7 +755,7 @@ pub fn documented_specimen() -> crate::config::Config {
             timeout: Duration::from_mins(10),
             steps: 50_000_000,
             build_timeout: Some(Duration::from_mins(15)),
-            jobs: 1,
+            jobs: rust_mutants::run::Jobs::Count(std::num::NonZeroUsize::MIN),
             skip_targets: vec!["demo/lib/demo".to_owned()],
             coverage: true,
         },

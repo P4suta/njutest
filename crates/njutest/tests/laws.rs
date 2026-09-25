@@ -7,7 +7,6 @@
     clippy::arithmetic_side_effects,
     clippy::expect_used,
     clippy::panic,
-    clippy::disallowed_methods,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 #![expect(
@@ -561,12 +560,16 @@ proptest! {
     /// How many measurements run at once follows the configuration, the machine, and what a resource forbids.
     #[test]
     fn how_widely_a_run_measures_is_what_it_was_told_bounded_by_what_it_has(
-        jobs in prop_oneof![Just(0_u32), 1_u32..64],
+        jobs in prop_oneof![
+            Just(rust_mutants::run::Jobs::Auto),
+            Just(rust_mutants::run::Jobs::All),
+            (1_usize..64).prop_map(|count| rust_mutants::run::Jobs::count(count)
+                .expect("a positive count")),
+        ],
         available in prop_oneof![Just(0_usize), 1_usize..64],
         exclusive in proptest::bool::ANY,
     ) {
-        let workers = njutest::assure::schedule::workers(jobs, available, exclusive)
-            .expect("a law's worker count fits this machine");
+        let workers = njutest::assure::schedule::workers(jobs, available, exclusive);
         prop_assert!(
             workers >= 1,
             "a run measures something: nought workers is a run that never finishes"
@@ -577,17 +580,23 @@ proptest! {
                 "a resource only one test may hold at a time decides it for the whole \
                  run, whatever was configured and whatever the machine offers"
             );
-        } else if jobs > 0 {
+        } else if let rust_mutants::run::Jobs::Count(count) = jobs {
             prop_assert_eq!(
                 workers,
-                usize::try_from(jobs).unwrap_or(1),
+                count.get(),
                 "and a run told how many gets that many: the machine's own count is a \
                  default, not a bound on what somebody asked for"
             );
+        } else if jobs == rust_mutants::run::Jobs::All {
+            prop_assert_eq!(
+                workers,
+                available.max(1),
+                "a run told `all` takes every processor the machine offers"
+            );
         } else {
             prop_assert!(
-                workers <= njutest::assure::schedule::CAP,
-                "while a run that said nothing takes what the machine offers up to the \
+                workers <= rust_mutants::run::DEFAULT_JOBS,
+                "while a run told `auto` takes what the machine offers up to the \
                  cap, because every worker is a test process and a machine's whole \
                  parallelism spent on those leaves nothing to run them"
             );
