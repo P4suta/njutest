@@ -6,17 +6,18 @@
 use std::collections::BTreeSet;
 
 use rust_mutants::carry::{
-    Body, Carried, Entered, Execution, Item, Locus, MalformedCarried, Now, Planned, Reach, Refusal,
-    SCHEMA, Sealing, believe, key,
+    Body, Carried, Entered, Execution, Locus, MalformedCarried, Now, Planned, Refusal, SCHEMA,
+    Sealing, believe, key,
 };
 use rust_mutants::outcomes::{CacheOutcome, Keyed};
+use rust_mutants::touch::{Completeness, ItemRef};
 
 const TARGET: &str = "pkg/test/lib";
 const OTHER: &str = "pkg/test/other";
 const SKELETON: &str = "skeleton-0";
 
-fn item(ordinal: u32) -> Item {
-    Item {
+fn item(ordinal: u32) -> ItemRef {
+    ItemRef {
         package: "pkg".to_owned(),
         path: "src/lib.rs".to_owned(),
         ordinal,
@@ -30,13 +31,13 @@ fn entered(ordinal: u32, digest: &str) -> Entered {
     }
 }
 
-fn execution(target: &str, detected: bool, reach: Reach) -> Execution {
+fn execution(target: &str, detected: bool, completeness: Completeness) -> Execution {
     Execution {
         target: target.to_owned(),
         filter: None,
         skeleton: SKELETON.to_owned(),
         entered: BTreeSet::from([entered(0, "body-0")]),
-        reach,
+        completeness,
         detected,
     }
 }
@@ -115,8 +116,8 @@ fn kill() -> Carried {
     record(
         CacheOutcome::Killed,
         vec![
-            execution(OTHER, false, Reach::Whole),
-            execution(TARGET, true, Reach::Whole),
+            execution(OTHER, false, Completeness::Whole),
+            execution(TARGET, true, Completeness::Whole),
         ],
     )
 }
@@ -125,8 +126,8 @@ fn survival() -> Carried {
     record(
         CacheOutcome::Survived,
         vec![
-            execution(OTHER, false, Reach::Whole),
-            execution(TARGET, false, Reach::Whole),
+            execution(OTHER, false, Completeness::Whole),
+            execution(TARGET, false, Completeness::Whole),
         ],
     )
 }
@@ -207,14 +208,14 @@ fn a_target_whose_reach_did_not_hold_refuses_it() {
 #[test]
 fn a_kill_needs_its_killer_to_have_named_what_it_entered_up_to_the_kill() {
     for (reach, expected) in [
-        (Reach::Whole, Ok(())),
-        (Reach::UpToFirstFailure, Ok(())),
-        (Reach::Cut, Err(Refusal::EntryIncomplete)),
+        (Completeness::Whole, Ok(())),
+        (Completeness::UpToFirstFailure, Ok(())),
+        (Completeness::Cut, Err(Refusal::EntryIncomplete)),
     ] {
         let carried = record(
             CacheOutcome::Killed,
             vec![
-                execution(OTHER, false, Reach::Cut),
+                execution(OTHER, false, Completeness::Cut),
                 execution(TARGET, true, reach),
             ],
         );
@@ -228,11 +229,11 @@ fn a_kill_needs_its_killer_to_have_named_what_it_entered_up_to_the_kill() {
 
 #[test]
 fn a_survival_needs_every_execution_to_have_named_everything_it_entered() {
-    for reach in [Reach::UpToFirstFailure, Reach::Cut] {
+    for reach in [Completeness::UpToFirstFailure, Completeness::Cut] {
         let carried = record(
             CacheOutcome::Survived,
             vec![
-                execution(OTHER, false, Reach::Whole),
+                execution(OTHER, false, Completeness::Whole),
                 execution(TARGET, false, reach),
             ],
         );

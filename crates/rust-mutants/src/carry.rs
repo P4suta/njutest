@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 
 use crate::id::HexDigest;
 use crate::outcomes::{CacheOutcome, Keyed};
+use crate::touch::{Completeness, ItemRef};
 
 /// The schema every carried record names.
 pub const SCHEMA: &str = "rust-mutants-carried-v1";
@@ -22,7 +23,7 @@ pub const LAYOUT: &str = "rust-mutants/carried-v1";
 #[serde(deny_unknown_fields)]
 pub struct Locus {
     /// The item whose body the edit is inside.
-    pub item: Item,
+    pub item: ItemRef,
     /// The digest of that body in the pristine tree.
     pub body_digest: String,
     /// Where the edit starts, in bytes from the start of the body.
@@ -33,32 +34,6 @@ pub struct Locus {
     pub replacement: String,
     /// The rule that made the mutation, with its version.
     pub rule: String,
-}
-
-/// One item of the program, by its package, its file, and its place among that file's items.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Item {
-    /// The package, by name.
-    pub package: String,
-    /// The file, relative to the root.
-    pub path: String,
-    /// Its place among the items of that file, from zero.
-    pub ordinal: u32,
-}
-
-/// How far an execution's record of the items it entered reaches.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, njutest_macros::AllVariants,
-)]
-#[serde(rename_all = "kebab-case")]
-pub enum Reach {
-    /// The process ran to its own end, so every item it entered is named.
-    Whole,
-    /// The process was ended at its first failing test, so every item entered up to the kill is named.
-    UpToFirstFailure,
-    /// The process was ended from outside, or its record did not read back, so what it entered is not known.
-    Cut,
 }
 
 /// One execution an answer rests on.
@@ -73,8 +48,8 @@ pub struct Execution {
     pub skeleton: String,
     /// Every item the process entered, with the digest its body had.
     pub entered: BTreeSet<Entered>,
-    /// How far that list reaches.
-    pub reach: Reach,
+    /// How much of the process that list accounts for.
+    pub completeness: Completeness,
     /// Whether a test of it failed.
     pub detected: bool,
 }
@@ -84,7 +59,7 @@ pub struct Execution {
 #[serde(deny_unknown_fields)]
 pub struct Entered {
     /// The item.
-    pub item: Item,
+    pub item: ItemRef,
     /// The digest of its body.
     pub body_digest: String,
 }
@@ -169,7 +144,7 @@ pub struct Now {
     /// Each target's skeleton now.
     pub skeletons: BTreeMap<String, String>,
     /// Each item's body digest now, and whether that body is sealed.
-    pub items: BTreeMap<Item, Body>,
+    pub items: BTreeMap<ItemRef, Body>,
     /// The targets whose reach held under a control of this tree.
     pub held: BTreeSet<String>,
 }
@@ -301,7 +276,11 @@ pub fn believe(record: &Carried, now: &Now, plan: &[Planned]) -> Result<(), Refu
             if planned.filter != killer.filter {
                 return Err(Refusal::FilterDiffers);
             }
-            held(killer, now, &[Reach::Whole, Reach::UpToFirstFailure])
+            held(
+                killer,
+                now,
+                &[Completeness::Whole, Completeness::UpToFirstFailure],
+            )
         }
         CacheOutcome::Survived => {
             for planned in plan {
@@ -316,7 +295,7 @@ pub fn believe(record: &Carried, now: &Now, plan: &[Planned]) -> Result<(), Refu
                 let Some(execution) = ran.find(|one| one.filter == planned.filter) else {
                     return Err(Refusal::FilterDiffers);
                 };
-                held(execution, now, &[Reach::Whole])?;
+                held(execution, now, &[Completeness::Whole])?;
             }
             Ok(())
         }
@@ -324,8 +303,8 @@ pub fn believe(record: &Carried, now: &Now, plan: &[Planned]) -> Result<(), Refu
 }
 
 /// Whether one execution would do on this tree what it did on its own: its record reaches far enough, its target holds its reach, its skeleton is unchanged, and every item it entered has the same sealed body.
-fn held(execution: &Execution, now: &Now, enough: &[Reach]) -> Result<(), Refusal> {
-    if !enough.contains(&execution.reach) {
+fn held(execution: &Execution, now: &Now, enough: &[Completeness]) -> Result<(), Refusal> {
+    if !enough.contains(&execution.completeness) {
         return Err(Refusal::EntryIncomplete);
     }
     if !now.held.contains(&execution.target) {
