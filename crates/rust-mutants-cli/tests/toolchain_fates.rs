@@ -274,6 +274,11 @@ fn fixture_build_script() {
 }
 
 #[test]
+fn fixture_carry() {
+    holds("fixture-carry");
+}
+
+#[test]
 fn fixture_child_refuses() {
     holds("fixture-child-refuses");
 }
@@ -381,6 +386,11 @@ fn fixture_include() {
 #[test]
 fn fixture_item_reach() {
     holds("fixture-item-reach");
+}
+
+#[test]
+fn fixture_killer_last() {
+    holds("fixture-killer-last");
 }
 
 #[test]
