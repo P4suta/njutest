@@ -526,6 +526,8 @@ impl Request {
 #[derive(Debug)]
 pub struct Session {
     workspace: Workspace,
+    /// The test executables the run starts, as the build left them, which every execution is checked against.
+    apparatus: crate::apparatus::Apparatus,
     catalog: Catalog,
     /// Every file the walk considered, in path order.
     files: Vec<FileReport>,
@@ -696,6 +698,16 @@ impl Session {
         let before = self.orphans();
         let started = std::time::SystemTime::now();
         let mut result = execute::exec(exec, context, cancel, &self.workspace.trace);
+        let changes = self.apparatus.changed();
+        if !changes.is_empty() {
+            return Err(SessionError::ApparatusChanged {
+                mutant: context
+                    .active
+                    .map_or_else(String::new, |(mutant, _catalog)| self.display_of(mutant)),
+                changes,
+            }
+            .into());
+        }
         result.entered = self.entered_by(log, &result, cancel);
         let ended = std::time::SystemTime::now();
         let unseen = self.uncontrolled(&exec.target().id)
@@ -709,6 +721,15 @@ impl Session {
             }
         }
         Ok(result)
+    }
+
+    /// The short name a person reads for the mutant whose full identity is `id`, or the identity itself where the catalog holds no such mutant.
+    fn display_of(&self, id: &str) -> String {
+        self.catalog
+            .mutants()
+            .iter()
+            .find(|mutant| mutant.id.as_str() == id)
+            .map_or_else(|| id.to_owned(), |mutant| mutant.display_id.to_string())
     }
 
     /// Whether a process of the tree may have run without the environment the run gave it while something ran from the first time to the second, which a directory that cannot be read cannot rule out.

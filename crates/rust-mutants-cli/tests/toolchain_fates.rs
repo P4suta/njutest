@@ -254,6 +254,11 @@ fn fixture_annotated() {
 }
 
 #[test]
+fn fixture_apparatus() {
+    holds("fixture-apparatus");
+}
+
+#[test]
 fn fixture_assured() {
     holds("fixture-assured");
 }

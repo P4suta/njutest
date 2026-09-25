@@ -72,6 +72,10 @@ name = "toolchain_2021"
 path = "tests/toolchain_2021.rs"
 
 [[test]]
+name = "toolchain_apparatus"
+path = "tests/toolchain_apparatus.rs"
+
+[[test]]
 name = "toolchain_cargo"
 path = "tests/toolchain_cargo.rs"
 
