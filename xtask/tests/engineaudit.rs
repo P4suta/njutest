@@ -778,6 +778,7 @@ fn owned_evidence_is_exact_after_the_duplicate_key_boundary() {
             probe_logs: Vec::new(),
             touched: touched.map(|text| Source { path, text }),
             skeletons: None,
+            carried: None,
             root: None,
         };
         let error = xtask::engineaudit::audit("report.json", &report, &evidence)
@@ -799,6 +800,11 @@ fn layers_of(name: &str) -> &'static [Layer] {
         | "a test the guards say reached a mutation and the route dropped" => &[Layer::Trace],
         "a body digest its bytes do not hash to, in the file the run measured" => {
             &[Layer::Identity]
+        }
+        "a kill carried across a body its killer entered that has changed since"
+        | "a survival carried though the route runs a target no recorded execution ran"
+        | "a kill carried across a skeleton that has changed since" => {
+            &[Layer::Identity, Layer::Work, Layer::Entry]
         }
         _ => &[],
     }

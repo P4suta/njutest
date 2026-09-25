@@ -491,12 +491,141 @@ fn carry_beside(
     ]
 }
 
+/// A run that carried one answer about the row at `row`, whose evidence agrees with it everywhere `planted` does not change.
+fn believed_beside(
+    name: &'static str,
+    (row, outcome, other): (usize, &str, &str),
+    planted: fn(&mut Value),
+) -> Perturbation {
+    let path = "src/lib.rs";
+    let source = carried_source("{ if a > b { a } else { b } }");
+    let (Some(start), Some(site)) = (
+        source.find('{'),
+        source.find("a > b").and_then(|at| at.checked_add(2)),
+    ) else {
+        return Perturbation { name, ..clean() };
+    };
+    let Some(end) = source.rfind('}').and_then(|at| at.checked_add(1)) else {
+        return Perturbation { name, ..clean() };
+    };
+    let body = source.as_bytes().get(start..end).unwrap_or_default();
+    let digest = crate::engineaudit::carry::digest_of(body);
+    let item = json!({ "package": "demo", "path": path, "ordinal": 0 });
+    let (rule, replacement) = if row == 0 {
+        ("gt-to-ge@1", ">=")
+    } else {
+        ("return-default@1", "Default::default()")
+    };
+    let executions: Vec<Value> = [TARGET, other]
+        .iter()
+        .enumerate()
+        .map(|(at, target)| {
+            json!({
+                "target": target, "filter": null,
+                "skeleton": crate::engineaudit::carry::digest_of(b""),
+                "entered": [{ "item": item, "body_digest": digest }],
+                "completeness": "whole",
+                "detected": outcome == "killed" && at == 1
+            })
+        })
+        .collect();
+    let mut believed = json!({
+        "mutant": if row == 0 { KILLED } else { SURVIVED },
+        "record": {
+            "schema": "rust-mutants-carried-v1",
+            "locus": {
+                "item": item, "body_digest": digest,
+                "start": site.checked_sub(start), "end": site.checked_sub(start).and_then(|at| at.checked_add(1)),
+                "replacement": replacement, "rule": rule
+            },
+            "keyed": {}, "outcome": outcome, "target": other, "tests_run": 2,
+            "failed_tests": [], "run_id": "earlier-run", "executions": executions
+        },
+        "plan": [{ "target": TARGET, "filter": null }, { "target": other, "filter": null }]
+    });
+    planted(&mut believed);
+    let mut rows = vec![json!({}), json!({})];
+    if let Some(one) = rows.get_mut(row) {
+        *one = json!({
+            "start_byte": site, "end_byte": site.checked_add(1),
+            "replacement": replacement, "source_run_id": "earlier-run"
+        });
+    }
+    let mut beside = carry_beside(path, &source, &json!({}), &json!([]));
+    for (file, document) in &mut beside {
+        if *file == "touched-v1.json" {
+            merge(
+                document,
+                json!({ "targets": {
+                    TARGET: { "reached": { "loose": [0, 1] }, "ran": [] },
+                    other: { "reached": { "loose": [0, 1] }, "ran": [] }
+                } }),
+            );
+        }
+    }
+    beside.push((
+        "carried-v1.json",
+        json!({
+            "document_type": "rust-mutants/carried", "schema_version": 1,
+            "records": [believed]
+        }),
+    ));
+    Perturbation {
+        name,
+        document: with(json!({ "mutants": rows })),
+        beside,
+        ..clean()
+    }
+}
+
+/// The defects planted in the carried answers a run believed.
+fn believed_plants() -> Vec<Perturbation> {
+    vec![
+        believed_beside(
+            "a kill carried across a body its killer entered that has changed since",
+            (0, "killed", "demo/test/other"),
+            |believed| {
+                merge(
+                    believed,
+                    json!({ "record": { "executions": [{}, {
+                        "entered": [{ "body_digest": "0".repeat(64) }]
+                    }] } }),
+                );
+            },
+        ),
+        believed_beside(
+            "a survival carried though the route runs a target no recorded execution ran",
+            (1, "survived", "demo/test/other"),
+            |believed| {
+                if let Some(executions) = believed
+                    .pointer_mut("/record/executions")
+                    .and_then(Value::as_array_mut)
+                {
+                    executions.truncate(1);
+                }
+                merge(believed, json!({ "record": { "target": TARGET } }));
+            },
+        ),
+        believed_beside(
+            "a kill carried across a skeleton that has changed since",
+            (0, "killed", "demo/test/other"),
+            |believed| {
+                merge(
+                    believed,
+                    json!({ "record": { "executions": [{}, { "skeleton": "1".repeat(64) }] } }),
+                );
+            },
+        ),
+    ]
+}
+
 /// The defects planted for the carry layer.
 fn carry_plants() -> Vec<Perturbation> {
     let clean = clean();
     let sealed = carried_source("{ if a > b { a } else { b } }");
     let macro_body = carried_source("{ foo!(a, b) }");
-    vec![
+    let mut plants = believed_plants();
+    plants.extend([
         Perturbation {
             name: "a body called sealed that invokes a macro off the page's list",
             beside: carry_beside("src/other.rs", &macro_body, &json!({}), &json!([])),
@@ -544,7 +673,8 @@ fn carry_plants() -> Vec<Perturbation> {
             tree: vec![("src/other.rs", sealed)],
             ..clean
         },
-    ]
+    ]);
+    plants
 }
 
 /// The clean recording with `overrides` laid over the event at `at`.

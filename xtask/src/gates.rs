@@ -2214,6 +2214,7 @@ pub fn engine_audit(asked: &EngineRun<'_>) -> Result<engineaudit::Audit, enginea
     let touched = read_optional_engine_document(&asked.run.join("touched-v1.json"))?;
     let catalog = read_optional_engine_document(&asked.run.join("catalog-v1.json"))?;
     let skeletons = read_optional_engine_document(&asked.run.join("skeletons-v1.json"))?;
+    let carried = read_optional_engine_document(&asked.run.join("carried-v1.json"))?;
     let probe_logs = read_probe_logs(&asked.run.join("probe"))?;
     engineaudit::audit(
         &label,
@@ -2241,6 +2242,9 @@ pub fn engine_audit(asked: &EngineRun<'_>) -> Result<engineaudit::Audit, enginea
                 .map(|(path, text)| engineaudit::Source { path, text }),
             probe_logs,
             skeletons: skeletons
+                .as_ref()
+                .map(|(path, text)| engineaudit::Source { path, text }),
+            carried: carried
                 .as_ref()
                 .map(|(path, text)| engineaudit::Source { path, text }),
             root: asked.root,

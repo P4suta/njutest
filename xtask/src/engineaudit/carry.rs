@@ -589,6 +589,9 @@ pub(super) fn layer(
     let Some(skeletons) = evidence.skeletons.as_ref() else {
         return;
     };
+    if let (Some(carried), Some(touched)) = (evidence.carried.as_ref(), evidence.touched.as_ref()) {
+        believed(report, (carried, &Held::of(skeletons, touched)), &mut notes);
+    }
     let Some(root) = evidence.root else {
         notes.unaudited(
             "root",
@@ -895,4 +898,328 @@ fn rendering(entry: &str, path: &str, text: &str, items: &[Cataloged]) -> String
     }
     rendered.push_str(text.get(at..).unwrap_or_default());
     rendered
+}
+
+/// One item as a carried record names it: its package, its file, and its place among that file's items.
+type Named = (String, String, u64);
+
+/// The evidence a believed record is held to, read once.
+struct Held<'a> {
+    tree: String,
+    bodies: std::collections::BTreeMap<Named, (String, bool)>,
+    by_index: std::collections::BTreeMap<u64, (Named, String)>,
+    spans: Vec<(u64, String, std::ops::Range<u64>)>,
+    touched: &'a serde_json::Value,
+}
+
+impl<'a> Held<'a> {
+    fn of(skeletons: &serde_json::Value, touched: &'a serde_json::Value) -> Self {
+        let mut units: Vec<String> = array(skeletons, "units")
+            .iter()
+            .filter_map(|unit| {
+                Some(format!(
+                    "{}\0{}\0{}\0{}\0{}\n",
+                    unit.get("package")?.as_str()?,
+                    unit.get("target")?.as_str()?,
+                    unit.get("kind")?.as_str()?,
+                    unit.get("test")?.as_bool()?,
+                    unit.get("skeleton")?.as_str()?
+                ))
+            })
+            .collect();
+        units.sort();
+        let mut bodies = std::collections::BTreeMap::new();
+        let mut by_index = std::collections::BTreeMap::new();
+        for item in array(skeletons, "items") {
+            let (Some(named), Some(digest), Some(sealed), Some(index)) = (
+                item.get("item").and_then(named),
+                item.get("body_digest").and_then(serde_json::Value::as_str),
+                item.get("sealed").and_then(serde_json::Value::as_bool),
+                item.get("index").and_then(serde_json::Value::as_u64),
+            ) else {
+                continue;
+            };
+            bodies.insert(named.clone(), (digest.to_owned(), sealed));
+            by_index.insert(index, (named, digest.to_owned()));
+        }
+        let spans = array(touched, "items")
+            .iter()
+            .filter_map(|item| {
+                let body = item.get("body")?;
+                Some((
+                    item.get("index")?.as_u64()?,
+                    item.get("path")?.as_str()?.to_owned(),
+                    body.get("start")?.as_u64()?..body.get("end")?.as_u64()?,
+                ))
+            })
+            .collect();
+        Self {
+            tree: sha256(units.concat().as_bytes()),
+            bodies,
+            by_index,
+            spans,
+            touched,
+        }
+    }
+}
+
+fn array<'v>(value: &'v serde_json::Value, key: &str) -> &'v [serde_json::Value] {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+}
+
+fn named(value: &serde_json::Value) -> Option<Named> {
+    Some((
+        value.get("package")?.as_str()?.to_owned(),
+        value.get("path")?.as_str()?.to_owned(),
+        value.get("ordinal")?.as_u64()?,
+    ))
+}
+
+/// A record's filter as a set of test names, or nothing for a whole target.
+fn filter_of(value: Option<&serde_json::Value>) -> Option<std::collections::BTreeSet<String>> {
+    value?.as_array().map(|tests| {
+        tests
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .map(ToOwned::to_owned)
+            .collect()
+    })
+}
+
+/// Every carried answer the run believed, held to this run's own evidence: its report row, its locus, the tree's skeleton, what each execution entered, and the plan it was held to (ADR 0041).
+fn believed(
+    report: &super::Report,
+    (carried, held): (&serde_json::Value, &Held<'_>),
+    notes: &mut super::Notes<'_>,
+) {
+    for entry in array(carried, "records") {
+        let mutant = entry
+            .get("mutant")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let Some(row) = report.mutants.iter().find(|row| row.id == mutant) else {
+            notes.violated(
+                mutant,
+                "the run believed a carried record about a mutant its report does not hold"
+                    .to_owned(),
+            );
+            continue;
+        };
+        let subject = row.display_id.as_str();
+        let (Some(record), Some(plan)) = (
+            entry.get("record"),
+            entry.get("plan").and_then(serde_json::Value::as_array),
+        ) else {
+            notes.violated(
+                subject,
+                "a believed record holds no record or no plan".to_owned(),
+            );
+            continue;
+        };
+        let outcome = record.get("outcome").and_then(serde_json::Value::as_str);
+        if outcome != Some(row.outcome.as_str())
+            || record.get("run_id").and_then(serde_json::Value::as_str)
+                != row.source_run_id.as_deref()
+        {
+            notes.violated(
+                subject,
+                format!(
+                    "the report says {} from {:?}, and the record it carried says {outcome:?} from \
+                     {:?}",
+                    row.outcome.as_str(),
+                    row.source_run_id,
+                    record.get("run_id")
+                ),
+            );
+        }
+        if let Some(why) = locus_differs(row, record.get("locus"), held) {
+            notes.violated(
+                subject,
+                format!("the record's locus is not the mutation's: {why}"),
+            );
+        }
+        if let Some(why) = premise_fails(outcome, record, plan, held) {
+            notes.violated(
+                subject,
+                format!("the run carried it though a premise of ADR 0041 fails: {why}"),
+            );
+        }
+        let reaching = super::evidence::reaching_targets(held.touched, row.index);
+        for planned in plan {
+            let target = planned
+                .get("target")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let Some(narrowed) = reaching.get(target) else {
+                notes.violated(
+                    subject,
+                    format!(
+                        "the plan runs {target}, which the guards' record says reaches nothing of it"
+                    ),
+                );
+                continue;
+            };
+            let filter = filter_of(planned.get("filter"));
+            if filter.is_some() && filter.as_ref() != narrowed.as_ref() {
+                notes.violated(
+                    subject,
+                    format!(
+                        "the plan narrows {target} to {filter:?}, and the guards' record narrows it \
+                         to {narrowed:?}"
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// Why a record's locus is not the mutation at `row`: another item, another body, another place in it, another edit, or another rule.
+fn locus_differs(
+    row: &super::Row,
+    locus: Option<&serde_json::Value>,
+    held: &Held<'_>,
+) -> Option<String> {
+    let locus = locus?;
+    let Some((index, _, body)) = held
+        .spans
+        .iter()
+        .filter(|(_, path, body)| {
+            *path == row.path && body.start <= row.start_byte && row.end_byte <= body.end
+        })
+        .max_by_key(|(_, _, body)| body.start)
+    else {
+        return Some("the mutation is inside no item body, which has no locus".to_owned());
+    };
+    let Some((item, digest)) = held.by_index.get(index) else {
+        return Some(format!("item {index} has no carry evidence"));
+    };
+    let expected = (
+        Some(item.clone()),
+        Some(digest.as_str()),
+        row.start_byte.checked_sub(body.start),
+        row.end_byte.checked_sub(body.start),
+        Some(row.replacement.as_str()),
+        Some(format!("{}@{}", row.rule, row.rule_version)),
+    );
+    let claimed = (
+        locus.get("item").and_then(named),
+        locus.get("body_digest").and_then(serde_json::Value::as_str),
+        locus.get("start").and_then(serde_json::Value::as_u64),
+        locus.get("end").and_then(serde_json::Value::as_u64),
+        locus.get("replacement").and_then(serde_json::Value::as_str),
+        locus
+            .get("rule")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+    );
+    (claimed != expected)
+        .then(|| format!("it says {claimed:?}, and the evidence makes it {expected:?}"))
+}
+
+/// The first premise of ADR 0041 a believed record fails against this run's evidence, in the words the trace uses.
+fn premise_fails(
+    outcome: Option<&str>,
+    record: &serde_json::Value,
+    plan: &[serde_json::Value],
+    held: &Held<'_>,
+) -> Option<String> {
+    let executions = array(record, "executions");
+    let resting: Vec<(&serde_json::Value, &[&str])> = match outcome {
+        Some("killed") => {
+            let Some(killer) = executions
+                .iter()
+                .rev()
+                .find(|one| one.get("detected").and_then(serde_json::Value::as_bool) == Some(true))
+            else {
+                return Some("entry-incomplete: a kill no execution detected".to_owned());
+            };
+            let target = killer.get("target");
+            let Some(planned) = plan.iter().find(|one| one.get("target") == target) else {
+                return Some("filter-differs: the killer's target is not in the plan".to_owned());
+            };
+            if filter_of(planned.get("filter")) != filter_of(killer.get("filter")) {
+                return Some("filter-differs: the killer named other tests".to_owned());
+            }
+            vec![(killer, &["whole", "up-to-first-failure"])]
+        }
+        Some("survived") => {
+            let mut resting = Vec::new();
+            for planned in plan {
+                let target = planned.get("target");
+                let mut ran = executions
+                    .iter()
+                    .filter(|one| one.get("target") == target)
+                    .peekable();
+                if ran.peek().is_none() {
+                    return Some(format!(
+                        "route-grew: nothing recorded ran {}",
+                        target
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default()
+                    ));
+                }
+                let Some(execution) = ran
+                    .find(|one| filter_of(one.get("filter")) == filter_of(planned.get("filter")))
+                else {
+                    return Some(format!(
+                        "filter-differs: {} ran other tests",
+                        target
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default()
+                    ));
+                };
+                resting.push((execution, ["whole"].as_slice()));
+            }
+            resting
+        }
+        other => return Some(format!("a carried record says {other:?}")),
+    };
+    resting
+        .into_iter()
+        .find_map(|(execution, enough)| execution_fails(execution, enough, held))
+}
+
+/// Why one execution would not do on this tree what it did on its own: its record does not reach far enough, its skeleton moved, or a body it entered changed or is no longer sealed.
+fn execution_fails(
+    execution: &serde_json::Value,
+    enough: &[&str],
+    held: &Held<'_>,
+) -> Option<String> {
+    let completeness = execution
+        .get("completeness")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if !enough.contains(&completeness) {
+        return Some(format!("entry-incomplete: {completeness}"));
+    }
+    if execution
+        .get("skeleton")
+        .and_then(serde_json::Value::as_str)
+        != Some(held.tree.as_str())
+    {
+        return Some("skeleton-changed".to_owned());
+    }
+    for entered in array(execution, "entered") {
+        let item = entered.get("item").and_then(named);
+        let digest = entered
+            .get("body_digest")
+            .and_then(serde_json::Value::as_str);
+        let label = item.as_ref().map_or_else(
+            || "an unnamed item".to_owned(),
+            |(package, path, ordinal)| format!("{package}/{path}#{ordinal}"),
+        );
+        match item.and_then(|item| held.bodies.get(&item)) {
+            Some((now, _)) if Some(now.as_str()) != digest => {
+                return Some(format!("item-changed: {label}"));
+            }
+            Some((_, false)) => return Some(format!("unsealed: {label}")),
+            Some((_, true)) => {}
+            None => return Some(format!("item-changed: {label} is gone")),
+        }
+    }
+    None
 }

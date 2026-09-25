@@ -355,6 +355,8 @@ pub struct Evidence<'a> {
     pub touched: Option<Source<'a>>,
     /// The carry evidence the run kept: body digests, sealing, and unit skeletons.
     pub skeletons: Option<Source<'a>>,
+    /// Every carried record the run believed, with the plan each was held to.
+    pub carried: Option<Source<'a>>,
     /// The tree the run measured, which the carry evidence is read again from.
     pub root: Option<&'a std::path::Path>,
 }
@@ -370,6 +372,7 @@ struct CheckedEvidence<'a> {
     probe_logs: &'a [String],
     touched: Option<Value>,
     skeletons: Option<Value>,
+    carried: Option<Value>,
     root: Option<&'a std::path::Path>,
 }
 
@@ -437,6 +440,7 @@ impl<'a> Evidence<'a> {
                 .map(|source| parse_typed_evidence(source, wire::validate_touched))
                 .transpose()?,
             skeletons: self.skeletons.map(parse_evidence).transpose()?,
+            carried: self.carried.map(parse_evidence).transpose()?,
             root: self.root,
         })
     }

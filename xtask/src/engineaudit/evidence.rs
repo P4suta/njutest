@@ -622,6 +622,25 @@ impl Touches {
     }
 }
 
+/// Every target whose tests could have noticed the mutation at `index`, re-derived from what the guards recorded: each with the tests it narrows to, or with nothing where every test of it could.
+pub(super) fn reaching_targets(
+    touched: &Value,
+    index: u64,
+) -> BTreeMap<String, Option<BTreeSet<String>>> {
+    let recorded = Recorded::of(touched);
+    recorded
+        .targets
+        .iter()
+        .filter_map(
+            |(target, touches)| match touches.reaching(index, &recorded.narrowing) {
+                Reaching::Nothing => None,
+                Reaching::Whole => Some((target.clone(), None)),
+                Reaching::Tests(tests) => Some((target.clone(), Some(tests))),
+            },
+        )
+        .collect()
+}
+
 /// Which of a target's tests could have noticed one mutation.
 #[derive(Debug)]
 enum Reaching {
