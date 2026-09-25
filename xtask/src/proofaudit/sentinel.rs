@@ -430,6 +430,44 @@ fn repaired_where_nothing_moved(clean: Perturbation) -> Perturbation {
     }
 }
 
+/// The defect planted for the repair layer: a repair whose run nothing could observe, said to have survived.
+fn unobserved_repair_called_a_survival() -> Perturbation {
+    let mut events = routes();
+    events.push(json!({
+        "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
+        "type": "mutant-exec",
+        "mutant": {
+            "mutant": SURVIVED, "target": TARGET, "args": [], "outcome": "inconclusive",
+            "duration_ms": 5
+        }
+    }));
+    events.push(json!({
+        "type": "repair",
+        "repair": {
+            "mutant": SURVIVED, "target": TARGET,
+            "was": "survived", "now": "survived", "reached": "reached"
+        }
+    }));
+    let mut repair = touch("repair", &[1]);
+    if let Some(record) = repair.get_mut("touch").and_then(Value::as_object_mut) {
+        record.insert("mutant".to_owned(), json!("b".repeat(64)));
+    }
+    Perturbation {
+        name: "a repair whose run nothing could observe, called a survival",
+        document: with(json!({
+            "drift": [{ "target": TARGET, "state": "moved" }],
+            "mutants": [{}, { "catalog_index": 1 }],
+            "limitations": [{ "name": "reach-moved", "detail": TARGET }]
+        })),
+        events: Some(events),
+        engine: Some(vec![
+            touch("baseline", &[0]),
+            touch("control", &[0, 1]),
+            repair,
+        ]),
+    }
+}
+
 impl Layer {
     /// The defects planted for this layer, each of which it must report as a violation.
     #[must_use]
@@ -496,7 +534,10 @@ impl Layer {
                 engine: Some(vec![touch("baseline", &[0]), touch("control", &[0, 1])]),
                 ..clean
             }],
-            Self::Repair => vec![repaired_where_nothing_moved(clean)],
+            Self::Repair => vec![
+                unobserved_repair_called_a_survival(),
+                repaired_where_nothing_moved(clean),
+            ],
             Self::Executions => [
                 "killed",
                 "unconfirmed",
