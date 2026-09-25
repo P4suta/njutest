@@ -31,6 +31,7 @@ fn fixture(name: &str) -> Fixture {
         .expect("a temporary directory");
     let root = dir.path().join(name);
     copy_tree(&source, &root);
+    njutest_devkit::fixture::pin_contract(&root, "standard-v1");
     Fixture { root, _dir: dir }
 }
 
@@ -65,7 +66,7 @@ fn verified_with(fixture: &Fixture, harness: &[&str]) -> serde_json::Value {
     );
     let answered = njutest_devkit::process::answered(code, out, err);
     assert!(
-        matches!(answered.status.code(), Some(0 | 2)),
+        matches!(answered.status.code(), Some(0..=2)),
         "the run finishes with a verdict: {answered:?}"
     );
     let run = njutest::app::reports::pointed_at(&fixture.root, njutest::app::reports::Index::Any)
@@ -162,5 +163,68 @@ fn a_binary_that_starts_nothing_and_reached_nothing_off_its_tests_is_proven_sing
             .iter()
             .all(|detail| !detail.contains("fixture-baseline/lib/fixture_baseline")),
         "a proven binary is not a hole: {stated:?}"
+    );
+}
+
+#[test]
+fn a_delayed_guard_that_makes_a_test_late_is_a_schedule_dependence_the_run_names() {
+    let fixture = fixture("fixture-scheduled");
+    std::fs::write(
+        fixture.root.join(".njutest.toml"),
+        "version = 1\n\n[schedules]\nexplore = 4\n",
+    )
+    .expect("the configuration");
+    let part = verified(&fixture);
+    let record = record_of(&part, "fixture-scheduled/lib/fixture_scheduled");
+    assert_eq!(record["standing"]["state"], "concurrent", "{record}");
+    let explored = &record["explored"];
+    assert_eq!(explored["state"], "broke", "{record}");
+    assert_eq!(explored["path"], "src/lib.rs", "{record}");
+    assert_eq!(
+        explored["line"], 9,
+        "the guard in `work`, which the spawned thread reaches: {record}"
+    );
+    assert_eq!(
+        explored["failed"],
+        serde_json::json!(["tests::a_message_arrives_in_time"]),
+        "{record}"
+    );
+    let findings: Vec<&serde_json::Value> = part["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .filter(|one| one["kind"] == "schedule-dependent")
+        .collect();
+    let [finding] = findings.as_slice() else {
+        panic!("one binary a schedule broke is one finding: {findings:?}");
+    };
+    assert_eq!(
+        finding["subject"],
+        "fixture-scheduled/lib/fixture_scheduled"
+    );
+    assert!(
+        finding["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("src/lib.rs:9")),
+        "the finding names the guard a reader goes to: {finding}"
+    );
+}
+
+#[test]
+fn a_binary_not_proven_single_threaded_is_unexplored_until_a_run_asks() {
+    let fixture = fixture("fixture-scheduled");
+    let part = verified(&fixture);
+    let record = record_of(&part, "fixture-scheduled/lib/fixture_scheduled");
+    assert_eq!(
+        record["explored"],
+        serde_json::json!({ "state": "unexplored", "why": "not-asked" }),
+        "{record}"
+    );
+    let stated = limitation(&part, njutest::limitation::SCHEDULE_NOT_EXPLORED);
+    assert!(
+        stated
+            .iter()
+            .any(|detail| detail.contains("fixture-scheduled/lib/fixture_scheduled")),
+        "{stated:?}"
     );
 }

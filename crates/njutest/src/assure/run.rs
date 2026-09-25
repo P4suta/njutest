@@ -46,6 +46,12 @@ pub enum RunInvariantError {
         /// The phase whose bound could not be formed.
         phase: &'static str,
     },
+    /// A guard a baseline reached, and a delay there broke, is one the catalog cannot place.
+    #[error("the baseline reached guard {site}, which the catalog cannot place")]
+    UnplacedSite {
+        /// The guard's catalog index.
+        site: u32,
+    },
     /// A checkpoint's attempt counter reached the end of its wire range.
     #[error("the checkpoint attempt counter exceeds u32")]
     AttemptOverflow,
@@ -163,7 +169,7 @@ pub fn run(
     let seams = super::wire::watched(&resources.leases(), &request.config.resources);
     state_unwatched(&mut report, &seams);
     let mut held = with_seams(environment, &seams);
-    if request.config.contract == crate::config::Contract::VerifiedV1 {
+    if request.config.contract.proves_models() {
         set_environment(&mut held, "CARGO_BUILD_TARGET", toolchain.host());
     }
     let environment = &held;
@@ -211,7 +217,7 @@ pub fn run(
         (request, environment, &toolchain),
         (notes, watch),
     )?;
-    released(&mut resources, &mut report);
+    wound_up(&mut resources, &mut report, request);
     finish(&mut report, request.started)?;
     journal.finished(watch.cancel)?;
     let kept = if request.keep_temp {
@@ -225,6 +231,20 @@ pub fn run(
         kept,
         model,
     })
+}
+
+/// What a run does once every phase is over: stop what it started, and say what dimension it did not establish.
+fn wound_up(resources: &mut crate::resource::Manager, report: &mut BuildReport, request: &Request) {
+    released(resources, report);
+    dimensioned(report, request);
+}
+
+/// The findings of every dimension a run that asks each of them did not establish, raised by a run of the whole catalog; a shard raises none and a merge raises them over every part (ADR 0033).
+fn dimensioned(report: &mut BuildReport, request: &Request) {
+    if request.config.contract.asks_every_dimension() && request.shard.is_none() {
+        let rows = crate::report::matrix::rows(&crate::report::matrix::Evidence::of(report));
+        report.findings.extend(crate::report::matrix::holes(&rows));
+    }
 }
 
 fn prepared(
@@ -417,7 +437,7 @@ fn deepened(
     with: (&rust_mutants::cargo::Toolchain, &Environment),
     watch: Watch<'_>,
 ) -> Result<(), RunnerError> {
-    if request.config.contract != crate::config::Contract::DeepV1 {
+    if !request.config.contract.runs_miri() {
         return Ok(());
     }
     let (toolchain, environment) = with;
@@ -431,6 +451,11 @@ fn deepened(
             timeout: Some(request.config.execution.timeout),
             offline: request.cargo.offline,
             locked: request.cargo.locked,
+            absent: if request.config.contract.asks_every_dimension() {
+                super::deep::Absent::Hole
+            } else {
+                super::deep::Absent::Refused
+            },
         },
         watch,
     )?;
@@ -487,7 +512,7 @@ pub fn opened(
     Ok(())
 }
 
-/// What a run does once it has measured: drive the fuzz targets, and ask for repairs for what it found.
+/// What a run does once it has measured: fail the calls it was asked to, drive the fuzz targets, and ask for repairs for what it found.
 fn afterwards(
     report: &mut BuildReport,
     within: (&Request, &Environment, &rust_mutants::cargo::Toolchain),
@@ -495,6 +520,12 @@ fn afterwards(
 ) -> Result<(), RunnerError> {
     let (request, environment, toolchain) = within;
     let (notes, watch) = telling;
+    if request.config.faults.inject {
+        super::faults::put(request, environment, report, (notes, watch))?;
+    }
+    if request.config.durability.crash {
+        super::crashes::put(request, environment, report, (notes, watch))?;
+    }
     driven(report, request, toolchain, (notes, watch))?;
     proposed(report, request, environment, (notes, watch))?;
     Ok(())
@@ -1006,9 +1037,16 @@ impl Journal {
         judged: &mutation::Judged,
     ) -> Result<(), crate::checkpoint::CheckpointError> {
         let disposition = match &judged.disposition {
-            mutation::Disposition::Killed { by } => {
-                crate::checkpoint::SavedDisposition::Killed { by: by.clone() }
-            }
+            mutation::Disposition::Killed { by } => crate::checkpoint::SavedDisposition::Killed {
+                by: by.clone(),
+                before: judged
+                    .routing
+                    .iter()
+                    .flat_map(|routing| &routing.answered)
+                    .take_while(|answer| answer.target != *by)
+                    .cloned()
+                    .collect(),
+            },
             mutation::Disposition::StepLimitReached { .. }
             | mutation::Disposition::Waited { .. }
             | mutation::Disposition::Rejected { .. }
@@ -1349,6 +1387,7 @@ fn run_mutation(
         Subject {
             session,
             baseline: &mutating.baseline.targets,
+            perturbing: mutation::Perturbing::Mutants,
         },
         &MutationOptions {
             test_args: mutating.request.test_args.clone(),
@@ -1391,7 +1430,17 @@ fn run_mutation(
     model.capture(session, &mutation.judged, tree_written)?;
     record(mutating.report, &mutation, &accepted.ids)?;
     mutating.report.findings.extend(accepted.findings);
-    let (concurrency, uncompiled) =
+    concurrency_of(mutating, session, watch)?;
+    Ok(())
+}
+
+/// Whether each test binary runs one thread, and what delaying the guards of those that may not found, into the report: exploring only in a whole run, since a shard's binaries are every part's.
+fn concurrency_of(
+    mutating: &mut Mutating<'_>,
+    session: &rust_mutants::session::Session,
+    watch: Watch<'_>,
+) -> Result<(), RunnerError> {
+    let (mut concurrency, uncompiled) =
         super::concurrency::recorded(session, &mutating.request.test_args)?;
     if !uncompiled.is_empty() {
         watch.trace.note(
@@ -1403,6 +1452,24 @@ fn run_mutation(
             ),
         );
     }
+    let whole = mutating.report.scope.shard.is_none();
+    super::concurrency::explored(
+        session,
+        &mut concurrency,
+        (
+            if whole {
+                mutating.request.config.schedules.explore
+            } else {
+                0
+            },
+            &super::knobs::passing(mutating.baseline),
+        ),
+        watch.cancel,
+    )?;
+    mutating
+        .report
+        .findings
+        .extend(crate::report::concurrency::found(&concurrency));
     mutating
         .report
         .limitations
@@ -1622,7 +1689,7 @@ fn narrowing(
     let Some(change) = request.changed.as_ref() else {
         return Ok(configured);
     };
-    rust_mutants::git::within(change, &configured)
+    rust_mutants::git::within(change, &configured)?.patterns()
 }
 
 /// Puts what the mutation phase judged into the report: the counts, one row per mutation, the findings, and what was not mutated.
@@ -1666,21 +1733,14 @@ pub fn record(
     report.drift.clone_from(&mutation.drift);
     report.sources.clone_from(&mutation.sources);
     if report.scope.shard.is_none() {
-        report
-            .findings
-            .extend(crate::report::hollow::found(&report.mutants));
-        report
-            .findings
-            .extend(crate::report::drift::found(&report.drift, &report.mutants));
-        report
-            .limitations
-            .extend(crate::report::drift::unmeasured(&report.drift));
-        report
-            .findings
-            .extend(crate::report::knobs::found(&report.knobs, &report.mutants));
-        report
-            .limitations
-            .extend(crate::report::knobs::limited(&report.knobs));
+        let whole = crate::report::whole_catalog(&report.drift, &report.knobs, &report.mutants);
+        report.findings.extend(whole.findings);
+        report.limitations.extend(whole.limitations);
+        report.limitations.extend(crate::report::drift::repaired(
+            &report.drift,
+            &report.mutants,
+            &mutation.repaired,
+        ));
     }
     for (reason, count) in &mutation.skips {
         report.limitations.push(Limitation::new(
@@ -1873,6 +1933,10 @@ pub fn first_line(text: &str) -> String {
 
 /// What a named limitation means, for the ones a phase reports by name.
 #[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one sentence for every limitation a phase names, and a table split in two is two places to add the next one to"
+)]
 pub fn limitation_detail(name: &str) -> String {
     let named = name.split_once(':').map_or(name, |(head, _target)| head);
     match named {
@@ -1893,6 +1957,22 @@ pub fn limitation_detail(name: &str) -> String {
         rust_mutants::limitation::DOCTESTS_NONE => {
             "the library documents no example, so its documentation target has nothing to \
              run and no mutation is routed to it"
+        }
+        crate::limitation::CRASH_NOT_PUT => {
+            "the compiler refused a crash, so nothing is claimed about a stop just after that call"
+        }
+        crate::limitation::CRASH_NO_SITE => {
+            "the run was asked for crashes and no measured file calls anything that writes, so \
+             there was nothing to stop after"
+        }
+        crate::limitation::FAULT_NO_SITE => {
+            "the run was asked for faults and no measured file has a `?`, so there was no call \
+             a fault could fail"
+        }
+        crate::limitation::FAULT_NOT_PUT => {
+            "the compiler refused a fault, because the `?` it asks about propagates an error \
+             type the engine does not make without guessing, so nothing is claimed about that \
+             call failing"
         }
         crate::limitation::PROC_MACRO_EXPANSION_NOT_MEASURED => {
             "a procedural macro decides what it expands to during the build, and a mutation \
@@ -1926,6 +2006,12 @@ pub fn limitation_detail(name: &str) -> String {
         rust_mutants::limitation::TOUCH_LOG_UNREADABLE => {
             "the target recorded what its guards reached and the record did not read back, \
              so nothing of it is believed and every test of it runs"
+        }
+        rust_mutants::limitation::UNCONTROLLED_CHILD => {
+            "a process of the target's tree ran without the environment the run gave it, as a \
+             test that clears a child's environment starts one: no mutant can be active in it \
+             and nothing records what it entered, so every test of the target stays in every \
+             route and a survival it reports is inconclusive"
         }
         rust_mutants::limitation::TARGET_SKIPPED_BY_CONFIGURATION => {
             "the configuration named this target as one never to start, so no mutation was \

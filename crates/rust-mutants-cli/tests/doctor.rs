@@ -27,7 +27,7 @@ fn asked(fixture: &Fixture, path: &Path, extra: &[(&str, &str)]) -> Output {
         .env_clear()
         .env("NO_COLOR", "1")
         .env("PATH", path)
-        .env("TMPDIR", fixture.temp())
+        .envs(njutest_devkit::paths::temporary_directory(fixture.temp()))
         .env("XDG_CACHE_HOME", fixture.cache());
     for (name, value) in extra {
         command.env(name, value);
@@ -173,7 +173,7 @@ fn every_check_the_lines_show_is_a_check_the_document_holds() {
         .env_clear()
         .env("NO_COLOR", "1")
         .env("PATH", &empty)
-        .env("TMPDIR", fixture.temp())
+        .envs(njutest_devkit::paths::temporary_directory(fixture.temp()))
         .env("XDG_CACHE_HOME", fixture.cache())
         .args([
             "doctor",
@@ -239,7 +239,7 @@ fn every_check_that_passed_names_what_it_looked_at() {
         .env_clear()
         .env("NO_COLOR", "1")
         .env("PATH", &empty)
-        .env("TMPDIR", fixture.temp())
+        .envs(njutest_devkit::paths::temporary_directory(fixture.temp()))
         .env("XDG_CACHE_HOME", fixture.cache())
         .args([
             "doctor",

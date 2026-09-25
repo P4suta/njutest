@@ -249,7 +249,7 @@ impl Scratch {
                 source,
             })?;
         }
-        match fs::remove_dir_all(&self.dir) {
+        match tempowner::remove_tree(&self.dir) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(source) => Err(ScratchError::Unusable {

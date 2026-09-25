@@ -11,7 +11,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use njutest::error::error_codes;
+use njutest::error::{NjCode, error_codes};
 
 fn documented_codes(prefix: &str) -> BTreeSet<String> {
     let path = njutest_devkit::paths::workspace_root().join("docs/errors.md");
@@ -101,18 +101,59 @@ fn every_code_the_runner_declares_is_one_some_place_reports() {
     );
 }
 
-/// The constant each code is declared under, as the ledger names it.
+/// The constant each code is declared under, as the ledger names it, refusing any declaration it cannot read.
 fn constants() -> BTreeMap<String, String> {
-    ledger()
-        .split("code!(")
+    let (table, rest) = ledger_parts();
+    let variants: BTreeMap<String, String> = table
+        .split("Self::")
         .skip(1)
-        .filter_map(|block| {
-            let (name, rest) = block.split_once(',')?;
-            let (_, quoted) = rest.split_once('"')?;
+        .filter_map(|arm| {
+            let (variant, rest) = arm.split_once("=>ErrorCode{")?;
+            let (_, quoted) = rest.split_once("code:\"")?;
             let (code, _) = quoted.split_once('"')?;
-            Some((code.to_owned(), name.trim().to_owned()))
+            Some((variant.to_owned(), code.to_owned()))
         })
-        .collect()
+        .collect();
+    assert_eq!(
+        variants.len(),
+        NjCode::ALL.len(),
+        "the scanner reads one arm per code, or a law resting on it would pass over what it \
+         could not read: {variants:?}"
+    );
+    let declared = rest.matches(":ErrorCode=").count();
+    let named: BTreeMap<String, String> = rest
+        .split(';')
+        .filter_map(|statement| {
+            let (head, tail) = statement.split_once(":ErrorCode=NjCode::")?;
+            let (variant, _) = tail.split_once('.')?;
+            let name = head.rsplit("const").next()?;
+            Some((variants.get(variant)?.clone(), name.to_owned()))
+        })
+        .collect();
+    assert_eq!(
+        named.len(),
+        declared,
+        "every `: ErrorCode =` outside the table is a constant read from one of its arms, or \
+         the scanner cannot say whether it is reported: {named:?}"
+    );
+    named
+}
+
+/// `text` with every whitespace character taken out, so no layout a formatter picks changes what is read.
+fn squeezed(text: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// The ledger's table and the rest of the ledger, each squeezed.
+fn ledger_parts() -> (String, String) {
+    let text = ledger();
+    let (before, table) = text
+        .split_once("mod table {")
+        .expect("the ledger holds its table");
+    let (table, after) = table
+        .split_once("\n}\n")
+        .expect("the table closes at the top level");
+    (squeezed(table), squeezed(&format!("{before}{after}")))
 }
 
 /// The ledger's own text.
@@ -137,11 +178,10 @@ fn sources() -> Vec<String> {
             if path.is_dir() {
                 pending.push(path);
             } else if path.extension().is_some_and(|kind| kind == "rs") {
-                let text = std::fs::read_to_string(&path).expect("a source file");
                 found.push(if path.file_name().is_some_and(|name| name == "error.rs") {
-                    declarations_removed(&text)
+                    declarations_removed()
                 } else {
-                    text
+                    squeezed(&std::fs::read_to_string(&path).expect("a source file"))
                 });
             }
         }
@@ -149,29 +189,13 @@ fn sources() -> Vec<String> {
     found
 }
 
-/// The ledger with everything that declares a code taken out, so a declaration is not a report.
-fn declarations_removed(text: &str) -> String {
-    let text = text.split_once("pub const fn error_codes()").map_or_else(
-        || text.to_owned(),
-        |(before, listing)| {
-            let after = listing
-                .split_once("\n}\n")
-                .map_or("", |(_gathered, rest)| rest);
-            format!("{before}{after}")
-        },
-    );
-    text.split("code!(")
-        .enumerate()
-        .map(|(at, block)| {
-            if at == 0 {
-                block.to_owned()
-            } else {
-                block
-                    .split_once(");")
-                    .map_or_else(String::new, |(_declared, rest)| rest.to_owned())
-            }
-        })
-        .collect()
+/// The ledger, squeezed, with the table and every declaration taken out, so a declaration is not a report.
+fn declarations_removed() -> String {
+    let rest = ledger_parts().1;
+    rest.split(';')
+        .filter(|statement| !statement.contains(":ErrorCode=NjCode::"))
+        .collect::<Vec<_>>()
+        .join(";")
 }
 
 #[test]

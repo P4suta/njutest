@@ -20,9 +20,12 @@ use sha2::{Digest as _, Sha256};
 #[cfg(feature = "testkit")]
 pub use event::SCHEMA;
 pub use event::{
-    ArtifactRecord, AskedRecord, DischargeRecord, DriftRecord, Event, ExecRecord, MutantExecRecord,
-    NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RouteRecord,
-    RunAccounting, RunRecord, SentinelRecord, StartRecord, WireExchangeRecord, WireExecRecord,
+    ArtifactRecord, AskedRecord, CrashAsked, CrashExecRecord, CrashNoticeRecord, CrashStep,
+    CrashStepRecord, DischargeRecord, DriftRecord, Event, ExecRecord, FaultAttributionRecord,
+    FaultControlRecord, FaultExecRecord, FaultRejectedRecord, FaultRole, FaultRouteRecord,
+    MutantExecRecord, NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read,
+    RepairRecord, RouteRecord, RunAccounting, RunRecord, SentinelRecord, SiteReached, StartRecord,
+    Unfaulted, WireExchangeRecord, WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{DirSink, FILE_NAME, OUTPUT_DIRECTORY_NAME, Sink};
@@ -37,7 +40,6 @@ use crate::report::ConclusionAccounting;
 pub enum Clock {
     /// The moment it actually is.
     Wall,
-    #[cfg(any(test, feature = "testkit"))]
     /// One that starts at `origin` and advances by `step` each reading, so a recording is the same bytes every time it is made.
     #[cfg(feature = "testkit")]
     Stepping {
@@ -198,9 +200,9 @@ enum EndDelivery {
     Delivered(Option<std::io::Error>),
 }
 
-struct EndInput<'a> {
+struct EndInput {
     moment: Timestamp,
-    verdict: &'a str,
+    verdict: crate::report::Verdict,
     accounting: Option<ConclusionAccounting>,
     error: Option<String>,
 }
@@ -381,6 +383,63 @@ impl Recorder {
         self.emit(Payload::MutantExec { mutant: record });
     }
 
+    /// Records one fault run against one target.
+    pub fn fault_exec(&self, record: FaultExecRecord) {
+        self.emit(Payload::FaultExec { fault: record });
+    }
+
+    /// Records whether one fault, run alone, wrote a path, and whether its target did without it.
+    pub fn fault_attribution(&self, record: FaultAttributionRecord) {
+        self.emit(Payload::FaultAttribution {
+            attribution: record,
+        });
+    }
+
+    /// Records which targets reach one fault.
+    pub fn fault_route(&self, record: FaultRouteRecord) {
+        self.emit(Payload::FaultRoute { route: record });
+    }
+
+    /// Records a fault the compiler refused.
+    pub fn fault_rejected(&self, record: FaultRejectedRecord) {
+        self.emit(Payload::FaultRejected { rejected: record });
+    }
+
+    /// Records what the original code did on the target a fault's detection is confirmed against.
+    pub fn fault_control(&self, record: FaultControlRecord) {
+        self.emit(Payload::FaultControl { control: record });
+    }
+
+    /// Records what a run established about one site a fault was asked at.
+    pub fn fault(&self, record: crate::report::faults::FaultRecord) {
+        self.emit(Payload::Fault { fault: record });
+    }
+
+    /// Records a survivor a target told apart only under a fault.
+    pub fn beside(&self, record: crate::report::faults::BesideRecord) {
+        self.emit(Payload::Beside { beside: record });
+    }
+
+    /// Records one pair of runs behind evidence beside a fault.
+    pub fn beside_run(&self, record: crate::report::faults::BesideRun) {
+        self.emit(Payload::BesideRun { pair: record });
+    }
+
+    /// Records one run of a test a crash was put to.
+    pub fn crash_exec(&self, record: CrashExecRecord) {
+        self.emit(Payload::CrashExec { crash: record });
+    }
+
+    /// Records one thing a run did about a crash besides running a test.
+    pub fn crash_step(&self, step: CrashStepRecord) {
+        self.emit(Payload::CrashStep { step });
+    }
+
+    /// Records what a run established about one call that writes a crash was asked at.
+    pub fn crash(&self, record: crate::report::crashes::CrashRecord) {
+        self.emit(Payload::Crash { crash: record });
+    }
+
     /// Records what the probe pass measured for one target.
     pub fn probe_exec(&self, record: ProbeExecRecord) {
         self.emit(Payload::ProbeExec { probe: record });
@@ -404,6 +463,11 @@ impl Recorder {
     /// Records what one control established about one target's baseline reach.
     pub fn drift(&self, record: DriftRecord) {
         self.emit(Payload::Drift { drift: record });
+    }
+
+    /// Records one disposition that rested on a moved target, run again against it.
+    pub fn repair(&self, record: RepairRecord) {
+        self.emit(Payload::Repair { repair: record });
     }
 
     /// Records what one control under one knob established about one target.
@@ -434,7 +498,7 @@ impl Recorder {
     /// The sink could not make the completed recording durable.
     pub fn run_end(
         &self,
-        verdict: &str,
+        verdict: crate::report::Verdict,
         accounting: Option<ConclusionAccounting>,
         error: Option<String>,
     ) -> std::io::Result<()> {
@@ -540,7 +604,7 @@ impl Recorder {
     }
 }
 
-fn deliver_end(inner: &Inner, input: EndInput<'_>) -> std::io::Result<EndDelivery> {
+fn deliver_end(inner: &Inner, input: EndInput) -> std::io::Result<EndDelivery> {
     let failure = {
         let mut state = inner.lock_state()?;
         if state.ended {
@@ -553,7 +617,7 @@ fn deliver_end(inner: &Inner, input: EndInput<'_>) -> std::io::Result<EndDeliver
             input.moment,
             Payload::RunEnd {
                 run: RunRecord {
-                    verdict: input.verdict.to_owned(),
+                    verdict: input.verdict,
                     accounting: input.accounting.map(RunAccounting::from),
                     error: input.error,
                     events_emitted,

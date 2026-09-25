@@ -26,7 +26,7 @@ fn environment(root: &Path) -> Environment {
         vars: Vec::new(),
         working_directory: root.to_path_buf(),
         temp_directory: root.join("tmp"),
-        program: std::path::PathBuf::from("this test never runs it"),
+        program: std::path::PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         cache_directory: root.join("cache"),
         cancel: rust_mutants::runner::Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),
@@ -183,7 +183,6 @@ fn a_tree_that_holds_only_directories_is_carried_as_nothing() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn one_unreadable_entry_refuses_the_whole_tree_instead_of_claiming_a_partial_bundle() {
     use std::os::unix::fs::symlink;

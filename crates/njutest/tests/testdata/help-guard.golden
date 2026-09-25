@@ -1,0 +1,10 @@
+Draw one file as a run measured it, each changed line marked with where it stands
+
+Usage: njutest guard [OPTIONS] <PATH>
+
+Arguments:
+  <PATH>  The file to draw, from the project's root
+
+Options:
+      --run <RUN>  The run to read. The latest by default
+  -h, --help       Print help

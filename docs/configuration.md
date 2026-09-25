@@ -9,7 +9,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 The defaults, the strictness, and the two rules about what a report may contain are fixed by tests; `njutest init` writes the skeleton below, and a test loads the untouched skeleton and asserts it is exactly the defaults.
 
 `.njutest.toml` is optional and strict.
-Missing configuration uses `standard-v1`, the whole workspace, a ten-minute measurement timeout, and a cache capped at 5 GiB and 30 days.
+Missing configuration uses `whole-v1`, the whole workspace, a ten-minute measurement timeout, and a cache capped at 5 GiB and 30 days.
 Unknown keys, malformed values, and any `version` other than `1` are errors.
 
 `njutest init` writes an annotated skeleton: the two active defaults, and every section below as commented guidance.
@@ -17,7 +17,7 @@ Loading the untouched skeleton yields exactly the defaults.
 
 ```toml
 version = 1
-contract = "standard-v1"        # "standard-v1" | "deep-v1" | "verified-v1"
+contract = "whole-v1"  # "whole-v1" | "standard-v1" | "deep-v1" | "verified-v1"
 
 [project]
 packages = []                   # cargo package names; empty = every workspace member
@@ -32,7 +32,7 @@ test_binary_args = []           # allowed: --test-threads=N, --include-ignored, 
 environment = []                # variable names only, never values; RUST_TEST_* is refused
 timeout = "10m"                 # upper bound for one measurement; Go duration syntax
 build_timeout = ""              # upper bound for one build; empty = no bound
-jobs = 0                        # mutation workers; 0 = logical CPUs capped at four
+jobs = "auto"                   # mutation workers: a count, "auto" (logical CPUs capped at four), or "all"
 skip_targets = []               # stable target ids never to start; every one is reported
 coverage = false                # also make the coverage build, as a second opinion (ADR 0014)
 
@@ -46,6 +46,12 @@ target = ""                     # target triple; empty = the host
 
 [mutation]
 equivalence = false             # ask the compiler whether it renders each survivor identically
+
+[faults]
+inject = false                  # fail each call a `?` asks about and ask what noticed; --faults sets it
+
+[durability]
+crash = false                   # stop just after each call that writes and run the test again; --crashes sets it
 
 [verification]                  # verified-v1 only; both keys are mandatory and nonzero
 # unwind = 8                    # maximum loop unwind for every proof harness
@@ -66,6 +72,9 @@ targets = []                   # empty = every target the tree holds
 
 [repeatable]
 knobs = []                     # e.g. ["timezone", "locale", "temp-directory", "home", "umask", "columns", "threads"]
+
+[schedules]
+explore = 0                    # guards to delay per test binary not proven single-threaded; 0 = none
 
 [soundness]                     # deep-v1 only
 miri_flags = []
@@ -97,9 +106,16 @@ owner = "quality-team"
 ticket = "QA-123"
 ```
 
+`[schedules] explore` asks for up to that many schedules of every test binary not proven to run one thread whose baseline passed: each delays one guard its baseline reached by 100 ms, the first time each thread reaches it, and a delay that makes the tests fail twice more while they pass without it is `schedule-dependent`, a defect ([ADR 0034](adr/0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)).
+Empty by default, because each schedule is one more run of the binary.
+
 `[repeatable] knobs` asks for one more control of every target whose baseline passed per knob, each started with one thing the contract lets differ between machines set differently: `timezone` (TZ=Australia/Lord_Howe), `locale` (LC_ALL=tr_TR.UTF-8), `temp-directory` (an empty temporary directory whose path holds a space), `home` (an empty home directory, with cargo's and rustup's kept), `umask` (077), `columns` (COLUMNS=37 LINES=11), and `threads` (`--test-threads=1`).
 Empty by default, because each knob is one more run of every target.
 A knob this machine cannot put is stated as `knob-not-put` rather than skipped silently; most CI images install no Turkish locale, so there `locale` is not put.
+
+`contract = "whole-v1"`, the default, asks every dimension a run can measure: it puts every fault, crash and knob, explores eight schedules of every binary not proven to run one thread, runs the soundness phase as `deep-v1` does, and is not `ASSURED` while any dimension is a hole ([ADR 0033](adr/0033-every-dimension-or-a-hole.md)).
+So a `whole-v1` run is `ASSURED` only where every test binary is proven to run one thread — run with `-- --test-threads=1`, over a closure that starts no thread — because an explored schedule is a sample and a sample is a hole; an `INSUFFICIENT` `whole-v1` run of a suite with threads is the contract answering, and its schedule row names which binary is concurrent and why.
+A document that turns one of those off in so many words, such as `[schedules] explore = 0`, is refused rather than overridden; name `standard-v1` to ask less.
 
 `[verification]` belongs only to `contract = "verified-v1"`.
 Both `unwind` (the nonzero loop-unwind bound) and `timeout` (the verifier process ceiling, representable as at least one whole millisecond) are mandatory there; the other contracts reject the section instead of silently ignoring proof settings.
@@ -142,6 +158,10 @@ It stays available because an independent second opinion is worth having when th
 `[execution] skip_targets` is the narrow escape hatch for a process whose tests inspect the instrumented tree itself, or otherwise fail for the same known reason under every mutation.
 Each entry is the stable target id a report and `njutest plan` name, such as `pkg/test/ui`.
 An id the workspace does not declare is an error, and every id that is left out is recorded as `target-skipped-by-configuration`; it is never a silent pass.
+
+`[faults] inject` fails, one at a time, every call a `?` in a measured file asks about, and asks the suite whether it noticed ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
+It is off by default because it costs a second instrumented build and baseline of the tree, and one execution for every `?` a test reaches.
+`njutest verify --faults` turns it on for one run whatever the file says, and the run's identity carries the answer, so a run with faults never reads back one without.
 
 `[execution] features`, `all_features` and `no_default_features` are the words cargo would have been given, and every command of a run is given them: the baseline, the mutation phase, the equivalence layer, `plan`, `replay` and `fix`.
 Cargo compiles a different program for a different feature set, so a run that measured the default build while the project ships another would put a verdict on a program nobody runs.

@@ -106,6 +106,13 @@ pub enum Violation {
         /// The mutation identity.
         id: String,
     },
+    /// A finding the part's own records decide is stored where they do not raise it, or missing where they do.
+    DerivedFindingIncoherent {
+        /// The kind.
+        kind: &'static str,
+        /// What the records and the report disagree about.
+        because: String,
+    },
     /// A mutation row and the actionable finding that should expose it disagree.
     MutantFindingIncoherent {
         /// The mutation identity.
@@ -223,12 +230,8 @@ impl fmt::Display for Violation {
             Self::SourcesDisagree { path } => fmt_sources_disagree(f, path),
             Self::KillNotItsLastAnswer { id, by } => fmt_kill_not_last(f, id, by),
             Self::SurvivorNotAskedOfItsRoute { id } => fmt_survivor_not_asked(f, id),
-            Self::MutantFindingIncoherent { id, because } => {
-                write!(
-                    f,
-                    "the finding for mutation row {id} is incoherent: {because}"
-                )
-            }
+            Self::DerivedFindingIncoherent { kind, because } => fmt_derived(f, kind, because),
+            Self::MutantFindingIncoherent { id, because } => fmt_mutant_finding(f, id, because),
             Self::VerdictUnsupported { verdict, because } => {
                 write!(f, "the report claims {verdict:?} and {because}")
             }
@@ -571,6 +574,7 @@ fn validate_flat(report: &BuildReport) -> Vec<Violation> {
     check_verdict(report, &mut violations);
     check_git(report, &mut violations);
     check_findings(report, &mut violations);
+    check_derived(report, &mut violations);
     check_acceptances(report, &mut violations);
     check_provenance(report, &mut violations);
     check_sources(report, &mut violations);
@@ -720,6 +724,7 @@ fn validate_build_ledger(report: &impl LatticeEvidence) -> Vec<Violation> {
         validate_build_parts(report, build, &mut unique_runs, &mut violations);
     }
     check_one_tree(report, &mut violations);
+    check_merged_acceptances(report, &mut violations);
     violations
 }
 
@@ -803,6 +808,9 @@ fn validate_build_parts<'a>(
             resources: part.resources.clone(),
             candidates: part.candidates.clone(),
             seams: part.seams.clone(),
+            faults: part.faults.clone(),
+            beside: part.beside.clone(),
+            crashes: part.crashes.clone(),
             targets: part.targets.clone(),
             sources: part.sources.clone(),
             mutants: part.mutants.clone(),
@@ -867,7 +875,7 @@ struct ModelAudit<'a> {
 }
 
 fn check_models(audit: &ModelAudit<'_>, violations: &mut Vec<Violation>) {
-    if audit.contract != crate::config::Contract::VerifiedV1 {
+    if !audit.contract.proves_models() {
         reject_models_for_contract(audit.contract, audit.models, audit.mutants, violations);
         return;
     }
@@ -1093,38 +1101,37 @@ fn check_seams(report: &BuildReport, violations: &mut Vec<Violation>) {
     }
 }
 
-/// Whether every unmatched-acceptance finding really fails to name exactly one catalog entry.
+/// Whether every unmatched-acceptance finding really fails to name exactly one catalog entry, which a part of a shard set cannot say alone.
 fn check_acceptances(report: &BuildReport, violations: &mut Vec<Violation>) {
     if report.scope.shard.is_some() {
         return;
     }
-    for finding in report
-        .findings
-        .iter()
-        .filter(|finding| finding.kind == FindingKind::UnmatchedAcceptance)
-    {
-        let subject = finding.subject.as_str();
-        let valid = (rust_mutants::id::MIN_PREFIX_LENGTH..=rust_mutants::id::ID_HEX_LENGTH)
-            .contains(&subject.len())
-            && subject
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
-        if !valid {
-            continue;
-        }
-        let mut matches = report
-            .mutants
+    resolved(&report.findings, &report.mutants, violations);
+}
+
+/// The same question of a build measured in parts, asked of every part's rows together.
+fn check_merged_acceptances(report: &impl LatticeEvidence, violations: &mut Vec<Violation>) {
+    for build in report.builds().iter() {
+        if !build
+            .parts
             .iter()
-            .filter(|mutant| mutant.id.starts_with(subject));
-        let Some(mutant) = matches.next() else {
+            .any(|part| matches!(part.part, super::CatalogPart::Shard(_)))
+        {
             continue;
-        };
-        if matches.next().is_none() {
-            violations.push(Violation::UnmatchedAcceptanceResolved {
-                subject: finding.subject.clone(),
-                mutant: mutant.id.clone(),
-            });
         }
+        let rows: Vec<super::MutantRecord> = build
+            .parts
+            .iter()
+            .flat_map(|part| part.mutants.iter().cloned())
+            .collect();
+        resolved(report.global_findings(), &rows, violations);
+    }
+}
+
+/// A violation for every unmatched acceptance `rows` resolve.
+fn resolved(findings: &[Finding], rows: &[super::MutantRecord], violations: &mut Vec<Violation>) {
+    for (subject, mutant) in super::acceptances_the_catalog_resolves(findings, rows) {
+        violations.push(Violation::UnmatchedAcceptanceResolved { subject, mutant });
     }
 }
 
@@ -1147,6 +1154,58 @@ fn check_provenance(report: &BuildReport, violations: &mut Vec<Violation>) {
             because: "a source run with no name is no source at all".to_owned(),
         });
     }
+}
+
+/// Every finding the part's own records decide is one the report holds, and a kind the records decide wholly holds no other.
+fn check_derived(report: &BuildReport, violations: &mut Vec<Violation>) {
+    let derived = super::derived::findings(report);
+    for kind in FindingKind::ALL {
+        let subjects = |findings: &[Finding]| -> Vec<String> {
+            let mut subjects: Vec<String> = findings
+                .iter()
+                .filter(|finding| finding.kind == kind)
+                .map(|finding| finding.subject.clone())
+                .collect();
+            subjects.sort();
+            subjects
+        };
+        let (decided, held) = (subjects(&derived), subjects(&report.findings));
+        let missing: Vec<&String> = decided.iter().filter(|one| !held.contains(one)).collect();
+        let because = match kind.derivation() {
+            super::Derivation::Records if decided != held => Some(format!(
+                "the records raise {decided:?} and the report holds {held:?}"
+            )),
+            super::Derivation::Shared if !missing.is_empty() => Some(format!(
+                "the records raise {missing:?}, which the report does not hold"
+            )),
+            super::Derivation::Records
+            | super::Derivation::Shared
+            | super::Derivation::Row
+            | super::Derivation::Observed => None,
+        };
+        if let Some(because) = because {
+            violations.push(Violation::DerivedFindingIncoherent {
+                kind: kind.name(),
+                because,
+            });
+        }
+    }
+}
+
+/// The sentence of a derived finding the records and the report disagree about.
+fn fmt_derived(f: &mut fmt::Formatter<'_>, kind: &str, because: &str) -> fmt::Result {
+    write!(
+        f,
+        "the {kind} findings disagree with the records: {because}"
+    )
+}
+
+/// The sentence of a mutation row whose finding is incoherent.
+fn fmt_mutant_finding(f: &mut fmt::Formatter<'_>, id: &str, because: &str) -> fmt::Result {
+    write!(
+        f,
+        "the finding for mutation row {id} is incoherent: {because}"
+    )
 }
 
 /// A verdict and the findings say the same thing, or the report says two things at once.

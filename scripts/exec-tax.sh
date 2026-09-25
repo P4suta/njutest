@@ -26,8 +26,8 @@ trap 'rm -rf "$dir"' EXIT
 # cheap question would have reported a machine that was fine.
 probe="$dir/probe"
 cp "$(command -v git)" "$probe" 2>/dev/null || {
-    echo "exec-tax: no program to copy as a probe" >&2
-    exit 0
+    echo "exec-tax: no program to copy as a probe, so this machine's exec cost cannot be measured" >&2
+    exit 2
 }
 chmod +x "$probe"
 

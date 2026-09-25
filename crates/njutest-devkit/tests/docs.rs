@@ -84,14 +84,22 @@ fn a_missing_marker_is_an_error() {
 
 #[test]
 fn an_unwritten_english_number_is_a_typed_refusal() {
-    let result = table_count("twenty-one kinds\n\n| `kind` |", "| `kind` |", 21, "kinds");
+    let result = table_count(
+        "one hundred kinds\n\n| `kind` |",
+        "| `kind` |",
+        100,
+        "kinds",
+    );
     assert_eq!(
         result_state(&result),
         ResultState::Refused,
         "an unsupported count cannot pass"
     );
     if let Err(error) = result {
-        assert_eq!(error.to_string(), "no documentation ledger spells 21 yet");
+        assert_eq!(
+            error.to_string(),
+            "no documentation ledger spells 100 in words"
+        );
     }
 }
 
@@ -204,4 +212,23 @@ fn flattened_serialization_may_not_emit_one_field_twice() {
         trace_field_ledger(page, "| Type | Fields | Records |", &specimens).is_err(),
         "a JSON map would otherwise keep one of the two values and hide the collision"
     );
+}
+
+#[test]
+fn every_count_below_a_hundred_is_spelled_as_a_page_would() {
+    for (many, words) in [
+        (0, "zero"),
+        (19, "nineteen"),
+        (20, "twenty"),
+        (21, "twenty-one"),
+        (75, "seventy-five"),
+        (99, "ninety-nine"),
+    ] {
+        let text = format!("{words} kinds\n\n| `kind` |");
+        assert_eq!(
+            result_state(&table_count(&text, "| `kind` |", many, "kinds")),
+            ResultState::Returned,
+            "{many} is spelled {words}"
+        );
+    }
 }

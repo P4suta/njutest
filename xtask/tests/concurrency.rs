@@ -111,6 +111,13 @@ fn a_reason_or_a_thread_count_no_run_gives_is_refused() {
     let single = json!({ "state": "single-threaded" });
     assert!(
         !holds(
+            &json!({ "state": "single-threaded", "because": [{ "kind": "starts" }] }),
+            &libtest("1", Some(0))
+        ),
+        "a proven binary names no reason it is not"
+    );
+    assert!(
+        !holds(
             &json!({ "state": "concurrent", "because": [{ "kind": "banana" }] }),
             &libtest("1", Some(0))
         ),
@@ -151,4 +158,207 @@ fn a_binary_the_recording_says_too_little_about_is_not_derived() {
         Err(UnwitnessedError::ArgumentsUnrecorded),
         "a libtest binary whose baseline arguments were not recorded has no known thread count"
     );
+}
+
+mod explored {
+    use std::collections::BTreeSet;
+
+    use serde_json::json;
+    use xtask::concurrency::{Context, Explored, Run, agrees_explored, replayed};
+    use xtask::knobs::Ended;
+
+    fn run(delayed: Option<u64>, ended: Ended, failed: &[&str]) -> Run {
+        Run {
+            delayed,
+            confirms: None,
+            ended,
+            failed: failed.iter().map(|one| (*one).to_owned()).collect(),
+        }
+    }
+
+    fn confirming(site: u64, ended: Ended, failed: &[&str]) -> Run {
+        Run {
+            confirms: Some(site),
+            ..run(None, ended, failed)
+        }
+    }
+
+    fn broke_at(site: u64) -> Vec<Run> {
+        let mut runs = vec![run(Some(site), Ended::Failed, &["t"])];
+        for _ in 0..5 {
+            runs.push(run(Some(site), Ended::Failed, &["t"]));
+            runs.push(confirming(site, Ended::Passed, &[]));
+        }
+        runs
+    }
+
+    const fn concurrent(runs: &[Run]) -> Context {
+        Context {
+            single_threaded: false,
+            passing: true,
+            reached: Some(2),
+            asked_any: !runs.is_empty(),
+        }
+    }
+
+    fn holds_in(report: &serde_json::Value, runs: &[Run], context: Context) -> bool {
+        replayed(runs).is_ok_and(|derived| agrees_explored(report, &derived, context).is_ok())
+    }
+
+    fn holds(report: &serde_json::Value, runs: &[Run]) -> bool {
+        holds_in(report, runs, concurrent(runs))
+    }
+
+    #[test]
+    fn a_broken_schedule_is_five_rounds_that_repeat_the_failure_and_pass_without_the_delay() {
+        let mut runs = vec![run(Some(2), Ended::Passed, &[])];
+        runs.extend(broke_at(7));
+        assert_eq!(
+            replayed(&runs).expect("a sequence the run gives"),
+            Explored::Broke {
+                site: 7,
+                failed: BTreeSet::from(["t".to_owned()]),
+                rounds: 5
+            }
+        );
+        let broke = json!({ "state": "broke", "site": 7, "path": "src/lib.rs", "line": 3, "failed": ["t"], "rounds": 5 });
+        assert!(holds(&broke, &runs));
+        let flaky = [
+            run(Some(7), Ended::Failed, &["t"]),
+            run(Some(7), Ended::Failed, &["t"]),
+            confirming(7, Ended::Passed, &[]),
+            run(Some(7), Ended::Failed, &["t", "other"]),
+        ];
+        assert!(
+            !holds(&broke, &flaky),
+            "a round that failed other tests confirms nothing"
+        );
+        let dirty = [
+            run(Some(7), Ended::Failed, &["t"]),
+            run(Some(7), Ended::Failed, &["t"]),
+            confirming(7, Ended::Failed, &["t"]),
+        ];
+        assert!(
+            !holds(&broke, &dirty),
+            "a test that fails without the delay is broken everywhere"
+        );
+    }
+
+    #[test]
+    fn every_state_a_report_gives_is_the_one_the_recorded_sequence_comes_to() {
+        let passed = [
+            run(Some(1), Ended::Passed, &[]),
+            run(Some(2), Ended::Passed, &[]),
+        ];
+        let sampled = json!({ "state": "sampled", "asked": 2, "delayed": [1, 2] });
+        assert!(holds(&sampled, &passed));
+        let waited = [
+            run(Some(1), Ended::Passed, &[]),
+            run(Some(2), Ended::Waited, &[]),
+        ];
+        assert!(
+            !holds(&sampled, &waited),
+            "a delay that settled nothing is no passing sample"
+        );
+        let undecided =
+            json!({ "state": "undecided", "asked": 2, "delayed": [1, 2], "undecided": [2] });
+        assert!(holds(&undecided, &waited));
+        let unexplored = json!({ "state": "unexplored", "why": "not-asked" });
+        assert!(holds(&unexplored, &[]));
+        assert!(
+            !holds(&unexplored, &broke_at(4)),
+            "a binary the engine broke is not one the report may call unexplored"
+        );
+        assert!(
+            !holds(
+                &json!({ "state": "sampled", "asked": 1, "delayed": [1] }),
+                &passed
+            ),
+            "a report may not drop a site the engine delayed"
+        );
+        let mut broke = broke_at(4);
+        broke.push(run(Some(5), Ended::Passed, &[]));
+        assert!(
+            replayed(&broke).is_err(),
+            "nothing runs after a schedule broke"
+        );
+        assert!(
+            replayed(&[confirming(3, Ended::Passed, &[])]).is_err(),
+            "an undelayed control before any delayed one is none the procedure starts"
+        );
+        let mut elsewhere = broke_at(4);
+        if let Some(last) = elsewhere.last_mut() {
+            last.confirms = Some(9);
+        }
+        assert!(
+            replayed(&elsewhere).is_err(),
+            "the undelayed half of a round names the site it confirms"
+        );
+        assert!(!holds(&json!({ "state": "explored" }), &passed));
+    }
+
+    #[test]
+    fn why_a_binary_was_not_explored_is_the_one_its_baseline_and_standing_give() {
+        let unexplored = |why: &str| json!({ "state": "unexplored", "why": why });
+        let quiet = concurrent(&[]);
+        assert!(
+            !holds_in(&unexplored("not-needed"), &[], quiet),
+            "a binary that may race is not one whose schedules need no exploring"
+        );
+        let proven = Context {
+            single_threaded: true,
+            ..quiet
+        };
+        assert!(holds_in(&unexplored("not-needed"), &[], proven));
+        assert!(
+            !holds_in(
+                &json!({ "state": "broke", "site": 7, "path": "p", "line": 1, "failed": ["t"], "rounds": 5 }),
+                &broke_at(7),
+                proven
+            ),
+            "a binary proven single-threaded has no schedule to break"
+        );
+        assert!(holds_in(
+            &unexplored("not-passing"),
+            &[],
+            Context {
+                passing: false,
+                ..quiet
+            }
+        ));
+        assert!(holds_in(
+            &unexplored("no-site"),
+            &[],
+            Context {
+                reached: Some(0),
+                ..quiet
+            }
+        ));
+        assert!(
+            !holds_in(
+                &unexplored("not-asked"),
+                &[],
+                Context {
+                    asked_any: true,
+                    ..quiet
+                }
+            ),
+            "in a run that delayed guards, a binary that could have been explored was asked"
+        );
+        let passed = [
+            run(Some(1), Ended::Passed, &[]),
+            run(Some(2), Ended::Passed, &[]),
+        ];
+        assert!(
+            !holds_in(
+                &json!({ "state": "sampled", "asked": 5, "delayed": [1, 2] }),
+                &passed,
+                Context {
+                    reached: Some(10),
+                    ..concurrent(&passed)
+                }
+            ),
+            "five asked of ten reached is five delayed, so two is not what five asked for"
+        );
+    }
 }

@@ -73,6 +73,61 @@ pub enum Payload {
         /// The record.
         mutant: MutantExecRecord,
     },
+    /// One fault put to one target, which no reader of mutant executions ever sees.
+    FaultExec {
+        /// The record.
+        fault: FaultExecRecord,
+    },
+    /// Which targets reach one fault, which no reader of mutant routes ever sees.
+    FaultRoute {
+        /// The record.
+        route: FaultRouteRecord,
+    },
+    /// A fault the compiler refused, so it was never put.
+    FaultRejected {
+        /// The record.
+        rejected: FaultRejectedRecord,
+    },
+    /// Whether one fault, run alone, wrote a path the phase left in the tree, and whether its test did without it.
+    FaultAttribution {
+        /// The record.
+        attribution: FaultAttributionRecord,
+    },
+    /// What the original code did on the target a fault's detection is confirmed against.
+    FaultControl {
+        /// The record.
+        control: FaultControlRecord,
+    },
+    /// What a run established about one site a fault was asked at.
+    Fault {
+        /// The record, as the report holds it.
+        fault: crate::report::faults::FaultRecord,
+    },
+    /// A survivor a target told apart only with the call at its site failing beside it.
+    Beside {
+        /// The record, as the report holds it.
+        beside: crate::report::faults::BesideRecord,
+    },
+    /// One pair of runs of a target behind evidence beside a fault.
+    BesideRun {
+        /// The record.
+        pair: crate::report::faults::BesideRun,
+    },
+    /// One run of a test a crash was put to: stopped at the call, run again over what it left, or run in a fresh scratch.
+    CrashExec {
+        /// The record.
+        crash: CrashExecRecord,
+    },
+    /// One thing a run did about a crash besides running a test: refused it, left it alone, routed it, or saw its stop write into the tree.
+    CrashStep {
+        /// The record.
+        step: CrashStepRecord,
+    },
+    /// What a run established about one call that writes a crash was asked at.
+    Crash {
+        /// The record, as the report holds it.
+        crash: crate::report::crashes::CrashRecord,
+    },
     /// What the probe pass measured for one target.
     ProbeExec {
         /// The record.
@@ -102,6 +157,11 @@ pub enum Payload {
     Drift {
         /// The record.
         drift: DriftRecord,
+    },
+    /// One disposition that rested on a moved target, run again against it (ADR 0036).
+    Repair {
+        /// The record.
+        repair: RepairRecord,
     },
     /// What one control under one knob established about one target, as the report keeps it.
     Knob {
@@ -133,12 +193,24 @@ impl Payload {
             Self::Artifact { .. } => "artifact",
             Self::Route { .. } => "route",
             Self::MutantExec { .. } => "mutant-exec",
+            Self::FaultExec { .. } => "fault-exec",
+            Self::FaultControl { .. } => "fault-control",
+            Self::FaultAttribution { .. } => "fault-attribution",
+            Self::FaultRoute { .. } => "fault-route",
+            Self::FaultRejected { .. } => "fault-rejected",
+            Self::Fault { .. } => "fault",
+            Self::Beside { .. } => "beside",
+            Self::BesideRun { .. } => "beside-run",
+            Self::CrashExec { .. } => "crash-exec",
+            Self::CrashStep { .. } => "crash-step",
+            Self::Crash { .. } => "crash",
             Self::ProbeExec { .. } => "probe-exec",
             Self::WireExchange { .. } => "wire-exchange",
             Self::WireExec { .. } => "wire-exec",
             Self::Sentinel { .. } => "sentinel",
             Self::Model { .. } => "model",
             Self::Drift { .. } => "drift",
+            Self::Repair { .. } => "repair",
             Self::Knob { .. } => "knob",
             Self::Note { .. } => "note",
             Self::RunEnd { .. } => "run-end",
@@ -400,6 +472,183 @@ pub struct MutantExecRecord {
     pub alone: bool,
 }
 
+/// Which execution of a fault one record is, so a detection can be held to the confirmation it needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FaultRole {
+    /// The execution that asked the target.
+    First,
+    /// The execution that asked again after a failure, with the control between.
+    Confirmation,
+    /// The execution run alone to see whether it writes a path the phase left in the tree.
+    Attribution,
+    /// The same test run alone without the fault, to see whether it writes that path anyway.
+    #[serde(rename = "attribution-control")]
+    AttributionControl,
+}
+
+/// Whether one fault, run alone on one target, wrote a path, and whether the target did without it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultAttributionRecord {
+    /// The fault.
+    pub fault: String,
+    /// The target it was run on.
+    pub target: String,
+    /// The path of the tree the phase left written.
+    pub path: String,
+    /// Whether the path was there after the fault ran alone.
+    pub faulted: bool,
+    /// Whether the target passed with the fault in place, which is what makes the write the program's rather than the test's own failure's.
+    pub passed: bool,
+    /// What the same target did run alone without the fault.
+    pub unfaulted: Unfaulted,
+}
+
+/// What a target run alone without a fault did to a path its faulted run wrote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Unfaulted {
+    /// It was not run, because the faulted run wrote nothing or its test failed.
+    NotAsked,
+    /// It wrote the path too, so the fault is not what wrote it.
+    Wrote,
+    /// It did not write the path, so the fault did.
+    DidNotWrite,
+}
+
+/// Which targets reach one fault.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultRouteRecord {
+    /// The fault a person types.
+    pub fault: String,
+    /// Every target whose baseline reached the site, which is empty where nothing did.
+    pub reaching: Vec<String>,
+}
+
+/// A fault the compiler refused.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultRejectedRecord {
+    /// The fault a person types.
+    pub fault: String,
+    /// The first line of what the compiler said.
+    pub diagnostic: String,
+}
+
+/// What the original code did on one target, answered for one fault's confirmation.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultControlRecord {
+    /// The fault whose detection this confirms.
+    pub fault: String,
+    /// The target.
+    pub target: String,
+    /// Whether the target passed on the original code.
+    pub passed: bool,
+}
+
+/// One fault run against one target.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultExecRecord {
+    /// The fault a person types.
+    pub fault: String,
+    /// Which execution of the fault this is.
+    pub role: FaultRole,
+    /// The target it ran against.
+    pub target: String,
+    /// The arguments the target was given, verbatim.
+    pub args: Vec<String>,
+    /// What the run established.
+    pub outcome: String,
+    /// How long it took.
+    pub duration_ms: u64,
+    /// Whether the machine was given to this execution, which a run does once when a budget expires.
+    pub alone: bool,
+}
+
+/// One run of a test a crash was put to.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CrashExecRecord {
+    /// The crash a person types.
+    pub crash: String,
+    /// The target the test is in.
+    pub target: String,
+    /// The test.
+    pub test: String,
+    /// Which run it was: `crash`, stopped at the call; `next`, over what a crash left; or `fresh`, in a scratch of its own.
+    pub stage: String,
+    /// The exit status, which is how a stop at the call is told from a test that failed.
+    pub exit_code: i64,
+    /// What the engine made of it.
+    pub outcome: String,
+    /// Whether the runtime published the notice that it stopped at the call, which is what makes the exit status a stop rather than a status the test chose.
+    pub noticed: bool,
+    /// What the engine issued a `crash` run and found published, which `noticed` is decided on and an audit decides again; nothing on a `next` or `fresh` run.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub issued: Option<CrashNoticeRecord>,
+    /// The files a stopped run left in its scratch, on a `crash` run that stopped; empty otherwise.
+    pub left: Vec<String>,
+    /// The tests a `next` or `fresh` run failed.
+    pub failed: Vec<String>,
+}
+
+/// One thing a run did about a crash besides running a test.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CrashStepRecord {
+    /// The crash a person types.
+    pub crash: String,
+    /// What the run did.
+    pub taken: CrashStep,
+}
+
+/// What a run did about a crash besides running a test, in the order its decision is re-derived from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum CrashStep {
+    /// The compiler refused the crash, so nothing ran.
+    Rejected,
+    /// An earlier stop wrote into the tree under measurement, so nothing ran.
+    Tainted,
+    /// The targets and tests that reach the call, in the order they are asked.
+    Route {
+        /// Every target, with its tests where the route names them.
+        asked: Vec<CrashAsked>,
+    },
+    /// A stop of this crash wrote into the tree under measurement.
+    Outside,
+}
+
+/// One target a crash's route asks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CrashAsked {
+    /// The target.
+    pub target: String,
+    /// The tests that reach the call, or nothing where which of them does is not known.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub tests: Option<Vec<String>>,
+}
+
+/// What the engine issued one crashed run, and what it read back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CrashNoticeRecord {
+    /// The mutation the run had active, in full.
+    pub mutant: String,
+    /// The catalog it was of.
+    pub catalog: String,
+    /// The nonce issued to this run alone.
+    pub nonce: String,
+    /// The notice's text as read, or nothing where none was published.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub read: Option<String>,
+}
+
 /// What the probe pass measured for one target.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -414,14 +663,43 @@ pub struct ProbeExecRecord {
     pub infected: Option<u64>,
 }
 
-/// What one original-code control, run to confirm a kill, established about whether one target reached what its baseline did.
+/// What one original-code control established about whether one target reached what its baseline did.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DriftRecord {
-    /// The mutation whose kill the control was confirming.
-    pub mutant: String,
+    /// The mutation whose kill the control was confirming, or nothing for the control a target that confirmed no kill is run alone for.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub mutant: Option<String>,
     /// What it established, as the report records it.
     pub observed: crate::report::drift::Drift,
+}
+
+/// One disposition that rested on a target whose reach moved, run again against that target with its reach recorded, and what it was before and is now (ADR 0036).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepairRecord {
+    /// The mutation, as a person types it.
+    pub mutant: String,
+    /// The target whose reach moved, which the mutation was run against.
+    pub target: String,
+    /// The outcome it had, which rested on that target's baseline.
+    pub was: String,
+    /// The outcome it has now: what the run decided, or what it had where the run did not reach the site.
+    pub now: String,
+    /// Whether the run's own record shows the mutation's site reached.
+    pub reached: SiteReached,
+}
+
+/// Whether a run's own record shows the site of the mutation it ran reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SiteReached {
+    /// The record shows it.
+    Reached,
+    /// The record is whole and does not show it.
+    NotReached,
+    /// There is no record to read.
+    Unrecorded,
 }
 
 /// How much of one exchange the wire said to read, and what that reading found.
@@ -594,8 +872,8 @@ pub struct NoteRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunRecord {
-    /// The verdict, or what stopped the run from reaching one.
-    pub verdict: String,
+    /// The verdict, which is `ERROR` where something stopped the run from reaching one.
+    pub verdict: crate::report::Verdict,
     /// What the run counted, when it got far enough to count.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub accounting: Option<RunAccounting>,

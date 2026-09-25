@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 ## Status
 
 Accepted, 2026-09-24.
-Implemented by `concurrency::scan` and `concurrency::proof`, by the `concurrency` record of every report part and the `schedule-not-explored` limitation.
+Implemented by `concurrency::scan`, `concurrency::proof` and `concurrency::explore`, by the runtime's delayed guard, by the `concurrency` record of every report part, the `schedule-dependent` finding, and the `schedule-not-explored` and `schedule-sampled` limitations.
 The first slice of dimension C, `concurrent-v1`: the proof layer, before any schedule is explored.
 
 ## Context
@@ -27,8 +27,9 @@ Reach alone cannot prove a binary single-threaded.
 
 1. **Single-threaded is a conjunction, and everything else is a hole.** A test binary is `single-threaded` only when its baseline reached no code off its tests' threads, its harness is libtest run with `--test-threads=1`, no package in its dependency closure has a place that can start a thread, and none of them links native code.
    Libtest runs a binary's tests on every processor unless it is told otherwise, and two tests on two threads interleave over whatever they share, so a binary run without `--test-threads=1` is `concurrent` with `parallel-tests`, however quiet its closure.
+   The runner and the audit each read the harness arguments as libtest does, and both are held by their tests to one contract, `schema/libtest-harness-options.json`, which lists every option and whether it takes a value, so the two readings cannot drift apart.
    Where anything says it can run more than one thread it is `concurrent`, with every reason; where anything could not be looked at it is `not-proven`, with every reason.
-   Both are named by `schedule-not-explored`, since nothing explores a schedule yet.
+   Both are holes until a schedule of them is explored: `schedule-not-explored` names them where none was.
 
 2. **The source half reads tokens of the whole closure and fails closed.** Every `.rs` file of every package the binary links is read, registry packages included, as tokens, so a macro body and an attribute are read exactly as code is.
    A call or method whose name starts with `spawn` on any receiver, a path call to `scope`, rayon, crossbeam, a thread pool or a parallel iterator, a runtime's `main` or `test` attribute and `new_multi_thread` each make it `concurrent`.
@@ -48,6 +49,15 @@ Reach alone cannot prove a binary single-threaded.
 5. **Every witnessed reason is re-derived by the audit.** The engine recording holds each binary's kind and harness, the harness arguments its baseline ran with, and its reach off its tests' threads.
    `proofaudit` derives `loose-reach`, `parallel-tests`, `no-touch`, `not-libtest` and `doctest` from them and requires the report to name exactly those, in the state they come to; the reasons a scan gives are stated as not re-derived.
    Shards of one run must agree on every record, and a part that measured a binary and records nothing about its threads is refused.
+
+5. **A schedule is one guard delayed.** Asked for with `[schedules] explore = N`, a run takes up to N guards the baseline of a binary not proven single-threaded reached, chosen by the SHA-256 of their index so they spread across the catalog the same way every run, and for each starts one control in which every thread pauses 100 ms the first time it reaches that guard (`RUST_MUTANTS_DELAY`, which only a control carries: the engine and the runtime both refuse it beside an active mutant).
+   The pause is bounded, one per thread per run, and the schedule is named by the guard a reader can go to, rather than by a seed nobody can read.
+
+6. **A broken schedule is believed only when it repeats and the clean control passes.** A delayed control that failed is run twice more with the same guard delayed, and once with nothing delayed; only when both repeats fail and the undelayed control passes is the binary `broke` at that guard, a `schedule-dependent` finding and a defect.
+   A control that ran past its bound under the pause, a repeat that passed, or an undelayed control that failed too settles nothing, and the guard is `undecided`.
+   A binary every delayed guard passed is `sampled`, named by `schedule-sampled`: a sample of its schedules is never all of them.
+   Only a whole run explores, since a shard's binaries are every part's.
+   The proofaudit concurrency layer holds a `broke` to three failing delayed controls the engine recorded at that guard, and a `sampled` to a delayed control for every guard it names.
 
 ## Consequences
 

@@ -6,13 +6,17 @@
 pub mod across;
 pub mod audit;
 pub mod concurrency;
+pub mod crashes;
+pub mod derived;
 pub mod drift;
+pub mod faults;
 pub mod hollow;
 pub mod html;
 pub mod json;
 pub mod junit;
 pub mod knobs;
 pub mod lines;
+pub mod matrix;
 pub mod merge;
 pub mod sarif;
 pub mod spec;
@@ -735,15 +739,15 @@ pub struct Routing {
     /// What widened the question, when the run could not narrow it.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub fallback: Option<rust_mutants::session::Fallback>,
-    /// The targets the run actually asked, in the order it asked them, with what each answered.
+    /// The targets actually asked, in the order they were asked, with what each answered: by this run, or by the run a read-back or resumed disposition came from.
     /// A target in `reaching` and not here reached the mutation and was never given the chance, because one asked before it noticed.
     pub answered: Vec<Answered>,
 }
 
 impl Routing {
-    /// What a route says, as a report records it.
+    /// What a route says, with what the targets asked about it answered, as a report records it.
     #[must_use]
-    pub fn of(route: &rust_mutants::session::Route) -> Self {
+    pub fn of(route: &rust_mutants::session::Route, answered: Vec<Answered>) -> Self {
         Self {
             granularity: route.granularity(),
             reaching: route
@@ -760,7 +764,7 @@ impl Routing {
                 })
                 .collect(),
             fallback: route.fallback(),
-            answered: Vec::new(),
+            answered,
         }
     }
 }
@@ -818,6 +822,16 @@ impl Decision {
             Self::ModelNoticed => 7,
             Self::Proved => 8,
             Self::ModelProved => 9,
+        }
+    }
+
+    /// Whichever of the two a mutation stands less on, which is what the two together stand on.
+    #[must_use]
+    pub const fn weaker(self, other: Self) -> Self {
+        if other.standing() < self.standing() {
+            other
+        } else {
+            self
         }
     }
 
@@ -1598,6 +1612,12 @@ pub struct BuildPartEvidence {
     candidates: Vec<CandidateRecord>,
     /// Every seam question this source put.
     seams: Vec<SeamRecord>,
+    /// Every site of this source's part a fault was asked at.
+    faults: Vec<faults::FaultRecord>,
+    /// Every survivor of this source's part a target told apart only under a fault.
+    beside: Vec<faults::BesideRecord>,
+    /// Every call that writes of this source's part a crash was asked at.
+    crashes: Vec<crashes::CrashRecord>,
     /// The baseline target facts, in canonical target order.
     targets: Vec<TargetRecord>,
     /// The SHA-256 of each file this source's mutants were read from, as it read them.
@@ -1634,6 +1654,9 @@ impl BuildPartEvidence {
             resources: report.resources.clone(),
             candidates: report.candidates.clone(),
             seams: report.seams.clone(),
+            faults: report.faults.clone(),
+            beside: report.beside.clone(),
+            crashes: report.crashes.clone(),
             targets: report.targets.clone(),
             sources: report.sources.clone(),
             mutants: report.mutants.clone(),
@@ -1659,6 +1682,9 @@ struct BuildPartEvidenceWire {
     resources: Vec<ResourceRecord>,
     candidates: Vec<CandidateRecord>,
     seams: Vec<SeamRecord>,
+    faults: Vec<faults::FaultRecord>,
+    beside: Vec<faults::BesideRecord>,
+    crashes: Vec<crashes::CrashRecord>,
     targets: Vec<TargetRecord>,
     #[serde(deserialize_with = "sources_wire::deserialize")]
     sources: BTreeMap<String, rust_mutants::id::HexDigest>,
@@ -1685,6 +1711,9 @@ impl<'de> Deserialize<'de> for BuildPartEvidence {
             resources: wire.resources,
             candidates: wire.candidates,
             seams: wire.seams,
+            faults: wire.faults,
+            beside: wire.beside,
+            crashes: wire.crashes,
             targets: wire.targets,
             sources: wire.sources,
             mutants: wire.mutants,
@@ -1874,6 +1903,18 @@ pub enum PartLedgerError {
         /// What was being counted.
         about: &'static str,
     },
+    /// Evidence under a fault names a survivor or a fault the part does not hold.
+    #[error(
+        "source {run_id} holds evidence under a fault about {mutant} beside {fault}, which are not a survivor and a fault of it"
+    )]
+    BesideUnheld {
+        /// The source.
+        run_id: rust_mutants::id::RunId,
+        /// The survivor it names.
+        mutant: String,
+        /// The fault it names.
+        fault: String,
+    },
     /// Stored accounting disagreed with the retained rows.
     #[error("source {run_id} has {about} accounting that disagrees with its rows")]
     AccountingMismatch {
@@ -2047,28 +2088,80 @@ impl PartLedger {
 }
 
 fn validate_part_catalog(part: &BuildPartEvidence) -> Result<(), PartLedgerError> {
-    for pair in part.mutants.windows(2) {
+    validate_catalog_positions(
+        part,
+        &part
+            .mutants
+            .iter()
+            .map(|mutant| mutant.catalog_index)
+            .collect::<Vec<_>>(),
+    )?;
+    validate_catalog_positions(
+        part,
+        &part
+            .faults
+            .iter()
+            .map(|fault| fault.catalog_index)
+            .collect::<Vec<_>>(),
+    )?;
+    validate_catalog_positions(
+        part,
+        &part
+            .crashes
+            .iter()
+            .map(|crash| crash.catalog_index)
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// Holds one catalog's positions to strictly ascending order and to the part's shard, so no position is in two parts.
+fn validate_catalog_positions(
+    part: &BuildPartEvidence,
+    positions: &[CatalogIndex],
+) -> Result<(), PartLedgerError> {
+    for pair in positions.windows(2) {
         let [previous, actual] = pair else {
             continue;
         };
-        if previous.catalog_index >= actual.catalog_index {
+        if previous >= actual {
             return Err(PartLedgerError::CatalogOutOfOrder {
                 run_id: part.run_id.clone(),
-                previous: previous.catalog_index.get(),
-                actual: actual.catalog_index.get(),
+                previous: previous.get(),
+                actual: actual.get(),
             });
         }
     }
     if let CatalogPart::Shard(shard) = part.part {
-        for mutant in &part.mutants {
-            if !shard.holds(mutant.catalog_index) {
+        for index in positions {
+            if !shard.holds(*index) {
                 return Err(PartLedgerError::CatalogOutsideShard {
                     run_id: part.run_id.clone(),
-                    index: mutant.catalog_index.get(),
+                    index: index.get(),
                     shard: shard.index(),
                     of: shard.of(),
                 });
             }
+        }
+    }
+    Ok(())
+}
+
+/// Holds every record of evidence under a fault to a survivor the part holds, and, where the part is the whole catalog, to a fault it holds: a shard owns its survivors by their index, and the fault beside one may be another shard's.
+fn validate_beside(part: &BuildPartEvidence) -> Result<(), PartLedgerError> {
+    for beside in &part.beside {
+        let survivor = part.mutants.iter().any(|mutant| {
+            mutant.display_id == beside.mutant && mutant.outcome.outcome() == Outcome::Survived
+        });
+        let fault = match part.part {
+            CatalogPart::Whole => part.faults.iter().any(|one| one.display_id == beside.fault),
+            CatalogPart::Shard(_) => true,
+        };
+        if !survivor || !fault {
+            return Err(PartLedgerError::BesideUnheld {
+                run_id: part.run_id.clone(),
+                mutant: beside.mutant.clone(),
+                fault: beside.fault.clone(),
+            });
         }
     }
     Ok(())
@@ -2094,6 +2187,17 @@ fn validate_knob_records(part: &BuildPartEvidence) -> Result<(), PartLedgerError
             )));
         }
     }
+    if let Some((knob, covered)) = by_knob.iter().next()
+        && let Some(target) = part.targets.iter().find(|target| {
+            target.status == TargetStatus::Passed && !covered.contains(target.name.as_str())
+        })
+    {
+        return Err(refused(format!(
+            "{} passed its baseline and {} was not put on it",
+            target.name,
+            knob.name()
+        )));
+    }
     let mut knobs = by_knob.iter();
     if let Some((first, covered)) = knobs.next()
         && let Some((other, _)) = knobs.find(|(_, targets)| *targets != covered)
@@ -2103,6 +2207,35 @@ fn validate_knob_records(part: &BuildPartEvidence) -> Result<(), PartLedgerError
             other.name(),
             first.name()
         )));
+    }
+    Ok(())
+}
+
+/// Holds each dimension's stored counts to the records the part holds, and to adding up to its sites.
+fn validate_dimension_accounting(part: &BuildPartEvidence) -> Result<(), PartLedgerError> {
+    let faults = faults::FaultAccounting::of(&part.faults).map_err(|_too_wide| {
+        PartLedgerError::CountOverflow {
+            run_id: part.run_id.clone(),
+            about: "fault sites",
+        }
+    })?;
+    if faults != part.accounting.faults || !faults.adds_up() {
+        return Err(PartLedgerError::AccountingMismatch {
+            run_id: part.run_id.clone(),
+            about: "fault",
+        });
+    }
+    let crashes = crashes::CrashAccounting::of(&part.crashes).map_err(|_too_wide| {
+        PartLedgerError::CountOverflow {
+            run_id: part.run_id.clone(),
+            about: "crash sites",
+        }
+    })?;
+    if crashes != part.accounting.crashes || !crashes.adds_up() {
+        return Err(PartLedgerError::AccountingMismatch {
+            run_id: part.run_id.clone(),
+            about: "crash",
+        });
     }
     Ok(())
 }
@@ -2153,6 +2286,8 @@ fn validate_part_evidence(part: &BuildPartEvidence) -> Result<(), PartLedgerErro
             about: "mutation",
         });
     }
+    validate_beside(part)?;
+    validate_dimension_accounting(part)?;
     validate_knob_records(part)?;
     validate_concurrency_records(part)?;
     let mut target_ids = BTreeSet::new();
@@ -2670,6 +2805,10 @@ pub struct Accounting {
     pub mutants: MutantAccounting,
     /// The soundness inventory.
     pub soundness: SoundnessAccounting,
+    /// The sites a fault was asked at.
+    pub faults: faults::FaultAccounting,
+    /// The calls that write a crash was asked at.
+    pub crashes: crashes::CrashAccounting,
 }
 
 /// What became of one target.
@@ -4277,6 +4416,19 @@ pub(crate) fn count_mutants(mutants: &[MutantRecord]) -> Result<MutantAccounting
     Ok(counts)
 }
 
+/// Where the findings of one kind come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Derivation {
+    /// One mutation row decides it, which the audit holds row by row.
+    Row,
+    /// The part's records decide it wholly: [`derived::findings`] is every one of them, and a report holds exactly those.
+    Records,
+    /// The records decide some of them and a phase observes the rest, so a report holds at least the ones the records decide.
+    Shared,
+    /// A phase observed it, and nothing a report records can decide it again.
+    Observed,
+}
+
 /// What kind of thing a run found.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, njutest_macros::AllVariants,
@@ -4309,10 +4461,20 @@ pub enum FindingKind {
     WireUnnoticed,
     /// A target reached something on an original-code control that it did not reach on its baseline, so every proof read off its baseline is unfounded.
     UnstableBaseline,
+    /// A call a `?` asks about failed and every test that reached it passed.
+    UnnoticedFault,
+    /// A test wrote into the tree under measurement while a fault failed a call, which it did not do while none did.
+    BrokenUnderFault,
+    /// A run that asks every dimension did not establish one of them.
+    DimensionNotMeasured,
+    /// The next run failed over what a crash just after a call that writes left.
+    CorruptAfterCrash,
     /// A target that passed on its baseline failed on a control started with something the contract lets differ between machines set differently.
     EnvironmentDependent,
     /// A target reached something else on a control started with something the contract lets differ between machines set differently, so every proof read off its baseline is unfounded where that differs.
     EnvironmentDependentReach,
+    /// A test binary that passed on its baseline failed, twice more, with one guard delayed, and passed again without the delay: its verdict depends on the schedule its threads get.
+    ScheduleDependent,
 }
 
 /// Which configured-build evidence raised a finding.
@@ -4333,6 +4495,33 @@ pub enum FindingOrigin {
 }
 
 impl FindingKind {
+    /// Whether only the whole catalog decides it, so no part carries it and every conclusion derives it over all the parts of a build.
+    #[must_use]
+    pub const fn catalog_wide(self) -> bool {
+        match self {
+            Self::HollowTarget
+            | Self::UnstableBaseline
+            | Self::EnvironmentDependent
+            | Self::EnvironmentDependentReach
+            | Self::DimensionNotMeasured => true,
+            Self::BuildFailure
+            | Self::FailingTest
+            | Self::TargetMissing
+            | Self::SurvivingMutant
+            | Self::Timeout
+            | Self::WaitedMutant
+            | Self::StepLimitReachedMutant
+            | Self::NotMeasured
+            | Self::UnmatchedAcceptance
+            | Self::UndefinedBehaviour
+            | Self::WireUnnoticed
+            | Self::UnnoticedFault
+            | Self::BrokenUnderFault
+            | Self::CorruptAfterCrash
+            | Self::ScheduleDependent => false,
+        }
+    }
+
     /// The name this carries in a report, which is the one a person greps for.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -4350,8 +4539,40 @@ impl FindingKind {
             Self::HollowTarget => "hollow-target",
             Self::WireUnnoticed => "wire-unnoticed",
             Self::UnstableBaseline => "unstable-baseline",
+            Self::UnnoticedFault => "unnoticed-fault",
+            Self::BrokenUnderFault => "broken-under-fault",
+            Self::DimensionNotMeasured => "dimension-not-measured",
+            Self::CorruptAfterCrash => "corrupt-after-crash",
             Self::EnvironmentDependent => "environment-dependent",
             Self::EnvironmentDependentReach => "environment-dependent-reach",
+            Self::ScheduleDependent => "schedule-dependent",
+        }
+    }
+
+    /// Where a finding of this kind comes from, which decides what a report may say about it: one its own records decide is neither added nor dropped.
+    #[must_use]
+    pub const fn derivation(self) -> Derivation {
+        match self {
+            Self::SurvivingMutant | Self::WaitedMutant | Self::StepLimitReachedMutant => {
+                Derivation::Row
+            }
+            Self::HollowTarget
+            | Self::UnstableBaseline
+            | Self::UnnoticedFault
+            | Self::CorruptAfterCrash
+            | Self::EnvironmentDependent
+            | Self::EnvironmentDependentReach
+            | Self::ScheduleDependent
+            | Self::DimensionNotMeasured => Derivation::Records,
+            Self::NotMeasured => Derivation::Shared,
+            Self::BuildFailure
+            | Self::FailingTest
+            | Self::TargetMissing
+            | Self::Timeout
+            | Self::UnmatchedAcceptance
+            | Self::UndefinedBehaviour
+            | Self::WireUnnoticed
+            | Self::BrokenUnderFault => Derivation::Observed,
         }
     }
 
@@ -4362,7 +4583,10 @@ impl FindingKind {
             Self::BuildFailure
             | Self::FailingTest
             | Self::UndefinedBehaviour
-            | Self::EnvironmentDependent => true,
+            | Self::BrokenUnderFault
+            | Self::EnvironmentDependent
+            | Self::CorruptAfterCrash
+            | Self::ScheduleDependent => true,
             Self::TargetMissing
             | Self::SurvivingMutant
             | Self::Timeout
@@ -4373,7 +4597,9 @@ impl FindingKind {
             | Self::HollowTarget
             | Self::WireUnnoticed
             | Self::UnstableBaseline
-            | Self::EnvironmentDependentReach => false,
+            | Self::UnnoticedFault
+            | Self::EnvironmentDependentReach
+            | Self::DimensionNotMeasured => false,
         }
     }
 }
@@ -4562,6 +4788,8 @@ pub struct ConclusionAccounting {
     pub mutants: MutantAccounting,
     /// One exact soundness inventory per configured build, in request order.
     pub soundness_by_build: Vec<BuildSoundness>,
+    /// The fault sites of every build and part, counted by what became of each.
+    pub faults: faults::FaultAccounting,
 }
 
 impl ConclusionTiming {
@@ -4616,6 +4844,12 @@ pub struct BuildReport {
     pub candidates: Vec<CandidateRecord>,
     /// Every question a watched seam licensed, and what became of it.
     pub seams: Vec<SeamRecord>,
+    /// Every site a fault was asked at, and what became of it.
+    pub faults: Vec<faults::FaultRecord>,
+    /// Every call that writes a crash was asked at, and what became of it.
+    pub crashes: Vec<crashes::CrashRecord>,
+    /// Every survivor a target told apart only once the call at its site failed.
+    pub beside: Vec<faults::BesideRecord>,
     /// Every target it selected, slowest first.
     pub targets: Vec<TargetRecord>,
     /// The SHA-256 of each file its mutants were read from, as it read them, by workspace-relative path.
@@ -4664,6 +4898,9 @@ impl BuildReport {
             resources: Vec::new(),
             candidates: Vec::new(),
             seams: Vec::new(),
+            faults: Vec::new(),
+            beside: Vec::new(),
+            crashes: Vec::new(),
             targets: Vec::new(),
             sources: BTreeMap::new(),
             mutants: Vec::new(),
@@ -5362,6 +5599,14 @@ pub struct Conclusion {
     pub candidates: Vec<CandidateRecord>,
     /// Every build's seam facts.
     pub seams: Vec<SeamRecord>,
+    /// Every build's fault sites, part by part.
+    pub faults: Vec<faults::FaultRecord>,
+    /// Every build's survivors told apart only under a fault, part by part.
+    pub beside: Vec<faults::BesideRecord>,
+    /// Every build's crash sites, part by part.
+    pub crashes: Vec<crashes::CrashRecord>,
+    /// What every build established along each dimension, one row per dimension.
+    pub matrix: Vec<matrix::Row>,
     /// Every build's target facts.
     pub targets: Vec<TargetRecord>,
     /// The mutation lattice projection, for presentation only.
@@ -5779,7 +6024,7 @@ impl LatticedReport {
     /// # Errors
     /// Refuses contracts that have no model phase.
     pub fn model_candidates(&self) -> Result<ModelCandidates, CompletionError> {
-        if self.contract != crate::config::Contract::VerifiedV1 {
+        if !self.contract.proves_models() {
             return Err(CompletionError::ModelForbidden {
                 contract: self.contract,
             });
@@ -5800,7 +6045,7 @@ impl LatticedReport {
     /// # Errors
     /// `verified-v1` cannot take this transition; it must call [`Self::attach_models`].
     pub fn complete_without_models(self) -> Result<Report, CompletionError> {
-        if self.contract == crate::config::Contract::VerifiedV1 {
+        if self.contract.proves_models() {
             return Err(CompletionError::ModelRequired);
         }
         self.into_report(ModelCompletion::NotRequired)
@@ -5811,7 +6056,7 @@ impl LatticedReport {
     /// # Errors
     /// Refuses another contract, another owner, or any record sequence other than the exact canonical survivor sequence.
     pub fn attach_models(self, batch: ModelBatch) -> Result<Report, CompletionError> {
-        if self.contract != crate::config::Contract::VerifiedV1 {
+        if !self.contract.proves_models() {
             return Err(CompletionError::ModelForbidden {
                 contract: self.contract,
             });
@@ -5958,11 +6203,15 @@ impl Report {
                 return Err(CompletionError::ModelRequired);
             }
             (
-                crate::config::Contract::StandardV1 | crate::config::Contract::DeepV1,
+                crate::config::Contract::StandardV1
+                | crate::config::Contract::DeepV1
+                | crate::config::Contract::WholeV1,
                 ModelCompletion::NotRequired,
             ) => {}
             (
-                crate::config::Contract::StandardV1 | crate::config::Contract::DeepV1,
+                crate::config::Contract::StandardV1
+                | crate::config::Contract::DeepV1
+                | crate::config::Contract::WholeV1,
                 ModelCompletion::Verified(_),
             ) => {
                 return Err(CompletionError::ModelForbidden {
@@ -6035,7 +6284,8 @@ impl Report {
     /// Returns [`CountError`] if the exact projection does not fit the v1 accounting counters.
     pub fn conclusion(&self) -> Result<Conclusion, CountError> {
         let mutants = projected_mutants_with_models(&self.builds, self.models());
-        let findings = projected_findings(&self.builds, &self.global_findings, &mutants);
+        let findings =
+            projected_findings(&self.builds, &self.global_findings, &mutants, self.contract);
         Ok(Conclusion {
             verdict: concluded_from_projection(ConclusionProjection {
                 run_kind: self.run_kind,
@@ -6066,6 +6316,10 @@ impl Report {
                 .iter()
                 .flat_map(|build| build.baseline().seams.iter().cloned())
                 .collect(),
+            faults: part_records(&self.builds, |part| &part.faults),
+            beside: part_records(&self.builds, |part| &part.beside),
+            crashes: part_records(&self.builds, |part| &part.crashes),
+            matrix: pooled_matrix(&self.builds),
             targets: self
                 .builds
                 .iter()
@@ -6073,18 +6327,7 @@ impl Report {
                 .collect(),
             mutants,
             findings,
-            limitations: self
-                .builds
-                .iter()
-                .flat_map(|build| {
-                    build
-                        .parts
-                        .iter()
-                        .flat_map(|part| part.limitations.iter().cloned())
-                        .chain(merged_drift_limitation(build))
-                        .chain(merged_knob_limitations(build))
-                })
-                .collect(),
+            limitations: self.builds.iter().flat_map(stated_by).collect(),
             sources: self
                 .builds
                 .iter()
@@ -6102,7 +6345,8 @@ impl Report {
     #[must_use]
     pub fn verdict(&self) -> Verdict {
         let mutants = projected_mutants_with_models(&self.builds, self.models());
-        let findings = projected_findings(&self.builds, &self.global_findings, &mutants);
+        let findings =
+            projected_findings(&self.builds, &self.global_findings, &mutants, self.contract);
         concluded_from_projection(ConclusionProjection {
             run_kind: self.run_kind,
             shard: self.scope.shard.as_deref(),
@@ -6525,10 +6769,7 @@ fn projected_mutants(builds: &BuildLedger) -> Vec<ProjectedMutant> {
                 .map(move |row| (part.run_id.clone(), part.part, row))
         });
         for (projection, (run_id, part, row)) in projected.iter_mut().zip(rows) {
-            let candidate = row.outcome.decision();
-            if candidate.standing() < projection.decision.standing() {
-                projection.decision = candidate;
-            }
+            projection.decision = projection.decision.weaker(row.outcome.decision());
             projection.by_build.push(BuildMutationDecision {
                 build: build.name.clone(),
                 run_id,
@@ -6601,6 +6842,7 @@ fn projected_findings(
     builds: &BuildLedger,
     global_findings: &[Finding],
     mutants: &[ProjectedMutant],
+    contract: crate::config::Contract,
 ) -> Vec<Finding> {
     let affirmative: BTreeSet<(&str, &str)> = mutants
         .iter()
@@ -6614,15 +6856,27 @@ fn projected_findings(
         .collect();
     let mut projected = global_findings.to_vec();
     for build in builds.iter() {
-        projected.extend(merged_drift_findings(build));
-        projected.extend(merged_knob_findings(build));
+        let from = projected.len();
+        projected.extend(catalog_of(build).findings);
+        if contract.asks_every_dimension() {
+            projected.extend(merged_matrix_findings(build));
+        }
         for part in build.parts.iter() {
-            for finding in &part.findings {
+            for finding in part
+                .findings
+                .iter()
+                .filter(|finding| !finding.kind.catalog_wide())
+            {
                 let answered_by_model = finding.kind == FindingKind::SurvivingMutant
                     && affirmative.iter().any(|(full, display)| {
                         finding.subject == *full || finding.subject == *display
                     });
-                if answered_by_model {
+                let stated = projected.iter().skip(from).any(|one| {
+                    one.kind == finding.kind
+                        && one.subject == finding.subject
+                        && one.detail == finding.detail
+                });
+                if answered_by_model || stated {
                     continue;
                 }
                 projected.push(finding.clone());
@@ -6632,98 +6886,238 @@ fn projected_findings(
     projected
 }
 
-/// Whether a build was measured in parts, which is when its drift finding and limitation are raised over the combined records rather than by a part.
-fn sharded(build: &BuildEvidence) -> bool {
-    build
-        .parts
-        .iter()
-        .any(|part| matches!(part.part, CatalogPart::Shard(_)))
+/// What only the whole catalog decides, which neither a shard nor any one part can.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WholeCatalog {
+    /// The findings it raises.
+    pub findings: Vec<Finding>,
+    /// The limitations it states.
+    pub limitations: Vec<Limitation>,
 }
 
-/// The `unstable-baseline` findings of a build measured in parts, over every part's records and rows, each attributed to the part that saw its target move.
-fn merged_drift_findings(build: &BuildEvidence) -> Vec<Finding> {
-    if !sharded(build) {
-        return Vec::new();
+/// What only the whole catalog decides, over its `drift` and `knobs` records and its mutant `rows`: raised once by a run that measured the catalog whole, and by a merge over the combined records of every part.
+#[must_use]
+pub fn whole_catalog(
+    drift: &[drift::Drift],
+    knobs: &[knobs::KnobRecord],
+    rows: &[MutantRecord],
+) -> WholeCatalog {
+    let mut findings = hollow::found(rows);
+    findings.extend(drift::found(drift, rows));
+    findings.extend(knobs::found(knobs, rows));
+    let mut limitations: Vec<Limitation> = drift::unmeasured(drift).into_iter().collect();
+    limitations.extend(knobs::limited(knobs));
+    WholeCatalog {
+        findings,
+        limitations,
     }
+}
+
+/// Every unmatched-acceptance finding among `findings` whose subject names exactly one of `rows`, with the mutation it names: the catalog resolves it, so calling it unmatched contradicts the rows.
+///
+/// Only the whole catalog decides it, so a run measured whole asks it of its own rows and a merge asks it of every part's rows together; one shard's rows could miss the mutation the acceptance names.
+#[must_use]
+pub fn acceptances_the_catalog_resolves(
+    findings: &[Finding],
+    rows: &[MutantRecord],
+) -> Vec<(String, String)> {
+    findings
+        .iter()
+        .filter(|finding| finding.kind == FindingKind::UnmatchedAcceptance)
+        .filter_map(|finding| {
+            let subject = finding.subject.as_str();
+            let valid = (rust_mutants::id::MIN_PREFIX_LENGTH..=rust_mutants::id::ID_HEX_LENGTH)
+                .contains(&subject.len())
+                && subject
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+            if !valid {
+                return None;
+            }
+            let mut matches = rows.iter().filter(|row| row.id.starts_with(subject));
+            let mutant = matches.next()?;
+            matches
+                .next()
+                .is_none()
+                .then(|| (finding.subject.clone(), mutant.id.clone()))
+        })
+        .collect()
+}
+
+/// The dimension findings of a build, derived from every part's records rather than read from what a part stored, so a report cannot drop one (ADR 0033).
+fn merged_matrix_findings(build: &BuildEvidence) -> Vec<Finding> {
+    let owned = MatrixEvidence::of(&[build]);
+    matrix::holes(&matrix::rows(&owned.borrowed()))
+}
+
+/// Every record of one kind every part of every build holds, part by part.
+fn part_records<T: Clone>(builds: &BuildLedger, of: fn(&BuildPartEvidence) -> &[T]) -> Vec<T> {
+    builds
+        .iter()
+        .flat_map(|build| build.parts.iter())
+        .flat_map(|part| of(part).iter().cloned())
+        .collect()
+}
+
+/// One matrix for every build: each build's column where each measured the dimension, and otherwise the column of the build that established least.
+fn pooled_matrix(builds: &BuildLedger) -> Vec<matrix::Row> {
+    let per_build: Vec<Vec<matrix::Row>> = builds
+        .iter()
+        .map(|build| matrix::rows(&MatrixEvidence::of(&[build]).borrowed()))
+        .collect();
+    matrix::Dimension::ALL
+        .into_iter()
+        .map(|dimension| matrix::Row {
+            dimension,
+            column: matrix::pooled(
+                per_build
+                    .iter()
+                    .flat_map(|rows| rows.iter())
+                    .filter(|row| row.dimension == dimension)
+                    .map(|row| row.column.clone())
+                    .collect(),
+            ),
+        })
+        .collect()
+}
+
+/// Every record of some builds a matrix is read off, gathered from every part.
+struct MatrixEvidence {
+    mutations: (usize, usize),
+    targets: Vec<TargetRecord>,
+    knobs: Vec<knobs::KnobRecord>,
+    faults: Vec<faults::FaultRecord>,
+    crashes: Vec<crashes::CrashRecord>,
+    concurrency: Vec<concurrency::ConcurrencyRecord>,
+    seams: Vec<SeamRecord>,
+    limitations: Vec<Limitation>,
+    findings: Vec<Finding>,
+}
+
+impl MatrixEvidence {
+    /// What every part of `builds` holds.
+    fn of(builds: &[&BuildEvidence]) -> Self {
+        let parts = || builds.iter().flat_map(|build| build.parts.iter());
+        let holes = parts()
+            .flat_map(|part| part.mutants.iter())
+            .filter(|mutant| matrix::unsettled(mutant.outcome.outcome()))
+            .count();
+        let answered = parts()
+            .flat_map(|part| part.mutants.iter())
+            .filter(|mutant| !matrix::unsettled(mutant.outcome.outcome()))
+            .count();
+        Self {
+            mutations: (answered, holes),
+            targets: parts()
+                .flat_map(|part| part.targets.iter().cloned())
+                .collect(),
+            knobs: knobs::combined(parts().flat_map(|part| part.knobs.iter())),
+            faults: parts()
+                .flat_map(|part| part.faults.iter().cloned())
+                .collect(),
+            crashes: parts()
+                .flat_map(|part| part.crashes.iter().cloned())
+                .collect(),
+            concurrency: parts()
+                .flat_map(|part| part.concurrency.iter().cloned())
+                .collect(),
+            seams: builds
+                .iter()
+                .flat_map(|build| build.baseline().seams.iter().cloned())
+                .collect(),
+            limitations: parts()
+                .flat_map(|part| part.limitations.iter().cloned())
+                .collect(),
+            findings: parts()
+                .flat_map(|part| part.findings.iter().cloned())
+                .collect(),
+        }
+    }
+
+    /// The same records, as the matrix reads them.
+    fn borrowed(&self) -> matrix::Evidence<'_> {
+        matrix::Evidence {
+            mutations: self.mutations,
+            targets: &self.targets,
+            knobs: &self.knobs,
+            faults: &self.faults,
+            crashes: &self.crashes,
+            concurrency: &self.concurrency,
+            seams: &self.seams,
+            limitations: &self.limitations,
+            findings: &self.findings,
+        }
+    }
+}
+
+/// Every limitation `build` states: each its parts state, once however many parts state it, and what only the whole catalog decides.
+fn stated_by(build: &BuildEvidence) -> Vec<Limitation> {
+    let mut stated: Vec<Limitation> = Vec::new();
+    for limitation in build
+        .parts
+        .iter()
+        .flat_map(|part| part.limitations.iter())
+        .filter(|limitation| {
+            ![
+                crate::limitation::DRIFT_NOT_MEASURED,
+                crate::limitation::KNOB_NOT_PUT,
+                crate::limitation::KNOB_NOT_COMPARED,
+            ]
+            .contains(&limitation.name.as_str())
+        })
+    {
+        if !stated.contains(limitation) {
+            stated.push(limitation.clone());
+        }
+    }
+    stated.extend(catalog_of(build).limitations);
+    stated
+}
+
+/// What only the whole catalog decides about `build`, over every part's records together, whether it was measured whole or in shards: the one place a conclusion gets it, so no producer can store it or forget it.
+///
+/// Each finding names the part holding the record it rests on; one no part holds is left run-wide rather than credited to a part that did not see it.
+fn catalog_of(build: &BuildEvidence) -> WholeCatalog {
     let records = drift::combined(build.parts.iter().flat_map(|part| part.drift.iter()));
+    let knob_records = knobs::combined(build.parts.iter().flat_map(|part| part.knobs.iter()));
     let rows: Vec<MutantRecord> = build
         .parts
         .iter()
         .flat_map(|part| part.mutants.iter().cloned())
         .collect();
-    drift::found(&records, &rows)
-        .into_iter()
-        .map(|mut finding| {
-            let saw = build.parts.iter().find(|part| {
-                part.drift.iter().any(|one| {
-                    matches!(one, drift::Drift::Moved { .. }) && one.target() == finding.subject
-                })
-            });
-            if let Some(part) = saw {
-                finding.origin = FindingOrigin::Source {
-                    build: build.name.clone(),
-                    run_id: part.run_id.clone(),
-                    part: part.part,
-                };
-            }
-            finding
-        })
-        .collect()
+    let mut whole = whole_catalog(&records, &knob_records, &rows);
+    for finding in &mut whole.findings {
+        if let Some(part) = build.parts.iter().find(|part| saw(part, finding)) {
+            finding.origin = FindingOrigin::Source {
+                build: build.name.clone(),
+                run_id: part.run_id.clone(),
+                part: part.part,
+            };
+        }
+    }
+    whole
 }
 
-/// The knob findings of a build measured in parts, over every part's records and rows, each attributed to the part whose control saw it.
-fn merged_knob_findings(build: &BuildEvidence) -> Vec<Finding> {
-    if !sharded(build) {
-        return Vec::new();
-    }
-    let records = knobs::combined(build.parts.iter().flat_map(|part| part.knobs.iter()));
-    let rows: Vec<MutantRecord> = build
-        .parts
+/// Whether `part` holds the record `finding` rests on: the move of the target it names, the control a knob broke or moved it under, or a row that target answered about.
+fn saw(part: &BuildPartEvidence, finding: &Finding) -> bool {
+    part.drift
         .iter()
-        .flat_map(|part| part.mutants.iter().cloned())
-        .collect();
-    knobs::found(&records, &rows)
-        .into_iter()
-        .map(|mut finding| {
-            let saw = build.parts.iter().find(|part| {
-                part.knobs.iter().any(|one| {
-                    one.target == finding.subject
-                        && matches!(
-                            one.standing,
-                            knobs::Standing::Broke { .. } | knobs::Standing::Moved { .. }
-                        )
-                })
-            });
-            if let Some(part) = saw {
-                finding.origin = FindingOrigin::Source {
-                    build: build.name.clone(),
-                    run_id: part.run_id.clone(),
-                    part: part.part,
-                };
-            }
-            finding
+        .any(|one| matches!(one, drift::Drift::Moved { .. }) && one.target() == finding.subject)
+        || part.knobs.iter().any(|one| {
+            one.target == finding.subject
+                && matches!(
+                    one.standing,
+                    knobs::Standing::Broke { .. } | knobs::Standing::Moved { .. }
+                )
         })
-        .collect()
-}
-
-/// The knob limitations of a build measured in parts, over every part's records.
-fn merged_knob_limitations(build: &BuildEvidence) -> Vec<Limitation> {
-    if !sharded(build) {
-        return Vec::new();
-    }
-    knobs::limited(&knobs::combined(
-        build.parts.iter().flat_map(|part| part.knobs.iter()),
-    ))
-}
-
-/// The `drift-not-measured` limitation of a build measured in parts, over every part's records.
-fn merged_drift_limitation(build: &BuildEvidence) -> Option<Limitation> {
-    if !sharded(build) {
-        return None;
-    }
-    drift::unmeasured(&drift::combined(
-        build.parts.iter().flat_map(|part| part.drift.iter()),
-    ))
+        || part.mutants.iter().any(|row| {
+            row.routing.as_ref().is_some_and(|routing| {
+                routing
+                    .answered
+                    .iter()
+                    .any(|answered| answered.target == finding.subject)
+            })
+        })
 }
 
 fn spanning_timing(builds: &BuildLedger) -> ConclusionTiming {
@@ -6745,10 +7139,16 @@ fn projected_accounting(
             accounting: build.baseline().accounting.soundness,
         })
         .collect();
+    let faulted: Vec<faults::FaultRecord> = builds
+        .iter()
+        .flat_map(|build| build.parts.iter())
+        .flat_map(|part| part.faults.iter().cloned())
+        .collect();
     Ok(ConclusionAccounting {
         targets: count_targets(&targets)?,
         mutants: count_projected_mutants(builds.catalog_count(), mutants)?,
         soundness_by_build,
+        faults: faults::FaultAccounting::of(&faulted)?,
     })
 }
 

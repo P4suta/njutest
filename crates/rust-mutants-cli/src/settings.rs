@@ -71,7 +71,7 @@ impl Settings {
             config.build.jobs = jobs;
         }
         if let Some(jobs) = scope.jobs {
-            config.execution.jobs = jobs;
+            config.execution.jobs = Some(jobs);
         }
         config.execution.offline |= offline;
         config.execution.locked |= locked;
@@ -128,6 +128,7 @@ impl Settings {
             operators: self.config.mutation.operators.clone(),
             include: compile(&self.config.project.include)?,
             exclude: compile(&self.config.project.exclude)?,
+            narrowing: Vec::new(),
             harness_args: self.config.execution.test_binary_args.clone(),
             scratch_working_directory: self.config.execution.scratch_working_directory,
             packages: self.config.project.packages.clone(),

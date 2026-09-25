@@ -205,3 +205,42 @@ fn a_perturbed_control_is_recorded_apart_from_every_control_run_as_its_baseline_
     }
     session.close().expect("close");
 }
+
+#[test]
+fn a_delay_at_the_guard_a_spawned_thread_reaches_is_a_schedule_the_test_fails_on() {
+    let fixture = Fixture::copy("fixture-scheduled");
+    let session = prepare(&fixture);
+    let target = "fixture-scheduled/lib/fixture_scheduled";
+    let site_of = |item: &str| {
+        session
+            .catalog()
+            .mutants()
+            .iter()
+            .find(|mutant| session.item_of(mutant.index) == Some(item))
+            .map(|mutant| mutant.index)
+            .expect("a mutation of the item")
+    };
+    let delaying = |site: u32| Perturbation {
+        delay: Some(rust_mutants::execute::Delay {
+            site,
+            pause_ms: 200,
+        }),
+        ..Perturbation::none()
+    };
+    assert_eq!(
+        controlled(&session, target, &Perturbation::none()),
+        Outcome::Survived,
+        "the answer arrives in time on the schedule the baseline got"
+    );
+    assert_eq!(
+        controlled(&session, target, &delaying(site_of("work"))),
+        Outcome::Killed,
+        "a pause where the spawned thread computes the answer makes it late"
+    );
+    assert_eq!(
+        controlled(&session, target, &delaying(site_of("unreached"))),
+        Outcome::Survived,
+        "a pause at a guard no thread reaches is never taken"
+    );
+    session.close().expect("close");
+}

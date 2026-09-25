@@ -553,7 +553,9 @@ fn the_trace_says_what_every_phase_did() {
         .exec(&Request::new(mutant), &Cancel::new())
         .expect("exec");
     drop(result);
-    recorder.run_end("ok", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
+        .expect("trace closes");
     session.close().expect("close");
 
     let events = recorder.events();
@@ -736,7 +738,9 @@ fn the_trace_of_a_covered_run_names_every_layer() {
             &Cancel::new(),
         )
         .expect("prepare");
-    recorder.run_end("ok", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
+        .expect("trace closes");
     let events = recorder.events();
 
     let phases: Vec<(String, bool)> = events
@@ -1082,11 +1086,13 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
             outcome,
             target: String::new(),
             exit_code: 0,
+            start_failure: None,
             duration: std::time::Duration::ZERO,
             tests_run: None,
             failed_tests: Vec::new(),
             signal: None,
             retried: false,
+            lingered: false,
             expected: false,
             not_run_reason: None,
             route: None,
@@ -1100,8 +1106,13 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
     let mut every: Vec<rust_mutants::run::Judged> = (0..indices.len())
         .map(|at| judged(at, Outcome::Survived))
         .collect();
-    let held = rust_mutants::run::verify(&session, std::slice::from_ref(&expectation), &mut every)
-        .expect("the small expectation set is representable");
+    let held = rust_mutants::run::verify(
+        &session,
+        std::slice::from_ref(&expectation),
+        &mut every,
+        rust_mutants::run::Scope::WHOLE,
+    )
+    .expect("the small expectation set is representable");
     assert!(
         matches!(held[0].standing, rust_mutants::run::Standing::Met),
         "every mutation the claim names came to the outcome it declared: {:?}",
@@ -1132,6 +1143,7 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
         &session,
         std::slice::from_ref(&expectation),
         &mut one_killed,
+        rust_mutants::run::Scope::WHOLE,
     )
     .expect("the small expectation set is representable");
     assert!(
@@ -1164,8 +1176,16 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
     for one in &mut again {
         one.expected = false;
     }
-    let unnamed = rust_mutants::run::verify(&session, std::slice::from_ref(&uncounted), &mut again)
-        .expect("the small expectation set is representable");
+    let unnamed = rust_mutants::run::verify(
+        &session,
+        std::slice::from_ref(&uncounted),
+        &mut again,
+        rust_mutants::run::Scope {
+            shard: None,
+            narrowed: false,
+        },
+    )
+    .expect("the small expectation set is representable");
     assert!(
         matches!(
             unnamed[0].standing,
@@ -1376,7 +1396,9 @@ fn targets_measured_under_coverage(skip_targets: Vec<String>) -> usize {
         )
         .expect("prepare");
     session.close().expect("close");
-    recorder.run_end("ok", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
+        .expect("trace closes");
     recorder
         .events()
         .iter()

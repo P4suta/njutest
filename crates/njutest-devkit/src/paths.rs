@@ -87,9 +87,70 @@ pub fn cache_beside(root: &Path) -> std::io::Result<PathBuf> {
 }
 
 fn beside(root: &Path, name: &str) -> std::io::Result<PathBuf> {
-    let dir = root.parent().unwrap_or(root).join(name);
+    let parent = root.parent().unwrap_or(root);
+    if same_directory(parent, &std::env::temp_dir()) {
+        return Err(std::io::Error::other(format!(
+            "{} sits directly in the shared temporary directory, so what is put beside it would \
+             be shared by every test and outlive them all; give the tree a directory of its own \
+             and root it inside that",
+            root.display()
+        )));
+    }
+    let dir = parent.join(name);
     fs::create_dir_all(&dir)?;
     Ok(dir)
+}
+
+/// Every variable a platform's standard library or a POSIX tool reads its temporary directory from.
+pub const TEMPORARY_VARIABLES: [&str; 3] = ["TMPDIR", "TMP", "TEMP"];
+
+/// `dir` as the temporary directory under each of [`TEMPORARY_VARIABLES`], for [`std::process::Command::envs`].
+#[must_use]
+pub fn temporary_directory(dir: &Path) -> [(&'static str, &Path); 3] {
+    TEMPORARY_VARIABLES.map(|name| (name, dir))
+}
+
+/// A project tree a test owns, rooted inside a temporary directory of its own so what a run puts beside the tree goes with it.
+#[derive(Debug)]
+pub struct Project {
+    #[expect(
+        dead_code,
+        reason = "the directory is held for what dropping it does: the project and what sits beside it go"
+    )]
+    directory: tempfile::TempDir,
+    root: PathBuf,
+}
+
+impl Project {
+    /// A new, empty project tree.
+    ///
+    /// # Panics
+    /// When no temporary directory can be made, which leaves the test nowhere to work.
+    #[must_use]
+    #[expect(
+        clippy::expect_used,
+        reason = "a test with no directory has nothing to test"
+    )]
+    pub fn fresh() -> Self {
+        let directory = tempfile::tempdir().expect("a directory for a project");
+        let root = directory.path().join("project");
+        fs::create_dir_all(&root).expect("a project tree");
+        Self { directory, root }
+    }
+
+    /// The project's root.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.root
+    }
+}
+
+/// Whether two paths name one directory once each is resolved.
+fn same_directory(left: &Path, right: &Path) -> bool {
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        (Err(_), _) | (_, Err(_)) => left == right,
+    }
 }
 
 /// `path`, escaped the way a JSON string escapes its contents, without the quotes.
@@ -122,6 +183,22 @@ pub fn text_in_json(text: &str) -> String {
         .to_owned()
 }
 
+/// How many toolchain tests nextest runs at once, whoever starts it; `.config/nextest.toml` holds the same number.
+pub const TOOLCHAIN_TESTS_AT_ONCE: usize = 4;
+
+/// The jobs a cargo started by a test may use: this machine's share for one of [`TOOLCHAIN_TESTS_AT_ONCE`] tests, never fewer than one.
+#[must_use]
+pub fn nested_build_jobs() -> usize {
+    let cores = match std::thread::available_parallelism() {
+        Ok(cores) => cores.get(),
+        Err(_unknown) => 1,
+    };
+    cores
+        .checked_div(TOOLCHAIN_TESTS_AT_ONCE)
+        .unwrap_or(1)
+        .max(1)
+}
+
 /// The parent's environment for a new in-process run, with the variables that run must compose for itself taken out.
 #[must_use]
 pub fn environment_for_a_run() -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
@@ -138,14 +215,29 @@ pub fn environment_for_a_run() -> Vec<(std::ffi::OsString, std::ffi::OsString)> 
     let outer_coverage = vars
         .iter()
         .any(|(name, _value)| same_name(name, std::ffi::OsStr::new("CARGO_LLVM_COV")));
-    vars.into_iter()
+    let mut kept: Vec<(std::ffi::OsString, std::ffi::OsString)> = vars
+        .into_iter()
         .filter(|(name, _value)| {
             let reserved = composed
                 .iter()
+                .chain(std::iter::once(&JOBS))
                 .any(|reserved| same_name(name, std::ffi::OsStr::new(reserved)));
             !(reserved || (outer_coverage && cargo_llvm_cov_owns(name)))
         })
-        .collect()
+        .collect();
+    kept.push(jobs());
+    kept
+}
+
+/// The variable a nested cargo reads its job count from.
+const JOBS: &str = "CARGO_BUILD_JOBS";
+
+/// This machine's share of cores for one nested cargo, as the variable that says it.
+fn jobs() -> (std::ffi::OsString, std::ffi::OsString) {
+    (
+        std::ffi::OsString::from(JOBS),
+        std::ffi::OsString::from(nested_build_jobs().to_string()),
+    )
 }
 
 /// Whether two environment variable names are one name on this platform.
@@ -199,6 +291,7 @@ pub fn environment_for_a_toolchain_run(
     if let Some(cache) = compilation_cache() {
         kept.push((std::ffi::OsString::from(WRAPPER), cache));
     }
+    kept.push(jobs());
     kept
 }
 
@@ -250,8 +343,20 @@ pub fn command(program: &Path) -> std::process::Command {
     for inherited in NOT_INHERITED {
         remove_environment(&mut command, inherited);
     }
+    discard_profile(&mut command);
     command
 }
+
+#[expect(
+    unused_results,
+    reason = "Command's infallible builder API returns self; this unit helper is the explicit boundary"
+)]
+fn discard_profile(command: &mut std::process::Command) {
+    command.env("LLVM_PROFILE_FILE", NULL_DEVICE);
+}
+
+/// The file this platform discards everything written to.
+pub const NULL_DEVICE: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 
 /// What a fixture run is insulated from, spelled here because this crate depends on nothing.
 ///

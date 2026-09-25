@@ -79,6 +79,7 @@ fn mutant(index: u32, outcome: Outcome, rule: &str) -> RunMutantDocument {
         route: None,
         identical: rust_mutants::run::CodegenIdentity::NotMeasured,
         retried: false,
+        lingered: false,
         expected: false,
         unreached: false,
         source_run_id: None,
@@ -89,7 +90,7 @@ fn mutant(index: u32, outcome: Outcome, rule: &str) -> RunMutantDocument {
 fn document() -> RunDocument {
     RunDocument {
         document_type: "rust-mutants/run-report".to_owned(),
-        schema_version: 2,
+        schema_version: 3,
         tool_version: "0.1.0".to_owned(),
         run: RunMeta {
             id: "20260905T000000000Z".to_owned(),
@@ -99,6 +100,10 @@ fn document() -> RunDocument {
             interrupted: false,
             exit_code: 1,
             shard: None,
+            jobs: rust_mutants_cli::report::run::JobsDocument {
+                asked: "auto".to_owned(),
+                used: 1,
+            },
         },
         workspace: WorkspaceDocument {
             root_name: "demo".to_owned(),

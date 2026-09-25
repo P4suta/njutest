@@ -210,7 +210,7 @@ struct Watching {
 }
 
 impl rust_mutants::run::Observer for Watching {
-    fn starting(&mut self, total: u32) {
+    fn starting(&mut self, total: u32, _width: rust_mutants::run::Width) {
         self.total = total;
     }
 
@@ -242,7 +242,7 @@ fn one_job_and_several_judge_a_catalog_the_same_way() {
                 expectations: &[],
                 quiet: &quiet,
                 equivalence: None,
-                jobs,
+                jobs: rust_mutants::run::Jobs::count(jobs).expect("a positive count"),
                 args: &[],
                 shard: None,
                 outcomes: None,

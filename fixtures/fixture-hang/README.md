@@ -29,14 +29,19 @@ at the allowance and is never asked twice. The fates below
 are the ones without the marker set, so the fixture's ordinary run stays
 ordinary; `crates/rust-mutants-cli/tests/toolchain_hang.rs` sets it.
 
+`walked` is the mutation outside the loop it stops ending.
+Its stride is the mutation's site, and the loop that walks it is in `src/walk.rs`, which a `rust-mutants: skip` marker keeps the run from mutating.
+Decrementing the stride to zero never ends that loop, and the checkpoints the instrumenter places across every mutable file, this one included, count it: the mutation is `step_limit_reached` at exactly one past the allowance and never `waited`, which `toolchain_hang.rs` holds.
+
 The two halves used to want `.rust-mutants.toml`'s bound pulled in opposite directions, and no longer do.
 `clamp_positive` needs the bound low enough that a sleep of a few seconds outlasts it, or nothing times out and there is no `inconclusive` to observe.
 `count_to` once needed it high enough that the count got there first, because the bound was on the whole execution and a slow enough machine let the clock stop a mutation the allowance was about to catch.
 For an execution that counts, the bound is now how long it may go without raising the count, so a loop that keeps taking its guard is never stopped by it; only the ceiling of ten bounds could still race the allowance.
 A sleep raises nothing, so it meets the bound exactly as it did.
 
-`FIXTURE_HANG_STRIDE_MS` makes the clamping test slow and moving: while a mutation is active it passes through `clamp_positive` forty times, that many milliseconds apart.
-With a stride of fifty and a bound of one second the test is slower than the bound and never quiet for one, and `toolchain_hang.rs` sets it to show the run waiting for it.
+`FIXTURE_HANG_STRIDE_MS` makes the clamping test slow and moving: while a mutation is active it passes through `clamp_positive` two hundred times, that many milliseconds apart.
+With a stride of fifty and a bound of five seconds the test is slower than the bound and never quiet for one, and `toolchain_hang.rs` sets it to show the run waiting for it.
+The window runs from the start of the process, so the bound also has to outlast starting it before the first step: a bound of one second lost that race on a loaded Windows runner.
 
 ## Fates
 
@@ -66,4 +71,7 @@ src/lib.rs:25:10 gt-to-ge survived
 src/lib.rs:25:12 int-increment survived
 src/lib.rs:25:16 return-default killed
 src/lib.rs:25:27 int-increment killed
+src/lib.rs:33:18 int-decrement step_limit_reached
+src/lib.rs:33:18 int-increment killed
+src/lib.rs:34:5 return-default killed
 ```

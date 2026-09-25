@@ -41,7 +41,9 @@ impl Reclaimed {
 /// Removes each of `directories`, stopping at [`BUDGET`] and naming what is left.
 #[must_use]
 pub fn all<'a>(directories: impl IntoIterator<Item = &'a Path>) -> Reclaimed {
-    with(directories, &|path: &Path| std::fs::remove_dir_all(path))
+    with(directories, &|path: &Path| {
+        crate::tempowner::remove_tree(path)
+    })
 }
 
 /// [`all`] with its removal as an argument, so a directory that refuses can be tested without a filesystem persuaded into refusing.

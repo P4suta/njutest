@@ -423,7 +423,9 @@
       "required": [
         "targets",
         "mutants",
-        "soundness"
+        "soundness",
+        "faults",
+        "crashes"
       ],
       "properties": {
         "targets": {
@@ -588,6 +590,80 @@
             "executed": {
               "type": "boolean",
               "description": "False under standard-v1, where the phase is a static inventory and a non-empty one is a limitation."
+            }
+          }
+        },
+        "faults": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Every site a fault was asked at has exactly one decision, so noticed + unnoticed + unreached + waited + undecided + not_put equals sites.",
+          "required": [
+            "sites",
+            "noticed",
+            "unnoticed",
+            "unreached",
+            "waited",
+            "undecided",
+            "not_put"
+          ],
+          "properties": {
+            "sites": {
+              "$ref": "#/$defs/count"
+            },
+            "noticed": {
+              "$ref": "#/$defs/count"
+            },
+            "unnoticed": {
+              "$ref": "#/$defs/count"
+            },
+            "unreached": {
+              "$ref": "#/$defs/count"
+            },
+            "waited": {
+              "$ref": "#/$defs/count"
+            },
+            "undecided": {
+              "$ref": "#/$defs/count"
+            },
+            "not_put": {
+              "$ref": "#/$defs/count"
+            }
+          }
+        },
+        "crashes": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Every call that writes a crash was asked at has exactly one decision, so restarted + corrupt + unshared + unreached + undecided + not_put equals sites.",
+          "required": [
+            "sites",
+            "restarted",
+            "corrupt",
+            "unshared",
+            "unreached",
+            "undecided",
+            "not_put"
+          ],
+          "properties": {
+            "sites": {
+              "$ref": "#/$defs/count"
+            },
+            "restarted": {
+              "$ref": "#/$defs/count"
+            },
+            "corrupt": {
+              "$ref": "#/$defs/count"
+            },
+            "unshared": {
+              "$ref": "#/$defs/count"
+            },
+            "unreached": {
+              "$ref": "#/$defs/count"
+            },
+            "undecided": {
+              "$ref": "#/$defs/count"
+            },
+            "not_put": {
+              "$ref": "#/$defs/count"
             }
           }
         }
@@ -812,6 +888,371 @@
           "properties": {
             "decision": {
               "const": "unreached"
+            }
+          }
+        }
+      ]
+    },
+    "faults": {
+      "description": "Every site of the part a fault was asked at, in catalog order, with its closed decision (ADR 0032).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fault"
+      }
+    },
+    "fault": {
+      "description": "One call a `?` asks about, failed once by a fault.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "catalog_index",
+        "id",
+        "display_id",
+        "path",
+        "item",
+        "position",
+        "decision"
+      ],
+      "properties": {
+        "catalog_index": {
+          "$ref": "#/$defs/count",
+          "description": "The dense zero-based position in the catalog of faults, which is what shard membership is a function of."
+        },
+        "id": {
+          "$ref": "#/$defs/fullDigest"
+        },
+        "display_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{20}$"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "item": {
+          "type": "string"
+        },
+        "position": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/position"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decision": {
+          "$ref": "#/$defs/faultDecision"
+        }
+      }
+    },
+    "faultDecision": {
+      "description": "What the suite did with one call failing: a closed set of its own, in which nothing is a kill and nothing is proved.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision",
+            "by"
+          ],
+          "properties": {
+            "decision": {
+              "const": "noticed"
+            },
+            "by": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision"
+          ],
+          "properties": {
+            "decision": {
+              "const": "unnoticed"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision"
+          ],
+          "properties": {
+            "decision": {
+              "const": "unreached"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision",
+            "on"
+          ],
+          "properties": {
+            "decision": {
+              "const": "waited"
+            },
+            "on": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision",
+            "on",
+            "why"
+          ],
+          "properties": {
+            "decision": {
+              "const": "undecided"
+            },
+            "on": {
+              "type": "string",
+              "minLength": 1
+            },
+            "why": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision",
+            "diagnostic"
+          ],
+          "properties": {
+            "decision": {
+              "const": "not-put"
+            },
+            "diagnostic": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "besides": {
+      "description": "Every error-propagation survivor of the part a target told apart only with the call at its own site failing beside it (ADR 0032 decision 6). Evidence, never a kill.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/beside"
+      }
+    },
+    "beside": {
+      "description": "One survivor put again beside the fault at its own call, and the target that told the two runs apart.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mutant",
+        "fault",
+        "target",
+        "failed"
+      ],
+      "properties": {
+        "mutant": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{20}$"
+        },
+        "fault": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{20}$"
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "failed": {
+          "enum": [
+            "beside",
+            "alone"
+          ],
+          "description": "Which of the two runs failed: with the mutation beside the failing call, or with the call failing alone."
+        }
+      }
+    },
+    "crashes": {
+      "description": "Every call that writes of the part a crash was asked at, in catalog order, with its closed decision (ADR 0035).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/crash"
+      }
+    },
+    "crash": {
+      "description": "One call that writes, after which a crash stopped the process.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "catalog_index",
+        "id",
+        "display_id",
+        "path",
+        "item",
+        "position",
+        "decision"
+      ],
+      "properties": {
+        "catalog_index": {
+          "$ref": "#/$defs/count"
+        },
+        "id": {
+          "$ref": "#/$defs/fullDigest"
+        },
+        "display_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{20}$"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "item": {
+          "type": "string"
+        },
+        "position": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/position"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decision": {
+          "$ref": "#/$defs/crashDecision"
+        }
+      }
+    },
+    "crashDecision": {
+      "description": "What the next run did over what a crash left.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision",
+            "on",
+            "left"
+          ],
+          "properties": {
+            "decision": {
+              "const": "restarted"
+            },
+            "on": {
+              "type": "string",
+              "minLength": 1
+            },
+            "left": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision",
+            "on",
+            "failed"
+          ],
+          "properties": {
+            "decision": {
+              "const": "corrupt"
+            },
+            "on": {
+              "type": "string",
+              "minLength": 1
+            },
+            "failed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision",
+            "on"
+          ],
+          "properties": {
+            "decision": {
+              "const": "unshared"
+            },
+            "on": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision"
+          ],
+          "properties": {
+            "decision": {
+              "const": "unreached"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision",
+            "on",
+            "why"
+          ],
+          "properties": {
+            "decision": {
+              "const": "undecided"
+            },
+            "on": {
+              "type": "string",
+              "minLength": 1
+            },
+            "why": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision",
+            "diagnostic"
+          ],
+          "properties": {
+            "decision": {
+              "const": "not-put"
+            },
+            "diagnostic": {
+              "type": "string"
             }
           }
         }
@@ -1260,7 +1701,12 @@
             "wire-unnoticed",
             "unstable-baseline",
             "environment-dependent",
-            "environment-dependent-reach"
+            "environment-dependent-reach",
+            "schedule-dependent",
+            "unnoticed-fault",
+            "broken-under-fault",
+            "dimension-not-measured",
+            "corrupt-after-crash"
           ]
         },
         "subject": {
@@ -1440,7 +1886,8 @@
             "target",
             "reached",
             "bodies",
-            "infected"
+            "infected",
+            "entered"
           ],
           "properties": {
             "state": {
@@ -1457,6 +1904,9 @@
               "$ref": "#/$defs/driftMoved"
             },
             "infected": {
+              "$ref": "#/$defs/driftMoved"
+            },
+            "entered": {
               "$ref": "#/$defs/driftMoved"
             }
           }
@@ -1894,6 +2344,9 @@
         "resources",
         "candidates",
         "seams",
+        "faults",
+        "beside",
+        "crashes",
         "targets",
         "sources",
         "mutants",
@@ -1928,6 +2381,15 @@
         },
         "seams": {
           "$ref": "#/$defs/seams"
+        },
+        "faults": {
+          "$ref": "#/$defs/faults"
+        },
+        "beside": {
+          "$ref": "#/$defs/besides"
+        },
+        "crashes": {
+          "$ref": "#/$defs/crashes"
         },
         "targets": {
           "type": "array",
@@ -2813,7 +3275,8 @@
           "enum": [
             "standard-v1",
             "deep-v1",
-            "verified-v1"
+            "verified-v1",
+            "whole-v1"
           ]
         },
         "tool": {
@@ -2897,7 +3360,8 @@
           "enum": [
             "standard-v1",
             "deep-v1",
-            "verified-v1"
+            "verified-v1",
+            "whole-v1"
           ]
         },
         "tool": {
@@ -3166,7 +3630,8 @@
       "additionalProperties": false,
       "required": [
         "target",
-        "standing"
+        "standing",
+        "explored"
       ],
       "properties": {
         "target": {
@@ -3175,8 +3640,134 @@
         },
         "standing": {
           "$ref": "#/$defs/concurrencyStanding"
+        },
+        "explored": {
+          "$ref": "#/$defs/concurrencyExploration"
         }
       }
+    },
+    "concurrencyExploration": {
+      "description": "What delaying the guards of one test binary found.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "why"
+          ],
+          "properties": {
+            "state": {
+              "const": "unexplored"
+            },
+            "why": {
+              "enum": [
+                "not-needed",
+                "not-asked",
+                "not-passing",
+                "no-site"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "asked",
+            "delayed"
+          ],
+          "properties": {
+            "state": {
+              "const": "sampled"
+            },
+            "asked": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "delayed": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "asked",
+            "delayed",
+            "undecided"
+          ],
+          "properties": {
+            "state": {
+              "const": "undecided"
+            },
+            "asked": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "delayed": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "undecided": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "site",
+            "path",
+            "line",
+            "failed",
+            "rounds"
+          ],
+          "properties": {
+            "state": {
+              "const": "broke"
+            },
+            "site": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "line": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "failed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "rounds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      ]
     }
   }
 }

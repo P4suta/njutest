@@ -36,7 +36,7 @@ impl Moved {
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum Unmeasured {
-    /// No control of the whole target ran, which is what a target nothing was confirmed on has.
+    /// No control of the whole target ran, which only a run cancelled before its targets were compared leaves.
     NoControl,
     /// The control's process could not record what its guards reached.
     Unrecorded,
@@ -104,6 +104,8 @@ pub enum Drift {
         bodies: Moved,
         /// The mutations a guard saw its two branches differ over.
         infected: Moved,
+        /// The items whose bodies anything of the target entered, by the item catalog.
+        entered: Moved,
     },
     /// Nothing about it was compared.
     NotMeasured {
@@ -131,12 +133,21 @@ impl Drift {
         let target = target.to_owned();
         match steadiness {
             rust_mutants::touch::Steadiness::Held => Self::Held { target },
-            rust_mutants::touch::Steadiness::Moved(moved) => Self::Moved {
-                target,
-                reached: Moved::of(&moved.reached),
-                bodies: Moved::of(&moved.bodies),
-                infected: Moved::of(&moved.infected),
-            },
+            rust_mutants::touch::Steadiness::Moved(moved) => {
+                let rust_mutants::touch::ReachMoved {
+                    reached,
+                    bodies,
+                    infected,
+                    entered,
+                } = moved;
+                Self::Moved {
+                    target,
+                    reached: Moved::of(reached),
+                    bodies: Moved::of(bodies),
+                    infected: Moved::of(infected),
+                    entered: Moved::of(entered),
+                }
+            }
             rust_mutants::touch::Steadiness::NotMeasured(why) => Self::NotMeasured {
                 target,
                 why: Unmeasured::of(*why),
@@ -214,13 +225,15 @@ pub fn found(drift: &[Drift], records: &[MutantRecord]) -> Vec<Finding> {
             Drift::Moved { target, .. } => Some(target.as_str()),
             Drift::Held { .. } | Drift::NotMeasured { .. } => None,
         })
-        .map(|target| {
+        .filter_map(|target| {
             let (discharged, unreached) = resting(records, target);
-            Finding::new(
-                FindingKind::UnstableBaseline,
-                target,
-                &unstable(target, discharged, unreached),
-            )
+            (discharged > 0 || unreached > 0).then(|| {
+                Finding::new(
+                    FindingKind::UnstableBaseline,
+                    target,
+                    &unstable(target, discharged, unreached),
+                )
+            })
         })
         .collect()
 }
@@ -238,6 +251,41 @@ pub fn resting(records: &[MutantRecord], target: &str) -> (usize, usize) {
         .filter(|record| record.outcome.outcome() == Outcome::Unreached)
         .count();
     (discharged, unreached)
+}
+
+/// The `reach-moved` limitation for every moved target nothing rests on any more, each with how many dispositions were decided again against it (ADR 0036).
+#[must_use]
+pub fn repaired(
+    drift: &[Drift],
+    records: &[MutantRecord],
+    counted: &BTreeMap<String, usize>,
+) -> Vec<Limitation> {
+    drift
+        .iter()
+        .filter_map(|one| match one {
+            Drift::Moved { target, .. } => Some(target.as_str()),
+            Drift::Held { .. } | Drift::NotMeasured { .. } => None,
+        })
+        .filter(|target| resting(records, target) == (0, 0))
+        .map(|target| {
+            let again = counted.get(target).copied().unwrap_or_default();
+            Limitation::new(
+                crate::limitation::REACH_MOVED,
+                &format!(
+                    "a target reached something on an original-code control that it did not \
+                     reach on its baseline, so what it reaches is not a function of the target; \
+                     {again} {} that rested on its baseline {} decided again by running against \
+                     it, and nothing this run concludes stands on the moved record ({target})",
+                    if again == 1 {
+                        "disposition"
+                    } else {
+                        "dispositions"
+                    },
+                    if again == 1 { "was" } else { "were" }
+                ),
+            )
+        })
+        .collect()
 }
 
 /// How many mutations, in the words a finding counts them in.

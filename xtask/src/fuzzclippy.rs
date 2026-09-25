@@ -48,6 +48,18 @@ pub enum FuzzClippyError {
     Refused,
 }
 
+impl crate::error::Coded for FuzzClippyError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Read { .. } | Self::Parse { .. } | Self::Missing { .. } | Self::Level { .. } => {
+                crate::error::XtCode::FuzzPolicy
+            }
+            Self::Start(..) => crate::error::XtCode::FuzzCargo,
+            Self::Refused => crate::error::XtCode::GateRefused,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Lint {
     priority: i64,

@@ -22,6 +22,7 @@ fn judged(index: u32, outcome: Outcome) -> Judged {
         outcome,
         target: "demo/lib/demo".to_owned(),
         exit_code: 0,
+        start_failure: None,
         duration: Duration::from_millis(1),
         tests_run: Some(1),
         failed_tests: Vec::new(),
@@ -29,6 +30,7 @@ fn judged(index: u32, outcome: Outcome) -> Judged {
         not_run_reason: None,
         route: None,
         retried: false,
+        lingered: false,
         expected: false,
         measured: true,
         identical: CodegenIdentity::NotMeasured,
@@ -47,6 +49,10 @@ const fn of(judged: Vec<Judged>) -> Run {
         interrupted: false,
         shard: None,
         duration: Duration::from_secs(1),
+        width: rust_mutants::run::Width {
+            asked: rust_mutants::run::Jobs::Auto,
+            used: 1,
+        },
     }
 }
 
@@ -214,6 +220,10 @@ fn a_mutant_a_reviewer_expected_to_survive_is_not_a_finding_and_a_stale_claim_is
         interrupted: false,
         shard: None,
         duration: Duration::from_secs(1),
+        width: rust_mutants::run::Width {
+            asked: rust_mutants::run::Jobs::Auto,
+            used: 1,
+        },
     };
     let kinds: Vec<FindingKind> = run.findings().iter().map(|f| f.kind).collect();
     assert_eq!(
@@ -332,19 +342,51 @@ fn an_inconclusive_mutant_says_which_of_the_two_things_left_it_undecided() {
 }
 
 #[test]
-fn jobs_defaults_to_the_machine_capped_at_four_and_a_number_wins() {
-    let cores = match std::thread::available_parallelism() {
-        Ok(cores) => cores.get(),
-        Err(_unavailable) => 1,
-    };
-    assert_eq!(rust_mutants::run::jobs(0), cores.min(4));
-    assert_eq!(rust_mutants::run::jobs(1), 1);
+fn auto_is_the_machine_capped_at_four_all_is_the_machine_and_a_count_wins() {
+    use rust_mutants::run::{Jobs, JobsError};
+
+    for cores in [1, 2, 4, 8, 64] {
+        assert_eq!(
+            Jobs::Auto.resolve_on(cores),
+            cores.min(4),
+            "{cores} cores: each test binary already runs its own tests on as many threads as the \
+             machine has, so the cap is what keeps a duration a fact about the mutation rather \
+             than the load on a machine a person is using"
+        );
+        assert_eq!(
+            Jobs::All.resolve_on(cores),
+            cores,
+            "{cores} cores: a CI runner doing nothing else is asked for every one"
+        );
+        assert_eq!(Jobs::count(64).map(|jobs| jobs.resolve_on(cores)), Ok(64));
+    }
     assert_eq!(
-        rust_mutants::run::jobs(64),
-        64,
-        "each test binary already runs its own tests on as many threads as the machine has, \
-         so the cap is what keeps a duration a fact about the mutation rather than the load; \
-         a person who says otherwise has said so"
+        Jobs::All.resolve_on(0),
+        1,
+        "a machine that says nothing still runs one"
+    );
+    for (written, read) in [
+        ("auto", Ok(Jobs::Auto)),
+        ("all", Ok(Jobs::All)),
+        ("3", Jobs::count(3)),
+        ("0", Err(JobsError::Zero)),
+        (
+            "many",
+            Err(JobsError::Unknown {
+                text: "many".to_owned(),
+            }),
+        ),
+    ] {
+        assert_eq!(Jobs::parse(written), read, "{written:?}");
+    }
+    assert_eq!(
+        Jobs::parse("0").map_err(|error| error.to_string()),
+        Err(
+            "0 jobs would measure nothing; write `auto` for as many as the machine has, capped \
+             at 4, or `all` for every one"
+                .to_owned()
+        ),
+        "a zero that used to mean auto says which word means it now"
     );
 }
 
@@ -556,5 +598,63 @@ fn a_mutation_this_machine_stopped_waiting_for_is_a_finding_that_says_so() {
         FindingKind::WaitedMutant.is_infrastructure(),
         "it is a gap in what the run established rather than a fault in the code, and the \
          two are counted in different columns"
+    );
+}
+
+#[test]
+fn a_run_ends_on_the_gravest_thing_it_holds_and_an_interruption_outranks_all_of_it() {
+    use rust_mutants::run::Exit;
+    assert_eq!(Exit::of(false, []), Exit::Detected);
+    assert_eq!(Exit::of(false, [FindingKind::SurvivingMutant]), Exit::Found);
+    assert_eq!(
+        Exit::of(
+            false,
+            [FindingKind::SurvivingMutant, FindingKind::WaitedMutant]
+        ),
+        Exit::Unestablished,
+        "a run that could not measure something it ran says so before what it found"
+    );
+    assert_eq!(
+        Exit::of(true, [FindingKind::WaitedMutant]),
+        Exit::Interrupted
+    );
+    let codes: Vec<u8> = Exit::ALL.iter().map(|exit| exit.code()).collect();
+    assert_eq!(codes, vec![0, 1, 2, 130, 143]);
+}
+
+#[test]
+fn every_exit_a_caller_reads_back_is_one_of_the_table_and_no_other_code_is() {
+    use rust_mutants::run::Exit;
+    for exit in Exit::ALL {
+        assert_eq!(
+            Exit::read(i32::from(exit.code())),
+            Some(exit),
+            "a caller holding the code a run ended with reads back the exit it meant"
+        );
+    }
+    for code in [-1, 3, 101, 129, 255] {
+        assert_eq!(
+            Exit::read(code),
+            None,
+            "and a code the table does not hold is no verdict at all, not the nearest one: {code}"
+        );
+    }
+}
+#[test]
+fn an_errored_mutant_whose_process_never_started_says_why_rather_than_an_exit_nobody_produced() {
+    let mut unstarted = judged(0, Outcome::Errored);
+    unstarted.exit_code = rust_mutants::runner::EXIT_CODE_UNAVAILABLE;
+    unstarted.start_failure = Some(rust_mutants::execute::StartFailure::Missing);
+    let said: Vec<String> = of(vec![unstarted])
+        .findings()
+        .into_iter()
+        .filter(|finding| finding.kind == FindingKind::ErroredMutant)
+        .map(|finding| finding.detail)
+        .collect();
+    assert!(
+        said.iter()
+            .any(|detail| detail.contains("its test binary was not there")
+                && !detail.contains("exit -1")),
+        "a row about a process that never started names why, which `exit -1` never did: {said:?}"
     );
 }

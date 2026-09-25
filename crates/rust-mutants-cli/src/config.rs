@@ -216,15 +216,7 @@ impl Expect {
     /// How the claim is written back to a reader.
     #[must_use]
     pub fn name(&self) -> String {
-        self.id.clone().unwrap_or_else(|| {
-            format!(
-                "{} {} {} {:?}",
-                self.path.as_deref().unwrap_or_default(),
-                self.item.as_deref().unwrap_or_default(),
-                self.rule.as_deref().unwrap_or_default(),
-                self.original.as_deref().unwrap_or_default()
-            )
-        })
+        self.expectation().name()
     }
 
     /// Whether the entry names a mutant by where it is rather than by identity.
@@ -351,9 +343,24 @@ pub struct Execution {
     pub doctests: bool,
     /// Targets never to start, by the id a report names them with.
     pub skip_targets: Vec<String>,
-    /// How many mutants to measure at once.
-    /// Zero is as many as the machine has, capped at four.
-    pub jobs: usize,
+    /// How many mutants to measure at once: a count, `auto` for as many as the machine has capped at four, or `all` for every one.
+    /// Unset is `all` under continuous integration and `auto` elsewhere.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jobs: Option<rust_mutants::run::Jobs>,
+}
+
+impl Execution {
+    /// The width a run measures at under `host`: what was asked for, or, where nothing was, every core of a CI runner, which a job has to itself, and what a shared workstation can spare elsewhere.
+    #[must_use]
+    pub const fn jobs_under(&self, host: &crate::CiHost) -> rust_mutants::run::Jobs {
+        match (self.jobs, host) {
+            (Some(asked), _) => asked,
+            (None, crate::CiHost::GitHub { .. } | crate::CiHost::GitLab) => {
+                rust_mutants::run::Jobs::All
+            }
+            (None, crate::CiHost::None) => rust_mutants::run::Jobs::Auto,
+        }
+    }
 }
 
 impl Default for Execution {
@@ -365,7 +372,7 @@ impl Default for Execution {
             test_binary_args: Vec::new(),
             scratch_working_directory: false,
             skip_targets: Vec::new(),
-            jobs: 0,
+            jobs: None,
         }
     }
 }
@@ -898,7 +905,7 @@ version = 1
 # locked = false
 # doctests = true                # run a library's documented examples as a target
 # skip_targets = []              # target ids never to start, as pkg/kind/name
-# jobs = 0                        # mutants measured at once; 0 = the machine, capped at 4
+# jobs = \"auto\"                # mutants measured at once: a count, \"auto\" (the machine, capped at 4), or \"all\"
 # test_binary_args = []          # allowed: {allowed}
 # scratch_working_directory = false # start each test process in a directory of its own,
 #                                # so a test that writes where it runs does not write into

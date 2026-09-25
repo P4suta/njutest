@@ -3,7 +3,7 @@
 
 //! Combining every typed shard of one catalog into one complete answer.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use super::{
     BuildEvidence, BuildLedger, BuildReport, LatticedReport, MergeSource, MergeSources, PartLedger,
@@ -117,6 +117,9 @@ pub fn merge(
         resources: first_source.resources.clone(),
         candidates: first_source.candidates.clone(),
         seams: first_source.seams.clone(),
+        faults: first_source.faults.clone(),
+        beside: first_source.beside.clone(),
+        crashes: first_source.crashes.clone(),
         targets: first_source.targets.clone(),
         sources: first_source.sources.clone(),
         mutants: first_source.mutants.clone(),
@@ -153,19 +156,11 @@ pub fn merge(
 }
 
 fn ordered(parts: &[ShardReport]) -> Result<Vec<&ShardReport>, MergeError> {
-    let first = parts.first().ok_or(MergeError::Nothing)?;
-    let of = first.shard.of();
-    let mut by_index = BTreeMap::new();
+    if parts.is_empty() {
+        return Err(MergeError::Nothing);
+    }
     let mut runs = BTreeSet::new();
     for part in parts {
-        let shard = part.shard;
-        if shard.of() != of {
-            return Err(MergeError::Denominator {
-                index: shard.index(),
-                expected: of,
-                actual: shard.of(),
-            });
-        }
         let run_id = rust_mutants::id::RunId::try_from(part.run_id.as_str()).map_err(|error| {
             MergeError::Unsound {
                 because: error.to_string(),
@@ -174,19 +169,36 @@ fn ordered(parts: &[ShardReport]) -> Result<Vec<&ShardReport>, MergeError> {
         if !runs.insert(run_id.clone()) {
             return Err(MergeError::DuplicateRun { run_id });
         }
-        if by_index.insert(shard.index(), part).is_some() {
-            return Err(MergeError::DuplicateShard {
-                index: shard.index(),
-                of,
-            });
-        }
     }
-    for index in 1..=of {
-        if !by_index.contains_key(&index) {
-            return Err(MergeError::MissingShard { index, of });
+    let shards = parts.iter().map(|part| {
+        (
+            rust_mutants::run::Shard {
+                index: part.shard.index(),
+                of: part.shard.of(),
+            },
+            part,
+        )
+    });
+    rust_mutants::run::Shard::every_part(shards).map_err(|error| match error {
+        rust_mutants::run::PartsError::Missing { index, of } => {
+            MergeError::MissingShard { index, of }
         }
-    }
-    Ok(by_index.into_values().collect())
+        rust_mutants::run::PartsError::Duplicate { index, of } => {
+            MergeError::DuplicateShard { index, of }
+        }
+        rust_mutants::run::PartsError::Denominator {
+            index,
+            expected,
+            actual,
+        } => MergeError::Denominator {
+            index,
+            expected,
+            actual,
+        },
+        other => MergeError::Unsound {
+            because: other.to_string(),
+        },
+    })
 }
 
 fn agree(parts: &[&ShardReport], first: &ShardReport) -> Result<(), MergeError> {

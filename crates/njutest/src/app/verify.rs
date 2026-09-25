@@ -19,7 +19,7 @@ use crate::cache::store::Store;
 use crate::cli::{EXIT_ERROR, Environment, Format, Verify};
 use crate::config::Config;
 use crate::evidence::digest::Mode;
-use crate::report::lines;
+use crate::report::{Verdict, lines};
 use crate::run_id;
 use crate::trace::{DirSink, Recorder, Sink, StartRecord};
 use crate::ui;
@@ -195,10 +195,7 @@ struct Reconciled {
     directory: reports::RunDirectory,
 }
 
-type ReportAnswer = (
-    crate::report::Verdict,
-    Option<crate::report::ConclusionAccounting>,
-);
+type ReportAnswer = (Verdict, Option<crate::report::ConclusionAccounting>);
 
 /// Where scheduling state for interrupted runs lives, beside the answers finished runs left.
 pub const CHECKPOINTS: &str = "checkpoints";
@@ -223,8 +220,9 @@ pub fn run(
             return Ok(EXIT_ERROR);
         }
     };
+    let (arguments, engine) = engine_of(arguments, environment, stderr)?;
     run_initialized(
-        arguments,
+        (arguments.as_ref(), &engine),
         environment,
         initialized,
         Streams {
@@ -234,8 +232,35 @@ pub fn run(
     )
 }
 
+/// The running njutest's digest, which every answer this run keeps is keyed on, and the arguments to run with: a njutest that cannot read itself neither reads nor keeps what earlier runs established.
+fn engine_of<'a>(
+    arguments: &'a Verify,
+    environment: &Environment,
+    stderr: &mut dyn Write,
+) -> std::io::Result<(std::borrow::Cow<'a, Verify>, String)> {
+    match crate::evidence::digest::engine_of(&environment.program) {
+        Ok(engine) => Ok((std::borrow::Cow::Borrowed(arguments), engine)),
+        Err(error) => {
+            super::diagnose(
+                stderr,
+                &format!(
+                    "the running njutest could not be read ({error}), so this run neither reads \
+                     nor keeps what earlier runs established"
+                ),
+            )?;
+            Ok((
+                std::borrow::Cow::Owned(Verify {
+                    no_cache: true,
+                    ..arguments.clone()
+                }),
+                String::new(),
+            ))
+        }
+    }
+}
+
 fn run_initialized(
-    arguments: &Verify,
+    (arguments, engine): (&Verify, &str),
     environment: &Environment,
     initialized: Initialized,
     streams: Streams<'_>,
@@ -265,6 +290,7 @@ fn run_initialized(
         config: &config,
         environment,
         changed: changed.as_ref(),
+        engine,
     };
     let evidence = match evidence_of(arguments, &asked, &cancel) {
         Ok(evidence) => evidence,
@@ -464,7 +490,7 @@ fn finish_established(
         Ok(answer) => answer,
         Err(code) => return Ok(code),
     };
-    let said_document = match persist_or_report(
+    let published = match persist_or_report(
         Persisting {
             root,
             report: &report,
@@ -485,7 +511,7 @@ fn finish_established(
         ControlFlow::Break(code) => return Ok(code),
     };
 
-    if let Err(error) = trace.run_end(&lines::escape(&format!("{verdict:?}")), accounting, None) {
+    if let Err(error) = trace.run_end(verdict, accounting, None) {
         super::diagnose(
             stderr,
             &format!("the trace could not be finalized: {error}"),
@@ -493,12 +519,7 @@ fn finish_established(
         return Ok(EXIT_ERROR);
     }
 
-    let rendered = match said(
-        &report,
-        root,
-        &said_document,
-        (environment, arguments.format),
-    ) {
+    let rendered = match said(&report, root, &published, (environment, arguments.format)) {
         Ok(rendered) => rendered,
         Err(error) => {
             super::diagnose(
@@ -520,7 +541,7 @@ fn persist_or_report(
     arguments: &Verify,
     trace: &Recorder,
     stderr: &mut dyn Write,
-) -> std::io::Result<ControlFlow<u8, String>> {
+) -> std::io::Result<ControlFlow<u8, Published>> {
     match persist(persisting, arguments, stderr) {
         Ok(document) => Ok(ControlFlow::Continue(document)),
         Err(error) => {
@@ -529,7 +550,7 @@ fn persist_or_report(
                 PersistError::Output { .. } => super::diagnose(stderr, &error.to_string())?,
             }
             if let Err(trace_error) = trace.run_end(
-                "ERROR",
+                Verdict::Error,
                 None,
                 Some("the completed report could not be persisted".to_owned()),
             ) {
@@ -575,7 +596,7 @@ fn reconciled(
             if let Err(trace_error) =
                 establishing
                     .trace
-                    .run_end("ERROR", None, Some(error.to_string()))
+                    .run_end(Verdict::Error, None, Some(error.to_string()))
             {
                 super::diagnose(
                     stderr,
@@ -701,7 +722,7 @@ fn complete_lattice(
             return Ok(crate::report::ReportDocument::Shard(shard));
         }
     };
-    if latticed.contract() != crate::config::Contract::VerifiedV1 {
+    if !latticed.contract().proves_models() {
         crate::assure::model::confirm_not_required(&prepared)
             .map_err(crate::error::RunnerError::from)?;
         return Ok(crate::report::ReportDocument::Complete(
@@ -824,7 +845,7 @@ fn every_build(
     let configured = match configured_builds(request, establishing) {
         Ok(configured) => configured,
         Err(error) => {
-            if let Err(trace_error) = trace.run_end("ERROR", None, Some(error.to_string())) {
+            if let Err(trace_error) = trace.run_end(Verdict::Error, None, Some(error.to_string())) {
                 super::diagnose(
                     stderr,
                     &format!("the trace could not be finalized: {trace_error}"),
@@ -856,17 +877,17 @@ fn every_build(
             run::run(&asked, environment, &mut notes, watch)
         };
         let ended = match &result {
-            Ok(outcome) => asked.engine_trace.run_end(
-                &format!("{:?}", outcome.report.verdict).to_lowercase(),
-                None,
-            ),
-            Err(error) => asked
+            Ok(_measured) => asked
                 .engine_trace
-                .run_end("failed", Some(error.to_string())),
+                .run_end(rust_mutants::trace::RunOutcome::Completed, None),
+            Err(error) => asked.engine_trace.run_end(
+                rust_mutants::trace::RunOutcome::Failed,
+                Some(error.to_string()),
+            ),
         };
         if let Err(source) = ended {
             let error = TraceSetupError::Finalize { ordinal, source };
-            if let Err(trace_error) = trace.run_end("ERROR", None, Some(error.to_string())) {
+            if let Err(trace_error) = trace.run_end(Verdict::Error, None, Some(error.to_string())) {
                 super::diagnose(
                     stderr,
                     &format!("the trace could not be finalized: {trace_error}"),
@@ -878,7 +899,9 @@ fn every_build(
         match result {
             Ok(outcome) => measured.push((name, selection, outcome)),
             Err(error) => {
-                if let Err(trace_error) = trace.run_end("ERROR", None, Some(error.to_string())) {
+                if let Err(trace_error) =
+                    trace.run_end(Verdict::Error, None, Some(error.to_string()))
+                {
                     super::diagnose(
                         stderr,
                         &format!("the trace could not be finalized: {trace_error}"),
@@ -936,7 +959,7 @@ fn asking(establishing: &Establishing<'_>, shard: Option<rust_mutants::run::Shar
 fn said(
     report: &crate::report::ReportDocument,
     root: &Path,
-    said_document: &str,
+    published: &Published,
     (environment, asked): (&Environment, Option<Format>),
 ) -> Result<String, SayingError> {
     let shape = asked.unwrap_or(if environment.terminal.drawing {
@@ -952,7 +975,8 @@ fn said(
             report,
             &Saying {
                 root,
-                said_document,
+                said_document: &published.document,
+                said: &published.said,
                 environment,
                 shape,
             },
@@ -964,6 +988,7 @@ fn said(
 struct Saying<'a> {
     root: &'a Path,
     said_document: &'a str,
+    said: &'a [lines::Said],
     environment: &'a Environment,
     shape: Format,
 }
@@ -983,6 +1008,7 @@ fn said_complete(
     let Saying {
         root,
         said_document,
+        said,
         environment,
         shape,
     } = *saying;
@@ -990,7 +1016,7 @@ fn said_complete(
         Format::Json => Ok(crate::report::json::document_any(
             &crate::report::ReportDocument::Complete(report.clone()),
         )?),
-        Format::Lines => Ok(lines::kept(report, said_document)?),
+        Format::Lines => Ok(lines::kept(report, said)?),
         Format::Spec => Ok(crate::report::spec::page(report)?),
         Format::Human | Format::Agent => {
             let sources = crate::presentation::Sources::read(root, report)?;
@@ -1053,6 +1079,7 @@ struct Asked<'a> {
     config: &'a Config,
     environment: &'a Environment,
     changed: Option<&'a crate::git::Change>,
+    engine: &'a str,
 }
 
 /// How much of the workspace the run looked at, which is part of what it is: a run about one package established less than one about everything, and the two must never share a stored answer.
@@ -1097,6 +1124,7 @@ fn evidence_of(
         config,
         environment,
         changed,
+        engine,
     } = *asked;
     let toolchain = rust_mutants::cargo::Toolchain::locate(
         &rust_mutants::cargo::LocateOptions {
@@ -1111,6 +1139,7 @@ fn evidence_of(
     let machine = identity::Machine {
         toolchain: &toolchain.to_string(),
         platform: toolchain.host(),
+        engine,
     };
     let asked = identity::Asked {
         root,
@@ -1143,6 +1172,7 @@ fn evidence_of(
             format!("rust-mutants {}", rust_mutants::VERSION),
         ],
         corpus: String::new(),
+        engine: engine.to_owned(),
     };
     identity::of(&asked, mode, common, arguments.shard.clone()).map_err(EvidenceError::from)
 }
@@ -1235,7 +1265,7 @@ fn persist(
     persisting: Persisting<'_>,
     arguments: &Verify,
     stderr: &mut dyn Write,
-) -> Result<String, PersistError> {
+) -> Result<Published, PersistError> {
     let Persisting {
         root,
         report,
@@ -1308,7 +1338,18 @@ fn persist(
     notes
         .finish()
         .map_err(|source| PersistError::Output { source })?;
-    Ok(written.said_document)
+    Ok(Published {
+        document: written.said_document,
+        said: written.said,
+    })
+}
+
+/// Where a published run's files are, as a reader is told them.
+struct Published {
+    /// The canonical document, from the project's own root.
+    document: String,
+    /// Every file the run sealed that a reader is told the path of.
+    said: Vec<lines::Said>,
 }
 
 fn note_publication_status(
@@ -1460,6 +1501,7 @@ fn reuse(
         &Saying {
             root,
             said_document: &written.said_document,
+            said: &written.said,
             environment,
             shape,
         },
@@ -1524,6 +1566,17 @@ fn harness_args(arguments: &Verify, config: &Config) -> Vec<String> {
 
 /// The configuration this run answers to.
 fn load(arguments: &Verify, workspace: &reports::WorkspaceRoot) -> Result<LoadedConfig, LoadError> {
+    let mut loaded = configured(arguments, workspace)?;
+    loaded.config.faults.inject |= arguments.faults;
+    loaded.config.durability.crash |= arguments.crashes;
+    Ok(loaded)
+}
+
+/// The configuration the invocation named, or the workspace's, as it was written.
+fn configured(
+    arguments: &Verify,
+    workspace: &reports::WorkspaceRoot,
+) -> Result<LoadedConfig, LoadError> {
     match &arguments.config {
         Some(path) => {
             let text = reports::read_configuration(path)?;
@@ -1770,6 +1823,41 @@ mod tests {
 
         #[cfg(unix)]
         #[test]
+        fn every_path_a_run_says_it_wrote_is_a_file_it_wrote() {
+            use crate::app::reports::Surface;
+
+            let project = tempfile::tempdir().expect("temporary project");
+            let store =
+                crate::app::reports::Store::read(project.path()).expect("held report store");
+            let kept = store
+                .keep(&complete_report("20260101t000000z-abacac"))
+                .expect("durable report publication");
+            let records: Vec<&str> = kept.said.iter().map(|one| one.record).collect();
+            assert_eq!(
+                records,
+                Surface::ALL.map(Surface::record).to_vec(),
+                "a complete report is published with every surface a reader is pointed at"
+            );
+            for one in &kept.said {
+                let metadata =
+                    std::fs::metadata(project.path().join(&one.path)).unwrap_or_else(|error| {
+                        panic!(
+                            "{} names {}, and a script that uploads what it was told finds nothing \
+                             there: {error}",
+                            one.record, one.path
+                        )
+                    });
+                assert!(
+                    metadata.is_file(),
+                    "{} names {}, which is not a file",
+                    one.record,
+                    one.path
+                );
+            }
+        }
+
+        #[cfg(unix)]
+        #[test]
         fn json_output_uses_the_checked_value_after_the_report_path_is_replaced() {
             use super::super::said;
             use crate::cli::{Environment, Format};
@@ -1807,7 +1895,10 @@ mod tests {
             let rendered = said(
                 &document,
                 project.path(),
-                &kept.said_document,
+                &crate::app::verify::Published {
+                    document: kept.said_document.clone(),
+                    said: kept.said,
+                },
                 (&environment, Some(Format::Json)),
             )
             .expect("in-memory JSON projection");

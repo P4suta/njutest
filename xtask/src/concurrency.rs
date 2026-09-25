@@ -56,6 +56,16 @@ pub enum UnwitnessedError {
     ArgumentsUnrecorded,
 }
 
+impl crate::error::Coded for UnwitnessedError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::TargetUnbuilt | Self::ArgumentsUnrecorded => {
+                crate::error::XtCode::ThreadsUnwitnessed
+            }
+        }
+    }
+}
+
 /// What a reported standing contradicts.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ContradictionError {
@@ -83,6 +93,12 @@ pub enum ContradictionError {
         /// The reasons for concurrency.
         because: BTreeSet<&'static str>,
     },
+    /// A proven binary that names a reason it is not.
+    #[error("it is reported single-threaded, and it names reasons in `{list}`")]
+    ProvenWithReasons {
+        /// The list that should not be there.
+        list: &'static str,
+    },
     /// A reason no run gives.
     #[error("{kind:?} is no reason a run gives")]
     Reason {
@@ -95,6 +111,26 @@ pub enum ContradictionError {
         /// The state.
         state: String,
     },
+    /// A part of the standing is not the shape a run writes it in.
+    #[error("its {part} is not the shape a run writes")]
+    Unshaped {
+        /// The part.
+        part: &'static str,
+    },
+}
+
+impl crate::error::Coded for ContradictionError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Proven { .. }
+            | Self::Reasons { .. }
+            | Self::Concurrent { .. }
+            | Self::ProvenWithReasons { .. }
+            | Self::Reason { .. }
+            | Self::Unknown { .. }
+            | Self::Unshaped { .. } => crate::error::XtCode::ThreadsContradicted,
+        }
+    }
 }
 
 /// The libtest options that take the next word as their value.
@@ -201,16 +237,21 @@ pub fn agrees(standing: &Value, derived: &Derived) -> Result<(), ContradictionEr
     let state = standing
         .get("state")
         .and_then(Value::as_str)
-        .unwrap_or_default()
+        .ok_or(ContradictionError::Unshaped { part: "state" })?
         .to_owned();
     known(standing)?;
-    let named = |list: &str, witnessable: &[&str]| named(standing, list, witnessable);
+    let named = |list: &'static str, witnessable: &[&str]| named(standing, list, witnessable);
     let same = |reported: &BTreeSet<String>, witnessed: &BTreeSet<&'static str>| {
         reported.len() == witnessed.len() && witnessed.iter().all(|one| reported.contains(*one))
     };
     match state.as_str() {
         "single-threaded" => {
-            if derived.because.is_empty() && derived.why.is_empty() {
+            if let Some(list) = ["because", "why"]
+                .into_iter()
+                .find(|list| standing.get(*list).is_some())
+            {
+                Err(ContradictionError::ProvenWithReasons { list })
+            } else if derived.because.is_empty() && derived.why.is_empty() {
                 Ok(())
             } else {
                 Err(ContradictionError::Proven {
@@ -220,7 +261,7 @@ pub fn agrees(standing: &Value, derived: &Derived) -> Result<(), ContradictionEr
             }
         }
         "concurrent" => {
-            let (count, reported) = named("because", &WITNESSED_BECAUSE);
+            let (count, reported) = named("because", &WITNESSED_BECAUSE)?;
             if count == 0 {
                 Err(ContradictionError::Unknown { state })
             } else if same(&reported, &derived.because) {
@@ -234,7 +275,7 @@ pub fn agrees(standing: &Value, derived: &Derived) -> Result<(), ContradictionEr
             }
         }
         "not-proven" => {
-            let (count, reported) = named("why", &WITNESSED_WHY);
+            let (count, reported) = named("why", &WITNESSED_WHY)?;
             if !derived.because.is_empty() {
                 Err(ContradictionError::Concurrent {
                     because: derived.because.clone(),
@@ -258,16 +299,11 @@ pub fn agrees(standing: &Value, derived: &Derived) -> Result<(), ContradictionEr
 /// Whether every reason `standing` gives is one a run gives.
 fn known(standing: &Value) -> Result<(), ContradictionError> {
     for (list, known) in [("because", &BECAUSE[..]), ("why", &WHY[..])] {
-        for reason in standing
-            .get(list)
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-        {
+        for reason in reasons(standing, list)? {
             let kind = reason
                 .get("kind")
                 .and_then(Value::as_str)
-                .unwrap_or_default();
+                .ok_or(ContradictionError::Unshaped { part: "reason" })?;
             if !known.contains(&kind) {
                 return Err(ContradictionError::Reason {
                     kind: kind.to_owned(),
@@ -278,23 +314,315 @@ fn known(standing: &Value) -> Result<(), ContradictionError> {
     Ok(())
 }
 
+/// The reasons `standing` gives in `list`: none where it has no such list, which is how a state that carries no reasons of that kind is written.
+///
+/// # Errors
+/// [`ContradictionError::Unshaped`] where the list is there and is not a list.
+fn reasons<'a>(standing: &'a Value, list: &'static str) -> Result<&'a [Value], ContradictionError> {
+    match standing.get(list) {
+        None => Ok(&[]),
+        Some(Value::Array(reasons)) => Ok(reasons),
+        Some(_) => Err(ContradictionError::Unshaped { part: list }),
+    }
+}
+
 /// How many reasons `standing` gives in `list`, and which of them are `witnessable`.
-fn named(standing: &Value, list: &str, witnessable: &[&str]) -> (usize, BTreeSet<String>) {
-    let all: Vec<String> = standing
-        .get(list)
-        .and_then(Value::as_array)
-        .map(|reasons| {
-            reasons
-                .iter()
-                .filter_map(|reason| reason.get("kind").and_then(Value::as_str))
+///
+/// # Errors
+/// [`ContradictionError::Unshaped`] where the list, or a reason in it, is not the shape a run writes.
+fn named(
+    standing: &Value,
+    list: &'static str,
+    witnessable: &[&str],
+) -> Result<(usize, BTreeSet<String>), ContradictionError> {
+    let all: Vec<String> = reasons(standing, list)?
+        .iter()
+        .map(|reason| {
+            reason
+                .get("kind")
+                .and_then(Value::as_str)
                 .map(ToOwned::to_owned)
-                .collect()
+                .ok_or(ContradictionError::Unshaped { part: "reason" })
         })
-        .unwrap_or_default();
+        .collect::<Result<_, _>>()?;
     let witnessed = all
         .iter()
         .filter(|kind| witnessable.contains(&kind.as_str()))
         .cloned()
         .collect();
-    (all.len(), witnessed)
+    Ok((all.len(), witnessed))
+}
+
+/// How many rounds confirm a delayed failure, written again from the runner's contract rather than read from its code.
+pub const CONFIRMING_ROUNDS: usize = 5;
+
+/// One control the exploration of a binary started, in the order the engine recorded it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Run {
+    /// The guard it paused its threads at, or nothing for an undelayed control.
+    pub delayed: Option<u64>,
+    /// The guard an undelayed control names itself the confirming half of a round for.
+    pub confirms: Option<u64>,
+    /// How it ended.
+    pub ended: crate::knobs::Ended,
+    /// The tests that failed.
+    pub failed: BTreeSet<String>,
+}
+
+/// What the exploration of one binary comes to, replayed from its controls.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Explored {
+    /// No control was started.
+    Nothing,
+    /// Every delayed control passed.
+    Sampled {
+        /// Every guard delayed, in order.
+        delayed: Vec<u64>,
+    },
+    /// No site broke it and some settled nothing.
+    Undecided {
+        /// Every guard delayed, in order.
+        delayed: Vec<u64>,
+        /// Those that settled nothing.
+        undecided: Vec<u64>,
+    },
+    /// Every confirming round held at one site.
+    Broke {
+        /// The guard.
+        site: u64,
+        /// The tests that failed.
+        failed: BTreeSet<String>,
+        /// How many rounds held.
+        rounds: usize,
+    },
+}
+
+/// Where a recorded sequence is not one the exploration procedure starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ReplayError {
+    /// A control the procedure would not have started there.
+    #[error("control {at} is not one the exploration starts at that point")]
+    Stray {
+        /// Its place in the sequence.
+        at: usize,
+    },
+    /// The sequence ends inside a confirming round.
+    #[error("the recording ends inside a confirming round")]
+    Truncated,
+    /// A control after the schedule broke.
+    #[error("control {at} was started after the schedule broke")]
+    AfterBroke {
+        /// Its place in the sequence.
+        at: usize,
+    },
+}
+
+impl crate::error::Coded for ReplayError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Stray { .. } | Self::Truncated | Self::AfterBroke { .. } => {
+                crate::error::XtCode::ScheduleUnreplayable
+            }
+        }
+    }
+}
+
+/// What the exploration of one binary comes to, replaying the procedure over `runs`.
+///
+/// Each delayed site has its first control, and where that failed, rounds of a delayed control that must fail exactly the same tests and an undelayed one that must pass, stopping at the first that does not.
+///
+/// # Errors
+/// [`ReplayError`] where the sequence is not one the procedure gives.
+pub fn replayed(runs: &[Run]) -> Result<Explored, ReplayError> {
+    let (mut delayed, mut undecided) = (Vec::new(), Vec::new());
+    let mut rest = runs.iter().enumerate();
+    while let Some((at, first)) = rest.next() {
+        let site = first.delayed.ok_or(ReplayError::Stray { at })?;
+        if first.confirms.is_some() {
+            return Err(ReplayError::Stray { at });
+        }
+        delayed.push(site);
+        match first.ended {
+            crate::knobs::Ended::Passed => continue,
+            crate::knobs::Ended::Waited | crate::knobs::Ended::Unsettled => {
+                undecided.push(site);
+                continue;
+            }
+            crate::knobs::Ended::Failed => {}
+        }
+        if confirmed(&mut rest, site, &first.failed)? {
+            if let Some((at, _)) = rest.next() {
+                return Err(ReplayError::AfterBroke { at });
+            }
+            return Ok(Explored::Broke {
+                site,
+                failed: first.failed.clone(),
+                rounds: CONFIRMING_ROUNDS,
+            });
+        }
+        undecided.push(site);
+    }
+    Ok(match (delayed.is_empty(), undecided.is_empty()) {
+        (true, _) => Explored::Nothing,
+        (false, true) => Explored::Sampled { delayed },
+        (false, false) => Explored::Undecided { delayed, undecided },
+    })
+}
+
+/// Whether every confirming round of `site` holds, consuming the controls the procedure started for them.
+fn confirmed<'a>(
+    rest: &mut impl Iterator<Item = (usize, &'a Run)>,
+    site: u64,
+    failed: &BTreeSet<String>,
+) -> Result<bool, ReplayError> {
+    for _ in 0..CONFIRMING_ROUNDS {
+        let (at, again) = rest.next().ok_or(ReplayError::Truncated)?;
+        if again.delayed != Some(site) {
+            return Err(ReplayError::Stray { at });
+        }
+        if !(again.ended == crate::knobs::Ended::Failed && again.failed == *failed) {
+            return Ok(false);
+        }
+        let (at, without) = rest.next().ok_or(ReplayError::Truncated)?;
+        if without.delayed.is_some() || without.confirms != Some(site) {
+            return Err(ReplayError::Stray { at });
+        }
+        if without.ended != crate::knobs::Ended::Passed {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// What a reported exploration contradicts in the replayed one.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ExploreContradictionError {
+    /// The report says something the replay does not come to.
+    #[error("the report says {reported}, and the recorded controls come to {derived:?}")]
+    Differs {
+        /// What the report says.
+        reported: String,
+        /// What the controls come to.
+        derived: Explored,
+    },
+}
+
+impl crate::error::Coded for ExploreContradictionError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Differs { .. } => crate::error::XtCode::ExplorationContradicted,
+        }
+    }
+}
+
+/// What else a reported exploration answers to beyond its own controls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Context {
+    /// Whether the audited standing of the binary is single-threaded.
+    pub single_threaded: bool,
+    /// Whether its baseline passed.
+    pub passing: bool,
+    /// How many guards its baseline reached, or nothing where no baseline reach of it was recorded.
+    pub reached: Option<usize>,
+    /// Whether the run delayed any guard of any binary, which is what asking for schedules does.
+    pub asked_any: bool,
+}
+
+/// Why a binary with no delayed control was not explored, as the recording decides it, or nothing where it cannot: a passing binary whose baseline reach was not recorded.
+#[must_use]
+pub const fn unexplored_because(context: Context) -> Option<&'static str> {
+    if context.single_threaded {
+        Some("not-needed")
+    } else if !context.passing {
+        Some("not-passing")
+    } else {
+        match context.reached {
+            Some(0) => Some("no-site"),
+            Some(_) => Some("not-asked"),
+            None => None,
+        }
+    }
+}
+
+/// Whether the reported `explored` is exactly what the controls come to, for a binary `context` describes.
+///
+/// # Errors
+/// [`ExploreContradictionError`] where it is not.
+pub fn agrees_explored(
+    explored: &Value,
+    derived: &Explored,
+    context: Context,
+) -> Result<(), ExploreContradictionError> {
+    let sites = |key: &str| -> Option<Vec<u64>> {
+        explored
+            .get(key)?
+            .as_array()?
+            .iter()
+            .map(Value::as_u64)
+            .collect()
+    };
+    let asked = explored.get("asked").and_then(Value::as_u64);
+    let holds = match (explored.get("state").and_then(Value::as_str), derived) {
+        (Some("unexplored"), Explored::Nothing) => unexplored_because(context).is_some_and(|why| {
+            explored.get("why").and_then(Value::as_str) == Some(why)
+                && !(why == "not-asked" && context.asked_any)
+        }),
+        (Some("sampled"), Explored::Sampled { delayed }) => {
+            !context.single_threaded
+                && sites("delayed").as_ref() == Some(delayed)
+                && fits(asked, delayed, context.reached)
+        }
+        (Some("undecided"), Explored::Undecided { delayed, undecided }) => {
+            !context.single_threaded
+                && sites("delayed").as_ref() == Some(delayed)
+                && sites("undecided").as_ref() == Some(undecided)
+                && fits(asked, delayed, context.reached)
+        }
+        (
+            Some("broke"),
+            Explored::Broke {
+                site,
+                failed,
+                rounds,
+            },
+        ) => {
+            let named: Option<BTreeSet<String>> = explored
+                .get("failed")
+                .and_then(Value::as_array)
+                .and_then(|tests| {
+                    tests
+                        .iter()
+                        .map(|one| one.as_str().map(ToOwned::to_owned))
+                        .collect()
+                });
+            !context.single_threaded
+                && explored.get("site").and_then(Value::as_u64) == Some(*site)
+                && named.as_ref() == Some(failed)
+                && u64::try_from(*rounds).is_ok_and(|rounds| {
+                    explored.get("rounds").and_then(Value::as_u64) == Some(rounds)
+                })
+        }
+        (
+            _,
+            Explored::Nothing
+            | Explored::Sampled { .. }
+            | Explored::Undecided { .. }
+            | Explored::Broke { .. },
+        ) => false,
+    };
+    if holds {
+        Ok(())
+    } else {
+        Err(ExploreContradictionError::Differs {
+            reported: explored.to_string(),
+            derived: derived.clone(),
+        })
+    }
+}
+
+/// Whether `delayed` is as many guards as were asked for, or every guard reached where fewer were; never where the baseline's reach was not recorded, which is what the count is held to.
+fn fits(asked: Option<u64>, delayed: &[u64], reached: Option<usize>) -> bool {
+    asked.zip(reached).is_some_and(|(asked, reached)| {
+        usize::try_from(asked).is_ok_and(|asked| delayed.len() == asked.min(reached))
+    })
 }

@@ -20,8 +20,10 @@ pub struct Unit {
     pub test: bool,
     /// Every source file the unit compiled, absolute, sorted, deduplicated.
     pub sources: Vec<PathBuf>,
-    /// Every file the compiler read for the unit, Rust or not — what `include!` and `include_str!` pulled in among them — absolute, sorted, deduplicated.
+    /// Every file the compiler read for the unit, Rust or not, absolute, sorted, deduplicated: what `include_str!` and `#[doc = include_str!]` embed as well as what was compiled.
     pub inputs: Vec<PathBuf>,
+    /// Every environment variable the compiler read for the unit through `env!` or `option_env!`, with the value it read, or nothing where it was unset.
+    pub env: std::collections::BTreeMap<String, Option<String>>,
 }
 
 /// The dep-info file rustc wrote beside `artifact`: the same stem without the `lib` prefix and with the `.d` extension.
@@ -82,6 +84,37 @@ pub fn parse_dep_info(text: &str) -> Result<Vec<String>, CargoError> {
     Ok(split_escaped(prerequisites))
 }
 
+/// The environment variables a dep-info file says the compiler read, each with the value it read or nothing where it was unset.
+#[must_use]
+pub fn env_deps(text: &str) -> std::collections::BTreeMap<String, Option<String>> {
+    text.lines()
+        .filter_map(|line| line.strip_prefix("# env-dep:"))
+        .map(|dependency| match dependency.split_once('=') {
+            Some((name, value)) => (name.to_owned(), Some(unescaped(value))),
+            None => (dependency.to_owned(), None),
+        })
+        .collect()
+}
+
+/// A value as rustc read it, before it escaped a backslash, a line feed, and a carriage return to keep it on one line.
+fn unescaped(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some(other) => out.push(other),
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
 /// Splits on unescaped whitespace, undoing `\ ` and `\\`.
 fn split_escaped(text: &str) -> Vec<String> {
     let mut items = Vec::new();
@@ -139,6 +172,104 @@ pub fn units_of(messages: &[Message], workspace_root: &Path) -> Result<Vec<Unit>
     Ok(units)
 }
 
+/// Every unit of a compilation as [`units_of`] reads them, and every build script's too, which is compiled under `build/` rather than `deps/` and so is never taken for an uplift.
+///
+/// # Errors
+/// What [`units_of`] refuses about any unit's dep-info.
+pub fn every_unit_of(messages: &[Message], workspace_root: &Path) -> Result<Vec<Unit>, CargoError> {
+    let mut units = Vec::new();
+    for message in messages {
+        let Message::CompilerArtifact(artifact) = message else {
+            continue;
+        };
+        if !artifact.target.is_custom_build() && is_uplift(artifact) {
+            continue;
+        }
+        units.push(unit_of(artifact, workspace_root)?);
+    }
+    Ok(units)
+}
+
+/// Every file the compiler read for a unit whose code runs while the build does rather than in a test: a procedural macro, and a build script, compiled for the build and not tested.
+///
+/// A build script is compiled under `build/` rather than `deps/`, so it is never taken for an uplift.
+///
+/// # Errors
+/// What [`units_of`] refuses about one such unit's dep-info.
+pub fn compile_time_inputs(
+    messages: &[Message],
+    workspace_root: &Path,
+) -> Result<Vec<PathBuf>, CargoError> {
+    let mut inputs = Vec::new();
+    for message in messages {
+        let Message::CompilerArtifact(artifact) = message else {
+            continue;
+        };
+        let runs_in_the_build = artifact.target.is_custom_build()
+            || (artifact.target.is_proc_macro() && !artifact.profile.test);
+        if !runs_in_the_build || (!artifact.target.is_custom_build() && is_uplift(artifact)) {
+            continue;
+        }
+        inputs.extend(unit_of(artifact, workspace_root)?.inputs);
+    }
+    inputs.sort();
+    inputs.dedup();
+    Ok(inputs)
+}
+
+/// What one build script told the compilation of its package's units: configurations, environment, and what to link.
+/// None of it is in a dep-info, and every part of it changes what compiles.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Emitted {
+    /// The directory it wrote into, which names the run.
+    pub out_dir: Option<PathBuf>,
+    /// `cargo::rustc-cfg`, sorted.
+    pub cfgs: Vec<String>,
+    /// `cargo::rustc-env`, sorted.
+    pub env: Vec<(String, String)>,
+    /// `cargo::rustc-link-lib`, sorted.
+    pub linked_libs: Vec<String>,
+    /// `cargo::rustc-link-search`, sorted.
+    pub linked_paths: Vec<String>,
+}
+
+impl Emitted {
+    fn of(script: &super::messages::BuildScript) -> Self {
+        let sorted = |mut values: Vec<String>| {
+            values.sort();
+            values
+        };
+        let mut env = script.env.clone();
+        env.sort();
+        Self {
+            out_dir: script.out_dir.clone(),
+            cfgs: sorted(script.cfgs.clone()),
+            env,
+            linked_libs: sorted(script.linked_libs.clone()),
+            linked_paths: sorted(script.linked_paths.clone()),
+        }
+    }
+}
+
+/// What every build script of a compilation emitted, by the id of the package whose units it was emitted for, each package's sorted.
+#[must_use]
+pub fn emitted_of(messages: &[Message]) -> std::collections::BTreeMap<String, Vec<Emitted>> {
+    let mut emitted: std::collections::BTreeMap<String, Vec<Emitted>> =
+        std::collections::BTreeMap::new();
+    for message in messages {
+        if let Message::BuildScriptExecuted(script) = message {
+            emitted
+                .entry(script.package_id.clone())
+                .or_default()
+                .push(Emitted::of(script));
+        }
+    }
+    for told in emitted.values_mut() {
+        told.sort();
+    }
+    emitted
+}
+
 /// Whether this artifact is cargo's uplifted copy of a unit rather than the unit itself.
 fn is_uplift(artifact: &Artifact) -> bool {
     artifact.filenames.iter().all(|file| {
@@ -148,7 +279,7 @@ fn is_uplift(artifact: &Artifact) -> bool {
     })
 }
 
-/// Every place this artifact's dep-info could sit: cargo puts it beside the hashed file in `deps/` and, for a binary it uplifts, beside the copy too.
+/// Every place this artifact's dep-info could sit: cargo puts it beside the hashed file in `deps/` and, for a binary it uplifts, beside the copy too, and a build script's beside its hashed program under `build/`.
 fn dep_info_candidates(artifact: &Artifact) -> Result<Vec<PathBuf>, CargoError> {
     let mut candidates = Vec::new();
     for file in artifact.filenames.iter().chain(artifact.executable.iter()) {
@@ -162,9 +293,21 @@ fn dep_info_candidates(artifact: &Artifact) -> Result<Vec<PathBuf>, CargoError> 
             )
         })?;
         candidates.push(candidate);
+        if artifact.target.is_custom_build()
+            && let Some(hashed) = build_script_dep_info(file, &artifact.target.name)
+        {
+            candidates.push(hashed);
+        }
     }
     candidates.dedup();
     Ok(candidates)
+}
+
+/// Where rustc left a build script's dep-info: cargo names the program `build-script-build` in a directory ending in the unit's hash, and rustc wrote `build_script_build-<hash>.d` beside it.
+fn build_script_dep_info(program: &Path, target: &str) -> Option<PathBuf> {
+    let directory = program.parent()?;
+    let hash = directory.file_name()?.to_str()?.rsplit_once('-')?.1;
+    Some(directory.join(format!("{}-{hash}.d", target.replace('-', "_"))))
 }
 
 fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoError> {
@@ -212,6 +355,7 @@ fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoErro
         test: artifact.profile.test,
         sources,
         inputs,
+        env: env_deps(&text),
     })
 }
 

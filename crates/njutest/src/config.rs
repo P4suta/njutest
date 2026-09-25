@@ -154,6 +154,9 @@ pub enum Contract {
     /// The soundness phase additionally proves eligible mutations with the pinned model checker.
     #[serde(rename = "verified-v1")]
     VerifiedV1,
+    /// Every dimension is asked, soundness runs as `deep-v1`, and a dimension not established is not assured (ADR 0033).
+    #[serde(rename = "whole-v1")]
+    WholeV1,
 }
 
 impl Default for Contract {
@@ -163,7 +166,34 @@ impl Default for Contract {
 }
 
 impl Contract {
-    const PROTOCOL_DEFAULT: Self = Self::StandardV1;
+    const PROTOCOL_DEFAULT: Self = Self::WholeV1;
+
+    /// Whether the soundness phase runs Miri, where an inventory alone would be a limitation.
+    #[must_use]
+    pub const fn runs_miri(self) -> bool {
+        match self {
+            Self::DeepV1 | Self::WholeV1 => true,
+            Self::StandardV1 | Self::VerifiedV1 => false,
+        }
+    }
+
+    /// Whether a run proves eligible survivors with the pinned model checker.
+    #[must_use]
+    pub const fn proves_models(self) -> bool {
+        match self {
+            Self::VerifiedV1 => true,
+            Self::StandardV1 | Self::DeepV1 | Self::WholeV1 => false,
+        }
+    }
+
+    /// Whether a run asks every dimension it can measure, and is not assured along any it did not (ADR 0033).
+    #[must_use]
+    pub const fn asks_every_dimension(self) -> bool {
+        match self {
+            Self::WholeV1 => true,
+            Self::StandardV1 | Self::DeepV1 | Self::VerifiedV1 => false,
+        }
+    }
 }
 
 /// Everything `.njutest.toml` can say.
@@ -191,8 +221,14 @@ pub struct Config {
     pub soundness: Soundness,
     /// The fuzz targets a run may drive.
     pub fuzz: Fuzz,
+    /// Whether a run fails the calls a `?` asks about.
+    pub faults: Faults,
+    /// Whether a run stops the process just after each call that writes.
+    pub durability: Durability,
     /// What a run sets differently for one more control of each target, to ask whether the target's verdict and reach hold where it differs.
     pub repeatable: Repeatable,
+    /// Which schedules to explore of each test binary not proven to run one thread.
+    pub schedules: Schedules,
     /// The integration resources a run may start, by name.
     pub resources: BTreeMap<String, Resource>,
     /// The provider that writes candidate tests.
@@ -216,7 +252,10 @@ impl Default for Config {
             reports: Reports::default(),
             soundness: Soundness::default(),
             fuzz: Fuzz::default(),
+            faults: Faults::default(),
+            durability: Durability::default(),
             repeatable: Repeatable::default(),
+            schedules: Schedules::default(),
             resources: BTreeMap::new(),
             generation: None,
             acceptance: Vec::new(),
@@ -302,9 +341,8 @@ pub struct Execution {
         serialize_with = "as_optional_millis"
     )]
     pub build_timeout: Option<Duration>,
-    /// How many mutation workers.
-    /// Zero means the logical CPUs, capped.
-    pub jobs: u32,
+    /// How many mutation workers: a count, `auto` for the logical CPUs capped, or `all` for every one.
+    pub jobs: rust_mutants::run::Jobs,
     /// Test targets never to start, by the stable id a report names them with.
     pub skip_targets: Vec<String>,
     /// Whether to make the coverage build, which is an independent second opinion rather than the measurement (ADR 0014).
@@ -340,7 +378,7 @@ impl Default for Execution {
             timeout: DEFAULT_TIMEOUT,
             steps: default_steps(),
             build_timeout: None,
-            jobs: 0,
+            jobs: rust_mutants::run::Jobs::Auto,
             skip_targets: Vec::new(),
             coverage: false,
         }
@@ -354,6 +392,27 @@ pub struct Mutation {
     /// Ask the compiler whether it renders each surviving mutation identically to the code it mutates.
     /// It costs two builds of a tree of its own for every survivor whose premises hold, and it removes a finding only where no test could have noticed the mutation.
     pub equivalence: bool,
+}
+
+/// Whether a run fails, one at a time, every call a `?` asks about, and asks the suite what it noticed (ADR 0032).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Faults {
+    /// Put the faults.
+    /// It costs a second instrumented build and baseline, and one execution for every `?` a test reaches.
+    pub inject: bool,
+}
+
+/// How many guards of each binary not proven to run one thread a run that asks every dimension delays, where the document does not say (ADR 0033, ADR 0034).
+pub const WHOLE_SCHEDULES: u32 = 8;
+
+/// Whether a run stops the process just after each call that writes, and asks whether the next run can start over what it left (ADR 0035).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Durability {
+    /// Stop after the calls.
+    /// It costs a third instrumented build and baseline, and three executions for every call that writes a test reaches.
+    pub crash: bool,
 }
 
 /// Bounds that exist only for the `verified-v1` contract.
@@ -511,6 +570,14 @@ pub struct Soundness {
 pub struct Repeatable {
     /// The knobs to put, by name.
     pub knobs: Vec<crate::report::knobs::Knob>,
+}
+
+/// Which schedules a run explores of each test binary not proven to run one thread: nothing unless asked, since each schedule is one more run of the binary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Schedules {
+    /// How many guards of each such binary to delay, one schedule each.
+    pub explore: u32,
 }
 
 /// The fuzz targets a run may drive.
@@ -816,12 +883,18 @@ impl Config {
     pub fn verified(&self) -> Result<Option<Verified>, VerificationError> {
         match self.contract {
             Contract::VerifiedV1 => self.verification.checked().map(Some),
-            Contract::StandardV1 | Contract::DeepV1 if self.verification.is_empty() => Ok(None),
-            Contract::StandardV1 | Contract::DeepV1 => Err(VerificationError::WrongContract),
+            Contract::StandardV1 | Contract::DeepV1 | Contract::WholeV1
+                if self.verification.is_empty() =>
+            {
+                Ok(None)
+            }
+            Contract::StandardV1 | Contract::DeepV1 | Contract::WholeV1 => {
+                Err(VerificationError::WrongContract)
+            }
         }
     }
 
-    /// Reads `.njutest.toml` from `root`, or the defaults when there is none.
+    /// Reads `.njutest.toml` from `root`, or [`Config::unwritten`] when there is none.
     ///
     /// # Errors
     /// See [`ConfigErrorKind`].
@@ -830,7 +903,7 @@ impl Config {
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self::default());
+                return Ok(Self::unwritten());
             }
             Err(error) => {
                 return Err(ConfigError::new(
@@ -848,11 +921,74 @@ impl Config {
     /// # Errors
     /// See [`ConfigErrorKind`].
     pub fn parse(text: &str, path: &Path) -> Result<Self, ConfigError> {
-        let config: Self = toml::from_str(text).map_err(|error| {
+        let mut config: Self = toml::from_str(text).map_err(|error| {
             ConfigError::new(ConfigErrorKind::Unparsable, path, one_line(&error))
         })?;
         config.validate(path)?;
+        config.asked_everything(text, path)?;
         Ok(config)
+    }
+
+    /// Puts every fault and every knob where the contract asks every dimension, and refuses a document that says, in so many words, not to (ADR 0033).
+    fn asked_everything(&mut self, text: &str, path: &Path) -> Result<(), ConfigError> {
+        if !self.contract.asks_every_dimension() {
+            return Ok(());
+        }
+        let written: toml::Table = toml::from_str(text).map_err(|error: toml::de::Error| {
+            ConfigError::new(ConfigErrorKind::Unparsable, path, one_line(&error))
+        })?;
+        let said = |section: &str, key: &str| {
+            written
+                .get(section)
+                .and_then(toml::Value::as_table)
+                .and_then(|table| table.get(key))
+                .is_some()
+        };
+        let every: Vec<crate::report::knobs::Knob> = crate::report::knobs::Knob::ALL.to_vec();
+        let refused = if said("faults", "inject") && !self.faults.inject {
+            Some("[faults] inject = false")
+        } else if said("durability", "crash") && !self.durability.crash {
+            Some("[durability] crash = false")
+        } else if said("schedules", "explore") && self.schedules.explore == 0 {
+            Some("[schedules] explore = 0")
+        } else if said("repeatable", "knobs") && self.repeatable.knobs != every {
+            Some("[repeatable] knobs naming fewer than every knob")
+        } else {
+            None
+        };
+        if let Some(said) = refused {
+            return Err(ConfigError::new(
+                ConfigErrorKind::Invalid,
+                path,
+                format!(
+                    "contract = \"whole-v1\" asks every dimension, and {said} asks the run not \
+                     to measure one of them; drop the key, or name another contract"
+                ),
+            ));
+        }
+        self.asking_everything();
+        Ok(())
+    }
+
+    /// The configuration of a tree with no configuration file: the defaults, with everything the default contract asks put.
+    #[must_use]
+    pub fn unwritten() -> Self {
+        let mut config = Self::default();
+        config.asking_everything();
+        config
+    }
+
+    /// Puts every fault, crash and knob and explores schedules, where the contract asks every dimension.
+    fn asking_everything(&mut self) {
+        if !self.contract.asks_every_dimension() {
+            return;
+        }
+        self.faults.inject = true;
+        self.durability.crash = true;
+        if self.schedules.explore == 0 {
+            self.schedules.explore = WHOLE_SCHEDULES;
+        }
+        self.repeatable.knobs = crate::report::knobs::Knob::ALL.to_vec();
     }
 
     /// Whether everything the document says can be honoured.
@@ -1005,7 +1141,7 @@ pub fn skeleton() -> String {
 # default. Unknown keys, malformed values, and any version other than 1 end
 # the run rather than being ignored.
 version = 1
-contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\" | \"verified-v1\"
+contract = \"whole-v1\"           # \"whole-v1\" | \"standard-v1\" | \"deep-v1\" | \"verified-v1\"
 
 [project]
 # packages = []                  # cargo package names; empty = every member
@@ -1020,7 +1156,7 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\" | \"verified-v
 # environment = []               # variable names only, never values
 # timeout = \"{timeout}m\"              # upper bound for one measurement
 # build_timeout = \"\"            # upper bound for one build; empty = no bound
-# jobs = 0                       # mutation workers; 0 = logical CPUs, capped
+# jobs = \"auto\"                  # mutation workers: a count, \"auto\" (logical CPUs, capped), or \"all\"
 # skip_targets = []              # target ids never to start; reported as a limitation
 # coverage = false                # make the coverage build as a second opinion (ADR 0014)
 

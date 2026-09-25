@@ -61,42 +61,9 @@ fn the_gates_a_person_runs_are_the_gates_the_pipeline_runs() {
     );
     let hooks = repository("lefthook.yml");
     assert!(
-        hooks.contains("scripts/pre-push-check.sh"),
-        "the pre-push hook runs something other than every local gate: {hooks}"
-    );
-    assert!(
-        hooks.contains("run: scripts/pre-push-check.sh\n      use_stdin: true"),
-        "the exact-SHA gate does not receive git's ref updates on stdin: {hooks}"
-    );
-    let pre_push = repository("scripts/pre-push-check.sh");
-    for held in [
-        "git rev-parse --verify HEAD",
-        "git -C \"${repository}\" worktree add --quiet --detach",
-        "git -C \"${checkout}\" status --porcelain=v1 --untracked-files=all",
-        "mise run check",
-        "within_budget",
-        "NJUTEST_PUSH_BUDGET_SECONDS",
-        "NJUTEST_PUSH_EXPECTED_SECONDS",
-    ] {
-        assert!(
-            pre_push.contains(held),
-            "the pre-push gate no longer constructs and proves the checked tree around the full \
-             check ({held:?} is absent): {pre_push}"
-        );
-    }
-    let proven_before = pre_push
-        .find("require_exact_tree\n")
-        .unwrap_or_else(|| panic!("the gate proves the tree before it reads it: {pre_push}"));
-    let checked = pre_push
-        .find("mise run check'")
-        .unwrap_or_else(|| panic!("the gate runs the full check: {pre_push}"));
-    let proven_after = pre_push
-        .rfind("require_exact_tree\n")
-        .unwrap_or_else(|| panic!("the gate proves the tree after it reads it: {pre_push}"));
-    assert!(
-        proven_before < checked && checked < proven_after,
-        "the full check no longer runs between two proofs that the tree is the pushed object, \
-         so an edit made while it ran could go unnoticed: {pre_push}"
+        hooks.contains("run: cargo xtask pre-push\n      use_stdin: true"),
+        "the pre-push hook runs something other than the exact-object gate, or does not hand it \
+         git's ref updates on stdin; what the gate does with them is held by pre_push.rs: {hooks}"
     );
 }
 
@@ -117,17 +84,12 @@ fn committed_checks_the_same_unique_to_head_range_locally_in_hooks_and_ci() {
         task("lint").contains("committed:range"),
         "the local lint gate does not run the commit-range check"
     );
-    let hook = repository("scripts/pre-push-check.sh");
-    let binds = hook.lines().any(|line| {
-        line.contains("mise run check'")
-            && line.contains("NJUTEST_COMMITTED_HEAD=")
-            && line.contains("\"${head}\"")
-    });
+    let hooks = repository("lefthook.yml");
     assert!(
-        binds,
-        "pre-push does not bind the commit check to the exact object being pushed: the line \
-         that runs the full check must carry NJUTEST_COMMITTED_HEAD and be given ${{head}}, \
-         however it is wrapped: {hook}"
+        hooks.contains("run: cargo xtask pre-push"),
+        "pre-push no longer runs the gate that binds the commit check to the exact object being \
+         pushed; `a_check_is_told_which_commit_it_answers_for` in pre_push.rs holds what that \
+         gate hands the check: {hooks}"
     );
 
     let workflow = repository(".github/workflows/ci.yml");
@@ -428,8 +390,15 @@ fn every_suite_that_starts_a_toolchain_says_so_in_its_name() {
             let scripted = source.contains("fake_cargo::");
             let against_a_fixture = source.contains("Fixture::copy")
                 && (source.contains("cargo_binary()") || source.contains("CARGO_BIN_EXE"));
-            let starts_cargo =
-                !scripted && (source.contains("Workspace::open") || against_a_fixture);
+            let every_gate = source.contains("gates::all(");
+            let verified_in_process = (source.contains("Fixture::copy")
+                || source.contains("copy_tree("))
+                && source.contains("\"verify\"");
+            let starts_cargo = !scripted
+                && (source.contains("Workspace::open")
+                    || against_a_fixture
+                    || every_gate
+                    || verified_in_process);
             if starts_cargo && !name.starts_with("toolchain_") {
                 wrong.push(format!("{crate_name}/{name}"));
             }
@@ -750,9 +719,10 @@ fn every_task_a_page_or_a_workflow_names_is_one_mise_declares() {
 }
 
 /// The commands a workflow runs that are the pipeline's own plumbing rather than a gate.
-const PLUMBING: [&str; 4] = [
+const PLUMBING: [&str; 5] = [
     "cargo fetch --locked",
     "rustup toolchain install",
+    "cargo +nightly miri setup",
     "cargo llvm-cov report",
     "cargo xtask sbom",
 ];
@@ -1001,6 +971,62 @@ fn the_mutation_matrix_is_every_crate_that_holds_rust_of_its_own() {
     );
 }
 
+#[test]
+fn every_suite_leaves_nothing_in_a_temporary_directory_nobody_owns() {
+    for place in ["mise.toml", ".github/workflows/ci.yml"] {
+        let text = repository(place);
+        let bare: Vec<&str> = text
+            .lines()
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .filter(|line| line.contains("cargo nextest run"))
+            .filter(|line| !line.contains("cargo xtask tidy -- cargo nextest run"))
+            .collect();
+        assert!(
+            bare.is_empty(),
+            "{place} runs a suite without `cargo xtask tidy`, so a test that leaves a directory \
+             in the shared temporary directory passes: 1,545 of them in one day on this machine \
+             before the rule existed, and the slow lane's toolchain tests leave the most \
+             (ADR 0006):\n  {}",
+            bare.join("\n  ")
+        );
+    }
+}
+
+#[test]
+fn a_nested_toolchain_run_shares_the_machine_with_the_ones_beside_it() {
+    let config = repository(".config/nextest.toml");
+    let grouped = format!(
+        "max-threads = {}",
+        njutest_devkit::paths::TOOLCHAIN_TESTS_AT_ONCE
+    );
+    assert!(
+        config.contains("[test-groups]")
+            && config.contains(&grouped)
+            && config.contains("test-group = \"toolchain\""),
+        "a toolchain suite run by any nextest invocation, not only `mise run test:slow`, runs at \
+         most {} of its tests at once, each starting its own cargo: {config}",
+        njutest_devkit::paths::TOOLCHAIN_TESTS_AT_ONCE
+    );
+    for environment in [
+        njutest_devkit::paths::environment_for_a_run(),
+        njutest_devkit::paths::environment_for_a_toolchain_run(&[]),
+    ] {
+        let jobs: Vec<_> = environment
+            .iter()
+            .filter(|(name, _value)| name == "CARGO_BUILD_JOBS")
+            .map(|(_name, value)| value.clone())
+            .collect();
+        assert_eq!(
+            jobs,
+            [std::ffi::OsString::from(
+                njutest_devkit::paths::nested_build_jobs().to_string()
+            )],
+            "a cargo a test starts takes every core as its own, so the tests running beside it \
+             multiply the machine by their number"
+        );
+    }
+}
+
 /// Every command in `place` that compiles the workspace in the dev profile for a build or a test.
 fn dev_builds(place: &str) -> Vec<String> {
     repository(place)
@@ -1049,5 +1075,89 @@ fn every_dev_build_compiles_the_one_feature_set_the_suite_does() {
          push builds them once per variant rather than once, and a person's own run warms \
          nothing the gate reads; an examples build takes `--profile test` so its library is the \
          one the suite links: {divergent:#?}"
+    );
+}
+
+#[test]
+fn an_advisory_check_reads_a_database_fetched_by_a_step_that_tries_again() {
+    let workflow = repository(".github/workflows/ci.yml");
+    for (check, offline, fetch) in [
+        ("cargo deny", "check --disable-fetch", "fetch db"),
+        (
+            "cargo audit",
+            "--no-fetch",
+            "git clone --depth 1 https://github.com/RustSec/advisory-db.git",
+        ),
+    ] {
+        let runs: Vec<&str> = workflow
+            .lines()
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .filter(|line| line.contains(check) && !line.contains(fetch))
+            .filter(|line| !line.contains("tools:"))
+            .collect();
+        assert!(
+            !runs.is_empty() && runs.iter().all(|line| line.contains(offline)),
+            "{check} fetched the advisory database itself, once, so a network error on that one \
+             fetch failed the job, twice on 2026-09-24; it reads a database a step of its own \
+             fetched and tried again for ({offline}): {runs:?}"
+        );
+        assert!(
+            workflow.contains(fetch) && workflow.contains("for attempt in 1 2 3 4 5"),
+            "and that step is there, and tries again: {fetch}"
+        );
+    }
+}
+
+#[test]
+fn a_gate_step_that_fails_says_which_it_was_and_how() {
+    let check = task("check");
+    let steps: Vec<&str> = check
+        .lines()
+        .filter(|line| line.contains("mise run"))
+        .collect();
+    assert!(
+        !steps.is_empty() && steps.iter().all(|line| line.starts_with("step mise run")),
+        "a push gate failed on 2026-09-25 with a bare `exit status 1` after the licence check, \
+         and nobody could tell which step had failed; every step of `check` goes through `step`, \
+         which names it and its exit status: {steps:?}"
+    );
+    let audit = task("audit");
+    assert!(
+        audit.contains("exited ${status}")
+            && audit.contains("--db \"${db}\"")
+            && audit.contains("not a fresh one"),
+        "`audit` says how each attempt ended, reads a database kept under its own target \
+         directory, since gates of several sessions fetching into the one shared checkout at \
+         once is a failure nobody's change caused, and says so when it checks against a copy \
+         it could not refresh: {audit}"
+    );
+}
+
+#[test]
+fn a_loop_of_durable_writes_answers_to_its_own_watch_and_not_the_cpu_clock() {
+    let config = repository(".config/nextest.toml");
+    let filter = "filter = 'test(/_while_a_run_replaces_it_is_one_whole_/)'";
+    let durable = config.find(filter);
+    let in_process = config.find("filter = 'not binary(/^toolchain_/)'");
+    assert!(
+        config.contains("durable = { max-threads = 1 }")
+            && durable.is_some_and(|at| in_process.is_some_and(|then| at < then))
+            && config.contains("test-group = \"durable\""),
+        "a test that replaces an entry hundreds of times under a reader makes a thousand durable \
+         writes, and on a machine busy with other builds each one waits on the disk: it ran past \
+         the in-process minute at load 26 and passed alone in under two seconds. Such tests run \
+         one at a time, ahead of the in-process override, under a clock their own progress \
+         watch is the detector for: {config}"
+    );
+    let named = ["njutest", "rust-mutants"]
+        .iter()
+        .filter(|crate_| {
+            repository(&format!("crates/{crate_}/tests/replace.rs"))
+                .contains("_while_a_run_replaces_it_is_one_whole_")
+        })
+        .count();
+    assert_eq!(
+        named, 2,
+        "and the filter names the tests that are that loop, in both crates that keep entries"
     );
 }

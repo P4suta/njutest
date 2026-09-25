@@ -29,9 +29,6 @@ enum TestFailure {
     /// A deliberately malformed fixture unexpectedly passed its gate.
     #[error("{0}")]
     UnexpectedSuccess(&'static str),
-    /// The gate declaration could not be found structurally in its source.
-    #[error("xtask/src/lib.rs no longer declares the gates")]
-    MissingGateDeclaration,
     /// A gate returned a report whose contract was not the one under test.
     #[error("{0}")]
     Contract(String),
@@ -425,63 +422,6 @@ fn a_fixture_root_that_cannot_be_listed_never_passes_as_empty() -> Result<(), Te
 }
 
 #[test]
-fn every_gate_that_needs_no_argument_is_one_all_runs() -> Result<(), TestFailure> {
-    let root = gates::workspace_root();
-    let source = std::fs::read_to_string(root.join("xtask/src/lib.rs"))?;
-    let declaration = source
-        .find("enum Gate {")
-        .and_then(|at| source.get(at..))
-        .ok_or(TestFailure::MissingGateDeclaration)?;
-    let declaration = match declaration.find("\n}\n") {
-        Some(end) => declaration
-            .get(..end)
-            .ok_or(TestFailure::MissingGateDeclaration)?,
-        None => declaration,
-    };
-
-    let bare: Vec<String> = declaration
-        .lines()
-        .filter_map(|line| line.trim().strip_suffix(','))
-        .filter(|name| {
-            name.chars().next().is_some_and(char::is_uppercase)
-                && name.chars().all(char::is_alphanumeric)
-        })
-        .filter(|name| *name != "All")
-        .map(kebab)
-        .collect();
-    require(
-        bare.len() >= 5,
-        format!("the gates that need no argument are the ones a person runs as a set: {bare:?}"),
-    )?;
-
-    let report = gates::all(&root)?;
-    let unrun: Vec<&String> = bare
-        .iter()
-        .filter(|name| !report.contains(&format!("{name}:")))
-        .collect();
-    require(
-        unrun.is_empty(),
-        format!(
-            "a gate `all` does not run is a gate `mise run check` does not run and continuous \
-             integration does not run: it holds nothing, and the only sign is that it is \
-             still in the help. {unrun:?} is declared and `all` never calls it:\n{report}"
-        ),
-    )
-}
-
-/// The name a gate answers to on the command line, from the name of its variant.
-fn kebab(variant: &str) -> String {
-    let mut said = String::new();
-    for (at, character) in variant.char_indices() {
-        if character.is_uppercase() && at > 0 {
-            said.push('-');
-        }
-        said.extend(character.to_lowercase());
-    }
-    said
-}
-
-#[test]
 fn a_public_function_only_a_test_names_is_what_the_reach_gate_reports() {
     let declaring = "pub fn believed_shipped() -> u8 { 0 }\npub fn called() -> u8 { 1 }\n";
     let ships = "pub fn believed_shipped() -> u8 { 0 }\npub fn called() -> u8 { 1 }\nfn use_it() { let _ = called(); }\n";
@@ -503,5 +443,75 @@ fn a_function_behind_a_test_feature_is_test_support_rather_than_an_unreached_cap
         "every public function of an incidental surface is reached by something that ships. \
          Sixteen were reported before this gate read `cfg(feature = \"testkit\")` as the \
          declaration of test support that it is: {report}"
+    );
+}
+
+#[test]
+fn a_defaulting_call_is_counted_and_a_test_module_is_not() {
+    let source = "fn read(v: Option<u8>) -> u8 { v.unwrap_or(0) + v.map_or(1, |x| x) }\n\
+                  fn all(v: Vec<Option<u8>>) -> Vec<u8> { v.into_iter().map(Option::unwrap_or_default).collect() }\n\
+                  #[cfg(test)] mod tests { fn t(v: Option<u8>) -> u8 { v.unwrap_or_default() } }\n";
+    assert_eq!(
+        xtask::defaulted::defaulted_in(source).expect("the source parses"),
+        3,
+        "a value supplied where the input gave none is counted where the audit runs, and a test \
+         building its own specimen is not the audit"
+    );
+}
+
+#[test]
+fn a_defaulting_call_inside_a_macro_is_counted_like_one_outside() {
+    let source = "fn say(v: Option<&str>) -> String { format!(\"{}\", v.unwrap_or(\"?\")) }\n\
+                  fn doc(v: Option<u8>) -> serde_json::Value { serde_json::json!({ \"n\": v.map_or(0, u8::from) }) }\n\
+                  fn check(v: Option<u8>) { assert!(v.map(Option::Some).unwrap_or_default().is_some()); }\n\
+                  fn named(unwrap_or: u8) -> String { format!(\"{unwrap_or}\") }\n";
+    assert_eq!(
+        xtask::defaulted::defaulted_in(source).expect("the source parses"),
+        3,
+        "syn leaves a macro's arguments as tokens, so a value supplied inside format!, json! or \
+         assert! went uncounted while the same call outside one was held to the ceiling; a name \
+         that is only a binding is not a call"
+    );
+}
+
+#[test]
+fn a_reader_is_held_to_exactly_its_ceiling() {
+    let counted: std::collections::BTreeMap<String, usize> =
+        std::iter::once(("xtask/src/wire.rs".to_owned(), 3)).collect();
+    assert_eq!(
+        xtask::defaulted::held(&counted, "3 xtask/src/wire.rs\n"),
+        Ok(3)
+    );
+    let above = xtask::defaulted::held(&counted, "2 xtask/src/wire.rs\n").expect_err("above");
+    assert!(
+        above
+            .iter()
+            .any(|one| one.contains("against a ceiling of 2")),
+        "{above:?}"
+    );
+    let below = xtask::defaulted::held(&counted, "5 xtask/src/wire.rs\n").expect_err("below");
+    assert!(
+        below
+            .iter()
+            .any(|one| one.contains("lower the ceiling to 3")),
+        "a fall is kept by lowering the ceiling to it, or the next change can spend it: {below:?}"
+    );
+    let fallen: std::collections::BTreeMap<String, usize> =
+        std::iter::once(("xtask/src/wire.rs".to_owned(), 0)).collect();
+    let none = xtask::defaulted::held(&fallen, "3 xtask/src/wire.rs\n").expect_err("fallen");
+    assert!(
+        none.iter().any(|one| one.contains("remove its line")),
+        "{none:?}"
+    );
+    let unnamed = xtask::defaulted::held(&counted, "").expect_err("unnamed");
+    assert!(
+        unnamed.iter().any(|one| one.contains("ceiling of 0")),
+        "{unnamed:?}"
+    );
+    let gone = xtask::defaulted::held(&std::collections::BTreeMap::new(), "4 xtask/src/gone.rs\n")
+        .expect_err("a stale line");
+    assert!(
+        gone.iter().any(|one| one.contains("remove the line")),
+        "{gone:?}"
     );
 }

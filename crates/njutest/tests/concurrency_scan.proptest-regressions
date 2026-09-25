@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 4a5ab126980e69f1a5006396be9be46da367de3e8a3ba37d0673af81411d5539 # shrinks to fragments = ["{", "ér", "\")\\\"(\"", "}"]
+cc 29c6c96b84353eba03a057818082f59ebf89d0034ac82282d6cf309861105b00 # shrinks to fragments = ["\"(\"", "r", "\")\\\"(\""]
+cc 417a31fa4adfe799309a586c2db316ced7be13e557f50084743ba23f1afa3961 # shrinks to fragments = ["'", "br", "\")\\\"(\"", "\"", "\"(\"", "\"(\"", "\"", "br##\")\"##", "r#\"(\"#", "br##\")\"##", "\""]
+cc eb949d4b8b6b38a8b36c8029b2f151b5b5db178cf935eaa9c3812c5ee02cbb1e # shrinks to fragments = ["r#", "br", "\")\\\"(\""]
+cc 9df01f799f98c67f1b828e887226ca54b30efaa8d47e0cc0751dbca7ffad4730 # shrinks to fragments = ["//!(\n"]

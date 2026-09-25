@@ -43,6 +43,9 @@ pub struct BuildScript {
     /// What it put in the environment with `cargo::rustc-env`, in the order it said them.
     #[serde(default)]
     pub env: Vec<(String, String)>,
+    /// The configurations it set with `cargo::rustc-cfg`, in the order it said them.
+    #[serde(default)]
+    pub cfgs: Vec<String>,
     /// Every library it told the linker to link, however it spelled that: cargo has already read `rustc-link-lib` and the `-l` of `rustc-flags` into this.
     #[serde(default)]
     pub linked_libs: Vec<String>,

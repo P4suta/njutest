@@ -179,6 +179,12 @@ pub fn command_failed(spec: &Spec, result: &crate::runner::RunResult) -> CargoEr
         crate::runner::Termination::StoppedByMonitor => {
             format!("{} was stopped by its execution monitor", argv.join(" "))
         }
+        crate::runner::Termination::Answered => {
+            format!(
+                "{} was stopped at the first test it said failed",
+                argv.join(" ")
+            )
+        }
         crate::runner::Termination::Cancelled { .. } => {
             format!("{} was cancelled", argv.join(" "))
         }

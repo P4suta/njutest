@@ -135,6 +135,16 @@ const fn result(exit_code: i32) -> Observation {
     }
 }
 
+#[cfg(unix)]
+const fn signalled(signal: i32) -> Observation {
+    Observation {
+        stopped: Stopped::Exited {
+            exit: ProcessExit::Signal(signal),
+        },
+        stale_catalog: false,
+    }
+}
+
 const fn stopped(stopped: Stopped) -> Observation {
     Observation {
         stopped,
@@ -160,12 +170,22 @@ fn step_notice() -> StepLimitNotice {
 #[test]
 fn the_exit_status_is_read_in_one_fixed_order() {
     assert_eq!(
-        outcome_of(&stopped(Stopped::NotStarted), None, true),
+        outcome_of(
+            &stopped(Stopped::NotStarted {
+                cause: rust_mutants::execute::StartFailure::Missing
+            }),
+            None,
+            (true, &[])
+        ),
         Outcome::Errored
     );
 
     assert_eq!(
-        outcome_of(&stopped(Stopped::TimedOut { raised: None }), None, true),
+        outcome_of(
+            &stopped(Stopped::TimedOut { raised: None }),
+            None,
+            (true, &[])
+        ),
         Outcome::Waited,
         "a bound expiring establishes that this machine stopped waiting, which is not a \
          thing the tests did"
@@ -177,7 +197,7 @@ fn the_exit_status_is_read_in_one_fixed_order() {
                 notice: step_notice(),
             }),
             None,
-            true,
+            (true, &[]),
         ),
         Outcome::StepLimitReached
     );
@@ -188,23 +208,23 @@ fn the_exit_status_is_read_in_one_fixed_order() {
                 exit: ProcessExit::Unknown,
             }),
             None,
-            true,
+            (true, &[]),
         ),
         Outcome::NotRun
     );
 
     assert_eq!(
-        outcome_of(&result(95), Some(green()), true),
+        outcome_of(&result(95), Some(green()), (true, &[])),
         Outcome::Killed,
         "a bare status formerly reserved by the runtime is only a nonzero process exit; the \
          nonce-bound notice, not a colliding number, establishes the step fact"
     );
 
-    assert_eq!(outcome_of(&result(101), None, true), Outcome::Killed);
-    assert_eq!(outcome_of(&result(1), None, true), Outcome::Killed);
+    assert_eq!(outcome_of(&result(101), None, (true, &[])), Outcome::Killed);
+    assert_eq!(outcome_of(&result(1), None, (true, &[])), Outcome::Killed);
 
     assert_eq!(
-        outcome_of(&result(0), Some(green()), true),
+        outcome_of(&result(0), Some(green()), (true, &[])),
         Outcome::Survived
     );
 
@@ -216,9 +236,15 @@ fn the_exit_status_is_read_in_one_fixed_order() {
         measured: 0,
         filtered_out: 3,
     });
-    assert_eq!(outcome_of(&result(0), empty, true), Outcome::Inconclusive);
+    assert_eq!(
+        outcome_of(&result(0), empty, (true, &[])),
+        Outcome::Inconclusive
+    );
 
-    assert_eq!(outcome_of(&result(0), None, true), Outcome::Inconclusive);
+    assert_eq!(
+        outcome_of(&result(0), None, (true, &[])),
+        Outcome::Inconclusive
+    );
 }
 
 #[test]
@@ -271,16 +297,19 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
     let scratch = Path::new("/scratch/worker-3");
     let env = environment(
         &Context {
+            leaders: None,
             base_env: &base,
             cargo: None,
             sysroot: None,
             active: Some(("abc", "digest")),
+            beside: None,
             touch: None,
             steps: None,
             profile: None,
+            crash: None,
         },
         &target(),
-        Some(scratch),
+        (Some(scratch), Some(scratch)),
     );
     assert_eq!(
         result_state(&env),
@@ -337,16 +366,19 @@ fn a_baseline_inherits_none_of_the_variables_a_run_composes_for_itself() {
     ];
     let baseline = environment(
         &Context {
+            leaders: None,
             base_env: &base,
             cargo: None,
             sysroot: None,
             active: None,
+            beside: None,
             touch: None,
             steps: None,
             profile: None,
+            crash: None,
         },
         &target(),
-        None,
+        (None, None),
     );
     assert_eq!(
         result_state(&baseline),
@@ -370,19 +402,23 @@ fn the_guards_are_told_where_to_record_exactly_when_the_run_asks_them_to() {
     let log = Path::new("/scratch/touch/demo.log");
     let asked = environment(
         &Context {
+            leaders: None,
             base_env: &[],
             cargo: None,
             sysroot: None,
             active: None,
+            beside: None,
             touch: Some(rust_mutants::execute::Touching {
+                scope: rust_mutants::execute::TouchScope::Everything,
                 log,
                 catalog: "digest",
             }),
             steps: None,
             profile: None,
+            crash: None,
         },
         &target(),
-        None,
+        (None, None),
     );
     assert_eq!(
         result_state(&asked),
@@ -464,16 +500,19 @@ fn a_test_process_learns_which_cargo_built_it() {
     );
     let composed = environment(
         &Context {
+            leaders: None,
             base_env: &[],
             cargo: Some(Path::new("/opt/toolchain/bin/cargo")),
             sysroot: None,
             active: None,
+            beside: None,
             touch: None,
             steps: None,
             profile: None,
+            crash: None,
         },
         &target,
-        None,
+        (None, None),
     );
     assert_eq!(
         result_state(&composed),
@@ -494,16 +533,19 @@ fn a_test_process_learns_which_cargo_built_it() {
 
     let without = environment(
         &Context {
+            leaders: None,
             base_env: &[],
             cargo: None,
             sysroot: None,
             active: None,
+            beside: None,
             touch: None,
             steps: None,
             profile: None,
+            crash: None,
         },
         &target,
-        None,
+        (None, None),
     );
     assert_eq!(
         result_state(&without),
@@ -566,7 +608,7 @@ fn a_runtime_that_named_another_catalog_is_an_error_however_the_process_exited()
     };
 
     assert_eq!(
-        outcome_of(&observed, None, true),
+        outcome_of(&observed, None, (true, &[])),
         Outcome::Errored,
         "cargo turns the runtime's own 97 into its 101, which is the code a failing test \
          has: a tree rebuilt behind the run's back would otherwise look exactly like a kill"
@@ -585,16 +627,19 @@ fn an_inherited_coverage_profile_path_never_reaches_a_test_process() {
     let scratch = Path::new("/scratch/worker-3");
     let env = environment(
         &Context {
+            leaders: None,
             base_env: &base,
             cargo: None,
             sysroot: None,
             active: Some(("abc", "digest")),
+            beside: None,
             touch: None,
             steps: None,
             profile: None,
+            crash: None,
         },
         &target(),
-        Some(scratch),
+        (Some(scratch), Some(scratch)),
     );
     assert_eq!(
         result_state(&env),
@@ -631,16 +676,19 @@ fn the_profile_path_a_coverage_pass_composes_is_the_one_it_gets() {
     let mine = Path::new("/scratch/coverage/demo-%m.profraw");
     let env = environment(
         &Context {
+            leaders: None,
             base_env: &base,
             cargo: None,
             sysroot: None,
             active: None,
+            beside: None,
             touch: None,
             steps: None,
             profile: Some(mine),
+            crash: None,
         },
         &target(),
-        None,
+        (None, None),
     );
     assert_eq!(
         result_state(&env),
@@ -797,7 +845,7 @@ fn a_custom_harness_that_exits_zero_survived_and_one_that_exits_nonzero_killed()
                 stale_catalog: false,
             },
             None,
-            false,
+            (false, &[]),
         )
     };
     assert_eq!(
@@ -820,7 +868,7 @@ fn a_libtest_target_that_printed_no_summary_is_undecided_rather_than_survived() 
             stale_catalog: false,
         },
         None,
-        true,
+        (true, &[]),
     );
     assert_eq!(
         silent,
@@ -880,6 +928,22 @@ fn a_documented_example_is_named_the_way_rustdoc_names_it() {
     assert_eq!(result_state(&lines), Returned, "the fixture is exact UTF-8");
     let Ok(lines) = lines else { return };
     assert_eq!(lines.passed, ["src/lib.rs - max (line 9)"]);
+}
+
+#[test]
+fn a_test_that_expects_a_panic_is_named_by_its_name_and_not_by_what_libtest_adds_to_it() {
+    let lines = parse_lines(
+        b"test tests::refuses - should panic ... ok\ntest tests::stops - should panic ... FAILED\n",
+    );
+    assert_eq!(result_state(&lines), Returned, "the fixture is exact UTF-8");
+    let Ok(lines) = lines else { return };
+    assert_eq!(
+        lines.passed,
+        ["tests::refuses"],
+        "the thread libtest runs the test on, and the filter that selects it, both know it by \
+         its name"
+    );
+    assert_eq!(lines.failed, ["tests::stops"]);
 }
 
 #[test]
@@ -945,7 +1009,7 @@ fn a_clock_that_ended_a_counting_computation_says_so_and_one_that_ended_a_silent
         ),
     ] {
         assert_eq!(
-            outcome_of(&stopped(Stopped::TimedOut { raised }), None, true),
+            outcome_of(&stopped(Stopped::TimedOut { raised }), None, (true, &[])),
             Outcome::Waited,
             "the verdict does not move, because the count did not fire: {what}"
         );
@@ -958,5 +1022,136 @@ fn a_clock_that_ended_a_counting_computation_says_so_and_one_that_ended_a_silent
          another would not, and the number to change is the allowance. A clock that ended \
          one raising nothing is the only instrument there is (ADR 0023), and there is \
          nothing to change"
+    );
+}
+
+#[test]
+fn a_test_the_harness_said_failed_is_a_detection_whatever_the_clock_did_afterwards() {
+    let failed = vec!["a_says_the_answer_is_ready".to_owned()];
+    for stop in [
+        Stopped::TimedOut { raised: None },
+        Stopped::Stalled { raised: None },
+    ] {
+        assert_eq!(
+            outcome_of(&stopped(stop.clone()), None, (true, &failed)),
+            Outcome::Killed,
+            "a test that finished and failed noticed the mutation; that another test then kept \
+             the process running until the clock stopped it is a fact about the process: {stop:?}"
+        );
+        assert_eq!(
+            outcome_of(&stopped(stop), None, (true, &[])),
+            Outcome::Waited,
+            "and with nothing failed, the clock stopping it establishes only that it stopped"
+        );
+    }
+    assert_eq!(
+        outcome_of(
+            &stopped(Stopped::TimedOut { raised: None }),
+            None,
+            (false, &failed)
+        ),
+        Outcome::Waited,
+        "a harness that is not libtest names no failure this reader can trust"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_signal_sent_from_outside_is_no_detection_and_one_the_process_raised_is() {
+    for (signal, name) in [(1, "HUP"), (2, "INT"), (9, "KILL"), (15, "TERM")] {
+        assert_ne!(
+            outcome_of(&signalled(signal), None, (true, &[])),
+            Outcome::Killed,
+            "SIG{name} is what a cancelled CI job or an out-of-memory killer sends; the tests \
+             did not notice anything, and a kill stored from it would hide a survivor from \
+             every later run that reads it back"
+        );
+    }
+    for (signal, name) in [
+        (4, "ILL"),
+        (5, "TRAP"),
+        (6, "ABRT"),
+        (8, "FPE"),
+        (11, "SEGV"),
+    ] {
+        assert_eq!(
+            outcome_of(&signalled(signal), None, (true, &[])),
+            Outcome::Killed,
+            "SIG{name} is raised by what the process itself did, which a mutation can make it do"
+        );
+    }
+    let failed = vec!["a_test_that_noticed".to_owned()];
+    assert_eq!(
+        outcome_of(&signalled(9), None, (true, &failed)),
+        Outcome::Killed,
+        "a test the harness had already said failed noticed the mutation, whatever ended the \
+         process afterwards"
+    );
+}
+
+#[test]
+fn every_way_a_process_stops_reads_back_as_itself() {
+    use rust_mutants::execute::Stopped;
+    use rust_mutants::runner::ProcessExit;
+    for stopped in [
+        Stopped::NotStarted {
+            cause: rust_mutants::execute::StartFailure::Missing,
+        },
+        Stopped::NotStarted {
+            cause: rust_mutants::execute::StartFailure::Other {
+                detail: "Operation not supported (os error 45)".to_owned(),
+            },
+        },
+        Stopped::Exited {
+            exit: ProcessExit::Code(3),
+        },
+        Stopped::Exited {
+            exit: ProcessExit::Signal(9),
+        },
+        Stopped::Exited {
+            exit: ProcessExit::Unknown,
+        },
+        Stopped::TimedOut { raised: Some(4) },
+        Stopped::Stalled { raised: None },
+        Stopped::Cancelled { started: true },
+        Stopped::WaitFailed,
+        Stopped::Answered,
+    ] {
+        let written = serde_json::to_string(&stopped).expect("a stop serializes");
+        let read: Stopped = njutest_devkit::strictjson::decode_str(&written)
+            .unwrap_or_else(|error| panic!("{written} does not read back: {error}"));
+        assert_eq!(
+            read, stopped,
+            "a stop the engine can reach is one a recording can hold and a reader can read: {written}"
+        );
+    }
+}
+
+#[test]
+fn a_harness_that_never_started_says_why() {
+    let result = rust_mutants::execute::exec(
+        &ExecRequest::new(&target()),
+        &Context {
+            leaders: None,
+            base_env: &[],
+            cargo: None,
+            sysroot: None,
+            active: None,
+            beside: None,
+            touch: None,
+            steps: None,
+            crash: None,
+            profile: None,
+        },
+        &rust_mutants::runner::Cancel::new(),
+        &rust_mutants::trace::Recorder::disabled(),
+    );
+    assert_eq!(
+        result.stopped,
+        Stopped::NotStarted {
+            cause: rust_mutants::execute::StartFailure::Missing
+        },
+        "a test binary that is not there is named as missing, which is what a row that says \
+         only `exit -1` left a person to guess"
     );
 }

@@ -46,6 +46,18 @@ pub(super) struct Supervisor {
     pgid: Option<Pid>,
 }
 
+/// What a process group would say about the processes it held, which on this platform is nothing: a child names its parent instead.
+#[derive(Debug, Clone, Copy)]
+pub enum Membership {}
+
+impl Membership {
+    /// Every process named since the last time it was asked; there is never one to ask.
+    #[must_use]
+    pub const fn drain(self) -> Vec<u32> {
+        match self {}
+    }
+}
+
 #[expect(
     clippy::unnecessary_wraps,
     clippy::unused_self,
@@ -106,28 +118,7 @@ impl Supervisor {
         if leader == LeaderObservation::ExitedWaitable && !self.has_member_besides_leader()? {
             return Ok(());
         }
-        let signalled = self.signal(Signal::KILL);
-        if matches!(
-            &signalled,
-            Err(error) if error.raw_os_error() == Some(rustix::io::Errno::PERM.raw_os_error())
-        ) {
-            return self.end_the_child_this_process_started();
-        }
-        signalled
-    }
-
-    /// Ends the one process this supervisor started, for a group the kernel will not let it signal whole.
-    ///
-    /// A group signal is refused for the whole group when any member is beyond this process's authority, and on a runner that is an Apple-signed binary a toolchain reached: protected from its own parent, and no more killable after this process ends than before.
-    /// What is answerable is the child that was started here, which is the group's leader, so it is signalled by name and a group that has already gone is still success.
-    fn end_the_child_this_process_started(&self) -> io::Result<()> {
-        let pgid = self.pgid.ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "the supervisor has no adopted process group",
-            )
-        })?;
-        signal_result(kill_process(pgid, Signal::KILL))
+        self.signal(Signal::KILL)
     }
 
     #[cfg(target_os = "macos")]
@@ -190,6 +181,15 @@ impl Supervisor {
     }
 
     /// What the supervisor can say about the group it owns, for the note before an abort.
+    /// Where this group names the processes it holds: nowhere, since a child here names its parent.
+    #[expect(
+        clippy::unused_self,
+        reason = "the same signature as the Windows supervisor, whose job names its processes"
+    )]
+    pub(super) const fn membership(&self) -> Option<std::sync::Arc<Membership>> {
+        None
+    }
+
     pub(super) fn state(&self) -> String {
         let pgid = match self.pgid {
             Some(pgid) => pgid.as_raw_nonzero().get(),
@@ -208,6 +208,10 @@ impl Supervisor {
         format!("group {pgid}")
     }
 
+    /// Signals the whole group, or, where the kernel refuses the group, the one process this supervisor started.
+    ///
+    /// A group signal is refused whole when any member is beyond this process's authority, as an Apple-signed binary a toolchain reached is on a runner, and on macOS when every member has ended and none is reaped yet, which is where a test process that printed its failure and exited is when the stop for that failure arrives.
+    /// What is answerable in both is the child started here, the group's leader, so it is signalled by name, and a leader that has already gone is still success.
     fn signal(&self, signal: Signal) -> io::Result<()> {
         let pgid = self.pgid.ok_or_else(|| {
             io::Error::new(
@@ -215,7 +219,10 @@ impl Supervisor {
                 "the supervisor has no adopted process group",
             )
         })?;
-        signal_result(kill_process_group(pgid, signal))
+        match kill_process_group(pgid, signal) {
+            Err(rustix::io::Errno::PERM) => signal_result(kill_process(pgid, signal)),
+            grouped => signal_result(grouped),
+        }
     }
 
     /// Forgets the group id only after the caller has forcefully signalled the group while its leader remained waitable, then reaped that leader.
@@ -305,6 +312,21 @@ pub(super) fn exit_observed(child: &Child) -> io::Result<bool> {
     )
     .map(|status| status.is_some())
     .map_err(io::Error::from)
+}
+
+/// Whether `signal` is one a process raises by what it does (an abort, a bad access, a bad instruction, a trap) rather than one another process sends it.
+pub(super) fn raised_by_itself(signal: i32) -> bool {
+    [
+        Signal::ABORT,
+        Signal::SEGV,
+        Signal::BUS,
+        Signal::ILL,
+        Signal::FPE,
+        Signal::TRAP,
+        Signal::SYS,
+    ]
+    .iter()
+    .any(|raised| raised.as_raw() == signal)
 }
 
 /// The child's status, mapping a signal death to the shell's 128 + N convention: 137 for a SIGKILL is both distinguishable from "no status at all" and what every other tool on the machine prints.

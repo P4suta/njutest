@@ -174,7 +174,8 @@ fn classified(tokens: &[Token], at: usize, name: &str) -> Option<Starts> {
 }
 
 /// How deep the brackets of `source` nest outside its comments and literals, found in one pass without building anything that recurses.
-fn nesting(source: &str) -> usize {
+#[must_use]
+pub fn nesting(source: &str) -> usize {
     let bytes = source.as_bytes();
     let (mut at, mut depth, mut deepest) = (0_usize, 0_usize, 0_usize);
     while let Some(&byte) = bytes.get(at) {
@@ -189,16 +190,33 @@ fn nesting(source: &str) -> usize {
                 at.saturating_add(1)
             }
             b'/' if bytes.get(at.saturating_add(1)) == Some(&b'/') => {
+                if documents(bytes, at) {
+                    deepest = deepest.max(depth.saturating_add(1));
+                }
                 past(bytes, at, |rest| rest.first() == Some(&b'\n'))
             }
-            b'/' if bytes.get(at.saturating_add(1)) == Some(&b'*') => past_comment(bytes, at),
-            b'"' => past_quoted(bytes, at.saturating_add(1), b'"'),
+            b'/' if bytes.get(at.saturating_add(1)) == Some(&b'*') => {
+                if documents(bytes, at) {
+                    deepest = deepest.max(depth.saturating_add(1));
+                }
+                past_comment(bytes, at)
+            }
+            b'"' => past_suffix(bytes, past_quoted(bytes, at.saturating_add(1), b'"')),
             b'\'' => past_char(bytes, at),
             b'r' | b'b' | b'c' => past_prefixed(bytes, at),
             _ => at.saturating_add(1),
         };
     }
     deepest
+}
+
+/// Whether the comment at `at` is documentation, which the lexer turns into a `#[doc = ...]` attribute and so a group one deeper.
+fn documents(bytes: &[u8], at: usize) -> bool {
+    let rest = bytes.get(at..).unwrap_or_default();
+    rest.starts_with(b"//!")
+        || (rest.starts_with(b"///") && !rest.starts_with(b"////"))
+        || rest.starts_with(b"/*!")
+        || (rest.starts_with(b"/**") && !rest.starts_with(b"/***") && !rest.starts_with(b"/**/"))
 }
 
 /// The index just past the first place at or after `at` where `ends` holds, or the end.
@@ -250,11 +268,11 @@ fn past_quoted(bytes: &[u8], at: usize, close: u8) -> usize {
     bytes.len()
 }
 
-/// The index just past the character literal at `at`, or just past the quote where it opens a lifetime.
+/// The index just past the character literal at `at`, or just past the quote, which the lexer reads as a mark of its own where no character literal follows.
 fn past_char(bytes: &[u8], at: usize) -> usize {
     let body = at.saturating_add(1);
     if bytes.get(body) == Some(&b'\\') {
-        return past_quoted(bytes, body, b'\'');
+        return past_suffix(bytes, past_quoted(bytes, body, b'\''));
     }
     let width = bytes
         .get(body)
@@ -265,9 +283,23 @@ fn past_char(bytes: &[u8], at: usize) -> usize {
             _ => 1,
         });
     if bytes.get(body.saturating_add(width)) == Some(&b'\'') {
-        return body.saturating_add(width).saturating_add(1);
+        return past_suffix(bytes, body.saturating_add(width).saturating_add(1));
     }
     body
+}
+
+/// The index just past the suffix a literal ending at `at` carries, which the lexer reads as part of it.
+fn past_suffix(bytes: &[u8], at: usize) -> usize {
+    let mut at = at;
+    while bytes.get(at).is_some_and(|&byte| continues_a_name(byte)) {
+        at = at.saturating_add(1);
+    }
+    at
+}
+
+/// Whether `byte` can be part of a name: an ASCII letter, digit or `_`, or any byte of a character beyond ASCII, which the lexer reads as a name or refuses.
+const fn continues_a_name(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80
 }
 
 /// The index just past the byte, C or raw string literal at `at`, or just past `at` where the letter starts a name.
@@ -275,7 +307,7 @@ fn past_prefixed(bytes: &[u8], at: usize) -> usize {
     if at
         .checked_sub(1)
         .and_then(|before| bytes.get(before))
-        .is_some_and(|&before| before.is_ascii_alphanumeric() || before == b'_')
+        .is_some_and(|&before| continues_a_name(before))
     {
         return at.saturating_add(1);
     }
@@ -292,14 +324,22 @@ fn past_prefixed(bytes: &[u8], at: usize) -> usize {
         Some(b'"') if raw => {
             let mut closing = vec![b'"'];
             closing.extend(std::iter::repeat_n(b'#', hashes));
-            past(bytes, quote.saturating_add(1), |rest| {
-                rest.starts_with(&closing)
-            })
-            .saturating_add(hashes)
+            past_suffix(
+                bytes,
+                past(bytes, quote.saturating_add(1), |rest| {
+                    rest.starts_with(&closing)
+                })
+                .saturating_add(hashes),
+            )
         }
-        Some(b'"') if hashes == 0 => past_quoted(bytes, quote.saturating_add(1), b'"'),
+        Some(b'"') if hashes == 0 => {
+            past_suffix(bytes, past_quoted(bytes, quote.saturating_add(1), b'"'))
+        }
         Some(b'\'') if hashes == 0 && bytes.get(at) == Some(&b'b') => past_char(bytes, quote),
-        _ => at.saturating_add(1),
+        _ if raw && hashes == 1 && bytes.get(quote).is_some_and(|&byte| continues_a_name(byte)) => {
+            past_suffix(bytes, quote)
+        }
+        _ => past_suffix(bytes, at.saturating_add(1)),
     }
 }
 

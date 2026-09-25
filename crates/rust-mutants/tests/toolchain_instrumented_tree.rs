@@ -23,7 +23,8 @@ use rust_mutants::cargo::{
 use rust_mutants::catalog::Catalog;
 use rust_mutants::discover::{DiscoverOptions, Input, discover};
 use rust_mutants::instrument::{
-    ACTIVE_ENV, CATALOG_ENV, Instrumenting, STALE_CATALOG_EXIT, instrument_file, plan_file,
+    ACTIVE_ENV, CATALOG_ENV, Instrumenting, STALE_CATALOG_EXIT, WATCHED_ENV, instrument_file,
+    plan_file,
 };
 use rust_mutants::rule::{Registry, Tier};
 use rust_mutants::runner::{Cancel, RunResult, Spec, run};
@@ -37,6 +38,7 @@ struct Tree {
     root: PathBuf,
     catalog: Catalog,
     binaries: BTreeMap<String, PathBuf>,
+    watched: String,
     _dir: tempfile::TempDir,
     _target: tempfile::TempDir,
 }
@@ -60,6 +62,12 @@ fn prepare(fixture: &str) -> Tree {
         .tempdir()
         .expect("tempdir");
     let root = dir.path().join(fixture);
+    let watched = dir
+        .path()
+        .join("watched")
+        .to_str()
+        .expect("a UTF-8 temporary path")
+        .to_owned();
     copy_tree(&njutest_devkit::paths::fixtures_dir().join(fixture), &root);
     let target = tempfile::Builder::new()
         .prefix("rust-mutants-tree-target-")
@@ -109,6 +117,7 @@ fn prepare(fixture: &str) -> Tree {
             selection: Selection::tier(&REGISTRY, Tier::All),
             include: Vec::new(),
             exclude: Vec::new(),
+            narrowing: Vec::new(),
             packages: Vec::new(),
             skips: Vec::new(),
         },
@@ -138,6 +147,8 @@ fn prepare(fixture: &str) -> Tree {
             comparable: &BTreeSet::default(),
             probed: &BTreeMap::default(),
             catalog_digest: discovery.catalog.digest(),
+            first_item: 0,
+            watched: &watched,
         })
         .expect("instrument");
         assert!(file.instrumented, "{path}");
@@ -179,6 +190,7 @@ fn prepare(fixture: &str) -> Tree {
         root,
         catalog: discovery.catalog,
         binaries,
+        watched,
         _dir: dir,
         _target: target,
     }
@@ -215,6 +227,7 @@ impl Tree {
                     .any(|reserved| key == std::ffi::OsStr::new(reserved))
             })
             .collect();
+        env.push((WATCHED_ENV.into(), self.watched.clone().into()));
         if let Some(active) = active {
             env.push((ACTIVE_ENV.into(), active.into()));
             env.push((

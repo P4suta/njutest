@@ -185,7 +185,7 @@ pub fn copy_tree(from: &Path, to: &Path) -> std::io::Result<bool> {
     let copied = match copy_tree_entries(entries, to) {
         Ok(copied) => copied,
         Err(copy_error) => {
-            return match std::fs::remove_dir_all(to) {
+            return match rust_mutants::tempowner::remove_tree(to) {
                 Ok(()) => Err(copy_error),
                 Err(cleanup_error) if cleanup_error.kind() == std::io::ErrorKind::NotFound => {
                     Err(copy_error)

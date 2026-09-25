@@ -199,6 +199,23 @@ pub fn every_failure() -> Vec<RunnerError> {
         RunnerError::Output {
             source: std::io::Error::other("output closed"),
         },
+        RunnerError::Measure(crate::assure::measure::MeasureError::Written {
+            path: "src/lib.rs".to_owned(),
+        }),
+        RunnerError::Measure(crate::assure::measure::MeasureError::Environment {
+            source: crate::assure::identity::EnvironmentError::Value {
+                name: "LANG".to_owned(),
+                source: invalid_utf8,
+            },
+        }),
+        RunnerError::Reach(crate::reach::ReachError::Unwritable {
+            path: nowhere.to_path_buf(),
+            source: std::io::Error::other("no"),
+        }),
+        RunnerError::Reach(crate::reach::ReachError::Unreadable {
+            path: nowhere.to_path_buf(),
+            message: "no measurement".to_owned(),
+        }),
     ];
     for one in &failures {
         match one {
@@ -227,6 +244,8 @@ pub fn every_failure() -> Vec<RunnerError> {
             | RunnerError::ReportCount { .. }
             | RunnerError::Scratch(_)
             | RunnerError::Build(_)
+            | RunnerError::Measure(_)
+            | RunnerError::Reach(_)
             | RunnerError::Blind { .. }
             | RunnerError::Engine(_) => {}
         }
@@ -312,14 +331,23 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::Exec { .. } => "exec",
         Payload::Progress { .. } => "progress",
         Payload::Artifact { .. } => "artifact",
-        Payload::Route { .. } => "route",
+        Payload::Route { .. } | Payload::FaultRoute { .. } => "route",
         Payload::MutantExec { .. } => "mutant",
+        Payload::FaultExec { .. } | Payload::Fault { .. } => "fault",
+        Payload::Beside { .. } => "beside",
+        Payload::BesideRun { .. } => "pair",
+        Payload::CrashExec { .. } | Payload::Crash { .. } => "crash",
+        Payload::CrashStep { .. } => "step",
+        Payload::FaultControl { .. } => "control",
+        Payload::FaultAttribution { .. } => "attribution",
+        Payload::FaultRejected { .. } => "rejected",
         Payload::ProbeExec { .. } => "probe",
         Payload::WireExchange { .. } => "exchange",
         Payload::WireExec { .. } => "wire",
         Payload::Sentinel { .. } => "sentinel",
         Payload::Model { .. } => "model",
         Payload::Drift { .. } => "drift",
+        Payload::Repair { .. } => "repair",
         Payload::Knob { .. } => "knob",
         Payload::Note { .. } => "note",
         Payload::RunEnd { .. } => "run",
@@ -354,6 +382,28 @@ pub mod payload {
         Route(&'a crate::trace::RouteRecord),
         /// A mutation execution.
         MutantExec(&'a crate::trace::MutantExecRecord),
+        /// A fault execution.
+        FaultExec(&'a crate::trace::FaultExecRecord),
+        /// A fault confirmation's control.
+        FaultControl(&'a crate::trace::FaultControlRecord),
+        /// A fault's write attribution.
+        FaultAttribution(&'a crate::trace::FaultAttributionRecord),
+        /// A fault's route.
+        FaultRoute(&'a crate::trace::FaultRouteRecord),
+        /// A fault the compiler refused.
+        FaultRejected(&'a crate::trace::FaultRejectedRecord),
+        /// A fault site's decision.
+        Fault(&'a crate::report::faults::FaultRecord),
+        /// A survivor told apart only under a fault.
+        Beside(&'a crate::report::faults::BesideRecord),
+        /// A pair of runs behind evidence beside a fault.
+        BesideRun(&'a crate::report::faults::BesideRun),
+        /// A run of a test a crash was put to.
+        CrashExec(&'a crate::trace::CrashExecRecord),
+        /// A step of a crash that ran no test.
+        CrashStep(&'a crate::trace::CrashStepRecord),
+        /// A crash site's decision.
+        Crash(&'a crate::report::crashes::CrashRecord),
         /// A probe execution.
         ProbeExec(&'a crate::trace::ProbeExecRecord),
         /// A wire exchange.
@@ -366,6 +416,8 @@ pub mod payload {
         Model,
         /// A control's drift observation.
         Drift(&'a crate::trace::DriftRecord),
+        /// A disposition run again against a moved target.
+        Repair(&'a crate::trace::RepairRecord),
         /// A knob record.
         Knob(&'a crate::report::knobs::KnobRecord),
         /// A note.
@@ -387,12 +439,24 @@ pub mod payload {
             Payload::Artifact { .. } => Ref::Artifact,
             Payload::Route { route } => Ref::Route(route),
             Payload::MutantExec { mutant } => Ref::MutantExec(mutant),
+            Payload::FaultExec { fault } => Ref::FaultExec(fault),
+            Payload::FaultControl { control } => Ref::FaultControl(control),
+            Payload::FaultRoute { route } => Ref::FaultRoute(route),
+            Payload::FaultAttribution { attribution } => Ref::FaultAttribution(attribution),
+            Payload::FaultRejected { rejected } => Ref::FaultRejected(rejected),
+            Payload::Fault { fault } => Ref::Fault(fault),
+            Payload::Beside { beside } => Ref::Beside(beside),
+            Payload::BesideRun { pair } => Ref::BesideRun(pair),
+            Payload::CrashExec { crash } => Ref::CrashExec(crash),
+            Payload::CrashStep { step } => Ref::CrashStep(step),
+            Payload::Crash { crash } => Ref::Crash(crash),
             Payload::ProbeExec { probe } => Ref::ProbeExec(probe),
             Payload::WireExchange { .. } => Ref::WireExchange,
             Payload::WireExec { .. } => Ref::WireExec,
             Payload::Sentinel { sentinel } => Ref::Sentinel(sentinel),
             Payload::Model { .. } => Ref::Model,
             Payload::Drift { drift } => Ref::Drift(drift),
+            Payload::Repair { repair } => Ref::Repair(repair),
             Payload::Knob { knob } => Ref::Knob(knob),
             Payload::Note { note } => Ref::Note(note),
             Payload::RunEnd { .. } => Ref::RunEnd,
@@ -403,7 +467,6 @@ pub mod payload {
     impl<'a> Ref<'a> {
         /// The execution record, where this is one.
         #[must_use]
-        #[cfg(feature = "testkit")]
         pub const fn exec(self) -> Option<&'a crate::trace::ExecRecord> {
             let Self::Exec(exec) = self else {
                 return None;
@@ -570,6 +633,129 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 alone: true,
             },
         },
+        Payload::FaultExec {
+            fault: crate::trace::FaultExecRecord {
+                fault: "abcdef".to_owned(),
+                role: crate::trace::FaultRole::First,
+                target: "demo/test/calls".to_owned(),
+                args: vec!["--exact".to_owned(), "tests::one".to_owned()],
+                outcome: "killed".to_owned(),
+                duration_ms: 5,
+                alone: false,
+            },
+        },
+        Payload::FaultAttribution {
+            attribution: crate::trace::FaultAttributionRecord {
+                fault: "abcdef".to_owned(),
+                target: "demo/test/calls".to_owned(),
+                path: "failed-read.log".to_owned(),
+                faulted: true,
+                passed: true,
+                unfaulted: crate::trace::Unfaulted::DidNotWrite,
+            },
+        },
+        Payload::FaultRoute {
+            route: crate::trace::FaultRouteRecord {
+                fault: "abcdef".to_owned(),
+                reaching: vec!["demo/test/calls".to_owned()],
+            },
+        },
+        Payload::FaultRejected {
+            rejected: crate::trace::FaultRejectedRecord {
+                fault: "abcdef".to_owned(),
+                diagnostic: "error[E0308]: mismatched types".to_owned(),
+            },
+        },
+        Payload::FaultControl {
+            control: crate::trace::FaultControlRecord {
+                fault: "abcdef".to_owned(),
+                target: "demo/test/calls".to_owned(),
+                passed: true,
+            },
+        },
+        Payload::Fault {
+            fault: crate::report::faults::FaultRecord {
+                catalog_index: crate::report::CatalogIndex::new(0),
+                id: "a".repeat(64),
+                display_id: "a".repeat(20),
+                path: "src/lib.rs".to_owned(),
+                item: "load".to_owned(),
+                position: Some(crate::report::Position {
+                    line: 13,
+                    column: 16,
+                    character_column: 16,
+                }),
+                decision: crate::report::faults::FaultDecision::Noticed {
+                    by: "demo/test/calls".to_owned(),
+                },
+            },
+        },
+        Payload::Beside {
+            beside: crate::report::faults::BesideRecord {
+                mutant: "b".repeat(20),
+                fault: "a".repeat(20),
+                target: "demo/test/calls".to_owned(),
+                failed: crate::report::faults::Failed::Beside,
+            },
+        },
+        Payload::BesideRun {
+            pair: crate::report::faults::BesideRun {
+                mutant: "b".repeat(20),
+                fault: "a".repeat(20),
+                target: "demo/test/calls".to_owned(),
+                alone: "survived".to_owned(),
+                with: "killed".to_owned(),
+            },
+        },
+        Payload::CrashExec {
+            crash: crate::trace::CrashExecRecord {
+                crash: "d".repeat(20),
+                target: "demo/test/counter".to_owned(),
+                test: "a_count_goes_up".to_owned(),
+                stage: "crash".to_owned(),
+                exit_code: 93,
+                outcome: "killed".to_owned(),
+                noticed: true,
+                issued: Some(crate::trace::CrashNoticeRecord {
+                    mutant: "d".repeat(64),
+                    catalog: "c".repeat(64),
+                    nonce: "e".repeat(32),
+                    read: Some(format!(
+                        "rust-mutants-crash-notice-v1\t{}\t{}\t{}\n",
+                        "e".repeat(32),
+                        "c".repeat(64),
+                        "d".repeat(64)
+                    )),
+                }),
+                left: vec!["count".to_owned()],
+                failed: Vec::new(),
+            },
+        },
+        Payload::CrashStep {
+            step: crate::trace::CrashStepRecord {
+                crash: "d".repeat(20),
+                taken: crate::trace::CrashStep::Route {
+                    asked: vec![crate::trace::CrashAsked {
+                        target: "demo/test/counter".to_owned(),
+                        tests: Some(vec!["a_count_goes_up".to_owned()]),
+                    }],
+                },
+            },
+        },
+        Payload::Crash {
+            crash: crate::report::crashes::CrashRecord {
+                catalog_index: crate::report::CatalogIndex::new(0),
+                id: "d".repeat(64),
+                display_id: "d".repeat(20),
+                path: "src/lib.rs".to_owned(),
+                item: "save".to_owned(),
+                position: None,
+                decision: crate::report::crashes::CrashDecision::Restarted {
+                    on: "demo/test/counter::a_count_goes_up".to_owned(),
+                    left: vec!["count".to_owned()],
+                },
+            },
+        },
         Payload::ProbeExec {
             probe: ProbeExecRecord {
                 target: "demo/lib/demo".to_owned(),
@@ -582,6 +768,15 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 crate::report::ModelIneligibility::Effect,
             )),
         },
+        Payload::Repair {
+            repair: crate::trace::RepairRecord {
+                mutant: "abcdef".to_owned(),
+                target: "demo/lib/demo".to_owned(),
+                was: "unreached".to_owned(),
+                now: "survived".to_owned(),
+                reached: crate::trace::SiteReached::Reached,
+            },
+        },
         Payload::Knob {
             knob: crate::report::knobs::KnobRecord {
                 target: "demo/lib/demo".to_owned(),
@@ -593,7 +788,7 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
         },
         Payload::Drift {
             drift: crate::trace::DriftRecord {
-                mutant: "abcdef".to_owned(),
+                mutant: Some("abcdef".to_owned()),
                 observed: crate::report::drift::Drift::Moved {
                     target: "demo/lib/demo".to_owned(),
                     reached: crate::report::drift::Moved {
@@ -608,6 +803,10 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                         gained: std::collections::BTreeSet::new(),
                         lost: std::collections::BTreeSet::new(),
                     },
+                    entered: crate::report::drift::Moved {
+                        gained: std::collections::BTreeSet::from([4]),
+                        lost: std::collections::BTreeSet::new(),
+                    },
                 },
             },
         },
@@ -619,7 +818,7 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
         },
         Payload::RunEnd {
             run: RunRecord {
-                verdict: "ERROR".to_owned(),
+                verdict: crate::report::Verdict::Error,
                 accounting: None,
                 error: Some("one failure".to_owned()),
                 events_emitted: 10,
@@ -752,8 +951,8 @@ pub fn documented_specimen() -> crate::config::Config {
     use std::time::Duration;
 
     use crate::config::{
-        Acceptance, Cache, Config, Configuration, Contract, Execution, Fuzz, Generation, Mutation,
-        Project, Repeatable, Reports, Resource, Soundness, Verification,
+        Acceptance, Cache, Config, Configuration, Contract, Execution, Faults, Fuzz, Generation,
+        Mutation, Project, Repeatable, Reports, Resource, Soundness, Verification,
     };
 
     Config {
@@ -773,7 +972,7 @@ pub fn documented_specimen() -> crate::config::Config {
             timeout: Duration::from_mins(10),
             steps: 50_000_000,
             build_timeout: Some(Duration::from_mins(15)),
-            jobs: 1,
+            jobs: rust_mutants::run::Jobs::Count(std::num::NonZeroUsize::MIN),
             skip_targets: vec!["demo/lib/demo".to_owned()],
             coverage: true,
         },
@@ -782,6 +981,8 @@ pub fn documented_specimen() -> crate::config::Config {
             ttl: Duration::from_hours(24 * 30),
         },
         mutation: Mutation { equivalence: true },
+        faults: Faults { inject: true },
+        durability: crate::config::Durability { crash: true },
         verification: Verification {
             unwind: Some(8),
             timeout: Some(Duration::from_mins(2)),
@@ -808,6 +1009,7 @@ pub fn documented_specimen() -> crate::config::Config {
                 crate::report::knobs::Knob::Threads,
             ],
         },
+        schedules: crate::config::Schedules { explore: 2 },
         resources: BTreeMap::from([(
             "api".to_owned(),
             Resource {
@@ -1051,6 +1253,7 @@ pub mod reports {
             })
             .collect();
         report.mutants = rows;
+        super::raise_what_the_records_decide(&mut report);
         super::read_every_named_file(&mut report);
         report.verdict = report.concluded();
         Ok(report)
@@ -1102,6 +1305,7 @@ pub mod reports {
         for (at, (name, rows, drift)) in builds.into_iter().enumerate() {
             let mut report = measured(&format!("{run}-{at}"), kind, rows, &order)?;
             report.drift = drift;
+            super::raise_what_the_records_decide(&mut report);
             report.verdict = report.concluded();
             measured_builds.push((
                 name.to_owned(),
@@ -1118,6 +1322,20 @@ pub mod reports {
             crate::report::LatticedDocument::Shard(_) => Err(UnmadeReport::Part),
         }
     }
+}
+
+/// Sets the findings the records of `report` decide to exactly the ones they raise, as a run does, leaving every finding of another derivation as the fixture put it.
+#[cfg(feature = "testkit")]
+pub fn raise_what_the_records_decide(report: &mut crate::report::BuildReport) {
+    report
+        .findings
+        .retain(|finding| finding.kind.derivation() != crate::report::Derivation::Records);
+    let derived = crate::report::derived::findings(report);
+    report.findings.extend(
+        derived
+            .into_iter()
+            .filter(|finding| finding.kind.derivation() == crate::report::Derivation::Records),
+    );
 }
 
 /// Records, for every file the rows and findings of `report` name, a digest as a run that read the file would have, which a report assembled by hand needs before the audit accepts it.

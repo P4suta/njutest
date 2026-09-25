@@ -117,6 +117,10 @@ pub fn slowest(events: &[Event]) -> Vec<(u64, String)> {
                 mutant.duration_ms,
                 format!("{} against {}", mutant.mutant, mutant.target),
             )),
+            Payload::FaultExec { fault } => Some((
+                fault.duration_ms,
+                format!("fault {} against {}", fault.fault, fault.target),
+            )),
             Payload::RunStart { .. }
             | Payload::PhaseStart { .. }
             | Payload::PhaseEnd { .. }
@@ -126,9 +130,20 @@ pub fn slowest(events: &[Event]) -> Vec<(u64, String)> {
             | Payload::ProbeExec { .. }
             | Payload::WireExchange { .. }
             | Payload::WireExec { .. }
+            | Payload::Fault { .. }
+            | Payload::Beside { .. }
+            | Payload::BesideRun { .. }
+            | Payload::Crash { .. }
+            | Payload::CrashExec { .. }
+            | Payload::CrashStep { .. }
+            | Payload::FaultControl { .. }
+            | Payload::FaultAttribution { .. }
+            | Payload::FaultRoute { .. }
+            | Payload::FaultRejected { .. }
             | Payload::Sentinel { .. }
             | Payload::Model { .. }
             | Payload::Drift { .. }
+            | Payload::Repair { .. }
             | Payload::Knob { .. }
             | Payload::Note { .. }
             | Payload::RunEnd { .. } => None,
