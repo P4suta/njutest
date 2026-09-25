@@ -1129,7 +1129,7 @@ mod {{MODULE}} {
     // so where the run looks, once, and a process that cannot say so stops.
     #[inline(always)]
     fn watched() {
-        WATCH.get_or_init(noticed);
+        let () = *WATCH.get_or_init(noticed);
     }
 
     #[cold]
