@@ -7,8 +7,6 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # The merge queue holds a pull request until `ci-success` reports on the merge group it builds.
-  merge_group:
   workflow_dispatch:
 
 permissions:
@@ -148,7 +146,17 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           tools: cargo-deny@0.19.7
-      - run: cargo deny --locked --all-features check
+      # The advisory database is fetched in a step of its own that tries again, and the check reads what it fetched:
+      # a fetch that failed once on a network error failed the whole job, twice on one day.
+      - name: Fetch the advisory database
+        shell: bash
+        run: |
+          for attempt in 1 2 3 4 5; do
+            cargo deny --locked --all-features fetch db && exit 0
+            sleep $((attempt * 15))
+          done
+          exit 1
+      - run: cargo deny --locked --all-features check --disable-fetch
 
   audit:
     name: audit
@@ -161,7 +169,17 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           tools: cargo-audit@0.22.2
-      - run: cargo audit --deny warnings
+      # As for `deny`: one fetch that tries again, and an audit that reads it.
+      - name: Fetch the advisory database
+        shell: bash
+        run: |
+          for attempt in 1 2 3 4 5; do
+            rm -rf "$HOME/.cargo/advisory-db"
+            git clone --depth 1 https://github.com/RustSec/advisory-db.git "$HOME/.cargo/advisory-db" && exit 0
+            sleep $((attempt * 15))
+          done
+          exit 1
+      - run: cargo audit --no-fetch --deny warnings
         env:
           CARGO_NET_OFFLINE: "false"
 

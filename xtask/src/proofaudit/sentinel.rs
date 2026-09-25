@@ -288,6 +288,18 @@ pub enum SpecimenError {
     Incomplete(#[from] crate::specimen::CompletionError),
 }
 
+impl crate::error::Coded for SpecimenError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Directory { .. } | Self::Unwritable { .. } => {
+                crate::error::XtCode::SpecimenUnwritable
+            }
+            Self::NotAnObject { .. } => crate::error::XtCode::SpecimenEvent,
+            Self::Incomplete(_) => crate::error::XtCode::SpecimenIncomplete,
+        }
+    }
+}
+
 fn directory() -> Result<TempDir, SpecimenError> {
     tempfile::tempdir().map_err(|source| SpecimenError::Directory { source })
 }

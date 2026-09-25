@@ -91,6 +91,19 @@ pub enum AuditError {
     },
 }
 
+impl crate::error::Coded for AuditError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Unreadable { .. } => crate::error::XtCode::ProofUnreadable,
+            Self::Unparsable { .. } => crate::error::XtCode::ProofUnparsable,
+            Self::MalformedRecording { .. } => crate::error::XtCode::ProofRecording,
+            Self::Unprojected { .. } => crate::error::XtCode::ProofUnprojected,
+            Self::OffSchema { .. } => crate::error::XtCode::ProofOffSchema,
+            Self::Schema(_) => crate::error::XtCode::SchemaUncompilable,
+        }
+    }
+}
+
 /// What a report holds instead of the one configured build measured whole this audit re-decides.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -116,6 +129,12 @@ pub enum Unprojectable {
     /// The document is one part laid flat, which no run writes.
     #[error("a flat part with no `document_type`, which no run writes")]
     Flat,
+}
+
+impl crate::error::Coded for Unprojectable {
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::ProofUnprojected
+    }
 }
 
 /// What the re-decision was able to conclude about one thing it looked at.
