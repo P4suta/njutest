@@ -37,6 +37,14 @@ pub enum DocflowsError {
     /// actionlint said something that is not UTF-8, so what it refused cannot be named.
     #[error("actionlint wrote bytes that are not UTF-8: {0}")]
     Undecodable(std::string::FromUtf8Error),
+    /// actionlint ran and said something other than which workflows it refused, so nothing was checked.
+    #[error("actionlint did not check the documented workflows ({status}):\n{said}")]
+    Failed {
+        /// How it ended.
+        status: std::process::ExitStatus,
+        /// What it said instead.
+        said: String,
+    },
     /// actionlint refused at least one documented workflow.
     #[error("actionlint refused a workflow the documentation shows:\n{0}")]
     Refused(String),
@@ -163,9 +171,13 @@ pub fn check(root: &Path, actionlint: &OsStr) -> Result<String, DocflowsError> {
             source,
         })?;
     }
+    let written: Vec<PathBuf> = (0..found.len())
+        .map(|index| workflows.join(format!("doc-{index}.yml")))
+        .collect();
     let output = Command::new(actionlint)
         .args(["-no-color", "-shellcheck=", "-pyflakes="])
-        .current_dir(scratch.path())
+        .args(&written)
+        .current_dir(root)
         .output()
         .map_err(DocflowsError::Start)?;
     if output.status.success() {
@@ -178,20 +190,47 @@ pub fn check(root: &Path, actionlint: &OsStr) -> Result<String, DocflowsError> {
     for stream in [output.stdout, output.stderr] {
         said.push_str(&String::from_utf8(stream).map_err(DocflowsError::Undecodable)?);
     }
-    for (index, snippet) in found.iter().enumerate().rev() {
-        said = said.replace(
-            &format!(".github/workflows/doc-{index}.yml"),
-            &format!(
-                "{} (the fence on line {})",
-                match snippet.page.strip_prefix(root) {
-                    Ok(relative) => relative.display(),
-                    Err(_outside_the_root) => snippet.page.display(),
-                },
-                snippet.line
-            ),
-        );
+    let refused = output.status.code() == Some(1)
+        && said
+            .lines()
+            .any(|line| snippet_of(line, found.len()).is_some());
+    if !refused {
+        return Err(DocflowsError::Failed {
+            status: output.status,
+            said,
+        });
     }
+    let named: Vec<String> = said
+        .lines()
+        .map(|line| match snippet_of(line, found.len()) {
+            Some((index, rest)) => found.get(index).map_or_else(
+                || line.to_owned(),
+                |snippet| {
+                    format!(
+                        "{} (the fence on line {}):{rest}",
+                        match snippet.page.strip_prefix(root) {
+                            Ok(relative) => relative.display(),
+                            Err(_outside_the_root) => snippet.page.display(),
+                        },
+                        snippet.line
+                    )
+                },
+            ),
+            None => line.to_owned(),
+        })
+        .collect();
+    said = named.join("\n");
     Err(DocflowsError::Refused(said))
+}
+
+/// Which snippet a line of actionlint's report is about, and what the report says after its path, however the path was spelled.
+fn snippet_of(line: &str, count: usize) -> Option<(usize, &str)> {
+    let (before, rest) = line.split_once(".yml:")?;
+    let (_, name) = before.rsplit_once("/.github/workflows/doc-")?;
+    match name.parse::<usize>() {
+        Ok(index) if index < count => Some((index, rest)),
+        Ok(_) | Err(_) => None,
+    }
 }
 
 fn copy_tree(from: &Path, to: &Path) -> Result<(), DocflowsError> {
