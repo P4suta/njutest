@@ -1691,3 +1691,106 @@ fn a_kill_is_taken_at_the_first_failing_test_rather_than_after_the_rest_hang() {
          hangs: {waited_out:#?}"
     );
 }
+#[test]
+fn an_edit_to_a_file_the_build_read_misses_the_outcome_store() {
+    let fixture = Fixture::copy("fixture-carry");
+    let asked = ["run", "--offline", "--locked", "--tier", "all"];
+    let first = against(&fixture, &asked);
+    assert!(
+        first.status.code() == Some(0) || first.status.code() == Some(1),
+        "{}",
+        stderr(&first)
+    );
+    for (edited, text) in [
+        ("src/answer.txt", "30\n"),
+        (
+            "build.rs",
+            "fn main() {\n    let out = std::env::var_os(\"OUT_DIR\").expect(\"cargo sets OUT_DIR\");\n    std::fs::write(std::path::Path::new(&out).join(\"limit.rs\"), \"1\").expect(\"write the limit\");\n    println!(\"cargo::rerun-if-changed=build.rs\");\n}\n",
+        ),
+    ] {
+        std::fs::write(fixture.root().join(edited), text).expect("edit the input");
+        let again = against(&fixture, &asked);
+        assert!(
+            again.status.code() == Some(0) || again.status.code() == Some(1),
+            "{}",
+            stderr(&again)
+        );
+        let report = stored(&fixture);
+        let read_back: Vec<&serde_json::Value> = report["mutants"]
+            .as_array()
+            .expect("the rows")
+            .iter()
+            .filter(|row| !row["source_run_id"].is_null())
+            .collect();
+        assert!(
+            read_back.is_empty(),
+            "{edited} changed what the compiled code computes, so no answer from before the \
+             edit may be read back as though the program were the same: {read_back:#?}"
+        );
+    }
+}
+
+fn executions(directory: &Path) -> std::collections::BTreeMap<String, Vec<String>> {
+    let text = std::fs::read_to_string(directory.join("trace.jsonl")).expect("the recording");
+    let mut found: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for line in text.lines() {
+        let event: serde_json::Value =
+            njutest_devkit::strictjson::decode_str(line).expect("a recorded line is JSON");
+        if event["payload"]["type"] == "mutant-exec" {
+            let mutant = &event["payload"]["mutant"];
+            found
+                .entry(mutant["id"].as_str().unwrap_or_default().to_owned())
+                .or_default()
+                .push(mutant["target"].as_str().unwrap_or_default().to_owned());
+        }
+    }
+    found
+}
+
+#[test]
+fn a_mutant_goes_first_to_the_target_that_killed_it_before() {
+    let fixture = Fixture::copy("fixture-killer-last");
+    let first_trace = fixture.temp().join("first");
+    let second_trace = fixture.temp().join("second");
+    let run = |trace: &Path| {
+        let flag = format!("--trace={}", trace.display());
+        let output = against(
+            &fixture,
+            &["run", "--offline", "--locked", "--tier", "all", &flag],
+        );
+        assert!(
+            output.status.code() == Some(0) || output.status.code() == Some(1),
+            "{}",
+            stderr(&output)
+        );
+    };
+    run(&first_trace);
+    std::fs::write(
+        fixture.root().join("src/unrelated.rs"),
+        "/// A constant nothing else reads.\n#[must_use]\npub const fn unrelated() -> u32 {\n    8\n}\n",
+    )
+    .expect("edit a file no mutation of `double` depends on");
+    run(&second_trace);
+    let before = executions(&first_trace);
+    let after = executions(&second_trace);
+    let late: Vec<(&String, &Vec<String>)> = before
+        .iter()
+        .filter(|(_, targets)| targets.len() > 1)
+        .collect();
+    assert!(
+        !late.is_empty(),
+        "the fixture exists to have a mutant its first target passes and a later one kills: \
+         {before:#?}"
+    );
+    for (mutant, targets) in late {
+        let killer = targets.last().expect("a last target");
+        assert_eq!(
+            after.get(mutant),
+            Some(&vec![killer.clone()]),
+            "{mutant} was killed by {killer} after {} passed, so the next run asks {killer} \
+             first and has its answer from one process",
+            targets.first().map_or("", String::as_str)
+        );
+    }
+}

@@ -22,6 +22,7 @@ pub mod glob;
 pub mod id;
 pub mod instrument;
 pub mod interval;
+pub mod killers;
 pub mod limitation;
 pub mod orphan;
 pub mod outcome;
