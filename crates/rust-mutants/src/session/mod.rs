@@ -2807,7 +2807,7 @@ const fn completeness_of(
             | MutantConclusion::Unobserved
             | MutantConclusion::Errored => Completeness::Cut,
         },
-        Stopped::NotStarted
+        Stopped::NotStarted { .. }
         | Stopped::TimedOut { .. }
         | Stopped::Stalled { .. }
         | Stopped::Cancelled { .. }
@@ -3217,7 +3217,9 @@ const fn unreached() -> MutantResult {
         passed_tests: Vec::new(),
         ignored_tests: Vec::new(),
         leader: None,
-        stopped: execute::Stopped::NotStarted,
+        stopped: execute::Stopped::NotStarted {
+            cause: execute::StartFailure::NotAsked,
+        },
         lingered: false,
     }
 }

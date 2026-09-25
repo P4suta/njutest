@@ -4,6 +4,30 @@
   "title": "njutest trace v1",
   "description": "One line of the current diagnostic trace. Every owned object is closed and every nullable field is explicitly present.",
   "$defs": {
+    "startFailure": {
+      "description": "Why the process never started.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "enum": ["missing", "denied", "busy", "exhausted", "unsupervised", "malformed", "unprepared", "not-asked"]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "detail"],
+          "properties": {
+            "kind": { "const": "other" },
+            "detail": { "type": "string" }
+          }
+        }
+      ]
+    },
     "processExit": {
       "oneOf": [
         {
@@ -37,8 +61,11 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind"],
-          "properties": { "kind": { "const": "not-started" } }
+          "required": ["kind", "cause"],
+          "properties": {
+            "kind": { "const": "not-started" },
+            "cause": { "$ref": "#/$defs/startFailure" }
+          }
         },
         {
           "type": "object",

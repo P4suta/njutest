@@ -479,8 +479,13 @@
         "mutant": {
           "description": "The mutation a repair ran, in full; null on a baseline or a control, which run with nothing active.",
           "oneOf": [
-            { "type": "null" },
-            { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
           ]
         },
         "passed": {
@@ -590,6 +595,48 @@
           }
         }
       }
+    },
+    "startFailure": {
+      "description": "Why the process never started.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "missing",
+                "denied",
+                "busy",
+                "exhausted",
+                "unsupervised",
+                "malformed",
+                "unprepared",
+                "not-asked"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "detail"
+          ],
+          "properties": {
+            "kind": {
+              "const": "other"
+            },
+            "detail": {
+              "type": "string"
+            }
+          }
+        }
+      ]
     }
   },
   "type": "object",
@@ -916,11 +963,15 @@
                       "type": "object",
                       "additionalProperties": false,
                       "required": [
-                        "kind"
+                        "kind",
+                        "cause"
                       ],
                       "properties": {
                         "kind": {
                           "const": "not-started"
+                        },
+                        "cause": {
+                          "$ref": "#/$defs/startFailure"
                         }
                       }
                     },
@@ -2217,7 +2268,13 @@
               ],
               "properties": {
                 "outcome": {
-                  "enum": ["detected", "found", "interrupted", "failed", "completed"],
+                  "enum": [
+                    "detected",
+                    "found",
+                    "interrupted",
+                    "failed",
+                    "completed"
+                  ],
                   "description": "How the run ended: every judged mutation noticed, some not, cancelled, stopped on an error, or finished with judgement left to the program that embedded it."
                 },
                 "error": {
