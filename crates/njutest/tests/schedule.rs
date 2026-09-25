@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use njutest::assure::mutation::quiet_measurement_due;
-use njutest::assure::schedule::{Quiet, measure, workers};
+use njutest::assure::schedule::{Crew, Named, Quiet, ScheduleError, Start, measure, workers};
 use njutest_devkit::thread::ScopedThread;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::run::DEFAULT_JOBS as CAP;
@@ -78,9 +78,9 @@ fn a_run_that_says_how_many_workers_it_wants_gets_them() {
 fn every_measurement_runs_on_a_worker_and_never_on_the_calling_thread() {
     let caller = std::thread::current().id();
     let two =
-        measure(&["a", "b"], 1, |_at, _item| std::thread::current().id()).expect("workers finish");
+        answers(&["a", "b"], 1, |_at, _item| std::thread::current().id()).expect("workers finish");
     let one =
-        measure(&["a"], 4, |_at, _item| std::thread::current().id()).expect("worker finishes");
+        answers(&["a"], 4, |_at, _item| std::thread::current().id()).expect("worker finishes");
 
     assert!(
         !two.contains(&caller) && !one.contains(&caller),
@@ -88,7 +88,7 @@ fn every_measurement_runs_on_a_worker_and_never_on_the_calling_thread() {
          how many measure"
     );
     assert!(
-        measure::<u8, u8, _>(&[], 4, |_at, item| *item)
+        answers::<u32, u32, _>(&[], 4, |_at, item| *item)
             .expect("empty work finishes")
             .is_empty()
     );
@@ -117,7 +117,7 @@ fn a_worker_has_the_stack_the_calling_thread_would_have_had_however_many_workers
     let frames = frames_for(4 << 20);
     let items = vec![frames; 4];
     for workers in [1, 2, 4] {
-        let answers = measure(&items, workers, |_at, frames| deep(*frames))
+        let answers = answers(&items, workers, |_at, frames| deep(*frames))
             .expect("every worker has the stack its work needs");
         assert_eq!(answers.len(), 4, "{workers} workers");
     }
@@ -127,18 +127,13 @@ fn a_worker_has_the_stack_the_calling_thread_would_have_had_however_many_workers
 fn one_worker_that_panicked_is_the_typed_refusal_as_many_are() {
     for (items, workers) in [(vec![1_u32], 4), (vec![1, 2], 1)] {
         let answered = std::panic::catch_unwind(|| {
-            measure(&items, workers, |_at, item| {
+            answers(&items, workers, |_at, item| {
                 assert!(*item > 100, "every item panics its worker");
                 *item
             })
         });
         assert!(
-            matches!(
-                answered,
-                Ok(Err(
-                    njutest::assure::schedule::ScheduleError::WorkerPanicked
-                ))
-            ),
+            matches!(answered, Ok(Err(ScheduleError::WorkerPanicked { .. }))),
             "{} items on {workers} workers: a panic is the typed refusal however many workers ran",
             items.len()
         );
@@ -165,7 +160,7 @@ fn an_exclusive_resource_leaves_one_worker() {
 fn answers_come_back_in_the_order_the_items_came_in() {
     let items: Vec<usize> = (0..16).collect();
 
-    let answers = measure(&items, 4, |at, item| {
+    let answers = answers(&items, 4, |at, item| {
         std::thread::sleep(Duration::from_millis(
             u64::try_from(16 - at).expect("fixture index fits"),
         ));
@@ -186,7 +181,7 @@ fn more_than_one_item_is_measured_at_a_time() {
     let inside = AtomicUsize::new(0);
     let most = AtomicUsize::new(0);
 
-    let answers = measure(&items, 4, |_at, item| {
+    let answers = answers(&items, 4, |_at, item| {
         let now = increment(&inside);
         most.fetch_max(now, Ordering::SeqCst);
         let until = Instant::now() + Duration::from_secs(2);
@@ -213,7 +208,7 @@ fn a_parallel_measurement_starts_exactly_the_workers_it_was_given() {
     let most = AtomicUsize::new(0);
     let entered = AtomicUsize::new(0);
 
-    let answers = measure(&items, 3, |_at, item| {
+    let answers = answers(&items, 3, |_at, item| {
         let now = increment(&inside);
         most.fetch_max(now, Ordering::SeqCst);
         let entered_now = increment(&entered);
@@ -301,18 +296,110 @@ fn only_an_expired_budget_buys_a_quiet_measurement_and_a_stopped_run_buys_nothin
 fn every_worker_that_panicked_is_joined_and_the_answer_is_the_typed_refusal() {
     let items: Vec<u32> = (0..8).collect();
     let answered = std::panic::catch_unwind(|| {
-        measure(&items, 4, |_at, item| {
+        answers(&items, 4, |_at, item| {
             assert!(*item > 100, "every item panics its worker");
             *item
         })
     });
     assert!(
-        matches!(
-            answered,
-            Ok(Err(
-                njutest::assure::schedule::ScheduleError::WorkerPanicked
-            ))
-        ),
+        matches!(answered, Ok(Err(ScheduleError::WorkerPanicked { .. }))),
         "the scope itself must not panic because a second worker did"
+    );
+}
+
+/// Every answer the scheduler gives on `workers` threads, in the order it gives them.
+fn answers<T, R, F>(items: &[T], workers: usize, work: F) -> Result<Vec<R>, ScheduleError>
+where
+    T: Sync + Named,
+    R: Send,
+    F: Fn(usize, &T) -> R + Sync,
+{
+    measure(items, &Crew::threads(workers, "test"), work)
+        .map(|answered| answered.into_iter().map(|(_, answer)| answer).collect())
+}
+
+/// Admits every worker before the one at `0` and refuses that one and every later one, as an operating system out of threads would.
+struct RefusingFrom(usize);
+
+impl Start for RefusingFrom {
+    fn admit(&self, ordinal: usize) -> std::io::Result<()> {
+        if ordinal < self.0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::other("the fixture refuses this worker"))
+        }
+    }
+}
+
+#[test]
+fn a_worker_that_would_not_start_leaves_the_started_ones_nothing_to_take() {
+    let items: Vec<u32> = (0..64).collect();
+    let taken = AtomicUsize::new(0);
+    let answered = measure(
+        &items,
+        &Crew::started(4, "test", RefusingFrom(1)),
+        |_at, item| {
+            increment(&taken);
+            std::thread::sleep(Duration::from_millis(1));
+            *item
+        },
+    );
+    assert!(
+        matches!(answered, Err(ScheduleError::WorkerUnstarted { .. })),
+        "{answered:?}"
+    );
+    assert_eq!(
+        taken.load(Ordering::SeqCst),
+        0,
+        "a run that cannot start the workers it was given ends in a refusal, so whatever its \
+         started workers measured would be thrown away, possibly after hours"
+    );
+}
+
+#[test]
+fn a_worker_that_panicked_leaves_the_others_nothing_more_to_take() {
+    let items: Vec<u32> = (0..400).collect();
+    let taken = AtomicUsize::new(0);
+    let answered = std::panic::catch_unwind(|| {
+        measure(&items, &Crew::threads(2, "test"), |at, item| {
+            assert!(at != 0, "the first item panics its worker");
+            increment(&taken);
+            std::thread::sleep(Duration::from_millis(2));
+            *item
+        })
+    });
+    assert!(
+        matches!(answered, Ok(Err(ScheduleError::WorkerPanicked { .. }))),
+        "{answered:?}"
+    );
+    let taken = taken.load(Ordering::SeqCst);
+    assert!(
+        taken < 200,
+        "a run whose worker panicked ends in a refusal, so the other worker stops after the item \
+         it holds rather than measuring the rest of the catalog for nothing: it took {taken} of 399"
+    );
+}
+
+#[test]
+fn a_worker_that_panicked_names_itself_what_it_was_measuring_and_what_it_said() {
+    let items = ["alpha", "beta"];
+    let answered = measure(&items, &Crew::threads(1, "njutest-read"), |_at, item| {
+        assert!(*item != "beta", "the reader met something it cannot read");
+        item.len()
+    });
+    let Err(ScheduleError::WorkerPanicked {
+        worker,
+        item,
+        message,
+    }) = answered
+    else {
+        panic!("a panicking worker is the typed refusal: {answered:?}");
+    };
+    assert_eq!(worker, "njutest-read-0");
+    assert_eq!(item, "package beta");
+    assert!(
+        message.contains("the reader met something it cannot read"),
+        "a panic on one package's file recurs every run, so the refusal says which and why: \
+         {message}"
     );
 }

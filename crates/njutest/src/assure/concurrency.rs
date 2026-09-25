@@ -20,7 +20,7 @@ pub const PAUSE_MS: u64 = 100;
 /// One record per measured test binary, each package read once and `workers` at a time, and the closure packages the build compiled nothing of.
 ///
 /// # Errors
-/// A reading worker panicked, or the process ran out of descriptors or memory while reading.
+/// A reading worker would not start or panicked, or the process ran out of descriptors or memory while reading.
 pub fn recorded(
     session: &rust_mutants::session::Session,
     (harness_args, workers): (&[String], usize),
@@ -100,28 +100,28 @@ pub fn recorded(
 
 /// Every package named in `ids` read once, at most `workers` at a time and never more than there are packages, by id, each held to the files `compiled` says its crates were built from.
 ///
-/// One the metadata does not hold, or no answer came back for, is read as a package whose manifest was not read.
+/// One the metadata does not hold is read as a package whose manifest was not read.
 ///
 /// # Errors
-/// A reading worker panicked, or the process ran out of descriptors or memory while reading.
+/// A reading worker would not start or panicked, or the process ran out of descriptors or memory while reading.
 pub fn scans(
     metadata: &rust_mutants::cargo::Metadata,
     (ids, compiled): (&[&str], &crate::concurrency::read::Compiled),
     workers: usize,
 ) -> Result<BTreeMap<String, PackageScan>, crate::error::RunnerError> {
-    let read = schedule::measure(ids, workers.min(ids.len()), |_at, id| {
-        metadata.package(id).map_or_else(
-            || Ok(unread_manifest(id)),
-            |package| crate::concurrency::read::package(package, compiled),
-        )
-    })?;
-    let mut answers = read.into_iter();
+    let read = schedule::measure(
+        ids,
+        &schedule::Crew::threads(workers, "njutest-read"),
+        |_at, id| {
+            metadata.package(id).map_or_else(
+                || Ok(unread_manifest(id)),
+                |package| crate::concurrency::read::package(package, compiled),
+            )
+        },
+    )?;
     let mut scanned = BTreeMap::new();
-    for id in ids {
-        let mut scan = match answers.next() {
-            Some(answer) => answer?,
-            None => unread_manifest(id),
-        };
+    for (id, answer) in read {
+        let mut scan = answer?;
         if compiled.inputs.is_empty() {
             scan.unread
                 .push("the build reported no unit it compiled".to_owned());

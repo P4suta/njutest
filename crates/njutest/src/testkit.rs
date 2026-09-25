@@ -180,7 +180,11 @@ pub fn every_failure() -> Vec<RunnerError> {
         RunnerError::Model {
             message: "model artifact could not be retained".to_owned(),
         },
-        RunnerError::Schedule(crate::assure::schedule::ScheduleError::WorkerPanicked),
+        RunnerError::Schedule(crate::assure::schedule::ScheduleError::WorkerPanicked {
+            worker: "njutest-measure-0".to_owned(),
+            item: "mutation abcdef".to_owned(),
+            message: "no".to_owned(),
+        }),
         RunnerError::Sources(crate::observe::SourceReadError::Exhausted {
             path: nowhere.to_path_buf(),
             source: std::io::Error::other("no"),
