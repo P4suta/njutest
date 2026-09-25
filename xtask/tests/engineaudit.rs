@@ -873,6 +873,7 @@ fn layers_of(name: &str) -> &'static [Layer] {
         "a row that ran a target its route never reached"
         | "a route narrowed by guards that kept no record"
         | "a test the guards say reached a mutation and the route dropped" => &[Layer::Trace],
+        "a route that says a target ran that no execution ran" => &[Layer::Work],
         "a body digest its bytes do not hash to, in the file the run measured" => {
             &[Layer::Identity]
         }

@@ -1788,6 +1788,7 @@ fn a_mutant_goes_first_to_the_target_that_killed_it_before() {
         "the fixture exists to have a mutant its first target passes and a later one kills: \
          {before:#?}"
     );
+    let report = stored(&fixture);
     for (mutant, targets) in late {
         let killer = targets.last().expect("a last target");
         assert_eq!(
@@ -1796,6 +1797,17 @@ fn a_mutant_goes_first_to_the_target_that_killed_it_before() {
             "{mutant} was killed by {killer} after {} passed, so the next run asks {killer} \
              first and has its answer from one process",
             targets.first().map_or("", String::as_str)
+        );
+        let row = report["mutants"]
+            .as_array()
+            .expect("the rows")
+            .iter()
+            .find(|row| row["id"] == mutant.as_str())
+            .expect("the row of the mutant");
+        assert_eq!(
+            row["route"]["executed"],
+            serde_json::json!([killer]),
+            "the report says which targets ran, and on the second run only {killer} did: {row:#}"
         );
     }
 }
