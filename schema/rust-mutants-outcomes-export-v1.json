@@ -117,6 +117,7 @@
             "closure",
             "manifests",
             "toolchain",
+            "engine",
             "args",
             "timeout",
             "steps",
@@ -130,6 +131,9 @@
               "type": "string"
             },
             "toolchain": {
+              "type": "string"
+            },
+            "engine": {
               "type": "string"
             },
             "args": {
