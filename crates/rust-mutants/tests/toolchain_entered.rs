@@ -131,13 +131,20 @@ fn a_change_set_narrows_what_is_mutated_and_never_what_is_marked() {
         &fixture,
         vec![Pattern::compile("src/lib.rs").expect("a pattern")],
     );
-    assert!(
-        narrowed
+    let paths = |session: &Session, keep: &dyn Fn(&str) -> bool| -> Vec<String> {
+        session
             .catalog()
             .mutants()
             .iter()
-            .all(|mutant| mutant.candidate.path == "src/lib.rs"),
-        "a change set still decides what is mutated"
+            .map(|mutant| mutant.candidate.path.clone())
+            .filter(|path| keep(path))
+            .collect()
+    };
+    let changed = paths(&whole, &|path| path == "src/lib.rs");
+    assert!(
+        !changed.is_empty() && paths(&narrowed, &|_| true) == changed,
+        "a change set still decides what is mutated: exactly the whole run's mutants of the \
+         changed file"
     );
     assert_eq!(
         narrowed.touched().items,
