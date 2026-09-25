@@ -80,11 +80,9 @@ runs:
         ARGS: ${{ inputs.args }}
       run: |
         set -uo pipefail
-        # The runner starts this shell with -e, and the status below is what this step exists to read.
-        set +e
+        status=0
         # shellcheck disable=SC2086
-        njutest verify ${ARGS} | tee njutest-verify.out
-        status=${PIPESTATUS[0]}
+        njutest verify ${ARGS} | tee njutest-verify.out || status=$?
         verdict=$(awk -F'\t' '$1 == "VERDICT" { print $2 }' njutest-verify.out)
         # The run says where it wrote each file it wrote, so this never has to know the layout or a file name:
         # `[reports] directory` is the project's to choose, and a path rebuilt here is one the run never promised.
