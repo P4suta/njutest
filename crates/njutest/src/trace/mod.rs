@@ -24,8 +24,8 @@ pub use event::{
     CrashStepRecord, DischargeRecord, DriftRecord, Event, ExecRecord, FaultAttributionRecord,
     FaultControlRecord, FaultExecRecord, FaultRejectedRecord, FaultRole, FaultRouteRecord,
     MutantExecRecord, NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read,
-    RepairRecord, RouteRecord, RunAccounting, RunRecord, SentinelRecord, SiteReached, StartRecord,
-    Unfaulted, WireExchangeRecord, WireExecRecord,
+    RepairRecord, ReuseRule, RouteRecord, RunAccounting, RunRecord, SentinelRecord, SiteReached,
+    StartRecord, Unfaulted, WireExchangeRecord, WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{DirSink, FILE_NAME, OUTPUT_DIRECTORY_NAME, Sink};

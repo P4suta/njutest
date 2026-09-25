@@ -481,6 +481,13 @@ pub enum RunnerError {
     /// Per-mutant evidence could not be preserved.
     #[error(transparent)]
     MutationEvidence(#[from] crate::evidence::store::StoreError),
+    /// An answer to carry across an edit could not be filed (ADR 0041).
+    #[error("{}: the answer could not be filed for a later tree to carry: {source}", CACHE_UNUSABLE.code)]
+    Carry {
+        /// Why the carried store refused it.
+        #[source]
+        source: rust_mutants::outcomes::StoreError,
+    },
     /// Coverage could not be read.
     #[error(transparent)]
     Coverage(#[from] crate::coverage::CoverageError),
@@ -607,6 +614,7 @@ impl RunnerError {
             Self::Cache(error) => error.code(),
             Self::Checkpoint(error) => error.code(),
             Self::MutationEvidence(error) => error.code(),
+            Self::Carry { .. } => CACHE_UNUSABLE,
             Self::Coverage(error) => error.code(),
             Self::Provider(error) => error.code(),
             Self::IdentityEnvironment { .. } => CONFIG_INVALID,

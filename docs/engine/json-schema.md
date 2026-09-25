@@ -187,5 +187,6 @@ A recording is never evidence, so nothing here reads one to decide anything.
 
 `rust-mutants cache --export <file>` writes every record of the store as one `rust-mutants/outcomes-export` document (`schema/rust-mutants-outcomes-export-v1.json`), and `rust-mutants cache --import <file>` files them into another.
 Each record carries everything its key is computed from beyond its mutant, so an importer recomputes the name each is filed under rather than trusting one, and a read refuses a record filed under a name its own inputs do not derive.
+Among them `runner` names what a runner that asked decides the answer under beyond the engine, its contract, environment, platform and versions, as a digest, and is `null` where `rust-mutants` asked; a key reads it as `none` or `some:<digest>`, so an answer one runner or contract established never answers another, and a record without the field is refused rather than read as `null`.
 `abi` names the versions keys are computed under, and a store exported by a release that computes them differently is refused before anything is filed.
 Nothing about where a checkout sits is part of a key, so a store a run filled on one machine answers a run of the same tree on another: that is how one CI job reads what the last run on the default branch established.

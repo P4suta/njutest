@@ -17,7 +17,7 @@ const ENGINE: &str = r#"
 
 /// A recording as the runner writes it: the mutant by its short name, no index, and no list of what ran.
 const RUNNER: &str = r#"
-{"seq":1,"timestamp":"2026-09-06T00:00:00Z","elapsed_ms":0,"payload":{"type":"route","route":{"mutant":"aaaaaaaaaaaaaaaaaaaa","granularity":"block","fallback":"touch-incomplete","reaching":["pkg/lib/pkg"],"discharged":[{"target":"pkg/test/ui","proof":"branch-never-taken"}],"considered":["pkg/test/wide"],"reused":null,"tests":[],"refused":null}}}
+{"seq":1,"timestamp":"2026-09-06T00:00:00Z","elapsed_ms":0,"payload":{"type":"route","route":{"mutant":"aaaaaaaaaaaaaaaaaaaa","granularity":"block","fallback":"touch-incomplete","reaching":["pkg/lib/pkg"],"discharged":[{"target":"pkg/test/ui","proof":"branch-never-taken"}],"considered":["pkg/test/wide"],"reused":null,"tests":[],"refused":null,"rule":null,"carry_refused":null}}}
 {"seq":2,"timestamp":"2026-09-06T00:00:01Z","elapsed_ms":1,"payload":{"type":"mutant-exec","mutant":{"mutant":"aaaaaaaaaaaaaaaaaaaa","target":"pkg/lib/pkg","args":[],"outcome":"survived","step_boundary":null,"duration_ms":9,"alone":true}}}
 "#;
 

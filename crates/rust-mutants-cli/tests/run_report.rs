@@ -24,6 +24,7 @@ fn keyed(build: &Config) -> Keyed {
         steps: build.mutation.steps,
         build: build.build.config().arguments(),
         engine: "e".to_owned(),
+        runner: None,
     }
 }
 

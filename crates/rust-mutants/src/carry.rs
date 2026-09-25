@@ -145,6 +145,7 @@ pub fn key(keyed: &Keyed, locus: &Locus) -> HexDigest {
         keyed.manifests.clone(),
         keyed.toolchain.clone(),
         keyed.engine.clone(),
+        keyed.runner_tag(),
         keyed.timeout.clone(),
         keyed.steps.to_string(),
         locus.item.package.clone(),

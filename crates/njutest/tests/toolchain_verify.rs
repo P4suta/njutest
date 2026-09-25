@@ -20,7 +20,7 @@
 
 use njutest_devkit::fixture::copy_tree;
 #[cfg(unix)]
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -2313,4 +2313,70 @@ fn a_run_that_reads_its_answers_back_finds_the_hollow_targets_a_run_that_asked_f
          were asked again or read back from the run that asked them cannot change which \
          targets noticed nothing"
     );
+}
+
+/// Every row of the latest run's first part, by where and what it mutates, which an edit elsewhere in the file leaves unchanged where an identity does not.
+#[cfg(unix)]
+fn rows_by_place(
+    report: &serde_json::Value,
+) -> BTreeMap<(String, String, String, String), serde_json::Value> {
+    report["builds"][0]["parts"][0]["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .map(|row| {
+            let text = |key: &str| row[key].as_str().expect("a text field").to_owned();
+            (
+                (
+                    row["position"].to_string(),
+                    text("rule"),
+                    text("original"),
+                    text("replacement"),
+                ),
+                row.clone(),
+            )
+        })
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
+    let fixture = fixture("fixture-two-bodies");
+    let first = verify(&fixture, &[]);
+    assert!(
+        first.status.code().is_some_and(|code| code < 3),
+        "{}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    let source = fixture.root.join("src/lib.rs");
+    let text = std::fs::read_to_string(&source).expect("the library");
+    std::fs::write(&source, text.replace("left + right", "right + left"))
+        .expect("edit inside the body of `total` alone");
+    let carried = verify(&fixture, &[]);
+    assert!(
+        carried.status.code().is_some_and(|code| code < 3),
+        "{}",
+        njutest_devkit::process::strict_utf8(&carried.stderr)
+    );
+    let with_carry = rows_by_place(&document(&fixture));
+    assert!(
+        with_carry
+            .values()
+            .any(|row| row["reuse"]["reused"] == true),
+        "the mutations of `over` were answered by executions that never entered `total`, so an \
+         edit inside `total` alone leaves those answers standing: {with_carry:#?}"
+    );
+    let fresh = verify(&fixture, &["--no-cache"]);
+    assert!(fresh.status.code().is_some_and(|code| code < 3));
+    let without = rows_by_place(&document(&fixture));
+    for (place, row) in &with_carry {
+        assert_eq!(
+            row["decision"]["outcome"],
+            without.get(place).map_or(serde_json::Value::Null, |fresh| {
+                fresh["decision"]["outcome"].clone()
+            }),
+            "a carried answer is the answer running it gives: {place:?}"
+        );
+    }
 }

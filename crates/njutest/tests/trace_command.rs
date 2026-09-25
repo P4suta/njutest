@@ -52,6 +52,8 @@ fn discharging(seq: u64, proofs: &[&str]) -> Event {
                 considered: Vec::new(),
                 reused: None,
                 refused: None,
+                rule: None,
+                carry_refused: None,
             },
         },
     )

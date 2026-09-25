@@ -1647,11 +1647,27 @@ fn evidence_of(mutating: &Mutating<'_>) -> Result<Option<mutation::Evidence>, Ru
         );
         names.insert(measured.target.id.to_string(), measured.target.name());
     }
+    let keyed = rust_mutants::outcomes::Keyed {
+        closure: mutating.session.closure().to_owned(),
+        manifests: mutating.session.manifests().to_owned(),
+        toolchain: keying.common.toolchain.clone(),
+        args: keying.common.test_args.clone(),
+        timeout: format!("{}ms", keying.common.timeout_ms),
+        steps: keying.common.steps,
+        build: vec![keying.common.build.digest().to_string()],
+        engine: keying.common.engine.clone(),
+        runner: Some(crate::evidence::key::runner(&keying.common)),
+    };
+    let carry = keyed.usable().then(|| mutation::Carry {
+        store: rust_mutants::carry::Store::new(root),
+        keyed,
+    });
     Ok(Some(mutation::Evidence {
         root: root.clone(),
         run_id: request.run_id.to_string(),
         standing,
         names,
+        carry,
     }))
 }
 
