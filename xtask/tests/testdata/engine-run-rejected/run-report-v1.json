@@ -1,25 +1,29 @@
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 2,
+  "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260924t131143739z",
-    "started_at": "2026-09-24T13:11:43.739238Z",
-    "finished_at": "2026-09-24T13:11:47.089288Z",
-    "duration_ms": 332,
+    "id": "20260925t142514048z",
+    "started_at": "2026-09-25T14:25:14.048893391Z",
+    "finished_at": "2026-09-25T14:25:18.808098823Z",
+    "duration_ms": 347,
     "interrupted": false,
     "exit_code": 1,
-    "shard": null
+    "shard": null,
+    "jobs": {
+      "asked": "auto",
+      "used": 4
+    }
   },
   "workspace": {
-    "root_name": "fixture-rejectable",
-    "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-    "workspace_digest": "cd84a068441097f4bdf801085892062e48ae7d1986eddfb1a6025daea650702f",
+    "root_name": "tmp.4S5R5c5jME",
+    "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "workspace_digest": "4d8b45be642b86e2b546ce1d5e4db4ff6afb437b027dd5e0a02654fd02811faf",
     "catalog_digest": "05ce4412ca26140ff556abf263fc400e9b1fa58b1d5908a3e491bfb14ae71d4d",
     "platform": {
-      "os": "darwin",
-      "arch": "aarch64",
-      "target": "aarch64-apple-darwin"
+      "os": "gnu",
+      "arch": "x86_64",
+      "target": "x86_64-unknown-linux-gnu"
     }
   },
   "selection": {
@@ -718,7 +722,7 @@
       "path": "src/lib.rs",
       "rule": "add-to-sub",
       "code": "E0369",
-      "diagnostic": "error[E0369]: cannot subtract `&str` from `String`\n  --> src/lib.rs:12:147\n   |\n12 | ... Default::default() } else if __rm_b1a35a68::active(1) { name - \"!\" } else { name + __rm_b1a35a68::value!(if __rm_b1a35a68::activ...\n   |                                                             ---- ^ --- &str\n   |                                                             |\n   |                                                             String\n   |\nnote: `String` does not implement `Sub<&str>`\n  --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/alloc/src/string.rs:353:0\n   |\n   = note: `String` is defined in another crate\n\n",
+      "diagnostic": "error[E0369]: cannot subtract `&str` from `String`\n   --> src/lib.rs:12:171\n    |\n 12 | ...Default::default() } else if __rm_b1a35a68::active(1) { name - \"!\" } else { name + __rm_b1a35a68::value!(if __rm_b1a35a68::activ...\n    |                                                            ---- ^ --- &str\n    |                                                            |\n    |                                                            String\n    |\nnote: `String` does not implement `Sub<&str>`\n   --> /home/yasunobu/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/string.rs:353:1\n    |\n353 | pub struct String {\n    | ^^^^^^^^^^^^^^^^^ `String` is defined in another crate\n\n",
       "isolated": true
     },
     {
@@ -728,7 +732,7 @@
       "path": "src/lib.rs",
       "rule": "range-to-inclusive",
       "code": "E0308",
-      "diagnostic": "error[E0308]: mismatched types\n  --> src/lib.rs:17:142\n   |\n16 | ...-> std::ops::Range<usize> {\n   |       ---------------------- expected `std::ops::Range<usize>` because of return type\n17 | ...point(); __rm_b1a35a68::value!(if __rm_b1a35a68::active(4) { Default::default() } else if __rm_b1a35a68::active(5) { 0..=n } else...\n   |                                                                                                                         ^^^^^ expected `Range<usize>`, found `RangeInclusive<usize>`\n   |\n   = note: expected struct `std::ops::Range<usize>`\n              found struct `std::ops::RangeInclusive<usize>`\n\n",
+      "diagnostic": "error[E0308]: mismatched types\n  --> src/lib.rs:17:166\n   |\n16 | ...-> std::ops::Range<usize> {\n   |       ---------------------- expected `std::ops::Range<usize>` because of return type\n17 | ...1); __rm_b1a35a68::checkpoint(); __rm_b1a35a68::value!(if __rm_b1a35a68::active(4) { Default::default() } else if __rm_b1a35a68::active(5) { 0..=n } ...\n   |                                                                                                                                                 ^^^^^ expected `Range<usize>`, found `RangeInclusive<usize>`\n   |\n   = note: expected struct `std::ops::Range<usize>`\n              found struct `std::ops::RangeInclusive<usize>`\n\n",
       "isolated": true
     },
     {
@@ -738,7 +742,7 @@
       "path": "src/lib.rs",
       "rule": "mul-to-div",
       "code": "unconditional_panic",
-      "diagnostic": "error: this operation will panic at runtime\n  --> src/lib.rs:22:142\n   |\n22 | ...fault() } else if __rm_b1a35a68::active(7) { value / 0 } else { value * __rm_b1a35a68::value!(if __rm_b1a35a68::active(8) { 1 } e...\n   |                                                 ^^^^^^^^^ attempt to divide `_` by zero\n   |\n   = note: `#[deny(unconditional_panic)]` on by default\n\n",
+      "diagnostic": "error: this operation will panic at runtime\n  --> src/lib.rs:22:166\n   |\n22 | ...fault() } else if __rm_b1a35a68::active(7) { value / 0 } else { value * __rm_b1a35a68::value!(if __rm_b1a35a68::active(8) { 1 } e...\n   |                                                 ^^^^^^^^^ attempt to divide `_` by zero\n   |\n   = note: `#[deny(unconditional_panic)]` on by default\n\n",
       "isolated": true
     },
     {
@@ -748,7 +752,7 @@
       "path": "src/lib.rs",
       "rule": "return-default",
       "code": "E0277",
-      "diagnostic": "error[E0277]: the trait bound `Label: Default` is not satisfied\n  --> src/lib.rs:27:86\n   |\n27 | ...if __rm_b1a35a68::active(9) { Default::default() } else { Label(__rm_b1a35a68::value!(if __rm_b1a35a68::active(10) { \"\" } else { ...\n   |                                  ^^^^^^^^^^^^^^^^^^ the trait `Default` is not implemented for `Label`\n   |\nhelp: consider annotating `Label` with `#[derive(Default)]`\n   |\n 8 + #[derive(Default)]\n 9 | pub struct Label(pub &'static str);\n   |\n\n",
+      "diagnostic": "error[E0277]: the trait bound `Label: Default` is not satisfied\n  --> src/lib.rs:27:110\n   |\n27 | ...if __rm_b1a35a68::active(9) { Default::default() } else { Label(__rm_b1a35a68::value!(if __rm_b1a35a68::active(10) { \"\" } else { ...\n   |                                  ^^^^^^^^^^^^^^^^^^ the trait `Default` is not implemented for `Label`\n   |\nhelp: consider annotating `Label` with `#[derive(Default)]`\n   |\n 8 + #[derive(Default)]\n 9 | pub struct Label(pub &'static str);\n   |\n\n",
       "isolated": true
     }
   ],
