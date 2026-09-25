@@ -57,7 +57,10 @@ pub const IO_DRAIN_GRACE: Duration = Duration::from_secs(2);
 
 /// A cooperative cancellation flag shared between the caller and a run.
 #[derive(Debug, Clone)]
-pub struct Cancel(Arc<AtomicBool>);
+pub struct Cancel {
+    own: Arc<AtomicBool>,
+    above: Vec<Arc<AtomicBool>>,
+}
 
 impl Cancel {
     /// A flag that is not yet cancelled.
@@ -67,26 +70,40 @@ impl Cancel {
         reason = "an execution-control state must be constructed explicitly, never by a semantic Default"
     )]
     pub fn new() -> Self {
-        Self(Arc::new(AtomicBool::new(false)))
+        Self {
+            own: Arc::new(AtomicBool::new(false)),
+            above: Vec::new(),
+        }
+    }
+
+    /// A flag cancelled whenever this one is, whose own cancellation this one never sees: what a run that stops its own work raises, so a caller does not read that stop as having been interrupted.
+    #[must_use]
+    pub fn child(&self) -> Self {
+        let mut above = self.above.clone();
+        above.push(Arc::clone(&self.own));
+        Self {
+            own: Arc::new(AtomicBool::new(false)),
+            above,
+        }
     }
 
     /// Requests cancellation.
     /// Idempotent.
     pub fn cancel(&self) {
-        self.0.store(true, Ordering::SeqCst);
+        self.own.store(true, Ordering::SeqCst);
     }
 
-    /// Whether cancellation was requested.
+    /// Whether cancellation was requested, of this flag or of any it is a child of.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
+        self.own.load(Ordering::SeqCst) || self.above.iter().any(|flag| flag.load(Ordering::SeqCst))
     }
 
     /// The flag itself, so a composition root can raise it from a signal handler.
     /// This crate never installs one: a signal is the process's business, not a library's.
     #[must_use]
     pub fn flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.0)
+        Arc::clone(&self.own)
     }
 }
 
