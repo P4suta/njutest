@@ -2789,8 +2789,8 @@ fn two_repairs(second_was: &str) -> Vec<String> {
     let laid = sentinel::Perturbation {
         name: "two repairs",
         document: with(serde_json::json!({ "drift": [
-            { "target": other, "state": "moved" },
-            { "target": TARGET, "state": "moved" }
+            sentinel::moved(other),
+            sentinel::moved(TARGET)
         ] })),
         events: Some(events),
         engine: Some(engine),

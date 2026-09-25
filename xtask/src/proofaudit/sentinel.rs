@@ -241,6 +241,7 @@ fn touched(measured: &str, reached: &[u32]) -> Value {
         "sites": reached.len(),
         "loose": 0,
         "infected": 0,
+        "entered": 0,
         "passed": ["lib::works"],
         "summary": { "protocol": "libtest", "tests_run": 1 },
         "reached_sites": reached,
@@ -288,16 +289,23 @@ pub fn knobbed(state: &str) -> Value {
 #[must_use]
 pub fn drifted(state: &str) -> Value {
     let record = match state {
-        "moved" => json!({
-            "target": TARGET, "state": state,
-            "reached": { "gained": [1], "lost": [] },
-            "bodies": { "gained": [], "lost": [] },
-            "infected": { "gained": [], "lost": [] }
-        }),
+        "moved" => moved(TARGET),
         "not-measured" => json!({ "target": TARGET, "state": state, "why": "no-control" }),
         other => json!({ "target": TARGET, "state": other }),
     };
     json!({ "drift": [record] })
+}
+
+/// A drift record saying `target` reached one more site on a control than on its baseline, and nothing else moved.
+#[must_use]
+pub fn moved(target: &str) -> Value {
+    json!({
+        "target": target, "state": "moved",
+        "reached": { "gained": [1], "lost": [] },
+        "bodies": { "gained": [], "lost": [] },
+        "infected": { "gained": [], "lost": [] },
+        "entered": { "gained": [], "lost": [] }
+    })
 }
 
 /// A specimen could not be laid out on disk.
@@ -744,7 +752,7 @@ fn unobserved_repair_called_a_survival() -> Perturbation {
     Perturbation {
         name: "a repair whose run nothing could observe, called a survival",
         document: with(json!({
-            "drift": [{ "target": TARGET, "state": "moved" }],
+            "drift": [moved(TARGET)],
             "mutants": [{}, { "catalog_index": 1 }],
             "limitations": [{ "name": "reach-moved", "detail": TARGET }]
         })),
