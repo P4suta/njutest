@@ -848,13 +848,27 @@ impl Session {
     ) -> Result<MutantResult, EngineError> {
         let before = self.orphans();
         let started = std::time::SystemTime::now();
+        let mutant = context
+            .active
+            .map_or_else(String::new, |(mutant, _catalog)| self.display_of(mutant));
+        let began = self
+            .apparatus
+            .running
+            .lock()
+            .map_err(|_poisoned| SessionError::CoordinationPoisoned)?
+            .begin(&mutant);
         let mut result = execute::exec(exec, context, cancel, &self.workspace.trace);
+        let beside = self
+            .apparatus
+            .running
+            .lock()
+            .map_err(|_poisoned| SessionError::CoordinationPoisoned)?
+            .end(&mutant, began);
         let changes = self.apparatus.changed();
         if !changes.is_empty() {
             return Err(SessionError::ApparatusChanged {
-                mutant: context
-                    .active
-                    .map_or_else(String::new, |(mutant, _catalog)| self.display_of(mutant)),
+                mutant,
+                beside,
                 changes,
             }
             .into());

@@ -82,11 +82,29 @@ pub fn summary(changes: &[Change]) -> String {
     }
 }
 
+/// The mutants that ran beside the one a change was found after, as a message names them: any of them may have made it.
+#[must_use]
+pub fn alongside(beside: &[String]) -> String {
+    if beside.is_empty() {
+        return String::new();
+    }
+    let named: Vec<&str> = beside.iter().take(NAMED).map(String::as_str).collect();
+    match beside.len().checked_sub(NAMED) {
+        Some(more) if more > 0 => format!(
+            " or one running beside it, {} and {more} more",
+            named.join(", ")
+        ),
+        Some(_) | None => format!(" or one running beside it, {}", named.join(", ")),
+    }
+}
+
 /// Every test executable the run starts, and every name in the directories they run from, as the build left them.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct Apparatus {
     executables: Vec<(PathBuf, Identity)>,
     beside: Vec<(PathBuf, BTreeSet<OsString>)>,
+    /// Which mutants' executions are running, so a change is charged to every execution that could have made it.
+    pub running: std::sync::Mutex<Running>,
 }
 
 impl Apparatus {
@@ -142,5 +160,41 @@ impl Apparatus {
             }
         }
         changes
+    }
+}
+
+/// Which mutants' executions are running, and every one that has started, so a change found after one execution can be charged to every execution that could have made it.
+#[derive(Debug, Default)]
+pub struct Running {
+    now: BTreeSet<String>,
+    started: Vec<String>,
+}
+
+/// Where a ledger stood when one execution started: who was running then, and how many had started.
+#[derive(Debug, Clone)]
+pub struct Began {
+    running: BTreeSet<String>,
+    from: usize,
+}
+
+impl Running {
+    /// Notes that `mutant`'s execution starts now.
+    pub fn begin(&mut self, mutant: &str) -> Began {
+        let began = Began {
+            running: self.now.clone(),
+            from: self.started.len(),
+        };
+        self.now.insert(mutant.to_owned());
+        self.started.push(mutant.to_owned());
+        began
+    }
+
+    /// Notes that `mutant`'s execution has ended, and names every other execution that ran at any moment it did: those running when it began, and those that began after.
+    pub fn end(&mut self, mutant: &str, began: Began) -> Vec<String> {
+        self.now.remove(mutant);
+        let mut beside = began.running;
+        beside.extend(self.started.iter().skip(began.from).cloned());
+        beside.remove(mutant);
+        beside.into_iter().collect()
     }
 }

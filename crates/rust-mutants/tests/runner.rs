@@ -705,3 +705,23 @@ fn only_libtests_line_for_one_failing_test_is_read_as_its_answer() {
         "a line that only contains the words is not libtest's report"
     );
 }
+
+#[test]
+fn a_child_cancel_follows_its_parent_and_never_raises_it() {
+    let parent = Cancel::new();
+    let child = parent.child();
+    let grandchild = child.child();
+    child.cancel();
+    assert!(
+        child.is_cancelled() && grandchild.is_cancelled() && !parent.is_cancelled(),
+        "a run stopping its own work stops everything under it and leaves the caller's flag down, \
+         so the caller does not read the stop as an interruption"
+    );
+    let parent = Cancel::new();
+    let grandchild = parent.child().child();
+    parent.cancel();
+    assert!(
+        grandchild.is_cancelled(),
+        "and an interruption of the caller reaches every flag below it, however deep"
+    );
+}
