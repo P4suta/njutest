@@ -253,7 +253,10 @@ pub fn environment_of(
 }
 
 /// The environment the run is a function of: the variables that change what the compiler produces, plus whatever the configuration named.
-fn selected(
+///
+/// # Errors
+/// A selected variable's name or value is not UTF-8.
+pub fn selected(
     vars: &[(OsString, OsString)],
     named: &[String],
 ) -> Result<Vec<(String, String)>, EnvironmentError> {
@@ -277,13 +280,69 @@ fn selected(
                 source,
             }
         })?;
+        if name_text == "CARGO_TARGET_DIR" {
+            continue;
+        }
         let value = std::str::from_utf8(value.as_encoded_bytes()).map_err(|source| {
             EnvironmentError::Value {
                 name: name_text.to_owned(),
                 source,
             }
         })?;
-        selected.push((name_text.to_owned(), value.to_owned()));
+        let folded = if TOOL_NAMES.contains(&name_text) {
+            program(value, vars)
+        } else {
+            value.to_owned()
+        };
+        selected.push((name_text.to_owned(), folded));
     }
     Ok(selected)
+}
+
+/// The variables that name a program, which a run is a function of by what the program is rather than where it sits.
+const TOOL_NAMES: [&str; 5] = [
+    "RUSTC",
+    "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER",
+    "CC",
+    "CXX",
+];
+
+/// A program as a run's identity folds it: its file name and the digest of its bytes, so one toolchain unpacked in two places is one program; the value as written where it names nothing this run can read, which only ever costs a reuse.
+fn program(value: &str, vars: &[(OsString, OsString)]) -> String {
+    let Some(path) = located(value, vars) else {
+        return value.to_owned();
+    };
+    let Some(name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
+        return value.to_owned();
+    };
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+            sha2::Digest::update(&mut hasher, &bytes);
+            format!(
+                "{name}@sha256:{}",
+                rust_mutants::id::HexDigest::finish(hasher)
+            )
+        }
+        Err(_unreadable) => value.to_owned(),
+    }
+}
+
+/// The file a program value names: itself where it is a path, or the first match on the run's own `PATH`.
+fn located(value: &str, vars: &[(OsString, OsString)]) -> Option<std::path::PathBuf> {
+    let written = Path::new(value);
+    if value.is_empty() || value.contains(char::is_whitespace) {
+        return None;
+    }
+    if written.components().count() > 1 {
+        return Some(written.to_path_buf());
+    }
+    let search = vars
+        .iter()
+        .find(|(name, _)| name.as_encoded_bytes() == b"PATH")
+        .map(|(_, path)| path)?;
+    std::env::split_paths(search)
+        .map(|directory| directory.join(value))
+        .find(|candidate| std::fs::metadata(candidate).is_ok_and(|metadata| metadata.is_file()))
 }

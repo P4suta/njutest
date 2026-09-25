@@ -140,6 +140,8 @@ fn kept_command(
             kept,
             clear_outcomes,
             cache_dir,
+            export,
+            import,
         } => sweep::cache(
             &sweep::Sweeping {
                 root: root.as_deref(),
@@ -148,6 +150,11 @@ fn kept_command(
                 kept: *kept,
                 clear_outcomes: *clear_outcomes,
                 cache_dir: cache_dir.as_deref(),
+                transport: match (export.as_deref(), import.as_deref()) {
+                    (Some(file), _) => sweep::StoreTransport::Export(file),
+                    (None, Some(file)) => sweep::StoreTransport::Import(file),
+                    (None, None) => sweep::StoreTransport::Stay,
+                },
             },
             environment,
             stdout,
@@ -938,6 +945,7 @@ fn prepared(
             fail_fast,
             dry_run,
             args,
+            scope,
             ..
         } => match mutant {
             Some(prefix) => one(
@@ -954,6 +962,7 @@ fn prepared(
                     open: prepared.open,
                     args,
                     shard: shard.as_deref(),
+                    narrowed: base_of(scope).is_some(),
                     asked: Switches {
                         no_report: *no_report,
                         no_cache: *no_cache,
@@ -1014,6 +1023,8 @@ struct Whole<'a> {
     open: &'a workspace::OpenOptions,
     args: &'a [String],
     shard: Option<&'a str>,
+    /// Whether the catalog was built from only the files this run's own selection, a change set, named.
+    narrowed: bool,
     /// The switches the command line set, which say what the run does rather than what it measures.
     asked: Switches,
     /// Which of the catalog's mutants this run is about.
@@ -1047,6 +1058,18 @@ struct Switches {
     dry_run: bool,
 }
 
+/// What a dry run says: the phases so far and what a run would cost, with nothing executed.
+fn estimated(
+    session: &Session,
+    filter: &run::Filter,
+    phases: &std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
+    stdout: &mut dyn Write,
+) -> Result<PreparedOutcome, CliError> {
+    write(stdout, &crate::ui::phases(phases))?;
+    write(stdout, &estimate::estimate(session, filter)?)?;
+    Ok(PreparedOutcome::complete(0))
+}
+
 fn whole(
     session: &Session,
     whole: &Whole<'_>,
@@ -1058,6 +1081,7 @@ fn whole(
         open,
         args,
         shard,
+        narrowed,
         asked:
             Switches {
                 no_report,
@@ -1094,15 +1118,12 @@ fn whole(
         fail_fast,
     };
     if dry_run {
-        write(stdout, &crate::ui::phases(phases))?;
-        write(stdout, &estimate::estimate(session, filter)?)?;
-        return Ok(PreparedOutcome::complete(0));
+        return estimated(session, filter, phases, stdout);
     }
     let mut result = measured_run(
         session,
         &Watched {
             options: &options,
-            settings,
             phases,
             json,
             ui,
@@ -1111,7 +1132,8 @@ fn whole(
         cancel,
         stdout,
     )?;
-    result.expectations = run::verify(session, &expectations, &mut result.judged, options.shard)
+    let scope = run::Scope::of(options.shard, narrowed);
+    result.expectations = run::verify(session, &expectations, &mut result.judged, scope)
         .map_err(EngineError::from)?;
     let document = run_report::document(
         session,
@@ -1123,11 +1145,9 @@ fn whole(
             finished_at: Timestamp::now(),
         },
     )?;
-    let written = if no_report {
-        None
-    } else {
-        Some(stored_with_evidence(session, settings, id, &document)?)
-    };
+    let written = (!no_report)
+        .then(|| stored_with_evidence(session, settings, id, &document))
+        .transpose()?;
     Ok(PreparedOutcome::RunPending(Box::new(PendingRun {
         document,
         written,
@@ -1182,7 +1202,6 @@ fn onward(document: &run_report::RunDocument) -> String {
 /// Everything the run itself needs beyond the session, so a caller chooses one display and hands it over.
 struct Watched<'a> {
     options: &'a run::Options<'a>,
-    settings: &'a Settings,
     phases: &'a std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
     json: bool,
     ui: crate::ui::Ui,
@@ -1204,12 +1223,7 @@ fn measured_run(
         return Ok(result?);
     }
     write(stdout, &crate::ui::phases(watched.phases))?;
-    let mut display = crate::ui::Display::new(
-        stdout,
-        resolved(watched.ui),
-        watched.paints,
-        run::jobs(watched.settings.config.execution.jobs),
-    );
+    let mut display = crate::ui::Display::new(stdout, resolved(watched.ui), watched.paints);
     let result = run::run(session, watched.options, cancel, &mut display);
     display.finish()?;
     Ok(result?)
@@ -1694,7 +1708,12 @@ fn read_run_document(path: &Path) -> Result<run_report::RunDocument, CliError> {
     document
         .validate()
         .map_err(|error| CliError::ReportMissing {
-            message: format!("{} is a contradictory run report: {error}", path.display()),
+            message: match error {
+                run_report::DocumentError::SchemaVersion { .. } => {
+                    format!("{}: {error}", path.display())
+                }
+                other => format!("{} is a contradictory run report: {other}", path.display()),
+            },
         })?;
     Ok(document)
 }

@@ -324,6 +324,12 @@ pub enum Command {
         /// Read and write the store under this directory rather than the user's cache directory.
         #[arg(long, value_name = "DIR")]
         cache_dir: Option<PathBuf>,
+        /// Write every record of the store to this file, each carrying what it was keyed on, for another checkout or a CI job to import.
+        #[arg(long, value_name = "FILE", conflicts_with_all = ["gc", "clear_outcomes", "import"])]
+        export: Option<PathBuf>,
+        /// File every record of an exported store under the key its own inputs name, refusing one keyed under another release's versions.
+        #[arg(long, value_name = "FILE", conflicts_with_all = ["gc", "clear_outcomes"])]
+        import: Option<PathBuf>,
     },
     /// Carry what a run established into a continuous integration job.
     Ci {
@@ -455,10 +461,9 @@ pub struct Scope {
     /// How many compilation jobs cargo may run at once.
     #[arg(long = "build-jobs", value_name = "N")]
     pub build_jobs: Option<u32>,
-    /// How many mutants to measure at once.
-    /// Zero is as many as the machine has, capped at four.
-    #[arg(long, short = 'j', value_name = "N")]
-    pub jobs: Option<usize>,
+    /// How many mutants to measure at once: a count, `auto` for as many as the machine has capped at four, or `all` for every one.
+    #[arg(long, short = 'j', value_name = "N|auto|all", value_parser = rust_mutants::run::Jobs::parse)]
+    pub jobs: Option<rust_mutants::run::Jobs>,
     /// Never start this target, by the id a report names it with.
     /// Repeatable.
     #[arg(long = "skip-target", value_name = "PKG/KIND/NAME")]

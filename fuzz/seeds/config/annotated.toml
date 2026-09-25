@@ -5,7 +5,7 @@ exclude = ["target/**"]
 
 [execution]
 timeout = "10m"
-jobs = 0
+jobs = "auto"
 
 [mutation]
 equivalence = false

@@ -12,9 +12,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use njutest::assure::mutation::quiet_measurement_due;
-use njutest::assure::schedule::{CAP, Quiet, measure, workers};
+use njutest::assure::schedule::{Quiet, measure, workers};
 use njutest_devkit::thread::ScopedThread;
 use rust_mutants::outcome::Outcome;
+use rust_mutants::run::DEFAULT_JOBS as CAP;
+use rust_mutants::run::Jobs;
 
 fn increment(counter: &AtomicUsize) -> usize {
     let previous = counter
@@ -37,31 +39,39 @@ fn decrement(counter: &AtomicUsize) {
 }
 
 #[test]
-fn a_run_that_does_not_say_takes_the_processors_it_has_up_to_the_cap() {
-    assert_eq!(workers(0, 0, false).expect("valid count"), 1);
-    assert_eq!(workers(0, 1, false).expect("valid count"), 1);
-    assert_eq!(workers(0, 2, false).expect("valid count"), 2);
-    assert_eq!(workers(0, 3, false).expect("valid count"), 3);
-    assert_eq!(workers(0, CAP, false).expect("valid count"), CAP);
+fn a_run_that_says_auto_takes_the_processors_it_has_up_to_the_cap() {
+    assert_eq!(workers(Jobs::Auto, 0, false), 1);
+    assert_eq!(workers(Jobs::Auto, 1, false), 1);
+    assert_eq!(workers(Jobs::Auto, 2, false), 2);
+    assert_eq!(workers(Jobs::Auto, 3, false), 3);
+    assert_eq!(workers(Jobs::Auto, CAP, false), CAP);
     assert_eq!(
-        workers(0, CAP.checked_add(1).expect("small fixture"), false).expect("valid count"),
+        workers(
+            Jobs::Auto,
+            CAP.checked_add(1).expect("small fixture"),
+            false
+        ),
         CAP
     );
     assert_eq!(
-        workers(0, 64, false).expect("valid count"),
+        workers(Jobs::Auto, 64, false),
         CAP,
-        "a run that helps itself to every processor starves the tests it is measuring"
+        "a run on a machine somebody is using that helps itself to every processor starves the \
+         tests it is measuring"
+    );
+    assert_eq!(
+        workers(Jobs::All, 64, false),
+        64,
+        "and a runner doing nothing else is asked for every one"
     );
 }
 
 #[test]
 fn a_run_that_says_how_many_workers_it_wants_gets_them() {
-    assert_eq!(workers(2, 64, false).expect("valid count"), 2);
-    assert_eq!(workers(1, 64, false).expect("valid count"), 1);
-    assert_eq!(
-        workers(u32::MAX, 1, false).expect("u32 fits every supported target"),
-        usize::try_from(u32::MAX).expect("u32 fits every supported target")
-    );
+    let count = |n| Jobs::count(n).expect("a positive count");
+    assert_eq!(workers(count(2), 64, false), 2);
+    assert_eq!(workers(count(1), 64, false), 1);
+    assert_eq!(workers(count(4096), 1, false), 4096);
 }
 
 #[test]
@@ -83,11 +93,18 @@ fn one_worker_or_one_item_stays_on_the_calling_thread() {
 
 #[test]
 fn an_exclusive_resource_leaves_one_worker() {
-    assert_eq!(
-        workers(8, 64, true).expect("valid count"),
-        1,
-        "a resource only one test may hold at a time is a resource no two tests may hold"
-    );
+    for jobs in [
+        Jobs::count(8).expect("a positive count"),
+        Jobs::Auto,
+        Jobs::All,
+    ] {
+        assert_eq!(
+            workers(jobs, 64, true),
+            1,
+            "a resource only one test may hold at a time is a resource no two tests may hold, \
+             whatever {jobs:?} asked for"
+        );
+    }
 }
 
 #[test]

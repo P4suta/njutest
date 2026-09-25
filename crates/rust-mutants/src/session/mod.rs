@@ -96,6 +96,23 @@ impl Locator {
             && self.line.is_none_or(|wanted| wanted == place.line)
     }
 
+    /// How a claim written as this locator is named to a reader: every field that tells it apart from another, the line included.
+    #[must_use]
+    pub fn name(&self) -> String {
+        let Self {
+            path,
+            item,
+            rule,
+            original,
+            line,
+            count: _,
+        } = self;
+        match line {
+            Some(line) => format!("{path} {item} {rule} {original:?} @{line}"),
+            None => format!("{path} {item} {rule} {original:?}"),
+        }
+    }
+
     /// The locator a reader writes on a command line, or nothing when the text is not one.
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {

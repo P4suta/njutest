@@ -696,10 +696,11 @@ fn the_report_boundary_rejects_unknown_fields_and_closed_state_values() {
 #[test]
 fn the_report_boundary_rejects_duplicate_keys() {
     let encoded = base().to_string();
-    let duplicated = encoded.replacen(
-        "\"schema_version\":2",
-        "\"schema_version\":2,\"schema_version\":2",
-        1,
+    let key = format!("\"schema_version\":{}", xtask::engineaudit::SCHEMA_VERSION);
+    let duplicated = encoded.replacen(&key, &format!("{key},{key}"), 1);
+    assert_ne!(
+        duplicated, encoded,
+        "the duplicate was planted, so the refusal below is about it"
     );
     let error = xtask::engineaudit::audit("duplicate.json", &duplicated, &Evidence::default())
         .expect_err("a duplicate key must not silently choose a winner");
@@ -1693,6 +1694,33 @@ fn a_filter_decision_needs_a_select_record_and_no_route_for_an_unvalidated_mutan
     assert!(
         violations(&audit, Layer::Proofs).is_empty(),
         "the select record agrees with the report: {audit}"
+    );
+}
+
+#[test]
+fn the_audit_reads_the_version_and_the_standings_the_schema_file_names() {
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(include_str!(
+        "../../schema/rust-mutants-run-report-v1.json"
+    ))
+    .expect("the committed run-report schema");
+    assert_eq!(
+        schema["properties"]["schema_version"]["const"].as_u64(),
+        Some(xtask::engineaudit::SCHEMA_VERSION),
+        "the audit re-decides the version of the report the schema file describes, and is kept \
+         apart from the engine's constant so that it stays a second reading"
+    );
+    let named: std::collections::BTreeSet<&str> = schema
+        .pointer("/properties/expectations/items/properties/standing/enum")
+        .and_then(serde_json::Value::as_array)
+        .expect("the standing enum")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    let known: std::collections::BTreeSet<&str> =
+        xtask::engineaudit::CLAIM_STANDINGS.into_iter().collect();
+    assert_eq!(
+        known, named,
+        "every standing the schema allows is one the audit knows how to re-decide"
     );
 }
 

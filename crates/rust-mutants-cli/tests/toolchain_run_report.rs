@@ -92,7 +92,7 @@ fn a_whole_run_judges_every_mutant_scores_the_workspace_and_writes_the_report() 
 
     let document = stored(&fixture);
     assert_eq!(document["document_type"], "rust-mutants/run-report");
-    assert_eq!(document["schema_version"], 2);
+    assert_eq!(document["schema_version"], 3);
     assert_eq!(document["run"]["exit_code"], 1);
     assert!(!document["run"]["interrupted"].as_bool().expect("a flag"));
     assert_eq!(document["selection"]["tier"], "all");
@@ -1419,4 +1419,152 @@ fn a_claim_on_several_mutations_split_across_shards_merges_to_what_the_whole_run
             stderr(&merged_output)
         );
     }
+}
+
+#[test]
+fn claims_a_line_tells_apart_are_two_claims_and_a_mutant_two_claims_name_is_refused() {
+    let fixture = Fixture::copy("fixture-families");
+    let claim = |line: Option<u32>, count: Option<u32>, reason: &str| {
+        let line = line.map_or_else(String::new, |line| format!("line = {line}\n"));
+        let count = count.map_or_else(String::new, |count| format!("count = {count}\n"));
+        format!(
+            "\n[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"results\"\nrule = \
+             \"question-to-unwrap\"\noriginal = \"?\"\n{line}{count}outcome = \
+             \"killed\"\nreason = \"{reason}\"\n"
+        )
+    };
+    let narrowed = [
+        "run",
+        "--offline",
+        "--locked",
+        "--include",
+        "src/lib.rs",
+        "--operator",
+        "question-to-unwrap",
+    ];
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        format!(
+            "version = 1\n{}{}",
+            claim(Some(47), None, "the parse a caller can see"),
+            claim(Some(48), None, "the parse whose value is thrown away")
+        ),
+    )
+    .expect("write the configuration");
+    let output = against(&fixture, &narrowed);
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "two claims on one item that a line tells apart are two claims, not one written twice: {}",
+        stderr(&output)
+    );
+    let stored = stored(&fixture);
+    let claims: Vec<(String, String)> = stored["expectations"]
+        .as_array()
+        .expect("expectations")
+        .iter()
+        .map(|one| (one["id"].to_string(), one["mutant"].to_string()))
+        .collect();
+    assert_eq!(claims.len(), 2, "{claims:?}");
+    assert!(
+        claims.first().map(|one| &one.0) != claims.get(1).map(|one| &one.0)
+            && claims.first().map(|one| &one.1) != claims.get(1).map(|one| &one.1),
+        "each is named apart in the report and answers for its own mutation: {claims:?}"
+    );
+
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        format!(
+            "version = 1\n{}{}",
+            claim(None, Some(2), "both parses"),
+            claim(Some(47), None, "the parse a caller can see")
+        ),
+    )
+    .expect("write the configuration");
+    let overlapping = against(&fixture, &narrowed);
+    assert_eq!(
+        overlapping.status.code(),
+        Some(2),
+        "a mutation two claims both name has two reasons, which a report cannot audit: {}",
+        stderr(&overlapping)
+    );
+    assert!(
+        stderr(&overlapping).contains("RM0004") && stderr(&overlapping).contains("@47"),
+        "the refusal is the configuration's, and names the mutation both claims hold: {}",
+        stderr(&overlapping)
+    );
+}
+
+#[test]
+fn a_claim_on_mutations_the_selection_left_out_is_unjudged_and_no_finding() {
+    let fixture = Fixture::copy("fixture-families");
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        "version = 1\n\n[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"results\"\nrule = \
+         \"question-to-unwrap\"\noriginal = \"?\"\ncount = 2\noutcome = \"killed\"\nreason = \
+         \"both of them parse the same text\"\n",
+    )
+    .expect("write the configuration");
+    let output = against(
+        &fixture,
+        &["run", "--offline", "--locked", "--file", "src/lib.rs:55-58"],
+    );
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "{}",
+        stderr(&output)
+    );
+    let stored = stored(&fixture);
+    let claims: Vec<(String, String)> = stored["expectations"]
+        .as_array()
+        .expect("expectations")
+        .iter()
+        .map(|one| (one["standing"].to_string(), one["mutant"].to_string()))
+        .collect();
+    let findings: Vec<String> = stored["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .filter(|one| {
+            one["kind"]
+                .as_str()
+                .is_some_and(|kind| kind.ends_with("-expectation"))
+        })
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(
+        (claims, findings),
+        (
+            vec![("\"unjudged\"".to_owned(), "null".to_owned())],
+            Vec::new()
+        ),
+        "a run that decided none of a claim's mutations has not judged it: that is neither met nor \
+         stale, and nothing to find"
+    );
+}
+
+#[test]
+fn a_run_says_how_wide_it_measured_in_its_report_and_its_lines() {
+    let fixture = Fixture::copy("fixture-simple");
+    let output = against(&fixture, &["run", "--offline", "--locked", "--jobs", "all"]);
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "{}",
+        stderr(&output)
+    );
+    let report = stored(&fixture);
+    let asked = report
+        .pointer("/run/jobs/asked")
+        .and_then(serde_json::Value::as_str);
+    let used = report
+        .pointer("/run/jobs/used")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    assert_eq!(asked, Some("all"), "the report says what was asked for");
+    assert!(used >= 1, "and how many were measured at once: {used}");
+    let lines = against(&fixture, &["report"]);
+    assert!(
+        stdout(&lines).contains(&format!("jobs      {used} (all)\n")),
+        "a CI log says how wide the run measured without anybody opening the report: {}",
+        stdout(&lines)
+    );
 }

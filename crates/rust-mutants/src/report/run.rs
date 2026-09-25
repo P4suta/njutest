@@ -21,7 +21,7 @@ use crate::run::{
 pub const DOCUMENT_TYPE: &str = "rust-mutants/run-report";
 
 /// The version of that shape.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// The file one run writes under its own directory.
 pub const FILE_NAME: &str = "run-report-v1.json";
@@ -94,6 +94,18 @@ pub struct RunMeta {
     /// Which part of the catalog the run was about, absent for the whole of it.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub shard: Option<String>,
+    /// How wide the run measured.
+    pub jobs: JobsDocument,
+}
+
+/// How wide a run measured, as a report says it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JobsDocument {
+    /// What was asked for, as a person writes it: a count, `auto`, or `all`.
+    pub asked: String,
+    /// How many mutants were measured at once.
+    pub used: u32,
 }
 
 /// What a run counted.
@@ -368,7 +380,16 @@ pub struct FindingDocument {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum DocumentError {
-    /// The document names another shape or version.
+    /// The document was written to another version of this schema, which is a matter of when rather than a contradiction.
+    #[error(
+        "the run report was written as schema version {found}, and this release reads {}; run again to write one it reads",
+        SCHEMA_VERSION
+    )]
+    SchemaVersion {
+        /// The version the document says it was written to.
+        found: u32,
+    },
+    /// The document names another shape.
     #[error("the run report header has an invalid {field}")]
     Header {
         /// The invalid header field.
@@ -615,9 +636,18 @@ impl RunDocument {
     }
 
     fn validate_header(&self) -> Result<(), DocumentError> {
+        if self.schema_version != SCHEMA_VERSION {
+            return Err(DocumentError::SchemaVersion {
+                found: self.schema_version,
+            });
+        }
+        let width_is_one = match crate::run::Jobs::parse(&self.run.jobs.asked) {
+            Ok(_asked) => self.run.jobs.used > 0,
+            Err(_unknown) => false,
+        };
         for (valid, field) in [
+            (width_is_one, "jobs"),
             (self.document_type == DOCUMENT_TYPE, "document_type"),
-            (self.schema_version == SCHEMA_VERSION, "schema_version"),
             (!self.tool_version.is_empty(), "tool_version"),
             (
                 crate::id::is_digest(&self.workspace.workspace_digest),
@@ -774,7 +804,7 @@ impl ExpectationDocument {
     /// Refuses a claim whose fields do not carry the standing it states.
     pub fn finding(&self) -> Result<Option<FindingDocument>, DocumentError> {
         match (self.standing.as_str(), self.actual, &self.why) {
-            ("met", None, _) => Ok(None),
+            ("met", None, _) | ("unjudged", None, None) => Ok(None),
             ("stale", Some(actual), None) => Ok(Some(FindingDocument {
                 kind: FindingKind::StaleExpectation,
                 mutant: self.mutant.clone(),
@@ -991,6 +1021,11 @@ pub fn document(
             interrupted: run.interrupted,
             exit_code: run.exit_code(),
             shard: run.shard.map(|shard| shard.to_string()),
+            jobs: JobsDocument {
+                asked: run.width.asked.name(),
+                used: u32::try_from(run.width.used)
+                    .map_err(|_too_wide| crate::workspace::SessionError::RunCountOverflow)?,
+            },
         },
         workspace: crate::report::catalog::workspace_document(session)?,
         selection,
@@ -1048,14 +1083,17 @@ fn expectation_document(verified: &crate::run::Verified) -> ExpectationDocument 
         standing: standing_name(&verified.standing).to_owned(),
         actual: match &verified.standing {
             Standing::Stale { actual } => Some(*actual),
-            Standing::Met | Standing::Moved { .. } | Standing::Unmatched { .. } => None,
+            Standing::Met
+            | Standing::Moved { .. }
+            | Standing::Unmatched { .. }
+            | Standing::Unjudged => None,
         },
         why: match &verified.standing {
             Standing::Unmatched { why } => Some(why.clone()),
             Standing::Moved { from, to } => {
                 Some(format!("the mutation moved from line {from} to line {to}"))
             }
-            Standing::Met | Standing::Stale { .. } => None,
+            Standing::Met | Standing::Stale { .. } | Standing::Unjudged => None,
         },
     }
 }
@@ -1065,6 +1103,7 @@ const fn standing_name(standing: &Standing) -> &'static str {
         Standing::Met | Standing::Moved { .. } => "met",
         Standing::Stale { .. } => "stale",
         Standing::Unmatched { .. } => "unmatched",
+        Standing::Unjudged => "unjudged",
     }
 }
 
@@ -1263,18 +1302,23 @@ pub enum MergeError {
 /// Every claim the parts state, one each, answered as the whole run answers it.
 ///
 /// A claim is the same claim in every part, and each part judged the mutations it held in catalog order and named the first that contradicted the claim, or the first it held when none did.
-/// The whole run names the first in catalog order across all of them, so the merged claim is the part's answer that names the earliest contradicting mutation, or failing any, the earliest held one.
+/// The whole run names the first in catalog order across all of them, so the merged claim is the part's answer that names the earliest contradicting mutation, or failing any, the earliest met one, and is unjudged only where no part decided any of them.
 fn claims_of(parts: &[RunDocument], rows: &[RunMutantDocument]) -> Vec<ExpectationDocument> {
     let at = |one: &ExpectationDocument| {
+        let rank = match one.standing.as_str() {
+            "met" => 1,
+            "unjudged" => 2,
+            _ => 0,
+        };
         let position = match &one.mutant {
             Some(mutant) => match rows.iter().find(|row| row.id == *mutant) {
                 Some(row) => row.index,
                 None => u32::MAX,
             },
-            None if one.standing == "met" => u32::MAX,
-            None => 0,
+            None if rank == 0 => 0,
+            None => u32::MAX,
         };
-        (one.standing == "met", position)
+        (rank, position)
     };
     let mut claims: Vec<ExpectationDocument> = Vec::new();
     for one in parts.iter().flat_map(|part| part.expectations.iter()) {
@@ -1451,13 +1495,15 @@ mod tests {
             Standing::Unmatched {
                 why: "the identity names nothing".to_owned(),
             },
+            Standing::Unjudged,
         ];
         for standing in &every {
             match standing {
                 Standing::Met
                 | Standing::Moved { .. }
                 | Standing::Stale { .. }
-                | Standing::Unmatched { .. } => {}
+                | Standing::Unmatched { .. }
+                | Standing::Unjudged => {}
             }
         }
         every

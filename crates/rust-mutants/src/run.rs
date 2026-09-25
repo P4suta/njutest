@@ -68,10 +68,7 @@ impl Expectation {
     pub fn name(&self) -> String {
         match (&self.id, &self.locator) {
             (Some(id), _) => id.clone(),
-            (None, Some(locator)) => format!(
-                "{} {} {} {:?}",
-                locator.path, locator.item, locator.rule, locator.original
-            ),
+            (None, Some(locator)) => locator.name(),
             (None, None) => String::new(),
         }
     }
@@ -178,6 +175,8 @@ pub enum Standing {
         /// Why the identity resolved to nothing.
         why: String,
     },
+    /// The claim names mutations of this catalog, and this run decided none of them: a selection left them out, another shard holds them, or the run stopped first.
+    Unjudged,
 }
 
 /// One declared expectation, as the run left it.
@@ -432,6 +431,17 @@ pub struct Run {
     pub shard: Option<Shard>,
     /// How long the executions took together.
     pub duration: Duration,
+    /// How wide the run measured: what was asked for, and how many at once that came to on this machine.
+    pub width: Width,
+}
+
+/// How wide a run measured, resolved once so the run and what it reports cannot disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Width {
+    /// What the configuration or the command line asked for.
+    pub asked: Jobs,
+    /// How many mutants were measured at once.
+    pub used: usize,
 }
 
 impl Run {
@@ -540,7 +550,7 @@ impl Run {
         }
         for expectation in &self.expectations {
             match &expectation.standing {
-                Standing::Met | Standing::Moved { .. } => {}
+                Standing::Met | Standing::Moved { .. } | Standing::Unjudged => {}
                 Standing::Stale { actual } => findings.push(Finding {
                     kind: FindingKind::StaleExpectation,
                     mutant: expectation.mutant.clone(),
@@ -684,8 +694,7 @@ pub struct Options<'a> {
     /// `None` asks nothing.
     pub equivalence: Option<&'a Equivalence<'a>>,
     /// How many mutants to measure at once.
-    /// Zero is [`jobs`]'s own answer.
-    pub jobs: usize,
+    pub jobs: Jobs,
     /// Further arguments for the harness.
     pub args: &'a [String],
     /// Which part of the catalog this run is about.
@@ -780,6 +789,29 @@ pub struct Reusing<'a> {
     pub keyed: &'a crate::outcomes::Keyed,
     /// This run, which is what a record it writes names.
     pub run_id: &'a str,
+}
+
+/// The part of a catalog one run answers for: the part a shard holds, and whether the run's own selection narrowed the catalog to some of the project's files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Scope {
+    /// The part of the catalog this run holds, when it holds only one.
+    pub shard: Option<Shard>,
+    /// Whether the catalog was built from only the files this run selected, such as a change set, so a claim on another file was never asked about.
+    pub narrowed: bool,
+}
+
+impl Scope {
+    /// The part a run answers for: the part `shard` holds, of a catalog its own selection did or did not narrow.
+    #[must_use]
+    pub const fn of(shard: Option<Shard>, narrowed: bool) -> Self {
+        Self { shard, narrowed }
+    }
+
+    /// A run that answers for the whole catalog it was built from.
+    pub const WHOLE: Self = Self {
+        shard: None,
+        narrowed: false,
+    };
 }
 
 /// One part of a catalog, for a run that shares the work with others.
@@ -950,11 +982,15 @@ pub fn run<O: Observer>(
         });
         unselected.push(unexecuted(mutant, NotRunReason::Unselected));
     }
-    observer.starting(count(places.len())?);
-    let judged = if jobs(options.jobs) == 1 {
+    let width = Width {
+        asked: options.jobs,
+        used: options.jobs.resolve(),
+    };
+    observer.starting(count(places.len())?, width);
+    let judged = if width.used == 1 {
         serially(session, &places, options, (cancel, observer))?
     } else {
-        pool::judge(session, &places, options, (cancel, observer))?
+        pool::judge(session, &places, options, (cancel, observer, width.used))?
     };
     observer.finished(started.elapsed());
     let mut judged = judged;
@@ -979,6 +1015,7 @@ pub fn run<O: Observer>(
         interrupted: interrupted || cancel.is_cancelled(),
         shard: options.shard,
         duration: started.elapsed(),
+        width,
     })
 }
 
@@ -1012,6 +1049,31 @@ fn addressed<'s>(
         (to != from).then_some(Standing::Moved { from, to })
     });
     Ok((mutants, moved))
+}
+
+/// Whether the file a claim names is one this run's catalog was built from rather than one its selection left out; a claim by identity names no file, so a narrowed run cannot say.
+fn scanned(session: &Session, expectation: &Expectation) -> bool {
+    expectation.locator.as_ref().is_some_and(|locator| {
+        session.files().iter().any(|file| {
+            file.path == locator.path
+                && file.whole_file != Some(crate::syntax::SkipReason::Excluded)
+        })
+    })
+}
+
+/// Whether this run decided the mutation `id`: a row it did not leave out, stop short of, or never get to.
+fn decided_here(judged: &[Judged], id: &str) -> bool {
+    judged.iter().find(|one| one.id == id).is_none_or(|one| {
+        !(one.outcome == Outcome::NotRun
+            && matches!(
+                one.not_run_reason,
+                Some(
+                    NotRunReason::Unselected
+                        | NotRunReason::StoppedEarly
+                        | NotRunReason::Interrupted
+                )
+            ))
+    })
 }
 
 /// What the run says about every mutant one claim names, and which of them decided it.
@@ -1102,16 +1164,133 @@ pub struct Equivalence<'a> {
     pub options: crate::equivalence::ProveOptions,
 }
 
-/// How many mutants a run measures at once.
-/// Zero is the default: as many as the machine has, capped at four.
-#[must_use]
-pub fn jobs(configured: usize) -> usize {
-    if configured > 0 {
-        return configured;
+/// How many mutants a run measures at once, as a person asked for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Jobs {
+    /// Exactly this many.
+    Count(std::num::NonZeroUsize),
+    /// As many as the machine has, capped at [`DEFAULT_JOBS`], which is what a machine a person is also using wants.
+    Auto,
+    /// As many as the machine has, which is what a CI runner doing nothing else wants.
+    All,
+}
+
+/// Why a text is not a number of jobs.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum JobsError {
+    /// Zero jobs would measure nothing, and `auto` says what a zero used to mean.
+    #[error(
+        "0 jobs would measure nothing; write `auto` for as many as the machine has, capped at {DEFAULT_JOBS}, or `all` for every one"
+    )]
+    Zero,
+    /// The text is neither a count nor a word this release knows.
+    #[error("{text:?} is not a number of jobs; write a count, `auto`, or `all`")]
+    Unknown {
+        /// What was written.
+        text: String,
+    },
+}
+
+impl JobsError {
+    /// The stable code of this failure.
+    #[must_use]
+    pub const fn code(&self) -> crate::error::ErrorCode {
+        match self {
+            Self::Zero | Self::Unknown { .. } => crate::error::CONFIG_INVALID,
+        }
     }
-    match std::thread::available_parallelism() {
-        Ok(cores) => cores.get().min(DEFAULT_JOBS),
-        Err(_unavailable) => 1,
+}
+
+impl Jobs {
+    /// The number of jobs `text` names: a count, `auto`, or `all`.
+    ///
+    /// # Errors
+    /// See [`JobsError`].
+    pub fn parse(text: &str) -> Result<Self, JobsError> {
+        match text {
+            "auto" => Ok(Self::Auto),
+            "all" => Ok(Self::All),
+            _ => match text.parse::<usize>() {
+                Ok(count) => Self::count(count),
+                Err(_not_a_count) => Err(JobsError::Unknown {
+                    text: text.to_owned(),
+                }),
+            },
+        }
+    }
+
+    /// Exactly `count` jobs.
+    ///
+    /// # Errors
+    /// [`JobsError::Zero`] for zero.
+    pub fn count(count: usize) -> Result<Self, JobsError> {
+        std::num::NonZeroUsize::new(count)
+            .map(Self::Count)
+            .ok_or(JobsError::Zero)
+    }
+
+    /// How many mutants are measured at once on a machine that offers `available` processors.
+    #[must_use]
+    pub fn resolve_on(self, available: usize) -> usize {
+        match self {
+            Self::Count(count) => count.get(),
+            Self::Auto => available.clamp(1, DEFAULT_JOBS),
+            Self::All => available.max(1),
+        }
+    }
+
+    /// How many mutants are measured at once on this machine; one where it cannot say how many processors it has.
+    #[must_use]
+    pub fn resolve(self) -> usize {
+        match std::thread::available_parallelism() {
+            Ok(cores) => self.resolve_on(cores.get()),
+            Err(_unavailable) => self.resolve_on(1),
+        }
+    }
+
+    /// How a person writes it.
+    #[must_use]
+    pub fn name(self) -> String {
+        match self {
+            Self::Count(count) => count.to_string(),
+            Self::Auto => "auto".to_owned(),
+            Self::All => "all".to_owned(),
+        }
+    }
+}
+
+impl serde::Serialize for Jobs {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Count(count) => serializer
+                .serialize_u64(u64::try_from(count.get()).map_err(serde::ser::Error::custom)?),
+            Self::Auto | Self::All => serializer.serialize_str(&self.name()),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Jobs {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Written;
+        impl serde::de::Visitor<'_> for Written {
+            type Value = Jobs;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a count of jobs, `auto`, or `all`")
+            }
+            fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Jobs, E> {
+                let count = usize::try_from(value).map_err(E::custom)?;
+                Jobs::count(count).map_err(E::custom)
+            }
+            fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Jobs, E> {
+                let count = usize::try_from(value).map_err(E::custom)?;
+                Jobs::count(count).map_err(E::custom)
+            }
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Jobs, E> {
+                Jobs::parse(value).map_err(E::custom)
+            }
+        }
+        deserializer.deserialize_any(Written)
     }
 }
 
@@ -1380,9 +1559,9 @@ mod pool {
         session: &Session,
         places: &[&Mutant],
         options: &Options<'_>,
-        watching: (&Cancel, &mut O),
+        watching: (&Cancel, &mut O, usize),
     ) -> Result<Vec<Judged>, EngineError> {
-        let (cancel, observer) = watching;
+        let (cancel, observer, workers) = watching;
         let total =
             u32::try_from(places.len()).map_err(|_overflow| SessionError::WorkerQueueTooLarge {
                 workers: places.len(),
@@ -1390,7 +1569,7 @@ mod pool {
         if places.is_empty() {
             return Ok(Vec::new());
         }
-        let worker_count = super::jobs(options.jobs).min(places.len());
+        let worker_count = workers.min(places.len());
         let capacity = worker_count
             .checked_mul(2)
             .ok_or(SessionError::WorkerQueueTooLarge {
@@ -1480,8 +1659,8 @@ fn route(session: &Session, mutant: &Mutant, judged: &mut Judged) {
 
 /// What a caller hears while a run happens.
 pub trait Observer {
-    /// The run is about to judge `total` mutants.
-    fn starting(&mut self, _total: u32) {}
+    /// The run is about to judge `total` mutants, `width` of them at once.
+    fn starting(&mut self, _total: u32, _width: Width) {}
 
     /// A mutant is about to be judged.
     fn started(&mut self, _mutant: &Mutant) {}
@@ -1741,18 +1920,16 @@ fn keep(mutant: &Mutant, options: &Options<'_>, judged: &Judged) -> Result<(), E
         return Ok(());
     }
     let mutant_id = crate::id::HexDigest::try_from(mutant.id.as_str())?;
-    reusing.store.put(
-        &reusing.keyed.key(&mutant_id),
-        &crate::outcomes::Record {
-            schema: crate::outcomes::SCHEMA.to_owned(),
-            mutant: mutant_id,
-            outcome,
-            target: judged.target.clone(),
-            tests_run: judged.tests_run,
-            failed_tests: judged.failed_tests.clone(),
-            run_id: reusing.run_id.to_owned(),
-        },
-    )?;
+    reusing.store.put(&crate::outcomes::Record {
+        schema: crate::outcomes::SCHEMA.to_owned(),
+        mutant: mutant_id,
+        outcome,
+        target: judged.target.clone(),
+        tests_run: judged.tests_run,
+        failed_tests: judged.failed_tests.clone(),
+        run_id: reusing.run_id.to_owned(),
+        keyed: reusing.keyed.clone(),
+    })?;
     Ok(())
 }
 
@@ -1789,12 +1966,33 @@ pub fn verify(
     session: &Session,
     expectations: &[Expectation],
     judged: &mut [Judged],
-    shard: Option<Shard>,
+    scope: Scope,
 ) -> Result<Vec<Verified>, SessionError> {
+    let Scope { shard, narrowed } = scope;
     let mut verified = Vec::with_capacity(expectations.len());
+    let mut reasons: std::collections::BTreeMap<u32, String> = std::collections::BTreeMap::new();
     for expectation in expectations {
         let resolved = addressed(session, expectation);
+        let named: &[&Mutant] = match &resolved {
+            Ok((mutants, _moved)) => mutants,
+            Err(_unresolved) => &[],
+        };
+        for mutant in named {
+            if let Some(first) = reasons.insert(mutant.index, expectation.name()) {
+                return Err(SessionError::ExpectationsOverlap {
+                    first,
+                    second: expectation.name(),
+                    mutant: session.position(mutant).map_or_else(
+                        || mutant.display_id.to_string(),
+                        |at| format!("{}@{}", mutant.display_id, at.line),
+                    ),
+                });
+            }
+        }
         let (covered, mutant, standing) = match resolved {
+            Err(_beyond) if narrowed && !scanned(session, expectation) => {
+                (0, None, Standing::Unjudged)
+            }
             Err(why) => (
                 0,
                 None,
@@ -1809,13 +2007,19 @@ pub fn verify(
                     .iter()
                     .filter(|mutant| shard.is_none_or(|part| part.holds(mutant.index)))
                     .map(|mutant| mutant.id.to_string())
+                    .filter(|id| decided_here(judged, id))
                     .collect();
-                let (named, standing) = standing_of(judged, expectation.outcome, &ids);
+                let (named, standing) = if ids.is_empty() {
+                    (None, Standing::Unjudged)
+                } else {
+                    standing_of(judged, expectation.outcome, &ids)
+                };
                 let standing = match standing {
                     Standing::Met => moved.unwrap_or(Standing::Met),
                     held @ (Standing::Moved { .. }
                     | Standing::Stale { .. }
-                    | Standing::Unmatched { .. }) => held,
+                    | Standing::Unmatched { .. }
+                    | Standing::Unjudged) => held,
                 };
                 if matches!(standing, Standing::Met | Standing::Moved { .. }) {
                     for one in judged.iter_mut().filter(|one| ids.contains(&one.id)) {
