@@ -3,7 +3,7 @@
   "report": {
     "schema": "njutest-assurance-report-v1",
     "schema_version": 2,
-    "run_id": "20260924t155030300z-00acc3",
+    "run_id": "20260925t144423242z-0a6b6a",
     "run_kind": "full",
     "contract": "standard-v1",
     "tool": {
@@ -11,12 +11,12 @@
       "rust_mutants": "0.1.0"
     },
     "repository": {
-      "root_name": "shardfx",
+      "root_name": "fixture-assured",
       "packages": [
         "fixture-assured"
       ],
       "workspace_digest": "98d07f238cbc4c6c37dcea8164e4a2d80b09feff1cd9016ecebe63e274462b26",
-      "configuration_digest": "b133999f6d10e13b29c0ad8146ba147e9ccc7d31c5ddf28efa3348531ecd2b63",
+      "configuration_digest": "bd7a7138ee28fca32a68b2d552e5b7dee7942a1398cb9495aa056ff2db8e99d1",
       "git": {
         "available": false,
         "commit": "unavailable",
@@ -27,7 +27,7 @@
       }
     },
     "provenance": {
-      "identity": "7135194f322b6d800f9b2c5a3836a90851da787e08ee3026273a6b8977d5c2f5",
+      "identity": "80e15e764a1af3a9e9ea8c4deddba816f3cb089b17ef7eaec1c157515d130b43",
       "cached": false,
       "source_run_id": null
     },
@@ -46,14 +46,14 @@
       "kind": "merged",
       "sources": [
         {
-          "run_id": "20260924t154519939z-0163e3",
+          "run_id": "20260925t144413757z-0a5ee2",
           "shard": {
             "index": 1,
             "of": 2
           }
         },
         {
-          "run_id": "20260924t154523496z-017bfd",
+          "run_id": "20260925t144418782z-0a6536",
           "shard": {
             "index": 2,
             "of": 2
@@ -76,23 +76,23 @@
         },
         "parts": [
           {
-            "run_id": "20260924t154519939z-0163e3-b0000000000",
+            "run_id": "20260925t144413757z-0a5ee2-b0000000000",
             "part": {
               "kind": "shard",
               "index": 1,
               "of": 2
             },
             "toolchain": {
-              "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-              "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
-              "target": "aarch64-apple-darwin",
-              "os": "macos",
-              "arch": "aarch64"
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+              "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+              "target": "x86_64-unknown-linux-gnu",
+              "os": "linux",
+              "arch": "x86_64"
             },
             "timing": {
-              "started": "2026-09-24T15:45:19.939789Z",
-              "finished": "2026-09-24T15:45:23.459631Z",
-              "duration_ms": 3519
+              "started": "2026-09-25T14:44:13.757389573Z",
+              "finished": "2026-09-25T14:44:18.739203288Z",
+              "duration_ms": 4981
             },
             "accounting": {
               "targets": {
@@ -145,7 +145,7 @@
                 "name": "fixture-assured/test/doubling",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 30,
+                "duration_ms": 25,
                 "message": null
               },
               {
@@ -153,7 +153,7 @@
                 "name": "fixture-assured/lib/fixture_assured",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 28,
+                "duration_ms": 25,
                 "message": null
               }
             ],
@@ -269,26 +269,27 @@
                 "state": "held",
                 "target": "fixture-assured/test/doubling"
               }
-            ]
+            ],
+            "knobs": []
           },
           {
-            "run_id": "20260924t154523496z-017bfd-b0000000000",
+            "run_id": "20260925t144418782z-0a6536-b0000000000",
             "part": {
               "kind": "shard",
               "index": 2,
               "of": 2
             },
             "toolchain": {
-              "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-              "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
-              "target": "aarch64-apple-darwin",
-              "os": "macos",
-              "arch": "aarch64"
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+              "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+              "target": "x86_64-unknown-linux-gnu",
+              "os": "linux",
+              "arch": "x86_64"
             },
             "timing": {
-              "started": "2026-09-24T15:45:23.496077Z",
-              "finished": "2026-09-24T15:45:27.077297Z",
-              "duration_ms": 3581
+              "started": "2026-09-25T14:44:18.782592885Z",
+              "finished": "2026-09-25T14:44:23.201170822Z",
+              "duration_ms": 4418
             },
             "accounting": {
               "targets": {
@@ -341,7 +342,7 @@
                 "name": "fixture-assured/test/doubling",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 28,
+                "duration_ms": 25,
                 "message": null
               },
               {
@@ -465,7 +466,8 @@
                 "state": "held",
                 "target": "fixture-assured/test/doubling"
               }
-            ]
+            ],
+            "knobs": []
           }
         ]
       }
