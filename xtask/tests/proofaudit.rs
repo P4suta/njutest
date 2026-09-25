@@ -603,6 +603,7 @@ fn duplicate_report_keys_are_malformed_before_any_redecision() {
         let nothing = xtask::proofaudit::Recorded {
             runner: None,
             engines: &[],
+            outputs: &[],
         };
         let error = xtask::proofaudit::audit_with("duplicate.json", &document, nothing, None)
             .expect_err("duplicate keys never reach proof redecision");
@@ -2043,6 +2044,7 @@ fn with_engine(document: serde_json::Value, engine: Vec<serde_json::Value>) -> A
         document,
         events: Some(routes()),
         engine: Some(engine),
+        outputs: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
@@ -2181,6 +2183,7 @@ fn a_complete_report_is_re_decided_as_the_one_build_it_measured_whole() {
         document,
         events: Some(routes()),
         engine: sentinel::clean().engine,
+        outputs: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
@@ -2671,6 +2674,7 @@ fn repair_audit(repaired: &[&str], engine: Vec<serde_json::Value>) -> Vec<String
         document: with(sentinel::drifted("moved")),
         events: Some(events),
         engine: Some(engine),
+        outputs: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
@@ -2788,6 +2792,7 @@ fn two_repairs(second_was: &str) -> Vec<String> {
         ] })),
         events: Some(events),
         engine: Some(engine),
+        outputs: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
@@ -2817,4 +2822,29 @@ fn a_second_repair_starts_from_what_the_first_one_made_it() {
         "a second repair that starts from the route rather than the first repair is refused: \
          {said:?}"
     );
+}
+
+#[test]
+fn the_audit_comes_to_the_verdict_the_published_contract_gives_every_case() {
+    let contract = xtask::strictjson::from_str(
+        &std::fs::read_to_string(gates::workspace_root().join("schema/miri-output.json"))
+            .expect("the published contract"),
+    )
+    .expect("the contract is JSON");
+    let cases = contract
+        .get("cases")
+        .and_then(serde_json::Value::as_array)
+        .expect("the contract's cases");
+    for case in cases {
+        let field = |key: &str| case.get(key).and_then(serde_json::Value::as_str);
+        let name = field("name").expect("a case is named");
+        assert_eq!(
+            Some(xtask::proofaudit::soundness::verdict(
+                field("output").expect("a case has output"),
+                case.get("status").and_then(serde_json::Value::as_i64),
+            )),
+            field("came"),
+            "{name}: the audit and the runner come to what the contract says of this case"
+        );
+    }
 }

@@ -376,6 +376,11 @@ Removing it is not enough on its own, since an instrumented binary with no path 
 So a run puts a path of its own in its place, under the temporary directory that execution owns.
 The coverage pass puts its own path there instead, per target.
 
+Every child, a test process or any other, is also told `CARGO_TERM_COLOR=never`, `CARGO_TERM_QUIET=false`, and `CARGO_TERM_VERBOSE=false`, over whatever its environment says.
+The engine reads what its children write, and a cargo that paints its status lines, drops them, or adds its own `Running` lines for each compiler call would be read as a different run.
+A CI that exports `CARGO_TERM_COLOR=always` did exactly that to the Miri reading, which counted no test binary started because every `Running` line began with an escape sequence.
+The runner sets these on every command it builds (`runner::PRESENTATION`), so no caller can forget them.
+
 Only the first three are refused on the command line.
 An instrumented engine binary is the narrow exception: its composition root embeds the catalog digest Cargo supplied as `RUST_MUTANTS_COMPILED_CATALOG`, and accepts an inherited `ACTIVE+CATALOG` or `TOUCH+CATALOG` pair only when that digest matches and only one mode is present.
 This makes a child process part of the outer measurement without licensing a normal binary or a stale environment.

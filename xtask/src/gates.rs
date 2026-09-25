@@ -2152,6 +2152,10 @@ pub fn proofaudit(
         .map(engine_recordings)
         .transpose()?
         .unwrap_or_default();
+    let outputs = match (trace, recorded.as_ref()) {
+        (Some(directory), Some((_path, text))) => kept_outputs(directory, text),
+        (None, _) | (_, None) => Vec::new(),
+    };
     proofaudit::audit_with(
         &label,
         &text,
@@ -2160,9 +2164,68 @@ pub fn proofaudit(
                 .as_ref()
                 .map(|(recording_path, text)| (recording_path.as_str(), text.as_str())),
             engines: &engines,
+            outputs: &outputs,
         },
         Some(run),
     )
+}
+
+/// What the recording kept of each interpreter run in the runner's recording `text`, read from beside it in `directory` and held to the size and digest its exec record gives; a copy that is cut, missing, or unreadable is left out, which the audit says it could not re-derive.
+fn kept_outputs(directory: &Path, text: &str) -> Vec<(String, proofaudit::soundness::Kept)> {
+    let mut kept = Vec::new();
+    for line in text.lines() {
+        let Ok(event) = crate::strictjson::from_str(line) else {
+            continue;
+        };
+        let Some(exec) = event.pointer("/payload/exec") else {
+            continue;
+        };
+        if !proofaudit::soundness::interprets(exec)
+            && !exec
+                .get("argv")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|argv| argv.iter().any(|word| word == "--version"))
+        {
+            continue;
+        }
+        if exec
+            .get("output_truncated")
+            .and_then(serde_json::Value::as_bool)
+            != Some(false)
+        {
+            continue;
+        }
+        let Some(relative) = exec.get("output_path").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        match std::fs::read(directory.join(relative)) {
+            Ok(bytes) => kept.push((relative.to_owned(), held_to(exec, bytes))),
+            Err(_not_kept) => {}
+        }
+    }
+    kept
+}
+
+/// A kept output held to the size and digest `exec` gives it.
+fn held_to(exec: &serde_json::Value, bytes: Vec<u8>) -> proofaudit::soundness::Kept {
+    use sha2::Digest as _;
+    let digest = hex::encode(sha2::Sha256::digest(&bytes));
+    let size = match u64::try_from(bytes.len()) {
+        Ok(size) => Some(size),
+        Err(_beyond_any_record) => None,
+    };
+    let described = exec
+        .get("output_sha256")
+        .and_then(serde_json::Value::as_str)
+        == Some(digest.as_str())
+        && exec.get("output_bytes").and_then(serde_json::Value::as_u64) == size;
+    if !described {
+        return proofaudit::soundness::Kept::Mismatched;
+    }
+    match String::from_utf8(bytes) {
+        Ok(text) => proofaudit::soundness::Kept::Whole(text),
+        Err(_not_text) => proofaudit::soundness::Kept::NotText,
+    }
 }
 
 /// Every configured build's engine recording under a runner recording, in namespace order, each as its path and its text.

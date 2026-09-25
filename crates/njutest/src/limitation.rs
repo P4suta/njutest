@@ -36,6 +36,9 @@ pub const MIRI_UNSUPPORTED: &str = "miri-unsupported";
 /// The interpreter ran out of the time it was given, which is not a claim that it found nothing.
 pub const MIRI_TIMED_OUT: &str = "miri-timed-out";
 
+/// The interpreter ended without a test result, so what its status says is about the interpreter and not the suite.
+pub const MIRI_RAN_NO_TEST: &str = "miri-ran-no-test";
+
 /// A sanitizer the run was asked for could not be run, so nothing it would have found is claimed.
 pub const SANITIZER_UNAVAILABLE: &str = "sanitizer-unavailable";
 
@@ -75,7 +78,7 @@ pub const KNOB_NOT_COMPARED: &str = "knob-not-compared";
 
 /// Every limitation this runner states of its own, in the order a reader meets them in a run.
 #[cfg(feature = "testkit")]
-pub const ALL: [&str; 23] = [
+pub const ALL: [&str; 24] = [
     WORKSPACE_DIGEST_NOT_COMPUTED,
     TREE_WRITTEN_DURING_MEASUREMENT,
     RESUMED_FROM_CHECKPOINT,
@@ -87,6 +90,7 @@ pub const ALL: [&str; 23] = [
     SOUNDNESS_SOURCE_UNREADABLE,
     MIRI_UNSUPPORTED,
     MIRI_TIMED_OUT,
+    MIRI_RAN_NO_TEST,
     SANITIZER_UNAVAILABLE,
     SANITIZER_STANDARD_LIBRARY_NOT_INSTRUMENTED,
     FUZZ_NOT_EXECUTED,

@@ -1309,13 +1309,10 @@ mod tests {
     use serde_json::json;
     use std::path::Path;
 
-    #[cfg(unix)]
     use super::Artifact;
-    #[cfg(unix)]
     use super::ArtifactFailure;
     use super::{Attempt, Invocation, Process, ToolFailure, Undecided, run};
     use crate::assure::model::result::Decision;
-    #[cfg(unix)]
     use crate::assure::model::result::Protocol;
     use crate::assure::model::tests::{generated, simple_source};
     use crate::assure::model::{
@@ -1330,7 +1327,6 @@ mod tests {
         source: std::path::PathBuf,
         cargo: std::path::PathBuf,
         artifact: std::path::PathBuf,
-        #[cfg(unix)]
         argv: std::path::PathBuf,
         target: std::path::PathBuf,
         harness: Harness,
@@ -1372,7 +1368,6 @@ mod tests {
                 fake_executable(&bundle.join(binary));
             }
             let artifact = temporary.path().join("raw.json");
-            #[cfg(unix)]
             let argv = temporary.path().join("argv.txt");
             let target = temporary.path().join("kani-target");
             std::fs::create_dir_all(&target).expect("fresh Kani target directory");
@@ -1545,7 +1540,6 @@ mod tests {
         environment.push((name.into(), value));
     }
 
-    #[cfg(unix)]
     fn fake_cargo(path: &Path) {
         use std::os::unix::fs::PermissionsExt as _;
 
@@ -1614,7 +1608,6 @@ exit "$FAKE_KANI_EXIT"
         std::fs::set_permissions(path, permissions).expect("fake is executable");
     }
 
-    #[cfg(unix)]
     fn fake_executable(path: &Path) {
         use std::os::unix::fs::PermissionsExt as _;
 
@@ -1631,7 +1624,6 @@ exit "$FAKE_KANI_EXIT"
         panic!("the fake Kani bundle currently requires POSIX permissions");
     }
 
-    #[cfg(unix)]
     #[test]
     fn accepts_only_exit_coherent_affirmative_documents() {
         let proved_fixture = Fixture::new("Success", 0);
@@ -1683,7 +1675,6 @@ exit "$FAKE_KANI_EXIT"
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn malformed_and_stale_artifacts_fail_closed() {
         let mut malformed = Fixture::new("Success", 0);
@@ -1797,7 +1788,6 @@ exit "$FAKE_KANI_EXIT"
         assert!(!fixture.artifact.exists());
     }
 
-    #[cfg(unix)]
     #[test]
     fn retained_artifact_reader_rejects_empty_files_and_final_symlinks() {
         use std::os::unix::fs::symlink;
@@ -1817,7 +1807,6 @@ exit "$FAKE_KANI_EXIT"
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn generated_source_parent_symlinks_cannot_escape_the_workspace_boundary() {
         use std::os::unix::fs::symlink;
@@ -1838,7 +1827,6 @@ exit "$FAKE_KANI_EXIT"
         assert!(!fixture.artifact.exists());
     }
 
-    #[cfg(unix)]
     #[test]
     fn checker_and_versioned_bundle_parent_symlinks_are_refused() {
         use std::os::unix::fs::symlink;
@@ -1874,7 +1862,6 @@ exit "$FAKE_KANI_EXIT"
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn version_and_outer_timeout_are_fail_closed() {
         let mut wrong = Fixture::new("Success", 0);
@@ -1982,7 +1969,6 @@ exit "$FAKE_KANI_EXIT"
         }
     }
 
-    #[cfg(unix)]
     #[test]
     fn subject_cargo_alias_is_refused_even_though_the_checker_is_resolved_directly() {
         let fixture = Fixture::new("Success", 0);
@@ -2156,7 +2142,6 @@ exit "$FAKE_KANI_EXIT"
         }
     }
 
-    #[cfg(unix)]
     #[test]
     fn forced_cargo_configuration_environment_is_refused_before_checker_start() {
         let fixture = Fixture::new("Success", 0);
@@ -2180,7 +2165,6 @@ exit "$FAKE_KANI_EXIT"
         assert!(!fixture.artifact.exists());
     }
 
-    #[cfg(unix)]
     #[test]
     fn cargo_configuration_symlinks_and_nonfiles_are_refused() {
         use std::os::unix::fs::symlink;

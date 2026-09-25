@@ -176,6 +176,12 @@ The `executions` layer holds every mutation's reported outcome to the executions
 Before it, a report that called its survivor killed, and made its columns, findings, and verdict agree, drew no violation from any layer.
 Its planted defects are that kind of lie, told consistently, and a law in `xtask/tests/sentinel.rs` reads every outcome the report schema allows and requires a planted lie for each (`proofaudit::sentinel::lie`) that some layer refuses, so an outcome added to the schema is audited against its executions the day it arrives.
 
+The `soundness` layer re-derives what interpreting the suite came to from the interpreter's recorded run and the output the recording kept of it, and holds the report's `accounting.soundness.executed` and its findings about soundness to that in both directions.
+It reads that output as `schema/miri-output.json` publishes it, and the runner reads it the same way: each keeps its own copy of the markers, and a test in each crate holds that copy to the contract, so a marker changed in one reading and not the other fails a gate rather than a run.
+A kept output is read only once its size and SHA-256 are the ones its exec record gives, so a copy rewritten after the run is a violation rather than a reading.
+Output is read by its structure and never by a phrase anywhere in it: a failing test's captured output says nothing, a diagnostic is the interpreter's own `error: ` line, a result is libtest's exact summary, and a pass needs one for every binary that started; the contract's `cases` are outputs the runner and the audit must each come to the same verdict on.
+A report that says the suite was interpreted with no run of the interpreter recorded, or names a failing test under one that ran no test to a result, is a violation; an output that was cut or not kept is unaudited.
+
 `cargo xtask engine-audit <run-directory> [--trace <recording>] [--shard <report>…] [--ledger .rust-mutants.toml]` is the same rule for the engine's own runs.
 It reads that run's `run-report-v1.json` and re-decides it in fourteen layers, none of which calls the engine's code; among them:
 

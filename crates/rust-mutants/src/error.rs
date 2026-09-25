@@ -89,7 +89,9 @@ pub const ENVIRONMENT_RESERVED: ErrorCode = ErrorCode {
 pub const REPORT_MISSING: ErrorCode = ErrorCode {
     code: "RM0007",
     summary: "a stored run report that is not there or cannot be read",
-    remedy: Some("`rust-mutants report --list` names the runs that are stored under this root"),
+    remedy: Some(
+        "every run is a directory named for it in the configured reports directory (`reports/mutation` by default); `rust-mutants report` with no `--run` reads the newest",
+    ),
 };
 
 /// A file a command would write that is already there.

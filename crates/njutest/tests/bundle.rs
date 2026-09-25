@@ -183,7 +183,6 @@ fn a_tree_that_holds_only_directories_is_carried_as_nothing() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn one_unreadable_entry_refuses_the_whole_tree_instead_of_claiming_a_partial_bundle() {
     use std::os::unix::fs::symlink;
