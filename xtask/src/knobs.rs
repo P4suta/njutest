@@ -155,8 +155,8 @@ impl Started {
         let mut words: Vec<String> = self
             .environment
             .iter()
-            .map(|(name, value)| match value {
-                Some(value) => format!("{name}={value}"),
+            .map(|(name, value)| match value.as_deref() {
+                Some(text) => format!("{name}={text}"),
                 None => format!("{name}=<not text>"),
             })
             .collect();

@@ -461,11 +461,15 @@ pub(super) struct Building<'a> {
     pub(super) options: &'a PrepareOptions,
 }
 
-fn built(building: &Building<'_>) -> Result<Built, EngineError> {
+fn built(building: &Building<'_>) -> Result<(Built, crate::apparatus::Apparatus), EngineError> {
     let phase = building.trace.phase("build");
     let built = built_untraced(building)?;
     phase.end();
-    Ok(built)
+    let apparatus = crate::apparatus::Apparatus::survey(
+        built.0.iter().map(|target| target.executable.as_path()),
+        building.workspace.target_dir(),
+    );
+    Ok((built, apparatus))
 }
 
 /// The test binaries the instrumented build produced, and what running them once established.
@@ -909,7 +913,7 @@ pub fn prepare(
 
     let mut workspace = workspace;
     let written_by_a_test = resealed(&mut workspace, &sources)?;
-    let (targets, scratch, verified) = built(&Building {
+    let ((targets, scratch, verified), apparatus) = built(&Building {
         workspace: &workspace,
         cancel,
         trace: &trace,
@@ -927,14 +931,14 @@ pub fn prepare(
     let (packages, items) = attributed(&discovery);
     let item_refs = item_refs(&instrumented.items)?;
     let verified = narrowed(verified, instrumented.narrowing, instrumented.items.items);
-    let sources = prepared_sources(sources)?;
     Ok(Session {
+        apparatus,
         item_refs,
         catalog: discovery.catalog,
         files: discovery.files,
         skips: discovery.skips,
         claims: discovery.claims,
-        sources,
+        sources: prepared_sources(sources)?,
         packages,
         items,
         proofs: established.proofs,

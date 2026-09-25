@@ -675,6 +675,8 @@ impl Request {
 #[derive(Debug)]
 pub struct Session {
     workspace: Workspace,
+    /// The test executables the run starts, as the build left them, which every execution is checked against.
+    apparatus: crate::apparatus::Apparatus,
     catalog: Catalog,
     /// Every file the walk considered, in path order.
     files: Vec<FileReport>,
@@ -847,6 +849,16 @@ impl Session {
         let before = self.orphans();
         let started = std::time::SystemTime::now();
         let mut result = execute::exec(exec, context, cancel, &self.workspace.trace);
+        let changes = self.apparatus.changed();
+        if !changes.is_empty() {
+            return Err(SessionError::ApparatusChanged {
+                mutant: context
+                    .active
+                    .map_or_else(String::new, |(mutant, _catalog)| self.display_of(mutant)),
+                changes,
+            }
+            .into());
+        }
         result.entered = self.entered_by(log, &result, cancel);
         let ended = std::time::SystemTime::now();
         let unseen = self.uncontrolled(&exec.target().id)
@@ -860,6 +872,15 @@ impl Session {
             }
         }
         Ok(result)
+    }
+
+    /// The short name a person reads for the mutant whose full identity is `id`, or the identity itself where the catalog holds no such mutant.
+    fn display_of(&self, id: &str) -> String {
+        self.catalog
+            .mutants()
+            .iter()
+            .find(|mutant| mutant.id.as_str() == id)
+            .map_or_else(|| id.to_owned(), |mutant| mutant.display_id.to_string())
     }
 
     /// Whether a process of the tree may have run without the environment the run gave it while something ran from the first time to the second, which a directory that cannot be read cannot rule out.
@@ -1917,6 +1938,7 @@ impl Session {
         };
         let ran = quiet.shared(|| self.execute(request, running(false), cancel))??;
         let (first, mut asked) = (ran.taken, ran.asked);
+        let executed: Vec<String> = asked.iter().map(|one| one.target.clone()).collect();
         let (timeout, timeout_source) = self.timeout_for(request, &first.target)?;
         let attempts = match InitialAttempt::classify(first, cancel.is_cancelled()) {
             InitialAttempt::Final(first) => AttemptLedger::single(first),
@@ -1930,19 +1952,14 @@ impl Session {
         let judgement = Judgement {
             attempts,
             asked,
+            executed,
             timeout,
             timeout_source,
             route,
         };
-        let result = judgement.result();
-        self.workspace.trace.route(
-            judgement.route.record(
-                mutant,
-                judgement
-                    .route
-                    .executed(&result.target, result.outcome().detected()),
-            ),
-        );
+        self.workspace
+            .trace
+            .route(judgement.route.record(mutant, judgement.executed.clone()));
         Ok(judgement)
     }
 
@@ -2946,6 +2963,8 @@ pub struct Judgement {
     /// Every target that was actually asked, in the order they were asked, with what each answered.
     /// A target that reaches a mutation and is absent from this was never given the chance: one before it detected, or the run was cancelled.
     pub asked: Vec<MutantResult>,
+    /// Every target the first attempt ran, in the order it ran them, which is the route's account of the work: a recorded killer asked first is first here, and a retry is counted apart.
+    pub executed: Vec<String>,
     /// The budget the target that answered was given.
     pub timeout: Duration,
     /// Where that budget came from.
@@ -3156,7 +3175,7 @@ const fn completeness_of(
             | MutantConclusion::Unobserved
             | MutantConclusion::Errored => Completeness::Cut,
         },
-        Stopped::NotStarted
+        Stopped::NotStarted { .. }
         | Stopped::TimedOut { .. }
         | Stopped::Stalled { .. }
         | Stopped::Cancelled { .. }
@@ -3566,7 +3585,9 @@ const fn unreached() -> MutantResult {
         passed_tests: Vec::new(),
         ignored_tests: Vec::new(),
         leader: None,
-        stopped: execute::Stopped::NotStarted,
+        stopped: execute::Stopped::NotStarted {
+            cause: execute::StartFailure::NotAsked,
+        },
         lingered: false,
     }
 }

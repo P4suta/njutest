@@ -160,6 +160,8 @@ mod table {
         SessionNotBeside,
         /// The system gave no randomness for the nonce that ties a crash's notice to its execution.
         SessionNonceUnavailable,
+        /// A mutant's execution changed the test executables the run starts.
+        SessionApparatusChanged,
         /// A coverage export that could not be read.
         CoverageUnreadable,
         /// The LLVM tools the toolchain ships, not installed.
@@ -709,6 +711,14 @@ mod table {
                     ),
                     sealed: Sealed,
                 },
+                Self::SessionApparatusChanged => ErrorCode {
+                    code: "RM5011",
+                    summary: "a mutant's execution changed the test executables the run starts, so no answer after it would be about the tests",
+                    remedy: Some(
+                        "run the mutant it names alone with `rust-mutants run --mutant <id> --jobs 1` to confirm, then keep its tests from writing where the test binaries live, or skip it with a reason",
+                    ),
+                    sealed: Sealed,
+                },
                 Self::CoverageUnreadable => ErrorCode {
                     code: "RM6001",
                     summary: "a coverage export that could not be read",
@@ -907,6 +917,8 @@ pub(crate) const SESSION_UNKNOWN_MUTANT: ErrorCode = RmCode::SessionUnknownMutan
 pub(crate) const SESSION_UNKNOWN_TARGET: ErrorCode = RmCode::SessionUnknownTarget.error_code();
 pub(crate) const SESSION_NO_TARGETS: ErrorCode = RmCode::SessionNoTargets.error_code();
 pub(crate) const SESSION_WRITE_FAILED: ErrorCode = RmCode::SessionWriteFailed.error_code();
+pub(crate) const SESSION_APPARATUS_CHANGED: ErrorCode =
+    RmCode::SessionApparatusChanged.error_code();
 pub(crate) const SENTINEL_UNWRITABLE: ErrorCode = RmCode::SentinelUnwritable.error_code();
 pub(crate) const SENTINEL_OTHER_TOOLCHAIN: ErrorCode = RmCode::SentinelOtherToolchain.error_code();
 pub(crate) const SESSION_NOT_BESIDE: ErrorCode = RmCode::SessionNotBeside.error_code();

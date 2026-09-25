@@ -1344,7 +1344,10 @@ fn paired<'a>(
                 format!(
                     "the engine recorded a repair touch of {} against {}, and no repair record \
                      says that mutation was run again there",
-                    touch.mutant.as_deref().unwrap_or_default(),
+                    match touch.mutant.as_deref() {
+                        Some(mutant) => mutant,
+                        None => "a mutation it did not name",
+                    },
                     touch.target
                 ),
             );

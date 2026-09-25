@@ -29,10 +29,10 @@ The tree's own rule — what was not measured is not claimed as measured — sto
    - `unmeasured`, with why: the run was asked and could not measure the dimension at all, as when the tree with every fault guarded gives no baseline;
    - `not-asked`: the run could have measured it and did not;
    - `nothing-to-ask`, with why: the run looked and there was nothing to put, as in a tree with no `?` in a measured file;
-   Every record is placed as answered, a hole, or a class not spoken about by one exhaustive match over its decision, so a decision added later is one somebody places; `catalogued = answered + holes` holds by construction, and a count that would not fit is `unmeasured`.
-   A class not spoken about is one no run could put, such as an error type the engine does not make; what this machine lacked and another could put, such as a locale that is not installed, is a hole.
-   A column that holds records and none of them answered or open measured nothing, and is `unmeasured` rather than `measured` with a catalogue of zero; a tree with nothing to mutate, or a configuration that names no seam, is `nothing-to-ask`.
-   Where a report holds several builds, a column is every build's counts added where each measured the dimension, and otherwise the column of the build that established least: a hole in any build is a hole of all of them.
+     Every record is placed as answered, a hole, or a class not spoken about by one exhaustive match over its decision, so a decision added later is one somebody places; `catalogued = answered + holes` holds by construction, and a count that would not fit is `unmeasured`.
+     A class not spoken about is one no run could put, such as an error type the engine does not make; what this machine lacked and another could put, such as a locale that is not installed, is a hole.
+     A column that holds records and none of them answered or open measured nothing, and is `unmeasured` rather than `measured` with a catalogue of zero; a tree with nothing to mutate, or a configuration that names no seam, is `nothing-to-ask`.
+     Where a report holds several builds, a column is every build's counts added where each measured the dimension, and otherwise the column of the build that established least: a hole in any build is a hole of all of them.
 
 2. **The matrix is derived, never stored.** Each column is computed from the records the part already holds: the mutation accounting, the knob records, the fault records, the seam records.
    A stored column would be a second copy of those records that a reader could find disagreeing with them.

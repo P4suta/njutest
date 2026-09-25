@@ -311,6 +311,18 @@ pub enum SessionError {
         /// The packages the run was about, which is where a reader looks for a test to write.
         packages: Vec<String>,
     },
+    /// A mutant's execution changed the test executables the run starts.
+    #[error(
+        "{}: the test executables changed while {mutant} ran ({}); every answer after it would be read against a harness this run did not build, so the run stops here. With more than one job, a mutant running beside it may have made the change",
+        error::SESSION_APPARATUS_CHANGED.code,
+        crate::apparatus::summary(changes)
+    )]
+    ApparatusChanged {
+        /// The mutant whose execution the change was found after.
+        mutant: String,
+        /// What changed.
+        changes: Vec<crate::apparatus::Change>,
+    },
     /// The instrumented tree could not be written.
     #[error("{}: cannot write {path} into the snapshot: {source}", error::SESSION_WRITE_FAILED.code)]
     WriteFailed {
@@ -700,6 +712,7 @@ impl SessionError {
                 error::SESSION_UNKNOWN_TARGET
             }
             Self::NoTargets { .. } => error::SESSION_NO_TARGETS,
+            Self::ApparatusChanged { .. } => error::SESSION_APPARATUS_CHANGED,
             Self::ExpectationsOverlap { .. } => error::CONFIG_INVALID,
             Self::WriteFailed { .. }
             | Self::TemporaryRootUnavailable { .. }

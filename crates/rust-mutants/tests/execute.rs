@@ -170,7 +170,13 @@ fn step_notice() -> StepLimitNotice {
 #[test]
 fn the_exit_status_is_read_in_one_fixed_order() {
     assert_eq!(
-        outcome_of(&stopped(Stopped::NotStarted), None, (true, &[])),
+        outcome_of(
+            &stopped(Stopped::NotStarted {
+                cause: rust_mutants::execute::StartFailure::Missing
+            }),
+            None,
+            (true, &[])
+        ),
         Outcome::Errored
     );
 
@@ -1088,7 +1094,14 @@ fn every_way_a_process_stops_reads_back_as_itself() {
     use rust_mutants::execute::Stopped;
     use rust_mutants::runner::ProcessExit;
     for stopped in [
-        Stopped::NotStarted,
+        Stopped::NotStarted {
+            cause: rust_mutants::execute::StartFailure::Missing,
+        },
+        Stopped::NotStarted {
+            cause: rust_mutants::execute::StartFailure::Other {
+                detail: "Operation not supported (os error 45)".to_owned(),
+            },
+        },
         Stopped::Exited {
             exit: ProcessExit::Code(3),
         },
@@ -1112,4 +1125,33 @@ fn every_way_a_process_stops_reads_back_as_itself() {
             "a stop the engine can reach is one a recording can hold and a reader can read: {written}"
         );
     }
+}
+
+#[test]
+fn a_harness_that_never_started_says_why() {
+    let result = rust_mutants::execute::exec(
+        &ExecRequest::new(&target()),
+        &Context {
+            leaders: None,
+            base_env: &[],
+            cargo: None,
+            sysroot: None,
+            active: None,
+            beside: None,
+            touch: None,
+            steps: None,
+            crash: None,
+            profile: None,
+        },
+        &rust_mutants::runner::Cancel::new(),
+        &rust_mutants::trace::Recorder::disabled(),
+    );
+    assert_eq!(
+        result.stopped,
+        Stopped::NotStarted {
+            cause: rust_mutants::execute::StartFailure::Missing
+        },
+        "a test binary that is not there is named as missing, which is what a row that says \
+         only `exit -1` left a person to guess"
+    );
 }
