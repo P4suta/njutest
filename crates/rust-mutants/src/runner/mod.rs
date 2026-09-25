@@ -1767,6 +1767,20 @@ pub const SUPERVISION_BOUNDARY: SupervisionBoundary = sys::SUPERVISION_BOUNDARY;
 #[cfg(test)]
 mod tests {
     #[cfg(unix)]
+    use njutest_devkit::result::ResultState::Refused;
+    use njutest_devkit::result::{ResultState::Returned, result_state};
+
+    #[cfg(unix)]
+    use std::time::Duration;
+
+    #[cfg(unix)]
+    use super::{
+        Bound, Cancel, ProcessExit, Progress, RunResult, SIDE_CHANNEL_LIMIT, Spec, Termination,
+        read_side_channel, run,
+    };
+    use super::{MonitorState, classify_monitor, inspect_monitor};
+
+    #[cfg(unix)]
     #[test]
     fn a_gentle_stop_of_a_group_whose_leader_has_already_exited_is_no_failure() {
         let mut command = std::process::Command::new("true");
@@ -1792,20 +1806,6 @@ mod tests {
              already named into an errored mutant: {stopped:?} {reaped:?}"
         );
     }
-
-    #[cfg(unix)]
-    use njutest_devkit::result::ResultState::Refused;
-    use njutest_devkit::result::{ResultState::Returned, result_state};
-
-    #[cfg(unix)]
-    use std::time::Duration;
-
-    #[cfg(unix)]
-    use super::{
-        Bound, Cancel, ProcessExit, Progress, RunResult, SIDE_CHANNEL_LIMIT, Spec, Termination,
-        read_side_channel, run,
-    };
-    use super::{MonitorState, classify_monitor, inspect_monitor};
 
     #[test]
     fn monitor_inspection_distinguishes_absence_regular_files_and_invalid_types() {
