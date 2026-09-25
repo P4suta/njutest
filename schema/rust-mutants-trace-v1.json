@@ -1014,6 +1014,18 @@
                       "type": "object",
                       "additionalProperties": false,
                       "required": [
+                        "kind"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "const": "answered"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
                         "kind",
                         "notice"
                       ],
@@ -1846,6 +1858,7 @@
                 "failed_tests",
                 "id",
                 "index",
+                "lingered",
                 "outcome",
                 "signal",
                 "step_notice",
@@ -1915,6 +1928,10 @@
                 "alone": {
                   "type": "boolean",
                   "description": "Whether it ran with nothing else the run started running beside it, which is what a confirming retry does."
+                },
+                "lingered": {
+                  "type": "boolean",
+                  "description": "Whether the harness had already answered when the clock ended the process, so the verdict is the harness's."
                 },
                 "step_notice": {
                   "oneOf": [
@@ -2166,8 +2183,8 @@
               ],
               "properties": {
                 "outcome": {
-                  "type": "string",
-                  "minLength": 1
+                  "enum": ["detected", "found", "interrupted", "failed", "completed"],
+                  "description": "How the run ended: every judged mutation noticed, some not, cancelled, stopped on an error, or finished with judgement left to the program that embedded it."
                 },
                 "error": {
                   "type": [

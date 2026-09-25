@@ -1975,6 +1975,79 @@ fn surface_harnesses(
         .collect()
 }
 
+/// The decision records against their numbers, their headings, the book's list, and every name of one in the tree.
+///
+/// # Errors
+/// The first record that does not hold together, or every name of a record that no record has.
+pub fn adrs(root: &Path) -> Result<String, GateFailure> {
+    let directory = root.join("docs/adr");
+    let mut files = Vec::new();
+    for entry in WalkDir::new(&directory)
+        .min_depth(1)
+        .max_depth(1)
+        .sort_by_file_name()
+    {
+        let entry = walked(entry)?;
+        let name = relative_slash(&directory, entry.path())?;
+        if !entry.file_type().is_file() {
+            return Err(GateFailure(format!(
+                "adrs: docs/adr/{name} is not a file, and the directory holds decision records only"
+            )));
+        }
+        let text = std::fs::read_to_string(entry.path())
+            .map_err(|error| GateFailure(format!("{}: {error}", entry.path().display())))?;
+        files.push((name, text));
+    }
+    let records =
+        crate::adrs::records(&files).map_err(|error| GateFailure(format!("adrs: {error}")))?;
+    let book = root.join("docs/SUMMARY.md");
+    let listed = std::fs::read_to_string(&book)
+        .map_err(|error| GateFailure(format!("{}: {error}", book.display())))?;
+    crate::adrs::summary(&listed, &records)
+        .map_err(|error| GateFailure(format!("adrs: {error}")))?;
+    let mut dangling = Vec::new();
+    let mut pages = 0_usize;
+    for entry in WalkDir::new(root)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|entry| {
+            entry.depth() == 0
+                || !(entry.file_name().as_encoded_bytes().first() == Some(&b'.')
+                    || entry.file_name() == "target")
+        })
+    {
+        let entry = walked(entry)?;
+        let read = entry.file_type().is_file()
+            && entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "md" || extension == "rs");
+        if !read {
+            continue;
+        }
+        pages = pages.saturating_add(1);
+        let page = relative_slash(root, entry.path())?;
+        let text = std::fs::read_to_string(entry.path())
+            .map_err(|error| GateFailure(format!("{page}: {error}")))?;
+        dangling.extend(
+            crate::adrs::dangling(&page, &text, &records)
+                .iter()
+                .map(ToString::to_string),
+        );
+    }
+    if !dangling.is_empty() {
+        return Err(GateFailure(format!(
+            "adrs: these name a decision record that is not there:\n  {}",
+            dangling.join("\n  ")
+        )));
+    }
+    Ok(format!(
+        "adrs: {} decision records, one number each and each listed once in the book under it, and \
+         {pages} files name no other",
+        records.len()
+    ))
+}
+
 /// Every variable that points git at a repository other than the one it is standing in, which a hook or a wrapper may have set.
 pub const REDIRECTING_GIT: [&str; 10] = [
     "GIT_DIR",
@@ -2111,6 +2184,7 @@ pub fn all(root: &Path) -> Result<String, GateFailure> {
         fixtures,
         release_check,
         milestones,
+        adrs,
         surfaces,
         reached,
         waivers,
@@ -2144,6 +2218,7 @@ pub fn proofaudit(
 struct Recordings {
     runner: Option<(String, String)>,
     engines: Vec<(String, String)>,
+    outputs: Vec<(String, proofaudit::soundness::Kept)>,
 }
 
 impl Recordings {
@@ -2155,6 +2230,7 @@ impl Recordings {
                 .as_ref()
                 .map(|(recording_path, text)| (recording_path.as_str(), text.as_str())),
             engines: &self.engines,
+            outputs: &self.outputs,
         }
     }
 }
@@ -2177,7 +2253,15 @@ fn recordings(trace: Option<&Path>) -> Result<Recordings, proofaudit::AuditError
         .map(engine_recordings)
         .transpose()?
         .unwrap_or_default();
-    Ok(Recordings { runner, engines })
+    let outputs = match (trace, runner.as_ref()) {
+        (Some(directory), Some((_path, text))) => kept_outputs(directory, text),
+        (None, _) | (_, None) => Vec::new(),
+    };
+    Ok(Recordings {
+        runner,
+        engines,
+        outputs,
+    })
 }
 
 /// Whether the merged report at `merged` is the merge of the shards `shards`, each re-decided against its recording under `traces`.
@@ -2243,6 +2327,64 @@ fn assurance_document(path: &Path) -> Result<AssuranceDocument, proofaudit::Audi
         text,
         run,
     })
+}
+
+/// What the recording kept of each interpreter run in the runner's recording `text`, read from beside it in `directory` and held to the size and digest its exec record gives; a copy that is cut, missing, or unreadable is left out, which the audit says it could not re-derive.
+fn kept_outputs(directory: &Path, text: &str) -> Vec<(String, proofaudit::soundness::Kept)> {
+    let mut kept = Vec::new();
+    for line in text.lines() {
+        let Ok(event) = crate::strictjson::from_str(line) else {
+            continue;
+        };
+        let Some(exec) = event.pointer("/payload/exec") else {
+            continue;
+        };
+        if !proofaudit::soundness::interprets(exec)
+            && !exec
+                .get("argv")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|argv| argv.iter().any(|word| word == "--version"))
+        {
+            continue;
+        }
+        if exec
+            .get("output_truncated")
+            .and_then(serde_json::Value::as_bool)
+            != Some(false)
+        {
+            continue;
+        }
+        let Some(relative) = exec.get("output_path").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        match std::fs::read(directory.join(relative)) {
+            Ok(bytes) => kept.push((relative.to_owned(), held_to(exec, bytes))),
+            Err(_not_kept) => {}
+        }
+    }
+    kept
+}
+
+/// A kept output held to the size and digest `exec` gives it.
+fn held_to(exec: &serde_json::Value, bytes: Vec<u8>) -> proofaudit::soundness::Kept {
+    use sha2::Digest as _;
+    let digest = hex::encode(sha2::Sha256::digest(&bytes));
+    let size = match u64::try_from(bytes.len()) {
+        Ok(size) => Some(size),
+        Err(_beyond_any_record) => None,
+    };
+    let described = exec
+        .get("output_sha256")
+        .and_then(serde_json::Value::as_str)
+        == Some(digest.as_str())
+        && exec.get("output_bytes").and_then(serde_json::Value::as_u64) == size;
+    if !described {
+        return proofaudit::soundness::Kept::Mismatched;
+    }
+    match String::from_utf8(bytes) {
+        Ok(text) => proofaudit::soundness::Kept::Whole(text),
+        Err(_not_text) => proofaudit::soundness::Kept::NotText,
+    }
 }
 
 /// Every configured build's engine recording under a runner recording, in namespace order, each as its path and its text.

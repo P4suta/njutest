@@ -542,6 +542,8 @@ pub struct Perturbation {
     pub engine: Option<Vec<Value>>,
     /// The shards a merged report was merged from, each laid in a run directory of its own with its recording under the run it names; none for a run measured whole.
     pub shards: Vec<Shard>,
+    /// What runs in the recording said, each by the path its exec record gives, kept beside the recording.
+    pub outputs: Vec<(&'static str, &'static str)>,
 }
 
 /// The clean specimen every perturbation starts from, on which no layer may find anything.
@@ -559,6 +561,7 @@ pub fn clean() -> Perturbation {
             perturbed("survived", &[], &recorded_reach(&[0, 1])),
         ]),
         shards: Vec::new(),
+        outputs: Vec::new(),
     }
 }
 
@@ -613,6 +616,20 @@ impl Perturbation {
                 Ok::<_, SpecimenError>(trace)
             })
             .transpose()?;
+        if let Some(trace) = trace.as_ref() {
+            for (relative, said) in &self.outputs {
+                let at = trace.path().join(relative);
+                if let Some(parent) = at.parent() {
+                    std::fs::create_dir_all(parent).map_err(|source| {
+                        SpecimenError::Unwritable {
+                            path: parent.display().to_string(),
+                            source,
+                        }
+                    })?;
+                }
+                written(&at, said)?;
+            }
+        }
         let shards = self
             .shards
             .iter()
@@ -763,6 +780,7 @@ fn unobserved_repair_called_a_survival() -> Perturbation {
             repair,
         ]),
         shards: Vec::new(),
+        outputs: Vec::new(),
     }
 }
 
@@ -964,9 +982,124 @@ impl Layer {
                 repaired_where_nothing_moved(clean),
             ],
             Self::Knobs => vec![broken_by_a_knob_called_stable(clean)],
+            Self::Soundness => soundness_planted(&clean),
             Self::Executions => LIED_OUTCOMES.into_iter().filter_map(lie).collect(),
         }
     }
+}
+
+/// A recorded run of the interpreter over the suite that ended with `code` and said `said`, kept at `output/1.txt` with its size and digest.
+fn interpreted(code: i64, said: &str) -> Value {
+    use sha2::Digest as _;
+    json!({
+        "type": "exec",
+        "exec": {
+            "argv": ["cargo", "+nightly", "miri", "test", "--workspace"],
+            "dir": null, "env_names": [], "timeout_ms": null,
+            "stopped": { "kind": "exited", "exit": { "kind": "code", "value": code } },
+            "duration_ms": 1, "output_bytes": said.len(),
+            "output_sha256": hex::encode(sha2::Sha256::digest(said.as_bytes())),
+            "output_truncated": false, "output_path": "output/1.txt", "error": null
+        }
+    })
+}
+
+/// What cargo-miri prints when it cannot start the test binary it built.
+const SETUP_FAILED: &str =
+    "thread 'main' panicked at cargo-miri/src/util.rs:132:9:\nfailed to run `cd /gone`\n";
+
+/// What Miri prints when every test it ran passed.
+const PASSED: &str = "     Running unittests src/lib.rs (x)\n\nrunning 1 test\ntest t ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
+
+/// What Miri prints when a test failed and its captured output quotes the words of undefined behaviour.
+const QUOTED_UNDEFINED: &str = "     Running unittests src/lib.rs (x)\n\nrunning 1 test\ntest t ... FAILED\n\nfailures:\n\n---- t stdout ----\nerror: Undefined Behavior: quoted by the test\n\nfailures:\n    t\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
+
+/// The report saying the suite was interpreted and a test failed under the interpreter.
+fn failing_under_the_interpreter() -> Value {
+    with(json!({
+        "accounting": { "soundness": { "executed": true } },
+        "findings": [{}, {
+            "kind": "failing-test",
+            "subject": "soundness",
+            "detail": "a test fails under the interpreter that passes without it",
+            "position": null
+        }]
+    }))
+}
+
+/// A recorded run of the interpreter that ran out of time, whose kept output is at `output/1.txt`.
+fn interpreted_until_the_clock(said: &str) -> Value {
+    use sha2::Digest as _;
+    json!({
+        "type": "exec",
+        "exec": {
+            "argv": ["cargo", "+nightly", "miri", "test", "--workspace"],
+            "dir": null, "env_names": [], "timeout_ms": 1,
+            "stopped": { "kind": "timed-out", "raised": null },
+            "duration_ms": 1, "output_bytes": said.len(),
+            "output_sha256": hex::encode(sha2::Sha256::digest(said.as_bytes())),
+            "output_truncated": false, "output_path": "output/1.txt", "error": null
+        }
+    })
+}
+
+/// The lies about soundness the soundness layer must refuse.
+fn soundness_planted(clean: &Perturbation) -> Vec<Perturbation> {
+    let with_run = |code: i64, said: &str| {
+        let mut events = routes();
+        events.push(interpreted(code, said));
+        Some(events)
+    };
+    vec![
+        Perturbation {
+            name: "a suite said to be interpreted with no run of the interpreter recorded",
+            document: with(json!({ "accounting": { "soundness": { "executed": true } } })),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a test failing under an interpreter that ran no test",
+            document: failing_under_the_interpreter(),
+            events: with_run(101, SETUP_FAILED),
+            outputs: vec![("output/1.txt", SETUP_FAILED)],
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "undefined behaviour read from a failing test's captured output",
+            document: with(json!({
+                "accounting": { "soundness": { "executed": true } },
+                "findings": [{}, {
+                    "kind": "undefined-behaviour",
+                    "subject": "soundness",
+                    "detail": "error: Undefined Behavior: quoted by the test",
+                    "position": null
+                }]
+            })),
+            events: with_run(101, QUOTED_UNDEFINED),
+            outputs: vec![("output/1.txt", QUOTED_UNDEFINED)],
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "an interpreter that ran out of time with no limitation stated",
+            document: with(json!({ "accounting": { "soundness": { "executed": false } } })),
+            events: Some({
+                let mut events = routes();
+                events.push(interpreted_until_the_clock("running 1 test\n"));
+                events
+            }),
+            outputs: vec![("output/1.txt", "running 1 test\n")],
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "an interpreter's kept output rewritten after the run",
+            document: failing_under_the_interpreter(),
+            events: with_run(0, PASSED),
+            outputs: vec![(
+                "output/1.txt",
+                "test result: FAILED. 0 passed; 1 failed; 0 ignored\n",
+            )],
+            ..clean.clone()
+        },
+    ]
 }
 
 /// How one outcome is told about the specimen's survivor: the lie's name, whether a test is named, the column that counts it, and the finding it owes.

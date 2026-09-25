@@ -331,7 +331,13 @@ impl Audit {
     /// A run that could not be read at all never reaches here and earns [`EXIT_UNREADABLE`] instead.
     #[must_use]
     pub fn exit_code(&self) -> u8 {
-        u8::from(self.violations() > 0)
+        if self.violations() > 0 {
+            1
+        } else if self.unaudited() > 0 {
+            crate::proofaudit::EXIT_UNAUDITED
+        } else {
+            0
+        }
     }
 
     fn standing(&self, standing: Standing) -> usize {
@@ -639,6 +645,10 @@ pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, A
 
 /// One mutant row, as a reader sees it.
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is an independent fact the published report row states"
+)]
 struct Row {
     index: u64,
     route: Option<RouteDecision>,
@@ -659,6 +669,7 @@ struct Row {
     killed_by: Vec<String>,
     item: String,
     retried: bool,
+    lingered: bool,
     expected: bool,
     unreached: bool,
     not_run_reason: Option<NotRunReason>,

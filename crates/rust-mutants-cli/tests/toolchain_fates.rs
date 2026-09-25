@@ -259,6 +259,11 @@ fn fixture_assured() {
 }
 
 #[test]
+fn fixture_balanced_fails_then_hangs() {
+    holds("fixture-balanced-fails-then-hangs");
+}
+
+#[test]
 fn fixture_baseline() {
     holds("fixture-baseline");
 }
@@ -266,6 +271,11 @@ fn fixture_baseline() {
 #[test]
 fn fixture_build_script() {
     holds("fixture-build-script");
+}
+
+#[test]
+fn fixture_carry() {
+    holds("fixture-carry");
 }
 
 #[test]
@@ -324,6 +334,11 @@ fn fixture_equivalent() {
 }
 
 #[test]
+fn fixture_fails_then_hangs() {
+    holds("fixture-fails-then-hangs");
+}
+
+#[test]
 fn fixture_families() {
     holds("fixture-families");
 }
@@ -354,6 +369,11 @@ fn fixture_hollow() {
 }
 
 #[test]
+fn fixture_hollow_only() {
+    holds("fixture-hollow-only");
+}
+
+#[test]
 fn fixture_ignored() {
     holds("fixture-ignored");
 }
@@ -366,6 +386,11 @@ fn fixture_include() {
 #[test]
 fn fixture_item_reach() {
     holds("fixture-item-reach");
+}
+
+#[test]
+fn fixture_killer_last() {
+    holds("fixture-killer-last");
 }
 
 #[test]

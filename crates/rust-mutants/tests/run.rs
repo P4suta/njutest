@@ -29,6 +29,7 @@ fn judged(index: u32, outcome: Outcome) -> Judged {
         not_run_reason: None,
         route: None,
         retried: false,
+        lingered: false,
         expected: false,
         measured: true,
         identical: CodegenIdentity::NotMeasured,
@@ -603,10 +604,7 @@ fn a_mutation_this_machine_stopped_waiting_for_is_a_finding_that_says_so() {
 fn a_run_ends_on_the_gravest_thing_it_holds_and_an_interruption_outranks_all_of_it() {
     use rust_mutants::run::Exit;
     assert_eq!(Exit::of(false, []), Exit::Detected);
-    assert_eq!(
-        Exit::of(false, [FindingKind::SurvivingMutant]),
-        Exit::Undetected
-    );
+    assert_eq!(Exit::of(false, [FindingKind::SurvivingMutant]), Exit::Found);
     assert_eq!(
         Exit::of(
             false,

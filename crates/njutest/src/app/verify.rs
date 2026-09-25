@@ -220,8 +220,9 @@ pub fn run(
             return Ok(EXIT_ERROR);
         }
     };
+    let (arguments, engine) = engine_of(arguments, environment, stderr)?;
     run_initialized(
-        arguments,
+        (arguments.as_ref(), &engine),
         environment,
         initialized,
         Streams {
@@ -231,8 +232,35 @@ pub fn run(
     )
 }
 
+/// The running njutest's digest, which every answer this run keeps is keyed on, and the arguments to run with: a njutest that cannot read itself neither reads nor keeps what earlier runs established.
+fn engine_of<'a>(
+    arguments: &'a Verify,
+    environment: &Environment,
+    stderr: &mut dyn Write,
+) -> std::io::Result<(std::borrow::Cow<'a, Verify>, String)> {
+    match crate::evidence::digest::engine_of(&environment.program) {
+        Ok(engine) => Ok((std::borrow::Cow::Borrowed(arguments), engine)),
+        Err(error) => {
+            super::diagnose(
+                stderr,
+                &format!(
+                    "the running njutest could not be read ({error}), so this run neither reads \
+                     nor keeps what earlier runs established"
+                ),
+            )?;
+            Ok((
+                std::borrow::Cow::Owned(Verify {
+                    no_cache: true,
+                    ..arguments.clone()
+                }),
+                String::new(),
+            ))
+        }
+    }
+}
+
 fn run_initialized(
-    arguments: &Verify,
+    (arguments, engine): (&Verify, &str),
     environment: &Environment,
     initialized: Initialized,
     streams: Streams<'_>,
@@ -262,6 +290,7 @@ fn run_initialized(
         config: &config,
         environment,
         changed: changed.as_ref(),
+        engine,
     };
     let evidence = match evidence_of(arguments, &asked, &cancel) {
         Ok(evidence) => evidence,
@@ -848,13 +877,13 @@ fn every_build(
             run::run(&asked, environment, &mut notes, watch)
         };
         let ended = match &result {
-            Ok(outcome) => asked.engine_trace.run_end(
-                &format!("{:?}", outcome.report.verdict).to_lowercase(),
-                None,
-            ),
-            Err(error) => asked
+            Ok(_measured) => asked
                 .engine_trace
-                .run_end("failed", Some(error.to_string())),
+                .run_end(rust_mutants::trace::RunOutcome::Completed, None),
+            Err(error) => asked.engine_trace.run_end(
+                rust_mutants::trace::RunOutcome::Failed,
+                Some(error.to_string()),
+            ),
         };
         if let Err(source) = ended {
             let error = TraceSetupError::Finalize { ordinal, source };
@@ -1050,6 +1079,7 @@ struct Asked<'a> {
     config: &'a Config,
     environment: &'a Environment,
     changed: Option<&'a crate::git::Change>,
+    engine: &'a str,
 }
 
 /// How much of the workspace the run looked at, which is part of what it is: a run about one package established less than one about everything, and the two must never share a stored answer.
@@ -1094,6 +1124,7 @@ fn evidence_of(
         config,
         environment,
         changed,
+        engine,
     } = *asked;
     let toolchain = rust_mutants::cargo::Toolchain::locate(
         &rust_mutants::cargo::LocateOptions {
@@ -1108,6 +1139,7 @@ fn evidence_of(
     let machine = identity::Machine {
         toolchain: &toolchain.to_string(),
         platform: toolchain.host(),
+        engine,
     };
     let asked = identity::Asked {
         root,
@@ -1140,6 +1172,7 @@ fn evidence_of(
             format!("rust-mutants {}", rust_mutants::VERSION),
         ],
         corpus: String::new(),
+        engine: engine.to_owned(),
     };
     identity::of(&asked, mode, common, arguments.shard.clone()).map_err(EvidenceError::from)
 }

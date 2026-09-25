@@ -216,6 +216,9 @@ A name is one to sixty-four of letters, digits, `.`, `_` and `-`, because it is 
 
 `--keep-temp` keeps the snapshot and the build cache a run would otherwise remove, and writes them into `kept-v1.json` under the report directory, with the run that kept them.
 `cache` lists what is there: the snapshots, the build caches, the outcome store with its size, and every kept directory with the run that kept it.
+Beside the outcome store, a run remembers which target killed each mutant, by the mutant's identity, in `rust-mutants/killers-v1`, and the next run asks that target first.
+It changes the order targets are asked in and never which are asked: a kill is still an execution of this tree, and a survivor still needs every target it reaches.
+`cache --clear-outcomes` clears both.
 `cache --gc` removes what is abandoned and leaves the build caches, so the next run is still fast — except the ones no run can look up again, which every run already sweeps on its way past: a cache is keyed to a source tree, and one whose tree is gone will never make anything fast.
 `--gc --all` takes the rest too; `--gc --kept` takes what was kept on purpose.
 `--clear-outcomes` empties the store and says how much was in it, and `--cache-dir` says where the store is.
@@ -375,6 +378,11 @@ The fourth is there because a measurement *of this engine* sets it: an instrumen
 Removing it is not enough on its own, since an instrumented binary with no path writes `default_*.profraw` into its working directory, which is the snapshot being measured and which the drift check would then report as the project's own tests writing into their tree.
 So a run puts a path of its own in its place, under the temporary directory that execution owns.
 The coverage pass puts its own path there instead, per target.
+
+Every child, a test process or any other, is also told `CARGO_TERM_COLOR=never`, `CARGO_TERM_QUIET=false`, and `CARGO_TERM_VERBOSE=false`, over whatever its environment says.
+The engine reads what its children write, and a cargo that paints its status lines, drops them, or adds its own `Running` lines for each compiler call would be read as a different run.
+A CI that exports `CARGO_TERM_COLOR=always` did exactly that to the Miri reading, which counted no test binary started because every `Running` line began with an escape sequence.
+The runner sets these on every command it builds (`runner::PRESENTATION`), so no caller can forget them.
 
 Only the first three are refused on the command line.
 An instrumented engine binary is the narrow exception: its composition root embeds the catalog digest Cargo supplied as `RUST_MUTANTS_COMPILED_CATALOG`, and accepts an inherited `ACTIVE+CATALOG` or `TOUCH+CATALOG` pair only when that digest matches and only one mode is present.

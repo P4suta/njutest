@@ -67,7 +67,7 @@ fn a_clean_run_is_silent_on_every_layer_it_can_re_decide() {
     assert_eq!(audit.violations(), 0, "{audit}");
     assert_eq!(audit.mutants, 2, "{audit}");
     assert_eq!(audit.rejections, 1, "{audit}");
-    assert_eq!(audit.exit_code(), 0, "{audit}");
+    assert_eq!(audit.exit_code(), undecided(&audit), "{audit}");
 }
 
 #[test]
@@ -252,7 +252,7 @@ fn a_waited_mutant_is_an_infrastructure_finding_not_a_detection() {
             "inconclusive": 0, "errored": 0
         },
         "score": { "detected": 0, "decided": 1, "value": 0.0 },
-        "mutants": [{ "outcome": "waited", "retried": true, "expected": false }, {}],
+        "mutants": [{ "outcome": "waited", "retried": true, "lingered": false, "expected": false }, {}],
         "findings": [{
             "kind": "waited-mutant", "mutant": short(KILLED),
             "detail": "the wall-clock bound expired twice"
@@ -347,6 +347,55 @@ fn a_mutant_exec_that_disagrees_with_its_row_is_a_violation() {
     assert!(
         found.iter().any(|remark| remark.contains("disagrees")),
         "{audit}"
+    );
+}
+
+#[test]
+fn a_row_says_it_lingered_exactly_when_its_recorded_execution_did() {
+    let mut claimed = base();
+    claimed["mutants"][0]["lingered"] = serde_json::json!(true);
+    let audit = audited_with(&claimed, &recording());
+    assert!(
+        violations(&audit, Layer::Trace)
+            .iter()
+            .any(|remark| remark.contains("lingered")),
+        "a row that says its process outlived its harness's answer, over an execution the \
+         recording says ended with it, rests on nothing: {audit}"
+    );
+    let mut events = recording();
+    events[8]["mutant"]["lingered"] = serde_json::json!(true);
+    let audit = audited_with(&base(), &events);
+    assert!(
+        violations(&audit, Layer::Trace)
+            .iter()
+            .any(|remark| remark.contains("lingered")),
+        "and a row that hides an execution the recording says lingered hides it: {audit}"
+    );
+}
+
+#[test]
+fn a_kill_recorded_from_a_signal_sent_from_outside_is_a_violation() {
+    let mut events = recording();
+    events[8]["mutant"]["signal"] = serde_json::json!(9);
+    events[8]["mutant"]["failed_tests"] = serde_json::json!([]);
+    let audit = audited_with(&base(), &events);
+    assert!(
+        violations(&audit, Layer::Trace)
+            .iter()
+            .any(|remark| remark.contains("signal 9")),
+        "a SIGKILL with no failing test named is what a cancelled job or an out-of-memory \
+         killer leaves, and a kill kept from it hides a survivor from every run that reads it \
+         back: {audit}"
+    );
+    let mut raised = recording();
+    raised[8]["mutant"]["signal"] = serde_json::json!(6);
+    raised[8]["mutant"]["failed_tests"] = serde_json::json!([]);
+    let audit = audited_with(&base(), &raised);
+    assert!(
+        !violations(&audit, Layer::Trace)
+            .iter()
+            .any(|remark| remark.contains("signal 6")),
+        "an abort the process raised itself is a kill a mutation can cause: {audit}"
     );
 }
 
@@ -567,7 +616,8 @@ fn a_ledger_that_explains_every_survivor_is_silent() {
 
 #[test]
 fn the_exit_code_follows_the_violations() {
-    assert_eq!(audited_with(&base(), &recording()).exit_code(), 0);
+    let clean = audited_with(&base(), &recording());
+    assert_eq!(clean.exit_code(), undecided(&clean), "{clean}");
     let broken = audited(&with(
         serde_json::json!({ "mutants": [{ "start_byte": 104 }] }),
     ));
@@ -885,7 +935,7 @@ fn every_committed_run_re_decides_with_nothing_the_audit_disagrees_with() {
         assert_eq!(audit.mutants, mutants, "{name}: {audit}");
         assert_eq!(audit.rejections, rejections, "{name}: {audit}");
         assert_eq!(audit.violations(), 0, "{name}: {audit}");
-        assert_eq!(audit.exit_code(), 0, "{name}");
+        assert_eq!(audit.exit_code(), undecided(&audit), "{name}");
     }
 }
 
@@ -937,7 +987,7 @@ fn a_run_the_interruption_stopped_is_not_a_run_that_lost_its_routes() {
             "original": ">", "replacement": ">=",
             "outcome": "not_run", "target": "", "exit_code": 0,
             "duration_ms": 0, "tests_run": null, "killed_by": [], "signal": null,
-            "step_notice": null, "retried": false, "not_run_reason": "interrupted",
+            "step_notice": null, "retried": false, "lingered": false, "not_run_reason": "interrupted",
             "route": null, "identical": "not-measured",
             "expected": false, "unreached": false, "source_run_id": null
         }]
@@ -1834,4 +1884,12 @@ fn a_mutant_named_after_an_item_the_catalog_does_not_hold_it_in_is_a_violation()
             .any(|remark| remark.contains("the catalog names the item holding it min")),
         "{audit}"
     );
+}
+/// The exit code an audit with no violation earns: 3 where it left anything unaudited, 0 only where it decided everything.
+fn undecided(audit: &Audit) -> u8 {
+    if audit.unaudited() > 0 {
+        xtask::proofaudit::EXIT_UNAUDITED
+    } else {
+        0
+    }
 }

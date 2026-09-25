@@ -17,6 +17,10 @@ concurrency:
   group: scorecard-${{ github.ref }}
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   analysis:
     name: Scorecard

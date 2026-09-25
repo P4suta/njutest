@@ -423,6 +423,8 @@ pub struct Request {
     /// How long the process may take.
     /// `None` uses the session's default.
     pub timeout: Option<Duration>,
+    /// A target to ask before the others, where one is known to have killed this mutant before; every target is still asked until one notices.
+    pub first: Option<String>,
 }
 
 impl Request {
@@ -460,6 +462,13 @@ impl Request {
     #[must_use]
     pub const fn with_timeout(mut self, timeout: Option<Duration>) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Asks `target` before the other targets, which changes the order they are asked in and never which are asked.
+    #[must_use]
+    pub fn trying_first(mut self, target: Option<String>) -> Self {
+        self.first = target;
         self
     }
 
@@ -1521,7 +1530,10 @@ impl Session {
             chosen,
             mutant,
         } = how;
-        let targets = self.selected(request.target.as_deref())?;
+        let mut targets = self.selected(request.target.as_deref())?;
+        if let Some(first) = request.first.as_deref() {
+            targets.sort_by_key(|target| target.id != first);
+        }
         let targets = match chosen {
             Chosen::Everything => targets,
             Chosen::Narrowed { only, .. } => {
@@ -1609,6 +1621,7 @@ impl Session {
             timeout_ms: duration_ms(timeout)?,
             timeout_source: source.name().to_owned(),
             alone,
+            lingered: result.lingered,
         });
         Ok(())
     }
@@ -1634,6 +1647,7 @@ impl Session {
             timeout_ms: duration_ms(timeout)?,
             timeout_source: source.name().to_owned(),
             alone: false,
+            lingered: result.lingered,
         });
         Ok(())
     }
@@ -2610,6 +2624,7 @@ mod kani_laws {
             passed_tests: Vec::new(),
             ignored_tests: Vec::new(),
             leader: None,
+            lingered: false,
         }
     }
 
@@ -2996,6 +3011,7 @@ const fn unreached() -> MutantResult {
         passed_tests: Vec::new(),
         ignored_tests: Vec::new(),
         leader: None,
+        lingered: false,
     }
 }
 
@@ -3028,6 +3044,7 @@ mod tests {
             passed_tests: Vec::new(),
             ignored_tests: Vec::new(),
             leader: None,
+            lingered: false,
         }
     }
 

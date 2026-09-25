@@ -460,8 +460,7 @@ fn parse_summary_line(line: &str) -> Option<Summary> {
 ///
 /// Four booleans and an exit code could say a process was both unstarted and killed by a clock, and the precedence that made that impossible lived in the order of a chain of `if`s.
 /// A process ends exactly one way, so the type says so and the policy reading it is a total match rather than a sequence somebody has to keep in the right order (ADR 0023).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stopped {
     /// The process could not be started at all.
     NotStarted,
@@ -491,6 +490,8 @@ pub enum Stopped {
     },
     /// The operating system did not yield a trustworthy final status.
     WaitFailed,
+    /// The harness said a test failed, which is the whole answer about the mutant, and the run ended the process there.
+    Answered,
     /// The execution monitor stopped the tree and its notice was verified.
     StepLimitReached {
         /// The verified notice that caused the stop.
@@ -584,7 +585,8 @@ pub enum StepProtocolFailure {
     },
 }
 
-#[derive(serde::Deserialize)]
+/// How a stop is spelled in a recording, in both directions, so a stop the engine can reach is one a reader can read.
+#[derive(serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 enum StoppedWire {
     NotStarted {},
@@ -593,8 +595,29 @@ enum StoppedWire {
     Stalled { raised: Option<u64> },
     Cancelled { started: bool },
     WaitFailed {},
+    Answered {},
     StepLimitReached { notice: StepLimitNotice },
     StepProtocolFailed { reason: StepProtocolFailure },
+}
+
+impl serde::Serialize for Stopped {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self.clone() {
+            Self::NotStarted => StoppedWire::NotStarted {},
+            Self::Exited { exit } => StoppedWire::Exited { exit },
+            Self::TimedOut { raised } => StoppedWire::TimedOut { raised },
+            Self::Stalled { raised } => StoppedWire::Stalled { raised },
+            Self::Cancelled { started } => StoppedWire::Cancelled { started },
+            Self::WaitFailed => StoppedWire::WaitFailed {},
+            Self::Answered => StoppedWire::Answered {},
+            Self::StepLimitReached { notice } => StoppedWire::StepLimitReached { notice },
+            Self::StepProtocolFailed { reason } => StoppedWire::StepProtocolFailed { reason },
+        }
+        .serialize(serializer)
+    }
 }
 
 impl<'de> serde::Deserialize<'de> for Stopped {
@@ -610,6 +633,7 @@ impl<'de> serde::Deserialize<'de> for Stopped {
                 StoppedWire::Stalled { raised } => Self::Stalled { raised },
                 StoppedWire::Cancelled { started } => Self::Cancelled { started },
                 StoppedWire::WaitFailed {} => Self::WaitFailed,
+                StoppedWire::Answered {} => Self::Answered,
                 StoppedWire::StepLimitReached { notice } => Self::StepLimitReached { notice },
                 StoppedWire::StepProtocolFailed { reason } => Self::StepProtocolFailed { reason },
             },
@@ -784,6 +808,7 @@ impl Stopped {
             },
             Termination::Cancelled { started } => Self::Cancelled { started: *started },
             Termination::WaitFailed { .. } => Self::WaitFailed,
+            Termination::Answered => Self::Answered,
         }
     }
 }
@@ -1214,6 +1239,14 @@ fn remove_notice(path: &Path) -> Result<(), NoticeError> {
     }
 }
 
+/// Whether one failing test is the whole answer this process is run for: a libtest target with a mutant active and nothing being measured, so ending it at that failure loses no evidence.
+const fn answered_by_one_failure(target: &TestTarget, context: &Context<'_>) -> bool {
+    target.harness
+        && context.active.is_some()
+        && context.touch.is_none()
+        && context.profile.is_none()
+}
+
 fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
     if matches!(
         result.termination,
@@ -1268,20 +1301,30 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
     }
 }
 
-/// What one run of a test binary establishes about the mutant that was active during it.
-/// See the module documentation for the order.
+/// What one run of a test binary establishes about its mutant, given what its harness said before it stopped: a failed test or a signal the process raised itself is a kill, a complete summary with none failed a survivor, and a signal sent from outside inconclusive.
 #[must_use]
-pub const fn outcome_of(
+pub fn outcome_of(
     observed: &Observation,
     summary: Option<Summary>,
-    harness: bool,
+    (harness, failed): (bool, &[String]),
 ) -> Outcome {
     let exit = match &observed.stopped {
         Stopped::NotStarted | Stopped::WaitFailed | Stopped::StepProtocolFailed { .. } => {
             return Outcome::Errored;
         }
+        Stopped::TimedOut { .. } | Stopped::Stalled { .. } if harness && !failed.is_empty() => {
+            return Outcome::Killed;
+        }
+        Stopped::TimedOut { .. } | Stopped::Stalled { .. }
+            if harness
+                && matches!(summary, Some(said) if said.ok && said.failed == 0 && !said.ran_nothing()) =>
+        {
+            return Outcome::Survived;
+        }
         Stopped::TimedOut { .. } | Stopped::Stalled { .. } => return Outcome::Waited,
         Stopped::Cancelled { .. } => return Outcome::NotRun,
+        Stopped::Answered if harness && !failed.is_empty() => return Outcome::Killed,
+        Stopped::Answered => return Outcome::Inconclusive,
         Stopped::StepLimitReached { .. } => return Outcome::StepLimitReached,
         Stopped::Exited { exit } => *exit,
     };
@@ -1290,7 +1333,9 @@ pub const fn outcome_of(
     }
     let code = match exit {
         ProcessExit::Code(code) => code,
-        ProcessExit::Signal(_) => return Outcome::Killed,
+        ProcessExit::Signal(_) if exit.raised_by_itself() => return Outcome::Killed,
+        ProcessExit::Signal(_) if harness && !failed.is_empty() => return Outcome::Killed,
+        ProcessExit::Signal(_) => return Outcome::Inconclusive,
         ProcessExit::Unknown => return Outcome::NotRun,
     };
     if code != 0 {
@@ -1701,13 +1746,13 @@ impl MutantConclusion {
         }
     }
 
-    fn of(observed: &Observation, summary: Option<Summary>, harness: bool) -> Self {
+    fn of(observed: &Observation, summary: Option<Summary>, heard: (bool, &[String])) -> Self {
         if let Stopped::StepLimitReached { notice } = &observed.stopped {
             return Self::StepLimitReached {
                 notice: notice.clone(),
             };
         }
-        match outcome_of(observed, summary, harness) {
+        match outcome_of(observed, summary, heard) {
             Outcome::NotRun => Self::NotRun,
             Outcome::Killed => Self::Killed,
             Outcome::Survived => Self::Survived,
@@ -1776,6 +1821,8 @@ pub struct MutantResult {
     pub ignored_tests: Vec<String>,
     /// The id of the process the execution started, which is the parent of whatever it starts, or nothing where none started.
     pub leader: Option<u32>,
+    /// Whether the harness had already answered when the clock ended the process, so the verdict is the harness's and the process outlived it.
+    pub lingered: bool,
 }
 
 /// The protocol a test process answered in.
@@ -1840,6 +1887,7 @@ impl MutantResult {
             passed_tests: Vec::new(),
             ignored_tests: Vec::new(),
             leader: None,
+            lingered: false,
         }
     }
 
@@ -1882,6 +1930,24 @@ fn watched(timeout: Option<Duration>, step: Option<&ExpectedStep>) -> (Bound, Op
     }
 }
 
+/// What a process's output and the way it stopped establish: the conclusion, the harness's summary, and the tests it named.
+fn concluded(
+    target: &TestTarget,
+    observation: &Observation,
+    output: &[u8],
+) -> (MutantConclusion, Option<Summary>, Lines) {
+    let (summary, lines, protocol_exact) = match (target.harness, std::str::from_utf8(output)) {
+        (true, Ok(text)) => (parse_summary_text(text), parse_lines_text(text), true),
+        (true, Err(_not_utf8)) => (None, Lines::default(), false),
+        (false, _) => (None, Lines::default(), true),
+    };
+    let conclusion = if protocol_exact {
+        MutantConclusion::of(observation, summary, (target.harness, &lines.failed))
+    } else {
+        MutantConclusion::Errored
+    };
+    (conclusion, summary, lines)
+}
 /// Runs one test process and reads what it means.
 #[must_use]
 pub fn exec(
@@ -1910,6 +1976,7 @@ pub fn exec(
     let mut spec = Spec::new(request.argv(), bound);
     spec.progress = progress;
     spec.leaders = context.leaders.cloned();
+    spec.stop_at_first_failure = answered_by_one_failure(target, context);
     spec.dir = Some(match (&request.scratch, request.scratch_cwd) {
         (Some(scratch), true) => scratch.clone(),
         _ => target.cwd.clone(),
@@ -1939,19 +2006,14 @@ pub fn exec(
         record
     });
     trace.exec_result(record);
-    let (summary, lines, protocol_exact) =
-        match (target.harness, std::str::from_utf8(&result.output)) {
-            (true, Ok(text)) => (parse_summary_text(text), parse_lines_text(text), true),
-            (true, Err(_not_utf8)) => (None, Lines::default(), false),
-            (false, _) => (None, Lines::default(), true),
-        };
+    let (conclusion, summary, lines) = concluded(target, &observation, &result.output);
     let signal = result.signal();
+    let lingered = matches!(
+        observation.stopped,
+        Stopped::TimedOut { .. } | Stopped::Stalled { .. }
+    ) && conclusion.outcome() != Outcome::Waited;
     MutantResult {
-        conclusion: if protocol_exact {
-            MutantConclusion::of(&observation, summary, target.harness)
-        } else {
-            MutantConclusion::Errored
-        },
+        conclusion,
         target: target.id.clone(),
         exit_code: result.conventional_exit_code(),
         duration: result.duration,
@@ -1967,6 +2029,7 @@ pub fn exec(
         passed_tests: lines.passed,
         ignored_tests: lines.ignored,
         leader: result.leader,
+        lingered,
     }
 }
 
@@ -2882,7 +2945,7 @@ mod tests {
                 exit: ProcessExit::Code(95)
             }
         );
-        assert_eq!(outcome_of(&observed, None, false), Outcome::Killed);
+        assert_eq!(outcome_of(&observed, None, (false, &[])), Outcome::Killed);
     }
 
     #[test]

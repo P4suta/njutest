@@ -5,6 +5,8 @@
 
 #![recursion_limit = "256"]
 
+#[path = "adrs.rs"]
+mod adrs;
 #[path = "deps.rs"]
 mod deps;
 #[path = "devgates.rs"]
@@ -53,6 +55,8 @@ mod sbom;
 mod sentinel;
 #[path = "shapes.rs"]
 mod shapes;
+#[path = "slot.rs"]
+mod slot;
 #[path = "specimen_reach.rs"]
 mod specimen_reach;
 #[path = "suites.rs"]

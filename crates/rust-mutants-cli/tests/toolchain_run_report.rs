@@ -1603,3 +1603,194 @@ fn a_mutant_of_a_whole_condition_replaces_all_of_it_whatever_operators_it_holds(
         );
     }
 }
+
+#[test]
+fn a_mutant_a_test_noticed_before_another_hung_is_killed_and_names_that_test() {
+    let fixture = Fixture::copy("fixture-fails-then-hangs");
+    let recording = fixture.temp().join("recording");
+    let trace = format!("--trace={}", recording.display());
+    let output = against(
+        &fixture,
+        &["run", "--offline", "--locked", "--tier", "all", &trace],
+    );
+    assert!(
+        output.status.code() == Some(0) || output.status.code() == Some(1),
+        "{}",
+        stderr(&output)
+    );
+    let report = stored(&fixture);
+    assert_eq!(
+        against_schema("rust-mutants-run-report-v1.json", &report),
+        Vec::<String>::new()
+    );
+    let rows = report["mutants"].as_array().expect("the rows");
+    let waited_naming: Vec<&serde_json::Value> = rows
+        .iter()
+        .filter(|row| {
+            row["outcome"] == "waited"
+                && row["killed_by"]
+                    .as_array()
+                    .is_some_and(|named| !named.is_empty())
+        })
+        .collect();
+    assert!(
+        waited_naming.is_empty(),
+        "a row that names the test that noticed it is not one the clock decided: {waited_naming:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row["outcome"] == "killed"
+                && row["killed_by"].as_array().is_some_and(|named| {
+                    named.iter().any(|one| one == "a_says_the_answer_is_ready")
+                })
+        }),
+        "the mutation that made one test fail and the other hang was noticed by the one that \
+         failed: {rows:#?}"
+    );
+    let text = std::fs::read_to_string(recording.join("trace.jsonl")).expect("the recording");
+    let outlived: std::collections::BTreeSet<u64> = text
+        .lines()
+        .map(|line| {
+            njutest_devkit::strictjson::decode_str::<serde_json::Value>(line)
+                .expect("a recorded line is JSON")
+        })
+        .filter(|event| event["payload"]["type"] == "mutant-exec")
+        .filter(|event| event["payload"]["mutant"]["lingered"] == true)
+        .filter_map(|event| event["payload"]["mutant"]["index"].as_u64())
+        .collect();
+    let claimed: std::collections::BTreeSet<u64> = rows
+        .iter()
+        .filter(|row| row["lingered"] == true)
+        .filter_map(|row| row["index"].as_u64())
+        .collect();
+    assert_eq!(
+        claimed, outlived,
+        "a row says it lingered exactly where the recording says an execution of it did"
+    );
+}
+
+#[test]
+fn a_kill_is_taken_at_the_first_failing_test_rather_than_after_the_rest_hang() {
+    let fixture = Fixture::copy("fixture-fails-then-hangs");
+    let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    assert!(
+        output.status.code() == Some(0) || output.status.code() == Some(1),
+        "{}",
+        stderr(&output)
+    );
+    let report = stored(&fixture);
+    let rows = report["mutants"].as_array().expect("the rows");
+    let waited_out: Vec<&serde_json::Value> = rows
+        .iter()
+        .filter(|row| row["outcome"] == "killed" && row["lingered"] == true)
+        .collect();
+    assert!(
+        waited_out.is_empty(),
+        "one failing test is the whole answer to whether the tests noticed a mutation, so the \
+         process is stopped there rather than kept running until the clock ends a test that \
+         hangs: {waited_out:#?}"
+    );
+}
+#[test]
+fn an_edit_to_a_file_the_build_read_misses_the_outcome_store() {
+    let fixture = Fixture::copy("fixture-carry");
+    let asked = ["run", "--offline", "--locked", "--tier", "all"];
+    let first = against(&fixture, &asked);
+    assert!(
+        first.status.code() == Some(0) || first.status.code() == Some(1),
+        "{}",
+        stderr(&first)
+    );
+    for (edited, text) in [
+        ("src/answer.txt", "30\n"),
+        (
+            "build.rs",
+            "fn main() {\n    let out = std::env::var_os(\"OUT_DIR\").expect(\"cargo sets OUT_DIR\");\n    std::fs::write(std::path::Path::new(&out).join(\"limit.rs\"), \"1\").expect(\"write the limit\");\n    println!(\"cargo::rerun-if-changed=build.rs\");\n}\n",
+        ),
+    ] {
+        std::fs::write(fixture.root().join(edited), text).expect("edit the input");
+        let again = against(&fixture, &asked);
+        assert!(
+            again.status.code() == Some(0) || again.status.code() == Some(1),
+            "{}",
+            stderr(&again)
+        );
+        let report = stored(&fixture);
+        let read_back: Vec<&serde_json::Value> = report["mutants"]
+            .as_array()
+            .expect("the rows")
+            .iter()
+            .filter(|row| !row["source_run_id"].is_null())
+            .collect();
+        assert!(
+            read_back.is_empty(),
+            "{edited} changed what the compiled code computes, so no answer from before the \
+             edit may be read back as though the program were the same: {read_back:#?}"
+        );
+    }
+}
+
+fn executions(directory: &Path) -> std::collections::BTreeMap<String, Vec<String>> {
+    let text = std::fs::read_to_string(directory.join("trace.jsonl")).expect("the recording");
+    let mut found: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for line in text.lines() {
+        let event: serde_json::Value =
+            njutest_devkit::strictjson::decode_str(line).expect("a recorded line is JSON");
+        if event["payload"]["type"] == "mutant-exec" {
+            let mutant = &event["payload"]["mutant"];
+            found
+                .entry(mutant["id"].as_str().unwrap_or_default().to_owned())
+                .or_default()
+                .push(mutant["target"].as_str().unwrap_or_default().to_owned());
+        }
+    }
+    found
+}
+
+#[test]
+fn a_mutant_goes_first_to_the_target_that_killed_it_before() {
+    let fixture = Fixture::copy("fixture-killer-last");
+    let first_trace = fixture.temp().join("first");
+    let second_trace = fixture.temp().join("second");
+    let run = |trace: &Path| {
+        let flag = format!("--trace={}", trace.display());
+        let output = against(
+            &fixture,
+            &["run", "--offline", "--locked", "--tier", "all", &flag],
+        );
+        assert!(
+            output.status.code() == Some(0) || output.status.code() == Some(1),
+            "{}",
+            stderr(&output)
+        );
+    };
+    run(&first_trace);
+    std::fs::write(
+        fixture.root().join("src/unrelated.rs"),
+        "/// A constant nothing else reads.\n#[must_use]\npub const fn unrelated() -> u32 {\n    8\n}\n",
+    )
+    .expect("edit a file no mutation of `double` depends on");
+    run(&second_trace);
+    let before = executions(&first_trace);
+    let after = executions(&second_trace);
+    let late: Vec<(&String, &Vec<String>)> = before
+        .iter()
+        .filter(|(_, targets)| targets.len() > 1)
+        .collect();
+    assert!(
+        !late.is_empty(),
+        "the fixture exists to have a mutant its first target passes and a later one kills: \
+         {before:#?}"
+    );
+    for (mutant, targets) in late {
+        let killer = targets.last().expect("a last target");
+        assert_eq!(
+            after.get(mutant),
+            Some(&vec![killer.clone()]),
+            "{mutant} was killed by {killer} after {} passed, so the next run asks {killer} \
+             first and has its answer from one process",
+            targets.first().map_or("", String::as_str)
+        );
+    }
+}

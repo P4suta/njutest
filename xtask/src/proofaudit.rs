@@ -8,6 +8,7 @@
 mod knobs;
 pub mod merge;
 pub mod sentinel;
+pub mod soundness;
 
 pub use crate::layers::Coverage;
 use std::collections::BTreeMap;
@@ -22,6 +23,9 @@ pub const REPORT_FILE: &str = "njutest-assurance-report-v1.json";
 
 /// The exit code a run directory that could not be read earns, kept apart from the audit's own so that "I could not look" never reads as "I looked and found nothing".
 pub const EXIT_UNREADABLE: u8 = 2;
+
+/// The exit code an audit that found no violation and left something unaudited earns, kept apart so a step that reads only the code cannot take it for an audit that checked everything.
+pub const EXIT_UNAUDITED: u8 = 3;
 
 const KILLED: &str = "killed";
 const SURVIVED: &str = "survived";
@@ -225,6 +229,8 @@ pub enum Layer {
     Knobs,
     /// Each mutation's reported outcome, held to the executions of it the recording holds.
     Executions,
+    /// What interpreting the suite established, re-derived from what the interpreter said.
+    Soundness,
 }
 
 impl Layer {
@@ -246,6 +252,7 @@ impl Layer {
             Self::Repair => "repair",
             Self::Knobs => "knobs",
             Self::Executions => "executions",
+            Self::Soundness => "soundness",
         }
     }
 }
@@ -321,7 +328,13 @@ impl Audit {
     /// A recording that could not be read at all never reaches here and earns [`EXIT_UNREADABLE`] instead.
     #[must_use]
     pub fn exit_code(&self) -> u8 {
-        u8::from(self.violations() > 0)
+        if self.violations() > 0 {
+            1
+        } else if self.unaudited() > 0 {
+            EXIT_UNAUDITED
+        } else {
+            0
+        }
     }
 
     fn standing(&self, standing: Standing) -> usize {
@@ -489,6 +502,8 @@ pub struct Recorded<'a> {
     pub runner: Option<(&'a str, &'a str)>,
     /// Every configured build's engine recording, in namespace order.
     pub engines: &'a [(String, String)],
+    /// What the recording kept of each run the audit re-derives from, by the path its exec record gives, held to that record's size and digest.
+    pub outputs: &'a [(String, soundness::Kept)],
 }
 
 /// Re-decides a report against what the run recorded beside it and, when `run` is present, re-reads every retained model-checker artifact from that exact run directory.
@@ -518,6 +533,7 @@ pub fn audit_with(
         routing,
         watched,
         repairs,
+        recorded_executions,
     } = runner_evidence(recorded_runner)?;
     let engines = recorded
         .engines
@@ -565,6 +581,12 @@ pub fn audit_with(
                 &mut audit,
             ),
             Layer::Knobs => knobs::audited(&recording, &engines, &mut audit),
+            Layer::Soundness => soundness::audited(
+                &recording,
+                recorded_executions.as_deref(),
+                recorded.outputs,
+                &mut audit,
+            ),
         };
     }
     audit.remarks.sort();
@@ -572,7 +594,7 @@ pub fn audit_with(
     Ok(audit)
 }
 
-/// What the runner's recording says of routing, seams and repairs, each read from the stream alone; nothing where the run kept none.
+/// What the runner's recording says of routing, seams, repairs and executions, each read from the stream alone; nothing where the run kept none.
 fn runner_evidence(recorded_runner: Option<(&str, &str)>) -> Result<RunnerEvidence, AuditError> {
     let routing = recorded_runner
         .map(|(recording_path, text)| {
@@ -601,10 +623,19 @@ fn runner_evidence(recorded_runner: Option<(&str, &str)>) -> Result<RunnerEviden
         })
         .transpose()?
         .unwrap_or_default();
+    let recorded_executions = recorded_runner
+        .map(|(recording_path, text)| {
+            executions_of(text).map_err(|source| AuditError::MalformedRecording {
+                path: recording_path.to_owned(),
+                source,
+            })
+        })
+        .transpose()?;
     Ok(RunnerEvidence {
         routing,
         watched,
         repairs,
+        recorded_executions,
     })
 }
 
@@ -613,6 +644,19 @@ struct RunnerEvidence {
     routing: Option<crate::route::Routing>,
     watched: Option<crate::wire::Watched>,
     repairs: Vec<crate::repair::Repair>,
+    recorded_executions: Option<Vec<serde_json::Value>>,
+}
+
+/// Every exec record a runner's recording holds, in the order it holds them.
+///
+/// # Errors
+/// The first line that does not read, as the recording's own reader says it.
+fn executions_of(text: &str) -> Result<Vec<serde_json::Value>, crate::route::ReadError> {
+    Ok(crate::route::events(text)?
+        .into_iter()
+        .filter(|event| event.get("type").and_then(serde_json::Value::as_str) == Some("exec"))
+        .filter_map(|mut event| event.get_mut("exec").map(serde_json::Value::take))
+        .collect())
 }
 
 /// The flat view of the report at `path` holding `text`, once it is JSON, on its published schema, and one build measured whole.

@@ -734,15 +734,15 @@ pub struct Routing {
     /// What widened the question, when the run could not narrow it.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub fallback: Option<rust_mutants::session::Fallback>,
-    /// The targets the run actually asked, in the order it asked them, with what each answered.
+    /// The targets actually asked, in the order they were asked, with what each answered: by this run, or by the run a read-back or resumed disposition came from.
     /// A target in `reaching` and not here reached the mutation and was never given the chance, because one asked before it noticed.
     pub answered: Vec<Answered>,
 }
 
 impl Routing {
-    /// What a route says, as a report records it.
+    /// What a route says, with what the targets asked about it answered, as a report records it.
     #[must_use]
-    pub fn of(route: &rust_mutants::session::Route) -> Self {
+    pub fn of(route: &rust_mutants::session::Route, answered: Vec<Answered>) -> Self {
         Self {
             granularity: route.granularity(),
             reaching: route
@@ -759,7 +759,7 @@ impl Routing {
                 })
                 .collect(),
             fallback: route.fallback(),
-            answered: Vec::new(),
+            answered,
         }
     }
 }
@@ -817,6 +817,16 @@ impl Decision {
             Self::ModelNoticed => 7,
             Self::Proved => 8,
             Self::ModelProved => 9,
+        }
+    }
+
+    /// Whichever of the two a mutation stands less on, which is what the two together stand on.
+    #[must_use]
+    pub const fn weaker(self, other: Self) -> Self {
+        if other.standing() < self.standing() {
+            other
+        } else {
+            self
         }
     }
 
@@ -4288,6 +4298,28 @@ pub enum FindingOrigin {
 }
 
 impl FindingKind {
+    /// Whether only the whole catalog decides it, so no part carries it and every conclusion derives it over all the parts of a build.
+    #[must_use]
+    pub const fn catalog_wide(self) -> bool {
+        match self {
+            Self::HollowTarget
+            | Self::UnstableBaseline
+            | Self::EnvironmentDependent
+            | Self::EnvironmentDependentReach => true,
+            Self::BuildFailure
+            | Self::FailingTest
+            | Self::TargetMissing
+            | Self::SurvivingMutant
+            | Self::Timeout
+            | Self::WaitedMutant
+            | Self::StepLimitReachedMutant
+            | Self::NotMeasured
+            | Self::UnmatchedAcceptance
+            | Self::UndefinedBehaviour
+            | Self::WireUnnoticed => false,
+        }
+    }
+
     /// The name this carries in a report, which is the one a person greps for.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -6025,17 +6057,7 @@ impl Report {
                 .collect(),
             mutants,
             findings,
-            limitations: self
-                .builds
-                .iter()
-                .flat_map(|build| {
-                    build
-                        .parts
-                        .iter()
-                        .flat_map(|part| part.limitations.iter().cloned())
-                        .chain(merged_whole_catalog(build).limitations)
-                })
-                .collect(),
+            limitations: self.builds.iter().flat_map(stated_by).collect(),
             sources: self
                 .builds
                 .iter()
@@ -6476,10 +6498,7 @@ fn projected_mutants(builds: &BuildLedger) -> Vec<ProjectedMutant> {
                 .map(move |row| (part.run_id.clone(), part.part, row))
         });
         for (projection, (run_id, part, row)) in projected.iter_mut().zip(rows) {
-            let candidate = row.outcome.decision();
-            if candidate.standing() < projection.decision.standing() {
-                projection.decision = candidate;
-            }
+            projection.decision = projection.decision.weaker(row.outcome.decision());
             projection.by_build.push(BuildMutationDecision {
                 build: build.name.clone(),
                 run_id,
@@ -6565,14 +6584,24 @@ fn projected_findings(
         .collect();
     let mut projected = global_findings.to_vec();
     for build in builds.iter() {
-        projected.extend(merged_whole_catalog(build).findings);
+        let from = projected.len();
+        projected.extend(catalog_of(build).findings);
         for part in build.parts.iter() {
-            for finding in &part.findings {
+            for finding in part
+                .findings
+                .iter()
+                .filter(|finding| !finding.kind.catalog_wide())
+            {
                 let answered_by_model = finding.kind == FindingKind::SurvivingMutant
                     && affirmative.iter().any(|(full, display)| {
                         finding.subject == *full || finding.subject == *display
                     });
-                if answered_by_model {
+                let stated = projected.iter().skip(from).any(|one| {
+                    one.kind == finding.kind
+                        && one.subject == finding.subject
+                        && one.detail == finding.detail
+                });
+                if answered_by_model || stated {
                     continue;
                 }
                 projected.push(finding.clone());
@@ -6609,22 +6638,65 @@ pub fn whole_catalog(
     }
 }
 
-/// Whether a build was measured in parts, which is when what only the whole catalog decides is raised over the combined records rather than by a part.
-fn sharded(build: &BuildEvidence) -> bool {
-    build
-        .parts
+/// Every unmatched-acceptance finding among `findings` whose subject names exactly one of `rows`, with the mutation it names: the catalog resolves it, so calling it unmatched contradicts the rows.
+///
+/// Only the whole catalog decides it, so a run measured whole asks it of its own rows and a merge asks it of every part's rows together; one shard's rows could miss the mutation the acceptance names.
+#[must_use]
+pub fn acceptances_the_catalog_resolves(
+    findings: &[Finding],
+    rows: &[MutantRecord],
+) -> Vec<(String, String)> {
+    findings
         .iter()
-        .any(|part| matches!(part.part, CatalogPart::Shard(_)))
+        .filter(|finding| finding.kind == FindingKind::UnmatchedAcceptance)
+        .filter_map(|finding| {
+            let subject = finding.subject.as_str();
+            let valid = (rust_mutants::id::MIN_PREFIX_LENGTH..=rust_mutants::id::ID_HEX_LENGTH)
+                .contains(&subject.len())
+                && subject
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+            if !valid {
+                return None;
+            }
+            let mut matches = rows.iter().filter(|row| row.id.starts_with(subject));
+            let mutant = matches.next()?;
+            matches
+                .next()
+                .is_none()
+                .then(|| (finding.subject.clone(), mutant.id.clone()))
+        })
+        .collect()
 }
 
-/// What only the whole catalog decides about a build measured in parts, over every part's records; nothing for a build measured whole, whose part raised it already.
-fn merged_whole_catalog(build: &BuildEvidence) -> WholeCatalog {
-    if !sharded(build) {
-        return WholeCatalog {
-            findings: Vec::new(),
-            limitations: Vec::new(),
-        };
+/// Every limitation `build` states: each its parts state, once however many parts state it, and what only the whole catalog decides.
+fn stated_by(build: &BuildEvidence) -> Vec<Limitation> {
+    let mut stated: Vec<Limitation> = Vec::new();
+    for limitation in build
+        .parts
+        .iter()
+        .flat_map(|part| part.limitations.iter())
+        .filter(|limitation| {
+            ![
+                crate::limitation::DRIFT_NOT_MEASURED,
+                crate::limitation::KNOB_NOT_PUT,
+                crate::limitation::KNOB_NOT_COMPARED,
+            ]
+            .contains(&limitation.name.as_str())
+        })
+    {
+        if !stated.contains(limitation) {
+            stated.push(limitation.clone());
+        }
     }
+    stated.extend(catalog_of(build).limitations);
+    stated
+}
+
+/// What only the whole catalog decides about `build`, over every part's records together, whether it was measured whole or in shards: the one place a conclusion gets it, so no producer can store it or forget it.
+///
+/// Each finding names the part holding the record it rests on; one no part holds is left run-wide rather than credited to a part that did not see it.
+fn catalog_of(build: &BuildEvidence) -> WholeCatalog {
     let records = drift::combined(build.parts.iter().flat_map(|part| part.drift.iter()));
     let knob_records = knobs::combined(build.parts.iter().flat_map(|part| part.knobs.iter()));
     let rows: Vec<MutantRecord> = build
@@ -6634,12 +6706,7 @@ fn merged_whole_catalog(build: &BuildEvidence) -> WholeCatalog {
         .collect();
     let mut whole = whole_catalog(&records, &knob_records, &rows);
     for finding in &mut whole.findings {
-        if let Some(part) = build
-            .parts
-            .iter()
-            .find(|part| saw(part, finding))
-            .or_else(|| build.parts.iter().next())
-        {
+        if let Some(part) = build.parts.iter().find(|part| saw(part, finding)) {
             finding.origin = FindingOrigin::Source {
                 build: build.name.clone(),
                 run_id: part.run_id.clone(),

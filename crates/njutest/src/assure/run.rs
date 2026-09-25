@@ -1006,9 +1006,16 @@ impl Journal {
         judged: &mutation::Judged,
     ) -> Result<(), crate::checkpoint::CheckpointError> {
         let disposition = match &judged.disposition {
-            mutation::Disposition::Killed { by } => {
-                crate::checkpoint::SavedDisposition::Killed { by: by.clone() }
-            }
+            mutation::Disposition::Killed { by } => crate::checkpoint::SavedDisposition::Killed {
+                by: by.clone(),
+                before: judged
+                    .routing
+                    .iter()
+                    .flat_map(|routing| &routing.answered)
+                    .take_while(|answer| answer.target != *by)
+                    .cloned()
+                    .collect(),
+            },
             mutation::Disposition::StepLimitReached { .. }
             | mutation::Disposition::Waited { .. }
             | mutation::Disposition::Rejected { .. }

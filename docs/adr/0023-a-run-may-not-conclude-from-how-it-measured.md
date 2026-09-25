@@ -272,5 +272,10 @@ The refusal was correct and the caller was permitted to throw it away.
 It is the same shape as the paragraph above it, at a different depth: both are the language offering to fill a hole somebody left open on purpose.
 `None` and `#[default]` are the two offers, and taking either one silently is how a decision stops being one.
 
+**A stop outranked a failure the run had already heard.** A test process whose first test failed and whose second then waited forever was ended by the clock, and the run concluded `waited` while naming the failed test in `killed_by`.
+The failure was established: libtest prints `FAILED` only after a test finished and failed, so what the clock did afterwards is a fact about the process and not about the mutation — the same timing artefact this record forbids concluding from, read the other way round.
+A run the clock ended after its harness named a failed test is now a kill, confirmed like any other; the stop stays in the recording as what it was, and `killed_by` is carried by a killed row alone, which the report schema holds, so a `waited` row naming the test that noticed it can no longer be written.
+A harness that is not libtest names no failure this reader can trust, so there the stop still concludes `waited`.
+
 **Nothing here is a budget.** No threshold, no cutoff, no "more than N is suspicious" ([ADR 0004](0004-proof-layers-not-budgets.md)).
 A finding either rests on what the run established or it is not raised.

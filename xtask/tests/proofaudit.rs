@@ -626,6 +626,7 @@ fn duplicate_report_keys_are_malformed_before_any_redecision() {
         let nothing = xtask::proofaudit::Recorded {
             runner: None,
             engines: &[],
+            outputs: &[],
         };
         let error = xtask::proofaudit::audit_with("duplicate.json", &document, nothing, None)
             .expect_err("duplicate keys never reach proof redecision");
@@ -668,7 +669,11 @@ fn every_violation_is_a_line_of_its_own_before_the_summary() {
 
 #[test]
 fn a_clean_recording_exits_zero_and_one_with_a_violation_in_it() {
-    assert_eq!(exit_code(run_directory(&base()).path()), 0);
+    assert_eq!(
+        exit_code(run_directory(&base()).path()),
+        i32::from(xtask::proofaudit::EXIT_UNAUDITED),
+        "read without its recording, a clean run leaves layers unaudited"
+    );
     assert_eq!(
         exit_code(run_directory(&with(serde_json::json!({ "findings": [] }))).path()),
         1
@@ -2065,6 +2070,7 @@ fn with_engine(document: serde_json::Value, engine: Vec<serde_json::Value>) -> A
         events: Some(routes()),
         engine: Some(engine),
         shards: Vec::new(),
+        outputs: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
@@ -2177,6 +2183,7 @@ fn a_complete_report_is_re_decided_as_the_one_build_it_measured_whole() {
         events: Some(routes()),
         engine: sentinel::clean().engine,
         shards: Vec::new(),
+        outputs: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
@@ -2677,6 +2684,7 @@ fn repair_audit(repaired: &[&str], engine: Vec<serde_json::Value>) -> Vec<String
         events: Some(events),
         engine: Some(engine),
         shards: Vec::new(),
+        outputs: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
@@ -2795,6 +2803,7 @@ fn two_repairs(second_was: &str) -> Vec<String> {
         events: Some(events),
         engine: Some(engine),
         shards: Vec::new(),
+        outputs: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
@@ -3004,4 +3013,43 @@ fn a_merge_says_how_far_each_layer_got_over_its_parts_and_no_further() {
             layer.label()
         );
     }
+}
+
+#[test]
+fn the_audit_comes_to_the_verdict_the_published_contract_gives_every_case() {
+    let contract = xtask::strictjson::from_str(
+        &std::fs::read_to_string(gates::workspace_root().join("schema/miri-output.json"))
+            .expect("the published contract"),
+    )
+    .expect("the contract is JSON");
+    let cases = contract
+        .get("cases")
+        .and_then(serde_json::Value::as_array)
+        .expect("the contract's cases");
+    for case in cases {
+        let field = |key: &str| case.get(key).and_then(serde_json::Value::as_str);
+        let name = field("name").expect("a case is named");
+        assert_eq!(
+            Some(xtask::proofaudit::soundness::verdict(
+                field("output").expect("a case has output"),
+                case.get("status").and_then(serde_json::Value::as_i64),
+            )),
+            field("came"),
+            "{name}: the audit and the runner come to what the contract says of this case"
+        );
+    }
+}
+
+#[test]
+fn an_audit_that_left_something_unaudited_does_not_exit_as_one_that_checked_everything() {
+    let unrecorded = audited(&base());
+    assert_eq!(unrecorded.violations(), 0, "{unrecorded}");
+    assert!(unrecorded.unaudited() > 0, "{unrecorded}");
+    assert_eq!(
+        unrecorded.exit_code(),
+        xtask::proofaudit::EXIT_UNAUDITED,
+        "a run whose recording was not given leaves layers unaudited, and a step that reads only \
+         the exit code must not read that as an audit that checked everything"
+    );
+    assert_eq!(xtask::proofaudit::EXIT_UNAUDITED, 3);
 }

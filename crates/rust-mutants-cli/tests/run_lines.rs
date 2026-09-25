@@ -97,6 +97,7 @@ fn mutant(index: u32, outcome: Outcome, expected: bool) -> RunMutantDocument {
         route: None,
         identical: rust_mutants::run::CodegenIdentity::NotMeasured,
         retried: false,
+        lingered: false,
         expected,
         unreached: false,
         source_run_id: None,
@@ -280,7 +281,7 @@ fn cohere(document: &mut RunDocument) {
     } else if document.findings.is_empty() {
         rust_mutants::run::EXIT_DETECTED
     } else {
-        rust_mutants::run::EXIT_UNDETECTED
+        rust_mutants::run::EXIT_FOUND
     };
 }
 
