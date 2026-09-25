@@ -120,12 +120,20 @@ name = "toolchain_interrupt"
 path = "tests/toolchain_interrupt.rs"
 
 [[test]]
+name = "toolchain_knobs"
+path = "tests/toolchain_knobs.rs"
+
+[[test]]
 name = "toolchain_lsp"
 path = "tests/toolchain_lsp.rs"
 
 [[test]]
 name = "toolchain_mutation"
 path = "tests/toolchain_mutation.rs"
+
+[[test]]
+name = "toolchain_repeatable"
+path = "tests/toolchain_repeatable.rs"
 
 [[test]]
 name = "toolchain_replay"
@@ -138,6 +146,10 @@ path = "tests/toolchain_resource_run.rs"
 [[test]]
 name = "toolchain_run_documents"
 path = "tests/toolchain_run_documents.rs"
+
+[[test]]
+name = "toolchain_select"
+path = "tests/toolchain_select.rs"
 
 [[test]]
 name = "toolchain_targets"

@@ -15,3 +15,5 @@ mod golden;
 mod paths;
 #[path = "repo.rs"]
 mod repo;
+#[path = "workflow_commands.rs"]
+mod workflow_commands;

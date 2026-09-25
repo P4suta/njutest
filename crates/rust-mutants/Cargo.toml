@@ -112,6 +112,10 @@ name = "toolchain_modern"
 path = "tests/toolchain_modern.rs"
 
 [[test]]
+name = "toolchain_perturbed"
+path = "tests/toolchain_perturbed.rs"
+
+[[test]]
 name = "toolchain_pool"
 path = "tests/toolchain_pool.rs"
 

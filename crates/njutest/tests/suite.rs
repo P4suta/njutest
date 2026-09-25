@@ -33,6 +33,8 @@ mod disposition;
 mod docs_ledger;
 #[path = "doctor_probe.rs"]
 mod doctor_probe;
+#[path = "documented_commands.rs"]
+mod documented_commands;
 #[path = "drift.rs"]
 mod drift;
 #[path = "equivalence.rs"]
@@ -65,6 +67,8 @@ mod interpose;
 mod item_spec;
 #[path = "kept.rs"]
 mod kept;
+#[path = "knobs.rs"]
+mod knobs;
 #[path = "laws.rs"]
 mod laws;
 #[path = "limitations.rs"]
@@ -87,6 +91,8 @@ mod projections;
 mod prove;
 #[path = "provider_process.rs"]
 mod provider_process;
+#[path = "reach_schema.rs"]
+mod reach_schema;
 #[path = "recording.rs"]
 mod recording;
 #[path = "repair.rs"]

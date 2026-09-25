@@ -9,6 +9,8 @@
 mod deps;
 #[path = "devgates.rs"]
 mod devgates;
+#[path = "docflows.rs"]
+mod docflows;
 #[path = "docs.rs"]
 mod docs;
 #[path = "dogfood.rs"]
@@ -37,6 +39,8 @@ mod proofaudit;
 mod release;
 #[path = "release_binaries.rs"]
 mod release_binaries;
+#[path = "remote.rs"]
+mod remote;
 #[path = "reportdiff.rs"]
 mod reportdiff;
 #[path = "route.rs"]
