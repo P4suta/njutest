@@ -1440,6 +1440,10 @@ Options:
           - gitlab: GitLab CI: the lines, and the verdict as the exit code
           - plain:  The lines, and the verdict as the exit code
 
+      --changed-from <REV>
+          Annotate only the survivors on lines that differ from this revision; the summary still
+          counts every one
+
   -h, --help
           Print help (see a summary with '-h')
 

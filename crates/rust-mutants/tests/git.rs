@@ -11,7 +11,9 @@ use njutest_devkit::result::{
     ResultState::{Refused, Returned},
     option_state, result_state,
 };
-use rust_mutants::git::{Asking, Change, DEFAULT_BASE, Facts, changed, facts};
+use rust_mutants::git::{
+    Asking, Change, DEFAULT_BASE, Facts, Lines, Touched, changed, facts, lines,
+};
 use rust_mutants::runner::{Cancel, Watched};
 use rust_mutants::trace::Recorder;
 
@@ -68,6 +70,24 @@ impl Asked {
     fn changed(&self, base: &str) -> Option<Change> {
         changed(&self.asking(), base)
     }
+
+    fn lines(&self, base: &str) -> Option<Lines> {
+        lines(&self.asking(), base)
+    }
+}
+
+/// Twenty lines, each saying which it is, with the ones in `edited` rewritten and the ones in `removed` gone.
+fn twenty(edited: &[u32], removed: &[u32]) -> String {
+    (1..=20_u32)
+        .filter(|line| !removed.contains(line))
+        .map(|line| {
+            if edited.contains(&line) {
+                format!("let edited_{line} = {line};\n")
+            } else {
+                format!("let line_{line} = {line};\n")
+            }
+        })
+        .collect()
 }
 
 #[test]
@@ -312,5 +332,106 @@ fn a_run_asks_about_the_tree_it_was_given_and_not_the_one_its_caller_was_in() {
          followed it would name another repository's commit as the thing it \
          established something about — which is a conclusion drawn from how the run \
          was invoked rather than from what it looked at"
+    );
+}
+
+#[test]
+fn a_change_names_the_lines_it_left_and_every_line_of_a_file_git_does_not_track() {
+    let asked = Asked::new(Vec::new());
+    asked.repo.write("src/lib.rs", &twenty(&[], &[]));
+    asked.repo.commit();
+    asked.repo.write("src/lib.rs", &twenty(&[5, 12, 13], &[18]));
+    asked.repo.write("src/added.rs", "pub fn g() {}\n");
+
+    let said = asked.lines(DEFAULT_BASE);
+    assert_eq!(option_state(said.as_ref()), Present, "the changed lines");
+    let Some(said) = said else { return };
+    assert_eq!(
+        said.files.get("src/lib.rs"),
+        Some(&Touched::Ranges(vec![(5, 5), (12, 13)])),
+        "an edited line is named where the new file has it, and a removed one names no \
+         line, because no line of the new file is it: {said:?}"
+    );
+    assert_eq!(
+        said.files.get("src/added.rs"),
+        Some(&Touched::Whole),
+        "{said:?}"
+    );
+    assert!(
+        said.touches("src/lib.rs", 12)
+            && !said.touches("src/lib.rs", 11)
+            && said.touches("src/added.rs", 1)
+            && !said.touches("src/other.rs", 1),
+        "{said:?}"
+    );
+}
+
+#[test]
+fn a_line_that_reads_like_a_header_is_what_the_file_says() {
+    let asked = Asked::new(Vec::new());
+    asked.repo.write("src/lib.rs", "let a = 1;\n");
+    asked.repo.commit();
+    asked.repo.write(
+        "src/lib.rs",
+        "let a = 1;\n++ b/src/elsewhere.rs\n@@ -1 +40,2 @@\n",
+    );
+
+    let said = asked.lines(DEFAULT_BASE);
+    assert_eq!(option_state(said.as_ref()), Present, "the changed lines");
+    let Some(said) = said else { return };
+    assert_eq!(
+        said.files,
+        std::collections::BTreeMap::from([(
+            "src/lib.rs".to_owned(),
+            Touched::Ranges(vec![(2, 3)])
+        )]),
+        "an added line is content wherever it starts, so it names no file and no lines"
+    );
+}
+
+#[test]
+fn a_root_inside_the_repository_reads_the_lines_under_it_by_its_own_paths() {
+    let asked = Asked::new(Vec::new());
+    asked
+        .repo
+        .write("crates/demo/src/lib.rs", &twenty(&[], &[]));
+    asked.repo.write("other/src/lib.rs", &twenty(&[], &[]));
+    asked.repo.commit();
+    asked
+        .repo
+        .write("crates/demo/src/lib.rs", &twenty(&[7], &[]));
+    asked.repo.write("other/src/lib.rs", &twenty(&[7], &[]));
+
+    let root = asked.repo.root().join("crates/demo");
+    let said = lines(
+        &Asking {
+            root: &root,
+            env: &asked.env,
+            excluded: &asked.excluded,
+            watch: &asked.watch,
+        },
+        DEFAULT_BASE,
+    );
+    assert_eq!(option_state(said.as_ref()), Present, "the changed lines");
+    let Some(said) = said else { return };
+    assert_eq!(
+        said.files,
+        std::collections::BTreeMap::from([(
+            "src/lib.rs".to_owned(),
+            Touched::Ranges(vec![(7, 7)])
+        )]),
+        "a report names files from the root it measured, so the lines are named from it \
+         too, and a file outside it is not a file the report can name"
+    );
+}
+
+#[test]
+fn a_revision_git_does_not_know_names_no_lines_rather_than_none_changed() {
+    let asked = Asked::new(Vec::new());
+    asked.repo.write("src/lib.rs", "let a = 1;\n");
+    asked.repo.commit();
+    assert!(
+        asked.lines("no-such-revision").is_none(),
+        "a diff that could not be taken is not a diff with nothing in it"
     );
 }

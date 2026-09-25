@@ -163,7 +163,7 @@ fn kept_command(
             stdout,
         ),
         cli::Command::Trace { command } => trace::read(command, environment, stdout),
-        cli::Command::Ci { command } => ci::dispatch(command, environment, stdout),
+        cli::Command::Ci { command } => ci::dispatch(command, environment, stdout, cancel),
         cli::Command::Rules { tier, json } => rules(tier.as_deref(), *json, stdout),
         cli::Command::Diagnostics { run, root, output } => bundle(
             &Gathering {

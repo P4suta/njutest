@@ -6,7 +6,9 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use rust_mutants::git::Lines;
 use rust_mutants::outcome::Outcome;
+use rust_mutants::runner::Cancel;
 
 use crate::error::CliError;
 use crate::report::run::{RunDocument, RunMutantDocument};
@@ -69,6 +71,8 @@ pub struct Gated<'a> {
     pub root: &'a Path,
     /// Where its findings are written as SARIF, when they are.
     pub sarif: Option<&'a Path>,
+    /// The lines a change left, when only the survivors on them are annotated.
+    pub changed: Option<&'a Lines>,
 }
 
 /// Does what a continuous integration job asks.
@@ -79,6 +83,7 @@ pub fn dispatch(
     command: &cli::CiCommand,
     environment: &Environment,
     stdout: &mut dyn Write,
+    cancel: &Cancel,
 ) -> Result<u8, CliError> {
     match command {
         cli::CiCommand::Gate {
@@ -87,6 +92,7 @@ pub fn dispatch(
             report,
             sarif,
             host,
+            changed_from,
         } => {
             let root = environment.rooted(root.as_deref());
             let path = match report {
@@ -102,18 +108,50 @@ pub fn dispatch(
             let sarif: Option<PathBuf> = sarif
                 .as_deref()
                 .map(|named| environment.working_directory.join(named));
+            let host = hosted(*host, &environment.ci)?;
+            let changed = match (&host, changed_from.as_deref()) {
+                (CiHost::GitHub { .. }, Some(base)) => {
+                    Some(changed_lines(&root, base, environment, cancel)?)
+                }
+                (CiHost::GitHub { .. } | CiHost::GitLab | CiHost::None, _) => None,
+            };
             gate(
                 &Gated {
                     document: &document,
                     report: &path,
                     root: &root,
                     sarif: sarif.as_deref(),
+                    changed: changed.as_ref(),
                 },
-                &hosted(*host, &environment.ci)?,
+                &host,
                 stdout,
             )
         }
     }
+}
+
+/// The lines that differ from `base` under `root`, which git has to be able to say.
+fn changed_lines(
+    root: &Path,
+    base: &str,
+    environment: &Environment,
+    cancel: &Cancel,
+) -> Result<Lines, CliError> {
+    let recorder = rust_mutants::trace::Recorder::disabled();
+    let watch = rust_mutants::runner::Watched::new(cancel, &recorder);
+    rust_mutants::git::lines(
+        &rust_mutants::git::Asking {
+            root,
+            env: &environment.vars,
+            excluded: &[],
+            watch: &watch,
+        },
+        base,
+    )
+    .ok_or_else(|| CliError::ChangeSetUnavailable {
+        root: root.to_path_buf(),
+        base: base.to_owned(),
+    })
 }
 
 /// The host to write for: the one asked for, which has to be there, or the one the environment names.
@@ -156,22 +194,33 @@ pub fn gate(gated: &Gated<'_>, host: &CiHost, stdout: &mut dyn Write) -> Result<
         } => {
             let prefix = inside(gated.root, workspace)?;
             let outputs = outputs(verdict, gated)?;
-            let survivors = survivors(gated.document);
-            let shown = survivors.len().min(ERRORS_SHOWN_PER_STEP);
+            let (annotated, elsewhere): (Vec<&RunMutantDocument>, Vec<&RunMutantDocument>) =
+                survivors(gated.document).into_iter().partition(|mutant| {
+                    gated
+                        .changed
+                        .is_none_or(|lines| lines.touches(&mutant.path, mutant.line))
+                });
+            let shown = annotated.len().min(ERRORS_SHOWN_PER_STEP);
             let mut markdown = report::markdown::document(gated.document);
-            if shown < survivors.len() {
+            if shown < annotated.len() {
                 crate::text::line(
                     &mut markdown,
                     format_args!(
                         "\n{}",
-                        truncated(shown, survivors.len(), gated.sarif.is_some())
+                        truncated(shown, annotated.len(), gated.sarif.is_some())
                     ),
+                );
+            }
+            if !elsewhere.is_empty() {
+                crate::text::line(
+                    &mut markdown,
+                    format_args!("\n{}", untouched(elsewhere.len())),
                 );
             }
             append(summary, &markdown)?;
             append(output, &outputs)?;
             let mut said = lines;
-            for mutant in survivors.into_iter().take(shown) {
+            for mutant in annotated.into_iter().take(shown) {
                 crate::text::line(
                     &mut said,
                     format_args!("{}", report::annotations::surviving(&prefix, mutant)),
@@ -193,6 +242,18 @@ pub fn truncated(shown: usize, survivors: usize, sarif: bool) -> String {
         "the report"
     };
     format!("Shown {shown} of {survivors} survivors; all {survivors} are in {held}.")
+}
+
+/// The sentence that says how many survivors are on lines the change did not touch, which no annotation names.
+#[must_use]
+pub fn untouched(survivors: usize) -> String {
+    if survivors == 1 {
+        "1 more survivor is on a line this change did not touch; it is in the report.".to_owned()
+    } else {
+        format!(
+            "{survivors} more survivors are on lines this change did not touch; they are in the report."
+        )
+    }
 }
 
 /// The survivors no claim accounts for, in catalog order.

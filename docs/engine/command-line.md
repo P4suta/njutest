@@ -85,7 +85,7 @@ These narrow a run, and `list`, `catalog`, `why-skipped` and `instrument` read t
 | `doctor` | `--json` |
 | `init` | `--force` |
 | `cache` | `--gc`, `--all`, `--kept`, `--clear-outcomes`, `--cache-dir DIR` |
-| `ci gate` | `--run ID`, `--report FILE`, `--sarif FILE`, `--host github\|gitlab\|plain` |
+| `ci gate` | `--run ID`, `--report FILE`, `--sarif FILE`, `--host github\|gitlab\|plain`, `--changed-from REV` |
 
 `--run` names a stored run, and the newest is read when nothing is named.
 A name no directory answers to is refused (`RM0007`) rather than answered from another run: a reader who mistyped it would otherwise be told confidently about a run they did not ask for, and `replay` would report the stored answer as having changed when what changed was which run it read.
@@ -99,6 +99,8 @@ On GitHub Actions it appends the Markdown report to the step summary, appends `v
 `verdict` is `detected`, `found`, `failed` or `interrupted`, the words for exit codes 0, 1, 2 and 130.
 A runner shows ten error annotations per step; past that the summary says how many were shown of how many, and where all of them are.
 An annotation's file is named from the checkout `GITHUB_WORKSPACE` names, so a root outside it is refused (`RM0015`) rather than annotated where the runner cannot place it.
+With `--changed-from REV`, only the survivors on lines that differ from that revision, committed and not, are annotated, and the summary says how many others there are; a revision git cannot answer about is refused (`RM0010`).
+Every line of a file git does not track counts as changed.
 On GitLab CI, and with `--host plain`, it writes the lines `report` writes.
 
 ## What a run's exit code says
