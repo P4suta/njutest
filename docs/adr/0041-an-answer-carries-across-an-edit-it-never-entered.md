@@ -38,12 +38,14 @@ An edit to the body of an item the execution never entered cannot change what th
    - no file of the unit declares or imports a macro with a listed name, and no glob import from a non-standard path reaches the file;
    - the item and every attribute inside it are in an allow-list (`inline`, `cold`, `must_use`, `doc`, `cfg`, lint attributes, `track_caller`, tool attributes);
    - it is not a `const fn`, a `const` or a `static`, whose bodies can be evaluated where nothing enters them.
+   - it is not an `async fn`, and its return type holds no `impl Trait`: calling it builds a future without entering it, and the type its body decides can be observed without entering it.
+   - it is not in a unit whose kind is `proc-macro`, whose bodies run inside the compiler and never inside a test.
    - it declares no item (a `fn`, type, `impl`, `trait`, `use`, `mod`, macro, `const` or `static` inside it changes the program where nothing enters the body), and holds no inline `const { … }` block;
    - the arguments of every listed macro are read as tokens, and any macro invoked inside them is held to the same rule;
    - no external glob import and no `#[macro_use] extern crate` appears anywhere in the unit, which would let a macro reach the body under a listed name.
      The exact lists are in `docs/engine/carry.md`, which is what the audit implements, not the engine's code.
 3. **Skeleton.** A unit (package name, target name, kind, test flag; never a package id, which carries an absolute path) has a skeleton digest.
-   It covers every file the unit's dep-info names, with each sealed body replaced by a placeholder naming its item, and the environment variables rustc recorded reading, and the generated files, and the output of the build scripts it depends on.
+   It covers every file the unit's dep-info names, with each sealed body replaced by a placeholder naming its item and the shape of its lines, so an edit that moves the lines after it (and `line!()`, a panic's `Location`, a backtrace) moves the skeleton, and the environment variables rustc recorded reading, and the generated files, and the output of the build scripts it depends on.
    Paths are named by the prefix classes `$root` and `$target`, so a skeleton travels between checkouts.
    Anything outside a sealed body is in the skeleton, so an edit to a signature, a type, a constant, a trait impl header, a macro, or an unsealed body changes it.
 4. **What a record holds.** A carried answer is filed under a *locus* key that does not fold the closure.
@@ -54,12 +56,14 @@ An edit to the body of an item the execution never entered cannot change what th
    - P2: every item that execution entered has the recorded body digest now, and is still sealed.
    - P3: the union is complete.
      An execution stopped by a clock, a signal, a cancellation, or an unreadable log is not; one stopped at its first failing test is complete for its kill and not for a survival.
+     A process of the program that started without the variable that asks it to record, as a test's child started with `env_clear()` does, leaves a mark the first time it enters any item; an execution that overlaps such a mark in time is not complete, since what that process entered is unknown.
    - P4 (a kill): the killing execution meets P1–P3, its target passed this run's baseline, and its filter names tests this baseline ran.
    - P5 (a survivor): every target and filter this run's route executes has a recorded execution with an equal filter meeting P1–P3.
      A subset of targets is enough; a narrower or different filter is not.
    - P6: a record is written only from an attributable answer: a failing test named, or a signal the process raised itself, and never after cancellation.
-6. **Visible.** A carried answer's route says `carried`, and a refusal names one word from a closed set: `skeleton-changed`, `item-changed`, `unsealed`, `entry-incomplete`, `route-grew`, `filter-differs`.
-7. **Audited before it ships.** The engine audit gains a `carry` layer that recomputes body digests, sealing and skeletons from the pristine sources with its own parser, from `docs/engine/carry.md`, and re-checks P1–P6 for every carried row.
+   - P7: every target an execution ran held its reach under a control of this run's tree ([ADR 0025](0025-a-reach-that-moves-is-not-a-measurement.md)).
+6. **Visible.** A carried answer's route says `carried`, and a refusal names one word from a closed set: `skeleton-changed`, `item-changed`, `unsealed`, `entry-incomplete`, `route-grew`, `filter-differs`, `reach-moved`.
+7. **Audited before it ships.** The engine audit gains a `carry` layer that recomputes body digests, sealing and skeletons from the pristine sources with its own parser, from `docs/engine/carry.md`, and re-checks P1–P7 for every carried row.
    Planted defects, each found by name before any run is read: a kill carried across a changed entered item, a survivor whose route grew, a change to a `const` that the skeleton missed.
    An edit-pair differential runs a fixture, applies a scripted edit, runs again with carry and with `--no-cache`, and requires the two to agree mutant by mutant and at least one answer to have been carried.
 
@@ -72,6 +76,8 @@ An edit to the body of an item the execution never entered cannot change what th
   - **Nondeterminism.** An execution that missed C by chance (a hash seed, the time, thread order) may reach it next time.
     Only answers from targets whose drift standing held ([ADR 0025](0025-a-reach-that-moves-is-not-a-measurement.md)) are carried.
   - **Reads outside the tree** (the network, `/etc`, `$HOME`, the runtime environment) are keyed by nothing, today or here.
+  - **Reads inside the tree at run time** (`fs::read("tests/data/x.json")`) are in no dep-info, so they are keyed by nothing either; carrying relies on that premise more often than the exact store does.
+  - **The selection shapes the skeleton.** Only an instrumented file has placeholders, so a run that catalogs fewer files has other skeletons, and nothing carries between it and a whole run until every workspace file records the items it enters.
   - **The sealing lists are a syntactic lemma.** A standard macro found to expand to an item is removed from the list, which unseals bodies and costs only speed.
   - **The unit graph** comes from cargo's metadata and dep-info, not from its unstable unit graph.
   - **A shared store is trusted** by whoever reads it; a store is written only by runs that could have run the mutant.
