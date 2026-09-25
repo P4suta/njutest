@@ -92,7 +92,10 @@ fn claim_scratch(
             continue;
         }
         match tempowner::claim_as(&dir, now, SCRATCH_OWNER_SCHEMA) {
-            Ok(owner) => return Ok((dir, owner)),
+            Ok(owner) => match owner.empty() {
+                Ok(()) => return Ok((dir, owner)),
+                Err(_left_by_a_dead_run_and_not_removable) => drop(owner),
+            },
             Err(_already_claimed_or_unusable) => {}
         }
     }
@@ -1085,6 +1088,15 @@ impl Workspace {
             return Ok(vec![dir, self.target_dir, self.scratch_dir]);
         }
         if let Some(mut owner) = self.scratch_owner.take() {
+            match owner.empty() {
+                Ok(()) => {}
+                Err(source) => record_cleanup_failure(
+                    &mut failure,
+                    "empty execution scratch at",
+                    &self.scratch_dir,
+                    source,
+                ),
+            }
             match owner.release() {
                 Ok(()) => {}
                 Err(source) => record_cleanup_failure(
@@ -1095,7 +1107,7 @@ impl Workspace {
                 ),
             }
         }
-        match std::fs::remove_dir_all(&self.scratch_dir) {
+        match tempowner::remove_tree(&self.scratch_dir) {
             Ok(()) => {}
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
             Err(source) => record_cleanup_failure(

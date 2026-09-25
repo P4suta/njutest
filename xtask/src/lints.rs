@@ -147,6 +147,10 @@ const UNBOUNDED_REMOVAL_REMEDY: &str = "use rust_mutants::reclaim, which stops a
     hands back what refused and what it never reached; a directory something else is holding \
     takes minutes to refuse, and a loop over a few hundred of those runs for a day while saying \
     nothing";
+const RAW_TREE_REMOVAL_REMEDY: &str = "use rust_mutants::tempowner::remove_tree, which gives \
+    the owner back the access a test took away from a directory before giving up on it; a \
+    mutation makes tests panic, a panicking test is the one that leaves a directory read-only, \
+    and a plain recursive removal stops there and leaves the next run a half-removed tree";
 const PERISHABLE_HANDLE_REMEDY: &str = "build it from a locator — path, item, rule — which holds \
     after the file has changed; a mutant identity is a function of the whole file, so the edit \
     that closes a survivor re-mints it and the command or record that names it stops naming \
@@ -225,6 +229,7 @@ declare_kinds! {
     OpaqueMacroSyntax => "opaque-macro-syntax",
     Comment => "comment",
     UnboundedRemoval => "unbounded-removal",
+    RawTreeRemoval => "raw-tree-removal",
     PerishableHandle => "perishable-handle",
     LooseLayout => "loose-layout",
     WildcardOverOurOwn => "wildcard-over-our-own",
@@ -273,6 +278,7 @@ impl Kind {
             Self::OpaqueMacroSyntax => OPAQUE_MACRO_SYNTAX_REMEDY,
             Self::Comment => COMMENT_REMEDY,
             Self::UnboundedRemoval => UNBOUNDED_REMOVAL_REMEDY,
+            Self::RawTreeRemoval => RAW_TREE_REMOVAL_REMEDY,
             Self::PerishableHandle => PERISHABLE_HANDLE_REMEDY,
             Self::LooseLayout => LOOSE_LAYOUT_REMEDY,
             Self::WildcardOverOurOwn => WILDCARD_OVER_OUR_OWN_REMEDY,
@@ -329,6 +335,14 @@ const PAINT_RULE: [&str; 2] = ["xtask/src/lints.rs", "xtask/tests/lints.rs"];
 ///
 /// A test may make it too: what a test removes is what it made, and it is standing there watching.
 const RECLAIMER: &str = "crates/rust-mutants/src/reclaim.rs";
+
+/// The one module that removes a tree a run owns, restoring the owner's access on the way down.
+const TREE_REMOVER: &str = "crates/rust-mutants/src/tempowner/mod.rs";
+
+/// Whether `file` is code a crate ships, which is where a removal of a run's own tree happens.
+fn shipped_source(file: &str) -> bool {
+    file.starts_with("crates/") && file.contains("/src/") && !file.contains("/tests/")
+}
 
 /// The only modules allowed to touch `serde_json`'s last-key-wins readers.
 ///
@@ -453,6 +467,10 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
         (
             file.ends_with(RECLAIMER) || file.contains("/tests/"),
             SourcePolicy::Reclaimer,
+        ),
+        (
+            file == TREE_REMOVER || !shipped_source(file),
+            SourcePolicy::TreeRemover,
         ),
         (
             STRICT_JSON_READERS.contains(&file),
@@ -4596,6 +4614,7 @@ fn owned_spawn_boundaries(parsed: &syn::File) -> BTreeSet<SourcePoint> {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum SourcePolicy {
     Reclaimer,
+    TreeRemover,
     StrictJsonReader,
     OverflowSensitive,
     StrictConversions,
@@ -4825,6 +4844,9 @@ impl Scan {
             && method.ident == RAW_REMOVAL
         {
             self.note(Kind::UnboundedRemoval, method.ident.span());
+        }
+        if !self.has_policy(SourcePolicy::TreeRemover) && method.ident == RAW_REMOVAL {
+            self.note(Kind::RawTreeRemoval, method.ident.span());
         }
         let is_iterator_flatten = method.ident == "flatten"
             && path
