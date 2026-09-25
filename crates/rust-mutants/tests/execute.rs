@@ -1155,3 +1155,29 @@ fn a_harness_that_never_started_says_why() {
          only `exit -1` left a person to guess"
     );
 }
+
+#[test]
+fn a_harness_that_named_a_failure_is_heard_even_where_its_process_exited_zero() {
+    let failed = vec!["noticed_the_mutation".to_owned()];
+    assert_eq!(
+        outcome_of(&result(0), Some(green()), (true, &failed)),
+        Outcome::Killed,
+        "a test the harness said failed noticed the mutation, as it does before a stop, a clock \
+         or a signal; an exit status of zero does not take that back, and reading it as a \
+         survivor would claim no test noticed what one said it did"
+    );
+    let failing = Summary {
+        ok: false,
+        passed: 1,
+        failed: 1,
+        ignored: 0,
+        measured: 0,
+        filtered_out: 0,
+    };
+    assert_eq!(
+        outcome_of(&result(0), Some(failing), (true, &[])),
+        Outcome::Inconclusive,
+        "a summary that counts a failure it names nowhere, from a process that exited zero, \
+         contradicts itself, and a contradiction is no survivor"
+    );
+}
