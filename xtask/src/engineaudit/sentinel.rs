@@ -41,7 +41,7 @@ fn killed() -> Value {
         "original": ">", "replacement": ">=",
         "outcome": "killed", "target": TARGET, "exit_code": 101,
         "duration_ms": 7, "tests_run": 2, "killed_by": ["larger_works"],
-        "signal": null, "step_notice": null, "retried": false,
+        "signal": null, "step_notice": null, "retried": false, "lingered": false,
         "not_run_reason": null,
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
@@ -62,7 +62,7 @@ fn survived() -> Value {
         "original": "if a > b { a } else { b }", "replacement": "Default::default()",
         "outcome": "survived", "target": TARGET, "exit_code": 0,
         "duration_ms": 5, "tests_run": 2, "killed_by": [], "signal": null,
-        "step_notice": null, "retried": false, "not_run_reason": null,
+        "step_notice": null, "retried": false, "lingered": false, "not_run_reason": null,
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
         "identical": "not-measured", "expected": true, "unreached": false,
@@ -173,7 +173,7 @@ fn judged(seq: (u64, u64), index: u64, id: &str, outcome: &str) -> [Value; 2] {
         json!({"seq":seq.1,"timestamp":"2026-09-06T10:15:02Z",
             "elapsed_ms":61,"type":"mutant-exec","mutant":{"id":short(id),
             "index":index,"target":TARGET,"outcome":outcome,
-            "exit_code":exit,"duration_ms":5,"tests_run":2}}),
+            "exit_code":exit,"duration_ms":5,"tests_run":2,"lingered":false}}),
     ]
 }
 

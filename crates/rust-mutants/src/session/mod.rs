@@ -1609,6 +1609,7 @@ impl Session {
             timeout_ms: duration_ms(timeout)?,
             timeout_source: source.name().to_owned(),
             alone,
+            lingered: result.lingered,
         });
         Ok(())
     }
@@ -1634,6 +1635,7 @@ impl Session {
             timeout_ms: duration_ms(timeout)?,
             timeout_source: source.name().to_owned(),
             alone: false,
+            lingered: result.lingered,
         });
         Ok(())
     }
@@ -2610,6 +2612,7 @@ mod kani_laws {
             passed_tests: Vec::new(),
             ignored_tests: Vec::new(),
             leader: None,
+            lingered: false,
         }
     }
 
@@ -2996,6 +2999,7 @@ const fn unreached() -> MutantResult {
         passed_tests: Vec::new(),
         ignored_tests: Vec::new(),
         leader: None,
+        lingered: false,
     }
 }
 
@@ -3028,6 +3032,7 @@ mod tests {
             passed_tests: Vec::new(),
             ignored_tests: Vec::new(),
             leader: None,
+            lingered: false,
         }
     }
 

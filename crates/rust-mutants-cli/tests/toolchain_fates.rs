@@ -324,6 +324,11 @@ fn fixture_equivalent() {
 }
 
 #[test]
+fn fixture_fails_then_hangs() {
+    holds("fixture-fails-then-hangs");
+}
+
+#[test]
 fn fixture_families() {
     holds("fixture-families");
 }

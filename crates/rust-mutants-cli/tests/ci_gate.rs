@@ -71,6 +71,7 @@ fn mutant(index: u32, outcome: Outcome) -> RunMutantDocument {
         route: None,
         identical: rust_mutants::run::CodegenIdentity::NotMeasured,
         retried: false,
+        lingered: false,
         expected: false,
         unreached: false,
         source_run_id: None,

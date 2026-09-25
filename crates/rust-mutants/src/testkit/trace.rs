@@ -356,6 +356,7 @@ pub fn every_payload() -> Vec<Payload> {
                 timeout_ms: 30_000,
                 timeout_source: "configured".to_owned(),
                 alone: true,
+                lingered: true,
             },
         },
         Payload::Note {

@@ -113,6 +113,10 @@ pub enum CodegenIdentity {
 
 /// What one mutant's execution established.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is an independent fact about one judged mutant that the published report states"
+)]
 pub struct Judged {
     /// The dense catalog index the guards name.
     pub index: u32,
@@ -138,6 +142,8 @@ pub struct Judged {
     pub signal: Option<i32>,
     /// Whether a first timeout was retried serially before the outcome was believed.
     pub retried: bool,
+    /// Whether the harness had already answered when the clock ended the process.
+    pub lingered: bool,
     /// The run that established this, when it was not this one.
     pub source_run_id: Option<String>,
     /// Whether a reviewer declared this outcome in advance and the run confirmed the claim.
@@ -1766,6 +1772,7 @@ fn execute(
         failed_tests: result.failed_tests,
         signal: result.signal,
         retried,
+        lingered: result.lingered,
         expected: false,
         not_run_reason: not_run_because(outcome, &route),
         route: None,
@@ -1880,6 +1887,7 @@ fn reuse(
         failed_tests: record.failed_tests,
         signal: None,
         retried: false,
+        lingered: false,
         expected: false,
         not_run_reason: None,
         route: None,
@@ -1947,6 +1955,7 @@ fn unexecuted(mutant: &Mutant, reason: NotRunReason) -> Judged {
         failed_tests: Vec::new(),
         signal: None,
         retried: false,
+        lingered: false,
         expected: false,
         not_run_reason: Some(reason),
         route: None,
