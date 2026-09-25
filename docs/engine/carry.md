@@ -21,25 +21,29 @@ A body is not sealed when any of these holds, and `unsealed` names the first tha
 1. `unread`: no unit read the item's file.
 2. `unlocated`: the catalog's body span names no bytes of the file.
 3. `evaluated`: the item is a `const fn`, a `const` or a `static`, which the compiler can evaluate where nothing enters it.
-4. `unlocated`: the catalog's body span is not a function body of the file as the parser reads it.
-5. `attribute`: an attribute off the list is on the file, on an inline `mod`, `impl` or `trait` around the item, or on the item.
+4. `compile-time`: a unit that read the item's file is a procedural macro or a build script, whose code runs in the compiler, where no test enters it, and decides what other code is.
+5. `unlocated`: the catalog's body span is not a function body of the file as the parser reads it.
+6. `attribute`: an attribute off the list is on the file, on an inline `mod`, `impl` or `trait` around the item, or on the item.
    An attribute is on the list when its path is one segment named in `sealable-attributes`, or its first segment is named in `tool-namespaces`.
    A `cfg_attr` is on the list when every attribute it would apply is.
-6. The first of these inside the body, in source order:
+   `test`, `should_panic` and `ignore` are on it because the harness entry they generate is built from the function's name and attributes, which are outside the body.
+7. `opaque-type`: the function is `async`, or its return type holds an `impl` type anywhere.
+   The body decides that hidden type, and a caller observes it, through its size, its name, or its layout, without entering the body; an `async` function's body runs only when its future is first polled.
+8. The first of these inside the body, in source order:
    - `attribute`: an attribute off the list;
    - `macro`: a macro invocation whose path is not one segment named in `sealable-macros`, or two segments whose first is named in `standard-roots` and whose second is named in `sealable-macros`;
    - `macro`, too: a macro invoked inside the arguments of a listed one.
      The arguments are read as tokens, not parsed: every identifier path followed by `!` and a delimited group is an invocation unless the path's last segment is a keyword, and the rule applies to it and to its own arguments in turn;
    - `declares-item`: any item: `fn`, `struct`, `enum`, `union`, `impl`, `trait`, `type`, `use`, `mod`, `macro_rules!` or another item macro, `const`, `static`, `extern crate`, an `extern` block, or an item the parser keeps as tokens;
    - `const-block`: an inline `const { … }` block.
-7. The first of these in the files the unit read, in byte order of their names:
+9. The first of these in the files the unit read, in byte order of their names:
    - `shadowed`: the file declares `macro_rules!` with a name in `sealable-macros`, or a `use` makes a name in `sealable-macros` visible, directly or with `as`, from a path whose first segment is not in `standard-roots`;
    - `foreign-glob`: the file imports `*` from a path whose first segment is in neither `standard-roots` nor `local-roots`, or takes a crate that is not in `standard-roots` with `#[macro_use] extern crate`.
      A glob reaches every module below the one that holds it, so this unseals every body of the unit.
 
-Rule 7 reads every file of the unit that parses as a whole Rust file, whatever its extension.
+Rule 9 reads every file of the unit that parses as a whole Rust file, whatever its extension.
 A file that does not, such as a data file or an included expression, can declare no macro another file sees.
-A body is sealed only if it is sealed in every unit that read its file; rule 7 names the first such unit in the order the build reported them.
+A body is sealed only if it is sealed in every unit that read its file; rule 9 names the first such unit in the order the build reported them.
 
 ### Lists
 
@@ -98,8 +102,11 @@ deprecated
 doc
 expect
 forbid
+ignore
 inline
 must_use
+should_panic
+test
 track_caller
 warn
 ```
@@ -121,7 +128,9 @@ A unit is named by its package's name, its target's name, its target's kinds joi
 Its skeleton is the SHA-256 of one line `<name>\0<digest>\n` per entry, in byte order of the names, and `entries` keeps every one of those names with its digest, so a reader can fold them again and check any entry it can read:
 
 - every file the unit's dep-info names, as `$root/<path>` under the workspace root or `$target/<path>` under the target directory, each path with forward slashes; a file under neither is the lock file's to key and has no entry.
-  The digest is the SHA-256 of the file's bytes with every sealed body of it replaced by `{sealed:<name>#<ordinal>}`, where `<name>` is the entry's name and `<ordinal>` is the item's position among the file's cataloged items, from 0;
+  The digest is the SHA-256 of the file's bytes with every sealed body of it replaced by `{sealed:<name>#<ordinal>/<newlines>:<bytes>:<characters>}`.
+  `<name>` is the entry's name, `<ordinal>` is the item's position among the file's cataloged items, from 0, `<newlines>` is how many line feeds the body holds, and `<bytes>` and `<characters>` are the length of its last line, after its last line feed, in bytes and in UTF-8 characters.
+  The shape is there because a body's length decides where everything after it is: a line added inside a sealed body moves the line `panic!`, `line!()`, `Location::caller()` and a backtrace report for every line after it;
 - every variable rustc recorded reading, as `$env/<NAME>`, with the value `unset`, or `set:` and the SHA-256 of the value with the run's own workspace root and target directory spelled `$root` and `$target`;
 - every build script the unit's package ran, as `$emitted/<out_dir>` with the directory spelled the same way.
   The digest is the SHA-256 of one line `<kind>\0<value>\n` for each `cargo::rustc-cfg` (`cfg`), `rustc-env` (`env`, as `NAME=value`), `rustc-link-lib` (`lib`) and `rustc-link-search` (`path`) it emitted, each kind's values sorted and spelled the same way.

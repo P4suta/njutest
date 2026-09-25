@@ -97,6 +97,8 @@
             "why": {
               "enum": [
                 "evaluated",
+                "compile-time",
+                "opaque-type",
                 "const-block",
                 "unlocated",
                 "unread"

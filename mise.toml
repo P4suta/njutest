@@ -97,7 +97,7 @@ run = "cargo xtask all"
 [tasks.lint]
 description = "Run formatting, clippy, rustdoc, the repository gates, the fuzz targets under the same Clippy policy, spelling, TOML, and workflow linters"
 depends = ["fmt:check", "clippy", "doc", "gates", "fuzz:clippy", "committed:range"]
-run = ["typos", "actionlint"]
+run = ["typos", "actionlint", "cargo xtask docflows"]
 
 [tasks."committed:range"]
 description = "Check exactly the commits unique to this branch against the current origin/main"

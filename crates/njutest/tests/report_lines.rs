@@ -143,7 +143,14 @@ fn the_verdict_is_the_last_record_so_a_reader_can_take_the_tail() {
 #[test]
 fn a_run_says_where_it_wrote_so_nobody_reading_it_has_to_know_the_layout() {
     let document = "elsewhere/runs/20260101T000000Z-aaaaaa/njutest-assurance-report-v1.json";
-    let text = lines::kept(&report(), document).expect("the checked report keeps its document");
+    let text = lines::kept(
+        &report(),
+        &[lines::Said {
+            record: "REPORT",
+            path: document.to_owned(),
+        }],
+    )
+    .expect("the checked report keeps its document");
     let said = records(&text, "REPORT");
     assert_eq!(
         said,
