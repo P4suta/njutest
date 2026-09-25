@@ -10,6 +10,7 @@ pub mod equivalence;
 pub mod fuzz;
 pub mod identity;
 pub mod knobs;
+pub mod measure;
 pub(crate) mod model;
 pub mod mutation;
 pub mod repair;

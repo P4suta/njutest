@@ -201,6 +201,9 @@ pub struct Observed {
     pub steadiness: crate::touch::Steadiness,
 }
 
+/// The directory beside the copy a run without some of the tree's files keeps them in until it puts them back.
+const ASIDE_NAME: &str = "aside";
+
 /// The file a control's guards append what they reached to, in the control's own scratch.
 const CONTROL_TOUCH_LOG: &str = "touch.log";
 
@@ -420,6 +423,8 @@ pub struct Session {
     scratch_working_directory: bool,
     /// How many executions this session has started, which is what names each one's own temporary directory.
     executions: std::sync::Mutex<u64>,
+    /// The process that leads each execution this session has started, recorded as it starts, whose children are that execution's rather than any other's.
+    leaders: crate::orphan::Leaders,
     mutant_timeout: Timeout,
     mutant_steps: Option<u64>,
     /// The arguments every test binary of this session is started with, unless one execution names its own.
@@ -442,6 +447,8 @@ pub struct Session {
     written_by_a_test: Vec<Drift>,
     /// The digest of the pristine sources every unit of this build compiled.
     closure: String,
+    /// What the build read that no survey of the tree sees.
+    inputs: crate::select::Inputs,
     /// The digest of the manifests, the lock file, and the cargo configuration the build read.
     manifests: String,
 }
@@ -503,10 +510,60 @@ impl Session {
         &self.targets
     }
 
+    /// Whether a process of the tree may have run without the environment the run gave it while something ran from the first time to the second, which a directory that cannot be read cannot rule out.
+    fn orphaned(
+        &self,
+        before: Option<&BTreeSet<crate::orphan::Orphan>>,
+        (started, ended): (std::time::SystemTime, std::time::SystemTime),
+        leader: Option<u32>,
+    ) -> Result<bool, EngineError> {
+        let others = self
+            .leaders
+            .every()
+            .map_err(|_poisoned| SessionError::ScratchStatePoisoned)?;
+        Ok(
+            match (
+                before,
+                crate::orphan::left(std::path::Path::new(self.workspace.watched())),
+            ) {
+                (Some(before), Ok(orphans)) => orphans.iter().any(|orphan| {
+                    !before.contains(orphan)
+                        && orphan.during(started, ended)
+                        && crate::orphan::ours(orphan, leader, &others)
+                }),
+                (None, Ok(_)) | (_, Err(_)) => true,
+            },
+        )
+    }
+
+    /// Every process that has said so far that it lost the run's environment, or nothing where the directory cannot be read, which an execution compares against to find the ones left while it ran.
+    fn orphans(&self) -> Option<BTreeSet<crate::orphan::Orphan>> {
+        match crate::orphan::left(std::path::Path::new(self.workspace.watched())) {
+            Ok(orphans) => Some(orphans.into_iter().collect()),
+            Err(_unreadable) => None,
+        }
+    }
+
+    /// Whether a process of `target`'s tree ran without the environment the run gave it, so a survival it reports is not one.
+    #[must_use]
+    pub fn uncontrolled(&self, target: &str) -> bool {
+        self.verified
+            .touched
+            .limitations
+            .iter()
+            .any(|one| one.split_once(':') == Some((crate::limitation::UNCONTROLLED_CHILD, target)))
+    }
+
     /// The digest of the pristine sources every unit of this build compiled.
     #[must_use]
     pub fn closure(&self) -> &str {
         &self.closure
+    }
+
+    /// What the build read that no survey of the tree sees: files outside the copy, and the variables the compiler read.
+    #[must_use]
+    pub const fn inputs(&self) -> &crate::select::Inputs {
+        &self.inputs
     }
 
     /// The digest of the manifests, the lock file, and the cargo configuration the build read.
@@ -896,6 +953,7 @@ impl Session {
             return Ok(*answer);
         }
         let context = Context {
+            leaders: Some(&self.leaders),
             base_env: &self.workspace.base_env,
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
@@ -1259,6 +1317,7 @@ impl Session {
             }
         };
         let context = Context {
+            leaders: Some(&self.leaders),
             base_env: &self.workspace.base_env,
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
@@ -1280,7 +1339,16 @@ impl Session {
             } else if let Some(named) = self.filtering(target, chosen, cancel)? {
                 exec = exec.with_tests(named);
             }
-            let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
+            let before = self.orphans();
+            let started = std::time::SystemTime::now();
+            let mut result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
+            let ended = std::time::SystemTime::now();
+            if result.conclusion == MutantConclusion::Survived
+                && (self.uncontrolled(&target.id)
+                    || self.orphaned(before.as_ref(), (started, ended), result.leader)?)
+            {
+                result.conclusion = MutantConclusion::Unobserved;
+            }
             self.record_mutant_exec(Executed {
                 mutant,
                 target,
@@ -1395,6 +1463,57 @@ impl Session {
         } else {
             request.args.clone()
         }
+    }
+
+    /// Runs one target whole with nothing active and the files `absent` taken out of the copy, then puts each back exactly as it was: what a test reads of the tree, as opposed to what it runs, is what such a run answers differently.
+    ///
+    /// It takes the session exclusively, since nothing else may run while the copy is missing files.
+    ///
+    /// # Errors
+    /// What [`Self::control`] refuses, and a file that could not be moved aside or put back.
+    #[expect(
+        clippy::needless_pass_by_ref_mut,
+        reason = "the copy is missing files while this runs, and taking the session exclusively is \
+                  what keeps any other execution from running against it"
+    )]
+    pub fn control_without(
+        &mut self,
+        request: &Request,
+        cancel: &Cancel,
+        absent: &[String],
+    ) -> Result<MutantResult, EngineError> {
+        let root = self.workspace.snapshot_root().to_path_buf();
+        let aside = self.workspace.snapshot.dir().join(ASIDE_NAME);
+        std::fs::create_dir_all(&aside).map_err(|source| SessionError::WriteFailed {
+            path: aside.display().to_string(),
+            source,
+        })?;
+        let mut moved = Vec::new();
+        let mut taken = Ok(());
+        for (index, path) in absent.iter().enumerate() {
+            let (from, to) = (root.join(path), aside.join(index.to_string()));
+            if let Err(source) = std::fs::rename(&from, &to) {
+                taken = Err(SessionError::WriteFailed {
+                    path: from.display().to_string(),
+                    source,
+                });
+                break;
+            }
+            moved.push((from, to));
+        }
+        let ran = match taken {
+            Ok(()) => self
+                .control(request, cancel, Observing::Nothing)
+                .map(|ran| ran.result),
+            Err(error) => Err(error.into()),
+        };
+        for (from, to) in moved.iter().rev() {
+            std::fs::rename(to, from).map_err(|source| SessionError::WriteFailed {
+                path: from.display().to_string(),
+                source,
+            })?;
+        }
+        ran
     }
 
     /// Runs one target with no mutant active under `conditions`: recording what it reached where they ask, and started with what they add to the baseline's start.
@@ -1520,6 +1639,7 @@ impl Session {
     ) -> MutantResult {
         let perturbation = once.perturbation;
         let context = Context {
+            leaders: Some(&self.leaders),
             base_env: &self.workspace.base_env,
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
@@ -1672,6 +1792,7 @@ impl Session {
     ) -> Result<MutantResult, EngineError> {
         let targets = self.selected(request.target.as_deref())?;
         let context = Context {
+            leaders: Some(&self.leaders),
             base_env: &self.workspace.base_env,
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
@@ -1945,6 +2066,16 @@ struct EstablishmentState {
     tests_started: u64,
 }
 
+impl EstablishmentState {
+    /// Nothing established and no test started yet.
+    const fn fresh() -> Self {
+        Self {
+            answers: BTreeMap::new(),
+            tests_started: 0,
+        }
+    }
+}
+
 /// A non-empty ledger of one mutant's executions.
 ///
 /// The first execution is structurally mandatory.
@@ -2182,7 +2313,15 @@ fn duration_ms(duration: Duration) -> Result<u64, SessionError> {
 
 /// Whether a target said anything at all.
 const fn spoke(result: &MutantResult) -> bool {
-    execute::answered(result.outcome())
+    match result.conclusion {
+        MutantConclusion::Inconclusive | MutantConclusion::StepLimitReached { .. } => false,
+        MutantConclusion::NotRun
+        | MutantConclusion::Killed
+        | MutantConclusion::Survived
+        | MutantConclusion::Waited
+        | MutantConclusion::Unobserved
+        | MutantConclusion::Errored => true,
+    }
 }
 
 /// The strongest fact all selected targets jointly establish.
@@ -2273,6 +2412,7 @@ mod kani_laws {
             failed_tests: Vec::new(),
             passed_tests: Vec::new(),
             ignored_tests: Vec::new(),
+            leader: None,
         }
     }
 
@@ -2658,6 +2798,7 @@ const fn unreached() -> MutantResult {
         failed_tests: Vec::new(),
         passed_tests: Vec::new(),
         ignored_tests: Vec::new(),
+        leader: None,
     }
 }
 
@@ -2689,6 +2830,7 @@ mod tests {
             failed_tests: Vec::new(),
             passed_tests: Vec::new(),
             ignored_tests: Vec::new(),
+            leader: None,
         }
     }
 

@@ -381,3 +381,24 @@ fn a_change_belongs_to_the_innermost_item_whose_body_holds_all_of_it() {
     );
     assert_eq!(at(0, 5), None, "the signature of an item is in no body");
 }
+
+#[test]
+fn an_item_only_one_whole_run_entered_is_a_move_even_where_every_site_agrees() {
+    let entering = |entered: Seen| {
+        let mut recorded = touch::Touches::default();
+        recorded.reached = seen(&[("alpha", &[1])], &[]);
+        recorded.entered = entered;
+        touch::TargetTouches::of(recorded, &["alpha".to_owned()])
+    };
+    let baseline = entering(seen(&[("alpha", &[4])], &[]));
+    let control = entering(seen(&[("alpha", &[4, 5])], &[]));
+    let moved = touch::unions_differ(&baseline, &control).expect(
+        "an item the control entered and the baseline did not is what a selection would have \
+         skipped a change to, so reach is not a function of the target by the measure select reads",
+    );
+    assert_eq!(moved.entered.gained, set(&[5]), "{moved:?}");
+    assert!(
+        moved.reached.is_empty() && moved.bodies.is_empty() && moved.infected.is_empty(),
+        "and nothing else moved: {moved:?}"
+    );
+}

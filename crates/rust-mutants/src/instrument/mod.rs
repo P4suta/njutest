@@ -31,10 +31,10 @@ use crate::syntax::branch::Marker;
 use crate::syntax::{Form, Found, SiteHint};
 
 pub use runtime::{
-    ACTIVE_ENV, CATALOG_ENV, COMPILED_CATALOG_ENV, MODULE_STEM, ModuleNameError, RUNTIME_MARKER,
-    Rendering, RuntimeRenderError, STALE_CATALOG_EXIT, STEP_NONCE_ENV, STEP_NOTICE_ENV,
-    STEP_NOTICE_SCHEMA, STEP_PROTOCOL_EXIT, STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV,
-    TOUCH_ENV, TOUCH_UNAVAILABLE_EXIT, module_name, render,
+    ACTIVE_ENV, CATALOG_ENV, COMPILED_CATALOG_ENV, MODULE_STEM, ModuleNameError, ORPHAN_PREFIX,
+    RUNTIME_MARKER, Rendering, RuntimeRenderError, STALE_CATALOG_EXIT, STEP_NONCE_ENV,
+    STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_PROTOCOL_EXIT, STEP_STATE_ENV, STEP_STATE_SCHEMA,
+    STEPS_ENV, TOUCH_ENV, TOUCH_UNAVAILABLE_EXIT, WATCHED_ENV, module_name, render,
 };
 
 /// The first words the runtime prints before it exits [`runtime::STALE_CATALOG_EXIT`].
@@ -393,6 +393,8 @@ pub struct Instrumenting<'a> {
     pub catalog_digest: &'a str,
     /// The item index the first item of this file takes, which is where its entry markers start counting.
     pub first_item: u32,
+    /// The absolute directory a process of the tree that lost the run's environment says so in.
+    pub watched: &'a str,
 }
 
 /// The pristine source after process-wide checkpoints have been inserted and every catalog position has been mapped into that intermediate source.
@@ -432,6 +434,7 @@ fn checkpointed(
         probed: _probed,
         catalog_digest: _catalog_digest,
         first_item,
+        watched: _watched,
     } = *file;
     let planted = steps::plant(text, &module, first_item).map_err(|error| {
         InstrumentError::new(
@@ -494,6 +497,17 @@ fn checkpointed(
 
 /// Rewrites one file so that every placed mutant lives in it behind a guard.
 ///
+/// `bytes` as text, or the refusal of kind `kind` saying `what` is not.
+fn text_of<'a>(
+    bytes: &'a [u8],
+    (kind, path): (InstrumentErrorKind, &str),
+    what: &str,
+) -> Result<&'a str, InstrumentError> {
+    std::str::from_utf8(bytes).map_err(|error| {
+        InstrumentError::new(kind, path, format!("{what} is not valid UTF-8: {error}"))
+    })
+}
+
 /// # Errors
 /// See [`InstrumentErrorKind`].
 pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, InstrumentError> {
@@ -506,14 +520,13 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
         probed,
         catalog_digest,
         first_item,
+        watched,
     } = *file;
-    let text = std::str::from_utf8(source).map_err(|error| {
-        InstrumentError::new(
-            InstrumentErrorKind::SourceMismatch,
-            path,
-            format!("the source is not valid UTF-8: {error}"),
-        )
-    })?;
+    let text = text_of(
+        source,
+        (InstrumentErrorKind::SourceMismatch, path),
+        "the source",
+    )?;
     let module = module_name(path, text).map_err(|error| {
         InstrumentError::new(
             InstrumentErrorKind::SourceMismatch,
@@ -523,13 +536,11 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
     })?;
     check_pristine(file, text, &module)?;
     let checkpointed = checkpointed(file, text, module)?;
-    let bounded_text = std::str::from_utf8(&checkpointed.source).map_err(|error| {
-        InstrumentError::new(
-            InstrumentErrorKind::SpliceFailed,
-            path,
-            format!("the checkpointed source is no longer valid UTF-8: {error}"),
-        )
-    })?;
+    let bounded_text = text_of(
+        &checkpointed.source,
+        (InstrumentErrorKind::SpliceFailed, path),
+        "the checkpointed source",
+    )?;
     let worker = File {
         path,
         text: bounded_text,
@@ -565,6 +576,7 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
             first_item,
             item_count: checkpointed.items,
             newline: worker.newline(),
+            watched,
         },
     )?;
     Ok(FileOutput {

@@ -251,6 +251,7 @@ pub fn every_payload() -> Vec<Payload> {
                         loose: 0,
                         infected: 0,
                         entered: 0,
+                        entered_items: Vec::new(),
                     },
                 },
             },
@@ -269,6 +270,7 @@ pub fn every_payload() -> Vec<Payload> {
                 loose: 1,
                 infected: 1,
                 entered: 2,
+                entered_items: vec![0, 1],
             },
         },
         Payload::Witness {

@@ -414,12 +414,13 @@ pub struct ProbeExecRecord {
     pub infected: Option<u64>,
 }
 
-/// What one original-code control, run to confirm a kill, established about whether one target reached what its baseline did.
+/// What one original-code control established about whether one target reached what its baseline did.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DriftRecord {
-    /// The mutation whose kill the control was confirming.
-    pub mutant: String,
+    /// The mutation whose kill the control was confirming, or nothing for the control a target that confirmed no kill is run alone for.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub mutant: Option<String>,
     /// What it established, as the report records it.
     pub observed: crate::report::drift::Drift,
 }

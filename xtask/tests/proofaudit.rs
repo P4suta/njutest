@@ -2624,3 +2624,26 @@ fn a_part_of_a_catalog_records_its_knobs_and_is_not_held_to_findings_it_does_not
          {shard}"
     );
 }
+
+#[test]
+fn a_control_that_entered_an_item_its_baseline_did_not_is_owed_the_finding() {
+    let mut control = sentinel::touch("control", &[0]);
+    merge(
+        &mut control,
+        serde_json::json!({ "touch": { "entered_items": [4, 5] } }),
+    );
+    let mut baseline = sentinel::touch("baseline", &[0]);
+    merge(
+        &mut baseline,
+        serde_json::json!({ "touch": { "entered_items": [4] } }),
+    );
+    let said = drift_violations(&with_engine(
+        with(sentinel::drifted("held")),
+        vec![baseline, control],
+    ));
+    assert!(
+        !said.is_empty(),
+        "every site agrees and the control entered item 5 the baseline never did, which is the \
+         union `select` narrows by; a report that calls it held is refused: {said:?}"
+    );
+}
