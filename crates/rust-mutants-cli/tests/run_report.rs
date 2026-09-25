@@ -23,6 +23,7 @@ fn keyed(build: &Config) -> Keyed {
         timeout: "auto".to_owned(),
         steps: build.mutation.steps,
         build: build.build.config().arguments(),
+        engine: "e".to_owned(),
     }
 }
 

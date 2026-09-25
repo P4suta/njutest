@@ -221,6 +221,7 @@ fn run_targets(
         }
         let pattern = profile_pattern(reading.profiles, &key(target));
         let context = Context {
+            leaders: None,
             base_env: &workspace.base_env,
             cargo: Some(workspace.toolchain.cargo()),
             sysroot: workspace.toolchain.sysroot(),

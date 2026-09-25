@@ -20,6 +20,18 @@ pub(crate) const BODIES: &str = "b";
 /// The first field of a record naming the mutations a thread saw its guard's two branches differ over.
 pub(crate) const INFECTED: &str = "i";
 
+/// The first field of a record naming the items whose bodies a thread entered, by item index.
+pub(crate) const ENTERED: &str = "e";
+
+/// How many mutants and how many items a record may name, which is what every index it holds is checked against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Bounds {
+    /// How many mutants the catalog holds, which bounds a site, a body, or an infection.
+    pub mutants: u32,
+    /// How many items the item catalog holds, which bounds an entered item.
+    pub items: u32,
+}
+
 /// Why a touch log said nothing.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -50,6 +62,16 @@ pub enum TouchError {
         /// The index the log named.
         index: u32,
         /// How many mutants there are.
+        count: u32,
+    },
+    /// A record names an item the item catalog does not hold.
+    #[error("line {line}: item {index} is beyond the {count} the item catalog holds")]
+    BeyondItems {
+        /// The 1-based line.
+        line: usize,
+        /// The index the log named.
+        index: u32,
+        /// How many items there are.
         count: u32,
     },
     /// A record appeared before any header did.
@@ -121,6 +143,8 @@ pub struct Touches {
     pub bodies: Seen,
     /// The mutations each thread saw its guard's two branches differ over.
     pub infected: Seen,
+    /// The items whose bodies each thread entered, by item index.
+    pub entered: Seen,
 }
 
 /// What each test that passed reported, with everything a thread no passing test names reported folded into `loose`.
@@ -145,7 +169,7 @@ pub fn attributed(recorded: Seen, ran: &[String]) -> Seen {
 /// # Errors
 /// See [`TouchError`].
 /// Every failure yields no facts at all, never the prefix that parsed.
-pub fn read(text: &str, catalog: &str, count: u32) -> Result<Touches, TouchError> {
+pub fn read(text: &str, catalog: &str, bounds: Bounds) -> Result<Touches, TouchError> {
     let mut touches = Touches::default();
     let mut seen_header = false;
     for (position, line) in text.lines().enumerate() {
@@ -161,7 +185,7 @@ pub fn read(text: &str, catalog: &str, count: u32) -> Result<Touches, TouchError
         if !seen_header {
             return Err(TouchError::Headless { line: number });
         }
-        record(line, count, number, &mut touches)?;
+        record(line, bounds, number, &mut touches)?;
     }
     Ok(touches)
 }
@@ -186,7 +210,12 @@ fn header(rest: &str, catalog: &str, line: usize) -> Result<(), TouchError> {
 }
 
 /// One record: the kind of thing reached, the thread that reached it, and the indices.
-fn record(line: &str, count: u32, number: usize, touches: &mut Touches) -> Result<(), TouchError> {
+fn record(
+    line: &str,
+    bounds: Bounds,
+    number: usize,
+    touches: &mut Touches,
+) -> Result<(), TouchError> {
     let mut fields = line.split('\t');
     let (Some(kind), Some(name), Some(indices), None) =
         (fields.next(), fields.next(), fields.next(), fields.next())
@@ -196,10 +225,11 @@ fn record(line: &str, count: u32, number: usize, touches: &mut Touches) -> Resul
             what: format!("{line:?} is not a kind, a thread, and a list of sites"),
         });
     };
-    let seen = match kind {
-        SITES => &mut touches.reached,
-        BODIES => &mut touches.bodies,
-        INFECTED => &mut touches.infected,
+    let (seen, within) = match kind {
+        SITES => (&mut touches.reached, Within::Mutants(bounds.mutants)),
+        BODIES => (&mut touches.bodies, Within::Mutants(bounds.mutants)),
+        INFECTED => (&mut touches.infected, Within::Mutants(bounds.mutants)),
+        ENTERED => (&mut touches.entered, Within::Items(bounds.items)),
         _ => {
             return Err(TouchError::Malformed {
                 line: number,
@@ -207,7 +237,7 @@ fn record(line: &str, count: u32, number: usize, touches: &mut Touches) -> Resul
             });
         }
     };
-    let reported = sites(indices, count, number)?;
+    let reported = sites(indices, within, number)?;
     let into = if name == UNATTRIBUTED {
         &mut seen.loose
     } else {
@@ -217,8 +247,17 @@ fn record(line: &str, count: u32, number: usize, touches: &mut Touches) -> Resul
     Ok(())
 }
 
-/// The comma-separated indices of one record, each within the catalog.
-fn sites(indices: &str, count: u32, line: usize) -> Result<BTreeSet<u32>, TouchError> {
+/// Which catalog a record's indices are about, and how many it holds.
+#[derive(Debug, Clone, Copy)]
+enum Within {
+    /// The mutant catalog.
+    Mutants(u32),
+    /// The item catalog.
+    Items(u32),
+}
+
+/// The comma-separated indices of one record, each within the catalog it is about.
+fn sites(indices: &str, within: Within, line: usize) -> Result<BTreeSet<u32>, TouchError> {
     let mut reached = BTreeSet::new();
     for field in indices.split(',') {
         let index = field
@@ -227,8 +266,14 @@ fn sites(indices: &str, count: u32, line: usize) -> Result<BTreeSet<u32>, TouchE
                 line,
                 what: format!("{field:?} is not a site"),
             })?;
-        if index >= count {
-            return Err(TouchError::BeyondCatalog { line, index, count });
+        match within {
+            Within::Mutants(count) if index >= count => {
+                return Err(TouchError::BeyondCatalog { line, index, count });
+            }
+            Within::Items(count) if index >= count => {
+                return Err(TouchError::BeyondItems { line, index, count });
+            }
+            Within::Mutants(_) | Within::Items(_) => {}
         }
         reached.insert(index);
     }
@@ -259,6 +304,30 @@ pub struct Touched {
     /// Which of the records above are facts about which mutant, without which the rest is only silence.
     #[serde(default)]
     pub narrowing: Narrowing,
+    /// Every item of every file the tree instrumented, by item index, which is what an `entered` index names.
+    #[serde(default)]
+    pub items: Vec<Item>,
+}
+
+/// One item of an instrumented file whose body a test can enter.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+#[serde(deny_unknown_fields)]
+pub struct Item {
+    /// The dense item index a marker names, which is this item's position in the catalog.
+    pub index: u32,
+    /// The package whose unit compiled the file.
+    pub package: String,
+    /// The workspace-relative path with forward slashes.
+    pub path: String,
+    /// The item as a reader writes it, which is what a mutant inside it names as its `item`.
+    pub name: String,
+    /// The bytes the whole item covers in the pristine file, attributes and signature included.
+    pub span: crate::span::Span,
+    /// The bytes its body covers in the pristine file, which is every byte a change can make and leave the item's signature alone.
+    pub body: crate::span::Span,
+    /// Whether entering the body is something the guards record, which a body the compiler may evaluate at compile time is not.
+    pub measurable: bool,
 }
 
 /// What a reader has to know before this record narrows anything: which mutants the tree that made it could say something about.
@@ -286,6 +355,9 @@ pub struct TargetTouches {
     /// The mutations each test of this target saw its guard's two branches differ over.
     #[serde(default)]
     pub infected: Seen,
+    /// The items whose bodies each test of this target entered, by item index.
+    #[serde(default)]
+    pub entered: Seen,
     /// Every test the baseline ran, which is what a report nothing could attribute is about and what "all of them" counts against.
     pub ran: Vec<String>,
 }
@@ -298,6 +370,7 @@ impl TargetTouches {
             reached: attributed(recorded.reached, ran),
             bodies: attributed(recorded.bodies, ran),
             infected: attributed(recorded.infected, ran),
+            entered: attributed(recorded.entered, ran),
             ran: ran.to_vec(),
         }
     }
@@ -332,7 +405,6 @@ impl Moved {
 
 /// How a whole target's reach on a control differed from its reach on the baseline.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub struct ReachMoved {
     /// The mutant sites.
     pub reached: Moved,
@@ -340,17 +412,26 @@ pub struct ReachMoved {
     pub bodies: Moved,
     /// The mutations a guard saw its two branches differ over.
     pub infected: Moved,
+    /// The items whose bodies anything of the target entered, which is what `select` narrows by.
+    pub entered: Moved,
 }
 
-/// How a control's per-target unions differ from the baseline's, or nothing where all three agree; that both passed the same tests is the caller's premise (ADR 0025).
+/// How a control's per-target unions differ from the baseline's, or nothing where all four agree; that both passed the same tests is the caller's premise (ADR 0025).
 #[must_use]
 pub fn unions_differ(baseline: &TargetTouches, control: &TargetTouches) -> Option<ReachMoved> {
     let moved = ReachMoved {
         reached: Moved::between(&baseline.reached, &control.reached),
         bodies: Moved::between(&baseline.bodies, &control.bodies),
         infected: Moved::between(&baseline.infected, &control.infected),
+        entered: Moved::between(&baseline.entered, &control.entered),
     };
-    if moved.reached.is_empty() && moved.bodies.is_empty() && moved.infected.is_empty() {
+    let ReachMoved {
+        reached,
+        bodies,
+        infected,
+        entered,
+    } = &moved;
+    if reached.is_empty() && bodies.is_empty() && infected.is_empty() && entered.is_empty() {
         return None;
     }
     Some(moved)
@@ -373,7 +454,17 @@ pub enum Steadiness {
 }
 
 /// Why a control established nothing about whether a target's baseline reach holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    njutest_macros::AllVariants,
+)]
+#[serde(rename_all = "kebab-case")]
 pub enum Unmeasured {
     /// The control's process could not record what its guards reached.
     Unrecorded,
@@ -435,6 +526,42 @@ impl TargetTouches {
         }
         Reaching::Tests(named)
     }
+
+    /// Which of this target's tests entered the body of the item at `index`, with the same reading of an unattributed entry as [`Self::reaching`].
+    #[must_use]
+    pub fn entering(&self, index: u32) -> Reaching {
+        if self.entered.loose.contains(&index) {
+            return Reaching::Whole;
+        }
+        let named = self.entered.who(index);
+        if named.is_empty() {
+            return Reaching::Nothing;
+        }
+        if named.len() >= self.ran.len() {
+            return Reaching::Whole;
+        }
+        Reaching::Tests(named)
+    }
+
+    /// Every item the named test entered, where an entry nothing could attribute is one every test made.
+    #[must_use]
+    pub fn entered_by(&self, test: &str) -> BTreeSet<u32> {
+        let mut entered = self.entered.loose.clone();
+        if let Some(held) = self.entered.tests.get(test) {
+            entered.extend(held.iter().copied());
+        }
+        entered
+    }
+
+    /// Every item anything of this target entered.
+    #[must_use]
+    pub fn entered_by_any(&self) -> BTreeSet<u32> {
+        let mut entered = self.entered.loose.clone();
+        for held in self.entered.tests.values() {
+            entered.extend(held.iter().copied());
+        }
+        entered
+    }
 }
 
 impl Touched {
@@ -448,6 +575,15 @@ impl Touched {
     #[must_use]
     pub fn reaching(&self, target: &str, index: u32) -> Option<Reaching> {
         Some(self.targets.get(target)?.reaching(index))
+    }
+
+    /// The innermost item of `path` whose body holds every byte of `span`, which is the item a change of those bytes is a change of.
+    #[must_use]
+    pub fn item_holding(&self, path: &str, span: crate::span::Span) -> Option<&Item> {
+        self.items
+            .iter()
+            .filter(|item| item.path == path && item.body.contains(span))
+            .min_by_key(|item| item.body.len())
     }
 
     /// Records that `target` said nothing this run can route by, and why.

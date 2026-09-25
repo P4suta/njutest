@@ -409,6 +409,7 @@ fn a_moved_baseline_is_told_as_a_measurement_the_proofs_cannot_stand_on() {
                 },
                 bodies: nothing(),
                 infected: nothing(),
+                entered: nothing(),
             }];
         },
     );

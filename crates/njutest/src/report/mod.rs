@@ -6298,8 +6298,7 @@ impl Report {
                         .parts
                         .iter()
                         .flat_map(|part| part.limitations.iter().cloned())
-                        .chain(merged_drift_limitation(build))
-                        .chain(merged_knob_limitations(build))
+                        .chain(merged_whole_catalog(build).limitations)
                 })
                 .collect(),
             sources: self
@@ -6833,8 +6832,7 @@ fn projected_findings(
         .collect();
     let mut projected = global_findings.to_vec();
     for build in builds.iter() {
-        projected.extend(merged_drift_findings(build));
-        projected.extend(merged_knob_findings(build));
+        projected.extend(merged_whole_catalog(build).findings);
         if contract.asks_every_dimension() {
             projected.extend(merged_matrix_findings(build));
         }
@@ -6857,7 +6855,34 @@ fn projected_findings(
     projected
 }
 
-/// Whether a build was measured in parts, which is when its drift finding and limitation are raised over the combined records rather than by a part.
+/// What only the whole catalog decides, which neither a shard nor any one part can.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WholeCatalog {
+    /// The findings it raises.
+    pub findings: Vec<Finding>,
+    /// The limitations it states.
+    pub limitations: Vec<Limitation>,
+}
+
+/// What only the whole catalog decides, over its `drift` and `knobs` records and its mutant `rows`: raised once by a run that measured the catalog whole, and by a merge over the combined records of every part.
+#[must_use]
+pub fn whole_catalog(
+    drift: &[drift::Drift],
+    knobs: &[knobs::KnobRecord],
+    rows: &[MutantRecord],
+) -> WholeCatalog {
+    let mut findings = hollow::found(rows);
+    findings.extend(drift::found(drift, rows));
+    findings.extend(knobs::found(knobs, rows));
+    let mut limitations: Vec<Limitation> = drift::unmeasured(drift).into_iter().collect();
+    limitations.extend(knobs::limited(knobs));
+    WholeCatalog {
+        findings,
+        limitations,
+    }
+}
+
+/// Whether a build was measured in parts, which is when what only the whole catalog decides is raised over the combined records rather than by a part.
 fn sharded(build: &BuildEvidence) -> bool {
     build
         .parts
@@ -6971,90 +6996,59 @@ impl MatrixEvidence {
     }
 }
 
-/// The `unstable-baseline` findings of a build measured in parts, over every part's records and rows, each attributed to the part that saw its target move.
-fn merged_drift_findings(build: &BuildEvidence) -> Vec<Finding> {
+/// What only the whole catalog decides about a build measured in parts, over every part's records; nothing for a build measured whole, whose part raised it already.
+fn merged_whole_catalog(build: &BuildEvidence) -> WholeCatalog {
     if !sharded(build) {
-        return Vec::new();
+        return WholeCatalog {
+            findings: Vec::new(),
+            limitations: Vec::new(),
+        };
     }
     let records = drift::combined(build.parts.iter().flat_map(|part| part.drift.iter()));
+    let knob_records = knobs::combined(build.parts.iter().flat_map(|part| part.knobs.iter()));
     let rows: Vec<MutantRecord> = build
         .parts
         .iter()
         .flat_map(|part| part.mutants.iter().cloned())
         .collect();
-    drift::found(&records, &rows)
-        .into_iter()
-        .map(|mut finding| {
-            let saw = build.parts.iter().find(|part| {
-                part.drift.iter().any(|one| {
-                    matches!(one, drift::Drift::Moved { .. }) && one.target() == finding.subject
-                })
-            });
-            if let Some(part) = saw {
-                finding.origin = FindingOrigin::Source {
-                    build: build.name.clone(),
-                    run_id: part.run_id.clone(),
-                    part: part.part,
-                };
-            }
-            finding
-        })
-        .collect()
+    let mut whole = whole_catalog(&records, &knob_records, &rows);
+    for finding in &mut whole.findings {
+        if let Some(part) = build
+            .parts
+            .iter()
+            .find(|part| saw(part, finding))
+            .or_else(|| build.parts.iter().next())
+        {
+            finding.origin = FindingOrigin::Source {
+                build: build.name.clone(),
+                run_id: part.run_id.clone(),
+                part: part.part,
+            };
+        }
+    }
+    whole
 }
 
-/// The knob findings of a build measured in parts, over every part's records and rows, each attributed to the part whose control saw it.
-fn merged_knob_findings(build: &BuildEvidence) -> Vec<Finding> {
-    if !sharded(build) {
-        return Vec::new();
-    }
-    let records = knobs::combined(build.parts.iter().flat_map(|part| part.knobs.iter()));
-    let rows: Vec<MutantRecord> = build
-        .parts
+/// Whether `part` holds the record `finding` rests on: the move of the target it names, the control a knob broke or moved it under, or a row that target answered about.
+fn saw(part: &BuildPartEvidence, finding: &Finding) -> bool {
+    part.drift
         .iter()
-        .flat_map(|part| part.mutants.iter().cloned())
-        .collect();
-    knobs::found(&records, &rows)
-        .into_iter()
-        .map(|mut finding| {
-            let saw = build.parts.iter().find(|part| {
-                part.knobs.iter().any(|one| {
-                    one.target == finding.subject
-                        && matches!(
-                            one.standing,
-                            knobs::Standing::Broke { .. } | knobs::Standing::Moved { .. }
-                        )
-                })
-            });
-            if let Some(part) = saw {
-                finding.origin = FindingOrigin::Source {
-                    build: build.name.clone(),
-                    run_id: part.run_id.clone(),
-                    part: part.part,
-                };
-            }
-            finding
+        .any(|one| matches!(one, drift::Drift::Moved { .. }) && one.target() == finding.subject)
+        || part.knobs.iter().any(|one| {
+            one.target == finding.subject
+                && matches!(
+                    one.standing,
+                    knobs::Standing::Broke { .. } | knobs::Standing::Moved { .. }
+                )
         })
-        .collect()
-}
-
-/// The knob limitations of a build measured in parts, over every part's records.
-fn merged_knob_limitations(build: &BuildEvidence) -> Vec<Limitation> {
-    if !sharded(build) {
-        return Vec::new();
-    }
-    knobs::limited(&knobs::combined(
-        build.parts.iter().flat_map(|part| part.knobs.iter()),
-    ))
-}
-
-/// The `drift-not-measured` limitation of a build measured in parts, over every part's records.
-fn merged_drift_limitation(build: &BuildEvidence) -> Option<Limitation> {
-    if !sharded(build) {
-        return None;
-    }
-    drift::unmeasured(&drift::combined(
-        build.parts.iter().flat_map(|part| part.drift.iter()),
-    ))
+        || part.mutants.iter().any(|row| {
+            row.routing.as_ref().is_some_and(|routing| {
+                routing
+                    .answered
+                    .iter()
+                    .any(|answered| answered.target == finding.subject)
+            })
+        })
 }
 
 fn spanning_timing(builds: &BuildLedger) -> ConclusionTiming {

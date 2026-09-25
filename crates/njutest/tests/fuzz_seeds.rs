@@ -80,8 +80,17 @@ const READERS: [(&str, Reader); 16] = [
         std::str::from_utf8(data).is_ok_and(|text| njutest::report::json::parse(text).is_ok())
     }),
     ("touch_log", |data| {
-        std::str::from_utf8(data)
-            .is_ok_and(|text| rust_mutants::touch::read(text, &"0".repeat(64), 4096).is_ok())
+        std::str::from_utf8(data).is_ok_and(|text| {
+            rust_mutants::touch::read(
+                text,
+                &"0".repeat(64),
+                rust_mutants::touch::Bounds {
+                    mutants: 4096,
+                    items: 4096,
+                },
+            )
+            .is_ok()
+        })
     }),
 ];
 

@@ -866,6 +866,13 @@ fn a_route_that_kept_nothing_and_ran_something_is_one_violation_and_not_two() {
                     "duration_ms": 5
                 }
             }),
+            serde_json::json!({
+                "seq": 3, "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2, "type": "mutant-exec",
+                "mutant": {
+                    "mutant": SURVIVED, "target": TARGET, "args": [], "outcome": "survived",
+                    "duration_ms": 5
+                }
+            }),
         ],
     );
 
@@ -1391,15 +1398,16 @@ fn a_column_the_audit_could_not_check_is_counted_as_one_it_could_not_check() {
 
     assert_eq!(
         audit.unaudited(),
-        6,
+        7,
         "one column that is not there leaves the column itself, the two equations it is \
-         a side of, and the two layers this recording does not carry — the routing and \
-         the executions. A count of what could not be checked is what tells a reader how \
-         much of the report the audit is silent about, and one that is always zero says \
-         it checked everything: {audit}"
+         a side of, and the four layers this recording does not carry — the routing, the \
+         targets put to mutations, the outcomes held to their executions, and the threads a \
+         single-threaded proof is held to. A count of what could not be checked is what \
+         tells a reader how much of the report the audit is silent about, and one that is \
+         always zero says it checked everything: {audit}"
     );
     assert!(
-        audit.to_string().contains("6 unaudited"),
+        audit.to_string().contains("7 unaudited"),
         "and the summary says it: {audit}"
     );
 }
@@ -2897,5 +2905,28 @@ fn the_audit_knows_exactly_the_knobs_the_published_schema_names() {
         schema_knobs(),
         "the audit's own list of knobs and the contract's are one list, so a knob added to either \
          and not the other fails here rather than being owed by one reading and not the other"
+    );
+}
+
+#[test]
+fn a_control_that_entered_an_item_its_baseline_did_not_is_owed_the_finding() {
+    let mut control = sentinel::touch("control", &[0]);
+    merge(
+        &mut control,
+        serde_json::json!({ "touch": { "entered_items": [4, 5] } }),
+    );
+    let mut baseline = sentinel::touch("baseline", &[0]);
+    merge(
+        &mut baseline,
+        serde_json::json!({ "touch": { "entered_items": [4] } }),
+    );
+    let said = drift_violations(&with_engine(
+        with(sentinel::drifted("held")),
+        vec![baseline, control],
+    ));
+    assert!(
+        !said.is_empty(),
+        "every site agrees and the control entered item 5 the baseline never did, which is the \
+         union `select` narrows by; a report that calls it held is refused: {said:?}"
     );
 }

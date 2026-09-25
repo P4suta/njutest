@@ -13,18 +13,27 @@ pub const FILE_NAME: &str = "njutest-assurance-report-v1.lines";
 /// A reader who has the stream should not have to know the layout to find the document beside it: a `REPORT` record is how a script that read the verdict reads the rest, and guessing a path is how one stops working the day a project moves its report directory.
 /// # Errors
 /// Returns the checked projection error retained by the completed report.
-pub fn kept(report: &Report, document: &str) -> Result<String, super::CountError> {
-    written(report, Some(document))
+pub fn kept(report: &Report, said: &[Said]) -> Result<String, super::CountError> {
+    written(report, said)
+}
+
+/// One file a run published, as the record that names it and its path from the project's own root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Said {
+    /// The record's name: `REPORT`, `SARIF`, or `JUNIT`.
+    pub record: &'static str,
+    /// Where the file is.
+    pub path: String,
 }
 
 /// The whole report as records, each line terminated.
 /// # Errors
 /// Returns the checked projection error retained by the completed report.
 pub fn stream(report: &Report) -> Result<String, super::CountError> {
-    written(report, None)
+    written(report, &[])
 }
 
-fn written(report: &Report, document: Option<&str>) -> Result<String, super::CountError> {
+fn written(report: &Report, said: &[Said]) -> Result<String, super::CountError> {
     let mut out = String::new();
     let conclusion = report.conclusion()?;
     identity(report, &conclusion, &mut out);
@@ -89,8 +98,8 @@ fn written(report: &Report, document: Option<&str>) -> Result<String, super::Cou
     }
     onward(&conclusion, &mut out);
     accounting(&conclusion, &mut out);
-    if let Some(document) = document {
-        record(&mut out, "REPORT", &[document]);
+    for one in said {
+        record(&mut out, one.record, &[&one.path]);
         out.push('\n');
     }
     record(&mut out, "VERDICT", &[&verdict_name(report)]);

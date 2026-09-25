@@ -183,6 +183,8 @@ pub enum Layer {
     Dimensions,
     /// Which test binaries the report proves single-threaded, held to the reach their baseline recorded off their tests' threads.
     Concurrency,
+    /// Each mutation's reported outcome, held to the executions of it the recording holds.
+    Executions,
 }
 
 impl Layer {
@@ -205,6 +207,7 @@ impl Layer {
             Self::Dimensions => "dimensions",
             Self::Crashes => "crashes",
             Self::Concurrency => "concurrency",
+            Self::Executions => "executions",
         }
     }
 }
@@ -463,22 +466,8 @@ pub fn audit_with(
     }
     let recorded_runner = recorded.runner;
     let recording = Recording::of(&document);
-    let routing = recorded_runner
-        .map(|(recording_path, text)| {
-            crate::route::read(text).map_err(|source| AuditError::MalformedRecording {
-                path: recording_path.to_owned(),
-                source,
-            })
-        })
-        .transpose()?;
-    let watched = recorded_runner
-        .map(|(recording_path, text)| {
-            crate::wire::read(text).map_err(|source| AuditError::MalformedRecording {
-                path: recording_path.to_owned(),
-                source,
-            })
-        })
-        .transpose()?;
+    let routing = read_runner(recorded_runner, crate::route::read)?;
+    let watched = read_runner(recorded_runner, crate::wire::read)?;
     let faulted = read_runner(recorded_runner, crate::faults::read)?;
     let crashed = read_runner(recorded_runner, crate::crashes::read)?;
     let engines = recorded
@@ -510,6 +499,7 @@ pub fn audit_with(
     acceptances(&recording, &mut audit);
     reuse(&recording, &mut audit);
     proofs(&recording, routing.as_ref(), &mut audit);
+    executions(&recording, routing.as_ref(), &mut audit);
     hollow(&recording, routing.as_ref(), &mut audit);
     wire(&recording, watched.as_ref(), &mut audit);
     models(&recording, run, &mut audit);
@@ -2699,6 +2689,118 @@ fn gaps(
                     .to_owned(),
             );
         }
+    }
+}
+
+/// What the equivalence layer records when the compiler renders a mutation identically.
+const IDENTICAL: &str = "identical";
+
+/// What the engine calls a step-limit outcome in the executions it records.
+const STEP_LIMIT_EXEC: &str = "step_limit_reached";
+
+/// Every mutation's reported outcome against the executions of it the recording holds, so a report cannot say a test noticed what every recorded execution says survived.
+fn executions(
+    recording: &Recording<'_>,
+    routing: Option<&crate::route::Routing>,
+    audit: &mut Audit,
+) {
+    let mut notes = Notes::on(audit, Layer::Executions);
+    let Some(routing) = routing else {
+        notes.unaudited(
+            "mutant-exec",
+            "the run kept no recording of its executions, so no outcome can be held to what \
+             ran"
+            .to_owned(),
+        );
+        return;
+    };
+    if routing.execs.is_empty() {
+        notes.unaudited(
+            "mutant-exec",
+            "the recording holds no mutation execution, so no outcome can be held to what ran"
+                .to_owned(),
+        );
+        return;
+    }
+    let mut ran: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for exec in &routing.execs {
+        ran.entry(exec.mutant.as_str())
+            .or_default()
+            .push(exec.outcome.as_str());
+    }
+    for mutant in recording.mutants.iter().filter(|mutant| !mutant.reused) {
+        let mut recorded: Vec<&str> = Vec::new();
+        for key in [mutant.display_id.as_str(), mutant.id.as_str()] {
+            if let Some(outcomes) = ran.get(key) {
+                recorded.extend(outcomes.iter().copied());
+            }
+        }
+        if let Some(why) = contradicted(&mutant.outcome, &recorded) {
+            notes.violated(mutant.label(), why);
+        } else if mutant.outcome == EQUIVALENT
+            && !routing
+                .equivalences
+                .iter()
+                .any(|(display_id, answer)| display_id == &mutant.display_id && answer == IDENTICAL)
+        {
+            notes.violated(
+                mutant.label(),
+                "the report says the compiler renders this mutation identically to the code it \
+                 mutates, and the recording holds no equivalence answer saying so"
+                    .to_owned(),
+            );
+        }
+    }
+}
+
+/// Why `reported` is not an outcome the executions `recorded` could have come to, if it is not.
+fn contradicted(reported: &str, recorded: &[&str]) -> Option<String> {
+    let any = |outcome: &str| recorded.contains(&outcome);
+    let requires = |outcome: &str| {
+        (!any(outcome)).then(|| {
+            format!(
+                "the report says {reported}, and no recorded execution of it came to \
+                 {outcome}: {recorded:?}"
+            )
+        })
+    };
+    match reported {
+        KILLED | UNCONFIRMED => requires(KILLED),
+        WAITED => requires(WAITED),
+        STEP_LIMIT_REACHED => requires(STEP_LIMIT_EXEC),
+        SURVIVED => recorded.iter().any(|one| *one != SURVIVED).then(|| {
+            format!(
+                "the report says every reaching test ran and none noticed, and the recorded \
+                 executions of it came to {recorded:?}; a mutation a proof removed every \
+                 execution of has none, and the proofs layer holds that"
+            )
+        }),
+        UNREACHED | REJECTED => (!recorded.is_empty()).then(|| {
+            format!(
+                "the report says {reported}, which no test ever executes, and the recording holds \
+                 executions of it: {recorded:?}"
+            )
+        }),
+        EQUIVALENT | "model-noticed" | "model-proved" => any(KILLED).then(|| {
+            format!(
+                "the report says {reported}, and a recorded execution of it was killed: a test \
+                 told the programs apart"
+            )
+        }),
+        ERRORED => (!recorded.is_empty()
+            && recorded
+                .iter()
+                .all(|one| *one == SURVIVED || *one == KILLED))
+        .then(|| {
+            format!(
+                "the report says the harness failed, and every recorded execution of it came to \
+                 a verdict: {recorded:?}"
+            )
+        }),
+        other => Some(format!(
+            "the report says {other}, which is not an outcome this audit knows how to hold to \
+             an execution"
+        )),
     }
 }
 

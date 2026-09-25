@@ -50,6 +50,8 @@ pub struct Touch {
     pub infected: BTreeSet<u64>,
     /// How many sites it reached on a thread no test answers for.
     pub loose: u64,
+    /// Every item anything of it entered the body of.
+    pub entered: BTreeSet<u64>,
 }
 
 impl Touch {
@@ -61,6 +63,7 @@ impl Touch {
         self.reached == other.reached
             && self.bodies == other.bodies
             && self.infected == other.infected
+            && self.entered == other.entered
     }
 }
 
@@ -208,6 +211,7 @@ pub(crate) fn touch(record: &Value) -> Option<Touch> {
         reached: indices(record.get("reached_sites")?)?,
         bodies: indices(record.get("entered_bodies")?)?,
         infected: indices(record.get("infected_sites")?)?,
+        entered: indices(record.get("entered_items")?)?,
     })
 }
 

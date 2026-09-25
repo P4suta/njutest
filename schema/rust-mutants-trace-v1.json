@@ -448,7 +448,9 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "entered",
         "entered_bodies",
+        "entered_items",
         "infected",
         "infected_sites",
         "loose",
@@ -563,6 +565,20 @@
           "description": "How many distinct mutations anything of it saw its guard's two branches differ over.",
           "type": "integer",
           "minimum": 0
+        },
+        "entered": {
+          "description": "How many distinct items anything of it entered the body of.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "entered_items": {
+          "description": "Every item anything of it entered the body of, which is what a comparison of two whole runs holds against each other.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
         }
       }
     }

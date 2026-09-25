@@ -35,8 +35,9 @@ The two halves used to want `.rust-mutants.toml`'s bound pulled in opposite dire
 For an execution that counts, the bound is now how long it may go without raising the count, so a loop that keeps taking its guard is never stopped by it; only the ceiling of ten bounds could still race the allowance.
 A sleep raises nothing, so it meets the bound exactly as it did.
 
-`FIXTURE_HANG_STRIDE_MS` makes the clamping test slow and moving: while a mutation is active it passes through `clamp_positive` forty times, that many milliseconds apart.
-With a stride of fifty and a bound of one second the test is slower than the bound and never quiet for one, and `toolchain_hang.rs` sets it to show the run waiting for it.
+`FIXTURE_HANG_STRIDE_MS` makes the clamping test slow and moving: while a mutation is active it passes through `clamp_positive` two hundred times, that many milliseconds apart.
+With a stride of fifty and a bound of five seconds the test is slower than the bound and never quiet for one, and `toolchain_hang.rs` sets it to show the run waiting for it.
+The window runs from the start of the process, so the bound also has to outlast starting it before the first step: a bound of one second lost that race on a loaded Windows runner.
 
 ## Fates
 

@@ -241,6 +241,17 @@ pub fn of(
     })
 }
 
+/// The variables of `vars` a run selects for its test processes under `config`, by name and value.
+///
+/// # Errors
+/// [`EnvironmentError`] when a selected name or value is not UTF-8.
+pub fn environment_of(
+    vars: &[(OsString, OsString)],
+    config: &Config,
+) -> Result<Vec<(String, String)>, EnvironmentError> {
+    selected(vars, &config.execution.environment)
+}
+
 /// The environment the run is a function of: the variables that change what the compiler produces, plus whatever the configuration named.
 fn selected(
     vars: &[(OsString, OsString)],

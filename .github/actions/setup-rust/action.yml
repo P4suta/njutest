@@ -34,11 +34,19 @@ runs:
     # machine run the same task rather than two spellings of one; none of them
     # installed mise, and `soundness` failed with `mise: command not found`.
     # It goes here rather than in those jobs so a job added later cannot forget.
+    # mise-action saves its cache only after installing through itself, and this action installs nothing through it, so its cache was never written and every job fetched mise from GitHub releases.
+    # One HTTP 500 there outlasted its five retries and cost a whole pipeline, so the directory mise lives in is restored here instead, keyed on everything that decides its contents.
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.local/share/mise
+          ~/AppData/Local/mise
+        key: mise-${{ runner.os }}-${{ runner.arch }}-${{ inputs.mise-tools }}-${{ hashFiles('mise.toml', '.github/actions/setup-rust/action.yml') }}
     - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
       with:
         version: 2026.9.12
         install: false
-        cache: true
+        cache: false
     # Activating mise brings `mise.toml`'s `[env]` with it, and that names `sccache` as the compiler wrapper.
     # A runner holding the variable but not the program fails every cargo invocation it has — `could not execute process sccache … (never executed)` — including the ones that only read metadata, which is how a single missing binary took nine jobs down at a step that does no compiling.
     # Installing it answers that and buys nothing: sccache is a compilation cache, and the one a job would hit is what `Swatinem/rust-cache` restores below. It also left the shim unable to resolve a version at compile time — `No version is set for shim: sccache` — which is a second failure held open for no gain.

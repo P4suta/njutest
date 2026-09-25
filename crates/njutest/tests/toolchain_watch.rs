@@ -938,7 +938,7 @@ fn a_run_that_held_something_says_what_it_held_and_lets_go_of_it() {
         &njutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
         &root,
     );
-    let provider = njutest_devkit::fake_cargo::example("fake_provider");
+    let provider = njutest_devkit::fake_cargo::example_in("fake_provider", dir.path());
     std::fs::write(
         root.join(".njutest.toml"),
         format!(
@@ -1055,7 +1055,7 @@ fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
         &njutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
         &root,
     );
-    let provider = njutest_devkit::fake_cargo::example("fake_provider");
+    let provider = njutest_devkit::fake_cargo::example_in("fake_provider", dir.path());
     std::fs::write(
         root.join(".njutest.toml"),
         format!(

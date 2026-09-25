@@ -601,6 +601,112 @@ fn write_length_prefixed(hasher: &mut Sha256, s: &str) -> Result<(), SnapshotErr
     Ok(())
 }
 
+/// One regular file of a tree as a build reads it: its bytes and whether it may be run.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Surveyed {
+    /// The SHA-256 of the file's bytes.
+    pub sha256: crate::id::HexDigest,
+    /// Whether any execute bit is set, which a test that runs the file answers to and no digest of its bytes sees.
+    pub executable: bool,
+}
+
+/// What a tree holds, file by file, read the way [`create`] would copy it but without copying anything.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Survey {
+    /// The digest of the rules the walk followed, so two surveys taken under different rules are never compared as though a file had been edited.
+    pub rules: String,
+    /// Every regular file under the source root, by its `/`-normalized path.
+    pub files: std::collections::BTreeMap<String, Surveyed>,
+    /// Every entry the walk did not read because it is not a regular file, by path, with what it points at where it is a link.
+    pub passed_over: std::collections::BTreeMap<String, Option<String>>,
+}
+
+/// Reads the tree `options` lays out the way [`create`] copies it, hashing every file where it stands.
+///
+/// A directory the tree reads outside itself is read too, each of its files named by its absolute path.
+///
+/// # Errors
+/// The walk failures and refusals of [`create`], and a file that cannot be read.
+pub fn survey(options: &Options) -> Result<Survey, SnapshotError> {
+    let source_root = options.layout.source_root();
+    let patterns = exclusions(options)?;
+    let mut walker = Walker::new(source_root, &patterns);
+    walker.walk("")?;
+    walker.rejection()?;
+    let mut files = std::collections::BTreeMap::new();
+    let mut passed_over = std::collections::BTreeMap::new();
+    surveyed(&walker, ToOwned::to_owned, (&mut files, &mut passed_over))?;
+    for placed in options.layout.under(PathBuf::new()).beside() {
+        let mut outside = Walker::new(placed.source(), &[]);
+        outside.walk("")?;
+        outside.rejection()?;
+        let under = placed.source().display().to_string();
+        surveyed(
+            &outside,
+            |rel| format!("{under}/{rel}"),
+            (&mut files, &mut passed_over),
+        )?;
+    }
+    Ok(Survey {
+        rules: rules_of(options, &patterns)?,
+        files,
+        passed_over,
+    })
+}
+
+type Surveying<'a> = (
+    &'a mut std::collections::BTreeMap<String, Surveyed>,
+    &'a mut std::collections::BTreeMap<String, Option<String>>,
+);
+
+/// Hashes every file one walk kept, naming each by `named`.
+fn surveyed(
+    walker: &Walker<'_>,
+    named: impl Fn(&str) -> String,
+    (files, passed_over): Surveying<'_>,
+) -> Result<(), SnapshotError> {
+    for file in &walker.files {
+        let sha256 = hash_file(&file.abs)
+            .and_then(|(_, sha256)| {
+                crate::id::HexDigest::try_from(sha256).map_err(io::Error::other)
+            })
+            .map_err(|source| {
+                SnapshotError::new(
+                    SnapshotErrorKind::Walk,
+                    file.rel.clone(),
+                    "cannot read the file",
+                )
+                .with_source(source)
+            })?;
+        files.insert(
+            named(&file.rel),
+            Surveyed {
+                sha256,
+                executable: platform::executable(&file.meta),
+            },
+        );
+    }
+    for one in &walker.passed_over {
+        passed_over.insert(named(&one.rel_path), one.target.clone());
+    }
+    Ok(())
+}
+
+/// The digest of what decides which files a walk reads: the exclusions, and the directories the tree reads outside itself.
+fn rules_of(options: &Options, patterns: &[Pattern]) -> Result<String, SnapshotError> {
+    let mut hasher = Sha256::new();
+    write_length_prefixed(&mut hasher, "rust-mutants-survey-rules-v1")?;
+    for pattern in patterns {
+        write_length_prefixed(&mut hasher, &pattern.to_string())?;
+    }
+    for placed in options.layout.under(PathBuf::new()).beside() {
+        write_length_prefixed(&mut hasher, &placed.source().display().to_string())?;
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
 /// Builds the pattern list: what no snapshot of a git tree wants, then what the caller named.
 ///
 /// The engine excludes the one directory it knows about whatever the caller is.
@@ -1423,6 +1529,10 @@ mod platform {
     }
 
     /// Nothing to clear: removing a file depends on the containing directory's permissions rather than the file's own.
+    pub(super) fn executable(meta: &Metadata) -> bool {
+        meta.permissions().mode() & 0o111 != 0
+    }
+
     pub(super) const fn clear_read_only(_: &Path) {}
 
     /// Whether two paths name the same directory, for the cleanup guard.
@@ -1445,6 +1555,10 @@ mod platform {
 
     /// Whether the entry is a reparse point of any kind.
     /// Symbolic links and junctions are caught by `is_symlink` first; this is for every other name surrogate.
+    pub(super) const fn executable(_: &Metadata) -> bool {
+        false
+    }
+
     pub(super) fn is_reparse_point(meta: &Metadata) -> bool {
         meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
     }

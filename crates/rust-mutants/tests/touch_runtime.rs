@@ -16,7 +16,9 @@ use rust_mutants::instrument::{
     ACTIVE_ENV, Instrumenting, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_PROTOCOL_EXIT, STEP_STATE_ENV,
     STEP_STATE_SCHEMA, STEPS_ENV, instrument_file,
 };
-use rust_mutants::instrument::{CATALOG_ENV, MODULE_STEM, Rendering, TOUCH_ENV, render};
+use rust_mutants::instrument::{
+    CATALOG_ENV, MODULE_STEM, Rendering, TOUCH_ENV, WATCHED_ENV, render,
+};
 use rust_mutants::rule::Tier;
 use rust_mutants::testkit::compile::ScriptedCompile;
 use rust_mutants::touch::{self, TouchError};
@@ -26,6 +28,15 @@ const SOURCE: &str = "pub fn one(a: i32) -> i32 { a + 1 }\n\
                       pub fn three(a: i32) -> i32 { a * 2 }\n";
 
 const CATALOG: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+/// The item index the file's first item takes, which is not zero so that an offset is exercised.
+const FIRST_ITEM: u32 = 5;
+
+/// The watched directory every runtime here is built with, which every process here is started carrying, so none of them has anything to say there.
+const WATCHED: &str = "/nowhere-a-process-of-this-test-writes";
+
+/// How many items the file holds.
+const ITEMS: u32 = 3;
 
 fn exact_output(bytes: &[u8]) -> &str {
     std::str::from_utf8(bytes).expect("the generated fixture writes exact UTF-8")
@@ -106,7 +117,10 @@ fn module() -> (String, u32) {
         catalog_digest: CATALOG,
         placements,
         markers: &[],
+        first_item: FIRST_ITEM,
+        item_count: ITEMS,
         newline: "\n",
+        watched: WATCHED,
     })
     .expect("a nonempty small catalog has a representable runtime window");
     (rendered, count)
@@ -126,7 +140,10 @@ fn step_modules() -> (String, String, String) {
         catalog_digest: CATALOG,
         placements,
         markers: &[],
+        first_item: 0,
+        item_count: 0,
         newline: "\n",
+        watched: WATCHED,
     })
     .expect("the first runtime renders");
     let two = render(&Rendering {
@@ -134,7 +151,10 @@ fn step_modules() -> (String, String, String) {
         catalog_digest: CATALOG,
         placements,
         markers: &[],
+        first_item: 0,
+        item_count: 0,
         newline: "\n",
+        watched: WATCHED,
     })
     .expect("the second runtime renders");
     (one, two, selected)
@@ -160,6 +180,7 @@ fn ran(name: &str, body: &str, touching: bool) -> String {
     let mut command = Command::new(dir.join(name));
     command.env_remove("RUST_MUTANTS_ACTIVE");
     command.env(CATALOG_ENV, CATALOG);
+    command.env(WATCHED_ENV, WATCHED);
     if touching {
         command.env(TOUCH_ENV, &log);
     } else {
@@ -220,6 +241,7 @@ fn one_allowance_spans_file_modules_and_repeated_guard_checks_do_not_spend_twice
     let run = Command::new(dir.join("global_steps"))
         .env(ACTIVE_ENV, &selected)
         .env(CATALOG_ENV, CATALOG)
+        .env(WATCHED_ENV, WATCHED)
         .env(STEPS_ENV, "2")
         .env(STEP_NONCE_ENV, nonce)
         .env(STEP_NOTICE_ENV, &notice)
@@ -310,6 +332,7 @@ fn publication_failure_never_persists_a_stopping_state_without_a_final_notice() 
         command
             .env(ACTIVE_ENV, &selected)
             .env(CATALOG_ENV, CATALOG)
+            .env(WATCHED_ENV, WATCHED)
             .env(STEPS_ENV, "1")
             .env(STEP_NONCE_ENV, nonce)
             .env(STEP_NOTICE_ENV, &notice)
@@ -375,6 +398,7 @@ fn the_generated_runtime_refuses_a_step_state_symlink_without_touching_its_targe
     let run = Command::new(dir.join("state_symlink"))
         .env(ACTIVE_ENV, &selected)
         .env(CATALOG_ENV, CATALOG)
+        .env(WATCHED_ENV, WATCHED)
         .env(STEPS_ENV, "2")
         .env(STEP_NONCE_ENV, nonce)
         .env(STEP_NOTICE_ENV, &notice)
@@ -408,6 +432,8 @@ fn an_expression_closure_reentered_by_an_external_iterator_spends_the_global_all
         comparable: &comparable,
         probed: &probed,
         catalog_digest: scripted.catalog().digest(),
+        first_item: 0,
+        watched: WATCHED,
     })
     .expect("instrument expression closure");
     assert!(
@@ -446,6 +472,7 @@ fn an_expression_closure_reentered_by_an_external_iterator_spends_the_global_all
     command
         .env(ACTIVE_ENV, &selected.id)
         .env(CATALOG_ENV, scripted.catalog().digest())
+        .env(WATCHED_ENV, WATCHED)
         .env(STEPS_ENV, "2")
         .env(STEP_NONCE_ENV, nonce)
         .env(STEP_NOTICE_ENV, &notice)
@@ -482,7 +509,15 @@ fn a_guard_records_the_thread_that_reached_it_and_libtest_names_that_thread_afte
          \x20   beta.join().expect(\"join\");",
         true,
     );
-    let touches = touch::read(&text, CATALOG, count).expect("the log reads");
+    let touches = touch::read(
+        &text,
+        CATALOG,
+        touch::Bounds {
+            mutants: count,
+            items: 0,
+        },
+    )
+    .expect("the log reads");
     assert_eq!(touches.reached.tests.get("alpha"), Some(&set(&[0, 1])));
     assert_eq!(touches.reached.tests.get("beta"), Some(&set(&[1])));
     assert!(
@@ -500,7 +535,15 @@ fn a_touch_nothing_can_be_attributed_to_is_recorded_as_one_rather_than_dropped()
          \x20   __rm::active(0);",
         true,
     );
-    let touches = touch::read(&text, CATALOG, count).expect("the log reads");
+    let touches = touch::read(
+        &text,
+        CATALOG,
+        touch::Bounds {
+            mutants: count,
+            items: 0,
+        },
+    )
+    .expect("the log reads");
     assert!(
         touches.reached.tests.is_empty(),
         "neither the main thread nor an unnamed one is a test: {touches:?}"
@@ -527,7 +570,15 @@ fn a_marker_records_that_control_entered_the_body_a_condition_gates() {
          \x20   beta.join().expect(\"join\");",
         true,
     );
-    let touches = touch::read(&text, CATALOG, count).expect("the log reads");
+    let touches = touch::read(
+        &text,
+        CATALOG,
+        touch::Bounds {
+            mutants: count,
+            items: 0,
+        },
+    )
+    .expect("the log reads");
     assert_eq!(
         touches.reached.tests.get("alpha"),
         Some(&set(&[0])),
@@ -565,7 +616,15 @@ fn a_guard_records_the_test_that_saw_its_two_branches_differ() {
          \x20   beta.join().expect(\"join\");",
         true,
     );
-    let touches = touch::read(&text, CATALOG, count).expect("the log reads");
+    let touches = touch::read(
+        &text,
+        CATALOG,
+        touch::Bounds {
+            mutants: count,
+            items: 0,
+        },
+    )
+    .expect("the log reads");
     assert_eq!(
         touches.infected.tests.get("alpha"),
         Some(&set(&[0])),
@@ -625,6 +684,7 @@ fn a_process_built_from_another_catalog_writes_nothing_into_this_run_s_record() 
         .env_remove("RUST_MUTANTS_ACTIVE")
         .env(TOUCH_ENV, &log)
         .env(CATALOG_ENV, "b".repeat(64))
+        .env(WATCHED_ENV, WATCHED)
         .output()
         .expect("the program runs");
     assert!(
@@ -678,7 +738,14 @@ fn the_header_the_runtime_writes_is_the_one_the_reader_expects() {
 fn a_log_about_another_catalog_says_nothing_rather_than_something_wrong() {
     let text = format!("{} {}\nt\talpha\t0\n", touch::SCHEMA, "b".repeat(64));
     assert!(matches!(
-        touch::read(&text, CATALOG, 4),
+        touch::read(
+            &text,
+            CATALOG,
+            touch::Bounds {
+                mutants: 4,
+                items: 0
+            }
+        ),
         Err(TouchError::OtherCatalog { .. })
     ));
 }
@@ -690,7 +757,14 @@ fn a_line_naming_a_site_the_catalog_does_not_hold_says_nothing_at_all() {
         touch_schema = touch::SCHEMA
     );
     assert!(matches!(
-        touch::read(&text, CATALOG, 4),
+        touch::read(
+            &text,
+            CATALOG,
+            touch::Bounds {
+                mutants: 4,
+                items: 0
+            }
+        ),
         Err(TouchError::BeyondCatalog { index: 9, .. })
     ));
 }
@@ -698,7 +772,14 @@ fn a_line_naming_a_site_the_catalog_does_not_hold_says_nothing_at_all() {
 #[test]
 fn a_record_before_any_header_says_nothing_because_nothing_says_which_catalog_it_is_about() {
     assert!(matches!(
-        touch::read("t\talpha\t0\n", CATALOG, 4),
+        touch::read(
+            "t\talpha\t0\n",
+            CATALOG,
+            touch::Bounds {
+                mutants: 4,
+                items: 0
+            }
+        ),
         Err(TouchError::Headless { .. })
     ));
 }
@@ -707,7 +788,14 @@ fn a_record_before_any_header_says_nothing_because_nothing_says_which_catalog_it
 fn a_line_of_a_kind_this_reader_does_not_know_says_nothing_at_all() {
     let text = format!("{schema} {CATALOG}\nz\talpha\t0\n", schema = touch::SCHEMA);
     assert!(matches!(
-        touch::read(&text, CATALOG, 4),
+        touch::read(
+            &text,
+            CATALOG,
+            touch::Bounds {
+                mutants: 4,
+                items: 0
+            }
+        ),
         Err(TouchError::Malformed { .. })
     ));
 }
@@ -718,7 +806,15 @@ fn the_same_thread_named_twice_is_one_test_that_reached_both_lines_worth_of_site
         "{schema} {CATALOG}\nt\talpha\t0,1\nt\talpha\t2\n",
         schema = touch::SCHEMA
     );
-    let touches = touch::read(&text, CATALOG, 4).expect("the log reads");
+    let touches = touch::read(
+        &text,
+        CATALOG,
+        touch::Bounds {
+            mutants: 4,
+            items: 0,
+        },
+    )
+    .expect("the log reads");
     assert_eq!(
         touches.reached.tests.get("alpha"),
         Some(&set(&[0, 1, 2])),
@@ -756,4 +852,270 @@ fn recording_costs_a_crate_neither_its_prelude_nor_its_ban_on_unsafe_code() {
             exact_output(&output.stderr)
         );
     }
+}
+
+#[test]
+fn an_entry_marker_records_the_thread_that_entered_the_item_by_its_index_in_the_whole_tree() {
+    let (_, count) = module();
+    let text = ran(
+        "entered",
+        "    let alpha = std::thread::Builder::new().name(\"alpha\".to_owned())\n\
+         \x20       .spawn(|| { __rm::item(5); __rm::item(5); __rm::item(7); })\n\
+         \x20       .expect(\"spawn\");\n\
+         \x20   alpha.join().expect(\"join\");\n\
+         \x20   __rm::item(6);",
+        true,
+    );
+    let touches = touch::read(
+        &text,
+        CATALOG,
+        touch::Bounds {
+            mutants: count,
+            items: FIRST_ITEM + ITEMS,
+        },
+    )
+    .expect("the log reads");
+    assert_eq!(touches.entered.tests.get("alpha"), Some(&set(&[5, 7])));
+    assert_eq!(
+        touches.entered.loose,
+        set(&[6]),
+        "the main thread is no test's, so what it entered every test entered"
+    );
+    assert!(
+        touches.reached.tests.is_empty() && touches.reached.loose.is_empty(),
+        "an entry is not a site: {touches:?}"
+    );
+}
+
+#[test]
+fn an_entry_marker_says_nothing_when_nobody_asked() {
+    let text = ran("entered_quietly", "    __rm::item(5);", false);
+    assert!(text.is_empty(), "{text}");
+}
+
+#[test]
+fn an_item_entered_while_its_thread_is_being_torn_down_is_recorded_rather_than_fatal() {
+    let (_, count) = module();
+    let text = ran(
+        "torn_down",
+        "    struct Late;\n\
+         \x20   impl Drop for Late { fn drop(&mut self) { __rm::item(6); } }\n\
+         \x20   thread_local! { static LATE: Late = const { Late }; }\n\
+         \x20   let alpha = std::thread::Builder::new().name(\"alpha\".to_owned())\n\
+         \x20       .spawn(|| { __rm::item(5); LATE.with(|_| {}); })\n\
+         \x20       .expect(\"spawn\");\n\
+         \x20   alpha.join().expect(\"join\");",
+        true,
+    );
+    let touches = touch::read(
+        &text,
+        CATALOG,
+        touch::Bounds {
+            mutants: count,
+            items: FIRST_ITEM + ITEMS,
+        },
+    )
+    .expect("the log reads");
+    assert!(
+        touches.entered.by("alpha", 6),
+        "whichever of the two thread-locals goes first, the entry is kept, on alpha or on \
+         every test: {touches:?}"
+    );
+}
+
+#[test]
+fn a_process_that_lost_the_runs_environment_says_so_where_the_run_looks() {
+    let temporary = tempfile::tempdir().expect("a place to build");
+    let dir = temporary.path();
+    let watched = dir.join("watched");
+    let watched_text = watched.to_str().expect("a UTF-8 temporary path");
+    let scripted = ScriptedCompile::from_source("src/lib.rs", SOURCE, Tier::All);
+    let rendered = render(&Rendering {
+        module: MODULE_STEM,
+        catalog_digest: CATALOG,
+        placements: scripted.placements(),
+        markers: &[],
+        first_item: FIRST_ITEM,
+        item_count: ITEMS,
+        newline: "\n",
+        watched: watched_text,
+    })
+    .expect("the runtime renders");
+    let source = dir.join("orphaned.rs");
+    std::fs::write(
+        &source,
+        format!("{rendered}\nfn main() {{\n    {MODULE_STEM}::item({FIRST_ITEM});\n}}\n"),
+    )
+    .expect("write");
+    let built = Command::new("rustc")
+        .args(["--edition", "2024", "--crate-type", "bin"])
+        .arg("--out-dir")
+        .arg(dir)
+        .arg(&source)
+        .output()
+        .expect("rustc runs");
+    assert!(built.status.success(), "{}", exact_output(&built.stderr));
+    let left = || rust_mutants::orphan::left(&watched).expect("the watched directory reads");
+    let carried = Command::new(dir.join("orphaned"))
+        .env(WATCHED_ENV, watched_text)
+        .output()
+        .expect("the program runs");
+    assert!(
+        carried.status.success(),
+        "{}",
+        exact_output(&carried.stderr)
+    );
+    assert!(
+        left().is_empty(),
+        "a process carrying what the run gave it has nothing to say: {:?}",
+        left()
+    );
+    let cleared = Command::new(dir.join("orphaned"))
+        .env_clear()
+        .output()
+        .expect("the program runs");
+    assert!(
+        cleared.status.success(),
+        "{}",
+        exact_output(&cleared.stderr)
+    );
+    let said = left();
+    assert_eq!(
+        said.len(),
+        1,
+        "a process started with a cleared environment is one no mutant can be active in and \
+         whose entries nothing records, and it says so once: {said:?}"
+    );
+    #[cfg(unix)]
+    assert!(
+        said.iter()
+            .all(|orphan| orphan.parent == std::process::id()),
+        "the parent is the process that started it, which is what the run maps it back by: \
+         {said:?}"
+    );
+}
+
+#[test]
+fn a_child_that_lost_the_environment_belongs_to_the_execution_that_started_it() {
+    use rust_mutants::orphan::{Known, Orphan, ours};
+    let child = |parent: u32| Orphan {
+        pid: 4_000_000,
+        parent,
+        at: None,
+    };
+    let others = Known {
+        leaders: BTreeSet::from([4_100_000_u32]),
+        members: BTreeMap::new(),
+    };
+    assert!(
+        ours(&child(4_200_000), Some(4_200_000), &others),
+        "a child whose parent led this execution is this execution's"
+    );
+    assert!(
+        !ours(&child(4_100_000), Some(4_200_000), &others),
+        "a child whose parent led another execution is that one's, however close in time"
+    );
+    #[cfg(unix)]
+    assert!(
+        !ours(&child(std::process::id()), Some(4_200_000), &others),
+        "a child whose parent is still running belongs to whatever is running"
+    );
+    #[cfg(not(unix))]
+    assert!(
+        ours(&child(std::process::id()), Some(4_200_000), &others),
+        "a platform that is not asked whether a process still runs cannot rule out that it \
+         left this execution's child, so the survival is not read past it"
+    );
+    assert!(
+        ours(&child(0), Some(4_200_000), &others)
+            && ours(&child(4_300_000), Some(4_200_000), &others),
+        "a parent the platform does not name, or one that has gone and led nothing known, cannot \
+         be told apart, so the survival is not read past it"
+    );
+    let named = Known {
+        leaders: BTreeSet::from([4_100_000_u32, 4_200_000]),
+        members: BTreeMap::from([
+            (4_100_000, BTreeSet::from([4_000_000_u32])),
+            (4_200_000, BTreeSet::from([4_000_001_u32])),
+        ]),
+    };
+    assert!(
+        !ours(&child(0), Some(4_200_000), &named),
+        "a child another execution's container named as its own is that execution's, even \
+         where the platform names no parent"
+    );
+    assert!(
+        ours(
+            &Orphan {
+                pid: 4_000_001,
+                parent: 4_100_000,
+                at: None
+            },
+            Some(4_200_000),
+            &named
+        ),
+        "and one this execution's container named is this execution's, whatever parent it \
+         names"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_run_binds_its_step_state_once_rather_than_reopening_it_at_every_boundary() {
+    let (one, two, selected) = step_modules();
+    let temporary = tempfile::tempdir().expect("a place to build");
+    let dir = temporary.path();
+    let source = dir.join("bound_steps.rs");
+    let state = dir.join("step.state");
+    let held = dir.join("held.state");
+    let replacement = dir.join("replacement.state");
+    let nonce = "0123456789abcdef0123456789abcdef";
+    let dormant =
+        format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t1000000\tdormant\t0\n");
+    let elsewhere =
+        format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t1000000\tactive\t500\n");
+    std::fs::write(&state, &dormant).expect("initial state");
+    std::fs::hard_link(&state, &held).expect("a second name for the file the run opens");
+    std::fs::write(&replacement, &elsewhere).expect("a replacement");
+    let program = format!(
+        "{one}\n{two}\nfn main() {{\n\
+         \x20   assert!(__rm_one::active(0));\n\
+         \x20   __rm_two::checkpoint();\n\
+         \x20   std::fs::rename({replacement:?}, {state:?}).expect(\"replace the name\");\n\
+         \x20   for _ in 0..1_000 {{ __rm_two::checkpoint(); }}\n\
+         }}\n"
+    );
+    std::fs::write(&source, program).expect("write program");
+    let built = Command::new("rustc")
+        .args(["--edition", "2024", "--crate-type", "bin"])
+        .arg("--out-dir")
+        .arg(dir)
+        .arg(&source)
+        .output()
+        .expect("rustc runs");
+    assert!(built.status.success(), "{}", exact_output(&built.stderr));
+    let run = Command::new(dir.join("bound_steps"))
+        .env(WATCHED_ENV, WATCHED)
+        .env(ACTIVE_ENV, &selected)
+        .env(CATALOG_ENV, CATALOG)
+        .env(STEPS_ENV, "1000000")
+        .env(STEP_NONCE_ENV, nonce)
+        .env(STEP_NOTICE_ENV, dir.join("step.notice"))
+        .env(STEP_STATE_ENV, &state)
+        .output()
+        .expect("program runs");
+    assert!(run.status.success(), "{}", exact_output(&run.stderr));
+    assert_eq!(
+        (
+            std::fs::read_to_string(&held).expect("the file the run opened"),
+            std::fs::read_to_string(&state).expect("the file now at the name"),
+        ),
+        (
+            format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t1000000\tactive\t1002\n"),
+            elsewhere,
+        ),
+        "a run opens its step state once, per runtime copy, and counts every boundary in that \
+         file: reopening the name at each of them paid an open, a check and a close per function \
+         entry and loop turn, which on Windows cost more than the work being measured"
+    );
 }

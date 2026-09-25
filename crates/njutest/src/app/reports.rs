@@ -2306,6 +2306,39 @@ pub const SARIF_NAME: &str = "njutest-assurance-report-v1.sarif";
 /// The targets and findings, for a continuous integration surface.
 pub const JUNIT_NAME: &str = "njutest-assurance-report-v1.junit.xml";
 
+/// A file of a published run whose path a caller is told, so a script reads the path rather than rebuilding it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum Surface {
+    /// The canonical document.
+    Report,
+    /// The findings for a code-scanning surface.
+    Sarif,
+    /// The targets and findings for a continuous integration surface.
+    Junit,
+}
+
+impl Surface {
+    /// The record that names it.
+    #[must_use]
+    pub const fn record(self) -> &'static str {
+        match self {
+            Self::Report => "REPORT",
+            Self::Sarif => "SARIF",
+            Self::Junit => "JUNIT",
+        }
+    }
+
+    /// Its name inside the run directory.
+    #[must_use]
+    pub const fn file(self) -> &'static str {
+        match self {
+            Self::Report => DOCUMENT_NAME,
+            Self::Sarif => SARIF_NAME,
+            Self::Junit => JUNIT_NAME,
+        }
+    }
+}
+
 /// Why a report could not be kept.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -2462,6 +2495,8 @@ pub struct Kept {
     pub directory: PathBuf,
     /// The canonical workspace-relative document spelling for presentation.
     pub said_document: String,
+    /// Every surface the run sealed into its directory, with its workspace-relative path; one it did not write is never named.
+    pub said: Vec<crate::report::lines::Said>,
     /// Whether the derived latest-run indexes were updated after the canonical directory became durable.
     pub indexes: IndexPublication,
 }
@@ -2566,11 +2601,17 @@ pub(crate) fn keep_claimed(
         };
         return Err(abort_after(claimed, error));
     }
-    let said_document = format!(
-        "{}/{DOCUMENT_NAME}",
-        store.named_exact(&StoredRunId::from(&run_id))
-    );
+    let named = store.named_exact(&StoredRunId::from(&run_id));
+    let said_document = format!("{named}/{DOCUMENT_NAME}");
     let sealed = seal(claimed, report, &document_text)?;
+    let said = Surface::ALL
+        .into_iter()
+        .filter(|surface| sealed.files.iter().any(|file| file.name == surface.file()))
+        .map(|surface| crate::report::lines::Said {
+            record: surface.record(),
+            path: format!("{named}/{}", surface.file()),
+        })
+        .collect();
     let publication = publish(sealed, |authority| {
         publish_indexes(authority, report, &run_id)
     })?;
@@ -2581,6 +2622,7 @@ pub(crate) fn keep_claimed(
         #[cfg(any(test, feature = "testkit"))]
         directory,
         said_document,
+        said,
         indexes,
     })
 }

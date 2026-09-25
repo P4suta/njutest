@@ -565,6 +565,7 @@ fn moved_reach() -> Specification {
         },
         bodies: nothing(),
         infected: nothing(),
+        entered: nothing(),
     };
     let report = njutest::testkit::reports::completed_with_drift(
         "the-run",

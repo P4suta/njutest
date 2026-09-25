@@ -195,6 +195,23 @@ pub fn every_failure() -> Vec<RunnerError> {
         RunnerError::Output {
             source: std::io::Error::other("output closed"),
         },
+        RunnerError::Measure(crate::assure::measure::MeasureError::Written {
+            path: "src/lib.rs".to_owned(),
+        }),
+        RunnerError::Measure(crate::assure::measure::MeasureError::Environment {
+            source: crate::assure::identity::EnvironmentError::Value {
+                name: "LANG".to_owned(),
+                source: invalid_utf8,
+            },
+        }),
+        RunnerError::Reach(crate::reach::ReachError::Unwritable {
+            path: nowhere.to_path_buf(),
+            source: std::io::Error::other("no"),
+        }),
+        RunnerError::Reach(crate::reach::ReachError::Unreadable {
+            path: nowhere.to_path_buf(),
+            message: "no measurement".to_owned(),
+        }),
     ];
     for one in &failures {
         match one {
@@ -222,6 +239,8 @@ pub fn every_failure() -> Vec<RunnerError> {
             | RunnerError::ReportCount { .. }
             | RunnerError::Scratch(_)
             | RunnerError::Build(_)
+            | RunnerError::Measure(_)
+            | RunnerError::Reach(_)
             | RunnerError::Blind { .. }
             | RunnerError::Engine(_) => {}
         }
@@ -752,7 +771,7 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
         },
         Payload::Drift {
             drift: crate::trace::DriftRecord {
-                mutant: "abcdef".to_owned(),
+                mutant: Some("abcdef".to_owned()),
                 observed: crate::report::drift::Drift::Moved {
                     target: "demo/lib/demo".to_owned(),
                     reached: crate::report::drift::Moved {
@@ -765,6 +784,10 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                     },
                     infected: crate::report::drift::Moved {
                         gained: std::collections::BTreeSet::new(),
+                        lost: std::collections::BTreeSet::new(),
+                    },
+                    entered: crate::report::drift::Moved {
+                        gained: std::collections::BTreeSet::from([4]),
                         lost: std::collections::BTreeSet::new(),
                     },
                 },
