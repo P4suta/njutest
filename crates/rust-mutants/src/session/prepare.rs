@@ -312,12 +312,11 @@ fn closure_of(
         );
         files.insert(format!("$env/{name}"), value);
     }
-    for told in crate::cargo::emitted_of(&checked.messages)
-        .values()
-        .flatten()
-    {
-        let (name, digest) = emitted_entry(told, portable);
-        files.insert(name, digest);
+    for scripts in crate::cargo::emitted_of(&checked.messages).values() {
+        for told in scripts {
+            let (name, digest) = emitted_entry(told, portable);
+            files.insert(name, digest);
+        }
     }
     if files.is_empty() {
         return Ok(String::new());
