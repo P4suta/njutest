@@ -58,6 +58,30 @@ pub struct Common {
     pub engine: String,
 }
 
+/// The domain hashed first for what a carried answer is keyed on beyond what the engine keys it on.
+const RUNNER_DOMAIN: &str = "njutest-carry-runner-v1";
+
+/// What njutest decides an answer under beyond what the engine's key holds.
+///
+/// That is the platform, the environment, the contract, the versions and the corpora; the toolchain, the arguments, the build, the bounds and njutest's own digest are fields of the engine's key already.
+#[must_use]
+pub fn runner(common: &Common) -> String {
+    let environment: BTreeSet<&(String, String)> = common.environment.iter().collect();
+    let mut fields = Fields::new(RUNNER_DOMAIN);
+    fields
+        .field("platform", &common.platform)
+        .list(
+            "environment",
+            environment
+                .iter()
+                .map(|(name, value)| format!("{name}\u{0}{value}")),
+        )
+        .field("contract", &common.contract)
+        .list("versions", &common.versions)
+        .field("corpus", &common.corpus);
+    fields.finish()
+}
+
 /// Binds a run-wide identity to one Cargo build selection.
 ///
 /// Checkpoints and other continuation state use this narrower identity.

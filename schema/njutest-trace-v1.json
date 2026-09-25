@@ -287,7 +287,7 @@
             "route": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["mutant", "granularity", "fallback", "reaching", "tests", "discharged", "considered", "reused", "refused"],
+              "required": ["mutant", "granularity", "fallback", "reaching", "tests", "discharged", "considered", "reused", "refused", "rule", "carry_refused"],
               "properties": {
                 "mutant": { "type": "string", "minLength": 1 },
                 "granularity": { "enum": ["all", "block", "test", "discharged", "unreached"] },
@@ -323,6 +323,10 @@
                 "reused": { "$ref": "#/$defs/nullableString" },
                 "refused": {
                   "enum": ["nothing-recorded", "unreadable", "target-unknown", "not-routed", "key-changed", "not-passing", "target-entered", "nothing-routed", null]
+                },
+                "rule": { "enum": ["exact", "carried", null] },
+                "carry_refused": {
+                  "enum": ["skeleton-changed", "item-changed", "unsealed", "entry-incomplete", "route-grew", "filter-differs", "reach-moved", "uncontrolled", null]
                 }
               }
             }

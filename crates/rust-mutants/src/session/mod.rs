@@ -587,6 +587,9 @@ pub struct Request {
     pub fault: Option<String>,
     /// What each execution records of the items its process entered.
     pub entered: Recording,
+    /// Whether a request that names its target still runs only the tests the route narrowed that target to, as a request that names none does.
+    /// A caller that asks target by target, as njutest does, asks this so each execution is the one the route plans.
+    pub narrowed: bool,
     /// A target to ask before the others, where one is known to have killed this mutant before; every target is still asked until one notices.
     pub first: Option<String>,
 }
@@ -613,7 +616,15 @@ impl Request {
             fault: None,
             first: None,
             entered: Recording::Off,
+            narrowed: false,
         }
+    }
+
+    /// Runs only the tests the route narrowed the named target to, as the route plans it.
+    #[must_use]
+    pub const fn narrowed(mut self) -> Self {
+        self.narrowed = true;
+        self
     }
 
     /// Records the items each execution's process entered.
@@ -2761,10 +2772,19 @@ enum Chosen {
 }
 
 impl Chosen {
-    /// What `route` narrows this request to, which is nothing when the request named a target itself.
+    /// What `route` narrows this request to: nothing when the request named a target itself, unless it asked to be narrowed, when that target runs the tests the route names for it.
     fn of(request: &Request, route: &Route, asking: Asking) -> Self {
-        if request.target.is_some() {
-            return Self::Everything;
+        match (&request.target, request.narrowed) {
+            (None, _) => {}
+            (Some(_), false) => return Self::Everything,
+            (Some(target), true) => {
+                return route
+                    .narrowing()
+                    .map_or(Self::Everything, |_| Self::Narrowed {
+                        only: vec![target.clone()],
+                        asked: route.asked(),
+                    });
+            }
         }
         match asking {
             Asking::Anything => route

@@ -40,6 +40,7 @@ fn evidence(root: &std::path::Path) -> Evidence {
             ("id-one".to_owned(), "core/lib/core".to_owned()),
             ("id-two".to_owned(), "core/test/wide".to_owned()),
         ]),
+        carry: None,
     }
 }
 
@@ -59,6 +60,9 @@ fn said(consulted: &Consulted) -> String {
         Consulted::NotKept => "not-kept".to_owned(),
         Consulted::Believed { run_id, .. } => format!("believed {run_id}"),
         Consulted::Refused(refusal) => refusal.name().to_owned(),
+        Consulted::CarryRefused { exact, carried } => {
+            format!("{} then {}", exact.name(), carried.name())
+        }
     }
 }
 
@@ -471,7 +475,14 @@ fn a_kill_is_confirmed_against_the_test_that_found_it_and_not_against_the_rest()
     use njutest::assure::mutation::{narrowed, request_for};
 
     let one = measured("cases::adds");
-    let asked = request_for(&id(1), Some(&one), &["--nocapture".to_owned()]);
+    let asked = request_for(
+        &id(1),
+        Some(&one),
+        (
+            &["--nocapture".to_owned()],
+            rust_mutants::session::Recording::Off,
+        ),
+    );
     assert_eq!(
         asked.target.as_deref(),
         Some("core/lib/core cases::adds"),
@@ -488,7 +499,14 @@ fn a_kill_is_confirmed_against_the_test_that_found_it_and_not_against_the_rest()
          target nobody routed to"
     );
 
-    let suite = request_for(&id(1), None, &["--quiet".to_owned()]);
+    let suite = request_for(
+        &id(1),
+        None,
+        (
+            &["--quiet".to_owned()],
+            rust_mutants::session::Recording::Off,
+        ),
+    );
     assert_eq!(
         (
             suite.target.clone(),

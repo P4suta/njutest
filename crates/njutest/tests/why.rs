@@ -45,6 +45,8 @@ fn routed_and_killed() -> Vec<Event> {
                     considered: Vec::new(),
                     reused: None,
                     refused: None,
+                    rule: None,
+                    carry_refused: None,
                 },
             },
         ),

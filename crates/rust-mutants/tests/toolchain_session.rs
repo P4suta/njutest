@@ -1434,3 +1434,38 @@ fn a_target_the_configuration_skips_is_not_started_by_the_coverage_measurement()
          took out ran anyway -- once, to the end, under coverage"
     );
 }
+
+#[test]
+fn a_request_that_names_its_target_runs_the_tests_its_route_names_only_when_it_asks_to() {
+    let fixture = Fixture::copy("fixture-two-bodies");
+    let session = prepare(&fixture);
+    let target = "fixture-two-bodies/lib/fixture_two_bodies";
+    let over = session
+        .catalog()
+        .mutants()
+        .iter()
+        .find(|mutant| session.position(mutant).is_some_and(|at| at.line == 13))
+        .expect("a mutation inside `over`");
+    let narrowed = session
+        .exec(
+            &Request::new(over.id.as_str())
+                .with_target(target)
+                .narrowed(),
+            &Cancel::new(),
+        )
+        .expect("exec");
+    let ran: Vec<&String> = narrowed
+        .failed_tests
+        .iter()
+        .chain(&narrowed.passed_tests)
+        .collect();
+    assert!(
+        !ran.is_empty()
+            && ran
+                .iter()
+                .all(|test| test.as_str() == "tests::ten_is_over_and_nine_is_not"),
+        "the route puts a mutation of `over` to the one test that reaches it, and a request that \
+         names the target and asks to be narrowed runs that test alone, as the plan a carried \
+         answer is held to says it did: {ran:?}"
+    );
+}

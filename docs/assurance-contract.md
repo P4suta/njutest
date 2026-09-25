@@ -340,6 +340,7 @@ A believed record is an execution that did not happen, so this is a layer and [A
 `target-unknown`, `not-routed`, `key-changed`, `not-passing`,
 `target-entered`, `nothing-routed` — and never both.
 A run that kept no store of earlier answers records neither, which is what parts it from a run whose store refuses everything: told only how long the two took, nobody can tell them apart.
+A reused answer's route also names the store it came out of, `exact` or `carried`, and a carried answer found and not believed names the premise it failed.
 
 #### A kill
 
@@ -353,6 +354,12 @@ A reused row then carries the answers the recording run was given, so what the w
 Reused when the mutant has the same identity and **every** target this run's coverage routes to it, after every discharge, is one of the recorded targets with the same key, seen to pass by this run's baseline.
 A reaching set smaller than the recorded one is still covered; a target that entered it is a test nothing was ever run against.
 Fuzz targets disqualify a survival in both directions.
+
+#### An answer carried across an edit
+
+Where this tree's own store has no answer to believe, the run asks the store of answers carried across edits ([ADR 0041](adr/0041-an-answer-carries-across-an-edit-it-never-entered.md)), under the mutation's locus: the item its edit is inside, that body's digest, the edit, and everything the engine keys an answer on but the pristine closure, with a digest of what this runner decides an answer under beside it — the platform, the environment, the contract, the versions and the corpora — so an answer one contract or machine established never answers another.
+It is believed only where every premise of that ADR holds, which the engine decides, and is otherwise refused with the word of the premise it failed: `skeleton-changed`, `item-changed`, `unsealed`, `entry-incomplete`, `route-grew`, `filter-differs`, `reach-moved`, or `uncontrolled`.
+Every execution of a mutation runs only the tests the route puts it to, and in a run that keeps a store it also records the items its process entered: that is the execution a carried record says it rests on.
 
 #### A mutant the evidence cannot say nothing reaches
 

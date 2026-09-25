@@ -745,6 +745,8 @@ fn a_route() -> RouteRecord {
         considered: Vec::new(),
         reused: None,
         refused: Some("key-changed".to_owned()),
+        rule: None,
+        carry_refused: None,
     }
 }
 
