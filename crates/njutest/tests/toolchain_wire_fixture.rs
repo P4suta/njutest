@@ -216,7 +216,13 @@ fn pointed_at_the_provider(fixture: &Fixture) {
         "the fixture no longer says where its provider goes, so this driver would run it \
          against whatever {PLACEHOLDER} was replaced with"
     );
-    let provider = njutest_devkit::fake_cargo::example("fake_upstream");
+    let provider = njutest_devkit::fake_cargo::example_in(
+        "fake_upstream",
+        fixture
+            .root()
+            .parent()
+            .expect("the fixture's own directory"),
+    );
     std::fs::write(
         &path,
         written.replace(

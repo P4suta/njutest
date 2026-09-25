@@ -100,9 +100,10 @@ Nothing is measured twice because nothing is measured a second time at all: the 
 That makes one premise carry every route: what a target reaches is a function of the target, and not of the order, the clock, or what an earlier process of the run left behind.
 The run checks it where it already runs a target a second time.
 The original-code control that confirms a kill runs the whole target again under the conditions the baseline ran under — the same arguments, the same environment, a fresh temporary directory of its own — and its guards record too.
+A target no kill was confirmed on is run whole once more, alone and under the same conditions, after the mutation phase, so every target the baseline measured is compared whether or not it noticed anything.
 Where it passed exactly the tests the baseline passed and the target's union of sites reached, bodies entered, or sites infected differs, the baseline record is one sample rather than a measurement, and the report raises `unstable-baseline` about the target, counting the `unreached` claims and the discharged executions that rest on it.
 One such observation is enough; a counterexample does not wait for a second.
-A measured target no comparable control recorded is named by `drift-not-measured`, because a proof read off it rests on one run.
+A measured target whose control could not be compared — it failed, passed other tests, or could not record — is named by `drift-not-measured`, because a proof read off it rests on one run.
 What rested on a moved target is run again against it with its reach recorded, and replaced by what that run decides where it reached the site ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)); `unstable-baseline` counts only what could not be, and a moved target nothing rests on any more is named in `reach-moved`.
 
 The decision widens whenever the evidence cannot carry it, and every widening runs more rather than less.

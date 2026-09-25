@@ -126,13 +126,7 @@ fn benchmarks(criterion: &mut Criterion) {
     let one = source(200);
     let discovery =
         discover_file("src/lib.rs", one.as_bytes(), &selection).expect("the file discovers");
-    let mut builder = Builder::new();
-    for found in &discovery.candidates {
-        builder
-            .add(found.candidate.clone())
-            .expect("the candidate is one");
-    }
-    let catalog = builder.build().expect("the catalog builds");
+    let catalog = catalog_of(&discovery.candidates);
     let placements =
         plan_file(&catalog, "src/lib.rs", &discovery.candidates).expect("the plan is one");
     criterion.bench_function("instrument/200-function file", |bencher| {
@@ -145,6 +139,8 @@ fn benchmarks(criterion: &mut Criterion) {
                 comparable: &BTreeSet::default(),
                 probed: &BTreeMap::default(),
                 catalog_digest: catalog.digest(),
+                first_item: 0,
+                watched: "/watched",
             })
         });
     });
@@ -193,6 +189,17 @@ fn benchmarks(criterion: &mut Criterion) {
         bencher.iter(|| configured(std::hint::black_box(&deepest), None));
     });
     routes(criterion);
+}
+
+/// The catalog of one file's candidates.
+fn catalog_of(found: &[rust_mutants::syntax::Found]) -> rust_mutants::catalog::Catalog {
+    let mut builder = Builder::new();
+    for one in found {
+        builder
+            .add(one.candidate.clone())
+            .expect("the candidate is one");
+    }
+    builder.build().expect("the catalog builds")
 }
 
 /// A tree `depth` directories deep, every level configuring its own flags.

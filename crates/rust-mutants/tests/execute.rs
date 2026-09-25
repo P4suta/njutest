@@ -271,6 +271,7 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
     let scratch = Path::new("/scratch/worker-3");
     let env = environment(
         &Context {
+            leaders: None,
             base_env: &base,
             cargo: None,
             sysroot: None,
@@ -337,6 +338,7 @@ fn a_baseline_inherits_none_of_the_variables_a_run_composes_for_itself() {
     ];
     let baseline = environment(
         &Context {
+            leaders: None,
             base_env: &base,
             cargo: None,
             sysroot: None,
@@ -370,6 +372,7 @@ fn the_guards_are_told_where_to_record_exactly_when_the_run_asks_them_to() {
     let log = Path::new("/scratch/touch/demo.log");
     let asked = environment(
         &Context {
+            leaders: None,
             base_env: &[],
             cargo: None,
             sysroot: None,
@@ -464,6 +467,7 @@ fn a_test_process_learns_which_cargo_built_it() {
     );
     let composed = environment(
         &Context {
+            leaders: None,
             base_env: &[],
             cargo: Some(Path::new("/opt/toolchain/bin/cargo")),
             sysroot: None,
@@ -494,6 +498,7 @@ fn a_test_process_learns_which_cargo_built_it() {
 
     let without = environment(
         &Context {
+            leaders: None,
             base_env: &[],
             cargo: None,
             sysroot: None,
@@ -585,6 +590,7 @@ fn an_inherited_coverage_profile_path_never_reaches_a_test_process() {
     let scratch = Path::new("/scratch/worker-3");
     let env = environment(
         &Context {
+            leaders: None,
             base_env: &base,
             cargo: None,
             sysroot: None,
@@ -631,6 +637,7 @@ fn the_profile_path_a_coverage_pass_composes_is_the_one_it_gets() {
     let mine = Path::new("/scratch/coverage/demo-%m.profraw");
     let env = environment(
         &Context {
+            leaders: None,
             base_env: &base,
             cargo: None,
             sysroot: None,
@@ -880,6 +887,22 @@ fn a_documented_example_is_named_the_way_rustdoc_names_it() {
     assert_eq!(result_state(&lines), Returned, "the fixture is exact UTF-8");
     let Ok(lines) = lines else { return };
     assert_eq!(lines.passed, ["src/lib.rs - max (line 9)"]);
+}
+
+#[test]
+fn a_test_that_expects_a_panic_is_named_by_its_name_and_not_by_what_libtest_adds_to_it() {
+    let lines = parse_lines(
+        b"test tests::refuses - should panic ... ok\ntest tests::stops - should panic ... FAILED\n",
+    );
+    assert_eq!(result_state(&lines), Returned, "the fixture is exact UTF-8");
+    let Ok(lines) = lines else { return };
+    assert_eq!(
+        lines.passed,
+        ["tests::refuses"],
+        "the thread libtest runs the test on, and the filter that selects it, both know it by \
+         its name"
+    );
+    assert_eq!(lines.failed, ["tests::stops"]);
 }
 
 #[test]
