@@ -28,6 +28,12 @@ filter = 'test(/_while_a_run_replaces_it_is_one_whole_/)'
 test-group = "durable"
 slow-timeout = { period = "60s", terminate-after = 5 }
 
+# Every source of this repository, instrumented and parsed again: its work grows with the repository rather than with the change.
+# With batch 7's tree it took 48s alone at load 17 and ran past the inner loop's minute beside the rest of the suite.
+[[profile.default.overrides]]
+filter = 'test(/::every_source_of_this_repository_still_parses_once_it_is_instrumented$/)'
+slow-timeout = { period = "60s", terminate-after = 5 }
+
 # The inner loop starts no toolchain, so a test there taking a minute is
 # already a test that has stopped answering.
 [[profile.default.overrides]]
