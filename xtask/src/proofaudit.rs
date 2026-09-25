@@ -823,8 +823,8 @@ fn drift(
 ) -> Decided {
     let mut notes = Notes::on(audit, Layer::Drift);
     let recorded = recorded_drift(recording);
-    let touched = match (engines, recorded.as_ref()) {
-        ([], None) => {
+    let touched = match (engines, recorded.as_deref()) {
+        ([], None | Some([])) => {
             return notes.absent(
                 "the report records no drift and the run kept no engine recording to derive one from",
             );
