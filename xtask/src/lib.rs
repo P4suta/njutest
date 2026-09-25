@@ -331,7 +331,16 @@ fn audit_engine(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> ExitCode {
-    let planted = match gates::engine_audit_sentinels() {
+    let checkers = match schemas::Checkers::compiled() {
+        Ok(checkers) => checkers,
+        Err(uncompiled) => {
+            return after_output(
+                writeln!(stderr, "{}", uncompiled.coded()),
+                ExitCode::from(engineaudit::EXIT_UNREADABLE),
+            );
+        }
+    };
+    let planted = match gates::engine_audit_sentinels(&checkers) {
         Ok(planted) => planted,
         Err(blind) => {
             return after_output(
@@ -340,7 +349,7 @@ fn audit_engine(
             );
         }
     };
-    match gates::engine_audit(asked) {
+    match gates::engine_audit(&checkers, asked) {
         Ok(audit) => {
             let intended = ExitCode::from(audit.exit_code());
             after_output(
@@ -365,7 +374,16 @@ fn audit_run(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> ExitCode {
-    let planted = match gates::proofaudit_sentinels() {
+    let checkers = match schemas::Checkers::compiled() {
+        Ok(checkers) => checkers,
+        Err(uncompiled) => {
+            return after_output(
+                writeln!(stderr, "{}", uncompiled.coded()),
+                ExitCode::from(proofaudit::EXIT_UNREADABLE),
+            );
+        }
+    };
+    let planted = match gates::proofaudit_sentinels(&checkers) {
         Ok(planted) => planted,
         Err(blind) => {
             return after_output(
@@ -375,9 +393,9 @@ fn audit_run(
         }
     };
     let audited = if shards.is_empty() {
-        gates::proofaudit(run, trace)
+        gates::proofaudit(&checkers, run, trace)
     } else {
-        gates::proofaudit_merged(run, shards, traces)
+        gates::proofaudit_merged(&checkers, run, shards, traces)
     };
     match audited {
         Ok(audit) => {

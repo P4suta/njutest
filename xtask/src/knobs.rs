@@ -235,12 +235,10 @@ pub struct Perturbations {
 }
 
 /// Every perturbed control of one engine recording.
-///
-/// # Errors
-/// A non-empty line that is not JSON rejects the whole recording.
-pub fn read(recorded: &str) -> Result<Perturbations, crate::route::ReadError> {
+#[must_use]
+pub fn read(recorded: &crate::route::Checked<crate::schemas::EngineLines>) -> Perturbations {
     let mut read = Perturbations::default();
-    for event in crate::route::events(recorded, crate::schemas::Producer::Engine)? {
+    for event in recorded.events() {
         if event.get("type").and_then(Value::as_str) != Some("perturbed-control") {
             continue;
         }
@@ -249,7 +247,7 @@ pub fn read(recorded: &str) -> Result<Perturbations, crate::route::ReadError> {
             None => read.unreadable = read.unreadable.saturating_add(1),
         }
     }
-    Ok(read)
+    read
 }
 
 fn perturbed(record: &Value) -> Option<Perturbed> {

@@ -116,23 +116,21 @@ pub fn derived(pairs: &[&Pair]) -> Option<(String, &'static str)> {
 }
 
 /// Everything the recording says about the faults.
-///
-/// # Errors
-/// A corrupt non-empty line is rejected rather than disappearing from the evidence.
-pub fn read(recorded: &str) -> Result<Faulted, crate::route::ReadError> {
+#[must_use]
+pub fn read(recorded: &crate::route::Checked<crate::schemas::RunnerLines>) -> Faulted {
     let mut faulted = Faulted::default();
-    for event in crate::route::events(recorded, crate::schemas::Producer::Runner)? {
+    for event in recorded.events() {
         let Some(kind) = event.get("type").and_then(Value::as_str) else {
             faulted
                 .unread
                 .push("an event that names no type".to_owned());
             continue;
         };
-        if !held(&mut faulted, kind, &event) {
+        if !held(&mut faulted, kind, event) {
             faulted.unread.push(kind.to_owned());
         }
     }
-    Ok(faulted)
+    faulted
 }
 
 /// Holds `event`, of type `kind`, in `faulted` where it is a fault record; whether it was read, which it is not where a field its schema requires is missing.

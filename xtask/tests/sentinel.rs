@@ -3,6 +3,11 @@
 
 //! A gate's silence is believed only after it has found what was planted for it.
 
+#![expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking"
+)]
+
 use xtask::devgates::SeamKind;
 use xtask::engineaudit::Layer;
 use xtask::engineaudit::sentinel::{Perturbation, clean};
@@ -158,7 +163,8 @@ fn a_seam_planted_outside_production_code_is_not_found() {
 
 #[test]
 fn every_engine_audit_layer_fires_on_what_was_planted_for_it() {
-    let found = engine_audit_sentinels().unwrap_or_else(|GateFailure(said)| panic!("{said}"));
+    let found =
+        engine_audit_sentinels(&checkers()).unwrap_or_else(|GateFailure(said)| panic!("{said}"));
     assert!(
         found >= Layer::ALL.len(),
         "{found} planted defects cannot cover {} layers",
@@ -173,7 +179,8 @@ fn an_engine_audit_layer_whose_planted_defect_changes_nothing_is_refused_as_blin
         ..clean()
     };
     for layer in Layer::ALL {
-        let Err(GateFailure(said)) = engine_audit_sighted(layer, std::slice::from_ref(&inert))
+        let Err(GateFailure(said)) =
+            engine_audit_sighted(&checkers(), layer, std::slice::from_ref(&inert))
         else {
             panic!(
                 "{} passed over a run with nothing planted in it",
@@ -191,7 +198,7 @@ fn an_engine_audit_layer_whose_planted_defect_changes_nothing_is_refused_as_blin
 #[test]
 fn an_engine_audit_layer_with_nothing_planted_for_it_is_refused_as_blind() {
     for layer in Layer::ALL {
-        let Err(GateFailure(said)) = engine_audit_sighted(layer, &[]) else {
+        let Err(GateFailure(said)) = engine_audit_sighted(&checkers(), layer, &[]) else {
             panic!("{} passed with nothing planted for it", layer.label());
         };
         assert!(
@@ -208,7 +215,8 @@ fn a_perturbation_found_does_not_stand_for_one_that_is_not() {
         name: "inert",
         ..clean()
     });
-    let Err(GateFailure(said)) = engine_audit_sighted(Layer::Identity, &planted) else {
+    let Err(GateFailure(said)) = engine_audit_sighted(&checkers(), Layer::Identity, &planted)
+    else {
         panic!("one defect found does not stand for another");
     };
     assert!(said.contains("`inert`"), "{said}");
@@ -216,7 +224,8 @@ fn a_perturbation_found_does_not_stand_for_one_that_is_not() {
 
 #[test]
 fn every_proofaudit_layer_fires_on_what_was_planted_for_it() {
-    let found = proofaudit_sentinels().unwrap_or_else(|GateFailure(said)| panic!("{said}"));
+    let found =
+        proofaudit_sentinels(&checkers()).unwrap_or_else(|GateFailure(said)| panic!("{said}"));
     assert!(
         found >= proofaudit::Layer::ALL.len(),
         "{found} planted defects cannot cover {} layers",
@@ -231,7 +240,9 @@ fn a_proofaudit_layer_whose_planted_defect_changes_nothing_is_refused_as_blind()
         ..proofaudit::sentinel::clean()
     };
     for layer in proofaudit::Layer::ALL {
-        let Err(GateFailure(said)) = proofaudit_sighted(layer, std::slice::from_ref(&inert)) else {
+        let Err(GateFailure(said)) =
+            proofaudit_sighted(&checkers(), layer, std::slice::from_ref(&inert))
+        else {
             panic!(
                 "{} passed over a run with nothing planted in it",
                 layer.label()
@@ -248,7 +259,7 @@ fn a_proofaudit_layer_whose_planted_defect_changes_nothing_is_refused_as_blind()
 #[test]
 fn a_proofaudit_layer_with_nothing_planted_for_it_is_refused_as_blind() {
     for layer in proofaudit::Layer::ALL {
-        let Err(GateFailure(said)) = proofaudit_sighted(layer, &[]) else {
+        let Err(GateFailure(said)) = proofaudit_sighted(&checkers(), layer, &[]) else {
             panic!("{} passed with nothing planted for it", layer.label());
         };
         assert!(
@@ -265,7 +276,9 @@ fn a_proofaudit_perturbation_found_does_not_stand_for_one_that_is_not() {
         name: "inert",
         ..proofaudit::sentinel::clean()
     });
-    let Err(GateFailure(said)) = proofaudit_sighted(proofaudit::Layer::Killers, &planted) else {
+    let Err(GateFailure(said)) =
+        proofaudit_sighted(&checkers(), proofaudit::Layer::Killers, &planted)
+    else {
         panic!("one defect found does not stand for another");
     };
     assert!(said.contains("`inert`"), "{said}");
@@ -302,7 +315,7 @@ fn every_outcome_a_report_can_claim_is_refused_when_its_executions_say_otherwise
         let laid = lie
             .lay()
             .unwrap_or_else(|error| panic!("{}: {error}", lie.name));
-        let audit = xtask::gates::proofaudit(laid.run(), laid.trace())
+        let audit = xtask::gates::proofaudit(&checkers(), laid.run(), laid.trace())
             .unwrap_or_else(|error| panic!("{}: {error}", lie.name));
         if audit.violations() == 0 {
             believed.push(format!("{outcome}: `{}` drew no violation", lie.name));
@@ -315,4 +328,9 @@ fn every_outcome_a_report_can_claim_is_refused_when_its_executions_say_otherwise
          schema allows has one planted (`proofaudit::sentinel::lie`), and some layer has to \
          refuse it: {believed:#?}"
     );
+}
+
+/// Every published schema, compiled.
+fn checkers() -> xtask::schemas::Checkers {
+    xtask::schemas::Checkers::compiled().expect("the published schemas compile")
 }

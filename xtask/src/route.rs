@@ -35,9 +35,6 @@ pub enum ReadCause {
         #[source]
         source: crate::schemas::OffSchema,
     },
-    /// The published schema itself does not compile.
-    #[error(transparent)]
-    Schema(#[from] crate::schemas::SchemaError),
     /// A field a reader needs is not there, or is not the type it reads, although the line passed its schema.
     #[error("the record has no {field} a reader can read")]
     Absent {
@@ -68,7 +65,6 @@ impl crate::error::Coded for ReadCause {
         match self {
             Self::Json { .. } => crate::error::XtCode::RecordingLine,
             Self::OffSchema { .. } => crate::error::XtCode::RecordingOffSchema,
-            Self::Schema(schema) => crate::error::Coded::code(schema),
             Self::Absent { .. } => crate::error::XtCode::RecordingUnread,
         }
     }
@@ -263,13 +259,12 @@ impl Routing {
     }
 }
 
-/// Reads the routes and executions out of a recording, ignoring every valid event that is neither.
+/// Reads the routes and executions out of a runner's or an engine's recording, ignoring every valid event that is neither.
 ///
 /// # Errors
-/// A non-empty line that is not JSON is rejected.
-/// An audit must never turn a corrupt evidence stream into an apparently empty one.
-pub fn read(recorded: &str, producer: crate::schemas::Producer) -> Result<Routing, ReadError> {
-    from_events(&events(recorded, producer)?)
+/// A route or execution missing what it must say.
+pub fn read<L: crate::schemas::Lines>(recorded: &Checked<L>) -> Result<Routing, ReadError> {
+    from_events(recorded.events())
 }
 
 /// Reads routing records from events that have already passed the JSONL boundary.
@@ -307,36 +302,55 @@ pub(crate) fn from_events(events: &[Value]) -> Result<Routing, ReadError> {
     Ok(routing)
 }
 
-/// Parses every non-empty event in a recording without discarding a corrupt line, holding each to `producer`'s published schema first.
-///
-/// # Errors
-/// [`ReadError`] for the first line that is not JSON or not on its schema.
-pub(crate) fn events(
-    recorded: &str,
-    producer: crate::schemas::Producer,
-) -> Result<Vec<Value>, ReadError> {
-    let checker = crate::schemas::Checker::of(producer).map_err(|source| ReadError {
-        line: 0,
-        cause: ReadCause::Schema(source),
-    })?;
-    recorded
-        .lines()
-        .enumerate()
-        .filter(|(_, line)| !line.trim().is_empty())
-        .map(|(index, line)| {
-            let line_number = index.saturating_add(1);
-            let json = |source| ReadError {
-                line: line_number,
-                cause: ReadCause::Json { source },
-            };
-            let parsed = crate::strictjson::from_str(line).map_err(json)?;
-            checker.check(&parsed).map_err(|source| ReadError {
-                line: line_number,
-                cause: ReadCause::OffSchema { source },
-            })?;
-            nested_event(parsed).map_err(json)
+/// A recording read once, every non-empty line of it held to the published schema of the producer `L` names, which every reader takes instead of the text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Checked<L> {
+    events: Vec<Value>,
+    lines: std::marker::PhantomData<L>,
+}
+
+impl<L: crate::schemas::Lines> Checked<L> {
+    /// Parses every non-empty line of `recorded` without discarding a corrupt one, holding each to `L`'s schema among `checkers` first.
+    ///
+    /// # Errors
+    /// [`ReadError`] for the first line that is not JSON or not on its schema.
+    pub fn read(recorded: &str, checkers: &crate::schemas::Checkers) -> Result<Self, ReadError> {
+        let checker = checkers.lines(L::PRODUCER);
+        let events = recorded
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| !line.trim().is_empty())
+            .map(|(index, line)| {
+                let line_number = index.saturating_add(1);
+                let json = |source| ReadError {
+                    line: line_number,
+                    cause: ReadCause::Json { source },
+                };
+                let parsed = crate::strictjson::from_str(line).map_err(json)?;
+                checker.check(&parsed).map_err(|source| ReadError {
+                    line: line_number,
+                    cause: ReadCause::OffSchema { source },
+                })?;
+                nested_event(parsed).map_err(json)
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
+            events,
+            lines: std::marker::PhantomData,
         })
-        .collect()
+    }
+
+    /// Every event, in the order the recording holds them, its payload beside its envelope.
+    #[must_use]
+    pub fn events(&self) -> &[Value] {
+        &self.events
+    }
+
+    /// Every event, owned.
+    #[must_use]
+    pub fn into_events(self) -> Vec<Value> {
+        self.events
+    }
 }
 
 /// Checks the current-v1 envelope, then gives the independent auditors a collision-free view with payload fields beside the envelope fields.

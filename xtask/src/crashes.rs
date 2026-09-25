@@ -132,12 +132,10 @@ pub const CRASH_EXIT: i64 = 93;
 pub const RULE: &str = "crash-after-write";
 
 /// Everything the recording says about the crashes.
-///
-/// # Errors
-/// A corrupt non-empty line is rejected rather than disappearing from the evidence.
-pub fn read(recorded: &str) -> Result<Crashed, crate::route::ReadError> {
+#[must_use]
+pub fn read(recorded: &crate::route::Checked<crate::schemas::RunnerLines>) -> Crashed {
     let mut crashed = Crashed::default();
-    for event in crate::route::events(recorded, crate::schemas::Producer::Runner)? {
+    for event in recorded.events() {
         match event.get("type").and_then(Value::as_str) {
             Some("crash-exec") => {
                 let Some((crash, record)) = event
@@ -181,7 +179,7 @@ pub fn read(recorded: &str) -> Result<Crashed, crate::route::ReadError> {
             Some(_) | None => {}
         }
     }
-    Ok(crashed)
+    crashed
 }
 
 /// One run of a crash as the runner writes it, or nothing where a field the schema requires is not there.

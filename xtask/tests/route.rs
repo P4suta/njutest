@@ -3,6 +3,11 @@
 
 //! The one reader both audits ask about how a run routed, over the two recordings that write it down.
 
+#![expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking"
+)]
+
 use njutest_devkit::result::{OptionState, ResultState, option_state, result_state};
 use xtask::route::{self, Discharge, Routing};
 use xtask::schemas::Producer;
@@ -21,8 +26,21 @@ const RUNNER: &str = r#"
 {"seq":2,"timestamp":"2026-09-06T00:00:01Z","elapsed_ms":1,"payload":{"type":"mutant-exec","mutant":{"mutant":"aaaaaaaaaaaaaaaaaaaa","target":"pkg/lib/pkg","args":[],"outcome":"survived","step_boundary":null,"duration_ms":9,"alone":true}}}
 "#;
 
+/// What the route reader makes of `recording`, once it is held to `producer`'s published schema.
+fn read(recording: &str, producer: Producer) -> Result<Routing, route::ReadError> {
+    let checkers = checkers();
+    match producer {
+        Producer::Runner => route::read(&route::Checked::<xtask::schemas::RunnerLines>::read(
+            recording, &checkers,
+        )?),
+        Producer::Engine => route::read(&route::Checked::<xtask::schemas::EngineLines>::read(
+            recording, &checkers,
+        )?),
+    }
+}
+
 fn routing(recording: &str, producer: Producer) -> Option<Routing> {
-    let result = route::read(recording, producer);
+    let result = read(recording, producer);
     assert_eq!(
         result_state(&result),
         ResultState::Returned,
@@ -141,7 +159,7 @@ fn each_producer_keeps_the_fields_only_it_records() {
 
 #[test]
 fn a_line_that_is_not_json_rejects_the_entire_recording() {
-    let result = route::read("not json\n\n{\"type\":\"route\"}\n", Producer::Runner);
+    let result = read("not json\n\n{\"type\":\"route\"}\n", Producer::Runner);
     assert_eq!(
         result_state(&result),
         ResultState::Refused,
@@ -162,4 +180,9 @@ fn a_mutant_nothing_routed_has_no_route_and_no_executions() {
         OptionState::Absent
     );
     assert_eq!(routing.execs_of("bbbbbbbbbbbbbbbbbbbb").count(), 0);
+}
+
+/// Every published schema, compiled.
+fn checkers() -> xtask::schemas::Checkers {
+    xtask::schemas::Checkers::compiled().expect("the published schemas compile")
 }
