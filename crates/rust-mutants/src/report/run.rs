@@ -293,7 +293,7 @@ pub struct RunMutantDocument {
     /// Why it was never executed, or measured nothing where it was, when it was not.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub not_run_reason: Option<NotRunReason>,
-    /// Each test that declined to measure in the execution the outcome rests on, and its words (ADR 0043).
+    /// Each test that declined to measure in any execution of it, and its words, which is also why its answer is never kept (ADR 0043).
     pub declined: Vec<crate::decline::Decline>,
     /// Which targets could have noticed it, and which of them ran.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
@@ -902,20 +902,20 @@ impl FindingKind {
     }
 }
 
-/// Whether the tests `one` says declined agree with its outcome (ADR 0043).
-fn declines_agree(one: &RunMutantDocument) -> bool {
-    match (one.outcome, one.declined.is_empty()) {
-        (_, true) => one.not_run_reason != Some(NotRunReason::Declined),
-        (Outcome::NotRun, false) => one.not_run_reason == Some(NotRunReason::Declined),
-        (Outcome::Survived, false) => true,
-        (Outcome::Killed, false) => match one.killed_by.as_slice() {
-            [killer] => one.declined.iter().any(|decline| &decline.test == killer),
-            _ => false,
-        },
+/// Whether the tests `one` says declined agree with its outcome: a mutation measured nothing because of declines only where some test declined, and one no execution was asked about declined nowhere (ADR 0043).
+const fn declines_agree(one: &RunMutantDocument) -> bool {
+    match (one.not_run_reason, one.declined.is_empty()) {
+        (Some(NotRunReason::Declined), empty) => !empty,
         (
-            Outcome::StepLimitReached | Outcome::Waited | Outcome::Inconclusive | Outcome::Errored,
-            false,
-        ) => false,
+            Some(
+                NotRunReason::Unreached
+                | NotRunReason::Discharged
+                | NotRunReason::Unselected
+                | NotRunReason::StoppedEarly,
+            ),
+            empty,
+        ) => empty,
+        (Some(NotRunReason::Interrupted) | None, _) => true,
     }
 }
 

@@ -36,6 +36,7 @@ const STEP_LIMIT_REACHED: &str = "step-limit-reached";
 const WAITED: &str = "waited";
 const UNCONFIRMED: &str = "unconfirmed";
 const ERRORED: &str = "errored";
+const DECLINED: &str = "declined";
 const PASSED: &str = "passed";
 const SURVIVING_MUTANT: &str = "surviving-mutant";
 const UNNOTICED_FAULT: &str = "unnoticed-fault";
@@ -57,6 +58,7 @@ const WAITED_MUTANT: &str = "waited-mutant";
 const STEP_LIMIT_REACHED_MUTANT: &str = "step-limit-reached-mutant";
 const FAILING_TEST: &str = "failing-test";
 const TARGET_MISSING: &str = "target-missing";
+const NOT_MEASURED: &str = "not-measured";
 const UNMATCHED_ACCEPTANCE: &str = "unmatched-acceptance";
 const EVERYTHING: &str = "all";
 const EQUIVALENT: &str = "equivalent";
@@ -3080,8 +3082,14 @@ fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
         holed.insert("schedule");
     }
     if recording.mutants.iter().any(|mutant| {
-        ["waited", "step-limit-reached", "unconfirmed", "errored"]
-            .contains(&mutant.outcome.as_str())
+        [
+            "waited",
+            "step-limit-reached",
+            "unconfirmed",
+            "errored",
+            "declined",
+        ]
+        .contains(&mutant.outcome.as_str())
     }) {
         holed.insert("mutation");
     }
@@ -3463,10 +3471,13 @@ fn contradicted(reported: &str, recorded: &[&str]) -> Option<String> {
         KILLED | UNCONFIRMED => requires(KILLED),
         WAITED => requires(WAITED),
         STEP_LIMIT_REACHED => requires(STEP_LIMIT_EXEC),
-        SURVIVED => recorded.iter().any(|one| *one != SURVIVED).then(|| {
+        SURVIVED => (recorded.iter().any(|one| *one != SURVIVED && *one != "not_run")
+            || (!recorded.is_empty() && !any(SURVIVED)))
+        .then(|| {
             format!(
                 "the report says every reaching test ran and none noticed, and the recorded \
-                 executions of it came to {recorded:?}; a mutation a proof removed every \
+                 executions of it came to {recorded:?}; a target whose every test declined \
+                 measured nothing and counts neither way, a mutation a proof removed every \
                  execution of has none, and the proofs layer holds that"
             )
         }),
@@ -3480,6 +3491,12 @@ fn contradicted(reported: &str, recorded: &[&str]) -> Option<String> {
             format!(
                 "the report says {reported}, and a recorded execution of it was killed: a test \
                  told the programs apart"
+            )
+        }),
+        DECLINED => (recorded.is_empty() || recorded.iter().any(|one| *one != "not_run")).then(|| {
+            format!(
+                "the report says every test that reached it declined to measure, and the recorded \
+                 executions of it are not each an execution that measured nothing: {recorded:?}"
             )
         }),
         ERRORED => (!recorded.is_empty()
@@ -4353,6 +4370,7 @@ fn findings(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
         STEP_LIMIT_REACHED_MUTANT,
         FAILING_TEST,
         TARGET_MISSING,
+        NOT_MEASURED,
     ];
     for mutant in &recording.mutants {
         let expected = match (mutant.outcome.as_str(), mutant.acceptance) {
@@ -4366,6 +4384,7 @@ fn findings(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
                 Some(FAILING_TEST)
             }
             (ERRORED, AcceptanceFact::Rejected | AcceptanceFact::Accepted) => Some(TARGET_MISSING),
+            (DECLINED, AcceptanceFact::Rejected | AcceptanceFact::Accepted) => Some(NOT_MEASURED),
             (_, AcceptanceFact::Rejected | AcceptanceFact::Accepted) => None,
         };
         let tied: Vec<&FindingRow> = recording

@@ -1226,15 +1226,15 @@ impl<'a> Walker<'a> {
         ) else {
             return false;
         };
-        let (Some(before), Some(after), Some(at)) = (
-            self.src.get(from..start),
-            self.src.get(end..),
+        let (Some(text), Some(start), Some(end), Some(at)) = (
+            self.src.get(from..),
+            start.checked_sub(from),
+            end.checked_sub(from),
             at.checked_sub(from),
         ) else {
             return false;
         };
-        self.grouping
-            .keeps(&format!("{before}{written}{after}"), at, new)
+        self.grouping.keeps(text, (start..end, written), (at, new))
     }
 
     fn walk_binary(&mut self, b: &syn::ExprBinary, ctx: Ctx) {

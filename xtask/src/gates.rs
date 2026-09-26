@@ -2082,6 +2082,130 @@ fn written_into(path: &str) -> &str {
     path.get(..end).unwrap_or(path)
 }
 
+/// A name no target of any workspace has, which the target check must refuse before its silence about the configuration counts.
+const PLANTED_UNKNOWN_TARGET: &str = "xtask/test/no-such-target-anywhere";
+
+/// Every target `.rust-mutants.toml` skips is one a member declares, as cargo's metadata names it.
+///
+/// # Errors
+/// The configuration cannot be read, cargo's metadata cannot be read, the check misses a planted name, or a name is no target.
+pub fn skipped(root: &Path) -> Result<String, GateError> {
+    let path = root.join(".rust-mutants.toml");
+    let text = std::fs::read_to_string(&path)
+        .map_err(|error| GateError(format!("skipped: {}: {error}", path.display())))?;
+    let config = text
+        .parse::<toml::Table>()
+        .map_err(|error| GateError(format!("skipped: {}: {error}", path.display())))?;
+    let named = skip_targets_of(&config, &path)?;
+    let metadata = cargo_metadata::MetadataCommand::new()
+        .manifest_path(root.join("Cargo.toml"))
+        .no_deps()
+        .exec()
+        .map_err(|error| GateError(format!("skipped: cargo metadata: {error}")))?;
+    let declared = declared_targets(&metadata);
+    let every_package_named = metadata.workspace_packages().iter().all(|package| {
+        let prefix = format!("{}/", package.name);
+        declared.iter().any(|one| one.starts_with(&prefix))
+    });
+    if declared.contains(PLANTED_UNKNOWN_TARGET) || !every_package_named {
+        return Err(GateError(format!(
+            "skipped: the targets derived from cargo's metadata do not refuse \
+             {PLANTED_UNKNOWN_TARGET} and name a target of every member, so their silence about \
+             the configuration would not be evidence"
+        )));
+    }
+    let unknown: Vec<&String> = named
+        .iter()
+        .filter(|name| !declared.contains(name.as_str()))
+        .collect();
+    if let Some(first) = unknown.first() {
+        let package = match first.split_once('/') {
+            Some((package, _rest)) => package,
+            None => first.as_str(),
+        };
+        let nearby: Vec<&str> = declared
+            .iter()
+            .filter(|one| one.starts_with(&format!("{package}/")))
+            .map(String::as_str)
+            .collect();
+        return Err(GateError(format!(
+            "skipped: {} names {}, which no member of this workspace declares; a run refuses it \
+             with RM5004 before it measures anything. {package} declares: {}",
+            path.display(),
+            unknown
+                .iter()
+                .map(|one| one.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+            nearby.join(", ")
+        )));
+    }
+    Ok(format!(
+        "skipped: {} skipped target(s), each one this workspace declares among its {}, and a planted unknown name refused first",
+        named.len(),
+        declared.len()
+    ))
+}
+
+/// The strings `[execution] skip_targets` holds, or none where the table or the key is absent.
+fn skip_targets_of(config: &toml::Table, path: &Path) -> Result<Vec<String>, GateError> {
+    let refused = |what: String| GateError(format!("skipped: {}: {what}", path.display()));
+    let Some(execution) = config.get("execution") else {
+        return Ok(Vec::new());
+    };
+    let Some(table) = execution.as_table() else {
+        return Err(refused("`execution` is not a table".to_owned()));
+    };
+    let Some(listed) = table.get("skip_targets") else {
+        return Ok(Vec::new());
+    };
+    let Some(listed) = listed.as_array() else {
+        return Err(refused(
+            "`execution.skip_targets` is not an array".to_owned(),
+        ));
+    };
+    listed
+        .iter()
+        .map(|one| match one.as_str() {
+            Some(name) => Ok(name.to_owned()),
+            None => Err(refused(format!(
+                "`execution.skip_targets` holds {one}, which is not a string"
+            ))),
+        })
+        .collect()
+}
+
+/// Every target the engine could start in this workspace, named as it names them: `package/kind/name`, and `package/doc/name` for a library whose documentation cargo tests.
+fn declared_targets(metadata: &cargo_metadata::Metadata) -> BTreeSet<String> {
+    let mut declared = BTreeSet::new();
+    for package in metadata.workspace_packages() {
+        for target in &package.targets {
+            let kind = if target.is_custom_build() || target.is_bench() {
+                None
+            } else if target.is_proc_macro() {
+                Some("proc-macro")
+            } else if target.is_lib() {
+                Some("lib")
+            } else if target.is_bin() {
+                Some("bin")
+            } else if target.is_test() {
+                Some("test")
+            } else if target.is_example() {
+                Some("example")
+            } else {
+                None
+            };
+            if let Some(kind) = kind {
+                declared.insert(format!("{}/{kind}/{}", package.name, target.name));
+            }
+            if target.is_lib() && !target.is_proc_macro() && target.doctest {
+                declared.insert(format!("{}/doc/{}", package.name, target.name));
+            }
+        }
+    }
+    declared
+}
+
 /// Every critical decision has a row saying what holds it at every layer, each cell naming an item the tree defines, and every open layer is a hole the gaps ledger gives an owner.
 ///
 /// # Errors
@@ -2096,7 +2220,6 @@ pub fn invariants(root: &Path) -> Result<String, GateError> {
     };
     let rows = crate::invariants::rows(&read("docs/invariants.md")?).map_err(coded)?;
     let gaps = crate::invariants::gaps(&read("xtask/invariant_gaps.txt")?).map_err(coded)?;
-    let most = ceiling(root, "xtask/invariant_gap_ceiling.txt")?;
     let mut defined = BTreeSet::new();
     for path in all_sources(root)? {
         let text = std::fs::read_to_string(&path)
@@ -2104,7 +2227,7 @@ pub fn invariants(root: &Path) -> Result<String, GateError> {
         defined.extend(crate::invariants::defined(&text));
     }
     let (decisions, held) =
-        crate::invariants::check(&rows, &gaps, &defined, most).map_err(|refused| {
+        crate::invariants::check(&rows, &gaps, &defined).map_err(|refused| {
             GateError(format!(
                 "invariants: the registry and the tree disagree:\n  {}",
                 refused
@@ -2116,9 +2239,153 @@ pub fn invariants(root: &Path) -> Result<String, GateError> {
         })?;
     Ok(format!(
         "invariants: {decisions} critical decisions, {held} layer cells each naming what the tree \
-         defines, and {} open, each owned in xtask/invariant_gaps.txt (at most {most})",
+         defines, and {} open, each owned in xtask/invariant_gaps.txt; `ratchets` holds them to \
+         the base",
         gaps.len()
     ))
+}
+
+/// The ledgers whose header says they may shrink and never grow, each one number.
+const NEVER_GROW: [&str; 2] = ["xtask/waiver_ceiling.txt", "xtask/seam_ceiling.txt"];
+
+/// Where this change meets `origin/main`, which is what everything that may never grow is held to.
+struct Base {
+    commit: String,
+    said: String,
+}
+
+/// What `git` answers in `root`, or a refusal that names what was asked and how to give it what it needs.
+///
+/// # Errors
+/// Git could not be started, or answered with a failure.
+fn git_answer(root: &Path, args: &[&str]) -> Result<String, GateError> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .map_err(|error| GateError(format!("ratchets: git could not run: {error}")))?;
+    if !output.status.success() {
+        return Err(GateError(format!(
+            "ratchets: `git {}` failed, so what this change is compared with is unknown; fetch \
+             origin/main (CI fetches it whole): {}",
+            args.join(" "),
+            match std::str::from_utf8(&output.stderr) {
+                Ok(said) => said.trim(),
+                Err(_not_text) => "it said something that is not text",
+            }
+        )));
+    }
+    String::from_utf8(output.stdout)
+        .map(|text| text.trim().to_owned())
+        .map_err(|_not_text| {
+            GateError(format!(
+                "ratchets: `git {}` answered in no text",
+                args.join(" ")
+            ))
+        })
+}
+
+impl Base {
+    /// The merge base of `HEAD` with `origin/main`, named the way a person checks it against CI's.
+    ///
+    /// # Errors
+    /// There is no Git, no `origin/main`, or no commit both reach.
+    fn of(root: &Path) -> Result<Self, GateError> {
+        let commit = git_answer(root, &["merge-base", "HEAD", "origin/main"])?;
+        let said = git_answer(root, &["log", "-1", "--format=%h of %cs", &commit])?;
+        Ok(Self { commit, said })
+    }
+
+    /// What `relative` held at the base, or nothing where it did not exist there.
+    ///
+    /// # Errors
+    /// Git could not say.
+    fn read(&self, root: &Path, relative: &str) -> Result<Option<String>, GateError> {
+        let named = format!("{}:{relative}", self.commit);
+        let present = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["cat-file", "-e", &named])
+            .output()
+            .map_err(|error| GateError(format!("ratchets: git could not run: {error}")))?;
+        if !present.status.success() {
+            return Ok(None);
+        }
+        git_answer(root, &["show", &named]).map(Some)
+    }
+}
+
+/// Everything this repository says may shrink and never grow, held to what it was where this change meets `origin/main` rather than to a bound the same change can raise.
+///
+/// # Errors
+/// The base cannot be found, a ledger or the registry cannot be read at either end, or something grew or fell back.
+pub fn ratchets(root: &Path) -> Result<String, GateError> {
+    let base = Base::of(root)?;
+    let mut refused = Vec::new();
+    for ledger in NEVER_GROW {
+        let now = ceiling(root, ledger)?;
+        let Some(then) = base.read(root, ledger)? else {
+            continue;
+        };
+        let then = held_number(ledger, &then)?;
+        if now > then {
+            refused.push(format!(
+                "{ledger} holds {now}, and held {then} at the base: it may shrink and never grow, \
+                 and a bound the same change raises bounds nothing"
+            ));
+        }
+    }
+    let registry = "docs/invariants.md";
+    if let Some(before) = base.read(root, registry)? {
+        let coded = |error: crate::invariants::InvariantError| {
+            GateError(format!("ratchets: {}", error.coded()))
+        };
+        let head = std::fs::read_to_string(root.join(registry))
+            .map_err(|error| GateError(format!("ratchets: {registry}: {error}")))?;
+        let now = crate::invariants::rows(&head).map_err(coded)?;
+        let then = crate::invariants::rows(&before).map_err(coded)?;
+        refused.extend(
+            crate::invariants::regressions(&then, &now)
+                .iter()
+                .map(crate::error::Coded::coded),
+        );
+    }
+    if !refused.is_empty() {
+        return Err(GateError(format!(
+            "ratchets: compared with {} where this change meets origin/main:\n  {}",
+            base.said,
+            refused.join("\n  ")
+        )));
+    }
+    Ok(format!(
+        "ratchets: {} and the registry's held layers, none grown or fallen back since {} where \
+         this change meets origin/main (fetch origin/main to compare with CI's base)",
+        NEVER_GROW.join(" and "),
+        base.said
+    ))
+}
+
+/// The one number a ledger's text at the base holds.
+///
+/// # Errors
+/// The text holds anything but one number.
+fn held_number(relative: &str, text: &str) -> Result<usize, GateError> {
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    let [written] = lines.as_slice() else {
+        return Err(GateError(format!(
+            "ratchets: {relative} at the base holds something other than one number"
+        )));
+    };
+    written.parse::<usize>().map_err(|_not_a_number| {
+        GateError(format!(
+            "ratchets: {relative} at the base holds {written}, which is not a number"
+        ))
+    })
 }
 
 /// Every gate, in order, stopping at the first failure.
@@ -2136,11 +2403,13 @@ pub fn all(root: &Path) -> Result<String, GateError> {
         milestones,
         adrs,
         invariants,
+        ratchets,
         surfaces,
         reached,
         defaulted,
         waivers,
         tracked,
+        skipped,
     ] {
         line(&mut report, format_args!("{}", gate(root)?));
     }

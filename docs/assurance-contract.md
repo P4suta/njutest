@@ -483,7 +483,7 @@ It runs nothing and establishes nothing: every line is a projection of the repor
 | what is pinned | every build noticed the change or found it to be the same program, and at least one noticed it: a target's tests failed on it, the compiler refused it, or the model checker found an input that tells the two apart | `killed`, `compile-rejected`, `model-noticed` |
 | what is left free | some build noticed nothing of a change that makes a different program there, and every build established something | `survived`, `unreached` |
 | what is the same program | every build found the change to be the same program | `equivalent`, `model-proved` |
-| what the run could not tell | some build established nothing about it | `step-limit-reached`, `waited`, `unconfirmed`, `errored` |
+| what the run could not tell | some build established nothing about it | `step-limit-reached`, `waited`, `unconfirmed`, `errored`, `declined` |
 
 A change is listed under the section its builds decided together, which is the same lattice minimum the verdict reads, so a change one build noticed and another did not is free, and a change that waited in any build is in the last section.
 What each build established is on the lines beneath it.

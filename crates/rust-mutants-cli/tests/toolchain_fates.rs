@@ -269,6 +269,11 @@ fn fixture_balanced_fails_then_hangs() {
 }
 
 #[test]
+fn fixture_bare_cargo() {
+    holds("fixture-bare-cargo");
+}
+
+#[test]
 fn fixture_baseline() {
     holds("fixture-baseline");
 }
@@ -361,6 +366,11 @@ fn fixture_fails_then_hangs() {
 #[test]
 fn fixture_families() {
     holds("fixture-families");
+}
+
+#[test]
+fn fixture_escapes() {
+    holds("fixture-escapes");
 }
 
 #[test]
