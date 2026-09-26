@@ -11,7 +11,6 @@
 answered-stop mutation njutest-14
 group-stop mutation njutest-14
 stall-watch mutation njutest-14
-step-transition plant njutest-14
 step-transition mutation njutest-14
 step-stop-said self-check njutest-14
 step-stop-said mutation njutest-14

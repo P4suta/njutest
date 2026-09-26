@@ -1814,7 +1814,150 @@ struct Window {
 
 #[cfg(test)]
 mod tests {
-    use super::{StepAction, StepAdvance, StepMachineError, StepPhase, TEMPLATE, step_transition};
+    use std::path::Path;
+    use std::process::Command;
+    use std::time::Duration;
+
+    use super::{
+        ACTIVE_ENV, CATALOG_ENV, DELAY_ENV, FAULT_ENV, Rendering, STEP_NONCE_ENV, STEP_NOTICE_ENV,
+        STEP_NOTICE_SCHEMA, STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, StepAction, StepAdvance,
+        StepMachineError, StepPhase, TEMPLATE, TOUCH_ENV, WATCHED_ENV, render, step_transition,
+    };
+    use crate::instrument::Placement;
+    use crate::rule::Tier;
+    use crate::runner::{Bound, Cancel, RunResult, Spec, Termination, run};
+    use crate::testkit::compile::ScriptedCompile;
+    use crate::vars::Variables;
+
+    const PLANT_CATALOG: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const PLANT_NONCE: &str = "0123456789abcdef0123456789abcdef";
+    const PLANT_WATCHED: &str = "/unwatched-step-transition-plant";
+
+    struct StepCase {
+        result: RunResult,
+        state: String,
+        notice: Option<String>,
+        completed: Option<Vec<u8>>,
+    }
+
+    fn run_step_case(root: &Path, name: &str, module: &str, selected: &Placement) -> StepCase {
+        let directory = root.join(name);
+        std::fs::create_dir_all(&directory).expect("case directory");
+        let source = directory.join("step.rs");
+        let state = directory.join("step.state");
+        let notice = directory.join("step.notice");
+        let completed = directory.join("completed");
+        std::fs::write(
+            &state,
+            format!(
+                "{STEP_STATE_SCHEMA}\t{PLANT_NONCE}\t{PLANT_CATALOG}\t{}\t2\tdormant\t0\n",
+                selected.id
+            ),
+        )
+        .expect("initial state");
+        std::fs::write(
+            &source,
+            format!(
+                "{module}\nfn main() {{ assert!(__rm::active({})); __rm::checkpoint(); std::fs::write({completed:?}, b\"completed\").expect(\"completed\"); }}\n",
+                selected.index
+            ),
+        )
+        .expect("generated source");
+        let built = Command::new("rustc")
+            .args(["--edition", "2024", "--crate-type", "bin"])
+            .arg("--out-dir")
+            .arg(&directory)
+            .arg(&source)
+            .output()
+            .expect("rustc runs");
+        assert!(
+            built.status.success(),
+            "{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let executable = directory.join(format!("step{}", std::env::consts::EXE_SUFFIX));
+        let mut spec = Spec::new(
+            [executable.into_os_string()],
+            Bound::After(Duration::from_secs(10)),
+        );
+        spec.stop_file = Some(notice.clone());
+        let mut env = Variables::of(std::env::vars_os());
+        for name in [DELAY_ENV, FAULT_ENV, TOUCH_ENV] {
+            env.remove(name);
+        }
+        env.set(ACTIVE_ENV, selected.id.as_str());
+        env.set(CATALOG_ENV, PLANT_CATALOG);
+        env.set(WATCHED_ENV, PLANT_WATCHED);
+        env.set(STEPS_ENV, "2");
+        env.set(STEP_NONCE_ENV, PLANT_NONCE);
+        env.set(STEP_NOTICE_ENV, notice.as_os_str().to_owned());
+        env.set(STEP_STATE_ENV, state.as_os_str().to_owned());
+        spec.env = Some(env);
+        let result = run(&spec, &Cancel::new());
+        StepCase {
+            result,
+            state: std::fs::read_to_string(state).expect("final state"),
+            notice: match std::fs::read_to_string(notice) {
+                Ok(text) => Some(text),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => panic!("notice: {error}"),
+            },
+            completed: match std::fs::read(completed) {
+                Ok(bytes) => Some(bytes),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => panic!("completed: {error}"),
+            },
+        }
+    }
+
+    #[test]
+    fn a_planted_activation_that_spends_two_steps_is_rejected() {
+        let temporary = tempfile::tempdir().expect("case root");
+        let scripted = ScriptedCompile::from_source(
+            "src/lib.rs",
+            "pub fn step(value: i32) -> i32 { value + 1 }\n",
+            Tier::All,
+        );
+        let selected = scripted.placements().first().expect("one mutation");
+        let module = render(&Rendering {
+            module: "__rm",
+            catalog_digest: PLANT_CATALOG,
+            placements: scripted.placements(),
+            markers: &[],
+            first_item: 0,
+            item_count: 0,
+            newline: "\n",
+            watched: PLANT_WATCHED,
+        })
+        .expect("generated runtime");
+        let before = "StepPhase :: Active(1), StepAdvance :: Continue";
+        assert_eq!(module.matches(before).count(), 1);
+        let planted = module.replacen(before, "StepPhase :: Active(2), StepAdvance :: Continue", 1);
+        let clean = run_step_case(temporary.path(), "clean", &module, selected);
+        assert!(clean.result.succeeded(), "{:?}", clean.result.termination);
+        assert_eq!(clean.completed, Some(b"completed".to_vec()));
+        assert_eq!(clean.notice, None);
+        assert_eq!(
+            clean.state,
+            format!(
+                "{STEP_STATE_SCHEMA}\t{PLANT_NONCE}\t{PLANT_CATALOG}\t{}\t2\tactive\t2\n",
+                selected.id
+            )
+        );
+        let altered = run_step_case(temporary.path(), "planted", &planted, selected);
+        assert!(matches!(
+            altered.result.termination,
+            Termination::StoppedByMonitor
+        ));
+        assert_eq!(altered.completed, None);
+        assert_eq!(
+            altered.notice,
+            Some(format!(
+                "{STEP_NOTICE_SCHEMA}\t{PLANT_NONCE}\t{PLANT_CATALOG}\t{}\t2\t3\n",
+                selected.id
+            ))
+        );
+    }
 
     #[test]
     fn the_runtime_ends_a_process_in_one_place_and_says_why_there_first() {
