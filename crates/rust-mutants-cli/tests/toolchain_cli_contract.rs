@@ -475,3 +475,90 @@ fn the_word_cargo_repeats_is_dropped_once_and_only_where_it_is_the_subcommand() 
     .expect("which is this command");
     assert_eq!(format!("{elsewhere:?}"), format!("{direct:?}"));
 }
+
+/// A directory holding `cargo` and `rustc` scripts that run the real ones only from `trusted`, and refuse every other directory as mise refuses a configuration nobody trusted there.
+#[cfg(unix)]
+#[expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking"
+)]
+fn refusing_shims(fixture: &Fixture) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+    let trusted = std::fs::canonicalize(fixture.root()).expect("the fixture's root");
+    let sysroot = std::process::Command::new("rustc")
+        .args(["--print", "sysroot"])
+        .current_dir(&trusted)
+        .output()
+        .expect("rustc names its toolchain");
+    let sysroot =
+        std::path::PathBuf::from(njutest_devkit::process::strict_utf8(&sysroot.stdout).trim());
+    let shims = fixture.temp().join("shims");
+    std::fs::create_dir_all(&shims).expect("the shims' directory");
+    for name in ["cargo", "rustc"] {
+        let path = shims.join(name);
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\nif [ \"$(pwd -P)\" != '{}' ]; then echo \"mise ERROR Config files in $(pwd -P)/mise.toml are not trusted.\" >&2; exit 1; fi\nexec '{}' \"$@\"\n",
+                trusted.display(),
+                sysroot.join("bin").join(name).display()
+            ),
+        )
+        .expect("a shim");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+            .expect("a shim that runs");
+    }
+    shims
+}
+
+#[cfg(unix)]
+#[test]
+fn a_test_that_runs_a_bare_cargo_gets_the_runs_toolchain_rather_than_a_shim_that_refuses_the_copy()
+{
+    let fixture = Fixture::copy("fixture-bare-cargo");
+    let shims = refusing_shims(&fixture);
+    let mut given = environment(&fixture);
+    let searched = given
+        .vars
+        .iter()
+        .find(|(name, _)| name == "PATH")
+        .map(|(_, value)| value.clone());
+    let path = std::env::join_paths(
+        std::iter::once(shims).chain(searched.iter().flat_map(std::env::split_paths)),
+    )
+    .expect("a search path");
+    given.vars.retain(|(name, _)| name != "PATH");
+    given.vars.push(("PATH".into(), path));
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        [
+            "rust-mutants",
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-coverage",
+            "--ui",
+            "quiet",
+            "--root",
+            root.as_str(),
+        ]
+        .map(OsString::from),
+        &given,
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    let output = njutest_devkit::process::answered(code, out, err);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "a shim that chooses the toolchain by the directory it runs in refuses the copy a run \
+         measures, so a test that runs `cargo` by its bare name fails there for a reason none of \
+         its code holds; the run gives every test its own toolchain first instead: {output:?}"
+    );
+}

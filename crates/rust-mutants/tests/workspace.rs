@@ -193,9 +193,11 @@ fn opening_copies_the_tree_and_asks_the_toolchain_in_the_copy() {
     );
     assert_eq!(
         installed.answered(),
-        vec![0, 1, 2, 3, 3],
+        vec![0, 1, 2, 3, 0, 3],
         "one banner each, the sysroot, then the metadata of the tree on disk — which is what \
-         says whether a copy of it could build at all — and the metadata of the copy"
+         says whether a copy of it could build at all — then a bare cargo's banner from the \
+         copy, which is what says whether the tests find the run's toolchain there, and the \
+         metadata of the copy"
     );
 }
 

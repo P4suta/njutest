@@ -269,6 +269,11 @@ fn fixture_balanced_fails_then_hangs() {
 }
 
 #[test]
+fn fixture_bare_cargo() {
+    holds("fixture-bare-cargo");
+}
+
+#[test]
 fn fixture_baseline() {
     holds("fixture-baseline");
 }
