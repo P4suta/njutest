@@ -57,8 +57,8 @@ fn planted((item, rule, original): (&str, &str, &str)) -> String {
     )
 }
 
-/// Asks the engine built from `repository` to resolve every claim of the workspace at `workspace`.
-fn listed(repository: &Path, workspace: &Path) -> Result<Listed, GateError> {
+/// Asks the engine built from `repository` to resolve every claim of the workspace at `workspace`, putting every temporary artifact under `temporary`.
+fn listed(repository: &Path, workspace: &Path, temporary: &Path) -> Result<Listed, GateError> {
     let asked = std::process::Command::new("cargo")
         .args([
             "run",
@@ -77,6 +77,7 @@ fn listed(repository: &Path, workspace: &Path) -> Result<Listed, GateError> {
         ])
         .arg(workspace)
         .current_dir(repository)
+        .envs(super::TEMPORARY_VARIABLES.map(|name| (name, temporary)))
         .output()
         .map_err(|error| GateError(format!("claims: cargo run could not start: {error}")))?;
     let said = String::from_utf8(asked.stdout).map_err(|_not_text| {
@@ -133,7 +134,7 @@ pub fn claims(root: &Path) -> Result<String, GateError> {
         ),
     )
     .map_err(|error| GateError(format!("claims: {}: {error}", configuration.display())))?;
-    let control = listed(root, &fixture)?;
+    let control = listed(root, &fixture, scratch.path())?;
     if !(control.refused
         && control.named("unmatched ", ROTTEN)
         && control.named("moved ", MOVED)
@@ -146,7 +147,7 @@ pub fn claims(root: &Path) -> Result<String, GateError> {
             control.said
         )));
     }
-    let repository = listed(root, root)?;
+    let repository = listed(root, root, scratch.path())?;
     if repository.refused {
         return Err(GateError(format!(
             "claims: a claim of .rust-mutants.toml names nothing, not as many as it says, or a \
