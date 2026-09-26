@@ -289,7 +289,7 @@ The work a lane admits runs in a process group of its own; `SIGINT`, `SIGTERM` a
 **One pass, bounded by quiet.** The gate runs `mise run check` once, with its output passed on as it arrives.
 Following [ADR 0026](adr/0026-a-bound-measures-quiet-not-duration.md), what stops it is quiet rather than duration: a check that says nothing for `NJUTEST_PUSH_QUIET_SECONDS` (600 by default) is stopped, and `NJUTEST_PUSH_BUDGET_SECONDS` (3600) is only the ceiling behind it.
 A check that is slow because the machine is loaded keeps talking, so it is not stopped for how long it took.
-The lane's record names every group its work ran in, the holder's and each nested run's, with when each leader started; a holder that lets the lane go itself writes `released`, and the next run leaves what that work left behind, while a holder killed outright leaves groups the next run asks to stop, then kills, going in only once none of them holds a process that has not ended.
+The lane's record names every group its work ran in, the holder's and each nested run's, with when each leader started; a holder that lets the lane go itself writes `released`, and the next run leaves what that work left behind, while a holder killed outright leaves groups the next run asks to stop, then kills, going in only once none of them holds a process that has not ended; a process that started a session of its own is outside every group the record names, and is left running.
 A narrowed run — one crate, one test binary, one filter — does not take the lane: it is the inner loop, and queueing it behind a push would cost more than it saves.
 Run a whole-workspace command by hand as `cargo xtask slot heavy -- cargo nextest run --workspace --all-targets --all-features`.
 

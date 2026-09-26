@@ -125,6 +125,18 @@ pub enum LaneError {
         /// The group's leader, whose id the group carries.
         pid: u32,
     },
+    /// Whether the holder the record names still runs could not be read.
+    #[cfg(unix)]
+    #[error(
+        "the {lane} lane's lock was free, and whether its recorded holder (pid {pid}) still runs \
+         could not be read, so its work is not ended and the lane is not taken over it"
+    )]
+    HolderUnseen {
+        /// The lane.
+        lane: &'static str,
+        /// The holder.
+        pid: u32,
+    },
     /// Whether the group a dead holder's work ran in is still there could not be seen.
     #[cfg(unix)]
     #[error(
@@ -157,7 +169,9 @@ impl crate::error::Coded for LaneError {
             | Self::Lock { .. }
             | Self::Progress { .. } => crate::error::XtCode::LaneUnavailable,
             #[cfg(unix)]
-            Self::Unended { .. } | Self::Unseen { .. } => crate::error::XtCode::LaneUnavailable,
+            Self::Unended { .. } | Self::Unseen { .. } | Self::HolderUnseen { .. } => {
+                crate::error::XtCode::LaneUnavailable
+            }
             Self::Interrupted { .. } => crate::error::XtCode::LaneInterrupted,
         }
     }
@@ -175,7 +189,7 @@ impl LaneError {
             | Self::Lock { .. }
             | Self::Progress { .. } => None,
             #[cfg(unix)]
-            Self::Unended { .. } | Self::Unseen { .. } => None,
+            Self::Unended { .. } | Self::Unseen { .. } | Self::HolderUnseen { .. } => None,
         }
     }
 }
@@ -222,6 +236,19 @@ impl Lanes {
         }
     }
 
+    /// The lane this process is already inside, to record the work it starts there, or nothing when it holds none.
+    #[must_use]
+    pub fn inside(&self, lane: Lane) -> Option<Held> {
+        self.held
+            .iter()
+            .any(|name| name == lane.name())
+            .then(|| Held {
+                lock: None,
+                record: Some(self.directory.join(format!("{}.holder", lane.name()))),
+                unended: std::cell::Cell::new(false),
+            })
+    }
+
     /// The value of [`HELD`] for a child of a process that holds `lane`.
     #[must_use]
     pub fn held_with(&self, lane: Lane) -> String {
@@ -244,6 +271,7 @@ impl Lanes {
             return Ok(Held {
                 lock: None,
                 record: Some(self.directory.join(format!("{}.holder", lane.name()))),
+                unended: std::cell::Cell::new(false),
             });
         }
         std::fs::create_dir_all(&self.directory).map_err(|source| io(&self.directory, source))?;
@@ -260,6 +288,7 @@ impl Lanes {
         Ok(Held {
             lock: Some(lock),
             record: Some(record),
+            unended: std::cell::Cell::new(false),
         })
     }
 }
@@ -407,7 +436,12 @@ impl Place<'_> {
             Ok(text) => text,
             Err(_no_record) => return Ok(()),
         };
-        for group in groups_of(&text, boot().as_deref()) {
+        let groups = groups_of(&text, boot().as_deref());
+        if groups.is_empty() {
+            return Ok(());
+        }
+        Self::outwait_holder(request, progress, &text)?;
+        for group in groups {
             self.end_group(request, progress, &group)?;
         }
         Ok(())
@@ -428,8 +462,50 @@ impl Place<'_> {
         Ok(())
     }
 
+    /// Waits while the holder the record names still runs, which a lock taken over a removed lock file cannot tell from one that died.
     #[cfg(unix)]
+    fn outwait_holder(
+        request: &Request<'_>,
+        progress: &mut dyn Write,
+        record: &str,
+    ) -> Result<(), LaneError> {
+        let lane = request.lane.name();
+        let (Some(pid), Some(born)) = (
+            record
+                .lines()
+                .find_map(|line| line.strip_prefix("pid="))
+                .and_then(number),
+            record
+                .lines()
+                .find_map(|line| line.strip_prefix("holder_born=")),
+        ) else {
+            return Ok(());
+        };
+        let mut reported: Option<Instant> = None;
+        loop {
+            match holder_state(&start_of(pid), born) {
+                HolderState::Dead => return Ok(()),
+                HolderState::Unseen => return Err(LaneError::HolderUnseen { lane, pid }),
+                HolderState::Alive => {}
+            }
+            if let Some(signal) = request.stops.raised() {
+                return Err(LaneError::Interrupted { lane, signal });
+            }
+            if reported.is_none_or(|last| last.elapsed() >= REPORT) {
+                reported = Some(Instant::now());
+                say(
+                    progress,
+                    &format!(
+                        "slot: the {lane} lane's lock was free but its holder (pid {pid}) still runs, as it does when the lock file was removed under it; waiting for it rather than ending its work"
+                    ),
+                )?;
+            }
+            std::thread::sleep(POLL);
+        }
+    }
+
     /// Asks the group `pid` led to stop, then kills it, until a look at it finds nobody that has not ended.
+    #[cfg(unix)]
     fn end_group(
         &self,
         request: &Request<'_>,
@@ -481,6 +557,29 @@ pub enum Liveness {
     Gone,
     /// The processes could not be listed, which answers neither.
     Unseen,
+}
+
+/// Whether the holder a lane's record names still runs.
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HolderState {
+    /// It runs since the recorded time.
+    Alive,
+    /// It is gone, or its id names a process started at another time.
+    Dead,
+    /// Whether it runs could not be read.
+    Unseen,
+}
+
+/// Whether the holder recorded as started at `born` still runs, from its start as the machine answers now.
+#[cfg(unix)]
+#[must_use]
+pub fn holder_state(now: &Start, born: &str) -> HolderState {
+    match now {
+        Start::Running(started) if started == born => HolderState::Alive,
+        Start::Running(_) | Start::Absent => HolderState::Dead,
+        Start::Unread => HolderState::Unseen,
+    }
 }
 
 /// A group a lane's record names: its leader's id, when the leader started, the session it ran in, and the holder it ran under.
@@ -672,12 +771,14 @@ fn stop_group(pid: u32, sent: crate::work::Sent) -> std::io::Result<()> {
 pub struct Held {
     lock: Option<File>,
     record: Option<PathBuf>,
+    unended: std::cell::Cell<bool>,
 }
 
 impl Drop for Held {
     /// Writes into the record that this holder let the lane go itself, before the lock goes: what its work left in its groups — a compilation cache's server, Git's file monitor — is somebody's to keep, and the next run leaves it; a holder that dies never writes it, and its groups are ended.
     fn drop(&mut self) {
         if self.lock.is_some()
+            && !self.unended.get()
             && let Some(record) = &self.record
         {
             match OpenOptions::new()
@@ -692,6 +793,11 @@ impl Drop for Held {
 }
 
 impl Held {
+    /// Says this holder's work could not be stopped, so the lane is let go without `released` and the next run ends what is left of it.
+    pub fn left_work_running(&self) {
+        self.unended.set(true);
+    }
+
     /// Records the process that leads the work this lane admitted, so a holder that dies before its work cannot let the next run in over it.
     ///
     /// # Errors
@@ -903,8 +1009,9 @@ fn state_directory(environment: &[(OsString, OsString)]) -> Option<PathBuf> {
 
 fn record_of(holder: &Holder) -> String {
     format!(
-        "pid={}\nsince={}\nworktree={}\nrevision={}\ncommand={}\nload={}\nboot={}\n",
+        "pid={}\nholder_born={}\nsince={}\nworktree={}\nrevision={}\ncommand={}\nload={}\nboot={}\n",
         std::process::id(),
+        started_at(std::process::id()).unwrap_or_default(),
         now(),
         holder.worktree.display(),
         holder.revision,

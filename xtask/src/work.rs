@@ -260,13 +260,21 @@ impl Group {
         };
         let asked_to_stop = signal(child, Sent::Ask);
         let asked = Instant::now();
-        while asked.elapsed() < GRACE && !exited(child)? {
-            std::thread::sleep(POLL);
+        let mut watched = Ok(());
+        while asked.elapsed() < GRACE {
+            match exited(child) {
+                Ok(true) => break,
+                Ok(false) => std::thread::sleep(POLL),
+                Err(unwatched) => {
+                    watched = Err(unwatched);
+                    break;
+                }
+            }
         }
         let killed = signal(child, Sent::Kill);
         child.wait().map_err(|source| WorkError::Watch { source })?;
         self.child = None;
-        killed.and(asked_to_stop)
+        killed.and(asked_to_stop).and(watched)
     }
 }
 

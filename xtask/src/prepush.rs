@@ -493,10 +493,15 @@ impl Run<'_> {
             heard: &mut heard,
         };
         let held = self.held;
-        work::run(&mut command, Some(&mut bound), self.stops, |leader| {
+        let ran = work::run(&mut command, Some(&mut bound), self.stops, |leader| {
             held.iter().try_for_each(|lane| lane.working_on(leader))
-        })
-        .map_err(|source| PrePushError::Work { source })
+        });
+        if ran.is_err() {
+            for lane in held {
+                lane.left_work_running();
+            }
+        }
+        ran.map_err(|source| PrePushError::Work { source })
     }
 }
 

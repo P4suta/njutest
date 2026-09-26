@@ -571,6 +571,8 @@ fn a_record_from_another_boot_names_no_group_and_one_without_a_boot_still_does()
 fn a_live_group_a_record_from_another_boot_names_is_left_alone() {
     use std::os::unix::process::CommandExt as _;
 
+    let dead = reaped();
+
     let machine = Machine::new();
     let mut sleeping = Command::new("sleep");
     sleeping.arg("30").process_group(0);
@@ -582,7 +584,7 @@ fn a_live_group_a_record_from_another_boot_names_is_left_alone() {
     std::fs::write(
         &record,
         format!(
-            "pid=1\nboot=a-boot-long-gone\ngroup={pid} holder=1 session={session} born={born}\n"
+            "pid={dead}\nholder_born=gone\nboot=a-boot-long-gone\ngroup={pid} holder={dead} session={session} born={born}\n"
         ),
     )
     .expect("a record from another boot");
@@ -595,7 +597,7 @@ fn a_live_group_a_record_from_another_boot_names_is_left_alone() {
     std::fs::write(
         &record,
         format!(
-            "pid=1\nboot={}\ngroup={pid} holder=1 session={session} born={born}\n",
+            "pid={dead}\nholder_born=gone\nboot={}\ngroup={pid} holder={dead} session={session} born={born}\n",
             xtask::lanes::boot().unwrap_or_default()
         ),
     )
@@ -655,6 +657,8 @@ fn what_a_holder_that_let_go_itself_left_in_its_group_is_left_alone() {
 fn a_group_whose_leader_is_gone_is_ended_only_where_it_shares_the_recorded_session() {
     use std::os::unix::process::CommandExt as _;
 
+    let dead = reaped();
+
     let machine = Machine::new();
     let turns = machine.turns.path().to_owned();
     let mut orphaning = Command::new("sh");
@@ -676,7 +680,7 @@ fn a_group_whose_leader_is_gone_is_ended_only_where_it_shares_the_recorded_sessi
     let boot = xtask::lanes::boot().unwrap_or_default();
     let line = |recorded: u32| {
         format!(
-            "pid=1\nboot={boot}\ngroup={group} holder=1 session={recorded} born=a long time ago\n"
+            "pid={dead}\nholder_born=gone\nboot={boot}\ngroup={group} holder={dead} session={recorded} born=a long time ago\n"
         )
     };
     std::fs::write(&record, line(session.saturating_add(1))).expect("a record in another session");
@@ -702,5 +706,81 @@ fn a_group_whose_leader_is_gone_is_ended_only_where_it_shares_the_recorded_sessi
     assert!(
         control_in.is_some_and(|status| status.success()),
         "the same group in the recorded session is the work's, and it is ended: {control_in:?}"
+    );
+}
+
+/// The id of a process that ran and was reaped, which is how a holder that died is named in a record.
+fn reaped() -> u32 {
+    let mut ending = Command::new("true");
+    let mut ended = SupervisedChild::launch(&mut ending).expect("a process to reap");
+    let pid = ended.id().expect("its id");
+    ended.wait().expect("it is reaped");
+    pid
+}
+
+#[test]
+fn a_holder_is_alive_only_while_its_id_names_a_process_started_when_it_was() {
+    use xtask::lanes::{HolderState, Start, holder_state};
+
+    let born = "Sat Sep 26 12:00:00 2026";
+    for (case, start, expected) in [
+        (
+            "it runs",
+            Start::Running(born.to_owned()),
+            HolderState::Alive,
+        ),
+        (
+            "its id is somebody else's",
+            Start::Running("then".to_owned()),
+            HolderState::Dead,
+        ),
+        ("nothing has its id", Start::Absent, HolderState::Dead),
+        (
+            "its start could not be read",
+            Start::Unread,
+            HolderState::Unseen,
+        ),
+    ] {
+        assert_eq!(holder_state(&start, born), expected, "{case}");
+    }
+}
+
+#[test]
+fn a_run_that_found_the_lock_free_waits_while_the_recorded_holder_still_runs() {
+    use std::os::unix::process::CommandExt as _;
+
+    let machine = Machine::new();
+    let mut sleeping = Command::new("sleep");
+    sleeping.arg("300").process_group(0);
+    let mut holder =
+        SupervisedChild::launch(&mut sleeping).expect("a holder whose lock was removed");
+    let pid = holder.id().expect("the holder's id");
+    let born = xtask::lanes::started(pid).expect("when the holder started");
+    let session = xtask::lanes::session(pid).expect("the holder's session");
+    std::fs::write(
+        machine.slots.path().join("heavy.holder"),
+        format!(
+            "pid={pid}\nholder_born={born}\nboot={}\ngroup={pid} holder={pid} session={session} born={born}\n",
+            xtask::lanes::boot().unwrap_or_default()
+        ),
+    )
+    .expect("the live holder's record");
+    let mut next = machine.run("true");
+    let early = finished_within(Duration::from_secs(3), &mut next);
+    let spared = holder
+        .try_wait()
+        .expect("the holder can be looked at")
+        .is_none();
+    kill_outright(&pid.to_string());
+    holder.wait().expect("the holder is reaped");
+    let late = finished_within(Duration::from_secs(60), &mut next);
+    assert!(
+        early.is_none() && spared,
+        "a lock taken over a removed lock file is not the holder's death: the next run waited, \
+         and the holder's work ran on: early {early:?}, spared {spared}"
+    );
+    assert!(
+        late.is_some_and(|status| status.success()),
+        "once the holder ended, the next run went in: {late:?}"
     );
 }
