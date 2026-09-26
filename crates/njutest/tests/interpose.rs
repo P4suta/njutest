@@ -1093,6 +1093,72 @@ fn what_a_fault_run_drives_through_a_second_seam_is_not_that_seam_s_catalogue() 
 }
 
 #[test]
+fn a_recording_follows_its_seam_when_the_watchers_are_reordered() {
+    let up = upstream("ok");
+    let mut seams = njutest::assure::wire::Seams {
+        environment: Vec::new(),
+        watching: vec![seam("api", up.address()), seam("ledger", up.address())],
+        unwatched: Vec::new(),
+    };
+    let api = seams.watching[0].interposer.address();
+    let baseline = seams.observing(|| {
+        drop(ask(api, "/orders"));
+        passing_baseline()
+    });
+    seams.watching.swap(0, 1);
+    let held = (
+        rust_mutants::runner::Cancel::new(),
+        njutest::trace::Recorder::disabled(),
+    );
+    let measured = njutest::assure::wire::asking(
+        &seams,
+        &baseline,
+        || {
+            drop(ask(api, "/orders"));
+            njutest::wire::settle::Asked::Answered(passing_baseline())
+        },
+        njutest::watch::Watch::new(&held.0, &held.1),
+    )
+    .expect("a recorded seam is identified by its capability rather than its position");
+    assert!(measured.executed);
+    assert_eq!(measured.seams.len(), 6);
+    assert!(measured.seams.iter().all(|one| one.capability == "api"));
+
+    for one in seams.watching {
+        drop(one.interposer.stop());
+    }
+}
+
+#[test]
+fn two_watchers_with_one_name_cannot_share_a_baseline() {
+    let up = upstream("ok");
+    let seams = njutest::assure::wire::Seams {
+        environment: Vec::new(),
+        watching: vec![seam("api", up.address()), seam("api", up.address())],
+        unwatched: Vec::new(),
+    };
+    let baseline = seams.observing(Vec::new);
+    let held = (
+        rust_mutants::runner::Cancel::new(),
+        njutest::trace::Recorder::disabled(),
+    );
+    let measured = njutest::assure::wire::asking(
+        &seams,
+        &baseline,
+        || njutest::wire::settle::Asked::Answered(Vec::new()),
+        njutest::watch::Watch::new(&held.0, &held.1),
+    );
+    assert!(matches!(
+        measured,
+        Err(njutest::wire::derive::DeriveError::NotOneBaseline { .. })
+    ));
+
+    for one in seams.watching {
+        drop(one.interposer.stop());
+    }
+}
+
+#[test]
 fn a_recording_from_other_seams_is_refused_rather_than_paired_by_position() {
     use njutest::assure::wire::{asking, watched};
     use std::collections::BTreeMap;

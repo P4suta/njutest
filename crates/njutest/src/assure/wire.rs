@@ -363,9 +363,7 @@ fn unnoticed(fault: &Fault, observed: &[Exchange]) -> Finding {
 /// Every seam is drained before any fault is put, and only then are they measured one at a time.
 /// Draining a seam after another seam's fault runs would take the traffic those runs drove through it for the baseline, and derive a catalogue from a program that was already being perturbed.
 ///
-/// One seam at a time, so the seam a question is about is the one that derived it rather than one looked up by name afterwards.
-/// A lookup can fail, and a failed lookup returning no answers would report *the run could not put this question* about a run that had lost track of its own seam —
-/// two facts under one sentence, and the one a reader would act on is the wrong one.
+/// Every recorded row owns the name of the seam that produced it, and a mismatch is refused before any question is put.
 /// # Errors
 /// Returns the closed fault-identity error rather than returning a partial catalogue.
 pub fn asking<R>(
@@ -378,22 +376,32 @@ where
     R: FnMut() -> crate::wire::settle::Asked,
 {
     let mut done = Measured::default();
-    let asking_of: Vec<&str> = seams
+    let watching: std::collections::BTreeMap<&str, &crate::wire::dialled::Watching> = seams
         .watching
         .iter()
-        .map(|one| one.capability.as_str())
+        .map(|one| (one.capability.as_str(), one))
         .collect();
-    if asking_of
-        != baseline
-            .of
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<&str>>()
-    {
-        return Err(crate::wire::derive::DeriveError::NotOneBaseline {
-            seams: seams.watching.len(),
-            recordings: baseline.per_seam.len(),
-        });
+    let mismatch = || crate::wire::derive::DeriveError::NotOneBaseline {
+        seams: seams.watching.len(),
+        recordings: baseline.per_seam.len(),
+    };
+    if watching.len() != seams.watching.len() || baseline.per_seam.len() != seams.watching.len() {
+        return Err(mismatch());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut paired = Vec::with_capacity(baseline.per_seam.len());
+    for recorded in &baseline.per_seam {
+        let name = recorded.capability.as_str();
+        let Some(at) = watching.get(name).copied() else {
+            return Err(mismatch());
+        };
+        if !seen.insert(name) {
+            return Err(mismatch());
+        }
+        paired.push((at, &recorded.exchanges));
+    }
+    if seen.len() != watching.len() {
+        return Err(mismatch());
     }
     for one in &seams.watching {
         let dropped = one.interposer.did_not_complete();
@@ -410,7 +418,7 @@ where
             ));
         }
     }
-    for (at, observed) in seams.watching.iter().zip(&baseline.per_seam) {
+    for (at, observed) in paired {
         for exchange in observed {
             watch.trace.wire_exchange(recorded(exchange));
         }
@@ -510,12 +518,16 @@ pub fn licensing(
 /// A catalogue is a set of questions about a program, and every one of those runs is a different program from the one a reader is being told about.
 #[derive(Debug)]
 pub struct Baseline {
-    /// One recording per seam, in the order the seams were started.
-    per_seam: Vec<Vec<Exchange>>,
-    /// The capability each recording came from, in the same order, so pairing them back is checked rather than assumed.
-    of: Vec<String>,
+    /// One named recording per seam.
+    per_seam: Vec<RecordedSeam>,
     /// What each target did with no fault in place, which is what makes a later failure attributable to one.
     before: crate::wire::settle::Before,
+}
+
+#[derive(Debug)]
+struct RecordedSeam {
+    capability: String,
+    exchanges: Vec<Exchange>,
 }
 
 impl Baseline {
@@ -523,7 +535,10 @@ impl Baseline {
     #[must_use]
     #[cfg(feature = "testkit")]
     pub fn all(&self) -> Vec<Exchange> {
-        self.per_seam.concat()
+        self.per_seam
+            .iter()
+            .flat_map(|one| one.exchanges.iter().cloned())
+            .collect()
     }
 }
 
@@ -570,14 +585,12 @@ impl Seams {
             per_seam: self
                 .watching
                 .iter()
-                .map(|one| one.interposer.seal())
+                .map(|one| RecordedSeam {
+                    capability: one.capability.clone(),
+                    exchanges: one.interposer.seal(),
+                })
                 .collect(),
             before: crate::wire::settle::Before::of(&answered),
-            of: self
-                .watching
-                .iter()
-                .map(|one| one.capability.clone())
-                .collect(),
         }
     }
 
