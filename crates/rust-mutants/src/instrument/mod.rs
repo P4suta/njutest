@@ -318,6 +318,8 @@ pub enum InstrumentErrorKind {
     LinesMoved,
     /// A mutant index makes the runtime's inclusive `u32` window unrepresentable.
     IndexReserved,
+    /// The rewritten file does not read as Rust, down to what every identity macro holds: a guard changed how the syntax around it reads.
+    Unparsable,
 }
 
 impl InstrumentErrorKind {
@@ -332,6 +334,7 @@ impl InstrumentErrorKind {
             Self::SpliceFailed => error::INSTRUMENT_SPLICE_FAILED,
             Self::LinesMoved => error::INSTRUMENT_LINES_MOVED,
             Self::IndexReserved => error::INSTRUMENT_INDEX_RESERVED,
+            Self::Unparsable => error::INSTRUMENT_UNPARSABLE,
         }
     }
 }
@@ -628,6 +631,7 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
+    worker.reparsed(&text)?;
     worker.append_runtime(
         &mut text,
         &Rendering {
@@ -746,6 +750,49 @@ struct File<'a> {
     probed: &'a BTreeMap<u32, crate::probe::Question>,
 }
 
+/// Whether `text` reads as Rust down to what every identity macro of the runtime module `module` holds, which the compiler reads only once it expands them.
+///
+/// # Errors
+/// The first place that does not read, as the parser says it.
+pub(crate) fn read_through(text: &str, module: &str) -> Result<(), syn::Error> {
+    let file = syn::parse_file(text)?;
+    let mut held = Held {
+        module,
+        failure: None,
+    };
+    syn::visit::Visit::visit_file(&mut held, &file);
+    match held.failure {
+        None => Ok(()),
+        Some(error) => Err(error),
+    }
+}
+
+/// Reads what every identity macro of one runtime module holds, keeping the first that does not read as an expression.
+struct Held<'m> {
+    module: &'m str,
+    failure: Option<syn::Error>,
+}
+
+impl<'ast> syn::visit::Visit<'ast> for Held<'_> {
+    fn visit_macro(&mut self, invocation: &'ast syn::Macro) {
+        let mut names = invocation
+            .path
+            .segments
+            .iter()
+            .rev()
+            .map(|segment| segment.ident.to_string());
+        let identity = names.next().is_some_and(|name| name == "value")
+            && names.next().is_some_and(|name| name == self.module);
+        if identity && self.failure.is_none() {
+            match invocation.parse_body::<syn::Expr>() {
+                Ok(held) => syn::visit::Visit::visit_expr(self, &held),
+                Err(error) => self.failure = Some(error),
+            }
+        }
+        syn::visit::visit_macro(self, invocation);
+    }
+}
+
 impl File<'_> {
     /// The line ending the file uses, so the appended runtime matches it.
     fn newline(&self) -> &'static str {
@@ -774,6 +821,23 @@ impl File<'_> {
         })?;
         text.push_str(&runtime);
         Ok(())
+    }
+
+    /// Whether the rewritten file reads as Rust down to what every identity macro holds, which the compiler reads only once it expands them.
+    fn reparsed(&self, text: &str) -> Result<(), InstrumentError> {
+        read_through(text, &self.module).map_err(|error| self.unparsable(&error))
+    }
+
+    fn unparsable(&self, error: &syn::Error) -> InstrumentError {
+        let at = error.span().start();
+        self.error(
+            InstrumentErrorKind::Unparsable,
+            format!(
+                "the rewritten file does not read as Rust at line {}, column {}: {error}",
+                at.line,
+                at.column.saturating_add(1)
+            ),
+        )
     }
 
     fn slice(&self, span: Span) -> Result<&str, InstrumentError> {

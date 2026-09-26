@@ -5,21 +5,21 @@
 //! and one nobody may delete because the match would stop being exhaustive.
 
 pub fn classify(n: i32) -> &'static str {
-    __rm::item(0); __rm::checkpoint(); __rm::value!(if __rm::active(0) { Default::default() } else { match n {
+    __rm::item(0); __rm::checkpoint(); if __rm::active(0) { Default::default() } else { __rm::value!(match n {
         0 if __rm::value!(__rm::active(1) && __rm::value!(false) || !__rm::active(1) && __rm::value!(true)) => __rm::value!(if __rm::active(2) { Default::default() } else if __rm::active(3) { "" } else { "zero" }),
         n if __rm::value!(__rm::active(4) && __rm::value!(false) || __rm::active(5) && __rm::value!(true) || __rm::active(6) && __rm::value!(n <= 5) || !__rm::active(4) && !__rm::active(5) && !__rm::active(6) && __rm::value!(n < __rm::value!(if __rm::active(7) { 6 } else if __rm::active(8) { 4 } else { 5 }))) => __rm::value!(if __rm::active(9) { Default::default() } else if __rm::active(10) { "" } else { "few" }),
         n if __rm::value!(__rm::active(11) && __rm::value!(false) || __rm::active(12) && __rm::value!(true) || __rm::active(13) && __rm::value!(n >= 100) || !__rm::active(11) && !__rm::active(12) && !__rm::active(13) && __rm::value!(n > __rm::value!(if __rm::active(14) { 101 } else if __rm::active(15) { 99 } else { 100 }))) => __rm::value!(if __rm::active(16) { Default::default() } else if __rm::active(17) { "" } else { "many" }),
         _ => __rm::value!(if __rm::active(18) { Default::default() } else if __rm::active(19) { "" } else { "some" }),
-    } })
+    }) }
 }
 
 pub fn pair(n: i32, m: i32) -> i32 {
-    __rm::item(1); __rm::checkpoint(); __rm::value!(if __rm::active(20) { Default::default() } else { match (n, m) {
+    __rm::item(1); __rm::checkpoint(); if __rm::active(20) { Default::default() } else { __rm::value!(match (n, m) {
         (0, other)
         | (other, 0) => __rm::value!(if __rm::active(21) { Default::default() } else { other }),
         (a, b) if __rm::value!(__rm::active(22) && __rm::value!(true) || __rm::active(23) && __rm::value!(a != b) || !__rm::active(22) && !__rm::active(23) && __rm::value!(a == b)) => __rm::value!(if __rm::active(24) { Default::default() } else { a }),
         (a, b) => __rm::value!(if __rm::active(25) { Default::default() } else if __rm::active(26) { a - b } else { a + b }),
-    } })
+    }) }
 }
 #[doc(hidden)]
 #[allow(dead_code, unused_qualifications)]

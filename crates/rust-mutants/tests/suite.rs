@@ -97,6 +97,8 @@ mod runner;
 mod sentinel;
 #[path = "session.rs"]
 mod session;
+#[path = "shape.rs"]
+mod shape;
 #[path = "skeleton.rs"]
 mod skeleton;
 #[path = "snapshot.rs"]
