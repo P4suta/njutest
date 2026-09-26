@@ -20,64 +20,72 @@ use njutest::assure::mutation::{Disposition, Judged, Mutation, Unconfirmed};
 use njutest::config::Contract;
 use njutest::evidence::digest::{Inputs, Mode, identity};
 use njutest::report::across::across;
-use njutest::report::{Decision, StepBoundary};
+use njutest::report::{Decision, Outcome as Recorded, StepBoundary};
 use proptest::prelude::*;
 use rust_mutants::session::{Fallback, Route};
 
 /// One disposition of each shape, as a run can reach it.
 fn disposition() -> impl Strategy<Value = Disposition> {
+    proptest::sample::select(
+        Recorded::ALL
+            .into_iter()
+            .filter_map(specimen)
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn counted_boundary() -> StepBoundary {
+    StepBoundary::new(10, 11).expect("a first count beyond the allowance")
+}
+
+fn specimen(outcome: Recorded) -> Option<Disposition> {
     let route = || Route::All {
         reaching: vec!["pkg/lib/pkg".to_owned()],
         fallback: Fallback::NotMeasured,
     };
-    let every = [
-        Disposition::Rejected {
+    Some(match outcome {
+        Recorded::CompileRejected => Disposition::Rejected {
             diagnostic: "no".to_owned(),
         },
-        Disposition::Killed {
+        Recorded::Killed => Disposition::Killed {
             by: "pkg/lib/pkg".to_owned(),
         },
-        Disposition::StepLimitReached {
+        Recorded::StepLimitReached => Disposition::StepLimitReached {
             on: "pkg/lib/pkg".to_owned(),
-            boundary: StepBoundary::new(10, 11).expect("a first count beyond the allowance"),
+            boundary: counted_boundary(),
         },
-        Disposition::Waited {
+        Recorded::Waited => Disposition::Waited {
             on: "pkg/lib/pkg".to_owned(),
         },
-        Disposition::Survived { route: route() },
-        Disposition::Unreached,
-        Disposition::Equivalent { route: route() },
-        Disposition::Unconfirmed {
+        Recorded::Survived => Disposition::Survived { route: route() },
+        Recorded::Unreached => Disposition::Unreached,
+        Recorded::Equivalent => Disposition::Equivalent { route: route() },
+        Recorded::Unconfirmed => Disposition::Unconfirmed {
             on: "pkg/lib/pkg".to_owned(),
             why: Unconfirmed::DidNotReproduce,
         },
-        Disposition::Errored {
+        Recorded::Errored => Disposition::Errored {
             on: "pkg/lib/pkg".to_owned(),
             detail: "no binary".to_owned(),
         },
-        Disposition::Declined {
+        Recorded::Declined => Disposition::Declined {
             on: "pkg/lib/pkg".to_owned(),
             tests: vec![rust_mutants::decline::Decline {
                 test: "tests::shares".to_owned(),
                 why: "this machine cannot share blocks".to_owned(),
             }],
         },
-    ];
-    for one in &every {
-        match one {
-            Disposition::Rejected { .. }
-            | Disposition::Killed { .. }
-            | Disposition::StepLimitReached { .. }
-            | Disposition::Waited { .. }
-            | Disposition::Survived { .. }
-            | Disposition::Unreached
-            | Disposition::Equivalent { .. }
-            | Disposition::Unconfirmed { .. }
-            | Disposition::Errored { .. }
-            | Disposition::Declined { .. } => {}
+        Recorded::ModelNoticed | Recorded::ModelProved => return None,
+    })
+}
+
+#[test]
+fn every_mutation_specimen_has_the_outcome_that_selected_it() {
+    for outcome in Recorded::ALL {
+        if let Some(disposition) = specimen(outcome) {
+            assert_eq!(disposition.outcome(), outcome);
         }
     }
-    proptest::sample::select(every.to_vec())
 }
 
 /// One way a mutation can be decided.
