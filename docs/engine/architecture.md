@@ -361,12 +361,13 @@ The long descriptive name stays on the target directory, which is a build cache 
 
 `execute::Scratch` lays one execution's directory out as `tmp`, `engine` and `home` beside each other, none inside another.
 `TMPDIR` names `tmp`, the engine keeps its own files about the process in `engine` (a touch or entered log, a crash's notice, a decline notice), and a confined home is `home`.
-So what a run reads in `tmp` as the process's own is only the process's, as a crash's leftovers are ([ADR 0035](../adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)), and a test that empties its `TMPDIR` empties nothing else.
+So what a run reads in `tmp` as the process's own is only the process's, and a test that empties its `TMPDIR` empties nothing else.
+A crash's leftovers ([ADR 0035](../adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)) are what it wrote in `tmp` and under its home, less what making the home put there, which the scratch records; the run over them is given the same `tmp` and home again.
 
 The home is the execution's too: `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME`, `XDG_DATA_HOME` and `XDG_RUNTIME_DIR` (and on Windows `USERPROFILE`, `HOMEDRIVE` with `HOMEPATH`, `APPDATA` and `LOCALAPPDATA`) name directories under `home`, so a mutation of the code that chooses where a test writes cannot reach the user's home ([ADR 0044](../adr/0044-a-test-writes-only-where-its-execution-may.md)).
 Each is set in place of every spelling the platform reads as its name.
 `CARGO_HOME` and `RUSTUP_HOME` are pinned to where the given home keeps them, and git's identity is copied in from where git reads it: `GIT_CONFIG_GLOBAL` or `~/.gitconfig`, and `$XDG_CONFIG_HOME/git/config` or `~/.config/git/config`.
-`GIT_CONFIG_GLOBAL` itself is removed, so `git config --global` writes the copy.
+`GIT_CONFIG_GLOBAL` itself is removed, so `git config --global` writes the copy; a source that is no regular file, as `/dev/null` is when git is told to read no global configuration, is nothing to copy.
 The home is made before the process starts, and a home that cannot be made, or an identity that cannot be read, refuses the run with `RM5012`.
 Just before the process starts, the engine checks that every confined variable names the execution's home and nothing else, and refuses to start it otherwise.
 A target whose tests fail in that home and pass with the given one keeps the given one for the run, as `unconfined-target`, and the reach it showed in a home of its own is not read.

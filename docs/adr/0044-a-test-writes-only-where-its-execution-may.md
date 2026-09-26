@@ -28,6 +28,7 @@ What it hands every test unchanged is the real `HOME` and the XDG directories un
    On Windows `USERPROFILE`, `HOMEDRIVE` with `HOMEPATH`, `APPDATA` and `LOCALAPPDATA` do the same, each set in place of every spelling Windows reads as its name.
    A write a test makes through any of them lands where the execution's scratch is emptied, whatever a mutant did to the code choosing the path.
    The home is never inside `tmp`, because what a run reads in `tmp` is the process's own — a crash's leftovers are ([ADR 0035](0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)) — and a test that empties its `TMPDIR` must empty nothing else.
+   The run over what a crash left is given the crashed run's `tmp` and home again, and what the crash left is what it wrote in either: under the home, everything but what making the home put there, named from `~/`.
    The variables are a closed list the engine owns; a variable it does not name keeps the value the run was given, even where it names a place under the given home.
 2. **What a build needs is pinned to where it is.** `CARGO_HOME` and `RUSTUP_HOME` are set to the directories they name for the engine, the defaults under the real home spelled out, so a test that runs cargo finds the registry and the toolchains.
    Where the run was given no home, only a variable that is set is pinned.
@@ -36,7 +37,7 @@ What it hands every test unchanged is the real `HOME` and the XDG directories un
 3. **What a test reads from the home is a copy.** The engine copies git's identity from where git reads it — `GIT_CONFIG_GLOBAL` where it is set and `~/.gitconfig` otherwise, and `$XDG_CONFIG_HOME/git/config`, or `~/.config/git/config` where that is unset — into the execution's home, so a test that commits in a temporary repository keeps the identity it had.
    `GIT_CONFIG_GLOBAL` is removed from the process's environment, so `git config --global` in a test writes the copy.
    Nothing else is copied.
-   A source that is absent is nothing to copy; a source that cannot be read, or a home that cannot be made, refuses the run with `RM5012`, since it is the engine's failure and never a fact about the target.
+   A source that is absent, or that is no regular file, as `/dev/null` is when git is told to read no global configuration, is nothing to copy; a regular file that cannot be read, or a home that cannot be made, refuses the run with `RM5012`, since it is the engine's failure and never a fact about the target.
 4. **A target whose tests fail in its own home and pass with the real one runs with the real one, and every run says so.** A baseline runs in a home of its own first.
    Only where its tests ran and failed there, twice, is it run again with the real home; a process that did not start or did not finish says nothing about a home.
    A target that passes only there keeps the real home for every execution of the run, and the run reports it as `unconfined-target`, every run, including one that recalls the remembered baseline, so the one place a mutation can still write outside is never silent.

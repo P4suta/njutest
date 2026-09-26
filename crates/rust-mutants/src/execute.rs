@@ -1847,6 +1847,8 @@ pub struct Scratch {
     tmp: PathBuf,
     engine: PathBuf,
     home: Option<PathBuf>,
+    /// What making the home put in it, each by its path under the home, a directory with a trailing `/`, with the digest of a file's bytes.
+    made: BTreeMap<String, Option<String>>,
 }
 
 impl Scratch {
@@ -1860,29 +1862,51 @@ impl Scratch {
                 Home::Confined => Some(own.join("home")),
                 Home::Given => None,
             },
+            made: BTreeMap::new(),
         }
     }
 
     /// The layout under `own`, made: its temporary and engine directories, and where `home` confines it a home with the given home's git identity copied in.
     ///
     /// # Errors
-    /// [`SessionError::HomeUnbuilt`] naming the directory that could not be made, and [`SessionError::IdentityUncopied`] naming the file that could not be copied.
+    /// [`SessionError::ScratchCreateFailed`] naming a temporary or engine directory that could not be made, [`SessionError::HomeUnbuilt`] naming a directory of the home, and [`SessionError::IdentityUncopied`] naming the file that could not be copied.
     pub fn made(
         own: &Path,
         home: Home,
         base: &[(OsString, OsString)],
     ) -> Result<Self, SessionError> {
-        let scratch = Self::under(own, home);
+        let mut scratch = Self::under(own, home);
         for directory in [&scratch.tmp, &scratch.engine] {
-            made_directory(directory)?;
+            std::fs::create_dir_all(directory).map_err(|source| {
+                SessionError::ScratchCreateFailed {
+                    path: directory.clone(),
+                    source,
+                }
+            })?;
         }
         if let Some(home) = &scratch.home {
             for (_, under) in CONFINED_HOME {
                 made_directory(&home.join(under))?;
+                let mut directory = String::new();
+                for part in under.split('/').filter(|part| !part.is_empty()) {
+                    directory.push_str(part);
+                    directory.push('/');
+                    scratch.made.insert(directory.clone(), None);
+                }
             }
             owner_only(&home.join(RUNTIME_UNDER_HOME))?;
             for (from, under) in identity(base) {
-                copied_if_present(&from, &home.join(under))?;
+                if let Some(digest) = copied_if_present(&from, &home.join(under))? {
+                    if let Some((parent, _)) = under.rsplit_once('/') {
+                        let mut directory = String::new();
+                        for part in parent.split('/') {
+                            directory.push_str(part);
+                            directory.push('/');
+                            scratch.made.insert(directory.clone(), None);
+                        }
+                    }
+                    scratch.made.insert(under.to_owned(), Some(digest));
+                }
             }
         }
         Ok(scratch)
@@ -1904,6 +1928,12 @@ impl Scratch {
     #[must_use]
     pub fn engine(&self) -> &Path {
         &self.engine
+    }
+
+    /// The home the process is given where it is its own, with what making it put there, each by its path under it, a directory with a trailing `/`, with the digest of a file's bytes.
+    #[must_use]
+    pub fn made_in_home(&self) -> Option<(&Path, &BTreeMap<String, Option<String>>)> {
+        self.home.as_deref().map(|home| (home, &self.made))
     }
 
     /// Which home the process is given.
@@ -2037,22 +2067,25 @@ fn identity(base: &[(OsString, OsString)]) -> Vec<(PathBuf, &'static str)> {
     found
 }
 
-/// Copies `from` to `to`, making `to`'s directory first, where `from` is there at all: an absent source is nothing to copy, and every other failure is one.
-fn copied_if_present(from: &Path, to: &Path) -> Result<(), SessionError> {
+/// Copies `from` to `to`, making `to`'s directory first, where `from` is a regular file, and answers the digest of what it copied: an absent source, or one that is no regular file as `/dev/null` is when git is told to read no global configuration, is nothing to copy, and every other failure is one.
+fn copied_if_present(from: &Path, to: &Path) -> Result<Option<String>, SessionError> {
     let uncopied = |source| SessionError::IdentityUncopied {
         from: from.to_path_buf(),
         to: to.to_path_buf(),
         source,
     };
     match std::fs::metadata(from) {
-        Ok(_found) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Ok(found) if found.file_type().is_file() => {}
+        Ok(_no_regular_file) => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(uncopied(error)),
     }
     if let Some(parent) = to.parent() {
         made_directory(parent)?;
     }
-    std::fs::copy(from, to).map(drop).map_err(uncopied)
+    let bytes = std::fs::read(from).map_err(uncopied)?;
+    std::fs::write(to, &bytes).map_err(uncopied)?;
+    Ok(Some(crate::id::digest(&bytes)))
 }
 
 /// The variable a dynamically linked test binary is found through, and what it should hold.

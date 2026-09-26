@@ -1665,3 +1665,38 @@ fn a_confined_home_replaces_a_home_the_base_spells_another_way() {
         );
     }
 }
+
+#[test]
+fn a_global_configuration_that_is_no_file_is_nothing_to_copy() {
+    let temp = tempfile::tempdir().expect("a directory");
+    let given = temp.path().join("given");
+    std::fs::create_dir_all(&given).expect("the given home");
+    let directory = temp.path().join("a-directory");
+    std::fs::create_dir_all(&directory).expect("a directory where a file would be");
+    let home_name = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    let mut named = vec![directory.into_os_string()];
+    if cfg!(unix) {
+        named.push(OsString::from("/dev/null"));
+    }
+    for global in named {
+        let base = vec![
+            (OsString::from(home_name), given.clone().into_os_string()),
+            (OsString::from("GIT_CONFIG_GLOBAL"), global.clone()),
+        ];
+        let own = temp
+            .path()
+            .join(format!("scratch-{}", base.len() + global.len()));
+        let made = Scratch::made(&own, Home::Confined, &base);
+        assert!(
+            made.is_ok(),
+            "GIT_CONFIG_GLOBAL={global:?} names no regular file, as `/dev/null` does when git is \
+             told to read no global configuration, and a source that is no regular file is \
+             nothing to copy, never a home the engine cannot make: {made:?}"
+        );
+        let copied = std::fs::symlink_metadata(own.join("home/.gitconfig"));
+        assert!(
+            copied.is_err(),
+            "and the execution's home holds no identity in its place: {copied:?}"
+        );
+    }
+}

@@ -141,3 +141,55 @@ fn a_test_that_ends_with_the_stop_status_itself_is_not_a_stop() {
     );
     session.close().expect("close");
 }
+
+#[test]
+fn what_a_crash_wrote_under_its_home_is_what_it_left() {
+    let fixture = Fixture::copy("fixture-home");
+    let session = Workspace::open(
+        fixture.root(),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(
+        &PrepareOptions {
+            operators: vec!["crash-after-write".to_owned()],
+            touch: true,
+            ..PrepareOptions::default()
+        },
+        &Cancel::new(),
+    )
+    .expect("prepare");
+    let after_writes: Vec<_> = session
+        .catalog()
+        .mutants()
+        .iter()
+        .filter(|mutant| session.item_of(mutant.index) == Some("remember"))
+        .collect();
+    assert!(
+        !after_writes.is_empty(),
+        "`remember` writes, so a crash is put after each write"
+    );
+    for mutant in after_writes {
+        let (crashed, kept) = session
+            .exec_keeping(
+                &Request::new(mutant.id.to_string())
+                    .with_target("fixture-home/test/writes")
+                    .test(Some("a_setting_kept_is_the_setting_recalled".to_owned())),
+                &Cancel::new(),
+            )
+            .expect("the crash runs");
+        assert!(
+            crashed.exit_code == CRASH_EXIT && kept.stop().noticed(),
+            "the process stops just after a write of `remember`: {}",
+            njutest_devkit::process::strict_utf8(&crashed.output)
+        );
+        let left = kept.left().expect("the scratch reads");
+        assert!(
+            !left.is_empty() && left.iter().all(|one| one.starts_with("~/.fixture-home/")),
+            "what the crash wrote under the execution's home, which the next run is given again, \
+             is what it left for the next run to read, and what the engine made for the home is \
+             not: {left:?}"
+        );
+    }
+}

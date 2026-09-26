@@ -357,56 +357,89 @@ impl Kept {
         &self.2
     }
 
-    /// Every file and directory the run left in its temporary directory, a directory named with a trailing `/`, relative to it and in path order; the engine keeps its own files and the home it made beside it, so every one of them is the run's.
+    /// Every file and directory the run left in its temporary directory, a directory named with a trailing `/`, relative to it, and under its own home, named from `~/`, in path order; the engine keeps its own files beside them and leaves out what it made for the home, so every one of them is the run's, and each is what the next run over them is given.
     ///
     /// # Errors
     /// [`SessionError::ScratchUnreadable`] where the directory could not be walked.
     pub fn left(&self) -> Result<Vec<String>, EngineError> {
-        let tmp = self.0.tmp();
-        let mut found = Vec::new();
-        let mut pending = vec![tmp.to_path_buf()];
-        while let Some(directory) = pending.pop() {
-            let entries = std::fs::read_dir(&directory).map_err(|source| {
-                SessionError::ScratchUnreadable {
-                    path: directory.clone(),
-                    source,
-                }
-            })?;
-            for entry in entries {
-                let entry = entry.map_err(|source| SessionError::ScratchUnreadable {
-                    path: directory.clone(),
-                    source,
-                })?;
-                let path = entry.path();
-                let kind = entry
-                    .file_type()
-                    .map_err(|source| SessionError::ScratchUnreadable {
-                        path: path.clone(),
-                        source,
-                    })?;
-                let Ok(relative) = path.strip_prefix(tmp) else {
-                    continue;
-                };
-                let relative = crate::id::slashed(relative).map_err(|_not_utf8| {
-                    SessionError::ScratchUnreadable {
-                        path: path.clone(),
-                        source: std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "a path left in the scratch is not UTF-8",
-                        ),
+        let mut found: Vec<String> = walked(self.0.tmp())?
+            .into_iter()
+            .map(|(relative, _file)| relative)
+            .collect();
+        if let Some((home, made)) = self.0.made_in_home() {
+            for (relative, file) in walked(home)? {
+                let engines = match (made.get(&relative), file) {
+                    (Some(None), None) => true,
+                    (Some(Some(digest)), Some(path)) => {
+                        let bytes = std::fs::read(&path).map_err(|source| {
+                            SessionError::ScratchUnreadable {
+                                path: path.clone(),
+                                source,
+                            }
+                        })?;
+                        crate::id::digest(&bytes) == *digest
                     }
-                })?;
-                if kind.is_dir() {
-                    found.push(format!("{relative}/"));
-                    pending.push(path);
-                } else {
-                    found.push(relative);
+                    (Some(_) | None, _) => false,
+                };
+                if !engines {
+                    found.push(format!("{HOME_LEFT}{relative}"));
                 }
             }
         }
         found.sort();
         Ok(found)
     }
+}
+
+/// How what a run left under its own home is named among what it left, before the path under the home.
+const HOME_LEFT: &str = "~/";
+
+/// Every file and directory under `root`, relative to it, a directory named with a trailing `/`, each file with its path.
+///
+/// # Errors
+/// [`SessionError::ScratchUnreadable`] where the directory could not be walked.
+fn walked(root: &std::path::Path) -> Result<Vec<(String, Option<PathBuf>)>, EngineError> {
+    let mut found = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        let entries =
+            std::fs::read_dir(&directory).map_err(|source| SessionError::ScratchUnreadable {
+                path: directory.clone(),
+                source,
+            })?;
+        for entry in entries {
+            let entry = entry.map_err(|source| SessionError::ScratchUnreadable {
+                path: directory.clone(),
+                source,
+            })?;
+            let path = entry.path();
+            let kind = entry
+                .file_type()
+                .map_err(|source| SessionError::ScratchUnreadable {
+                    path: path.clone(),
+                    source,
+                })?;
+            let Ok(relative) = path.strip_prefix(root) else {
+                continue;
+            };
+            let relative = crate::id::slashed(relative).map_err(|_not_utf8| {
+                SessionError::ScratchUnreadable {
+                    path: path.clone(),
+                    source: std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "a path left in the scratch is not UTF-8",
+                    ),
+                }
+            })?;
+            if kind.is_dir() {
+                found.push((format!("{relative}/"), None));
+                pending.push(path);
+            } else {
+                found.push((relative, Some(path)));
+            }
+        }
+    }
+    Ok(found)
 }
 
 /// A fresh nonce a crash notice must carry to be this execution's.
