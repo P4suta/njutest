@@ -10,6 +10,7 @@ use rust_mutants::carry::{
     Sealing, believe, key,
 };
 use rust_mutants::outcomes::{CacheOutcome, Keyed};
+use rust_mutants::skeleton::Position;
 use rust_mutants::touch::{Completeness, ItemRef};
 
 const TARGET: &str = "pkg/test/lib";
@@ -24,10 +25,19 @@ fn item(ordinal: u32) -> ItemRef {
     }
 }
 
+/// Where the body of the item at `ordinal` starts in the tree the records were made on: the first on line 1, every other on line 11.
+const fn at(ordinal: u32) -> Position {
+    Position {
+        line: if ordinal == 0 { 1 } else { 11 },
+        column: 30,
+    }
+}
+
 fn entered(ordinal: u32, digest: &str) -> Entered {
     Entered {
         item: item(ordinal),
         body_digest: digest.to_owned(),
+        start: at(ordinal),
     }
 }
 
@@ -116,6 +126,7 @@ fn tree() -> Tree {
             Body {
                 digest: digest.to_owned(),
                 sealing: Sealing::Sealed,
+                start: Some(at(ordinal)),
             },
         );
     }
@@ -165,6 +176,56 @@ fn an_answer_carries_across_an_edit_to_a_body_no_execution_entered() {
     assert_eq!(
         believe(&survival(), &edited.now(), &plan(&[OTHER, TARGET])),
         Ok(())
+    );
+}
+
+#[test]
+fn a_body_an_execution_entered_that_starts_elsewhere_refuses_it() {
+    let mut moved = tree();
+    if let Some(body) = moved.items.get_mut(&item(0)) {
+        body.start = Some(Position {
+            line: at(0).line.checked_add(1).expect("a small line"),
+            column: at(0).column,
+        });
+    }
+    assert_eq!(
+        believe(&kill(), &moved.now(), &plan(&[OTHER, TARGET])),
+        Err(Refusal::ItemMoved),
+        "a line added above a body an execution entered moves every position inside it, and \
+         the execution could have read one"
+    );
+    let mut shifted = tree();
+    if let Some(body) = shifted.items.get_mut(&item(0)) {
+        body.start = Some(Position {
+            line: at(0).line,
+            column: at(0).column.checked_add(4).expect("a small column"),
+        });
+    }
+    assert_eq!(
+        believe(&survival(), &shifted.now(), &plan(&[OTHER, TARGET])),
+        Err(Refusal::ItemMoved),
+        "so does a column"
+    );
+    let mut unplaced = tree();
+    if let Some(body) = unplaced.items.get_mut(&item(0)) {
+        body.start = None;
+    }
+    assert_eq!(
+        believe(&kill(), &unplaced.now(), &plan(&[OTHER, TARGET])),
+        Err(Refusal::ItemMoved),
+        "a body the tree cannot place is not known to stand where it stood"
+    );
+    let mut elsewhere = tree();
+    if let Some(body) = elsewhere.items.get_mut(&item(1)) {
+        body.start = Some(Position {
+            line: at(1).line.checked_add(7).expect("a small line"),
+            column: 1,
+        });
+    }
+    assert_eq!(
+        believe(&kill(), &elsewhere.now(), &plan(&[OTHER, TARGET])),
+        Ok(()),
+        "a body no execution entered may move: nothing that ran could read a position in it"
     );
 }
 

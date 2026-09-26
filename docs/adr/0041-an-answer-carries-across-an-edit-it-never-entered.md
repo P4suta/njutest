@@ -7,8 +7,8 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 ## Status
 
-Proposed, 2026-09-26.
-To be implemented in three parts: the evidence (item body digests, sealing, unit skeletons), the entered-item union of every mutant execution, and the rule with its audit.
+Accepted, 2026-09-26, and implemented in three parts: the evidence (item body digests, sealing, unit skeletons), the entered-item union of every mutant execution, and the rule with its audit.
+Amended the same day, after review by windows-spawn-strict-design and njutest-bottleneck-optimization: a line moves only what runs after it.
 It refines [ADR 0004](0004-proof-layers-not-budgets.md) and [ADR 0007](0007-survived-evidence-is-universal.md): it is one more proof layer, the reuse layer, stated and audited like the others.
 
 ## Context
@@ -84,3 +84,39 @@ An edit to the body of an item the execution never entered cannot change what th
   - **The unit graph** comes from cargo's metadata and dep-info, not from its unstable unit graph.
   - **A shared store is trusted** by whoever reads it; a store is written only by runs that could have run the mutant.
 - A proof layer that can be wrong about one of these is audited against recordings like every other; the differential is the check that it removes work without changing an answer.
+
+## Amendment, 2026-09-26: a line moves only what runs after it
+
+### Context
+
+Measured on a real workspace, storage-scout with 1202 mutants, one comment line added inside one sealed body carried nothing: 1100 answers were refused `skeleton-changed`.
+Decision 3's placeholder named the shape of a sealed body's lines, and the tree skeleton every execution is held to folds every unit, so a line added anywhere moved every skeleton.
+That was sound, since a line added moves every position after it and a position can be observed, and it is why a second run after a handful of edits reused nothing: an edit that adds or removes a line is the usual kind.
+
+A position is observed only by code that runs, or by the compiler while it evaluates something.
+Code that runs in a file the run instruments is code an execution records entering ([ADR 0027](0027-an-item-is-entered-where-its-body-starts.md)), the tests' own bodies among them.
+So a line that moves need move only what an entered body, or the compiler, can see.
+
+### Decision
+
+1. **Placeholders lose their shape.** A sealed body's placeholder is `{sealed:<entry>#<ordinal>}`, and its lines no longer move the skeleton.
+2. **The skeleton keeps positions where the compiler reads them.** Every workspace Rust file contributes `$positions/$root/<path>`: the start of every body that is not sealed, a `const fn`, `const` and `static` among them, and outside every cataloged body each item-level macro invocation, each attribute off the list, each documentation code block, and each array length, enum discriminant, const parameter default and const argument that holds a macro invocation or a call, each at a token [docs/engine/carry.md](../engine/carry.md) names for its kind.
+   A position is a line and a column as the compiler counts them: only a line feed ends a line, a leading byte-order mark is no column, and a column counts characters.
+   A toolchain law holds that count to what a compiled program reports through `line!()` and `column!()`, with a multi-byte character, a four-byte character, a tab, a carriage return and line feed, a carriage return alone and a byte-order mark before the probe.
+3. **Every body that runs records its entry.** In a file the run instruments this already holds: every function body the parser finds records its entry, `#[test]` functions and `#[cfg(test)]` items among them, and only such a file has placeholders.
+   A file that holds no mutation, as a configuration-excluded file, an integration test or a package left out of the selection is, has no placeholders and keeps every line in the skeleton; recording entry in those too is what lets an edit inside them carry, and it comes next.
+4. **An entered body is held where it starts.** `skeletons-v1.json` gives every item the `start` of its body, and a carried record keeps, beside each entered item's body digest, the `start` it had.
+   A new premise, P8: every item an execution entered starts where it started, or the answer is refused `item-moved`.
+   A panic's location, `line!()`, `Location::caller()`, a location a dependency's `#[track_caller]` function captures, a snapshot macro's position and a backtrace frame are each read by code that is running, and that code is an entered body, whose positions are then unchanged, or code outside the tree, which no edit moves.
+5. **No runner reads what libtest records of a test's position.** libtest's `--list --format json` holds the line each test starts and ends on; a law holds that no runner asks for it, since a `#[test]` body may move where no execution entered it.
+6. **The audit reads it all again.** The engine audit re-derives every `start`, every `$positions` entry and P8 with its own parser against the page, and its planted defects include a kill carried though a body its killer entered starts elsewhere, an item placed where its body does not start, and a positions entry its file does not hash to.
+   The edit-pair differential gains a line added inside the last test, which leaves every answer of `total` carried, and a line added inside `total`, which refuses every answer of `over` as `item-moved`; both agree with `--no-cache` mutant for mutant.
+
+### Consequences
+
+- An edit that adds lines inside a body carries every answer whose executions entered nothing below it in that file, and nothing that entered what moved.
+  Unit tests at the end of a file move with every line added above them, so an answer resting on one of them runs again; an answer resting on tests in another file, or above the edit, carries.
+- Inserting an item still moves ordinals and signature text, so it still refuses everything in the unit.
+- No premise is added about what code reads: what moved and ran is known from what the run recorded, rather than argued about.
+- Future work: a body that moved without changing is refused because a position can reach a verdict through a dependency's `#[track_caller]` function, which is a question of types, not of text.
+  A build with `-Zlocation-detail=none` and no debuginfo would redact every such position alike on both trees, leaving only `line!` and `column!`, which text can find; it needs a nightly compiler and would have to enter the build's identity, so it is an opt-in for later.
