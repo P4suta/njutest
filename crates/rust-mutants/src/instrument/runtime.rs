@@ -107,9 +107,9 @@ pub(super) const FIRST_UNREPRESENTABLE_INDEX: u32 = u32::MAX;
 /// Why an instrumented file could not receive a collision-free runtime module name.
 #[derive(Debug, thiserror::Error)]
 pub enum ModuleNameError {
-    /// The source was not a Rust token stream.
+    /// The source was not a Rust token stream, or could not be read at all.
     #[error("the source is not a Rust token stream: {0}")]
-    Tokens(#[from] proc_macro2::LexError),
+    Tokens(#[from] crate::parsing::ReadingError),
     /// The finite suffix namespace could not be searched without overflowing its representation.
     #[error("the generated runtime module suffix namespace is exhausted")]
     SuffixesExhausted,
@@ -129,7 +129,20 @@ pub enum RuntimeRenderError {
 ///
 /// Returns [`ModuleNameError`] when `text` is not a Rust token stream or the collision suffix namespace cannot be searched without overflow.
 pub fn module_name(path: &str, text: &str) -> Result<String, ModuleNameError> {
-    module_named(text, &format!("{MODULE_STEM}_{}", short_digest(path)))
+    crate::parsing::apart(|parsing| module_name_in(parsing, path, text))?
+}
+
+/// [`module_name`], reading with `parsing` on the thread already reading.
+pub(super) fn module_name_in(
+    parsing: &crate::parsing::Parsing,
+    path: &str,
+    text: &str,
+) -> Result<String, ModuleNameError> {
+    module_named(
+        parsing,
+        text,
+        &format!("{MODULE_STEM}_{}", short_digest(path)),
+    )
 }
 
 /// The first eight hex characters of the path's SHA-256, which is what makes one file's runtime module a different item from another's.
@@ -140,8 +153,12 @@ fn short_digest(path: &str) -> String {
 }
 
 /// [`module_name`] for a module of another stem, so the witness tree can have one of its own without either shadowing the other.
-pub(super) fn module_named(text: &str, stem: &str) -> Result<String, ModuleNameError> {
-    let tokens = text.parse::<proc_macro2::TokenStream>()?;
+pub(super) fn module_named(
+    parsing: &crate::parsing::Parsing,
+    text: &str,
+    stem: &str,
+) -> Result<String, ModuleNameError> {
+    let tokens = parsing.tokens(text)?;
     let mut taken = BTreeSet::new();
     collect_identifiers(tokens, &mut taken);
     if !taken.contains(stem) {

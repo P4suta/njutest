@@ -117,7 +117,7 @@ path = "crates/rust-mutants/src/instrument/witness.rs"
 item = "apply_plan"
 rule = "question-to-unwrap"
 original = "?"
-line = 195
+line = 194
 reason = "plan emits one rewrite per span, so the splices apply is handed never overlap and it never fails; two_claims_over_one_span_are_one_rewrite_rather_than_two holds that grouping, and this is an equivalence under it rather than an unreachable fail-open"
 
 # Which of the mutations a locator names is asked where its line has moved to.

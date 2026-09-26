@@ -196,6 +196,11 @@ const BARE_SHELL_REMEDY: &str = "a POSIX `sh` is on every Unix and on no Windows
     this repository can count on, so a program named `sh` outside `#[cfg(unix)]` is a precondition \
     nobody states: a test takes its shell from `njutest_devkit::paths::posix_sh()`, which says what \
     to install when there is none, and code that names `sh` for itself is compiled only for Unix";
+const RAW_LEXING_REMEDY: &str = "read Rust text through `rust_mutants::parsing`: `apart` lends \
+    a `Parsing`, and its `read`, `read_with`, `file` and `tokens` are the only ways text becomes \
+    tokens. Text lexed anywhere else stays in proc-macro2's map for as long as its thread lives, and \
+    past 4 GiB on one thread every location wraps; a reading thread ends with its map. A \
+    `.parse::<T>()` of a type that is not Rust text goes on `PARSED_TYPES`";
 const RAW_ENVIRONMENT_REMEDY: &str = "hold an environment as `rust_mutants::vars::Variables`, \
     which reads, changes, selects and digests a name only as the platform takes it. Pairs of \
     `OsString` let each reader compare names its own way, and four did it by bytes where Windows \
@@ -290,6 +295,7 @@ declare_kinds! {
     LoneTemporaryVariable => "lone-temporary-variable",
     ErrorName => "error-name",
     BareShell => "bare-shell",
+    RawLexing => "raw-lexing",
     RawEnvironment => "raw-environment",
 }
 
@@ -344,6 +350,7 @@ impl Kind {
             Self::RawRead => RAW_READ_REMEDY,
             Self::RawTreeWalk => RAW_TREE_WALK_REMEDY,
             Self::BareShell => BARE_SHELL_REMEDY,
+            Self::RawLexing => RAW_LEXING_REMEDY,
             Self::RawEnvironment => RAW_ENVIRONMENT_REMEDY,
             Self::LoneTemporaryVariable => LONE_TEMPORARY_VARIABLE_REMEDY,
             Self::ErrorName => ERROR_NAME_REMEDY,
@@ -620,6 +627,9 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     scan.found.extend(implied_cfgs(&parsed, file));
     if file != SHELL_FINDER {
         scan.found.extend(bare_shells(&parsed, file));
+    }
+    if reads_into_the_map(file) {
+        scan.found.extend(raw_lexings(&parsed, file));
     }
     if !ENVIRONMENT_READERS
         .iter()
@@ -8383,4 +8393,214 @@ fn tokens_end_with_qualified(trees: &[proc_macro2::TokenTree], owner: &str) -> b
             proc_macro2::TokenTree::Punct(second_colon),
         ] if found == owner && first_colon.as_char() == ':' && second_colon.as_char() == ':'
     )
+}
+
+/// The one module that reads Rust text into tokens.
+const RUST_READER: &str = "crates/rust-mutants/src/parsing.rs";
+
+/// Crates whose code never reads text into proc-macro2's map: the macros are handed the compiler's own tokens, and the devkit is linked only into what measures a crate.
+const OUTSIDE_THE_MAP: [&str; 2] = ["crates/njutest-macros/", "crates/njutest-devkit/"];
+
+/// Every type a `.parse::<T>()` may name outside the reader, none of them Rust text.
+const PARSED_TYPES: [&str; 19] = [
+    "u8",
+    "u16",
+    "u32",
+    "u64",
+    "u128",
+    "usize",
+    "i8",
+    "i16",
+    "i32",
+    "i64",
+    "i128",
+    "isize",
+    "f32",
+    "f64",
+    "bool",
+    "char",
+    "String",
+    "toml::Table",
+    "jiff::Timestamp",
+];
+
+/// Functions and constructors that lex the text they are given, whatever path names them.
+const LEXING_FUNCTIONS: [&str; 2] = ["parse_str", "parse_file"];
+
+/// Macros that lex the literals they quote.
+const LEXING_MACROS: [&str; 4] = [
+    "quote",
+    "quote_spanned",
+    "parse_quote",
+    "parse_quote_spanned",
+];
+
+/// Whether `file` is shipped code that would read into proc-macro2's map on its own thread.
+fn reads_into_the_map(file: &str) -> bool {
+    shipped_source(file)
+        && file != RUST_READER
+        && !OUTSIDE_THE_MAP
+            .iter()
+            .any(|outside| file.starts_with(outside))
+}
+
+/// Every place outside the reader where Rust text becomes tokens, but for code compiled only for tests.
+fn raw_lexings(parsed: &syn::File, file: &str) -> Vec<Finding> {
+    let mut visitor = RawLexing {
+        file,
+        tests: 0,
+        found: Vec::new(),
+    };
+    visitor.visit_file(parsed);
+    visitor.found
+}
+
+/// How many enclosing items are compiled only for tests, and every lexing outside all of them.
+struct RawLexing<'a> {
+    file: &'a str,
+    tests: usize,
+    found: Vec<Finding>,
+}
+
+/// Whether `attributes` compile what they sit on only for tests.
+fn test_only(attributes: &[syn::Attribute]) -> bool {
+    attributes.iter().any(|attribute| match &attribute.meta {
+        syn::Meta::List(list) if list.path.is_ident("cfg") => {
+            list.tokens.to_string() == "test"
+                || all_of(&list.tokens)
+                    .is_some_and(|parts| parts.iter().any(|part| part.to_string() == "test"))
+        }
+        syn::Meta::List(_) | syn::Meta::Path(_) | syn::Meta::NameValue(_) => false,
+    })
+}
+
+/// The last segment's name of `path`, spelled.
+fn last_name(path: &syn::Path) -> String {
+    match path.segments.last() {
+        Some(segment) => segment.ident.to_string(),
+        None => String::new(),
+    }
+}
+
+/// Whether `path` names a function that lexes the text it is given.
+fn lexing_path(path: &syn::Path, qualified: Option<&syn::QSelf>) -> bool {
+    let names: Vec<String> = path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect();
+    let Some(last) = names.last() else {
+        return false;
+    };
+    let lexed_type = |name: &str| name == "TokenStream" || name == "Literal";
+    let qualified_lexed = qualified.is_some_and(|qself| match &*qself.ty {
+        syn::Type::Path(ty) => lexed_type(&last_name(&ty.path)),
+        _ => false,
+    });
+    LEXING_FUNCTIONS.contains(&last.as_str())
+        || (last == "from_str"
+            && (qualified_lexed
+                || names
+                    .iter()
+                    .any(|name| lexed_type(name) || name == "FromStr")))
+        || (last == "new"
+            && names
+                .iter()
+                .rev()
+                .nth(1)
+                .is_some_and(|ty| ty == "LitInt" || ty == "LitFloat"))
+}
+
+impl RawLexing<'_> {
+    fn within(&mut self, attributes: &[syn::Attribute], walk: impl FnOnce(&mut Self)) {
+        let tests = test_only(attributes);
+        if tests {
+            self.tests = self.tests.saturating_add(1);
+        }
+        walk(self);
+        if tests {
+            self.tests = self.tests.saturating_sub(1);
+        }
+    }
+
+    fn note(&mut self, span: proc_macro2::Span) {
+        if self.tests == 0 {
+            self.found.push(Finding {
+                kind: Kind::RawLexing,
+                file: self.file.to_owned(),
+                line: span.start().line,
+            });
+        }
+    }
+}
+
+impl Visit<'_> for RawLexing<'_> {
+    fn visit_item(&mut self, item: &syn::Item) {
+        self.within(item_attributes(item), |walk| {
+            syn::visit::visit_item(walk, item);
+        });
+    }
+
+    fn visit_impl_item(&mut self, item: &syn::ImplItem) {
+        let attributes: &[syn::Attribute] = match item {
+            syn::ImplItem::Const(one) => &one.attrs,
+            syn::ImplItem::Fn(one) => &one.attrs,
+            syn::ImplItem::Type(one) => &one.attrs,
+            syn::ImplItem::Macro(one) => &one.attrs,
+            _ => &[],
+        };
+        self.within(attributes, |walk| syn::visit::visit_impl_item(walk, item));
+    }
+
+    fn visit_item_use(&mut self, item: &syn::ItemUse) {
+        for function in LEXING_FUNCTIONS {
+            for span in imported_function_spans(&item.tree, function) {
+                self.note(span);
+            }
+        }
+        syn::visit::visit_item_use(self, item);
+    }
+
+    fn visit_expr_path(&mut self, path: &syn::ExprPath) {
+        if lexing_path(&path.path, path.qself.as_ref())
+            && let Some(last) = path.path.segments.last()
+        {
+            self.note(last.ident.span());
+        }
+        syn::visit::visit_expr_path(self, path);
+    }
+
+    fn visit_expr_method_call(&mut self, call: &syn::ExprMethodCall) {
+        let method = call.method.to_string();
+        let untyped = |turbofish: &syn::AngleBracketedGenericArguments| match turbofish.args.first()
+        {
+            Some(syn::GenericArgument::Type(syn::Type::Path(ty))) if ty.qself.is_none() => {
+                let spelled = ty
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect::<Vec<String>>()
+                    .join("::");
+                !PARSED_TYPES.contains(&spelled.as_str())
+            }
+            Some(_) | None => true,
+        };
+        let lexes = method == "parse_str"
+            || method == "parse_with"
+            || (method == "parse" && call.turbofish.as_ref().is_some_and(untyped));
+        if lexes {
+            self.note(call.method.span());
+        }
+        syn::visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_macro(&mut self, invocation: &syn::Macro) {
+        if LEXING_MACROS.contains(&last_name(&invocation.path).as_str())
+            && let Some(last) = invocation.path.segments.last()
+        {
+            self.note(last.ident.span());
+        }
+        syn::visit::visit_macro(self, invocation);
+    }
 }

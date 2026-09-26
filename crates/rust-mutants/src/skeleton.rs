@@ -338,7 +338,7 @@ fn slice(bytes: &[u8], start: u32, end: u32) -> Option<&[u8]> {
 }
 
 /// A file as the Rust it holds, or nothing when it is not a whole Rust file, which is what a data file or an included expression is.
-fn parsed(bytes: &[u8]) -> Option<(u32, syn::File)> {
+fn parsed(parsing: &crate::parsing::Parsing, bytes: &[u8]) -> Option<(u32, syn::File)> {
     let text = match std::str::from_utf8(bytes) {
         Ok(text) => text,
         Err(_not_text) => return None,
@@ -347,9 +347,17 @@ fn parsed(bytes: &[u8]) -> Option<(u32, syn::File)> {
         Ok(split) => split,
         Err(_does_not_fit) => return None,
     };
-    match syn::parse_str::<syn::File>(rest) {
+    match parsing.read::<syn::File>(rest) {
         Ok(file) => Some((base, file)),
-        Err(_not_a_rust_file) => None,
+        Err(_not_read) => None,
+    }
+}
+
+/// What `work` answers on a reading thread, or `unread` where no thread could read: the answer a file that does not parse gets, which seals nothing.
+fn reading<T: Send>(unread: T, work: impl FnOnce(&crate::parsing::Parsing) -> T + Send) -> T {
+    match crate::parsing::apart(work) {
+        Ok(answer) => answer,
+        Err(_no_thread) => unread,
     }
 }
 
@@ -443,43 +451,46 @@ fn read_positions(
             if read.contains_key(name) {
                 continue;
             }
-            let Some((base, file)) = parsed(bytes) else {
+            let Some(positions) = reading(None, |parsing| {
+                let (base, file) = parsed(parsing, bytes)?;
+                let in_file: Vec<(&Item, &ItemEvidence)> = items
+                    .iter()
+                    .zip(evidence)
+                    .filter(|((_, reference), _)| reference.path == path)
+                    .map(|((item, _), said)| (*item, said))
+                    .collect();
+                let bodies: Vec<(u32, u32)> = in_file
+                    .iter()
+                    .map(|(item, _)| (item.body.start, item.body.end))
+                    .collect();
+                let mut consumers = Consumers {
+                    base,
+                    bodies: &bodies,
+                    found: Vec::new(),
+                };
+                consumers.visit_file(&file);
+                let mut lines: Vec<String> = consumers
+                    .found
+                    .into_iter()
+                    .map(|(kind, at)| match position(bytes, at) {
+                        Some(Position { line, column }) => format!("{kind} {line}:{column}"),
+                        None => format!("{kind} @{at}"),
+                    })
+                    .collect();
+                for (_, said) in in_file.iter().filter(|(_, said)| !said.sealed) {
+                    lines.push(match said.start {
+                        Some(Position { line, column }) => {
+                            format!("body {} {line}:{column}", said.item.ordinal)
+                        }
+                        None => format!("body {} unplaced", said.item.ordinal),
+                    });
+                }
+                lines.sort();
+                Some(crate::id::digest(lines.join("\n").as_bytes()))
+            }) else {
                 continue;
             };
-            let in_file: Vec<(&Item, &ItemEvidence)> = items
-                .iter()
-                .zip(evidence)
-                .filter(|((_, reference), _)| reference.path == path)
-                .map(|((item, _), said)| (*item, said))
-                .collect();
-            let bodies: Vec<(u32, u32)> = in_file
-                .iter()
-                .map(|(item, _)| (item.body.start, item.body.end))
-                .collect();
-            let mut consumers = Consumers {
-                base,
-                bodies: &bodies,
-                found: Vec::new(),
-            };
-            consumers.visit_file(&file);
-            let mut lines: Vec<String> = consumers
-                .found
-                .into_iter()
-                .map(|(kind, at)| match position(bytes, at) {
-                    Some(Position { line, column }) => format!("{kind} {line}:{column}"),
-                    None => format!("{kind} @{at}"),
-                })
-                .collect();
-            for (_, said) in in_file.iter().filter(|(_, said)| !said.sealed) {
-                lines.push(match said.start {
-                    Some(Position { line, column }) => {
-                        format!("body {} {line}:{column}", said.item.ordinal)
-                    }
-                    None => format!("body {} unplaced", said.item.ordinal),
-                });
-            }
-            lines.sort();
-            read.insert(name.clone(), crate::id::digest(lines.join("\n").as_bytes()));
+            read.insert(name.clone(), positions);
         }
     }
     read
@@ -675,10 +686,12 @@ impl<'ast> Visit<'ast> for Computing {
 /// Why no body of this unit is sealed, when a file of it can rename a listed macro.
 fn unit_unsealing(unit: &UnitSource) -> Option<Unsealing> {
     unit.files.values().find_map(|bytes| {
-        let (_, file) = parsed(bytes)?;
-        let mut declarations = Declarations::default();
-        declarations.visit_file(&file);
-        declarations.found
+        reading(None, |parsing| {
+            let (_, file) = parsed(parsing, bytes)?;
+            let mut declarations = Declarations::default();
+            declarations.visit_file(&file);
+            declarations.found
+        })
     })
 }
 
@@ -761,16 +774,18 @@ impl<'ast> Visit<'ast> for Declarations {
 
 /// Every function body of one file, by its byte span, and why it is not sealed, or nothing when it is.
 fn file_verdicts(bytes: &[u8]) -> BTreeMap<(u32, u32), Option<Unsealing>> {
-    let Some((base, file)) = parsed(bytes) else {
-        return BTreeMap::new();
-    };
-    let mut bodies = Bodies {
-        base,
-        around: attributes(&file.attrs),
-        verdicts: BTreeMap::new(),
-    };
-    bodies.visit_file(&file);
-    bodies.verdicts
+    reading(BTreeMap::new(), |parsing| {
+        let Some((base, file)) = parsed(parsing, bytes) else {
+            return BTreeMap::new();
+        };
+        let mut bodies = Bodies {
+            base,
+            around: attributes(&file.attrs),
+            verdicts: BTreeMap::new(),
+        };
+        bodies.visit_file(&file);
+        bodies.verdicts
+    })
 }
 
 /// The first attribute off the list among `attrs`.

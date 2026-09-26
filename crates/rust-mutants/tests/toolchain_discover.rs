@@ -16,9 +16,7 @@ use rust_mutants::cargo::{
     CompileKind, CompileOptions, Driver, LocateOptions, Metadata, MetadataOptions, Toolchain,
     compile,
 };
-use rust_mutants::discover::{
-    DiscoverError, DiscoverOptions, Discovery, Input, discover, freestanding,
-};
+use rust_mutants::discover::{DiscoverError, DiscoverOptions, Discovery, Input, discover};
 use rust_mutants::glob::Pattern;
 use rust_mutants::rule::{Registry, Tier};
 use rust_mutants::runner::Cancel;
@@ -588,39 +586,48 @@ fn a_file_pasted_in_where_an_expression_goes_is_a_skip_and_not_the_end_of_the_ru
 #[test]
 fn what_the_host_cannot_lend_std_to_is_read_out_of_the_crate_root() {
     assert!(
-        !freestanding("#![no_std]\npub fn f() {}\n", "2024"),
+        !rust_mutants::discover::freestanding("#![no_std]\npub fn f() {}\n", "2024")
+            .expect("the root is read"),
         "the attribute withholds the implicit link and the prelude, and forbids neither an \
          explicit link nor an explicit path"
     );
     assert!(
-        !freestanding("#![cfg_attr(not(test), no_std)]\npub fn f() {}\n", "2024"),
+        !rust_mutants::discover::freestanding(
+            "#![cfg_attr(not(test), no_std)]\npub fn f() {}\n",
+            "2024"
+        )
+        .expect("the root is read"),
         "under cfg(test), which is how every test of the crate is built, the crate has std"
     );
     assert!(
-        freestanding(
+        rust_mutants::discover::freestanding(
             "#![no_std]\n#[panic_handler]\nfn p(_: &core::panic::PanicInfo) -> ! { loop {} }\n",
             "2024"
-        ),
+        )
+        .expect("the root is read"),
         "std supplies a panic handler too, and only one may exist"
     );
     assert!(
-        freestanding(
+        rust_mutants::discover::freestanding(
             "#![no_std]\n#[global_allocator]\nstatic A: X = X;\n",
             "2024"
-        ),
+        )
+        .expect("the root is read"),
         "and an allocator too"
     );
     assert!(
-        freestanding("#![no_std]\n#![no_main]\npub fn f() {}\n", "2024"),
+        rust_mutants::discover::freestanding("#![no_std]\n#![no_main]\npub fn f() {}\n", "2024")
+            .expect("the root is read"),
         "and the entry point"
     );
     assert!(
-        freestanding("#![no_std]\npub fn f() {}\n", "2015"),
+        rust_mutants::discover::freestanding("#![no_std]\npub fn f() {}\n", "2015")
+            .expect("the root is read"),
         "`extern crate` resolves differently in 2015, and the engine does not run what it \
          does not test"
     );
     assert!(
-        !freestanding("pub fn f( {}\n", "2024"),
+        !rust_mutants::discover::freestanding("pub fn f( {}\n", "2024").expect("the root is read"),
         "a root that does not parse is answered by the walk, which reports the failure"
     );
 }

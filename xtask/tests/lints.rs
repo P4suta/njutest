@@ -2390,6 +2390,49 @@ fn a_shell_compiled_only_for_unix_or_only_compared_against_is_not_a_bare_one() {
 }
 
 #[test]
+fn text_read_by_the_reader_or_for_a_test_or_as_no_rust_is_no_raw_lexing() {
+    let found = |path: &str, source: &str| -> Vec<Kind> {
+        scan_source(path, source)
+            .expect("the source parses")
+            .into_iter()
+            .map(|finding| finding.kind)
+            .collect()
+    };
+    for (path, passing) in [
+        (
+            "crates/rust-mutants/src/parsing.rs",
+            "fn read(text: &str) -> bool { syn::parse_str::<syn::Expr>(text).is_ok() }",
+        ),
+        (
+            "crates/app/src/lib.rs",
+            "#[cfg(test)] mod tests { fn read(text: &str) -> bool { syn::parse_file(text).is_ok() } }",
+        ),
+        (
+            "crates/app/src/lib.rs",
+            "fn count(text: &str) -> Option<u32> { text.parse::<u32>().ok() }",
+        ),
+        (
+            "crates/app/src/lib.rs",
+            "fn table(text: &str) -> bool { toml::from_str::<toml::Table>(text).is_ok() }",
+        ),
+        (
+            "crates/njutest-macros/src/lib.rs",
+            "fn tokens() -> proc_macro2::TokenStream { quote::quote!(1) }",
+        ),
+        (
+            "crates/app/tests/suite.rs",
+            "fn read(text: &str) -> bool { syn::parse_file(text).is_ok() }",
+        ),
+    ] {
+        assert!(
+            !found(path, passing).contains(&Kind::RawLexing),
+            "the reader itself, code compiled only for tests, text that is not Rust, the macros' \
+             own tokens and a suite are no lexing into a shipped thread's map: {path}: {passing}"
+        );
+    }
+}
+
+#[test]
 fn an_environment_held_as_raw_pairs_is_refused_wherever_it_is_named() {
     for refused in [
         "fn given() -> Vec<(OsString, OsString)> { Vec::new() }",

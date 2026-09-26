@@ -142,3 +142,48 @@ fn a_file_the_inventory_cannot_read_is_named_rather_than_passed_over() {
         "nothing was found, so no package holds anything"
     );
 }
+
+/// How many texts this thread's location map holds, read from the file a fresh token's location names.
+fn texts_on_this_thread() -> usize {
+    let probe = "probe"
+        .parse::<proc_macro2::TokenStream>()
+        .expect("a probe token lexes");
+    let named = probe
+        .into_iter()
+        .next()
+        .expect("the probe is one token")
+        .span()
+        .file();
+    named
+        .strip_prefix("<parsed string ")
+        .and_then(|rest| rest.strip_suffix('>'))
+        .expect("a lexed token names the text it came from")
+        .parse::<usize>()
+        .expect("the text a token came from is numbered")
+}
+
+#[test]
+fn every_way_into_the_runner_that_reads_rust_leaves_the_callers_locations_as_they_were() {
+    let source = "pub fn f() -> u8 { unsafe { *std::ptr::null() } }\n";
+    let before = texts_on_this_thread();
+    for _ in 0..5 {
+        assert!(
+            of_source("src/lib.rs", source).is_ok(),
+            "the inventory reads it"
+        );
+        assert!(
+            njutest::concurrency::scan::scanned("src/lib.rs", source).is_ok(),
+            "the concurrency scan reads it"
+        );
+        assert!(
+            !njutest::concurrency::scan::includes_code(source),
+            "nothing is included"
+        );
+    }
+    assert_eq!(
+        texts_on_this_thread(),
+        before + 1,
+        "a watch round runs every reading on the one thread that watches, so every reading has \
+         to end its locations with a thread of its own, or each round leaks its sources for good"
+    );
+}

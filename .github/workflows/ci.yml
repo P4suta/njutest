@@ -51,23 +51,16 @@ jobs:
       # The newer kernel still listed the waitable leader, so the machine that wrote the code could never have seen it.
       # What that row answers for is the kernel, so on a pull request it runs the part of the suite that meets the kernel (`kernel` below), and the whole suite weekly.
       #
-      # `part` is how much of the suite a row runs.
-      # `macos-26` is the slowest runner and the one every pull request waited for, so it runs the suite in two halves nextest chooses by hash, each on its own runner.
-      # Windows whole then became the longest row, so it takes the same two halves rather than making every pull request wait for both in series.
       # Linux runs the whole suite in `coverage`, which has to run all of it to measure it, so a second uninstrumented Linux run would ask the same questions again.
       fail-fast: false
       matrix:
         include:
           - os: macos-26
-            part: hash:1/2
-          - os: macos-26
-            part: hash:2/2
+            part: whole
           - os: macos-15
             part: kernel
           - os: windows-2025
-            part: hash:1/2
-          - os: windows-2025
-            part: hash:2/2
+            part: whole
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -100,10 +93,8 @@ jobs:
         run: |
           in_process='not binary(/^toolchain_/)'
           toolchain='binary(/^toolchain_/)'
-          partition=()
           case "$PART" in
             whole) ;;
-            hash:*) partition=(--partition "$PART") ;;
             kernel)
               # The in-process suite runs whole everywhere: it is two minutes, and it holds the supervisor's, the runner's and the temporary directories' own laws.
               # Of the suites that drive a real cargo, these are the ones whose answer is a process group, a signal, a crash, a durable write or a schedule.
@@ -112,17 +103,16 @@ jobs:
               fi
               ;;
             *)
-              echo "::error::a test row names the part '$PART', which is none of whole, hash:K/N and kernel"
+              echo "::error::a test row names the part '$PART', which is neither whole nor kernel"
               exit 1
               ;;
           esac
-          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail "${partition[@]}" -E "$in_process"
+          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E "$in_process"
           # Each test in these binaries drives its own Cargo. Two outer tests
           # keep hosted runners busy without multiplying their build jobs into
           # resource exhaustion; the ordinary suite above remains fully parallel.
-          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 "${partition[@]}" -E "$toolchain"
+          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 -E "$toolchain"
       - name: Doctests
-        if: matrix.part != 'hash:2/2'
         shell: bash
         run: cargo test --locked --workspace --all-features --doc
       # The lint job stands on Linux, so code only another platform compiles is linted here or nowhere.
