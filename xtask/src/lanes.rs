@@ -935,9 +935,16 @@ pub fn revision_of(directory: &Path, environment: &[(OsString, OsString)]) -> St
 }
 
 /// When the process `pid` started, as a lane records it.
-#[cfg(feature = "testkit")]
+#[cfg(all(unix, feature = "testkit"))]
 #[must_use]
 pub fn started(pid: u32) -> Option<String> {
+    started_at(pid)
+}
+
+/// When the process `pid` started, as a lane records it.
+#[cfg(all(not(unix), feature = "testkit"))]
+#[must_use]
+pub const fn started(pid: u32) -> Option<String> {
     started_at(pid)
 }
 
@@ -1027,7 +1034,7 @@ fn session_text(pid: u32) -> String {
 }
 
 #[cfg(not(unix))]
-fn session_text(_pid: u32) -> String {
+const fn session_text(_pid: u32) -> String {
     String::new()
 }
 
