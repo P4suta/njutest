@@ -49,7 +49,7 @@ fn document(targets: &[&str], rows: &[serde_json::Value]) -> RunDocument {
         "accounting": {
             "cataloged": rows.len(), "refused": 0, "skipped": 0, "executed": 0,
             "killed": 0, "survived": 0, "step_limit_reached": 0, "waited": 0, "inconclusive": 0, "errored": 0,
-            "not_run": 0, "unreached": 0, "discharged": 0, "expected": 0
+            "not_run": 0, "unreached": 0, "discharged": 0, "declined": 0, "expected": 0
         },
         "score": null,
         "established_tests": 0,
@@ -57,7 +57,8 @@ fn document(targets: &[&str], rows: &[serde_json::Value]) -> RunDocument {
         "rejections": [],
         "skips": [],
         "expectations": [],
-        "findings": []
+        "findings": [],
+        "facts": []
     });
     serde_json::from_value(value).expect("the report reads back")
 }
@@ -92,6 +93,7 @@ fn row(index: u32, extra: &serde_json::Value) -> serde_json::Value {
         "retried": false,
         "lingered": false,
         "not_run_reason": null,
+        "declined": [],
         "route": null,
         "identical": "not-measured",
         "expected": false,

@@ -8,8 +8,6 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt::Arguments;
 use std::path::{Component, Path, PathBuf};
 
-use walkdir::WalkDir;
-
 use crate::{
     deps, devgates, engineaudit, fixtures, lints as lint_scan, proofaudit, release, reportdiff,
     shapes,
@@ -26,9 +24,9 @@ pub fn workspace_root() -> PathBuf {
 /// A gate's failure, rendered for a person.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
-pub struct GateFailure(pub String);
+pub struct GateError(pub String);
 
-impl crate::error::Coded for GateFailure {
+impl crate::error::Coded for GateError {
     fn code(&self) -> crate::error::XtCode {
         crate::error::XtCode::GateRefused
     }
@@ -46,62 +44,47 @@ fn line(output: &mut String, arguments: Arguments<'_>) {
 /// Every Rust file the repository commits, tests included.
 ///
 /// # Errors
-/// Any directory entry cannot be read; an incomplete source set proves no gate.
-pub fn all_sources(root: &Path) -> Result<Vec<PathBuf>, GateFailure> {
-    validate_closed_source_inventory(root)?;
-    let mut files = Vec::new();
-    for base in SOURCE_ROOTS {
-        for entry in WalkDir::new(root.join(base)).sort_by_file_name() {
-            let entry = walked(entry)?;
-            let path = entry.path();
-            let relative = relative_slash(root, path)?;
-            if entry.file_type().is_file()
-                && path.extension().is_some_and(|extension| extension == "rs")
-                && !relative.split('/').any(|part| part == "target")
-            {
-                files.push(path.to_path_buf());
-            }
-        }
-    }
-    Ok(files)
+/// The repository cannot be listed; an incomplete source set proves no gate.
+pub fn all_sources(root: &Path) -> Result<Vec<PathBuf>, GateError> {
+    let files = crate::repository::files(root)?;
+    validate_closed_source_inventory(&files)?;
+    Ok(files
+        .iter()
+        .filter(|relative| {
+            in_source_roots(relative) && crate::repository::extension_is(relative, "rs")
+        })
+        .map(|relative| root.join(relative))
+        .collect())
 }
 
 const SOURCE_ROOTS: [&str; 4] = ["compiler-surfaces", "crates", "xtask", "fuzz"];
 
-fn validate_closed_source_inventory(root: &Path) -> Result<(), GateFailure> {
-    let entries = WalkDir::new(root)
-        .sort_by_file_name()
-        .into_iter()
-        .filter_entry(|entry| {
-            if entry.depth() != 1 {
-                return true;
-            }
-            entry
-                .file_name()
-                .as_encoded_bytes()
-                .first()
-                .is_none_or(|byte| *byte != b'.')
-                && entry.file_name() != std::ffi::OsStr::new("target")
-                && !SOURCE_ROOTS
-                    .iter()
-                    .any(|source| entry.file_name() == std::ffi::OsStr::new(source))
-        });
-    for entry in entries {
-        let entry = walked(entry)?;
-        if !entry.file_type().is_file()
-            || entry
-                .path()
-                .extension()
-                .is_none_or(|extension| extension != "rs")
+/// Whether a workspace-relative path lies under one of the source roots.
+fn in_source_roots(relative: &str) -> bool {
+    SOURCE_ROOTS
+        .iter()
+        .any(|root| relative.starts_with(&format!("{root}/")))
+}
+
+fn validate_closed_source_inventory(files: &[String]) -> Result<(), GateError> {
+    if !files.iter().any(|file| in_source_roots(file)) {
+        return Err(GateError(format!(
+            "walking the repository: it holds nothing under the source roots {}, so an empty \
+             tree would pass as a proved one",
+            SOURCE_ROOTS.join(", ")
+        )));
+    }
+    for relative in files {
+        if !crate::repository::extension_is(relative, "rs")
+            || in_source_roots(relative)
+            || relative.starts_with('.')
+            || relative.starts_with("fixtures/")
         {
             continue;
         }
-        let relative = relative_slash(root, entry.path())?;
-        if !relative.starts_with("fixtures/") {
-            return Err(GateFailure(format!(
-                "walking the repository: {relative} is Rust outside the four scanned source roots; only fixtures/ is an explicit unproved input corpus"
-            )));
-        }
+        return Err(GateError(format!(
+            "walking the repository: {relative} is Rust outside the four scanned source roots; only fixtures/ is an explicit unproved input corpus"
+        )));
     }
     Ok(())
 }
@@ -141,20 +124,6 @@ const ALLOWED_PATH_REDIRECTS: [(&str, &str); 8] = [
     ),
 ];
 
-fn walked(
-    entry: Result<walkdir::DirEntry, walkdir::Error>,
-) -> Result<walkdir::DirEntry, GateFailure> {
-    let entry = entry.map_err(|error| GateFailure(format!("walking the repository: {error}")))?;
-    if entry.path_is_symlink() {
-        return Err(GateFailure(format!(
-            "walking the repository: {} is a symbolic link; a gate does not follow a name that \
-             can hide or escape the tree it proves",
-            entry.path().display()
-        )));
-    }
-    Ok(entry)
-}
-
 #[derive(Debug)]
 struct ProcMacroPackage {
     name: String,
@@ -166,13 +135,13 @@ fn source_universe(
     root: &Path,
     files: &[PathBuf],
     sources: &[(String, String, String)],
-) -> Result<Vec<lint_scan::Finding>, GateFailure> {
+) -> Result<Vec<lint_scan::Finding>, GateError> {
     let mut labels = BTreeSet::new();
     let mut canonical_labels = BTreeMap::new();
     for path in files {
         let label = relative_slash(root, path)?;
         let canonical = std::fs::canonicalize(path)
-            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+            .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
         labels.insert(label.clone());
         canonical_labels.insert(canonical, label);
     }
@@ -181,7 +150,7 @@ fn source_universe(
     let mut found = Vec::new();
     for (_scope, file, source) in sources {
         for redirect in lint_scan::source_redirects(source)
-            .map_err(|error| GateFailure(format!("{file}: {error}")))?
+            .map_err(|error| GateError(format!("{file}: {error}")))?
         {
             let line = match &redirect {
                 lint_scan::SourceRedirect::Include { line, .. }
@@ -272,9 +241,9 @@ fn resolve_redirect(file: &str, target: &str) -> Option<String> {
 fn cargo_source_universe(
     root: &Path,
     sources: &BTreeMap<PathBuf, String>,
-) -> Result<Vec<ProcMacroPackage>, GateFailure> {
+) -> Result<Vec<ProcMacroPackage>, GateError> {
     let canonical_root = std::fs::canonicalize(root)
-        .map_err(|error| GateFailure(format!("{}: {error}", root.display())))?;
+        .map_err(|error| GateError(format!("{}: {error}", root.display())))?;
     preflight_cargo_manifests(&canonical_root)?;
     validate_dependency_proc_macro_inventory(&canonical_root)?;
     let mut pending = VecDeque::from([root.join("Cargo.toml"), root.join("fuzz/Cargo.toml")]);
@@ -284,7 +253,7 @@ fn cargo_source_universe(
 
     while let Some(manifest) = pending.pop_front() {
         let manifest = std::fs::canonicalize(&manifest)
-            .map_err(|error| GateFailure(format!("{}: {error}", manifest.display())))?;
+            .map_err(|error| GateError(format!("{}: {error}", manifest.display())))?;
         if !requested.insert(manifest.clone()) {
             continue;
         }
@@ -293,7 +262,7 @@ fn cargo_source_universe(
             .no_deps()
             .exec()
             .map_err(|error| {
-                GateFailure(format!(
+                GateError(format!(
                     "cargo metadata for {}: {error}",
                     manifest.display()
                 ))
@@ -302,7 +271,7 @@ fn cargo_source_universe(
         for package in metadata.workspace_packages() {
             let package_manifest = std::fs::canonicalize(package.manifest_path.as_std_path())
                 .map_err(|error| {
-                    GateFailure(format!("{}: {error}", package.manifest_path.as_str()))
+                    GateError(format!("{}: {error}", package.manifest_path.as_str()))
                 })?;
             if !packages.insert(package_manifest.clone()) {
                 continue;
@@ -317,10 +286,10 @@ fn cargo_source_universe(
                 };
                 let dependency_directory =
                     std::fs::canonicalize(path.as_std_path()).map_err(|error| {
-                        GateFailure(format!("local dependency {}: {error}", path.as_str()))
+                        GateError(format!("local dependency {}: {error}", path.as_str()))
                     })?;
                 if !inside_source_roots(&canonical_root, &dependency_directory) {
-                    return Err(GateFailure(format!(
+                    return Err(GateError(format!(
                         "lints: local dependency {} is outside the four scanned source roots",
                         path.as_str()
                     )));
@@ -328,7 +297,7 @@ fn cargo_source_universe(
                 let dependency_manifest = dependency_directory.join("Cargo.toml");
                 let dependency_manifest =
                     std::fs::canonicalize(&dependency_manifest).map_err(|error| {
-                        GateFailure(format!("{}: {error}", dependency_manifest.display()))
+                        GateError(format!("{}: {error}", dependency_manifest.display()))
                     })?;
                 if !packages.contains(&dependency_manifest) {
                     pending.push_back(dependency_manifest);
@@ -343,7 +312,7 @@ fn cargo_source_universe(
 
 const PROC_MACRO_INVENTORY: &str = "xtask/proc_macro_inventory.txt";
 
-fn validate_dependency_proc_macro_inventory(root: &Path) -> Result<(), GateFailure> {
+fn validate_dependency_proc_macro_inventory(root: &Path) -> Result<(), GateError> {
     let inventory_path = root.join(PROC_MACRO_INVENTORY);
     let expected = expected_proc_macro_dependencies(&inventory_path)?;
 
@@ -362,7 +331,7 @@ fn validate_dependency_proc_macro_inventory(root: &Path) -> Result<(), GateFailu
             .other_options(vec!["--locked".to_owned()])
             .exec()
             .map_err(|error| {
-                GateFailure(format!(
+                GateError(format!(
                     "cargo metadata --locked for {}: {error}",
                     manifest.display()
                 ))
@@ -380,20 +349,20 @@ fn validate_dependency_proc_macro_inventory(root: &Path) -> Result<(), GateFailu
             .collect::<BTreeSet<_>>();
         let absent_from_lock = observed.difference(&locked).cloned().collect::<Vec<_>>();
         if !absent_from_lock.is_empty() {
-            return Err(GateFailure(format!(
+            return Err(GateError(format!(
                 "lints: {graph} metadata reports procedural macros absent from {}: {absent_from_lock:?}",
                 lockfile.display()
             )));
         }
         let declared = expected.get(graph).ok_or_else(|| {
-            GateFailure(format!(
+            GateError(format!(
                 "lints: {PROC_MACRO_INVENTORY} has no {graph} graph"
             ))
         })?;
         if observed != *declared {
             let added = observed.difference(declared).cloned().collect::<Vec<_>>();
             let removed = declared.difference(&observed).cloned().collect::<Vec<_>>();
-            return Err(GateFailure(format!(
+            return Err(GateError(format!(
                 "lints: {graph} locked dependency procedural-macro inventory drifted; added {added:?}, removed {removed:?}"
             )));
         }
@@ -403,9 +372,9 @@ fn validate_dependency_proc_macro_inventory(root: &Path) -> Result<(), GateFailu
 
 fn expected_proc_macro_dependencies(
     path: &Path,
-) -> Result<BTreeMap<String, BTreeSet<String>>, GateFailure> {
+) -> Result<BTreeMap<String, BTreeSet<String>>, GateError> {
     let inventory = std::fs::read_to_string(path)
-        .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+        .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
     let mut expected = BTreeMap::from([
         ("root".to_owned(), BTreeSet::new()),
         ("fuzz".to_owned(), BTreeSet::new()),
@@ -417,14 +386,14 @@ fn expected_proc_macro_dependencies(
         }
         let fields = line.split_whitespace().collect::<Vec<_>>();
         let [graph, package, version, source] = fields.as_slice() else {
-            return Err(GateFailure(format!(
+            return Err(GateError(format!(
                 "{}:{}: expected graph, package, version, and source",
                 path.display(),
                 line_index.saturating_add(1)
             )));
         };
         let Some(packages) = expected.get_mut(*graph) else {
-            return Err(GateFailure(format!(
+            return Err(GateError(format!(
                 "{}:{}: unknown Cargo graph {graph:?}",
                 path.display(),
                 line_index.saturating_add(1)
@@ -432,7 +401,7 @@ fn expected_proc_macro_dependencies(
         };
         let entry = format!("{package} {version} {source}");
         if !packages.insert(entry.clone()) {
-            return Err(GateFailure(format!(
+            return Err(GateError(format!(
                 "{}:{}: duplicate procedural-macro package {entry}",
                 path.display(),
                 line_index.saturating_add(1)
@@ -450,31 +419,29 @@ fn proc_macro_dependency_key(package: &cargo_metadata::Package) -> String {
     format!("{} {} {source}", package.name, package.version)
 }
 
-fn lock_packages(path: &Path) -> Result<BTreeSet<String>, GateFailure> {
+fn lock_packages(path: &Path) -> Result<BTreeSet<String>, GateError> {
     let source = std::fs::read_to_string(path)
-        .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+        .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
     let lock = toml::from_str::<toml::Value>(&source)
-        .map_err(|error| GateFailure(format!("parsing {}: {error}", path.display())))?;
+        .map_err(|error| GateError(format!("parsing {}: {error}", path.display())))?;
     let packages = lock
         .get("package")
         .and_then(toml::Value::as_array)
-        .ok_or_else(|| GateFailure(format!("{} has no package array", path.display())))?;
+        .ok_or_else(|| GateError(format!("{} has no package array", path.display())))?;
     let mut found = BTreeSet::new();
     for package in packages {
         let table = package
             .as_table()
-            .ok_or_else(|| GateFailure(format!("{} has a non-table package", path.display())))?;
+            .ok_or_else(|| GateError(format!("{} has a non-table package", path.display())))?;
         let name = table
             .get("name")
             .and_then(toml::Value::as_str)
-            .ok_or_else(|| {
-                GateFailure(format!("{} has a package without a name", path.display()))
-            })?;
+            .ok_or_else(|| GateError(format!("{} has a package without a name", path.display())))?;
         let version = table
             .get("version")
             .and_then(toml::Value::as_str)
             .ok_or_else(|| {
-                GateFailure(format!(
+                GateError(format!(
                     "{} has a package without a version",
                     path.display()
                 ))
@@ -483,20 +450,20 @@ fn lock_packages(path: &Path) -> Result<BTreeSet<String>, GateFailure> {
             .get("source")
             .map_or(Some("path"), toml::Value::as_str)
             .ok_or_else(|| {
-                GateFailure(format!("{} has a non-text package source", path.display()))
+                GateError(format!("{} has a non-text package source", path.display()))
             })?;
         if source.starts_with("registry+") {
             let checksum = table
                 .get("checksum")
                 .and_then(toml::Value::as_str)
                 .ok_or_else(|| {
-                    GateFailure(format!(
+                    GateError(format!(
                         "{} has registry package {name} {version} without a checksum",
                         path.display()
                     ))
                 })?;
             if checksum.len() != 64 || !checksum.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                return Err(GateFailure(format!(
+                return Err(GateError(format!(
                     "{} has invalid checksum for registry package {name} {version}",
                     path.display()
                 )));
@@ -511,17 +478,17 @@ fn cargo_package_sources(
     root: &Path,
     sources: &BTreeMap<PathBuf, String>,
     package: &cargo_metadata::Package,
-) -> Result<Vec<ProcMacroPackage>, GateFailure> {
+) -> Result<Vec<ProcMacroPackage>, GateError> {
     let package_manifest = std::fs::canonicalize(package.manifest_path.as_std_path())
-        .map_err(|error| GateFailure(format!("{}: {error}", package.manifest_path.as_str())))?;
+        .map_err(|error| GateError(format!("{}: {error}", package.manifest_path.as_str())))?;
     let directory = package_manifest.parent().ok_or_else(|| {
-        GateFailure(format!(
+        GateError(format!(
             "{} has no package directory",
             package.manifest_path
         ))
     })?;
     if !inside_source_roots(root, directory) {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "lints: local package {} at {} is outside the four scanned source roots",
             package.name, package.manifest_path
         )));
@@ -529,10 +496,10 @@ fn cargo_package_sources(
     let mut proc_macros = Vec::new();
     for target in &package.targets {
         let source = std::fs::canonicalize(target.src_path.as_std_path()).map_err(|error| {
-            GateFailure(format!("{} target {}: {error}", package.name, target.name))
+            GateError(format!("{} target {}: {error}", package.name, target.name))
         })?;
         if !sources.contains_key(&source) {
-            return Err(GateFailure(format!(
+            return Err(GateError(format!(
                 "lints: Cargo target {}:{} at {} is not an exact .rs member of the scanned source universe",
                 package.name, target.name, target.src_path
             )));
@@ -548,32 +515,21 @@ fn cargo_package_sources(
     Ok(proc_macros)
 }
 
-fn preflight_cargo_manifests(root: &Path) -> Result<(), GateFailure> {
+fn preflight_cargo_manifests(root: &Path) -> Result<(), GateError> {
     preflight_cargo_manifest(root, &root.join("Cargo.toml"))?;
-    for base in SOURCE_ROOTS {
-        for entry in WalkDir::new(root.join(base)).sort_by_file_name() {
-            let entry = walked(entry)?;
-            if !entry.file_type().is_file()
-                || entry.file_name() != std::ffi::OsStr::new("Cargo.toml")
-                || entry
-                    .path()
-                    .components()
-                    .any(|component| matches!(component, Component::Normal(part) if part == std::ffi::OsStr::new("target")))
-            {
-                continue;
-            }
-            preflight_cargo_manifest(root, entry.path())?;
+    for relative in crate::repository::files(root)? {
+        if in_source_roots(&relative) && relative.ends_with("/Cargo.toml") {
+            preflight_cargo_manifest(root, &root.join(relative))?;
         }
     }
     Ok(())
 }
 
-fn preflight_cargo_manifest(root: &Path, path: &Path) -> Result<(), GateFailure> {
+fn preflight_cargo_manifest(root: &Path, path: &Path) -> Result<(), GateError> {
     let source = std::fs::read_to_string(path)
-        .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
-    let manifest = toml::from_str::<toml::Value>(&source).map_err(|error| {
-        GateFailure(format!("parsing {} before Cargo: {error}", path.display()))
-    })?;
+        .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
+    let manifest = toml::from_str::<toml::Value>(&source)
+        .map_err(|error| GateError(format!("parsing {} before Cargo: {error}", path.display())))?;
     validate_manifest_paths(root, path, &manifest)
 }
 
@@ -581,7 +537,7 @@ fn validate_manifest_paths(
     root: &Path,
     manifest_path: &Path,
     manifest: &toml::Value,
-) -> Result<(), GateFailure> {
+) -> Result<(), GateError> {
     let Some(top) = manifest.as_table() else {
         return Ok(());
     };
@@ -634,7 +590,7 @@ fn validate_dependency_paths(
     root: &Path,
     manifest_path: &Path,
     dependencies: &toml::value::Table,
-) -> Result<(), GateFailure> {
+) -> Result<(), GateError> {
     for dependency in dependencies.values().filter_map(toml::Value::as_table) {
         if let Some(path) = dependency.get("path").and_then(toml::Value::as_str) {
             validate_declared_path(root, manifest_path, path, true)?;
@@ -648,30 +604,30 @@ fn validate_declared_path(
     manifest_path: &Path,
     declared: &str,
     canonical: bool,
-) -> Result<(), GateFailure> {
+) -> Result<(), GateError> {
     let directory = manifest_path.parent().ok_or_else(|| {
-        GateFailure(format!(
+        GateError(format!(
             "{} has no parent directory",
             manifest_path.display()
         ))
     })?;
     let candidate = repository_path(root, directory, declared).ok_or_else(|| {
-        GateFailure(format!(
+        GateError(format!(
             "lints: {} declares path {declared:?} outside the repository",
             manifest_path.display()
         ))
     })?;
     if !inside_source_roots(root, &candidate) {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "lints: {} declares path {declared:?} outside the four scanned source roots",
             manifest_path.display()
         )));
     }
     if canonical {
         let resolved = std::fs::canonicalize(&candidate)
-            .map_err(|error| GateFailure(format!("{}: {error}", candidate.display())))?;
+            .map_err(|error| GateError(format!("{}: {error}", candidate.display())))?;
         if !inside_source_roots(root, &resolved) {
-            return Err(GateFailure(format!(
+            return Err(GateError(format!(
                 "lints: {} declares path {declared:?} that resolves outside the four scanned source roots",
                 manifest_path.display()
             )));
@@ -717,9 +673,9 @@ fn validate_proc_macros(
     labels: &BTreeMap<PathBuf, String>,
     sources: &[(String, String, String)],
     found: &mut Vec<lint_scan::Finding>,
-) -> Result<(), GateFailure> {
+) -> Result<(), GateError> {
     if !matches!(packages, [package] if package.name == "njutest-macros") {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "lints: the workspace procedural-macro package inventory drifted: {:?}",
             packages
                 .iter()
@@ -729,9 +685,9 @@ fn validate_proc_macros(
     }
     let package = packages
         .first()
-        .ok_or_else(|| GateFailure("lints: njutest-macros is absent".to_owned()))?;
+        .ok_or_else(|| GateError("lints: njutest-macros is absent".to_owned()))?;
     let target_label = labels.get(&package.target).ok_or_else(|| {
-        GateFailure(format!(
+        GateError(format!(
             "lints: {} procedural-macro target escaped the source labels",
             package.name
         ))
@@ -740,10 +696,10 @@ fn validate_proc_macros(
         .iter()
         .any(|(_scope, file, _source)| file == target_label)
     {
-        return Err(GateFailure(format!("lints: {target_label} was not read")));
+        return Err(GateError(format!("lints: {target_label} was not read")));
     }
     let source_root = std::fs::canonicalize(&package.source_root)
-        .map_err(|error| GateFailure(format!("{}: {error}", package.source_root.display())))?;
+        .map_err(|error| GateError(format!("{}: {error}", package.source_root.display())))?;
     let mut exports = Vec::new();
     for (_scope, file, source) in sources {
         let absolute = labels
@@ -754,11 +710,11 @@ fn validate_proc_macros(
         }
         exports.extend(
             lint_scan::proc_macro_exports(source)
-                .map_err(|error| GateFailure(format!("{file}: {error}")))?,
+                .map_err(|error| GateError(format!("{file}: {error}")))?,
         );
         found.extend(
             lint_scan::opaque_proc_macro_synthesis(file, source)
-                .map_err(|error| GateFailure(format!("{file}: {error}")))?,
+                .map_err(|error| GateError(format!("{file}: {error}")))?,
         );
     }
     exports.sort();
@@ -769,7 +725,7 @@ fn validate_proc_macros(
         .collect::<Vec<_>>();
     let expected = [("derive", "AllVariants")];
     if observed != expected {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "lints: njutest-macros exports {observed:?}, expected exactly {expected:?}"
         )));
     }
@@ -797,12 +753,12 @@ fn compiled_as(path: &str) -> String {
 ///
 /// # Errors
 /// A file the ledger names that cannot be read.
-pub fn waivers(root: &Path) -> Result<String, GateFailure> {
+pub fn waivers(root: &Path) -> Result<String, GateError> {
     let files = all_sources(root)?;
     let (ours, open) = sets(root, &files)?;
     let path = root.join("xtask/wildcard_allowlist.txt");
     let ledger = std::fs::read_to_string(&path)
-        .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+        .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
     let mut said = String::new();
     let mut counted: BTreeMap<&'static str, usize> = BTreeMap::new();
     let mut entries: Vec<&'static str> = Vec::new();
@@ -813,17 +769,17 @@ pub fn waivers(root: &Path) -> Result<String, GateFailure> {
     {
         let (file, item, over, expected_arms) = parted(entry)?;
         let source = std::fs::read_to_string(root.join(file))
-            .map_err(|error| GateFailure(format!("{file}: {error}")))?;
+            .map_err(|error| GateError(format!("{file}: {error}")))?;
         let mut shaped = shapes::shapes(&source, &ours)
-            .map_err(|error| GateFailure(format!("{file}: {error}")))?;
+            .map_err(|error| GateError(format!("{file}: {error}")))?;
         let lines: Vec<usize> = lint_scan::wildcards_over(&source, &ours)
-            .map_err(|error| GateFailure(format!("{file}: {error}")))?
+            .map_err(|error| GateError(format!("{file}: {error}")))?
             .into_iter()
             .filter(|one| one.item == item && one.over == over)
             .map(|one| one.line)
             .collect();
         if lines.len() != expected_arms {
-            return Err(GateFailure(format!(
+            return Err(GateError(format!(
                 "lints: {entry:?} declares {expected_arms} wildcard arm(s), but the source has {}",
                 lines.len()
             )));
@@ -882,7 +838,7 @@ pub fn waivers(root: &Path) -> Result<String, GateFailure> {
 ///
 /// # Errors
 /// Every finding, one per line, or a file that could not be read or parsed.
-pub fn lints(root: &Path) -> Result<String, GateFailure> {
+pub fn lints(root: &Path) -> Result<String, GateError> {
     let planted = lint_sentinels()?;
     let scanned = lints_scanned(root)?;
     Ok(format!(
@@ -895,7 +851,7 @@ pub fn lints(root: &Path) -> Result<String, GateFailure> {
 ///
 /// # Errors
 /// Every finding, one per line, or a file that could not be read or parsed.
-pub fn lints_scanned(root: &Path) -> Result<String, GateFailure> {
+pub fn lints_scanned(root: &Path) -> Result<String, GateError> {
     let (files, found) = lint_findings(root)?;
     if found.is_empty() {
         let kinds = lint_scan::Kind::ALL
@@ -915,19 +871,19 @@ pub fn lints_scanned(root: &Path) -> Result<String, GateFailure> {
     for finding in &found {
         line(&mut report, format_args!("{finding}"));
     }
-    Err(GateFailure(report.trim_end().to_owned()))
+    Err(GateError(report.trim_end().to_owned()))
 }
 
 /// How many planted shapes every lint kind was found in, before any real file is read.
 ///
 /// # Errors
 /// The first kind a planted shape of it was not found as, which means the scan is blind to that shape and its silence about the tree says nothing.
-pub fn lint_sentinels() -> Result<usize, GateFailure> {
+pub fn lint_sentinels() -> Result<usize, GateError> {
     let mut found = 0_usize;
     for kind in lint_scan::Kind::ALL {
         let shapes = lint_sighted(*kind, kind.planted())?;
         found = found.checked_add(shapes).ok_or_else(|| {
-            GateFailure("lints: more planted shapes than a count can hold".to_owned())
+            GateError("lints: more planted shapes than a count can hold".to_owned())
         })?;
     }
     Ok(found)
@@ -937,7 +893,7 @@ pub fn lint_sentinels() -> Result<usize, GateFailure> {
 ///
 /// # Errors
 /// The first shape the scan did not find as `kind`, or planted text that does not parse.
-pub fn lint_sighted(kind: lint_scan::Kind, planted: &str) -> Result<usize, GateFailure> {
+pub fn lint_sighted(kind: lint_scan::Kind, planted: &str) -> Result<usize, GateError> {
     let kinds = |found: Vec<lint_scan::Finding>| -> Vec<lint_scan::Kind> {
         found.into_iter().map(|finding| finding.kind).collect()
     };
@@ -952,7 +908,7 @@ pub fn lint_sighted(kind: lint_scan::Kind, planted: &str) -> Result<usize, GateF
         |path, text| {
             lint_scan::scan_source(path, text)
                 .map(kinds)
-                .map_err(|error| GateFailure(error.to_string()))
+                .map_err(|error| GateError(error.to_string()))
         },
         |root| lint_findings(root).map(|(_files, found)| kinds(found)),
     )
@@ -972,9 +928,9 @@ struct Planted<'a> {
 fn sighted<K: PartialEq>(
     planted: &Planted<'_>,
     kind: &K,
-    per_file: impl Fn(&str, &str) -> Result<Vec<K>, GateFailure>,
-    whole: impl Fn(&Path) -> Result<Vec<K>, GateFailure>,
-) -> Result<usize, GateFailure> {
+    per_file: impl Fn(&str, &str) -> Result<Vec<K>, GateError>,
+    whole: impl Fn(&Path) -> Result<Vec<K>, GateError>,
+) -> Result<usize, GateError> {
     let Planted {
         gate,
         ref file,
@@ -982,23 +938,23 @@ fn sighted<K: PartialEq>(
         text,
     } = *planted;
     let shapes = crate::sentinel::shapes(text)
-        .map_err(|error| GateFailure(format!("{gate}: {file}: {error}")))?;
+        .map_err(|error| GateError(format!("{gate}: {file}: {error}")))?;
     for shape in &shapes {
         let name = shape.name();
         let found = match shape {
             crate::sentinel::Shape::Source { path, text, .. } => {
-                per_file(path, text).map_err(|GateFailure(error)| {
-                    GateFailure(format!(
+                per_file(path, text).map_err(|GateError(error)| {
+                    GateError(format!(
                         "{gate}: planted shape `{name}` of {label}: {error}"
                     ))
                 })?
             }
             crate::sentinel::Shape::Tree { files, .. } => {
                 let root = tempfile::tempdir().map_err(|error| {
-                    GateFailure(format!("{gate}: a directory to plant {label} in: {error}"))
+                    GateError(format!("{gate}: a directory to plant {label} in: {error}"))
                 })?;
                 crate::sentinel::plant(root.path(), files).map_err(|error| {
-                    GateFailure(format!(
+                    GateError(format!(
                         "{gate}: planting shape `{name}` of {label}: {error}"
                     ))
                 })?;
@@ -1006,7 +962,7 @@ fn sighted<K: PartialEq>(
             }
         };
         if !found.contains(kind) {
-            return Err(GateFailure(format!(
+            return Err(GateError(format!(
                 "{gate}: the {label} check is blind. Its planted shape `{name}` ({file}) was not \
                  found as {label}, so a tree that carries none says nothing about whether this \
                  repository does. Nothing this gate would have said is believed until the \
@@ -1021,17 +977,17 @@ fn sighted<K: PartialEq>(
 ///
 /// # Errors
 /// A file that could not be read or parsed.
-fn lint_findings(root: &Path) -> Result<(usize, Vec<lint_scan::Finding>), GateFailure> {
+fn lint_findings(root: &Path) -> Result<(usize, Vec<lint_scan::Finding>), GateError> {
     let files = all_sources(root)?;
     let mut found = Vec::new();
     let mut sources = Vec::new();
     for path in &files {
         let source = std::fs::read_to_string(path)
-            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+            .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
         let label = relative_slash(root, path)?;
         found.extend(
             lint_scan::scan_source(&label, &source)
-                .map_err(|error| GateFailure(format!("{label}: {error}")))?,
+                .map_err(|error| GateError(format!("{label}: {error}")))?,
         );
         sources.push((compiled_as(&label), label, source));
     }
@@ -1046,7 +1002,7 @@ fn lint_findings(root: &Path) -> Result<(usize, Vec<lint_scan::Finding>), GateFa
                 .iter()
                 .map(|(scope, file, source)| (scope.as_str(), file.as_str(), source.as_str())),
         )
-        .map_err(|error| GateFailure(format!("cross-file Rust declarations: {error}")))?,
+        .map_err(|error| GateError(format!("cross-file Rust declarations: {error}")))?,
     );
     found.extend(
         lint_scan::manual_variant_lists_across(
@@ -1054,7 +1010,7 @@ fn lint_findings(root: &Path) -> Result<(usize, Vec<lint_scan::Finding>), GateFa
                 .iter()
                 .map(|(scope, file, source)| (scope.as_str(), file.as_str(), source.as_str())),
         )
-        .map_err(|error| GateFailure(format!("cross-file variant lists: {error}")))?,
+        .map_err(|error| GateError(format!("cross-file variant lists: {error}")))?,
     );
     found.extend(loose_layouts(root, &files)?);
     found.extend(wildcards(root, &files)?);
@@ -1071,16 +1027,16 @@ fn lint_findings(root: &Path) -> Result<(usize, Vec<lint_scan::Finding>), GateFa
 ///
 /// Two passes, because whether an arm may catch everything depends on who owns the enum, and that is a fact about the workspace rather than about the file being read.
 /// A foreign enum keeps its catch-all: the values of `syn::Expr` are not ours to list, so an arm that stands for the rest is the handling.
-fn wildcards(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Finding>, GateFailure> {
+fn wildcards(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Finding>, GateError> {
     let (ours, open) = sets(root, files)?;
     let mut standing: Vec<Waived> = Vec::new();
     for path in files {
         let source = std::fs::read_to_string(path)
-            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+            .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
         let label = relative_slash(root, path)?;
         let mut grouped: BTreeMap<(String, String), Vec<lint_scan::Wildcard>> = BTreeMap::new();
         for one in lint_scan::wildcards_over(&source, &ours)
-            .map_err(|error| GateFailure(format!("{label}: {error}")))?
+            .map_err(|error| GateError(format!("{label}: {error}")))?
         {
             if open
                 .get(&one.over)
@@ -1117,19 +1073,19 @@ fn wildcards(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Finding>, 
 fn sets(
     root: &Path,
     files: &[PathBuf],
-) -> Result<(Vec<String>, BTreeMap<String, String>), GateFailure> {
+) -> Result<(Vec<String>, BTreeMap<String, String>), GateError> {
     let mut ours: Vec<String> = Vec::new();
     let mut open: BTreeMap<String, String> = BTreeMap::new();
     for path in files {
         let source = std::fs::read_to_string(path)
-            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+            .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
         let label = relative_slash(root, path)?;
         ours.extend(
             lint_scan::declared_enums(&source)
-                .map_err(|error| GateFailure(format!("{label}: {error}")))?,
+                .map_err(|error| GateError(format!("{label}: {error}")))?,
         );
         for name in lint_scan::open_enums(&source)
-            .map_err(|error| GateFailure(format!("{label}: {error}")))?
+            .map_err(|error| GateError(format!("{label}: {error}")))?
         {
             open.insert(name, label.clone());
         }
@@ -1142,24 +1098,24 @@ fn sets(
 /// The file, the item and the set a ledger name is made of.
 ///
 /// A name carries no line, which is the point of it, so the second reading finds the arms for itself rather than being handed a coordinate that may by now be pointing at something else.
-fn parted(entry: &str) -> Result<(&str, &str, &str, usize), GateFailure> {
+fn parted(entry: &str) -> Result<(&str, &str, &str, usize), GateError> {
     let Some((place, rest)) = entry.split_once(" over ") else {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "lints: malformed wildcard ledger entry {entry:?}"
         )));
     };
     let Some((over, how_many)) = rest.split_once(", ") else {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "lints: malformed wildcard ledger entry {entry:?}"
         )));
     };
     let Some(how_many) = how_many.strip_suffix(" arm(s)") else {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "lints: malformed wildcard ledger count in {entry:?}"
         )));
     };
     let how_many = how_many.parse::<usize>().map_err(|error| {
-        GateFailure(format!(
+        GateError(format!(
             "lints: malformed wildcard ledger count in {entry:?}: {error}"
         ))
     })?;
@@ -1177,21 +1133,21 @@ fn parted(entry: &str) -> Result<(&str, &str, &str, usize), GateFailure> {
 ///
 /// # Errors
 /// Either file cannot be read, or the ledger has grown past the ceiling.
-fn waived_lines(root: &Path) -> Result<usize, GateFailure> {
+fn waived_lines(root: &Path) -> Result<usize, GateError> {
     let how_many = counted(root, "xtask/wildcard_allowlist.txt")?.len();
     let ceiling = counted(root, "xtask/waiver_ceiling.txt")?;
     let [written] = ceiling.as_slice() else {
-        return Err(GateFailure(
+        return Err(GateError(
             "lints: xtask/waiver_ceiling.txt holds one number and nothing else.".to_owned(),
         ));
     };
     let Ok(most) = written.parse::<usize>() else {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "lints: xtask/waiver_ceiling.txt holds {written}, which is not a number."
         )));
     };
     if how_many > most {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "lints: the catch-all ledger carries {how_many} waiver(s) and \
              xtask/waiver_ceiling.txt allows {most}. That file may shrink and never \
              grow, so a new waiver is a number going up in a file of its own — which \
@@ -1206,15 +1162,15 @@ fn waived_lines(root: &Path) -> Result<usize, GateFailure> {
 ///
 /// # Errors
 /// The file cannot be read, or holds anything but one number.
-fn ceiling(root: &Path, relative: &str) -> Result<usize, GateFailure> {
+fn ceiling(root: &Path, relative: &str) -> Result<usize, GateError> {
     let held = counted(root, relative)?;
     let [written] = held.as_slice() else {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "{relative} holds one number and nothing else."
         )));
     };
     written.parse::<usize>().map_err(|_not_a_number| {
-        GateFailure(format!(
+        GateError(format!(
             "{relative} holds {written}, which is not a number."
         ))
     })
@@ -1224,10 +1180,10 @@ fn ceiling(root: &Path, relative: &str) -> Result<usize, GateFailure> {
 ///
 /// # Errors
 /// The file cannot be read.
-fn counted(root: &Path, relative: &str) -> Result<Vec<String>, GateFailure> {
+fn counted(root: &Path, relative: &str) -> Result<Vec<String>, GateError> {
     let path = root.join(relative);
     let text = std::fs::read_to_string(&path)
-        .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+        .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
     Ok(text
         .lines()
         .map(str::trim)
@@ -1250,10 +1206,10 @@ struct Waived {
     line: usize,
 }
 
-fn ratcheted(root: &Path, standing: &[Waived]) -> Result<Vec<lint_scan::Finding>, GateFailure> {
+fn ratcheted(root: &Path, standing: &[Waived]) -> Result<Vec<lint_scan::Finding>, GateError> {
     let path = root.join("xtask/wildcard_allowlist.txt");
     let ledger = std::fs::read_to_string(&path)
-        .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+        .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
     let allowed: Vec<&str> = ledger
         .lines()
         .map(str::trim)
@@ -1281,7 +1237,7 @@ fn ratcheted(root: &Path, standing: &[Waived]) -> Result<Vec<lint_scan::Finding>
             .map(|line| format!("\n  {line}"))
             .collect::<Vec<_>>()
             .concat();
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "lints: xtask/wildcard_allowlist.txt names {how_many} line(s) that no longer \
              catch everything left of a set this repository closes. Take them out: a \
              ledger that keeps a waiver nobody needs is one nobody reads.{named}"
@@ -1291,17 +1247,17 @@ fn ratcheted(root: &Path, standing: &[Waived]) -> Result<Vec<lint_scan::Finding>
 }
 
 /// joiners rather than reading the spelling.
-fn loose_layouts(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Finding>, GateFailure> {
+fn loose_layouts(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Finding>, GateError> {
     let mut layouts = Vec::new();
     let mut configured: Vec<String> = Vec::new();
     for path in files {
         let source = std::fs::read_to_string(path)
-            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+            .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
         let module = path
             .file_stem()
-            .ok_or_else(|| GateFailure(format!("{} has no file stem", path.display())))?
+            .ok_or_else(|| GateError(format!("{} has no file stem", path.display())))?
             .to_str()
-            .ok_or_else(|| GateFailure(format!("{} has a non-UTF-8 file stem", path.display())))?
+            .ok_or_else(|| GateError(format!("{} has a non-UTF-8 file stem", path.display())))?
             .to_owned();
         for (name, _line) in lint_scan::exported_strings(&source) {
             layouts.push((module.clone(), name));
@@ -1309,7 +1265,7 @@ fn loose_layouts(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Findin
     }
     for path in production_sources(root)? {
         let source = std::fs::read_to_string(&path)
-            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+            .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
         configured.extend(lint_scan::configured_directories(&source));
     }
     configured.sort();
@@ -1320,7 +1276,7 @@ fn loose_layouts(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Findin
             continue;
         }
         let source = std::fs::read_to_string(path)
-            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+            .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
         let label = relative_slash(root, path)?;
         for line in lint_scan::spelled(&source, &configured) {
             found.push(lint_scan::Finding {
@@ -1332,7 +1288,7 @@ fn loose_layouts(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Findin
     }
     for path in tests_under(root)? {
         let source = std::fs::read_to_string(&path)
-            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+            .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
         let label = relative_slash(root, &path)?;
         for (module, name) in &layouts {
             if !lint_scan::joins(&source, name)
@@ -1355,43 +1311,32 @@ fn loose_layouts(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Findin
 }
 
 /// Every test source of the workspace, which is where a layout being joined freezes it.
-fn tests_under(root: &Path) -> Result<Vec<PathBuf>, GateFailure> {
-    let mut found = Vec::new();
-    for base in SOURCE_ROOTS {
-        for entry in WalkDir::new(root.join(base)).sort_by_file_name() {
-            let entry = walked(entry)?;
-            let path = entry.path();
-            let relative = relative_slash(root, path)?;
-            if entry.file_type().is_file()
-                && path.extension().is_some_and(|one| one == "rs")
+fn tests_under(root: &Path) -> Result<Vec<PathBuf>, GateError> {
+    Ok(crate::repository::files(root)?
+        .into_iter()
+        .filter(|relative| {
+            in_source_roots(relative)
+                && crate::repository::extension_is(relative, "rs")
                 && relative.contains("/tests/")
-            {
-                found.push(path.to_path_buf());
-            }
-        }
-    }
-    Ok(found)
+        })
+        .map(|relative| root.join(relative))
+        .collect())
 }
 
 /// The production source files the seam ratchet scans.
 ///
 /// # Errors
-/// Any directory entry cannot be read; an incomplete source set proves no gate.
-pub fn production_sources(root: &Path) -> Result<Vec<PathBuf>, GateFailure> {
-    let mut files = Vec::new();
-    for base in SOURCE_ROOTS {
-        for entry in WalkDir::new(root.join(base)).sort_by_file_name() {
-            let entry = walked(entry)?;
-            let path = entry.path();
-            if entry.file_type().is_file() && path.extension().is_some_and(|ext| ext == "rs") {
-                let relative = relative_slash(root, path)?;
-                if is_production(&relative) {
-                    files.push(path.to_path_buf());
-                }
-            }
-        }
-    }
-    Ok(files)
+/// The repository cannot be listed; an incomplete source set proves no gate.
+pub fn production_sources(root: &Path) -> Result<Vec<PathBuf>, GateError> {
+    Ok(crate::repository::files(root)?
+        .into_iter()
+        .filter(|relative| {
+            in_source_roots(relative)
+                && crate::repository::extension_is(relative, "rs")
+                && is_production(relative)
+        })
+        .map(|relative| root.join(relative))
+        .collect())
 }
 
 fn is_production(relative: &str) -> bool {
@@ -1412,9 +1357,9 @@ fn is_production(relative: &str) -> bool {
             .any(|part| *part == "tests" || *part == "benches" || *part == "examples")
 }
 
-fn relative_slash(root: &Path, path: &Path) -> Result<String, GateFailure> {
+fn relative_slash(root: &Path, path: &Path) -> Result<String, GateError> {
     let relative = path.strip_prefix(root).map_err(|error| {
-        GateFailure(format!(
+        GateError(format!(
             "{} is outside {}: {error}",
             path.display(),
             root.display()
@@ -1422,7 +1367,7 @@ fn relative_slash(root: &Path, path: &Path) -> Result<String, GateFailure> {
     })?;
     let relative = relative
         .to_str()
-        .ok_or_else(|| GateFailure(format!("{} is not UTF-8", relative.display())))?;
+        .ok_or_else(|| GateError(format!("{} is not UTF-8", relative.display())))?;
     Ok(relative.replace('\\', "/"))
 }
 
@@ -1430,19 +1375,18 @@ fn relative_slash(root: &Path, path: &Path) -> Result<String, GateFailure> {
 ///
 /// # Errors
 /// Returns a disagreement between the scan and the ledger, or an unreadable file.
-pub fn devgates(root: &Path) -> Result<String, GateFailure> {
+pub fn devgates(root: &Path) -> Result<String, GateError> {
     let planted = seam_sentinels()?;
     let (files, found) = seam_findings(root)?;
     let ledger_path = root.join("xtask/seam_allowlist.txt");
     let ledger_text = std::fs::read_to_string(&ledger_path)
-        .map_err(|error| GateFailure(format!("{}: {error}", ledger_path.display())))?;
-    let ledger =
-        devgates::parse_ledger(&ledger_text).map_err(|error| GateFailure(error.coded()))?;
+        .map_err(|error| GateError(format!("{}: {error}", ledger_path.display())))?;
+    let ledger = devgates::parse_ledger(&ledger_text).map_err(|error| GateError(error.coded()))?;
     devgates::compare(&found, &ledger)
-        .map_err(|disagreement| GateFailure(disagreement.to_string()))?;
+        .map_err(|disagreement| GateError(disagreement.to_string()))?;
     let most = ceiling(root, "xtask/seam_ceiling.txt")?;
     if ledger.len() > most {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "devgates: the seam ledger carries {} seam(s) and xtask/seam_ceiling.txt \
              allows {most}. That file may shrink and never grow, so a new seam is a \
              number going up in a file of its own — which is the review the ledger \
@@ -1463,15 +1407,15 @@ pub fn devgates(root: &Path) -> Result<String, GateFailure> {
 ///
 /// # Errors
 /// A file that could not be read or parsed.
-fn seam_findings(root: &Path) -> Result<(usize, Vec<devgates::Seam>), GateFailure> {
+fn seam_findings(root: &Path) -> Result<(usize, Vec<devgates::Seam>), GateError> {
     let mut found = Vec::new();
     let files = production_sources(root)?;
     for path in &files {
         let source = std::fs::read_to_string(path)
-            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+            .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
         let label = relative_slash(root, path)?;
         let seams = devgates::scan_source(&label, &source)
-            .map_err(|error| GateFailure(format!("{label}: {error}")))?;
+            .map_err(|error| GateError(format!("{label}: {error}")))?;
         found.extend(seams);
     }
     found.sort();
@@ -1483,12 +1427,12 @@ fn seam_findings(root: &Path) -> Result<(usize, Vec<devgates::Seam>), GateFailur
 ///
 /// # Errors
 /// The first kind a planted shape of it was not found as.
-pub fn seam_sentinels() -> Result<usize, GateFailure> {
+pub fn seam_sentinels() -> Result<usize, GateError> {
     let mut found = 0_usize;
     for kind in devgates::SeamKind::ALL {
         let shapes = seam_sighted(kind, kind.planted())?;
         found = found.checked_add(shapes).ok_or_else(|| {
-            GateFailure("devgates: more planted shapes than a count can hold".to_owned())
+            GateError("devgates: more planted shapes than a count can hold".to_owned())
         })?;
     }
     Ok(found)
@@ -1498,7 +1442,7 @@ pub fn seam_sentinels() -> Result<usize, GateFailure> {
 ///
 /// # Errors
 /// The first shape the scan did not find as `kind`, or planted text that does not parse.
-pub fn seam_sighted(kind: devgates::SeamKind, planted: &str) -> Result<usize, GateFailure> {
+pub fn seam_sighted(kind: devgates::SeamKind, planted: &str) -> Result<usize, GateError> {
     let kinds = |found: Vec<devgates::Seam>| -> Vec<devgates::SeamKind> {
         found.into_iter().map(|seam| seam.kind).collect()
     };
@@ -1513,7 +1457,7 @@ pub fn seam_sighted(kind: devgates::SeamKind, planted: &str) -> Result<usize, Ga
         |path, text| {
             devgates::scan_source(path, text)
                 .map(kinds)
-                .map_err(|error| GateFailure(error.to_string()))
+                .map_err(|error| GateError(error.to_string()))
         },
         |root| seam_findings(root).map(|(_files, found)| kinds(found)),
     )
@@ -1523,13 +1467,13 @@ pub fn seam_sighted(kind: devgates::SeamKind, planted: &str) -> Result<usize, Ga
 ///
 /// # Errors
 /// Returns every edge the direction rule refuses, or a `cargo metadata` failure.
-pub fn deps(root: &Path) -> Result<String, GateFailure> {
+pub fn deps(root: &Path) -> Result<String, GateError> {
     let census = census(root)?;
     let metadata = cargo_metadata::MetadataCommand::new()
         .manifest_path(root.join("Cargo.toml"))
         .no_deps()
         .exec()
-        .map_err(|error| GateFailure(format!("cargo metadata: {error}")))?;
+        .map_err(|error| GateError(format!("cargo metadata: {error}")))?;
     let members: Vec<String> = metadata
         .workspace_packages()
         .iter()
@@ -1559,7 +1503,7 @@ pub fn deps(root: &Path) -> Result<String, GateFailure> {
         .manifest_path(root.join("fuzz/Cargo.toml"))
         .no_deps()
         .exec()
-        .map_err(|error| GateFailure(format!("cargo metadata for fuzz/Cargo.toml: {error}")))?;
+        .map_err(|error| GateError(format!("cargo metadata for fuzz/Cargo.toml: {error}")))?;
     prohibited.extend(deps::prohibited_direct_dependencies(
         fuzz.workspace_packages().iter().flat_map(|package| {
             package
@@ -1586,7 +1530,7 @@ pub fn deps(root: &Path) -> Result<String, GateFailure> {
         line(&mut message, format_args!("  {violation}"));
     }
     append(&mut message, format_args!("{}", deps::RULE));
-    Err(GateFailure(message))
+    Err(GateError(message))
 }
 
 /// Nothing, where every direct dependency of a shipped crate is built with the features its tests build it with.
@@ -1597,7 +1541,7 @@ fn built_as_tested(
     root: &Path,
     metadata: &cargo_metadata::Metadata,
     members: &[String],
-) -> Result<(), GateFailure> {
+) -> Result<(), GateError> {
     let direct: BTreeSet<String> = metadata
         .workspace_packages()
         .iter()
@@ -1633,7 +1577,7 @@ fn built_as_tested(
             &mut message,
             format_args!("turn the feature on where the shipped crate depends on it"),
         );
-        return Err(GateFailure(message));
+        return Err(GateError(message));
     }
     Ok(())
 }
@@ -1645,8 +1589,8 @@ fn built_as_tested(
 fn features_only_tests_build_with(
     root: &Path,
     direct: &BTreeSet<String>,
-) -> Result<Vec<(String, Vec<String>)>, GateFailure> {
-    let tree = |target: &str, edges: &str| -> Result<String, GateFailure> {
+) -> Result<Vec<(String, Vec<String>)>, GateError> {
+    let tree = |target: &str, edges: &str| -> Result<String, GateError> {
         let mut args = vec![
             "tree", "--locked", "--color", "never", "--prefix", "none", "--format", "{p}|{f}",
             "--target", target, "--edges", edges,
@@ -1658,14 +1602,14 @@ fn features_only_tests_build_with(
             .args(&args)
             .current_dir(root)
             .output()
-            .map_err(|error| GateFailure(format!("cargo tree: {error}")))?;
+            .map_err(|error| GateError(format!("cargo tree: {error}")))?;
         if !asked.status.success() {
             let stderr = std::str::from_utf8(&asked.stderr)
-                .map_err(|error| GateFailure(format!("cargo tree stderr is not UTF-8: {error}")))?;
-            return Err(GateFailure(format!("cargo tree: {}", stderr.trim())));
+                .map_err(|error| GateError(format!("cargo tree stderr is not UTF-8: {error}")))?;
+            return Err(GateError(format!("cargo tree: {}", stderr.trim())));
         }
         String::from_utf8(asked.stdout)
-            .map_err(|error| GateFailure(format!("cargo tree stdout is not UTF-8: {error}")))
+            .map_err(|error| GateError(format!("cargo tree stdout is not UTF-8: {error}")))
     };
     let mut found = Vec::new();
     for target in deps::SHIPPED_TARGETS {
@@ -1690,12 +1634,12 @@ fn features_only_tests_build_with(
 ///
 /// # Errors
 /// A manifest that belongs to none of the three, or metadata that could not be read.
-fn census(root: &Path) -> Result<String, GateFailure> {
+fn census(root: &Path) -> Result<String, GateError> {
     let members: BTreeSet<PathBuf> = cargo_metadata::MetadataCommand::new()
         .manifest_path(root.join("Cargo.toml"))
         .no_deps()
         .exec()
-        .map_err(|error| GateFailure(format!("cargo metadata: {error}")))?
+        .map_err(|error| GateError(format!("cargo metadata: {error}")))?
         .workspace_packages()
         .iter()
         .map(|package| PathBuf::from(package.manifest_path.as_std_path()))
@@ -1704,21 +1648,14 @@ fn census(root: &Path) -> Result<String, GateFailure> {
     let fixtures = root.join("fixtures");
     let mut counted = [0_usize; 3];
     let mut loose = Vec::new();
-    let walk = WalkDir::new(root)
-        .sort_by_file_name()
-        .into_iter()
-        .filter_entry(|entry| {
-            entry.depth() == 0
-                || entry.file_name().as_encoded_bytes().first() != Some(&b'.')
-                    && entry.file_name() != std::ffi::OsStr::new("target")
-        });
-    for entry in walk {
-        let entry = walked(entry)?;
-        let path = entry.path();
-        if !entry.file_type().is_file() || entry.file_name() != std::ffi::OsStr::new("Cargo.toml") {
+    for relative in crate::repository::files(root)? {
+        if !(relative == "Cargo.toml" || relative.ends_with("/Cargo.toml"))
+            || relative.starts_with('.')
+        {
             continue;
         }
-        let relative = relative_slash(root, path)?;
+        let whole = root.join(&relative);
+        let path = whole.as_path();
         let at = if path == root.join("Cargo.toml") || members.contains(path) {
             0
         } else if path.starts_with(&fuzz) {
@@ -1734,7 +1671,7 @@ fn census(root: &Path) -> Result<String, GateFailure> {
         }
     }
     if !loose.is_empty() {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "deps: {} cargo manifest(s) belong to no class this repository has a command \
              for. A manifest is a member of the root workspace, the fuzz workspace, or a \
              fixture, and each of those is reached by `cargo nextest run --workspace`, \
@@ -1756,14 +1693,14 @@ fn census(root: &Path) -> Result<String, GateFailure> {
 ///
 /// # Errors
 /// Returns every convention a fixture breaks.
-pub fn fixtures(root: &Path) -> Result<String, GateFailure> {
+pub fn fixtures(root: &Path) -> Result<String, GateError> {
     let dir = root.join("fixtures");
     let names = fixtures::discover(&dir)
-        .map_err(|error| GateFailure(format!("{}: {error}", dir.display())))?;
+        .map_err(|error| GateError(format!("{}: {error}", dir.display())))?;
     let mut problems = Vec::new();
     for name in &names {
         for problem in fixtures::check_fixture(&dir.join(name))
-            .map_err(|error| GateFailure(format!("fixtures/{name}: {error}")))?
+            .map_err(|error| GateError(format!("fixtures/{name}: {error}")))?
         {
             problems.push(format!("fixtures/{name}: {problem}"));
         }
@@ -1775,7 +1712,7 @@ pub fn fixtures(root: &Path) -> Result<String, GateFailure> {
         ));
     }
     problems.sort();
-    Err(GateFailure(format!(
+    Err(GateError(format!(
         "fixtures: {}\n{}",
         problems.join("\n"),
         fixtures::RULE
@@ -1786,20 +1723,16 @@ pub fn fixtures(root: &Path) -> Result<String, GateFailure> {
 ///
 /// # Errors
 /// Returns every inconsistency.
-pub fn release_check(root: &Path) -> Result<String, GateFailure> {
+pub fn release_check(root: &Path) -> Result<String, GateError> {
     let read = |relative: &str| {
         std::fs::read_to_string(root.join(relative))
-            .map_err(|error| GateFailure(format!("{relative}: {error}")))
+            .map_err(|error| GateError(format!("{relative}: {error}")))
     };
     let workspace = read("Cargo.toml")?;
     let mut members = Vec::new();
-    for entry in WalkDir::new(root.join("crates"))
-        .max_depth(2)
-        .sort_by_file_name()
-    {
-        let entry = walked(entry)?;
-        if entry.file_name() == "Cargo.toml" {
-            let label = relative_slash(root, entry.path())?;
+    for label in crate::repository::files(root)? {
+        let depth = label.split('/').count();
+        if label.starts_with("crates/") && label.ends_with("/Cargo.toml") && depth <= 3 {
             members.push((label.clone(), read(&label)?));
         }
     }
@@ -1825,7 +1758,7 @@ pub fn release_check(root: &Path) -> Result<String, GateFailure> {
             member_names.len()
         ));
     }
-    Err(GateFailure(format!(
+    Err(GateError(format!(
         "release-check:\n  {}",
         problems.join("\n  ")
     )))
@@ -1835,37 +1768,31 @@ pub fn release_check(root: &Path) -> Result<String, GateFailure> {
 ///
 /// # Errors
 /// The roadmap registry is malformed, a page cannot be read, or a page names a milestone the registry does not declare.
-pub fn milestones(root: &Path) -> Result<String, GateFailure> {
+pub fn milestones(root: &Path) -> Result<String, GateError> {
     let roadmap_path = root.join("docs/roadmap.md");
     let roadmap = std::fs::read_to_string(&roadmap_path)
-        .map_err(|error| GateFailure(format!("{}: {error}", roadmap_path.display())))?;
+        .map_err(|error| GateError(format!("{}: {error}", roadmap_path.display())))?;
     let registered = crate::milestones::registry(&roadmap)
-        .map_err(|error| GateFailure(format!("milestones: docs/roadmap.md: {error}")))?;
+        .map_err(|error| GateError(format!("milestones: docs/roadmap.md: {error}")))?;
     let mut unresolved = Vec::new();
     let mut pages = 0usize;
-    for entry in WalkDir::new(root.join("docs")) {
-        let entry = walked(entry)?;
-        if !entry.file_type().is_file()
-            || entry.path().extension() != Some(std::ffi::OsStr::new("md"))
-        {
+    for page in crate::repository::files(root)? {
+        if !(page.starts_with("docs/") && crate::repository::extension_is(&page, "md")) {
             continue;
         }
         pages = pages.saturating_add(1);
-        let text = std::fs::read_to_string(entry.path())
-            .map_err(|error| GateFailure(format!("{}: {error}", entry.path().display())))?;
+        let text = std::fs::read_to_string(root.join(&page))
+            .map_err(|error| GateError(format!("{page}: {error}")))?;
         for reference in crate::milestones::references(&text) {
             if !registered.contains(&reference) {
-                unresolved.push(format!(
-                    "{} names {reference}",
-                    relative_slash(root, entry.path())?
-                ));
+                unresolved.push(format!("{page} names {reference}"));
             }
         }
     }
     unresolved.sort();
     unresolved.dedup();
     if !unresolved.is_empty() {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "milestones: these references have no row in docs/roadmap.md:\n  {}",
             unresolved.join("\n  ")
         )));
@@ -1880,12 +1807,12 @@ pub fn milestones(root: &Path) -> Result<String, GateFailure> {
 ///
 /// # Errors
 /// Cargo metadata is unreadable, a declaration is absent or contradictory, or the compiler harness and the incidental declarations are not the same set.
-pub fn surfaces(root: &Path) -> Result<String, GateFailure> {
+pub fn surfaces(root: &Path) -> Result<String, GateError> {
     let metadata = cargo_metadata::MetadataCommand::new()
         .manifest_path(root.join("Cargo.toml"))
         .no_deps()
         .exec()
-        .map_err(|error| GateFailure(format!("cargo metadata: {error}")))?;
+        .map_err(|error| GateError(format!("cargo metadata: {error}")))?;
     let mut packages = Vec::new();
     let mut harness_targets = Vec::new();
     for package in metadata.workspace_packages() {
@@ -1919,7 +1846,7 @@ pub fn surfaces(root: &Path) -> Result<String, GateFailure> {
             .map(|target| target.src_path.as_std_path())
             .map(std::fs::canonicalize)
             .transpose()
-            .map_err(|error| GateFailure(format!("{} library target: {error}", package.name)))?;
+            .map_err(|error| GateError(format!("{} library target: {error}", package.name)))?;
         let binary = package.targets.iter().any(cargo_metadata::Target::is_bin);
         packages.push(crate::surface::Package {
             name: package.name.to_string(),
@@ -1935,7 +1862,7 @@ pub fn surfaces(root: &Path) -> Result<String, GateFailure> {
     }
     let problems = crate::surface::check(&packages, &harness_targets);
     if !problems.is_empty() {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "surfaces: crate visibility has no mechanically checked meaning:\n  {}",
             problems.join("\n  ")
         )));
@@ -1949,21 +1876,19 @@ pub fn surfaces(root: &Path) -> Result<String, GateFailure> {
 
 fn surface_harnesses(
     package: &cargo_metadata::Package,
-) -> Result<Vec<crate::surface::Harness>, GateFailure> {
+) -> Result<Vec<crate::surface::Harness>, GateError> {
     package
         .targets
         .iter()
         .filter(|target| target.is_bin())
         .map(|target| {
             let source = std::fs::read_to_string(target.src_path.as_std_path())
-                .map_err(|error| GateFailure(format!("{}: {error}", target.src_path)))?;
+                .map_err(|error| GateError(format!("{}: {error}", target.src_path)))?;
             let product = crate::surface::harness_product(&source, target.src_path.as_std_path())
-                .map_err(|error| {
-                    GateFailure(format!("{}: invalid Rust: {error}", target.src_path))
-                })?
+                .map_err(|error| GateError(format!("{}: invalid Rust: {error}", target.src_path)))?
                 .map(|path| {
                     std::fs::canonicalize(&path)
-                        .map_err(|error| GateFailure(format!("{}: {error}", path.display())))
+                        .map_err(|error| GateError(format!("{}: {error}", path.display())))
                 })
                 .transpose()?;
             Ok(crate::surface::Harness {
@@ -1979,64 +1904,50 @@ fn surface_harnesses(
 ///
 /// # Errors
 /// The first record that does not hold together, or every name of a record that no record has.
-pub fn adrs(root: &Path) -> Result<String, GateFailure> {
-    let directory = root.join("docs/adr");
+pub fn adrs(root: &Path) -> Result<String, GateError> {
+    let repository = crate::repository::files(root)?;
     let mut files = Vec::new();
-    for entry in WalkDir::new(&directory)
-        .min_depth(1)
-        .max_depth(1)
-        .sort_by_file_name()
-    {
-        let entry = walked(entry)?;
-        let name = relative_slash(&directory, entry.path())?;
-        if !entry.file_type().is_file() {
-            return Err(GateFailure(format!(
-                "adrs: docs/adr/{name} is not a file, and the directory holds decision records only"
+    for relative in &repository {
+        let Some(name) = relative.strip_prefix("docs/adr/") else {
+            continue;
+        };
+        if let Some((directory, _inside)) = name.split_once('/') {
+            return Err(GateError(format!(
+                "adrs: docs/adr/{directory} is not a file, and the directory holds decision records only"
             )));
         }
-        let text = std::fs::read_to_string(entry.path())
-            .map_err(|error| GateFailure(format!("{}: {error}", entry.path().display())))?;
-        files.push((name, text));
+        let text = std::fs::read_to_string(root.join(relative))
+            .map_err(|error| GateError(format!("{relative}: {error}")))?;
+        files.push((name.to_owned(), text));
     }
     let records = crate::adrs::records(&files)
-        .map_err(|error| GateFailure(format!("adrs: {}", error.coded())))?;
+        .map_err(|error| GateError(format!("adrs: {}", error.coded())))?;
     let book = root.join("docs/SUMMARY.md");
     let listed = std::fs::read_to_string(&book)
-        .map_err(|error| GateFailure(format!("{}: {error}", book.display())))?;
+        .map_err(|error| GateError(format!("{}: {error}", book.display())))?;
     crate::adrs::summary(&listed, &records)
-        .map_err(|error| GateFailure(format!("adrs: {}", error.coded())))?;
+        .map_err(|error| GateError(format!("adrs: {}", error.coded())))?;
     let mut dangling = Vec::new();
     let mut pages = 0_usize;
-    for entry in WalkDir::new(root)
-        .sort_by_file_name()
-        .into_iter()
-        .filter_entry(|entry| {
-            entry.depth() == 0
-                || !(entry.file_name().as_encoded_bytes().first() == Some(&b'.')
-                    || entry.file_name() == "target")
-        })
-    {
-        let entry = walked(entry)?;
-        let read = entry.file_type().is_file()
-            && entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension == "md" || extension == "rs");
+    for page in &repository {
+        let read = !page.starts_with('.')
+            && !page.split('/').any(|part| part.starts_with('.'))
+            && (crate::repository::extension_is(page, "md")
+                || crate::repository::extension_is(page, "rs"));
         if !read {
             continue;
         }
         pages = pages.saturating_add(1);
-        let page = relative_slash(root, entry.path())?;
-        let text = std::fs::read_to_string(entry.path())
-            .map_err(|error| GateFailure(format!("{page}: {error}")))?;
+        let text = std::fs::read_to_string(root.join(page))
+            .map_err(|error| GateError(format!("{page}: {error}")))?;
         dangling.extend(
-            crate::adrs::dangling(&page, &text, &records)
+            crate::adrs::dangling(page, &text, &records)
                 .iter()
                 .map(crate::error::Coded::coded),
         );
     }
     if !dangling.is_empty() {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "adrs: these name a decision record that is not there:\n  {}",
             dangling.join("\n  ")
         )));
@@ -2066,14 +1977,14 @@ pub const REDIRECTING_GIT: [&str; 10] = [
 ///
 /// # Errors
 /// The detector misses planted build output or refuses a lookalike, git cannot list what it tracks, or something under a `target` directory is tracked.
-pub fn tracked(root: &Path) -> Result<String, GateFailure> {
+pub fn tracked(root: &Path) -> Result<String, GateError> {
     let planted: Vec<&str> = PLANTED_BUILT
         .iter()
         .chain(PLANTED_SOURCE.iter())
         .copied()
         .collect();
     if built(&planted) != PLANTED_BUILT {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "tracked: the detector does not find exactly the planted build output among {}, so \
              its silence about the tree would not be evidence",
             planted.join(", ")
@@ -2086,18 +1997,18 @@ pub fn tracked(root: &Path) -> Result<String, GateFailure> {
     }
     let listed = git
         .output()
-        .map_err(|error| GateFailure(format!("tracked: git ls-files could not run: {error}")))?;
+        .map_err(|error| GateError(format!("tracked: git ls-files could not run: {error}")))?;
     if !listed.status.success() {
         let said = match String::from_utf8(listed.stderr) {
             Ok(said) => said,
             Err(_not_text) => "its diagnostics are not text".to_owned(),
         };
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "tracked: git ls-files failed, so what the repository commits is unknown: {said}"
         )));
     }
     let listed = String::from_utf8(listed.stdout).map_err(|_not_text| {
-        GateFailure(
+        GateError(
             "tracked: git ls-files printed a path that is not UTF-8, which no path this \
              repository commits is"
                 .to_owned(),
@@ -2115,7 +2026,7 @@ pub fn tracked(root: &Path) -> Result<String, GateFailure> {
             .iter()
             .map(|(directory, count)| format!("{directory}/ ({count})"))
             .collect();
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "tracked: {} committed path(s) lie under a `target` directory, which a build wrote \
              and the next build writes again: {}. `git rm -r --cached` on each directory takes \
              them out of the index, and `.gitignore` keeps every `target/` out after that",
@@ -2178,26 +2089,26 @@ const PLANTED_UNKNOWN_TARGET: &str = "xtask/test/no-such-target-anywhere";
 ///
 /// # Errors
 /// The configuration cannot be read, cargo's metadata cannot be read, the check misses a planted name, or a name is no target.
-pub fn skipped(root: &Path) -> Result<String, GateFailure> {
+pub fn skipped(root: &Path) -> Result<String, GateError> {
     let path = root.join(".rust-mutants.toml");
     let text = std::fs::read_to_string(&path)
-        .map_err(|error| GateFailure(format!("skipped: {}: {error}", path.display())))?;
+        .map_err(|error| GateError(format!("skipped: {}: {error}", path.display())))?;
     let config = text
         .parse::<toml::Table>()
-        .map_err(|error| GateFailure(format!("skipped: {}: {error}", path.display())))?;
+        .map_err(|error| GateError(format!("skipped: {}: {error}", path.display())))?;
     let named = skip_targets_of(&config, &path)?;
     let metadata = cargo_metadata::MetadataCommand::new()
         .manifest_path(root.join("Cargo.toml"))
         .no_deps()
         .exec()
-        .map_err(|error| GateFailure(format!("skipped: cargo metadata: {error}")))?;
+        .map_err(|error| GateError(format!("skipped: cargo metadata: {error}")))?;
     let declared = declared_targets(&metadata);
     let every_package_named = metadata.workspace_packages().iter().all(|package| {
         let prefix = format!("{}/", package.name);
         declared.iter().any(|one| one.starts_with(&prefix))
     });
     if declared.contains(PLANTED_UNKNOWN_TARGET) || !every_package_named {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "skipped: the targets derived from cargo's metadata do not refuse \
              {PLANTED_UNKNOWN_TARGET} and name a target of every member, so their silence about \
              the configuration would not be evidence"
@@ -2217,7 +2128,7 @@ pub fn skipped(root: &Path) -> Result<String, GateFailure> {
             .filter(|one| one.starts_with(&format!("{package}/")))
             .map(String::as_str)
             .collect();
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "skipped: {} names {}, which no member of this workspace declares; a run refuses it \
              with RM5004 before it measures anything. {package} declares: {}",
             path.display(),
@@ -2237,8 +2148,8 @@ pub fn skipped(root: &Path) -> Result<String, GateFailure> {
 }
 
 /// The strings `[execution] skip_targets` holds, or none where the table or the key is absent.
-fn skip_targets_of(config: &toml::Table, path: &Path) -> Result<Vec<String>, GateFailure> {
-    let refused = |what: String| GateFailure(format!("skipped: {}: {what}", path.display()));
+fn skip_targets_of(config: &toml::Table, path: &Path) -> Result<Vec<String>, GateError> {
+    let refused = |what: String| GateError(format!("skipped: {}: {what}", path.display()));
     let Some(execution) = config.get("execution") else {
         return Ok(Vec::new());
     };
@@ -2295,11 +2206,50 @@ fn declared_targets(metadata: &cargo_metadata::Metadata) -> BTreeSet<String> {
     declared
 }
 
+/// Every critical decision has a row saying what holds it at every layer, each cell naming an item the tree defines, and every open layer is a hole the gaps ledger gives an owner.
+///
+/// # Errors
+/// The registry, the ledger or its ceiling cannot be read or is malformed, or they and the tree disagree.
+pub fn invariants(root: &Path) -> Result<String, GateError> {
+    let read = |relative: &str| {
+        std::fs::read_to_string(root.join(relative))
+            .map_err(|error| GateError(format!("invariants: {relative}: {error}")))
+    };
+    let coded = |error: crate::invariants::InvariantError| {
+        GateError(format!("invariants: {}", error.coded()))
+    };
+    let rows = crate::invariants::rows(&read("docs/invariants.md")?).map_err(coded)?;
+    let gaps = crate::invariants::gaps(&read("xtask/invariant_gaps.txt")?).map_err(coded)?;
+    let most = ceiling(root, "xtask/invariant_gap_ceiling.txt")?;
+    let mut defined = BTreeSet::new();
+    for path in all_sources(root)? {
+        let text = std::fs::read_to_string(&path)
+            .map_err(|error| GateError(format!("invariants: {}: {error}", path.display())))?;
+        defined.extend(crate::invariants::defined(&text));
+    }
+    let (decisions, held) =
+        crate::invariants::check(&rows, &gaps, &defined, most).map_err(|refused| {
+            GateError(format!(
+                "invariants: the registry and the tree disagree:\n  {}",
+                refused
+                    .iter()
+                    .map(crate::error::Coded::coded)
+                    .collect::<Vec<_>>()
+                    .join("\n  ")
+            ))
+        })?;
+    Ok(format!(
+        "invariants: {decisions} critical decisions, {held} layer cells each naming what the tree \
+         defines, and {} open, each owned in xtask/invariant_gaps.txt (at most {most})",
+        gaps.len()
+    ))
+}
+
 /// Every gate, in order, stopping at the first failure.
 ///
 /// # Errors
 /// Returns the first gate's failure.
-pub fn all(root: &Path) -> Result<String, GateFailure> {
+pub fn all(root: &Path) -> Result<String, GateError> {
     let mut report = String::new();
     for gate in [
         devgates,
@@ -2309,6 +2259,7 @@ pub fn all(root: &Path) -> Result<String, GateFailure> {
         release_check,
         milestones,
         adrs,
+        invariants,
         surfaces,
         reached,
         defaulted,
@@ -2533,16 +2484,11 @@ fn engine_recordings(trace: &Path) -> Result<Vec<(String, String)>, proofaudit::
         path: path.display().to_string(),
         source,
     };
-    let entries = match std::fs::read_dir(&builds) {
+    let namespaces = match crate::repository::entries(&builds) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(source) => return Err(unreadable(&builds, source)),
     };
-    let mut namespaces = Vec::new();
-    for entry in entries {
-        namespaces.push(entry.map_err(|source| unreadable(&builds, source))?.path());
-    }
-    namespaces.sort();
     namespaces
         .into_iter()
         .map(|namespace| {
@@ -2558,10 +2504,10 @@ fn engine_recordings(trace: &Path) -> Result<Vec<(String, String)>, proofaudit::
 ///
 /// # Errors
 /// A clean specimen some layer finds a violation in, which means that layer fires on anything, or the first layer that did not find a defect planted for it.
-pub fn proofaudit_sentinels(checkers: &crate::schemas::Checkers) -> Result<usize, GateFailure> {
+pub fn proofaudit_sentinels(checkers: &crate::schemas::Checkers) -> Result<usize, GateError> {
     let clean = proofaudit::sentinel::clean();
     let merged = proofaudit::sentinel::sharded_clean().map_err(|error| {
-        GateFailure(format!(
+        GateError(format!(
             "proofaudit: the clean specimen cannot be measured in shards: {error}"
         ))
     })?;
@@ -2572,7 +2518,7 @@ pub fn proofaudit_sentinels(checkers: &crate::schemas::Checkers) -> Result<usize
     for layer in proofaudit::Layer::ALL {
         let planted = proofaudit_sighted(checkers, layer, &layer.planted())?;
         found = found.checked_add(planted).ok_or_else(|| {
-            GateFailure("proofaudit: more planted defects than a count can hold".to_owned())
+            GateError("proofaudit: more planted defects than a count can hold".to_owned())
         })?;
     }
     for rule in proofaudit::merge::MergeRule::ALL {
@@ -2588,9 +2534,9 @@ pub fn proofaudit_sentinels(checkers: &crate::schemas::Checkers) -> Result<usize
 fn merge_rule_sighted(
     checkers: &crate::schemas::Checkers,
     rule: proofaudit::merge::MergeRule,
-) -> Result<(), GateFailure> {
+) -> Result<(), GateError> {
     let plant = proofaudit::sentinel::merge_plant(rule).map_err(|error| {
-        GateFailure(format!(
+        GateError(format!(
             "proofaudit: the merge rule {} has no defect planted for it: {error}",
             rule.label()
         ))
@@ -2604,7 +2550,7 @@ fn merge_rule_sighted(
     }) {
         Ok(())
     } else {
-        Err(GateFailure(format!(
+        Err(GateError(format!(
             "proofaudit: the merge rule {label} is blind. Its planted defect `{name}` drew no \
              violation of it, so a merge it is silent about says nothing. Nothing this gate would \
              have said is believed until the planted defect is found again.\n{audit}",
@@ -2621,10 +2567,10 @@ fn merge_rule_sighted(
 fn silent(
     checkers: &crate::schemas::Checkers,
     specimen: &proofaudit::sentinel::Perturbation,
-) -> Result<(), GateFailure> {
+) -> Result<(), GateError> {
     let audit = proofaudit_specimen(checkers, specimen)?;
     if audit.violations() > 0 {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "proofaudit: the clean specimen `{}` draws {} violation(s), so a layer that fires on \
              it fires on anything and its violations about a real run say nothing. Nothing this \
              gate would have said is believed until the clean specimen is silent again.\n{audit}",
@@ -2643,9 +2589,9 @@ pub fn proofaudit_sighted(
     checkers: &crate::schemas::Checkers,
     layer: proofaudit::Layer,
     planted: &[proofaudit::sentinel::Perturbation],
-) -> Result<usize, GateFailure> {
+) -> Result<usize, GateError> {
     if planted.is_empty() {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "proofaudit: the {} layer is blind. Nothing is planted for it, so its silence \
              about a real run says nothing. Nothing this gate would have said is believed \
              until a defect is planted for it and found.",
@@ -2655,7 +2601,7 @@ pub fn proofaudit_sighted(
     for perturbation in planted {
         let audit = proofaudit_specimen(checkers, perturbation)?;
         if !audit.violated(layer) {
-            return Err(GateFailure(format!(
+            return Err(GateError(format!(
                 "proofaudit: the {label} layer is blind. Its planted defect `{name}` \
                  (`Layer::planted` in xtask/src/proofaudit/sentinel.rs) drew no {label} \
                  violation, so a run it is silent about says nothing about whether the run is \
@@ -2673,18 +2619,18 @@ pub fn proofaudit_sighted(
 fn proofaudit_specimen(
     checkers: &crate::schemas::Checkers,
     specimen: &proofaudit::sentinel::Perturbation,
-) -> Result<proofaudit::Audit, GateFailure> {
+) -> Result<proofaudit::Audit, GateError> {
     let name = specimen.name;
     let laid = specimen
         .lay()
-        .map_err(|error| GateFailure(format!("proofaudit: specimen `{name}`: {error}")))?;
+        .map_err(|error| GateError(format!("proofaudit: specimen `{name}`: {error}")))?;
     let shards: Vec<PathBuf> = laid.shards().into_iter().map(Path::to_path_buf).collect();
     if shards.is_empty() {
         proofaudit(checkers, laid.run(), laid.trace())
     } else {
         proofaudit_merged(checkers, laid.run(), &shards, laid.traces())
     }
-    .map_err(|error| GateFailure(format!("proofaudit: specimen `{name}`: {error}")))
+    .map_err(|error| GateError(format!("proofaudit: specimen `{name}`: {error}")))
 }
 
 /// What one engine run is audited against: its own directory, and everything a layer needs beyond it.
@@ -2798,11 +2744,11 @@ pub fn engine_audit(
 ///
 /// # Errors
 /// A clean specimen some layer finds a violation in, which means that layer fires on anything, or the first layer that did not find a defect planted for it.
-pub fn engine_audit_sentinels(checkers: &crate::schemas::Checkers) -> Result<usize, GateFailure> {
+pub fn engine_audit_sentinels(checkers: &crate::schemas::Checkers) -> Result<usize, GateError> {
     let clean = engineaudit::sentinel::clean();
     let audit = engine_audit_specimen(checkers, &clean)?;
     if audit.violations() > 0 {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "engine-audit: the clean specimen draws {} violation(s), so a layer that fires on it \
              fires on anything and its violations about a real run say nothing. Nothing this \
              gate would have said is believed until the clean specimen is silent again.\n{audit}",
@@ -2813,7 +2759,7 @@ pub fn engine_audit_sentinels(checkers: &crate::schemas::Checkers) -> Result<usi
     for layer in engineaudit::Layer::ALL {
         let planted = engine_audit_sighted(checkers, layer, &layer.planted())?;
         found = found.checked_add(planted).ok_or_else(|| {
-            GateFailure("engine-audit: more planted defects than a count can hold".to_owned())
+            GateError("engine-audit: more planted defects than a count can hold".to_owned())
         })?;
     }
     Ok(found)
@@ -2827,9 +2773,9 @@ pub fn engine_audit_sighted(
     checkers: &crate::schemas::Checkers,
     layer: engineaudit::Layer,
     planted: &[engineaudit::sentinel::Perturbation],
-) -> Result<usize, GateFailure> {
+) -> Result<usize, GateError> {
     if planted.is_empty() {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "engine-audit: the {} layer is blind. Nothing is planted for it, so its silence \
              about a real run says nothing. Nothing this gate would have said is believed \
              until a defect is planted for it and found.",
@@ -2839,7 +2785,7 @@ pub fn engine_audit_sighted(
     for perturbation in planted {
         let audit = engine_audit_specimen(checkers, perturbation)?;
         if !audit.violated(layer) {
-            return Err(GateFailure(format!(
+            return Err(GateError(format!(
                 "engine-audit: the {label} layer is blind. Its planted defect `{name}` \
                  (`Layer::planted` in xtask/src/engineaudit/sentinel.rs) drew no {label} \
                  violation, so a run it is silent about says nothing about whether the run is \
@@ -2857,11 +2803,11 @@ pub fn engine_audit_sighted(
 fn engine_audit_specimen(
     checkers: &crate::schemas::Checkers,
     specimen: &engineaudit::sentinel::Perturbation,
-) -> Result<engineaudit::Audit, GateFailure> {
+) -> Result<engineaudit::Audit, GateError> {
     let name = specimen.name;
     let laid = specimen
         .lay()
-        .map_err(|error| GateFailure(format!("engine-audit: specimen `{name}`: {error}")))?;
+        .map_err(|error| GateError(format!("engine-audit: specimen `{name}`: {error}")))?;
     engine_audit(
         checkers,
         &EngineRun {
@@ -2873,7 +2819,7 @@ fn engine_audit_specimen(
             root: laid.root(),
         },
     )
-    .map_err(|error| GateFailure(format!("engine-audit: specimen `{name}`: {error}")))
+    .map_err(|error| GateError(format!("engine-audit: specimen `{name}`: {error}")))
 }
 
 fn read_engine_document(path: &Path) -> Result<(String, String), engineaudit::AuditError> {
@@ -2912,7 +2858,7 @@ fn read_optional_engine_document(
 }
 
 fn read_probe_logs(path: &Path) -> Result<Vec<String>, engineaudit::AuditError> {
-    let entries = match std::fs::read_dir(path) {
+    let entries = match crate::repository::entries(path) {
         Ok(entries) => entries,
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
             match std::fs::symlink_metadata(path) {
@@ -2941,21 +2887,26 @@ fn read_probe_logs(path: &Path) -> Result<Vec<String>, engineaudit::AuditError> 
         }
     };
     entries
+        .into_iter()
         .map(|entry| {
-            let entry = entry.map_err(|source| engineaudit::AuditError::Unreadable {
-                path: path.display().to_string(),
-                source,
-            })?;
-            entry
-                .file_name()
-                .into_string()
-                .map_err(|_name| engineaudit::AuditError::Unreadable {
-                    path: entry.path().display().to_string(),
+            let Some(named) = entry.file_name() else {
+                return Err(engineaudit::AuditError::Unreadable {
+                    path: entry.display().to_string(),
+                    source: std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "a probe log path ends in no name",
+                    ),
+                });
+            };
+            named.to_os_string().into_string().map_err(|_name| {
+                engineaudit::AuditError::Unreadable {
+                    path: entry.display().to_string(),
                     source: std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
                         "probe log name is not UTF-8",
                     ),
-                })
+                }
+            })
         })
         .collect()
 }
@@ -2964,31 +2915,31 @@ fn read_probe_logs(path: &Path) -> Result<Vec<String>, engineaudit::AuditError> 
 ///
 /// # Errors
 /// A `cargo metadata` that could not be run or read, or a file that could not be written.
-pub fn sbom(root: &Path, output: Option<&Path>) -> Result<String, GateFailure> {
+pub fn sbom(root: &Path, output: Option<&Path>) -> Result<String, GateError> {
     let asked = std::process::Command::new("cargo")
         .args(["metadata", "--format-version", "1", "--locked"])
         .current_dir(root)
         .output()
-        .map_err(|error| GateFailure(format!("cargo metadata: {error}")))?;
+        .map_err(|error| GateError(format!("cargo metadata: {error}")))?;
     if !asked.status.success() {
         let stderr = std::str::from_utf8(&asked.stderr)
-            .map_err(|error| GateFailure(format!("cargo metadata stderr is not UTF-8: {error}")))?;
-        return Err(GateFailure(format!("cargo metadata: {}", stderr.trim())));
+            .map_err(|error| GateError(format!("cargo metadata stderr is not UTF-8: {error}")))?;
+        return Err(GateError(format!("cargo metadata: {}", stderr.trim())));
     }
     let manifest = std::fs::read_to_string(root.join("Cargo.toml"))
-        .map_err(|error| GateFailure(format!("Cargo.toml: {error}")))?;
+        .map_err(|error| GateError(format!("Cargo.toml: {error}")))?;
     let version = release::workspace_version(&manifest)
-        .ok_or_else(|| GateFailure("Cargo.toml has no [workspace.package].version".to_owned()))?;
+        .ok_or_else(|| GateError("Cargo.toml has no [workspace.package].version".to_owned()))?;
     let stdout = std::str::from_utf8(&asked.stdout)
-        .map_err(|error| GateFailure(format!("cargo metadata stdout is not UTF-8: {error}")))?;
-    let bom = crate::sbom::of(stdout, ("njutest", &version))
-        .map_err(|error| GateFailure(error.coded()))?;
+        .map_err(|error| GateError(format!("cargo metadata stdout is not UTF-8: {error}")))?;
+    let bom =
+        crate::sbom::of(stdout, ("njutest", &version)).map_err(|error| GateError(error.coded()))?;
     let document = serde_json::to_string_pretty(&bom)
-        .map_err(|error| GateFailure(format!("the bill of materials: {error}")))?;
+        .map_err(|error| GateError(format!("the bill of materials: {error}")))?;
     match output {
         Some(path) => {
             std::fs::write(path, format!("{document}\n"))
-                .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+                .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
             Ok(format!(
                 "sbom: {} components of {} written to {}",
                 bom.components.len(),
@@ -3004,17 +2955,17 @@ pub fn sbom(root: &Path, output: Option<&Path>) -> Result<String, GateFailure> {
 ///
 /// # Errors
 /// A document that could not be read, or is not JSON.
-pub fn report_diff(before: &Path, after: &Path) -> Result<String, GateFailure> {
-    let read = |path: &Path| -> Result<String, GateFailure> {
+pub fn report_diff(before: &Path, after: &Path) -> Result<String, GateError> {
+    let read = |path: &Path| -> Result<String, GateError> {
         std::fs::read_to_string(path)
-            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))
+            .map_err(|error| GateError(format!("{}: {error}", path.display())))
     };
     let (left, right) = (read(before)?, read(after)?);
     let changes = reportdiff::compare(
         (&before.display().to_string(), &left),
         (&after.display().to_string(), &right),
     )
-    .map_err(|error| GateFailure(error.coded()))?;
+    .map_err(|error| GateError(error.coded()))?;
 
     if changes.is_empty() {
         return Ok("reportdiff: the two reports claim the same thing".to_owned());
@@ -3163,12 +3114,12 @@ fn mentions(text: &str, name: &str) -> usize {
 ///
 /// # Errors
 /// Refuses a crate that declares nothing, and a declaration this gate does not know.
-fn declared_surfaces(root: &Path) -> Result<Vec<(String, Surface, PathBuf)>, GateFailure> {
+fn declared_surfaces(root: &Path) -> Result<Vec<(String, Surface, PathBuf)>, GateError> {
     let metadata = cargo_metadata::MetadataCommand::new()
         .manifest_path(root.join("Cargo.toml"))
         .no_deps()
         .exec()
-        .map_err(|error| GateFailure(format!("cargo metadata: {error}")))?;
+        .map_err(|error| GateError(format!("cargo metadata: {error}")))?;
     let mut declared = Vec::new();
     for package in metadata.workspace_packages() {
         let named = package
@@ -3177,14 +3128,14 @@ fn declared_surfaces(root: &Path) -> Result<Vec<(String, Surface, PathBuf)>, Gat
             .and_then(|value| value.get("surface"))
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| {
-                GateFailure(format!(
+                GateError(format!(
                     "{}: no [package.metadata.njutest] surface, so this gate cannot say whether a \
                      function only a test reaches is a finding",
                     package.name
                 ))
             })?;
         let surface = Surface::named(named).ok_or_else(|| {
-            GateFailure(format!(
+            GateError(format!(
                 "{}: surface {named:?} is not one this gate knows",
                 package.name
             ))
@@ -3192,7 +3143,7 @@ fn declared_surfaces(root: &Path) -> Result<Vec<(String, Surface, PathBuf)>, Gat
         let directory = package
             .manifest_path
             .parent()
-            .ok_or_else(|| GateFailure(format!("{}: manifest has no directory", package.name)))?;
+            .ok_or_else(|| GateError(format!("{}: manifest has no directory", package.name)))?;
         declared.push((
             package.name.to_string(),
             surface,
@@ -3223,15 +3174,15 @@ pub fn only_a_test_reaches(declaring: &str, ships: &str, tested: &str) -> Vec<St
 ///
 /// # Errors
 /// Returns every such function, and refuses a surface nobody declared.
-pub fn reached(root: &Path) -> Result<String, GateFailure> {
+pub fn reached(root: &Path) -> Result<String, GateError> {
     let declared = declared_surfaces(root)?;
 
     let mut ships = String::new();
     let mut tested = String::new();
     for (_name, surface, directory) in &declared {
-        for file in rust_files_under(directory)? {
+        for file in rust_files_under(root, directory)? {
             let text = std::fs::read_to_string(&file)
-                .map_err(|error| GateFailure(format!("{}: {error}", file.display())))?;
+                .map_err(|error| GateError(format!("{}: {error}", file.display())))?;
             let under_src = file.starts_with(directory.join("src"));
             tested.push_str(&text);
             tested.push('\n');
@@ -3247,9 +3198,9 @@ pub fn reached(root: &Path) -> Result<String, GateFailure> {
         if *surface != Surface::Incidental {
             continue;
         }
-        for file in rust_files_under(&directory.join("src"))? {
+        for file in rust_files_under(root, &directory.join("src"))? {
             let text = std::fs::read_to_string(&file)
-                .map_err(|error| GateFailure(format!("{}: {error}", file.display())))?;
+                .map_err(|error| GateError(format!("{}: {error}", file.display())))?;
             let shipped = without_test_items(&text);
             for function in only_a_test_reaches(&shipped, &ships, &tested) {
                 only_tests.push(format!("{name}::{function}"));
@@ -3261,20 +3212,20 @@ pub fn reached(root: &Path) -> Result<String, GateFailure> {
 
     let held = counted(root, "xtask/reached_ceiling.txt")?;
     let Some(written) = held.first() else {
-        return Err(GateFailure(
+        return Err(GateError(
             "xtask/reached_ceiling.txt holds one number and holds nothing".to_owned(),
         ));
     };
     let ceiling = match written.parse::<usize>() {
         Ok(ceiling) => ceiling,
         Err(why) => {
-            return Err(GateFailure(format!(
+            return Err(GateError(format!(
                 "xtask/reached_ceiling.txt holds one number and holds {written:?}: {why}"
             )));
         }
     };
     if only_tests.len() > ceiling {
-        return Err(GateFailure(format!(
+        return Err(GateError(format!(
             "{} public function(s) of an incidental surface are reached by a test and by nothing \
              that ships, against a ceiling of {ceiling}. A test of one of these is evidence about \
              a function nothing uses. Delete it, or call it, or raise the ceiling in a commit that \
@@ -3294,38 +3245,38 @@ pub fn reached(root: &Path) -> Result<String, GateFailure> {
 ///
 /// # Errors
 /// Every file above or below its ceiling, and a source or ceiling that does not read.
-pub fn defaulted(root: &Path) -> Result<String, GateFailure> {
+pub fn defaulted(root: &Path) -> Result<String, GateError> {
     let mut counted = BTreeMap::new();
-    for file in rust_files_under(&root.join("xtask/src"))? {
+    for file in rust_files_under(root, &root.join("xtask/src"))? {
         let relative = file
             .strip_prefix(root)
-            .map_err(|error| GateFailure(format!("{}: {error}", file.display())))?
+            .map_err(|error| GateError(format!("{}: {error}", file.display())))?
             .components()
             .map(|part| {
                 part.as_os_str().to_str().ok_or_else(|| {
-                    GateFailure(format!("{}: a path that is not UTF-8", file.display()))
+                    GateError(format!("{}: a path that is not UTF-8", file.display()))
                 })
             })
-            .collect::<Result<Vec<&str>, GateFailure>>()?
+            .collect::<Result<Vec<&str>, GateError>>()?
             .join("/");
         if !crate::defaulted::reads_for_an_audit(&relative) {
             continue;
         }
         let text = std::fs::read_to_string(&file)
-            .map_err(|error| GateFailure(format!("{}: {error}", file.display())))?;
+            .map_err(|error| GateError(format!("{}: {error}", file.display())))?;
         let count = crate::defaulted::defaulted_in(&text)
-            .map_err(|error| GateFailure(format!("{relative}: {error}")))?;
+            .map_err(|error| GateError(format!("{relative}: {error}")))?;
         counted.insert(relative, count);
     }
     let ceiling = root.join("xtask/defaulted_ceiling.txt");
     let written = std::fs::read_to_string(&ceiling)
-        .map_err(|error| GateFailure(format!("{}: {error}", ceiling.display())))?;
+        .map_err(|error| GateError(format!("{}: {error}", ceiling.display())))?;
     match crate::defaulted::held(&counted, &written) {
         Ok(total) => Ok(format!(
             "defaulted: {total} value(s) supplied where an audit reader's input gave none, each \
              file at its ceiling"
         )),
-        Err(refused) => Err(GateFailure(format!(
+        Err(refused) => Err(GateError(format!(
             "defaulted: an audit reader holds a record to a schema and then answers for an absent \
              field anyway:\n  {}",
             refused.join("\n  ")
@@ -3334,17 +3285,10 @@ pub fn defaulted(root: &Path) -> Result<String, GateFailure> {
 }
 
 /// Every `.rs` file under `directory`, skipping anything built.
-fn rust_files_under(directory: &Path) -> Result<Vec<PathBuf>, GateFailure> {
-    let mut files = Vec::new();
-    for entry in WalkDir::new(directory).sort_by_file_name() {
-        let entry = walked(entry)?;
-        let path = entry.path();
-        if entry.file_type().is_file()
-            && path.extension().is_some_and(|extension| extension == "rs")
-            && !path.components().any(|part| part.as_os_str() == "target")
-        {
-            files.push(path.to_path_buf());
-        }
-    }
-    Ok(files)
+fn rust_files_under(root: &Path, directory: &Path) -> Result<Vec<PathBuf>, GateError> {
+    let base = relative_slash(root, directory)?;
+    Ok(crate::repository::under(root, &base)?
+        .into_iter()
+        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+        .collect())
 }

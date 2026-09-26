@@ -42,6 +42,7 @@ impl Tally {
             within: vec![
                 ("not run", "unreached", counted.unreached.count()),
                 ("not run", "discharged", counted.discharged.count()),
+                ("not run", "declined", counted.declined.count()),
                 ("survived", "expected", counted.expected.count()),
             ],
             beside: vec![

@@ -18,10 +18,10 @@ include!("support/uncoded.rs");
 
 /// A gate refusal, or a report whose contract was not the one under test.
 #[derive(Debug, thiserror::Error)]
-enum TestFailure {
+enum TestError {
     /// A repository gate refused the tree.
     #[error(transparent)]
-    Gate(#[from] gates::GateFailure),
+    Gate(#[from] gates::GateError),
     /// A path returned by the production source walker escaped its root.
     #[error("{} is outside {}", path.display(), root.display())]
     OutsideRoot {
@@ -38,11 +38,11 @@ enum TestFailure {
     Contract(String),
 }
 
-fn require(condition: bool, message: impl Into<String>) -> Result<(), TestFailure> {
+fn require(condition: bool, message: impl Into<String>) -> Result<(), TestError> {
     if condition {
         Ok(())
     } else {
-        Err(TestFailure::Contract(message.into()))
+        Err(TestError::Contract(message.into()))
     }
 }
 
@@ -57,60 +57,60 @@ fn git(root: &Path, arguments: &[&str]) -> std::process::Output {
 }
 
 #[test]
-fn the_seam_ledger_agrees_with_the_tree() -> Result<(), TestFailure> {
+fn the_seam_ledger_agrees_with_the_tree() -> Result<(), TestError> {
     let report = gates::devgates(&gates::workspace_root())?;
     require(report.starts_with("devgates: "), report)
 }
 
 #[test]
-fn every_internal_dependency_points_in_the_allowed_direction() -> Result<(), TestFailure> {
+fn every_internal_dependency_points_in_the_allowed_direction() -> Result<(), TestError> {
     let report = gates::deps(&gates::workspace_root())?;
     require(report.starts_with("deps: "), report)
 }
 
 #[test]
-fn every_fixture_follows_the_conventions() -> Result<(), TestFailure> {
+fn every_fixture_follows_the_conventions() -> Result<(), TestError> {
     let report = gates::fixtures(&gates::workspace_root())?;
     require(report.starts_with("fixtures: "), report)
 }
 
 #[test]
-fn the_release_versions_agree() -> Result<(), TestFailure> {
+fn the_release_versions_agree() -> Result<(), TestError> {
     let report = gates::release_check(&gates::workspace_root())?;
     require(report.starts_with("release-check: "), report)
 }
 
 #[test]
-fn every_milestone_reference_resolves_to_the_roadmap() -> Result<(), TestFailure> {
+fn every_milestone_reference_resolves_to_the_roadmap() -> Result<(), TestError> {
     let report = gates::milestones(&gates::workspace_root())?;
     require(report.starts_with("milestones: "), report)
 }
 
 #[test]
-fn every_crate_surface_has_a_compiler_checked_meaning() -> Result<(), TestFailure> {
+fn every_crate_surface_has_a_compiler_checked_meaning() -> Result<(), TestError> {
     let report = gates::surfaces(&gates::workspace_root())?;
     require(report.starts_with("surfaces: "), report)
 }
 
 #[test]
-fn production_sources_exclude_test_support() -> Result<(), TestFailure> {
+fn production_sources_exclude_test_support() -> Result<(), TestError> {
     let root = gates::workspace_root();
     let files: Vec<String> = gates::production_sources(&root)?
         .iter()
         .map(|path| {
             let relative = path
                 .strip_prefix(&root)
-                .map_err(|source| TestFailure::OutsideRoot {
+                .map_err(|source| TestError::OutsideRoot {
                     path: path.clone(),
                     root: root.clone(),
                     source,
                 })?;
             let relative = relative
                 .to_str()
-                .ok_or_else(|| TestFailure::NonUtf8Path { path: path.clone() })?;
+                .ok_or_else(|| TestError::NonUtf8Path { path: path.clone() })?;
             Ok(relative.replace('\\', "/"))
         })
-        .collect::<Result<_, TestFailure>>()?;
+        .collect::<Result<_, TestError>>()?;
     require(
         files.iter().any(|f| f == "crates/rust-mutants/src/lib.rs"),
         format!("missing production library from {files:?}"),

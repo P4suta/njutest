@@ -186,7 +186,7 @@ fn field_length(field: &'static str, bytes: usize) -> Result<u32, IdentityError>
 }
 
 /// One exchange, as the recording writes it.
-fn exchange(record: &Value) -> Result<Exchange, crate::route::ReadCause> {
+fn exchange(record: &Value) -> Result<Exchange, crate::route::ReadCauseError> {
     use crate::route::required;
     let read = required(record, "read", Some)?;
     Ok(Exchange {
@@ -203,7 +203,7 @@ fn exchange(record: &Value) -> Result<Exchange, crate::route::ReadCause> {
 }
 
 /// One execution of a fault, as the recording writes it.
-fn exec(record: &Value) -> Result<Exec, crate::route::ReadCause> {
+fn exec(record: &Value) -> Result<Exec, crate::route::ReadCauseError> {
     use crate::route::required;
     let answer = required(record, "answer", Some)?;
     Ok(Exec {

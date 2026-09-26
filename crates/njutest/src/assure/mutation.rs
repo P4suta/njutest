@@ -791,11 +791,7 @@ fn establish(
             disposition
         } else {
             let (established, asked, ran) = judge(judging, mutant, route.clone())?;
-            match keep(options, mutant.id.as_str(), (&route, &asked), &established)? {
-                Kept::Written => {}
-                Kept::NotKept(_costs_the_next_run_its_time_and_this_one_no_verdict) => {}
-            }
-            carry_answer(judging, mutant, &established, &ran)?;
+            left_for_later(judging, mutant, (&route, &asked, &ran), &established)?;
             routing = Some(crate::report::Routing::of(&route, asked));
             established
         }
@@ -1100,6 +1096,25 @@ fn carried(
     })
 }
 
+/// Keeps what this run established about `mutant` for a later run of this tree, and carries it for a later run of another, wherever either may inherit it.
+fn left_for_later(
+    judging: &Judging<'_>,
+    mutant: &Mutant,
+    (route, asked, ran): (&Route, &[crate::report::Answered], &[MutantResult]),
+    established: &Disposition,
+) -> Result<(), crate::error::RunnerError> {
+    match keep(
+        judging.options,
+        mutant.id.as_str(),
+        (route, asked, ran),
+        established,
+    )? {
+        Kept::Written => {}
+        Kept::NotKept(_costs_the_next_run_its_time_and_this_one_no_verdict) => {}
+    }
+    carry_answer(judging, mutant, established, ran)
+}
+
 /// Files what this run established about `mutant` under its locus, with every execution in `ran` it rests on, so a later tree that differs only where none of them went can carry it (ADR 0041).
 /// Only a kill or a survival of a mutation, established in full by a run that carries answers and was not cancelled, is filed.
 ///
@@ -1247,11 +1262,54 @@ pub enum NotKept {
     },
     /// A survival that reached no target at all, which says nothing a later run could check.
     NothingReached,
+    /// A test in an execution the answer rests on declined to measure, so the answer is this machine's and not the tree's (ADR 0043).
+    Declined,
     /// The disposition is not one a later run may inherit.
     NotAVerdict {
         /// What this run concluded.
         disposition: &'static str,
     },
+}
+
+/// The record of a kill by the target `by`, with every target asked before it, or why none may be kept.
+fn killed_record(
+    evidence: &Evidence,
+    by: &str,
+    asked: &[crate::report::Answered],
+) -> Result<store::Outcome, NotKept> {
+    let Some(target) = evidence.identity(by) else {
+        return Err(NotKept::TargetUnknown {
+            target: by.to_owned(),
+        });
+    };
+    let Some(key) = evidence.standing.passing.get(target) else {
+        return Err(NotKept::NotPassing {
+            target: target.to_owned(),
+        });
+    };
+    let mut before = Vec::new();
+    for answer in asked.iter().take_while(|answer| answer.target != by) {
+        let Some(identity) = evidence.identity(&answer.target) else {
+            return Err(NotKept::TargetUnknown {
+                target: answer.target.clone(),
+            });
+        };
+        let Some(key) = evidence.standing.passing.get(identity) else {
+            return Err(NotKept::NotPassing {
+                target: identity.to_owned(),
+            });
+        };
+        before.push(store::Answer {
+            target: identity.to_owned(),
+            key: key.clone(),
+            outcome: answer.outcome,
+        });
+    }
+    Ok(store::Outcome::Killed {
+        target: target.to_owned(),
+        key: key.clone(),
+        before,
+    })
 }
 
 /// Records what this run established for a later run whose targets retain the same behaviour keys.
@@ -1264,12 +1322,15 @@ pub enum NotKept {
 pub fn keep(
     options: &MutationOptions,
     mutant: &str,
-    (route, asked): (&Route, &[crate::report::Answered]),
+    (route, asked, ran): (&Route, &[crate::report::Answered], &[MutantResult]),
     disposition: &Disposition,
 ) -> Result<Kept, store::StoreError> {
     let Some(evidence) = options.evidence.as_ref() else {
         return Ok(Kept::NotKept(NotKept::NoStore));
     };
+    if !rust_mutants::decline::storable(ran) {
+        return Ok(Kept::NotKept(NotKept::Declined));
+    }
     let mutant = rust_mutants::id::HexDigest::try_from(mutant).map_err(|error| {
         store::StoreError::Corrupt {
             path: evidence.root.clone(),
@@ -1277,39 +1338,10 @@ pub fn keep(
         }
     })?;
     let outcome = match disposition {
-        Disposition::Killed { by } => {
-            let Some(target) = evidence.identity(by) else {
-                return Ok(Kept::NotKept(NotKept::TargetUnknown { target: by.clone() }));
-            };
-            let Some(key) = evidence.standing.passing.get(target) else {
-                return Ok(Kept::NotKept(NotKept::NotPassing {
-                    target: target.to_owned(),
-                }));
-            };
-            let mut before = Vec::new();
-            for answer in asked.iter().take_while(|answer| answer.target != *by) {
-                let Some(identity) = evidence.identity(&answer.target) else {
-                    return Ok(Kept::NotKept(NotKept::TargetUnknown {
-                        target: answer.target.clone(),
-                    }));
-                };
-                let Some(key) = evidence.standing.passing.get(identity) else {
-                    return Ok(Kept::NotKept(NotKept::NotPassing {
-                        target: identity.to_owned(),
-                    }));
-                };
-                before.push(store::Answer {
-                    target: identity.to_owned(),
-                    key: key.clone(),
-                    outcome: answer.outcome,
-                });
-            }
-            store::Outcome::Killed {
-                target: target.to_owned(),
-                key: key.clone(),
-                before,
-            }
-        }
+        Disposition::Killed { by } => match killed_record(evidence, by, asked) {
+            Ok(outcome) => outcome,
+            Err(not_kept) => return Ok(Kept::NotKept(not_kept)),
+        },
         Disposition::Survived { .. } => {
             let mut targets = BTreeMap::new();
             let named = match answered(route, evidence) {
@@ -1826,9 +1858,23 @@ fn fact_of(request: Request, measured: Option<&Measured>, result: &MutantResult)
     );
     match &result.conclusion {
         MutantConclusion::Survived => TargetFact::Survived,
-        MutantConclusion::Killed => TargetFact::Killed {
+        MutantConclusion::Killed | MutantConclusion::DeclinedUnderTheMutant { .. } => {
+            TargetFact::Killed {
+                on: name,
+                retry: narrowed(request, measured, &result.target),
+            }
+        }
+        MutantConclusion::Declined { tests } => TargetFact::Errored {
             on: name,
-            retry: narrowed(request, measured, &result.target),
+            detail: format!(
+                "every test that reached it declined to measure on this machine, as it did with \
+                 nothing active, so nothing here says whether a test would notice it: {}",
+                tests
+                    .iter()
+                    .map(|one| format!("{} ({})", one.test, one.why))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         },
         MutantConclusion::Waited => TargetFact::Waited {
             on: name,

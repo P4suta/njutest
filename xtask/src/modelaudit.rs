@@ -75,7 +75,7 @@ pub struct AttemptInput<'a> {
 
 /// Why retained model evidence does not independently establish its claim.
 #[derive(Debug, thiserror::Error)]
-pub enum Failure {
+pub enum ModelAuditError {
     /// The report-side evidence shape is not exact.
     #[error("the report-side model evidence is not the closed verified-v1 shape: {0}")]
     Report(serde_json::Error),
@@ -101,7 +101,7 @@ pub enum Failure {
     Decision(&'static str),
 }
 
-impl crate::error::Coded for Failure {
+impl crate::error::Coded for ModelAuditError {
     fn code(&self) -> crate::error::XtCode {
         match self {
             Self::Report { .. } | Self::Evidence { .. } => crate::error::XtCode::ModelReport,
@@ -316,22 +316,22 @@ enum Expected {
 ///
 /// # Errors
 /// Returns a typed refusal for every missing or contradictory fact.
-pub fn verify(input: Input<'_>) -> Result<(), Failure> {
+pub fn verify(input: Input<'_>) -> Result<(), ModelAuditError> {
     let evidence: Evidence =
-        serde_json::from_value(input.evidence.clone()).map_err(Failure::Report)?;
+        serde_json::from_value(input.evidence.clone()).map_err(ModelAuditError::Report)?;
     validate_evidence(&evidence, input.report_target, input.mutant, input.answer)?;
     let source = read(input.run, &evidence.source)?;
     let raw = read(input.run, &evidence.artifact)?;
     if digest(&source) != evidence.identity.rendered_sha256 {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "generated source digest differs from its identity",
         ));
     }
     validate_crate_input(&evidence.identity.crate_input, &source)?;
     let source_text = std::str::from_utf8(&source)
-        .map_err(|_error| Failure::Evidence("generated source is not UTF-8 Rust text"))?;
+        .map_err(|_error| ModelAuditError::Evidence("generated source is not UTF-8 Rust text"))?;
     validate_generated(source_text, &evidence.identity)?;
-    let document = parse_document(&raw).map_err(Failure::Export)?;
+    let document = parse_document(&raw).map_err(ModelAuditError::Export)?;
     validate_document(&document, &evidence, input.answer)
 }
 
@@ -342,12 +342,13 @@ pub fn verify(input: Input<'_>) -> Result<(), Failure> {
 ///
 /// # Errors
 /// Returns a typed refusal for every missing, open-shaped, or contradictory retained fact.
-pub fn verify_attempt(input: AttemptInput<'_>) -> Result<(), Failure> {
+pub fn verify_attempt(input: AttemptInput<'_>) -> Result<(), ModelAuditError> {
     let evidence: AttemptEvidence =
-        serde_json::from_value(input.evidence.clone()).map_err(Failure::Report)?;
-    let reason: Reason = serde_json::from_value(input.reason.clone()).map_err(Failure::Report)?;
+        serde_json::from_value(input.evidence.clone()).map_err(ModelAuditError::Report)?;
+    let reason: Reason =
+        serde_json::from_value(input.reason.clone()).map_err(ModelAuditError::Report)?;
     if matches!(&reason, Reason::OtherFailure(category) if category.is_empty()) {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "an other-failure reason must retain a nonempty property category",
         ));
     }
@@ -357,31 +358,34 @@ pub fn verify_attempt(input: AttemptInput<'_>) -> Result<(), Failure> {
     }
     let source = read(input.run, &evidence.source)?;
     if digest(&source) != evidence.identity.rendered_sha256 {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "generated source digest differs from its identity",
         ));
     }
     validate_crate_input(&evidence.identity.crate_input, &source)?;
     let source_text = std::str::from_utf8(&source)
-        .map_err(|_error| Failure::Evidence("generated source is not UTF-8 Rust text"))?;
+        .map_err(|_error| ModelAuditError::Evidence("generated source is not UTF-8 Rust text"))?;
     validate_generated(source_text, &evidence.identity)?;
 
     let raw = read_attempt_artifact(input.run, evidence.artifact.as_ref())?;
     if digest(&raw) != evidence.raw_sha256 {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "the retained raw export differs from the attempt digest",
         ));
     }
     validate_attempt_export(input, &evidence, &reason, &raw)?;
     if !process_reason(evidence.process, &reason) {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "the process fact does not support the uncertainty reason",
         ));
     }
     Ok(())
 }
 
-fn read_attempt_artifact(run: &Path, artifact: Option<&Artifact>) -> Result<Vec<u8>, Failure> {
+fn read_attempt_artifact(
+    run: &Path,
+    artifact: Option<&Artifact>,
+) -> Result<Vec<u8>, ModelAuditError> {
     artifact.map_or_else(|| Ok(Vec::new()), |artifact| read(run, artifact))
 }
 
@@ -390,11 +394,11 @@ fn validate_attempt_export(
     evidence: &AttemptEvidence,
     reason: &Reason,
     raw: &[u8],
-) -> Result<(), Failure> {
+) -> Result<(), ModelAuditError> {
     match (evidence.artifact.is_some(), parse_document(raw)) {
         (true, Ok(document)) => {
             if reason == &Reason::Protocol(ProtocolReason::Schema) {
-                return Err(Failure::Evidence(
+                return Err(ModelAuditError::Evidence(
                     "a parseable export cannot carry the protocol/schema reason",
                 ));
             }
@@ -405,7 +409,7 @@ fn validate_attempt_export(
                     backend: actual.clone(),
                 })
             {
-                return Err(Failure::Evidence(
+                return Err(ModelAuditError::Evidence(
                     "attempt tool or backend identity differs from its raw export",
                 ));
             }
@@ -413,7 +417,7 @@ fn validate_attempt_export(
             if let Some(detail) = mismatch
                 && reason != &Reason::Protocol(detail)
             {
-                return Err(Failure::Evidence(
+                return Err(ModelAuditError::Evidence(
                     "a tool/backend mismatch is not named by the uncertainty reason",
                 ));
             }
@@ -421,19 +425,19 @@ fn validate_attempt_export(
         }
         (true, Err(_error)) => {
             if evidence.verifier.is_some() {
-                return Err(Failure::Evidence(
+                return Err(ModelAuditError::Evidence(
                     "an unparsable export cannot establish tool or backend identity",
                 ));
             }
             if reason != &Reason::Protocol(ProtocolReason::Schema) {
-                return Err(Failure::Evidence(
+                return Err(ModelAuditError::Evidence(
                     "an unparsable export is not named as a protocol/schema refusal",
                 ));
             }
         }
         (false, _parsed) => {
             if evidence.verifier.is_some() {
-                return Err(Failure::Evidence(
+                return Err(ModelAuditError::Evidence(
                     "an attempt without a raw export cannot establish tool or backend identity",
                 ));
             }
@@ -447,7 +451,7 @@ fn reject_hidden_answer(
     evidence: &AttemptEvidence,
     reason: &Reason,
     mismatch: Option<ProtocolReason>,
-) -> Result<(), Failure> {
+) -> Result<(), ModelAuditError> {
     let (None, Process::Exited(code @ (0 | 1))) = (mismatch, evidence.process) else {
         return Ok(());
     };
@@ -457,12 +461,12 @@ fn reject_hidden_answer(
         Answer::Noticed
     };
     let Some(verifier) = evidence.verifier.clone() else {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "a parsed pinned export has no retained verifier identity",
         ));
     };
     let Some(artifact) = evidence.artifact.clone() else {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "a parsed pinned export has no retained artifact identity",
         ));
     };
@@ -474,7 +478,7 @@ fn reject_hidden_answer(
         process: evidence.process,
     };
     match validate_document(document, &affirmative, answer) {
-        Ok(()) if !post_verification_override(reason) => Err(Failure::Evidence(
+        Ok(()) if !post_verification_override(reason) => Err(ModelAuditError::Evidence(
             "the raw export establishes an affirmative answer but the record calls it undecided",
         )),
         Ok(()) | Err(_) => Ok(()),
@@ -553,7 +557,7 @@ fn validate_evidence(
     report_target: &str,
     mutant: &str,
     answer: Answer,
-) -> Result<(), Failure> {
+) -> Result<(), ModelAuditError> {
     let expected_exit = match answer {
         Answer::Proved => 0,
         Answer::Noticed => 1,
@@ -568,14 +572,14 @@ fn validate_evidence(
         || evidence.verifier.backend.goto_instrument != GOTO_INSTRUMENT
         || evidence.verifier.backend.solver != SOLVER
     {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "tool or backend identity is not the exact pin",
         ));
     }
     validate_identity(&evidence.identity, mutant, &evidence.source)?;
     validate_artifact_path(&evidence.artifact, mutant, "json")?;
     if !matches!(evidence.process, Process::Exited(code) if code == expected_exit) {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "process exit does not match the affirmative answer",
         ));
     }
@@ -584,26 +588,30 @@ fn validate_evidence(
         || !digest_string(&evidence.artifact.sha256)
         || !digest_string(&evidence.source.sha256)
     {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "a required SHA-256 identity is malformed or inconsistent",
         ));
     }
     Ok(())
 }
 
-fn validate_identity(identity: &Identity, mutant: &str, source: &Artifact) -> Result<(), Failure> {
+fn validate_identity(
+    identity: &Identity,
+    mutant: &str,
+    source: &Artifact,
+) -> Result<(), ModelAuditError> {
     if identity.mutant != mutant
         || identity.unwind == 0
         || identity.timeout_ms == 0
         || identity.assertion != format!("njutest-model-v1:{mutant}")
         || identity.harness != format!("__njutest_model_{mutant}")
     {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "model question identity is not self-consistent",
         ));
     }
     if !identity_fields(identity) {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "the mutation identity fields are incomplete or non-canonical",
         ));
     }
@@ -613,7 +621,7 @@ fn validate_identity(identity: &Identity, mutant: &str, source: &Artifact) -> Re
         || !digest_string(&source.sha256)
         || source.sha256 != identity.rendered_sha256
     {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "a required SHA-256 identity is malformed or inconsistent",
         ));
     }
@@ -621,7 +629,7 @@ fn validate_identity(identity: &Identity, mutant: &str, source: &Artifact) -> Re
     Ok(())
 }
 
-fn validate_crate_input(input: &CrateInput, source: &[u8]) -> Result<(), Failure> {
+fn validate_crate_input(input: &CrateInput, source: &[u8]) -> Result<(), ModelAuditError> {
     if input.package != MODEL_PACKAGE
         || input.edition != MODEL_EDITION
         || input.source != MODEL_SOURCE_PATH
@@ -630,7 +638,7 @@ fn validate_crate_input(input: &CrateInput, source: &[u8]) -> Result<(), Failure
         || input.environment != MODEL_ENVIRONMENT_POLICY
         || input.sha256 != model_crate_digest(source)
     {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "the fixed manifest, lockfile, source, and proof policy do not match the retained crate identity",
         ));
     }
@@ -651,10 +659,10 @@ fn validate_artifact_path(
     artifact: &Artifact,
     mutant: &str,
     extension: &str,
-) -> Result<(), Failure> {
+) -> Result<(), ModelAuditError> {
     let expected = format!("model/{mutant}.{extension}");
     if artifact.path != expected {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "a retained model artifact does not have its identity-bound path",
         ));
     }
@@ -683,31 +691,33 @@ fn backend_of(document: &Document) -> Backend {
     }
 }
 
-fn read(run: &Path, artifact: &Artifact) -> Result<Vec<u8>, Failure> {
+fn read(run: &Path, artifact: &Artifact) -> Result<Vec<u8>, ModelAuditError> {
     let relative = resolved_artifact(run, artifact)?;
-    let mut file = open_confined(run, &relative).map_err(|error| Failure::Artifact {
+    let mut file = open_confined(run, &relative).map_err(|error| ModelAuditError::Artifact {
         path: artifact.path.clone(),
         detail: error.to_string(),
     })?;
-    let before = file.metadata().map_err(|error| Failure::Artifact {
+    let before = file.metadata().map_err(|error| ModelAuditError::Artifact {
         path: artifact.path.clone(),
         detail: error.to_string(),
     })?;
     if !before.file_type().is_file() || before.len() > LIMIT || before.len() != artifact.bytes {
-        return Err(Failure::Artifact {
+        return Err(ModelAuditError::Artifact {
             path: artifact.path.clone(),
             detail: "it is not one complete regular file of the recorded size".to_owned(),
         });
     }
-    let read_limit = LIMIT.checked_add(1).ok_or_else(|| Failure::Artifact {
-        path: artifact.path.clone(),
-        detail: "the retained artifact read limit overflowed".to_owned(),
-    })?;
+    let read_limit = LIMIT
+        .checked_add(1)
+        .ok_or_else(|| ModelAuditError::Artifact {
+            path: artifact.path.clone(),
+            detail: "the retained artifact read limit overflowed".to_owned(),
+        })?;
     let mut bytes = Vec::new();
     file.by_ref()
         .take(read_limit)
         .read_to_end(&mut bytes)
-        .map_err(|error| Failure::Artifact {
+        .map_err(|error| ModelAuditError::Artifact {
             path: artifact.path.clone(),
             detail: error.to_string(),
         })?;
@@ -715,9 +725,12 @@ fn read(run: &Path, artifact: &Artifact) -> Result<Vec<u8>, Failure> {
     Ok(bytes)
 }
 
-fn resolved_artifact(run: &Path, artifact: &Artifact) -> Result<std::path::PathBuf, Failure> {
+fn resolved_artifact(
+    run: &Path,
+    artifact: &Artifact,
+) -> Result<std::path::PathBuf, ModelAuditError> {
     if artifact.bytes == 0 || !digest_string(&artifact.sha256) {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "a complete artifact must have nonzero bytes and a canonical digest",
         ));
     }
@@ -728,37 +741,39 @@ fn resolved_artifact(run: &Path, artifact: &Artifact) -> Result<std::path::PathB
             .components()
             .any(|component| !matches!(component, Component::Normal(_)))
     {
-        return Err(Failure::Path(artifact.path.clone()));
+        return Err(ModelAuditError::Path(artifact.path.clone()));
     }
     let path = run.join(relative);
-    let canonical_run = std::fs::canonicalize(run).map_err(|error| Failure::Artifact {
+    let canonical_run = std::fs::canonicalize(run).map_err(|error| ModelAuditError::Artifact {
         path: artifact.path.clone(),
         detail: format!("the run directory cannot be resolved: {error}"),
     })?;
     let mut component_path = run.to_path_buf();
     for component in relative.components() {
         let Component::Normal(component) = component else {
-            return Err(Failure::Path(artifact.path.clone()));
+            return Err(ModelAuditError::Path(artifact.path.clone()));
         };
         component_path.push(component);
-        let metadata =
-            std::fs::symlink_metadata(&component_path).map_err(|error| Failure::Artifact {
+        let metadata = std::fs::symlink_metadata(&component_path).map_err(|error| {
+            ModelAuditError::Artifact {
                 path: artifact.path.clone(),
                 detail: error.to_string(),
-            })?;
+            }
+        })?;
         if metadata.file_type().is_symlink() {
-            return Err(Failure::Artifact {
+            return Err(ModelAuditError::Artifact {
                 path: artifact.path.clone(),
                 detail: "a retained artifact path crosses a symbolic link".to_owned(),
             });
         }
     }
-    let canonical_path = std::fs::canonicalize(&path).map_err(|error| Failure::Artifact {
-        path: artifact.path.clone(),
-        detail: error.to_string(),
-    })?;
+    let canonical_path =
+        std::fs::canonicalize(&path).map_err(|error| ModelAuditError::Artifact {
+            path: artifact.path.clone(),
+            detail: error.to_string(),
+        })?;
     if canonical_path == canonical_run || !canonical_path.starts_with(&canonical_run) {
-        return Err(Failure::Artifact {
+        return Err(ModelAuditError::Artifact {
             path: artifact.path.clone(),
             detail: "the resolved artifact escapes its run directory".to_owned(),
         });
@@ -771,12 +786,12 @@ fn validate_read_artifact(
     file: &std::fs::File,
     before: &std::fs::Metadata,
     bytes: &[u8],
-) -> Result<(), Failure> {
-    let after = file.metadata().map_err(|error| Failure::Artifact {
+) -> Result<(), ModelAuditError> {
+    let after = file.metadata().map_err(|error| ModelAuditError::Artifact {
         path: artifact.path.clone(),
         detail: error.to_string(),
     })?;
-    let byte_count = u64::try_from(bytes.len()).map_err(|_overflow| Failure::Artifact {
+    let byte_count = u64::try_from(bytes.len()).map_err(|_overflow| ModelAuditError::Artifact {
         path: artifact.path.clone(),
         detail: "the retained artifact length does not fit its wire type".to_owned(),
     })?;
@@ -785,7 +800,7 @@ fn validate_read_artifact(
         || byte_count != artifact.bytes
         || digest(bytes) != artifact.sha256
     {
-        return Err(Failure::Artifact {
+        return Err(ModelAuditError::Artifact {
             path: artifact.path.clone(),
             detail: "its retained bytes do not match the recorded length and digest".to_owned(),
         });
@@ -927,12 +942,12 @@ fn canonical_workspace_path(path: &str) -> bool {
 
 /// Re-derives the mutation identity and the differential wiring from the generated Rust itself.
 /// This intentionally does not call the producer's eligibility or rendering code.
-fn validate_generated(rendered: &str, identity: &Identity) -> Result<(), Failure> {
+fn validate_generated(rendered: &str, identity: &Identity) -> Result<(), ModelAuditError> {
     syn::parse_file(rendered)
-        .map_err(|_error| Failure::Evidence("generated source is not parseable Rust"))?;
+        .map_err(|_error| ModelAuditError::Evidence("generated source is not parseable Rust"))?;
     let parts = generated_parts(rendered, identity)?;
     let parsed = syn::parse_file(&parts.pristine).map_err(|_error| {
-        Failure::Evidence("the retained pristine source is not parseable Rust")
+        ModelAuditError::Evidence("the retained pristine source is not parseable Rust")
     })?;
     let subject = subject(&parts.pristine, &parsed, parts.start, parts.end)?;
     closed_source_context(&parsed, &subject.function.sig)?;
@@ -943,35 +958,41 @@ fn validate_generated(rendered: &str, identity: &Identity) -> Result<(), Failure
         &format!("__njutest_original_{}", identity.mutant),
     )?;
     let mut mutant_bytes = subject.text.as_bytes().to_vec();
-    let relative_start = parts
-        .start
-        .checked_sub(subject.start)
-        .ok_or(Failure::Evidence("the mutation starts before its subject"))?;
+    let relative_start =
+        parts
+            .start
+            .checked_sub(subject.start)
+            .ok_or(ModelAuditError::Evidence(
+                "the mutation starts before its subject",
+            ))?;
     let relative_end = parts
         .end
         .checked_sub(subject.start)
-        .ok_or(Failure::Evidence("the mutation ends before its subject"))?;
+        .ok_or(ModelAuditError::Evidence(
+            "the mutation ends before its subject",
+        ))?;
     mutant_bytes.splice(
         relative_start..relative_end,
         parts.replacement.iter().copied(),
     );
     let mutant_text = std::str::from_utf8(&mutant_bytes)
-        .map_err(|_error| Failure::Evidence("the mutant rendering is not UTF-8 Rust"))?;
+        .map_err(|_error| ModelAuditError::Evidence("the mutant rendering is not UTF-8 Rust"))?;
     let mutant_clone = renamed(
         mutant_text,
         subject.name,
         &format!("__njutest_mutant_{}", identity.mutant),
     )?;
     let original_item = syn::parse_str::<syn::ItemFn>(&original_clone).map_err(|_error| {
-        Failure::Evidence("the independently derived original clone is invalid")
+        ModelAuditError::Evidence("the independently derived original clone is invalid")
     })?;
-    let mutant_item = syn::parse_str::<syn::ItemFn>(&mutant_clone)
-        .map_err(|_error| Failure::Evidence("the independently derived mutant clone is invalid"))?;
+    let mutant_item = syn::parse_str::<syn::ItemFn>(&mutant_clone).map_err(|_error| {
+        ModelAuditError::Evidence("the independently derived mutant clone is invalid")
+    })?;
 
     let (inputs, output, arguments) = signature(&original_item)?;
     let (mutant_inputs, mutant_output, mutant_arguments) = signature(&mutant_item)?;
     if inputs != mutant_inputs || output != mutant_output || arguments != mutant_arguments {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "the original and mutant signatures differ after independent parsing",
         ));
     }
@@ -990,7 +1011,7 @@ fn validate_generated(rendered: &str, identity: &Identity) -> Result<(), Failure
         hex::encode(parts.pristine.as_bytes())
     );
     if rendered.strip_prefix(&prefix) != Some(suffix.as_str()) {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "generated source suffix differs from the independently reconstructed verified-v1 program",
         ));
     }
@@ -1005,7 +1026,7 @@ struct GeneratedParts {
     end: usize,
 }
 
-fn generated_parts(rendered: &str, identity: &Identity) -> Result<GeneratedParts, Failure> {
+fn generated_parts(rendered: &str, identity: &Identity) -> Result<GeneratedParts, ModelAuditError> {
     let alias = format!("__njutest_kani_{}", identity.mutant);
     let core_alias = format!("__njutest_core_{}", identity.mutant);
     let marker = format!(
@@ -1013,62 +1034,65 @@ fn generated_parts(rendered: &str, identity: &Identity) -> Result<GeneratedParts
     );
     let mut boundaries = rendered.match_indices(&marker);
     let Some((boundary, observed_marker)) = boundaries.next() else {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "generated source has no isolated Kani crate boundary",
         ));
     };
     if observed_marker != marker {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "generated source has a non-canonical Kani crate boundary",
         ));
     }
     if boundaries.next().is_some() {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "generated source has more than one Kani crate boundary",
         ));
     }
     let encoded = rendered
         .get(..boundary)
         .and_then(|prefix| prefix.strip_prefix("// njutest-pristine-v1:"))
-        .ok_or(Failure::Evidence(
+        .ok_or(ModelAuditError::Evidence(
             "generated source has no canonical pristine-source record",
         ))?;
-    let pristine_bytes = hex::decode(encoded)
-        .map_err(|_error| Failure::Evidence("the pristine-source record is not hexadecimal"))?;
+    let pristine_bytes = hex::decode(encoded).map_err(|_error| {
+        ModelAuditError::Evidence("the pristine-source record is not hexadecimal")
+    })?;
     if hex::encode(&pristine_bytes) != encoded {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "the pristine-source record is not canonical lowercase hex",
         ));
     }
     let pristine = String::from_utf8(pristine_bytes)
-        .map_err(|_error| Failure::Evidence("the pristine-source record is not UTF-8"))?;
+        .map_err(|_error| ModelAuditError::Evidence("the pristine-source record is not UTF-8"))?;
     if digest(pristine.as_bytes()) != identity.source_sha256 {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "the retained pristine source does not match the recorded source digest",
         ));
     }
-    let original = hex::decode(&identity.original_hex)
-        .map_err(|_error| Failure::Evidence("original mutation bytes are not lowercase hex"))?;
-    let replacement = hex::decode(&identity.replacement_hex)
-        .map_err(|_error| Failure::Evidence("replacement mutation bytes are not lowercase hex"))?;
+    let original = hex::decode(&identity.original_hex).map_err(|_error| {
+        ModelAuditError::Evidence("original mutation bytes are not lowercase hex")
+    })?;
+    let replacement = hex::decode(&identity.replacement_hex).map_err(|_error| {
+        ModelAuditError::Evidence("replacement mutation bytes are not lowercase hex")
+    })?;
     if hex::encode(&original) != identity.original_hex
         || hex::encode(&replacement) != identity.replacement_hex
     {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "mutation bytes are not canonical lowercase hex",
         ));
     }
     let start = usize::try_from(identity.start_byte)
-        .map_err(|_error| Failure::Evidence("mutation start does not fit this host"))?;
+        .map_err(|_error| ModelAuditError::Evidence("mutation start does not fit this host"))?;
     let end = usize::try_from(identity.end_byte)
-        .map_err(|_error| Failure::Evidence("mutation end does not fit this host"))?;
+        .map_err(|_error| ModelAuditError::Evidence("mutation end does not fit this host"))?;
     if pristine.as_bytes().get(start..end) != Some(original.as_slice()) || original == replacement {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "the recorded span and mutation bytes do not describe the retained pristine source",
         ));
     }
     if mint(identity, &original, &replacement)? != identity.mutant {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "the independently minted mutation identity differs",
         ));
     }
@@ -1081,7 +1105,11 @@ fn generated_parts(rendered: &str, identity: &Identity) -> Result<GeneratedParts
     })
 }
 
-fn mint(identity: &Identity, original: &[u8], replacement: &[u8]) -> Result<String, Failure> {
+fn mint(
+    identity: &Identity,
+    original: &[u8],
+    replacement: &[u8],
+) -> Result<String, ModelAuditError> {
     let mut hasher = sha2::Sha256::new();
     let version = identity.rule_version.to_string();
     let start = identity.start_byte.to_string();
@@ -1100,7 +1128,7 @@ fn mint(identity: &Identity, original: &[u8], replacement: &[u8]) -> Result<Stri
         replacement.as_str(),
     ] {
         let length = u32::try_from(field.len())
-            .map_err(|_error| Failure::Evidence("a mutation identity field is too long"))?;
+            .map_err(|_error| ModelAuditError::Evidence("a mutation identity field is too long"))?;
         hasher.update(length.to_be_bytes());
         hasher.update(field.as_bytes());
     }
@@ -1120,7 +1148,7 @@ fn subject<'a>(
     file: &'a syn::File,
     mutation_start: usize,
     mutation_end: usize,
-) -> Result<Subject<'a>, Failure> {
+) -> Result<Subject<'a>, ModelAuditError> {
     let mut found = None;
     for item in &file.items {
         let syn::Item::Fn(function) = item else {
@@ -1132,21 +1160,27 @@ fn subject<'a>(
         let body_end = offset(source, function.block.brace_token.span.close().start())?;
         if body_start <= mutation_start && mutation_end <= body_end {
             if found.is_some() {
-                return Err(Failure::Evidence(
+                return Err(ModelAuditError::Evidence(
                     "the mutation is enclosed by more than one top-level function",
                 ));
             }
             let name_start = offset(source, function.sig.ident.span().start())?;
             let name_end = offset(source, function.sig.ident.span().end())?;
-            let text = source
-                .get(start..end)
-                .ok_or(Failure::Evidence("the subject function span is invalid"))?;
-            let relative_name_start = name_start.checked_sub(start).ok_or(Failure::Evidence(
-                "the function name starts before the function",
+            let text = source.get(start..end).ok_or(ModelAuditError::Evidence(
+                "the subject function span is invalid",
             ))?;
-            let relative_name_end = name_end.checked_sub(start).ok_or(Failure::Evidence(
-                "the function name ends before the function",
-            ))?;
+            let relative_name_start =
+                name_start
+                    .checked_sub(start)
+                    .ok_or(ModelAuditError::Evidence(
+                        "the function name starts before the function",
+                    ))?;
+            let relative_name_end =
+                name_end
+                    .checked_sub(start)
+                    .ok_or(ModelAuditError::Evidence(
+                        "the function name ends before the function",
+                    ))?;
             found = Some(Subject {
                 text,
                 start,
@@ -1155,44 +1189,48 @@ fn subject<'a>(
             });
         }
     }
-    found.ok_or(Failure::Evidence(
+    found.ok_or(ModelAuditError::Evidence(
         "the mutation is not inside one top-level function body",
     ))
 }
 
-fn offset(source: &str, location: proc_macro2::LineColumn) -> Result<usize, Failure> {
+fn offset(source: &str, location: proc_macro2::LineColumn) -> Result<usize, ModelAuditError> {
     let mut line = 1usize;
     let mut base = 0usize;
     for part in source.split_inclusive('\n') {
         if line == location.line {
             let byte = base
                 .checked_add(location.column)
-                .ok_or(Failure::Evidence("a parser location overflowed"))?;
+                .ok_or(ModelAuditError::Evidence("a parser location overflowed"))?;
             if byte <= source.len() && source.is_char_boundary(byte) {
                 return Ok(byte);
             }
-            return Err(Failure::Evidence(
+            return Err(ModelAuditError::Evidence(
                 "a parser location is not a byte boundary",
             ));
         }
         base = base
             .checked_add(part.len())
-            .ok_or(Failure::Evidence("a parser location overflowed"))?;
+            .ok_or(ModelAuditError::Evidence("a parser location overflowed"))?;
         line = line
             .checked_add(1)
-            .ok_or(Failure::Evidence("a parser line overflowed"))?;
+            .ok_or(ModelAuditError::Evidence("a parser line overflowed"))?;
     }
     if location.line == line && location.column == 0 {
         return Ok(base);
     }
-    Err(Failure::Evidence(
+    Err(ModelAuditError::Evidence(
         "a parser location lies outside the source",
     ))
 }
 
-fn renamed(source: &str, name: (usize, usize), replacement: &str) -> Result<String, Failure> {
+fn renamed(
+    source: &str,
+    name: (usize, usize),
+    replacement: &str,
+) -> Result<String, ModelAuditError> {
     if !source.is_char_boundary(name.0) || !source.is_char_boundary(name.1) {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "the function name is not on UTF-8 boundaries",
         ));
     }
@@ -1201,7 +1239,9 @@ fn renamed(source: &str, name: (usize, usize), replacement: &str) -> Result<Stri
     Ok(renamed)
 }
 
-fn signature(function: &syn::ItemFn) -> Result<(Vec<String>, String, BTreeSet<String>), Failure> {
+fn signature(
+    function: &syn::ItemFn,
+) -> Result<(Vec<String>, String, BTreeSet<String>), ModelAuditError> {
     let signature = &function.sig;
     if !signature.generics.params.is_empty()
         || signature.generics.where_clause.is_some()
@@ -1212,7 +1252,7 @@ fn signature(function: &syn::ItemFn) -> Result<(Vec<String>, String, BTreeSet<St
         || signature.variadic.is_some()
         || signature.inputs.is_empty()
     {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "the independently parsed function shape is outside verified-v1",
         ));
     }
@@ -1220,15 +1260,17 @@ fn signature(function: &syn::ItemFn) -> Result<(Vec<String>, String, BTreeSet<St
     let mut names = BTreeSet::new();
     for input in &signature.inputs {
         let syn::FnArg::Typed(typed) = input else {
-            return Err(Failure::Evidence("verified-v1 cannot model a receiver"));
+            return Err(ModelAuditError::Evidence(
+                "verified-v1 cannot model a receiver",
+            ));
         };
         let syn::Pat::Ident(binding) = typed.pat.as_ref() else {
-            return Err(Failure::Evidence(
+            return Err(ModelAuditError::Evidence(
                 "verified-v1 requires plain by-value argument bindings",
             ));
         };
         if binding.by_ref.is_some() || binding.subpat.is_some() {
-            return Err(Failure::Evidence(
+            return Err(ModelAuditError::Evidence(
                 "verified-v1 requires plain by-value argument bindings",
             ));
         }
@@ -1258,13 +1300,16 @@ impl<'ast> syn::visit::Visit<'ast> for TypeRootAudit {
     }
 }
 
-fn closed_source_context(file: &syn::File, signature: &syn::Signature) -> Result<(), Failure> {
+fn closed_source_context(
+    file: &syn::File,
+    signature: &syn::Signature,
+) -> Result<(), ModelAuditError> {
     use syn::visit::Visit as _;
 
     let mut attributes = AttributeAudit::default();
     attributes.visit_file(file);
     if attributes.forbidden {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "a source attribute is outside the closed verified-v1 fragment",
         ));
     }
@@ -1275,7 +1320,7 @@ fn closed_source_context(file: &syn::File, signature: &syn::Signature) -> Result
         .iter()
         .any(|item| item_conflicts_with_type_roots(item, &roots.names))
     {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "the subject crate can rebind an admitted signature type",
         ));
     }
@@ -1348,7 +1393,10 @@ fn literal_doc_attribute(attribute: &syn::Attribute) -> bool {
     }
 }
 
-fn closed_function(function: &syn::ItemFn, arguments: &BTreeSet<String>) -> Result<(), Failure> {
+fn closed_function(
+    function: &syn::ItemFn,
+    arguments: &BTreeSet<String>,
+) -> Result<(), ModelAuditError> {
     closed_attributes(function)?;
     ClosedBody {
         scopes: vec![arguments.clone()],
@@ -1356,13 +1404,13 @@ fn closed_function(function: &syn::ItemFn, arguments: &BTreeSet<String>) -> Resu
     .block(&function.block)
 }
 
-fn closed_attributes(function: &syn::ItemFn) -> Result<(), Failure> {
+fn closed_attributes(function: &syn::ItemFn) -> Result<(), ModelAuditError> {
     use syn::visit::Visit as _;
 
     let mut attributes = AttributeAudit::default();
     attributes.visit_item_fn(function);
     if attributes.forbidden {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "a function attribute is outside the closed verified-v1 fragment",
         ));
     }
@@ -1378,20 +1426,20 @@ impl ClosedBody {
         self.scopes.iter().rev().any(|scope| scope.contains(name))
     }
 
-    fn block(&mut self, block: &syn::Block) -> Result<(), Failure> {
+    fn block(&mut self, block: &syn::Block) -> Result<(), ModelAuditError> {
         self.scopes.push(BTreeSet::new());
         for statement in &block.stmts {
             self.statement(statement)?;
         }
         match self.scopes.pop() {
             Some(_completed_scope) => Ok(()),
-            None => Err(Failure::Evidence(
+            None => Err(ModelAuditError::Evidence(
                 "the independent purity scope stack became unbalanced",
             )),
         }
     }
 
-    fn statement(&mut self, statement: &syn::Stmt) -> Result<(), Failure> {
+    fn statement(&mut self, statement: &syn::Stmt) -> Result<(), ModelAuditError> {
         match statement {
             syn::Stmt::Expr(expression, _semi) => self.expression(expression),
             syn::Stmt::Local(local) => {
@@ -1415,7 +1463,7 @@ impl ClosedBody {
         }
     }
 
-    fn expression(&mut self, expression: &syn::Expr) -> Result<(), Failure> {
+    fn expression(&mut self, expression: &syn::Expr) -> Result<(), ModelAuditError> {
         match expression {
             syn::Expr::Array(array) => array
                 .elems
@@ -1477,7 +1525,7 @@ impl ClosedBody {
         }
     }
 
-    fn binary(&mut self, binary: &syn::ExprBinary) -> Result<(), Failure> {
+    fn binary(&mut self, binary: &syn::ExprBinary) -> Result<(), ModelAuditError> {
         match binary.op {
             syn::BinOp::And(_)
             | syn::BinOp::Or(_)
@@ -1514,7 +1562,7 @@ impl ClosedBody {
         }
     }
 
-    fn path(&self, path: &syn::ExprPath) -> Result<(), Failure> {
+    fn path(&self, path: &syn::ExprPath) -> Result<(), ModelAuditError> {
         let mut segments = path.path.segments.iter();
         let Some(first) = segments.next() else {
             return Self::reject_closed();
@@ -1530,7 +1578,7 @@ impl ClosedBody {
         }
     }
 
-    fn unary(&mut self, unary: &syn::ExprUnary) -> Result<(), Failure> {
+    fn unary(&mut self, unary: &syn::ExprUnary) -> Result<(), ModelAuditError> {
         match unary.op {
             syn::UnOp::Not(_) => self.expression(&unary.expr),
             syn::UnOp::Neg(_) => Self::reject_profile(),
@@ -1539,7 +1587,7 @@ impl ClosedBody {
         }
     }
 
-    const fn literal(literal: &syn::ExprLit) -> Result<(), Failure> {
+    const fn literal(literal: &syn::ExprLit) -> Result<(), ModelAuditError> {
         match literal.lit {
             syn::Lit::Bool(_)
             | syn::Lit::Byte(_)
@@ -1550,7 +1598,7 @@ impl ClosedBody {
         }
     }
 
-    fn place(&mut self, expression: &syn::Expr) -> Result<(), Failure> {
+    fn place(&mut self, expression: &syn::Expr) -> Result<(), ModelAuditError> {
         match expression {
             syn::Expr::Path(_) => self.expression(expression),
             syn::Expr::Field(field) if matches!(field.member, syn::Member::Unnamed(_)) => {
@@ -1566,32 +1614,32 @@ impl ClosedBody {
         }
     }
 
-    const fn reject_closed<T>() -> Result<T, Failure> {
-        Err(Failure::Evidence(
+    const fn reject_closed<T>() -> Result<T, ModelAuditError> {
+        Err(ModelAuditError::Evidence(
             "a function body is outside the closed verified-v1 fragment",
         ))
     }
 
-    const fn reject_profile<T>() -> Result<T, Failure> {
-        Err(Failure::Evidence(
+    const fn reject_profile<T>() -> Result<T, ModelAuditError> {
+        Err(ModelAuditError::Evidence(
             "profile-dependent arithmetic is outside verified-v1",
         ))
     }
 
-    const fn reject_named_field<T>() -> Result<T, Failure> {
-        Err(Failure::Evidence(
+    const fn reject_named_field<T>() -> Result<T, ModelAuditError> {
+        Err(ModelAuditError::Evidence(
             "a named field is outside the closed verified-v1 fragment",
         ))
     }
 
-    const fn reject_literal<T>() -> Result<T, Failure> {
-        Err(Failure::Evidence(
+    const fn reject_literal<T>() -> Result<T, ModelAuditError> {
+        Err(ModelAuditError::Evidence(
             "a non-scalar literal is outside the closed verified-v1 fragment",
         ))
     }
 
-    const fn reject_unknown<T>() -> Result<T, Failure> {
-        Err(Failure::Evidence(
+    const fn reject_unknown<T>() -> Result<T, ModelAuditError> {
+        Err(ModelAuditError::Evidence(
             "unknown syntax is outside the closed verified-v1 fragment",
         ))
     }
@@ -1607,7 +1655,7 @@ fn closed_local_name(pattern: &syn::Pat) -> Option<String> {
     }
 }
 
-fn canonical_type(held: &syn::Type, input: bool) -> Result<String, Failure> {
+fn canonical_type(held: &syn::Type, input: bool) -> Result<String, ModelAuditError> {
     match held {
         syn::Type::Tuple(tuple) if tuple.elems.is_empty() => Ok("()".to_owned()),
         syn::Type::Tuple(tuple) if tuple.elems.len() <= 4 => {
@@ -1626,14 +1674,14 @@ fn canonical_type(held: &syn::Type, input: bool) -> Result<String, Failure> {
         }
         syn::Type::Array(array) => {
             let syn::Expr::Lit(length) = &array.len else {
-                return Err(Failure::Evidence("array length is not a literal"));
+                return Err(ModelAuditError::Evidence("array length is not a literal"));
             };
             let syn::Lit::Int(length) = &length.lit else {
-                return Err(Failure::Evidence("array length is not an integer"));
+                return Err(ModelAuditError::Evidence("array length is not an integer"));
             };
             let length = length
                 .base10_parse::<usize>()
-                .map_err(|_error| Failure::Evidence("array length is not canonical"))?;
+                .map_err(|_error| ModelAuditError::Evidence("array length is not canonical"))?;
             Ok(format!(
                 "[{}; {length}]",
                 canonical_type(&array.elem, input)?
@@ -1642,13 +1690,13 @@ fn canonical_type(held: &syn::Type, input: bool) -> Result<String, Failure> {
         syn::Type::Paren(paren) => canonical_type(&paren.elem, input),
         syn::Type::Group(group) => canonical_type(&group.elem, input),
         syn::Type::Path(path) if path.qself.is_none() => canonical_path(&path.path, input),
-        _ => Err(Failure::Evidence(
+        _ => Err(ModelAuditError::Evidence(
             "a signature type is outside the closed verified-v1 domain",
         )),
     }
 }
 
-fn canonical_path(path: &syn::Path, input: bool) -> Result<String, Failure> {
+fn canonical_path(path: &syn::Path, input: bool) -> Result<String, ModelAuditError> {
     let segments = path.segments.iter().collect::<Vec<_>>();
     let primitive = match segments.as_slice() {
         [one] if matches!(one.arguments, syn::PathArguments::None) => Some(one.ident.to_string()),
@@ -1683,7 +1731,7 @@ fn canonical_path(path: &syn::Path, input: bool) -> Result<String, Failure> {
         )
     {
         if !input && matches!(name.as_str(), "f32" | "f64") {
-            return Err(Failure::Evidence(
+            return Err(ModelAuditError::Evidence(
                 "a float result is not reflexive under Eq",
             ));
         }
@@ -1701,19 +1749,25 @@ fn canonical_path(path: &syn::Path, input: bool) -> Result<String, Failure> {
         _ => None,
     };
     let Some(option) = option else {
-        return Err(Failure::Evidence(
+        return Err(ModelAuditError::Evidence(
             "a named signature type is outside verified-v1",
         ));
     };
     let syn::PathArguments::AngleBracketed(arguments) = &option.arguments else {
-        return Err(Failure::Evidence("Option has no one concrete argument"));
+        return Err(ModelAuditError::Evidence(
+            "Option has no one concrete argument",
+        ));
     };
     let mut arguments = arguments.args.iter();
     let Some(syn::GenericArgument::Type(inner)) = arguments.next() else {
-        return Err(Failure::Evidence("Option has no one concrete argument"));
+        return Err(ModelAuditError::Evidence(
+            "Option has no one concrete argument",
+        ));
     };
     if arguments.next().is_some() {
-        return Err(Failure::Evidence("Option has more than one argument"));
+        return Err(ModelAuditError::Evidence(
+            "Option has more than one argument",
+        ));
     }
     Ok(format!(
         "::core::option::Option<{}>",
@@ -2242,16 +2296,16 @@ fn validate_document(
     document: &Document,
     evidence: &Evidence,
     answer: Answer,
-) -> Result<(), Failure> {
+) -> Result<(), ModelAuditError> {
     validate_context(document, evidence)?;
     validate_harness(document, evidence, answer)?;
     let [details] = document.property_details.as_slice() else {
-        return Err(Failure::Decision(
+        return Err(ModelAuditError::Decision(
             "there is not exactly one property count record",
         ));
     };
     let [result] = document.verification_results.results.as_slice() else {
-        return Err(Failure::Decision(
+        return Err(ModelAuditError::Decision(
             "there is not exactly one verification result",
         ));
     };
@@ -2264,7 +2318,7 @@ fn validate_document(
     })
 }
 
-fn validate_context(document: &Document, evidence: &Evidence) -> Result<(), Failure> {
+fn validate_context(document: &Document, evidence: &Evidence) -> Result<(), ModelAuditError> {
     let verifier = &evidence.verifier;
     let backend = &verifier.backend;
     if document.metadata.version != backend.export_version
@@ -2283,7 +2337,7 @@ fn validate_context(document: &Document, evidence: &Evidence) -> Result<(), Fail
         || !clean_absolute(Path::new(&document.project.output_dir))
         || document.coverage.enabled
     {
-        return Err(Failure::Decision(
+        return Err(ModelAuditError::Decision(
             "metadata, project, tool, or backend facts differ",
         ));
     }
@@ -2294,27 +2348,29 @@ fn validate_harness(
     document: &Document,
     evidence: &Evidence,
     answer: Answer,
-) -> Result<(), Failure> {
+) -> Result<(), ModelAuditError> {
     let [metadata] = document.harness_metadata.as_slice() else {
-        return Err(Failure::Decision(
+        return Err(ModelAuditError::Decision(
             "there is not exactly one harness metadata record",
         ));
     };
     let [errors] = document.error_details.as_slice() else {
-        return Err(Failure::Decision(
+        return Err(ModelAuditError::Decision(
             "there is not exactly one harness error record",
         ));
     };
     let [details] = document.property_details.as_slice() else {
-        return Err(Failure::Decision(
+        return Err(ModelAuditError::Decision(
             "there is not exactly one property count record",
         ));
     };
     let [cbmc] = document.cbmc.as_slice() else {
-        return Err(Failure::Decision("there is not exactly one CBMC record"));
+        return Err(ModelAuditError::Decision(
+            "there is not exactly one CBMC record",
+        ));
     };
     let [result] = document.verification_results.results.as_slice() else {
-        return Err(Failure::Decision(
+        return Err(ModelAuditError::Decision(
             "there is not exactly one verification result",
         ));
     };
@@ -2358,7 +2414,7 @@ fn validate_harness(
         || cbmc.configuration.solver != SOLVER
         || !stats(&cbmc.stats)
     {
-        return Err(Failure::Decision(
+        return Err(ModelAuditError::Decision(
             "harness or CBMC facts differ from the closed protocol",
         ));
     }
@@ -2438,7 +2494,7 @@ struct ResultInput<'a> {
     answer: Answer,
 }
 
-fn validate_result(input: ResultInput<'_>) -> Result<(), Failure> {
+fn validate_result(input: ResultInput<'_>) -> Result<(), ModelAuditError> {
     let ResultInput {
         summary,
         details,
@@ -2449,12 +2505,12 @@ fn validate_result(input: ResultInput<'_>) -> Result<(), Failure> {
     validate_result_summary(summary, result)?;
     let observed = observed_counts(&result.checks)?;
     if details.property_details != observed {
-        return Err(Failure::Decision(
+        return Err(ModelAuditError::Decision(
             "property counters differ from property statuses",
         ));
     }
     if result.checks.iter().any(incomplete_check) {
-        return Err(Failure::Decision(
+        return Err(ModelAuditError::Decision(
             "a property identity or location is incomplete",
         ));
     }
@@ -2464,7 +2520,7 @@ fn validate_result(input: ResultInput<'_>) -> Result<(), Failure> {
         .filter(|check| check.description == identity.assertion)
         .collect();
     let [tagged] = tagged.as_slice() else {
-        return Err(Failure::Decision(
+        return Err(ModelAuditError::Decision(
             "the tagged assertion is absent or duplicated",
         ));
     };
@@ -2479,18 +2535,24 @@ fn validate_result(input: ResultInput<'_>) -> Result<(), Failure> {
             .filter(|check| check.description != identity.assertion)
             .any(|check| check.status != Status::Success)
     {
-        return Err(Failure::Decision(
+        return Err(ModelAuditError::Decision(
             "a safety or unwind property did not succeed",
         ));
     }
     validate_answer(summary, result, tagged, answer)
 }
 
-fn validate_result_summary(summary: &Summary, result: &HarnessResult) -> Result<(), Failure> {
-    let classified = summary
-        .successful
-        .checked_add(summary.failed)
-        .ok_or(Failure::Decision("summary result counters overflow"))?;
+fn validate_result_summary(
+    summary: &Summary,
+    result: &HarnessResult,
+) -> Result<(), ModelAuditError> {
+    let classified =
+        summary
+            .successful
+            .checked_add(summary.failed)
+            .ok_or(ModelAuditError::Decision(
+                "summary result counters overflow",
+            ))?;
     if summary.total_harnesses != 1
         || summary.executed != 1
         || summary.status != "completed"
@@ -2498,7 +2560,9 @@ fn validate_result_summary(summary: &Summary, result: &HarnessResult) -> Result<
         || summary.duration_ms == 0
         || result.duration_ms == 0
     {
-        return Err(Failure::Decision("summary is not one completed harness"));
+        return Err(ModelAuditError::Decision(
+            "summary is not one completed harness",
+        ));
     }
     Ok(())
 }
@@ -2516,7 +2580,7 @@ fn validate_answer(
     result: &HarnessResult,
     tagged: &Check,
     answer: Answer,
-) -> Result<(), Failure> {
+) -> Result<(), ModelAuditError> {
     let coherent = match answer {
         Answer::Proved => {
             tagged.status == Status::Success
@@ -2532,14 +2596,14 @@ fn validate_answer(
         }
     };
     if !coherent {
-        return Err(Failure::Decision(
+        return Err(ModelAuditError::Decision(
             "tagged property, harness, and summary disagree",
         ));
     }
     Ok(())
 }
 
-fn observed_counts(checks: &[Check]) -> Result<PropertyCounts, Failure> {
+fn observed_counts(checks: &[Check]) -> Result<PropertyCounts, ModelAuditError> {
     let count = |predicate: fn(Status) -> bool| {
         u64::try_from(
             checks
@@ -2547,11 +2611,11 @@ fn observed_counts(checks: &[Check]) -> Result<PropertyCounts, Failure> {
                 .filter(|check| predicate(check.status))
                 .count(),
         )
-        .map_err(|_error| Failure::Decision("property count does not fit u64"))
+        .map_err(|_error| ModelAuditError::Decision("property count does not fit u64"))
     };
     Ok(PropertyCounts {
         total_properties: u64::try_from(checks.len())
-            .map_err(|_error| Failure::Decision("property count does not fit u64"))?,
+            .map_err(|_error| ModelAuditError::Decision("property count does not fit u64"))?,
         passed: count(|status| status == Status::Success)?,
         failed: count(|status| status == Status::Failure)?,
         unreachable: count(|status| status == Status::Unreachable)?,

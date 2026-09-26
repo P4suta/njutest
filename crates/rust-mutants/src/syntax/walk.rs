@@ -219,6 +219,8 @@ pub(super) struct Input<'a> {
     pub(super) path: &'a str,
     /// The lowercase hex SHA-256 of the bytes.
     pub(super) digest: &'a str,
+    /// The file's tree, which every operator swap is held to.
+    pub(super) grouping: &'a super::regroup::Grouping,
 }
 
 /// One proposed edit.
@@ -240,6 +242,8 @@ enum Outcome {
 pub(super) struct Walker<'a> {
     src: &'a str,
     base: u32,
+    /// The file's tree, which every operator swap is held to.
+    grouping: &'a super::regroup::Grouping,
     path: &'a str,
     digest: &'a str,
     selection: &'a Selection<'a>,
@@ -277,6 +281,7 @@ impl<'a> Walker<'a> {
         Self {
             src: input.text,
             base: input.base,
+            grouping: input.grouping,
             path: input.path,
             digest: input.digest,
             selection,
@@ -1167,6 +1172,71 @@ impl<'a> Walker<'a> {
         }
     }
 
+    /// The edit that swaps `binary`'s operator for `replacement`, written so the text reads back as exactly that swap: the same operands, grouped as they were.
+    /// A swap that binds as tightly as the operator it replaces cannot regroup anything and is the token alone; any other is held to the file's tree, and nothing is proposed where no writing keeps it.
+    fn swap(&self, binary: &syn::ExprBinary, replacement: &str) -> Option<(Span, String)> {
+        use super::regroup::{Binding, Side, regroups};
+        let op = self.span(&binary.op);
+        let new = match syn::parse_str::<BinOp>(replacement) {
+            Ok(new) => new,
+            Err(_not_an_operator) => return None,
+        };
+        let (was, now) = (Binding::of(&binary.op)?, Binding::of(&new)?);
+        let token = (op, replacement.to_owned());
+        if was == now {
+            return Some(token);
+        }
+        let (node, left, right) = (
+            self.span(binary),
+            self.span(&binary.left),
+            self.span(&binary.right),
+        );
+        let between = |from: u32, to: u32| match Span::new(from, to) {
+            Ok(gap) => self.text(gap),
+            Err(_operands_overlap) => "",
+        };
+        let operand = |span: Span, regrouped: bool| {
+            let text = self.text(span);
+            if regrouped {
+                format!("({text})")
+            } else {
+                text.to_owned()
+            }
+        };
+        let grouped = format!(
+            "{}{}{replacement}{}{}",
+            operand(left, regroups(&binary.left, Side::Left, now)),
+            between(left.end, op.start),
+            between(op.end, right.start),
+            operand(right, regroups(&binary.right, Side::Right, now)),
+        );
+        let enclosed = format!("({grouped})");
+        [token, (node, grouped), (node, enclosed)]
+            .into_iter()
+            .find(|edit| self.keeps(edit, op.start, &new))
+    }
+
+    /// Whether the file with `span` rewritten as `written` reads back as its own tree with the operator at `op` replaced by `new`.
+    fn keeps(&self, (span, written): &(Span, String), op: u32, new: &BinOp) -> bool {
+        let (Some(from), Some(start), Some(end), Some(at)) = (
+            self.usize_offset(self.base),
+            self.usize_offset(span.start),
+            self.usize_offset(span.end),
+            self.usize_offset(op),
+        ) else {
+            return false;
+        };
+        let (Some(before), Some(after), Some(at)) = (
+            self.src.get(from..start),
+            self.src.get(end..),
+            at.checked_sub(from),
+        ) else {
+            return false;
+        };
+        self.grouping
+            .keeps(&format!("{before}{written}{after}"), at, new)
+    }
+
     fn walk_binary(&mut self, b: &syn::ExprBinary, ctx: Ctx) {
         let own = self.span(b);
         if let Some((rule, original, replacement)) = binary_swap(&b.op) {
@@ -1190,15 +1260,21 @@ impl<'a> Walker<'a> {
                 } else {
                     Self::site_for(ctx, own)
                 };
-                self.emit(
-                    rule,
-                    Edit {
-                        span: edit,
-                        replacement: replacement.as_bytes().to_vec(),
-                        site,
-                        probe: None,
-                    },
-                );
+                match self.swap(b, replacement) {
+                    Some((span, written)) => self.emit(
+                        rule,
+                        Edit {
+                            span,
+                            replacement: written.into_bytes(),
+                            site,
+                            probe: None,
+                        },
+                    ),
+                    None => self.declined(
+                        At::new(edit.start, rule).noting("would-regroup"),
+                        SkipReason::UnsupportedSite,
+                    ),
+                }
             }
         }
         if is_compound_assignment(&b.op) {

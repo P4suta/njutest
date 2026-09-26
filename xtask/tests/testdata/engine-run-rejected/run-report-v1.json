@@ -3,10 +3,10 @@
   "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260925t173158991z",
-    "started_at": "2026-09-25T17:31:58.991841Z",
-    "finished_at": "2026-09-25T17:32:01.477659Z",
-    "duration_ms": 254,
+    "id": "20260926t050822788z",
+    "started_at": "2026-09-26T05:08:22.788302939Z",
+    "finished_at": "2026-09-26T05:08:25.241697418Z",
+    "duration_ms": 219,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -18,12 +18,12 @@
   "workspace": {
     "root_name": "fixture-rejectable",
     "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "3f2019f69d77eaf9991acf2c7e5e2f9aabea40e6ce3edbfe99349db07950868e",
+    "workspace_digest": "11b0e4a02da5eb7c35ac722499417deb75a7e8083525feda60e4b71f08f06e2b",
     "catalog_digest": "05ce4412ca26140ff556abf263fc400e9b1fa58b1d5908a3e491bfb14ae71d4d",
     "platform": {
-      "os": "darwin",
-      "arch": "aarch64",
-      "target": "aarch64-apple-darwin"
+      "os": "gnu",
+      "arch": "x86_64",
+      "target": "x86_64-unknown-linux-gnu"
     }
   },
   "selection": {
@@ -49,6 +49,7 @@
     "not_run": 16,
     "unreached": 16,
     "discharged": 0,
+    "declined": 0,
     "expected": 0
   },
   "score": null,
@@ -101,6 +102,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -142,6 +144,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -183,6 +186,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -224,6 +228,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -265,6 +270,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -306,6 +312,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -347,6 +354,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -388,6 +396,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -429,6 +438,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -470,6 +480,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -511,6 +522,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -552,6 +564,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -593,6 +606,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -634,6 +648,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -675,6 +690,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -716,6 +732,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -738,7 +755,7 @@
       "path": "src/lib.rs",
       "rule": "add-to-sub",
       "code": "E0369",
-      "diagnostic": "error[E0369]: cannot subtract `&str` from `String`\n  --> src/lib.rs:12:171\n   |\n12 | ... Default::default() } else if __rm_b1a35a68::active(1) { name - \"!\" } else { name + __rm_b1a35a68::value!(if __rm_b1a35a68::activ...\n   |                                                             ---- ^ --- &str\n   |                                                             |\n   |                                                             String\n   |\nnote: `String` does not implement `Sub<&str>`\n  --> /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/alloc/src/string.rs:353:0\n   |\n   = note: `String` is defined in another crate\n\n",
+      "diagnostic": "error[E0369]: cannot subtract `&str` from `String`\n   --> src/lib.rs:12:171\n    |\n 12 | ...Default::default() } else if __rm_b1a35a68::active(1) { name - \"!\" } else { name + __rm_b1a35a68::value!(if __rm_b1a35a68::activ...\n    |                                                            ---- ^ --- &str\n    |                                                            |\n    |                                                            String\n    |\nnote: `String` does not implement `Sub<&str>`\n   --> /home/yasunobu/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/string.rs:353:1\n    |\n353 | pub struct String {\n    | ^^^^^^^^^^^^^^^^^ `String` is defined in another crate\n\n",
       "isolated": true
     },
     {
@@ -855,5 +872,27 @@
       "mutant": "8a5af3ac89db2e59cee2f37029e04801ab8a41b7fff6f6a17e2deefa785b841b",
       "detail": "no measured test reaches 8a5af3ac89db2e59cee2: the mutation lives in code the tests never execute"
     }
+  ],
+  "facts": [
+    "panic=\"unwind\"",
+    "target_abi=\"\"",
+    "target_arch=\"x86_64\"",
+    "target_endian=\"little\"",
+    "target_env=\"gnu\"",
+    "target_family=\"unix\"",
+    "target_has_atomic=\"16\"",
+    "target_has_atomic=\"32\"",
+    "target_has_atomic=\"64\"",
+    "target_has_atomic=\"8\"",
+    "target_has_atomic=\"ptr\"",
+    "target_has_atomic_primitive_alignment=\"16\"",
+    "target_has_atomic_primitive_alignment=\"32\"",
+    "target_has_atomic_primitive_alignment=\"64\"",
+    "target_has_atomic_primitive_alignment=\"8\"",
+    "target_has_atomic_primitive_alignment=\"ptr\"",
+    "target_os=\"linux\"",
+    "target_pointer_width=\"64\"",
+    "target_vendor=\"unknown\"",
+    "unix"
   ]
 }

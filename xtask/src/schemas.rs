@@ -123,14 +123,14 @@ impl crate::error::Coded for SchemaError {
 /// Where one value departs from its schema.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{message} at {pointer:?}")]
-pub struct OffSchema {
+pub struct OffSchemaError {
     /// The JSON pointer of the offending value.
     pub pointer: String,
     /// What the validator said of it.
     pub message: String,
 }
 
-impl crate::error::Coded for OffSchema {
+impl crate::error::Coded for OffSchemaError {
     fn code(&self) -> crate::error::XtCode {
         crate::error::XtCode::RecordingOffSchema
     }
@@ -216,7 +216,7 @@ impl Checker {
     ///
     /// # Errors
     /// The first place it departs.
-    pub fn check(&self, value: &Value) -> Result<(), OffSchema> {
+    pub fn check(&self, value: &Value) -> Result<(), OffSchemaError> {
         match self.validator.iter_errors(value).next() {
             None => Ok(()),
             Some(error) => Err(innermost(&error)),
@@ -225,7 +225,7 @@ impl Checker {
 }
 
 /// Where `error` really is: within a `oneOf` whose branches are told apart by a constant, the first error of the branch whose constant the value carries, since a reader wants the field, not the list of shapes it was not.
-fn innermost(error: &jsonschema::ValidationError<'_>) -> OffSchema {
+fn innermost(error: &jsonschema::ValidationError<'_>) -> OffSchemaError {
     if let jsonschema::error::ValidationErrorKind::OneOfNotValid { context } = error.kind() {
         let chosen = context.iter().find(|branch| {
             !branch.is_empty()
@@ -240,7 +240,7 @@ fn innermost(error: &jsonschema::ValidationError<'_>) -> OffSchema {
             return innermost(first);
         }
     }
-    OffSchema {
+    OffSchemaError {
         pointer: error.instance_path().to_string(),
         message: error.to_string(),
     }

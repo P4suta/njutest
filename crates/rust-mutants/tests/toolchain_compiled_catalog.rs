@@ -175,7 +175,10 @@ fn cargo_rebuilds_an_unchanged_binary_when_the_embedded_catalog_changes() {
             &driver,
             &CompileOptions {
                 kind: CompileKind::Tests,
-                target_dir: Some(target.clone()),
+                target_dir: Some(rust_mutants::cargo::BuildDir::new(
+                    target.clone(),
+                    Vec::new(),
+                )),
                 locked: true,
                 offline: true,
                 env: vec![(

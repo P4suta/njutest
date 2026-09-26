@@ -1474,3 +1474,88 @@ fn whatever_a_run_holds_exactly_one_verdict_is_held_free_of_violations() {
         );
     }
 }
+
+/// `base` with one thing changed.
+fn varied(base: &Grounds, vary: impl FnOnce(&mut Grounds)) -> Grounds {
+    let mut grounds = base.clone();
+    vary(&mut grounds);
+    grounds
+}
+
+#[test]
+fn every_refusal_of_a_verdict_says_why_in_words_a_reader_can_act_on() {
+    let assured = Grounds {
+        verdict: Verdict::Assured,
+        run_kind: RunKind::Full,
+        shard: None,
+        defects: 0,
+        findings: 0,
+        observed: true,
+        asked: true,
+        unanswered: Vec::new(),
+        unsettled: false,
+    };
+    assert!(
+        held(&assured).is_empty(),
+        "the grounds every case below changes one thing of are an assurance"
+    );
+    let cases = [
+        (
+            varied(&assured, |one| one.verdict = Verdict::ChangeAssured),
+            "assures only what it looked at",
+        ),
+        (
+            varied(&assured, |one| one.shard = Some("1/2".to_owned())),
+            "assures nothing on its own",
+        ),
+        (
+            varied(&assured, |one| one.verdict = Verdict::Partial),
+            "PARTIAL is what one part of a divided catalog concludes",
+        ),
+        (
+            varied(&assured, |one| one.verdict = Verdict::Defect),
+            "a defect a reader cannot see named",
+        ),
+        (
+            varied(&assured, |one| {
+                one.verdict = Verdict::Insufficient;
+                one.defects = 1;
+                one.findings = 1;
+            }),
+            "says DEFECT, whole or in part",
+        ),
+        (
+            varied(&assured, |one| one.verdict = Verdict::Insufficient),
+            "established more than it says",
+        ),
+        (
+            varied(&assured, |one| one.verdict = Verdict::Error),
+            "ERROR is what one that",
+        ),
+        (
+            varied(&assured, |one| one.findings = 1),
+            "the claim that nothing was found",
+        ),
+        (
+            varied(&assured, |one| one.observed = false),
+            "nothing was observed",
+        ),
+        (
+            varied(&assured, |one| one.asked = false),
+            "not one mutation was put to a test",
+        ),
+        (
+            varied(&assured, |one| one.unsettled = true),
+            "a reach moved or a knob shook",
+        ),
+    ];
+    for (grounds, said) in cases {
+        let refused: Vec<String> = held(&grounds).iter().map(ToString::to_string).collect();
+        assert!(
+            refused.iter().any(|one| one.contains(said)),
+            "{grounds:?} is refused for a reason the refusal has to name, {said:?}, and a reader \
+             told only that a verdict is unsupported cannot tell which of eleven things to fix: \
+             {refused:?}"
+        );
+    }
+}

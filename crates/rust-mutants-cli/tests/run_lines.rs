@@ -94,6 +94,7 @@ fn mutant(index: u32, outcome: Outcome, expected: bool) -> RunMutantDocument {
         killed_by: Vec::new(),
         signal: None,
         not_run_reason: None,
+        declined: Vec::new(),
         route: None,
         identical: rust_mutants::run::CodegenIdentity::NotMeasured,
         retried: false,
@@ -185,12 +186,14 @@ fn document() -> RunDocument {
             standing: "met".to_owned(),
             actual: None,
             why: None,
+            holds: None,
         }],
         findings: vec![FindingDocument {
             kind: FindingKind::SurvivingMutant,
             mutant: Some(surviving_id),
             detail: format!("no test noticed {surviving_display_id}; 1 tests ran and passed"),
         }],
+        facts: Vec::new(),
     }
 }
 
@@ -208,6 +211,7 @@ fn fixture_accounting() -> Accounting {
         errored: 0_u32.into(),
         unreached: 0_u32.into(),
         discharged: 0_u32.into(),
+        declined: 0_u32.into(),
         not_run: 0_u32.into(),
         expected: 1_u32.into(),
     }
@@ -248,6 +252,12 @@ fn cohere(document: &mut RunDocument) {
         if one.not_run_reason == Some(NotRunReason::Discharged) {
             accounting
                 .discharged
+                .raise()
+                .expect("the finite fixture accounting fits u32");
+        }
+        if one.not_run_reason == Some(NotRunReason::Declined) {
+            accounting
+                .declined
                 .raise()
                 .expect("the finite fixture accounting fits u32");
         }
@@ -785,6 +795,7 @@ fn claim(id: &str, stale: Option<&RunMutantDocument>) -> ExpectationDocument {
         why: stale
             .is_none()
             .then(|| "the claim names nothing".to_owned()),
+        holds: None,
     }
 }
 
@@ -800,6 +811,7 @@ fn claimed(why: &str, mutant: &RunMutantDocument) -> ExpectationDocument {
         standing: "met".to_owned(),
         actual: None,
         why: None,
+        holds: None,
     }
 }
 
