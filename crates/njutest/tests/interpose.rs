@@ -1102,7 +1102,7 @@ fn a_recording_follows_its_seam_when_the_watchers_are_reordered() {
     };
     let api = seams.watching[0].interposer.address();
     let baseline = seams.observing(|| {
-        drop(ask(api, "/orders"));
+        assert!(ask(api, "/orders").contains("200"));
         passing_baseline()
     });
     seams.watching.swap(0, 1);
@@ -1114,7 +1114,8 @@ fn a_recording_follows_its_seam_when_the_watchers_are_reordered() {
         &seams,
         &baseline,
         || {
-            drop(ask(api, "/orders"));
+            let fault_response = ask(api, "/orders");
+            drop(fault_response);
             njutest::wire::settle::Asked::Answered(passing_baseline())
         },
         njutest::watch::Watch::new(&held.0, &held.1),
@@ -1125,7 +1126,8 @@ fn a_recording_follows_its_seam_when_the_watchers_are_reordered() {
     assert!(measured.seams.iter().all(|one| one.capability == "api"));
 
     for one in seams.watching {
-        drop(one.interposer.stop());
+        let remaining_exchanges = one.interposer.stop();
+        drop(remaining_exchanges);
     }
 }
 
@@ -1154,7 +1156,8 @@ fn two_watchers_with_one_name_cannot_share_a_baseline() {
     ));
 
     for one in seams.watching {
-        drop(one.interposer.stop());
+        let remaining_exchanges = one.interposer.stop();
+        drop(remaining_exchanges);
     }
 }
 
