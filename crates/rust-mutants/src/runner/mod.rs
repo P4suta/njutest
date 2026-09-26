@@ -370,6 +370,9 @@ pub enum RunnerError {
         #[source]
         source: io::Error,
     },
+    /// The reported first-failure ending contradicts the failure and process ending observed.
+    #[error("the answered-stop decision contradicts the observed failure and process ending")]
+    AnsweredStopInconsistent,
 }
 
 /// Which bounded process-set termination phase an operating-system failure interrupted.
@@ -779,6 +782,7 @@ fn complete(
     child.finish();
     let duration = started.elapsed();
     let named_a_failure = answered.is_some_and(|answered| answered.load(Ordering::SeqCst));
+    let observation = observe_answer(&outcome, named_a_failure);
     let process_termination = match outcome {
         Exit::Exited if named_a_failure => Termination::Answered,
         Exit::TimedOut => Termination::TimedOut,
@@ -808,9 +812,11 @@ fn complete(
             None => (Vec::new(), false),
         },
     };
+    let capture_failed = capture_failure.is_some();
     let termination = capture_failure.map_or(process_termination, |error| {
         Termination::WaitFailed { error }
     });
+    let termination = checked_answered_termination(observation, capture_failed, termination);
     RunResult {
         termination,
         duration,
@@ -1460,6 +1466,51 @@ enum Exit {
     SupervisionFailed(RunnerError),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AnswerObservation {
+    ExitedAfterFailure,
+    StoppedAtFailure,
+    Other,
+    InconsistentStop,
+}
+
+const fn observe_answer(outcome: &Exit, named_a_failure: bool) -> AnswerObservation {
+    match outcome {
+        Exit::Exited if named_a_failure => AnswerObservation::ExitedAfterFailure,
+        Exit::Answered if named_a_failure => AnswerObservation::StoppedAtFailure,
+        Exit::Answered => AnswerObservation::InconsistentStop,
+        Exit::Exited
+        | Exit::WaitFailed(_)
+        | Exit::TimedOut
+        | Exit::Stalled
+        | Exit::Cancelled
+        | Exit::StoppedByMonitor
+        | Exit::MonitorFailed(_)
+        | Exit::SupervisionFailed(_) => AnswerObservation::Other,
+    }
+}
+
+fn checked_answered_termination(
+    observation: AnswerObservation,
+    capture_failed: bool,
+    reported: Termination,
+) -> Termination {
+    let answered = !capture_failed
+        && matches!(
+            observation,
+            AnswerObservation::ExitedAfterFailure | AnswerObservation::StoppedAtFailure
+        );
+    if observation != AnswerObservation::InconsistentStop
+        && answered == matches!(reported, Termination::Answered)
+    {
+        reported
+    } else {
+        Termination::WaitFailed {
+            error: RunnerError::AnsweredStopInconsistent,
+        }
+    }
+}
+
 /// How often the wait loop looks at the cancellation flag.
 const POLL_INTERVAL: Duration = Duration::from_millis(25);
 
@@ -1958,13 +2009,12 @@ mod tests {
     use std::time::Duration;
 
     #[cfg(unix)]
-    use super::{
-        Bound, Cancel, ProcessExit, RunResult, SIDE_CHANNEL_LIMIT, Spec, Termination,
-        read_side_channel, run,
-    };
+    use super::{Bound, Cancel, RunResult, SIDE_CHANNEL_LIMIT, Spec, read_side_channel, run};
     #[cfg(unix)]
     use super::{Delivered, Others, StopDecision, Stopped, checked_decide_stop, decide_stop};
-    use super::{MonitorState, Progress, classify_monitor, inspect_monitor};
+    use super::{
+        MonitorState, ProcessExit, Progress, Termination, classify_monitor, inspect_monitor,
+    };
 
     #[cfg(unix)]
     #[test]
@@ -2106,6 +2156,63 @@ mod tests {
             "refused",
         )));
         assert!(matches!(failure, MonitorState::InspectFailed(_)));
+    }
+
+    #[test]
+    fn a_planted_exit_after_a_named_failure_is_refused() {
+        let observation = super::observe_answer(&super::Exit::Exited, true);
+        let termination = super::checked_answered_termination(
+            observation,
+            false,
+            Termination::Exited(ProcessExit::Code(101)),
+        );
+        assert!(matches!(
+            termination,
+            Termination::WaitFailed {
+                error: super::RunnerError::AnsweredStopInconsistent
+            }
+        ));
+    }
+
+    #[test]
+    fn a_planted_answer_without_failure_evidence_is_refused() {
+        let observation = super::observe_answer(&super::Exit::Answered, false);
+        let termination =
+            super::checked_answered_termination(observation, false, Termination::Answered);
+        assert!(matches!(
+            termination,
+            Termination::WaitFailed {
+                error: super::RunnerError::AnsweredStopInconsistent
+            }
+        ));
+    }
+
+    #[test]
+    fn answered_stop_self_check_accepts_both_failure_endings() {
+        for outcome in [super::Exit::Exited, super::Exit::Answered] {
+            let observation = super::observe_answer(&outcome, true);
+            let termination =
+                super::checked_answered_termination(observation, false, Termination::Answered);
+            assert!(matches!(termination, Termination::Answered));
+        }
+    }
+
+    #[test]
+    fn a_failed_capture_cannot_be_overridden_by_a_named_test_failure() {
+        let observation = super::observe_answer(&super::Exit::Exited, true);
+        let termination = super::checked_answered_termination(
+            observation,
+            true,
+            Termination::WaitFailed {
+                error: super::RunnerError::OutputReaderDisconnected { stream: "output" },
+            },
+        );
+        assert!(matches!(
+            termination,
+            Termination::WaitFailed {
+                error: super::RunnerError::OutputReaderDisconnected { stream: "output" }
+            }
+        ));
     }
 
     #[cfg(unix)]

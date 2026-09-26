@@ -819,7 +819,8 @@ impl StartFailure {
             | RunnerError::DeadlineOverflow { .. }
             | RunnerError::ProcessControlFailed { .. }
             | RunnerError::ProcessControlSequenceFailed { .. }
-            | RunnerError::SupervisorReleaseFailed { .. } => Self::Other {
+            | RunnerError::SupervisorReleaseFailed { .. }
+            | RunnerError::AnsweredStopInconsistent => Self::Other {
                 detail: error.to_string(),
             },
         }
