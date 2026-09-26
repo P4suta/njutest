@@ -148,6 +148,7 @@ pub fn key(keyed: &Keyed, locus: &Locus) -> HexDigest {
         keyed.runner_tag(),
         keyed.timeout.clone(),
         keyed.steps.to_string(),
+        keyed.declared.digest.clone(),
         locus.item.package.clone(),
         locus.item.path.clone(),
         locus.item.ordinal.to_string(),

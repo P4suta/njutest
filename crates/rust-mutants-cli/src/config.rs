@@ -550,6 +550,17 @@ impl Config {
         Self::parse(&text, &path)
     }
 
+    /// Every variable a claim's `where.env` names, which the configuration thereby declares an answer may depend on.
+    #[must_use]
+    pub fn declared_env(&self) -> BTreeSet<String> {
+        self.mutation
+            .expect
+            .iter()
+            .filter_map(|claim| claim.holds.as_ref())
+            .flat_map(|holds| holds.env.keys().cloned())
+            .collect()
+    }
+
     /// Reads a configuration from text, naming `path` in any error.
     ///
     /// # Errors
