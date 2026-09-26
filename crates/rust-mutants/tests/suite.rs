@@ -11,12 +11,16 @@ mod branch;
 mod build_identity;
 #[path = "canonical.rs"]
 mod canonical;
+#[path = "capdir.rs"]
+mod capdir;
 #[path = "cargo.rs"]
 mod cargo;
 #[path = "cargo_config.rs"]
 mod cargo_config;
 #[path = "cargo_manifest.rs"]
 mod cargo_manifest;
+#[path = "carry.rs"]
+mod carry;
 #[path = "catalog.rs"]
 mod catalog;
 #[path = "census.rs"]
@@ -85,6 +89,8 @@ mod runner;
 mod sentinel;
 #[path = "session.rs"]
 mod session;
+#[path = "skeleton.rs"]
+mod skeleton;
 #[path = "snapshot.rs"]
 mod snapshot;
 #[path = "snapshot_layout.rs"]

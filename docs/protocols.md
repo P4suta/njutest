@@ -46,4 +46,5 @@ Allowed paths are independently confined to test files and fuzz corpora; a patch
 Provider output never changes the worktree.
 Each candidate is written into a snapshot, where the patched tree must pass three times with nothing active and fail twice with the mutant it claims to close; the preimage on disk must be the one the provider says it saw.
 Only then is the content kept, under `.njutest/candidates-v1/<digest>`, and recorded in the report.
+`njutest next` offers the same candidates a gap at a time and writes one only through that same check;
 `njutest fix` says what was offered and writes nothing; `njutest fix --apply` repeats the whole check and the preimage comparison before writing, and says so rather than overwriting when the file already holds exactly what the candidate would write.

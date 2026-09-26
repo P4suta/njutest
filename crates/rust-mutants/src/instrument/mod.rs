@@ -31,10 +31,12 @@ use crate::syntax::branch::Marker;
 use crate::syntax::{Form, Found, SiteHint};
 
 pub use runtime::{
-    ACTIVE_ENV, CATALOG_ENV, COMPILED_CATALOG_ENV, MODULE_STEM, ModuleNameError, ORPHAN_PREFIX,
-    RUNTIME_MARKER, Rendering, RuntimeRenderError, STALE_CATALOG_EXIT, STEP_NONCE_ENV,
-    STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_PROTOCOL_EXIT, STEP_STATE_ENV, STEP_STATE_SCHEMA,
-    STEPS_ENV, TOUCH_ENV, TOUCH_UNAVAILABLE_EXIT, WATCHED_ENV, module_name, render,
+    ACTIVE_ENV, CATALOG_ENV, COMPILED_CATALOG_ENV, CRASH_EXIT, CRASH_NONCE_ENV, CRASH_NOTICE_ENV,
+    CRASH_NOTICE_SCHEMA, CRASHED_CALL, DELAY_ENV, FAULT_ENV, INJECTED, INJECTED_CALL, MODULE_STEM,
+    ModuleNameError, ORPHAN_PREFIX, RUNTIME_MARKER, Rendering, RuntimeRenderError,
+    STALE_CATALOG_EXIT, STEP_BEAT_ENV, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA,
+    STEP_PROTOCOL_EXIT, STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, TOUCH_ENV, TOUCH_ITEMS_ENV,
+    TOUCH_UNAVAILABLE_EXIT, WATCHED_ENV, module_name, render,
 };
 
 /// The first words the runtime prints before it exits [`runtime::STALE_CATALOG_EXIT`].
@@ -120,6 +122,30 @@ pub struct ItemCatalog {
     pub first: BTreeMap<String, u32>,
 }
 
+impl ItemCatalog {
+    /// The position of `item` among every cataloged item of its file, in catalog order: the one definition an entered union, a sealed placeholder, and an audit all name an item by.
+    #[must_use]
+    pub fn ordinal(&self, item: &crate::touch::Item) -> Option<u32> {
+        let first = self.first.get(&item.path)?;
+        item.index.checked_sub(*first)
+    }
+
+    /// The portable name of the item at `index`, when the catalog holds one.
+    #[must_use]
+    pub fn item_ref(&self, index: u32) -> Option<crate::touch::ItemRef> {
+        let at = match usize::try_from(index) {
+            Ok(at) => at,
+            Err(_beyond_this_target) => return None,
+        };
+        let item = self.items.get(at)?;
+        Some(crate::touch::ItemRef {
+            package: item.package.clone(),
+            path: item.path.clone(),
+            ordinal: self.ordinal(item)?,
+        })
+    }
+}
+
 /// Numbers every item of `files` densely, in the order the files are given, so a marker's index names one item of the whole tree.
 ///
 /// # Errors
@@ -172,6 +198,8 @@ pub struct Placement {
     pub replacement: Vec<u8>,
     /// The rewrite site.
     pub hint: SiteHint,
+    /// Whether its guard is carried into every alternative of a site it nests in, so it can be active beside a mutation there.
+    pub carried: bool,
 }
 
 /// One guard the instrumenter placed.
@@ -205,11 +233,40 @@ struct Planted<'a> {
     markers: &'a [Marker],
 }
 
+/// One site an alternative is written for: where it is, its pristine text, and the guards carried into every alternative of it.
+#[derive(Clone, Copy)]
+struct Around<'a> {
+    site: Span,
+    text: &'a str,
+    carried: &'a [Carried],
+}
+
+/// A guard carried into the alternatives of the site it nests in: where it is, its rendered text, and the faults it can activate.
+struct Carried {
+    span: Span,
+    text: String,
+    faults: Vec<u32>,
+}
+
+/// What precedes an edit in its alternative, and which carried guards it holds.
+struct Headed<'c> {
+    head: String,
+    in_head: Vec<u32>,
+    kept: Option<&'c Carried>,
+}
+
+/// One alternative's text, and the faults whose guards it carries.
+struct Written {
+    text: String,
+    carries: Vec<u32>,
+}
+
 /// A rewritten file: its text and where every alternative landed in it.
 struct Rewritten {
     text: String,
     branches: Vec<Branch>,
     compared: BTreeSet<u32>,
+    beside: BTreeSet<(u32, u32)>,
 }
 
 /// A rendered site: its text, where each alternative sits in it, and which of them the guard evaluates beside what it replaces.
@@ -217,6 +274,7 @@ struct Rendered {
     text: String,
     branches: Vec<(u32, Span)>,
     compared: BTreeSet<u32>,
+    beside: BTreeSet<(u32, u32)>,
 }
 
 /// One instrumented file.
@@ -234,6 +292,8 @@ pub struct FileOutput {
     pub compared: Vec<u32>,
     /// Every marker this text holds the call for, ascending, which is not every marker it was given: a body inside a guard's own site takes none.
     pub marked: Vec<u32>,
+    /// Every mutation whose branch in this text carries a fault's guard, with that fault, ascending: the only pairs a fault can be active beside.
+    pub beside: Vec<(u32, u32)>,
     /// The name the runtime module took.
     pub module: String,
     /// Whether anything was rewritten.
@@ -368,6 +428,7 @@ pub fn plan_file(
             original: one.candidate.original.clone(),
             replacement: one.candidate.replacement.clone(),
             hint: one.hint.clone(),
+            carried: one.candidate.rule.family.carried_beside(),
         });
     }
     placements.sort_by_key(|placement| placement.index);
@@ -556,6 +617,7 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
         mut text,
         branches,
         compared,
+        beside,
     } = worker.rewrite(
         &checkpointed.source,
         &Planted {
@@ -586,6 +648,7 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
         branches,
         compared: compared.into_iter().collect(),
         marked: markers.iter().map(|marker| marker.index).collect(),
+        beside: beside.into_iter().collect(),
         module: worker.module,
         instrumented: true,
     })
@@ -639,6 +702,7 @@ fn mapped_placement(
             site_text: site_text.to_owned(),
             super_depth: placement.hint.super_depth,
         },
+        carried: placement.carried,
     })
 }
 
@@ -899,10 +963,12 @@ impl File<'_> {
         let mut splices = Vec::new();
         let mut roots = Vec::new();
         let mut compared = BTreeSet::new();
+        let mut beside = BTreeSet::new();
         for root in forest.roots() {
             let rendered = self.render(root)?;
             splices.push(self.splice(root.span, rendered.text.clone())?);
             compared.extend(rendered.compared.iter().copied());
+            beside.extend(rendered.beside.iter().copied());
             roots.push((root.span, rendered));
         }
         splices.extend(markers.iter().map(|marker| self.marker(marker)));
@@ -955,6 +1021,7 @@ impl File<'_> {
             text,
             branches,
             compared,
+            beside,
         })
     }
 
@@ -964,14 +1031,30 @@ impl File<'_> {
             text: original,
             branches: nested,
             mut compared,
+            mut beside,
         } = self.original_branch(node)?;
 
         let site = self.slice(node.span)?;
+        let carried = self.carried(node)?;
         let mut alternatives = Vec::with_capacity(node.alternatives.len());
         for placement in &node.alternatives {
+            let written = self.alternative(
+                &Around {
+                    site: node.span,
+                    text: site,
+                    carried: &carried,
+                },
+                placement,
+            )?;
+            beside.extend(
+                written
+                    .carries
+                    .iter()
+                    .map(|fault| (placement.index, *fault)),
+            );
             alternatives.push(guards::Alternative {
                 index: placement.index,
-                text: self.alternative(node.span, site, placement)?,
+                text: written.text,
                 comparable: self.comparable.contains(&placement.index),
                 probe: self.probed.get(&placement.index).copied(),
             });
@@ -1017,6 +1100,7 @@ impl File<'_> {
             text: composed.text,
             branches,
             compared,
+            beside,
         })
     }
 
@@ -1029,6 +1113,7 @@ impl File<'_> {
         let mut text = String::new();
         let mut branches: Vec<(u32, Span)> = Vec::new();
         let mut compared = BTreeSet::new();
+        let mut beside = BTreeSet::new();
         let mut cursor = node.span.start;
         for child in &node.children {
             text.push_str(self.slice(bounds(cursor, child.span.start)?)?);
@@ -1038,6 +1123,7 @@ impl File<'_> {
                 branches.push((index, self.shifted(span, at, "nested branch")?));
             }
             compared.extend(rendered.compared);
+            beside.extend(rendered.beside);
             text.push_str(&rendered.text);
             cursor = child.span.end;
         }
@@ -1046,21 +1132,26 @@ impl File<'_> {
             text,
             branches,
             compared,
+            beside,
         })
     }
 
-    /// One alternative: the pristine site with exactly this edit applied, folded onto one line.
+    /// One alternative: the pristine site with exactly this edit applied, folded onto one line, with every carried guard the edit keeps the bytes of rendered where those bytes are.
     fn alternative(
         &self,
-        site: Span,
-        site_text: &str,
+        around: &Around<'_>,
         placement: &Placement,
-    ) -> Result<String, InstrumentError> {
-        let head = self.slice(
-            Span::new(site.start, placement.edit.start).map_err(|error| {
-                self.error(InstrumentErrorKind::SiteConflict, error.to_string())
-            })?,
-        )?;
+    ) -> Result<Written, InstrumentError> {
+        let Around {
+            site,
+            text: site_text,
+            carried,
+        } = *around;
+        let Headed {
+            head,
+            in_head,
+            kept,
+        } = self.headed(site, carried, placement)?;
         let tail =
             self.slice(Span::new(placement.edit.end, site.end).map_err(|error| {
                 self.error(InstrumentErrorKind::SiteConflict, error.to_string())
@@ -1074,15 +1165,39 @@ impl File<'_> {
                 ),
             )
         })?;
+        let in_replacement: Vec<u32> = kept.map(|one| one.faults.clone()).unwrap_or_default();
+        let replacement = match kept {
+            Some(one) => {
+                let (_, rest) = replacement.split_at(self.slice(one.span)?.len());
+                format!("{}{rest}", one.text)
+            }
+            None => replacement.to_owned(),
+        };
+        let resolved = replacement
+            .replace(
+                INJECTED_CALL,
+                &guards::named(&self.module, placement.hint.super_depth, "injected"),
+            )
+            .replace(
+                CRASHED_CALL,
+                &guards::named(&self.module, placement.hint.super_depth, "crashed_after"),
+            );
+        let replacement = resolved.as_str();
         if placement.hint.form == Form::M {
-            return Ok(replacement.to_owned());
+            return Ok(Written {
+                text: replacement.to_owned(),
+                carries: in_replacement,
+            });
         }
         let text = format!("{head}{replacement}{tail}");
         debug_assert!(!site_text.is_empty() || text.is_empty());
         if text.trim().is_empty() {
-            return Ok(String::new());
+            return Ok(Written {
+                text: String::new(),
+                carries: Vec::new(),
+            });
         }
-        flatten(&text).map_err(|error| {
+        let text = flatten(&text).map_err(|error| {
             self.error(
                 InstrumentErrorKind::FlattenFailed,
                 format!(
@@ -1090,6 +1205,70 @@ impl File<'_> {
                     placement.hint.form, placement.index
                 ),
             )
+        })?;
+        Ok(Written {
+            text,
+            carries: in_head.into_iter().chain(in_replacement).collect(),
+        })
+    }
+
+    /// Every child of `node` whose every alternative is a fault, rendered, which is what every alternative of `node` that keeps its bytes carries.
+    fn carried(&self, node: &Node<Placement>) -> Result<Vec<Carried>, InstrumentError> {
+        let mut carried = Vec::new();
+        for child in node
+            .children
+            .iter()
+            .filter(|child| child.alternatives.iter().all(|placement| placement.carried))
+        {
+            carried.push(Carried {
+                span: child.span,
+                text: self.render(child)?.text,
+                faults: child
+                    .alternatives
+                    .iter()
+                    .map(|placement| placement.index)
+                    .collect(),
+            });
+        }
+        Ok(carried)
+    }
+
+    /// The pristine bytes of a site before the edit, with every carried guard wholly inside them rendered in place, and the carried guard the edit's replacement begins with.
+    fn headed<'c>(
+        &self,
+        site: Span,
+        carried: &'c [Carried],
+        placement: &Placement,
+    ) -> Result<Headed<'c>, InstrumentError> {
+        let mut head = String::new();
+        let mut cursor = site.start;
+        let mut kept: Option<&Carried> = None;
+        let mut in_head: Vec<u32> = Vec::new();
+        for one in carried {
+            if one.span.end <= placement.edit.start {
+                head.push_str(self.slice(Span::new(cursor, one.span.start).map_err(
+                    |error| self.error(InstrumentErrorKind::SiteConflict, error.to_string()),
+                )?)?);
+                head.push_str(&one.text);
+                in_head.extend(one.faults.iter().copied());
+                cursor = one.span.end;
+            } else if one.span.start == placement.edit.start
+                && placement
+                    .replacement
+                    .starts_with(self.slice(one.span)?.as_bytes())
+            {
+                kept = Some(one);
+            }
+        }
+        head.push_str(
+            self.slice(Span::new(cursor, placement.edit.start).map_err(|error| {
+                self.error(InstrumentErrorKind::SiteConflict, error.to_string())
+            })?)?,
+        );
+        Ok(Headed {
+            head,
+            in_head,
+            kept,
         })
     }
 

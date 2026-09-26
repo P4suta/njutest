@@ -21,7 +21,7 @@ pub const LAYOUT: &str = "rust-mutants/outcomes-v2";
 pub const RULE_ABI: u32 = 1;
 
 /// Bumped when a guard changes shape, so a record about the old instrumentation stops answering.
-pub const INSTRUMENTATION_ABI: u32 = 2;
+pub const INSTRUMENTATION_ABI: u32 = 3;
 
 /// Bumped when the policy interpreting a finite step allowance changes.
 /// A step limit is an execution bound in this ABI, never a detected mutant.
@@ -480,7 +480,7 @@ const LOOK_AGAIN_EVERY: std::time::Duration = std::time::Duration::from_millis(1
 /// POSIX `rename` is atomic for a reader holding the old inode, so this returns on the first attempt there.
 /// Windows gives an *opener* no such guarantee: while a replacement is in flight the name is briefly delete-pending and opening it answers `ERROR_ACCESS_DENIED`, so a reader racing a writer sees a refusal where the store's contract promises a whole record or nothing.
 /// Answering `None` to any refusal would read an unreadable directory as a permanent cache miss, which is the same fault pointing the other way, so a refusal that outlasts a replacement is returned as itself.
-fn read_through_a_replacement(path: &Path) -> io::Result<Option<String>> {
+pub(crate) fn read_through_a_replacement(path: &Path) -> io::Result<Option<String>> {
     let started = std::time::Instant::now();
     loop {
         match std::fs::read_to_string(path) {

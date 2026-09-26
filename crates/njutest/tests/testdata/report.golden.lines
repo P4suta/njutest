@@ -14,5 +14,11 @@ TARGETS	selected=2	passed=1	failed=1	skipped=0	missing=0
 MUTANTS	cataloged=1	rejected=0	executed=1	unreached=0
 OUTCOMES	killed=0	survived=1	step_limit_reached=0	waited=0	equivalent=0
 WITHIN_OUTCOMES	accepted_of_survived=0	reused_of_killed=0	reused_of_survived=0
+DIMENSION	mutation	measured	catalogued=1	answered=1	holes=0
+DIMENSION	repeatable	not-asked
+DIMENSION	fault	not-asked
+DIMENSION	schedule	measured	catalogued=1	answered=0	holes=1
+DIMENSION	wire	nothing-to-ask	no seam was configured or asked a question
+DIMENSION	durable	not-asked
 SOUNDNESS	build=default	unsafe_items=0	packages_with_unsafe=0	was_executed=false
 VERDICT	INSUFFICIENT

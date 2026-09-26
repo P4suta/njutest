@@ -98,38 +98,41 @@ fn production_harnesses() -> BTreeSet<String> {
     found
 }
 
-fn configured_harnesses(task: &str) -> BTreeSet<String> {
-    let listed: Vec<String> = task
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("--harness "))
-        .map(|name| name.trim_end_matches('\\').trim().to_owned())
-        .collect();
-    let unique: BTreeSet<String> = listed.iter().cloned().collect();
-    assert_eq!(
-        listed.len(),
-        unique.len(),
-        "a duplicated --harness argument is not another proof"
-    );
-    unique
-}
-
 #[test]
 fn every_production_kani_harness_is_proved_by_the_exact_local_and_ci_task() {
     let mise = std::fs::read_to_string(root().join("mise.toml")).expect("mise.toml is readable");
     let laws = task(&mise, "kani:laws");
     assert!(
-        laws.contains("cargo kani -p rust-mutants --lib --exact --no-assertion-reach-checks"),
-        "the verifier must reject an ambiguous harness name"
+        laws.contains("cargo xtask kani-laws --cache"),
+        "the local and CI gate proves through the one task that knows every harness"
+    );
+    let arguments: Vec<String> = xtask::kanilaws::arguments(Path::new("export.json"))
+        .into_iter()
+        .map(|argument| argument.into_string().expect("an argument is text"))
+        .collect();
+    let spoken = arguments.join(" ");
+    assert!(
+        spoken.starts_with("kani -p rust-mutants --lib --exact --no-assertion-reach-checks"),
+        "the verifier must reject an ambiguous harness name: {spoken}"
     );
     assert!(
-        laws.contains("-Z unstable-options --export-json \"$export_file\"")
-            && laws.contains("cargo xtask kani-laws-audit \"$export_file\""),
-        "Kani success is not sufficient: the same task must strictly audit its fresh raw export"
+        spoken.ends_with("-Z unstable-options --export-json export.json"),
+        "Kani success is not sufficient: its raw export is what the audit reads: {spoken}"
+    );
+    let asked: BTreeSet<String> = xtask::kanilaws::harnesses()
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(
+        asked.len(),
+        xtask::kanilaws::harnesses().len(),
+        "a duplicated harness is not another proof"
     );
     assert_eq!(
-        configured_harnesses(&laws),
+        asked,
         production_harnesses(),
-        "the Kani task and the production #[kani::proof] inventory must be exactly the same set"
+        "the harnesses the task proves, which are the ones the audit requires, and the production \
+         #[kani::proof] inventory must be exactly the same set"
     );
 
     let verified = task(&mise, "kani:verified");

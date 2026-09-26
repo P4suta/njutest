@@ -143,6 +143,7 @@ fn one(place: &Place, spot: &Spot, telling: Telling) -> String {
         places: vec![narrowed],
         diagnostics: Vec::new(),
         limitations: Vec::new(),
+        matrix: Vec::new(),
     };
     let drawn = super::human::draw(&told, telling.terminal());
     drawn

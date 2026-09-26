@@ -57,7 +57,10 @@ pub const IO_DRAIN_GRACE: Duration = Duration::from_secs(2);
 
 /// A cooperative cancellation flag shared between the caller and a run.
 #[derive(Debug, Clone)]
-pub struct Cancel(Arc<AtomicBool>);
+pub struct Cancel {
+    own: Arc<AtomicBool>,
+    above: Vec<Arc<AtomicBool>>,
+}
 
 impl Cancel {
     /// A flag that is not yet cancelled.
@@ -67,26 +70,40 @@ impl Cancel {
         reason = "an execution-control state must be constructed explicitly, never by a semantic Default"
     )]
     pub fn new() -> Self {
-        Self(Arc::new(AtomicBool::new(false)))
+        Self {
+            own: Arc::new(AtomicBool::new(false)),
+            above: Vec::new(),
+        }
+    }
+
+    /// A flag cancelled whenever this one is, whose own cancellation this one never sees: what a run that stops its own work raises, so a caller does not read that stop as having been interrupted.
+    #[must_use]
+    pub fn child(&self) -> Self {
+        let mut above = self.above.clone();
+        above.push(Arc::clone(&self.own));
+        Self {
+            own: Arc::new(AtomicBool::new(false)),
+            above,
+        }
     }
 
     /// Requests cancellation.
     /// Idempotent.
     pub fn cancel(&self) {
-        self.0.store(true, Ordering::SeqCst);
+        self.own.store(true, Ordering::SeqCst);
     }
 
-    /// Whether cancellation was requested.
+    /// Whether cancellation was requested, of this flag or of any it is a child of.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
+        self.own.load(Ordering::SeqCst) || self.above.iter().any(|flag| flag.load(Ordering::SeqCst))
     }
 
     /// The flag itself, so a composition root can raise it from a signal handler.
     /// This crate never installs one: a signal is the process's business, not a library's.
     #[must_use]
     pub fn flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.0)
+        Arc::clone(&self.own)
     }
 }
 
@@ -129,7 +146,7 @@ pub struct Spec {
     /// The child's working directory.
     /// `None` means this process's directory.
     pub dir: Option<PathBuf>,
-    /// The child's complete environment.
+    /// The child's complete environment, but for [`PRESENTATION`], which the runner sets over it.
     /// `None` inherits this process's environment, which is convenient for one-shot probes; the engine composes the full set explicitly for mutant executions.
     pub env: Option<Vec<(OsString, OsString)>>,
     /// Bounds the child's wall-clock run time.
@@ -148,6 +165,8 @@ pub struct Spec {
     pub(crate) progress: Option<Progress>,
     /// Where the process that leads this run is recorded the moment it starts, so a child it leaves is known to be its own before anything else looks.
     pub(crate) leaders: Option<crate::orphan::Leaders>,
+    /// Whether the run ends at the first line in which libtest says a test failed, because that one failure is the whole answer the caller wants.
+    pub(crate) stop_at_first_failure: bool,
     /// Test-only terminal ownership fault selected explicitly by the composition root.
     reaping: Reaping,
 }
@@ -170,6 +189,7 @@ impl Spec {
             stop_file: None,
             progress: None,
             leaders: None,
+            stop_at_first_failure: false,
             reaping: Reaping::Normal,
         }
     }
@@ -181,13 +201,41 @@ impl Spec {
     }
 }
 
-/// A file whose content changes whenever the child makes progress, and how long it may go unchanged.
+/// Files whose content changes whenever the child makes progress, and how long they may all go unchanged.
 #[derive(Debug, Clone)]
 pub(crate) struct Progress {
-    /// The file the child rewrites.
+    /// The file the child rewrites whenever it takes a reservation of its count.
     pub(crate) path: PathBuf,
-    /// How long the file may stay unchanged before the run is [`Termination::Stalled`].
+    /// The file the child rewrites while it spends a reservation, at most [`Progress::beat_every`] apart.
+    pub(crate) beat: PathBuf,
+    /// How long both files may stay unchanged before the run is [`Termination::Stalled`].
     pub(crate) quiet: Duration,
+}
+
+/// How many beats the child is told to fit into one quiet window.
+const BEATS_PER_WINDOW: u32 = 4;
+
+impl Progress {
+    /// How long the child may spend a reservation before it rewrites [`Progress::beat`]: a quarter of the window, and never less than a millisecond.
+    pub(crate) fn beat_every(&self) -> Duration {
+        let share = match self.quiet.checked_div(BEATS_PER_WINDOW) {
+            Some(share) => share,
+            None => self.quiet,
+        };
+        share.max(Duration::from_millis(1))
+    }
+
+    /// What the child is told so that it is never quiet for a window while it moves, set over its environment by the runner that watches it.
+    pub(crate) fn told(&self) -> (&'static str, OsString) {
+        let mut value = OsString::from(format!("{}@", self.beat_every().as_millis()));
+        value.push(self.beat.as_os_str());
+        (crate::instrument::STEP_BEAT_ENV, value)
+    }
+
+    /// Every file a change to which is the child moving.
+    fn signals(&self) -> [&Path; 2] {
+        [&self.path, &self.beat]
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -363,8 +411,7 @@ pub enum MonitorFailure {
 }
 
 /// How a process that exited by itself did so.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(tag = "kind", content = "value", rename_all = "kebab-case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessExit {
     /// The process returned this status code.
     Code(i32),
@@ -375,12 +422,48 @@ pub enum ProcessExit {
     Unknown,
 }
 
-#[derive(serde::Deserialize)]
+impl ProcessExit {
+    /// Whether the process ended of a signal it raised by what it did, which a mutation can make it do, rather than one sent from outside.
+    #[must_use]
+    #[cfg_attr(
+        windows,
+        expect(
+            clippy::missing_const_for_fn,
+            reason = "only a POSIX signal can be one the process raised itself, so on Windows every arm is a constant, and on unix the answer reads a signal set"
+        )
+    )]
+    pub fn raised_by_itself(self) -> bool {
+        match self {
+            #[cfg(unix)]
+            Self::Signal(signal) => sys::raised_by_itself(signal),
+            #[cfg(windows)]
+            Self::Signal(_) => false,
+            Self::Code(_) | Self::Unknown => false,
+        }
+    }
+}
+
+/// How an exit is spelled in a recording, in both directions, so an exit the runner can report is one a reader can read.
+#[derive(serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 enum ProcessExitWire {
     Code { value: i32 },
     Signal { value: i32 },
     Unknown {},
+}
+
+impl serde::Serialize for ProcessExit {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match *self {
+            Self::Code(value) => ProcessExitWire::Code { value },
+            Self::Signal(value) => ProcessExitWire::Signal { value },
+            Self::Unknown => ProcessExitWire::Unknown {},
+        }
+        .serialize(serializer)
+    }
 }
 
 impl<'de> serde::Deserialize<'de> for ProcessExit {
@@ -444,6 +527,8 @@ pub enum Termination {
     Stalled,
     /// An execution-specific monitor observed its stop request and the supervised process set was ended.
     StoppedByMonitor,
+    /// The harness said a test failed, which was the whole answer asked for, and the supervised process set was ended.
+    Answered,
     /// The execution-specific monitor could not establish whether a valid stop request existed.
     MonitorFailed {
         /// Why the monitor could not be trusted.
@@ -489,6 +574,7 @@ impl Termination {
             | Self::TimedOut
             | Self::Stalled
             | Self::StoppedByMonitor
+            | Self::Answered
             | Self::Cancelled { .. }
             | Self::WaitFailed { .. }
             | Self::MonitorFailed { .. } => None,
@@ -507,6 +593,7 @@ impl Termination {
             | Self::TimedOut
             | Self::Stalled
             | Self::StoppedByMonitor
+            | Self::Answered
             | Self::Cancelled { .. } => None,
         }
     }
@@ -568,6 +655,7 @@ impl RunResult {
             | Termination::TimedOut
             | Termination::Stalled
             | Termination::StoppedByMonitor
+            | Termination::Answered
             | Termination::MonitorFailed { .. }
             | Termination::Cancelled { .. }
             | Termination::WaitFailed { .. } => None,
@@ -624,7 +712,8 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
         Ok(deadline) => deadline,
         Err(error) => return not_started(started, error, Vec::new()),
     };
-    let running = match start(spec, program) {
+    let answered = Arc::new(AtomicBool::new(false));
+    let running = match start(spec, program, &answered) {
         Ok(started) => started,
         Err(Failed { error, output }) => return not_started(started, error, output),
     };
@@ -640,6 +729,7 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
             cancel,
             monitor: spec.stop_file.as_deref(),
             progress: spec.progress.as_ref(),
+            answered: spec.stop_at_first_failure.then_some(answered.as_ref()),
         },
     );
     let completed = complete(started, running, outcome);
@@ -681,6 +771,7 @@ fn complete(started: Instant, running: Started, outcome: Exit) -> RunResult {
         Exit::TimedOut => Termination::TimedOut,
         Exit::Stalled => Termination::Stalled,
         Exit::StoppedByMonitor => Termination::StoppedByMonitor,
+        Exit::Answered => Termination::Answered,
         Exit::MonitorFailed(failure) => Termination::MonitorFailed { failure },
         Exit::Cancelled => Termination::Cancelled { started: true },
         Exit::Exited => Termination::Exited(sys::process_exit(status)),
@@ -878,7 +969,7 @@ struct Failed {
 
 /// The first half of [`run`]: supervision, the pipes, the spawn, the reader threads, and adoption.
 /// On any failure the child, if any, is dead.
-fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
+fn start(spec: &Spec, program: &OsString, answered: &Arc<AtomicBool>) -> Result<Started, Failed> {
     let failed = |error: RunnerError| Failed {
         error,
         output: Vec::new(),
@@ -912,6 +1003,7 @@ fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
         merged,
         structured,
         spec.output_limit.unwrap_or(DEFAULT_OUTPUT_LIMIT),
+        spec.stop_at_first_failure.then(|| Arc::clone(answered)),
     ) {
         Ok(readers) => readers,
         Err(error) => {
@@ -979,6 +1071,7 @@ fn launch_readers(
     merged: io::PipeReader,
     structured: Option<(usize, io::PipeReader)>,
     output_limit: usize,
+    answered: Option<Arc<AtomicBool>>,
 ) -> Result<StartingReaders, RunnerError> {
     let head = match structured {
         Some((limit, reader)) => Some(JoinedReader::launch(
@@ -988,11 +1081,19 @@ fn launch_readers(
         )?),
         None => None,
     };
-    let merged = JoinedReader::launch(
-        merged,
-        "combined stdout/stderr",
-        TailCapture(TailBuffer::new(output_limit)),
-    )?;
+    let tail = TailCapture(TailBuffer::new(output_limit));
+    let merged = match answered {
+        None => JoinedReader::launch(merged, "combined stdout/stderr", tail)?,
+        Some(answered) => JoinedReader::launch(
+            merged,
+            "combined stdout/stderr",
+            FirstFailure {
+                inner: tail,
+                partial: Vec::new(),
+                answered,
+            },
+        )?,
+    };
     Ok(StartingReaders { merged, head })
 }
 
@@ -1020,6 +1121,13 @@ fn resolved(spec: &Spec, program: &OsString) -> io::Result<OsString> {
         .map_err(|unfound| io::Error::new(io::ErrorKind::NotFound, unfound.to_string()))
 }
 
+/// What every child is told about presenting its output, over whatever its environment says, since the engine reads what it writes.
+pub const PRESENTATION: [(&str, &str); 3] = [
+    ("CARGO_TERM_COLOR", "never"),
+    ("CARGO_TERM_QUIET", "false"),
+    ("CARGO_TERM_VERBOSE", "false"),
+];
+
 /// A command with its pipes attached: the merged reader, and the structured stdout reader with its cap when the spec asked for one.
 struct Wired {
     command: Command,
@@ -1040,6 +1148,11 @@ fn wire(spec: &Spec, program: &OsString) -> io::Result<Wired> {
     if let Some(env) = &spec.env {
         command.env_clear();
         command.envs(env.iter().map(|(key, value)| (key, value)));
+    }
+    command.envs(PRESENTATION);
+    if let Some(progress) = &spec.progress {
+        let (name, value) = progress.told();
+        command.env(name, value);
     }
     command.stdin(Stdio::null());
     let structured = if let Some(limit) = spec.structured_stdout {
@@ -1085,6 +1198,40 @@ impl ReaderCapture for TailCapture {
     fn finish(self) -> Result<Self::Output, OutputError> {
         self.0.capture()
     }
+}
+
+/// A capture that also raises `answered` at the first whole line in which libtest says a test failed.
+struct FirstFailure<C> {
+    inner: C,
+    partial: Vec<u8>,
+    answered: Arc<AtomicBool>,
+}
+
+impl<C: ReaderCapture> ReaderCapture for FirstFailure<C> {
+    type Output = C::Output;
+
+    fn write(&mut self, bytes: &[u8]) -> Result<(), OutputError> {
+        self.partial.extend_from_slice(bytes);
+        while let Some(end) = self.partial.iter().position(|byte| *byte == b'\n') {
+            let line: Vec<u8> = self.partial.drain(..=end).collect();
+            if says_a_test_failed(&line) {
+                self.answered.store(true, Ordering::SeqCst);
+            }
+        }
+        self.inner.write(bytes)
+    }
+
+    fn finish(self) -> Result<Self::Output, OutputError> {
+        self.inner.finish()
+    }
+}
+
+/// Whether `line` is libtest's report of one test that failed: `test <name> ... FAILED`, and never its closing `test result: FAILED.`.
+#[must_use]
+pub fn says_a_test_failed(line: &[u8]) -> bool {
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    line.starts_with(b"test ") && line.ends_with(b" ... FAILED")
 }
 
 struct HeadCapture(HeadBuffer);
@@ -1292,6 +1439,8 @@ enum Exit {
     Cancelled,
     /// An execution-specific monitor asked the declared process set to stop.
     StoppedByMonitor,
+    /// The harness said a test failed, and the declared process set was ended there.
+    Answered,
     /// The execution-specific monitor could not be inspected safely.
     MonitorFailed(MonitorFailure),
     /// Stopping or reaping the child failed, so the triggering event cannot be reported as a trustworthy termination.
@@ -1307,12 +1456,13 @@ struct Stops<'a> {
     cancel: &'a Cancel,
     monitor: Option<&'a Path>,
     progress: Option<&'a Progress>,
+    answered: Option<&'a AtomicBool>,
 }
 
-/// What the wait loop last saw of the progress file, and when it last saw it change.
+/// What the wait loop last saw of each progress file, and when it last saw any of them change.
 struct Watching<'a> {
     progress: &'a Progress,
-    seen: Option<Vec<u8>>,
+    seen: [Option<Vec<u8>>; 2],
     moved: Instant,
 }
 
@@ -1320,20 +1470,22 @@ impl<'a> Watching<'a> {
     const fn of(progress: &'a Progress, started: Instant) -> Self {
         Self {
             progress,
-            seen: None,
+            seen: [None, None],
             moved: started,
         }
     }
 
-    /// Looks at the file and returns the moment it counts as stalled; a failed read is not a change, since a child that is not writing never causes one.
+    /// Looks at the files and returns the moment they count as stalled; a failed read is not a change, since a child that is not writing never causes one.
     fn look(&mut self, now: Instant) -> Option<Instant> {
-        match read_between_writes(&self.progress.path) {
-            Ok(content) if self.seen.as_ref() != Some(&content) => {
-                self.seen = Some(content);
-                self.moved = now;
+        for (path, seen) in self.progress.signals().into_iter().zip(&mut self.seen) {
+            match read_between_writes(path) {
+                Ok(content) if seen.as_ref() != Some(&content) => {
+                    *seen = Some(content);
+                    self.moved = now;
+                }
+                Ok(_unchanged) => {}
+                Err(_a_failed_read_is_not_a_change) => {}
             }
-            Ok(_unchanged) => {}
-            Err(_a_failed_read_is_not_a_change) => {}
         }
         self.moved.checked_add(self.progress.quiet)
     }
@@ -1426,6 +1578,20 @@ fn held_by_writer(error: &io::Error) -> bool {
     }
 }
 
+/// The stop a harness's first failing test asks for, where the run asked to end there and it has.
+fn answered(
+    supervisor: &sys::Supervisor,
+    child: &SupervisedChild,
+    answered: Option<&AtomicBool>,
+) -> Option<Exit> {
+    answered
+        .is_some_and(|answered| answered.load(Ordering::SeqCst))
+        .then(|| match terminate(supervisor, child) {
+            Ok(()) => Exit::Answered,
+            Err(error) => Exit::SupervisionFailed(error),
+        })
+}
+
 /// Waits for the child to exit, the deadline to pass, or the cancellation flag to be raised — and in the latter two cases ends the declared process set.
 fn await_exit(supervisor: &sys::Supervisor, child: &SupervisedChild, stops: Stops<'_>) -> Exit {
     let mut watching = stops
@@ -1459,6 +1625,9 @@ fn await_exit(supervisor: &sys::Supervisor, child: &SupervisedChild, stops: Stop
                 Ok(()) => Exit::Cancelled,
                 Err(error) => Exit::SupervisionFailed(error),
             };
+        }
+        if let Some(answered) = answered(supervisor, child, stops.answered) {
+            return answered;
         }
         if let Some(path) = stops.monitor {
             match inspect_monitor(path) {
@@ -1639,18 +1808,44 @@ pub const SUPERVISION_BOUNDARY: SupervisionBoundary = sys::SUPERVISION_BOUNDARY;
 #[cfg(test)]
 mod tests {
     #[cfg(unix)]
+    #[test]
+    fn a_gentle_stop_of_a_group_whose_leader_has_already_exited_is_no_failure() {
+        let mut command = std::process::Command::new("true");
+        let mut supervisor = super::sys::Supervisor::new().expect("a supervisor");
+        supervisor.configure(&mut command);
+        let mut child = super::SupervisedChild::launch(&mut command, super::Reaping::Normal)
+            .expect("true starts");
+        supervisor
+            .adopt(child.handle())
+            .expect("the group is adopted");
+        let started = std::time::Instant::now();
+        while !child.exit_observed().expect("the leader can be observed") {
+            assert!(started.elapsed() < Duration::from_secs(10), "true exits");
+            std::thread::yield_now();
+        }
+        let stopped = supervisor.terminate_gently();
+        let reaped = child.reap_observed();
+        assert!(
+            stopped.is_ok(),
+            "a test process that printed its failure and exited before the stop arrived leaves a \
+             group of one process that has ended and is not reaped yet, and macOS refuses a \
+             signal to it with EPERM; read as a failure, it turned a kill the harness had \
+             already named into an errored mutant: {stopped:?} {reaped:?}"
+        );
+    }
+
+    #[cfg(unix)]
     use njutest_devkit::result::ResultState::Refused;
     use njutest_devkit::result::{ResultState::Returned, result_state};
 
-    #[cfg(unix)]
     use std::time::Duration;
 
     #[cfg(unix)]
     use super::{
-        Bound, Cancel, ProcessExit, Progress, RunResult, SIDE_CHANNEL_LIMIT, Spec, Termination,
+        Bound, Cancel, ProcessExit, RunResult, SIDE_CHANNEL_LIMIT, Spec, Termination,
         read_side_channel, run,
     };
-    use super::{MonitorState, classify_monitor, inspect_monitor};
+    use super::{MonitorState, Progress, classify_monitor, inspect_monitor};
 
     #[test]
     fn monitor_inspection_distinguishes_absence_regular_files_and_invalid_types() {
@@ -1716,16 +1911,70 @@ mod tests {
             return None;
         };
         let file = directory.path().join("progress");
+        let beat = directory.path().join("beat");
         let mut spec = Spec::new(
             [
                 "sh".to_owned(),
                 "-c".to_owned(),
-                script.replace("PROGRESS", &file.display().to_string()),
+                script
+                    .replace("PROGRESS", &file.display().to_string())
+                    .replace("BEAT", &beat.display().to_string()),
             ],
             Bound::After(ceiling),
         );
-        spec.progress = Some(Progress { path: file, quiet });
+        spec.progress = Some(Progress {
+            path: file,
+            beat,
+            quiet,
+        });
         Some(run(&spec, &Cancel::new()))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_child_that_moves_only_its_beat_outlives_its_quiet_window() {
+        let Some(result) = watched(
+            "echo 0 > PROGRESS; i=0; while [ $i -lt 30 ]; do echo $i > BEAT; i=$((i+1)); sleep 0.05; done",
+            Duration::from_millis(500),
+            Duration::from_secs(20),
+        ) else {
+            return;
+        };
+        assert!(
+            matches!(
+                result.termination,
+                Termination::Exited(ProcessExit::Code(0))
+            ),
+            "a child spending one reservation for a second and a half leaves its state alone and \
+             rewrites its beat every fifty milliseconds, so it is never quiet for half of one: \
+             {:?} after {:?}",
+            result.termination,
+            result.duration
+        );
+    }
+
+    #[test]
+    fn a_child_is_told_to_beat_well_inside_every_window() {
+        for millis in [1, 2, 3, 4, 7, 100, 500, 5_000, 30_000, 3_600_000] {
+            let quiet = Duration::from_millis(millis);
+            let progress = Progress {
+                path: std::path::PathBuf::from("state"),
+                beat: std::path::PathBuf::from("beat"),
+                quiet,
+            };
+            let every = progress.beat_every();
+            assert!(
+                every >= Duration::from_millis(1) && (every * 2 <= quiet || every == quiet),
+                "a beat every {every:?} leaves a child moving in a {quiet:?} window time to be seen"
+            );
+            let (name, value) = progress.told();
+            assert_eq!(name, crate::instrument::STEP_BEAT_ENV);
+            assert_eq!(
+                value,
+                std::ffi::OsString::from(format!("{}@beat", every.as_millis())),
+                "the child is told the interval in whole milliseconds and the file it rewrites"
+            );
+        }
     }
 
     #[cfg(unix)]

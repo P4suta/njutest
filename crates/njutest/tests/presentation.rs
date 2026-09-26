@@ -72,6 +72,7 @@ fn told() -> Told {
         places: Vec::new(),
         diagnostics: vec![survivor()],
         limitations: Vec::new(),
+        matrix: Vec::new(),
     }
 }
 
@@ -182,6 +183,7 @@ fn a_run_with_nothing_to_say_says_that_and_stops() {
         places: Vec::new(),
         diagnostics: Vec::new(),
         limitations: Vec::new(),
+        matrix: Vec::new(),
     };
     assert_eq!(
         human::draw(&told, Terminal::plain(80)),

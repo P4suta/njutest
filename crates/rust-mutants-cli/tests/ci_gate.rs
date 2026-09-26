@@ -71,6 +71,7 @@ fn mutant(index: u32, outcome: Outcome) -> RunMutantDocument {
         route: None,
         identical: rust_mutants::run::CodegenIdentity::NotMeasured,
         retried: false,
+        lingered: false,
         expected: false,
         unreached: false,
         source_run_id: None,
@@ -108,7 +109,7 @@ fn document(survivors: u32) -> RunDocument {
             exit_code: if survivors == 0 {
                 rust_mutants::run::EXIT_DETECTED
             } else {
-                rust_mutants::run::EXIT_UNDETECTED
+                rust_mutants::run::EXIT_FOUND
             },
             shard: None,
             jobs: rust_mutants_cli::report::run::JobsDocument {

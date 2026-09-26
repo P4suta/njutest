@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# How many values each audit reader supplies where its input gave none.
+# Each count may only fall, and the gate holds it to exactly what the file does.
+2 xtask/src/engineaudit/arithmetic.rs
+12 xtask/src/engineaudit/evidence.rs
+2 xtask/src/engineaudit/ledger.rs
+1 xtask/src/engineaudit/mod.rs
+3 xtask/src/engineaudit/recording.rs
+2 xtask/src/engineaudit/sentinel.rs
+11 xtask/src/proofaudit.rs
+2 xtask/src/proofaudit/knobs.rs
+3 xtask/src/proofaudit/merge.rs
+3 xtask/src/proofaudit/sentinel.rs
+2 xtask/src/proofaudit/soundness.rs
+2 xtask/src/route.rs

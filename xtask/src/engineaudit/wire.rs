@@ -15,7 +15,7 @@ use super::{
 };
 
 /// Reads a nullable value while leaving absence for serde to reject at the enclosing struct boundary.
-fn required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+pub(super) fn required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de>,
@@ -274,6 +274,10 @@ impl Target {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is an independent fact the published report row states, and the wire shape is the schema's"
+)]
 struct Mutant {
     index: u64,
     id: String,
@@ -310,6 +314,7 @@ struct Mutant {
     #[serde(deserialize_with = "required_option")]
     _signal: Option<i64>,
     retried: bool,
+    lingered: bool,
     #[serde(deserialize_with = "required_option")]
     not_run_reason: Option<NotRunReason>,
     #[serde(deserialize_with = "required_option")]
@@ -322,13 +327,17 @@ struct Mutant {
     source_run_id: Option<String>,
 }
 
-/// What the optional compiler-artifact comparison established about a row, as the run report writes it.
+/// What the engine's compiler-artifact comparison established about one mutant, as the published run report spells it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum CodegenIdentity {
+    /// Nothing was compared.
     NotMeasured,
+    /// The mutant compiles to the same code.
     Identical,
+    /// It compiles to different code.
     Different,
+    /// The comparison could not be made.
     NotEstablished,
 }
 
@@ -360,6 +369,7 @@ impl Mutant {
             killed_by,
             _signal: _,
             retried,
+            lingered,
             not_run_reason,
             route,
             _identical: _,
@@ -389,6 +399,7 @@ impl Mutant {
             killed_by,
             item,
             retried,
+            lingered,
             expected,
             unreached,
             not_run_reason,

@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use jiff::Timestamp;
 use rust_mutants::EngineError;
 use rust_mutants::id::RunId;
+use rust_mutants::killers::Killers;
 use rust_mutants::report::explain;
 use rust_mutants::run::Expectation;
 use rust_mutants::runner::Cancel;
@@ -479,7 +480,7 @@ fn preparation_options(
     options.measurements = remembered_measurements(command, running.environment);
     harness(command, &mut options);
     if let Some(changed) = changed {
-        options.include = changed;
+        options.narrowing = changed;
     }
     let validation_filter = validation_filter(command, running.settings)?;
     options.validation_filter.clone_from(&validation_filter);
@@ -1058,6 +1059,21 @@ struct Switches {
     dry_run: bool,
 }
 
+/// Where a run reads and writes what it established: the exact store, the carried one and the killers, under this run's keys.
+fn reusing<'a>(
+    (store, carried, killers): &'a (crate::outcomes::Store, rust_mutants::carry::Store, Killers),
+    keyed: &'a rust_mutants::outcomes::Keyed,
+    id: &'a RunId,
+) -> run::Reusing<'a> {
+    run::Reusing {
+        store,
+        keyed,
+        run_id: id.as_str(),
+        carried,
+        killers,
+    }
+}
+
 /// What a dry run says: the phases so far and what a run would cost, with nothing executed.
 fn estimated(
     session: &Session,
@@ -1099,21 +1115,21 @@ fn whole(
     } = *whole;
     let shard = shard.map(run::Shard::parse).transpose()?;
     let asking = asking_equivalence(settings, open);
-    let outcomes = crate::outcomes::Store::new(&environment.cache_directory);
+    let stores = (
+        crate::outcomes::Store::new(&environment.cache_directory),
+        rust_mutants::carry::Store::new(&environment.cache_directory),
+        Killers::new(&environment.cache_directory),
+    );
     let (keyed, expectations) = (keyed(session, whole), expectations(settings));
     let selection = report::selection_document(&settings.prepare_options()?);
     let options = run::Options {
         quiet: &run::Quiet::default(),
         equivalence: asking.as_ref(),
-        jobs: settings.config.execution.jobs,
+        jobs: settings.config.execution.jobs_under(&environment.ci),
         expectations: &expectations,
         args,
         shard,
-        outcomes: (!no_cache).then_some(run::Reusing {
-            store: &outcomes,
-            keyed: &keyed,
-            run_id: id.as_str(),
-        }),
+        outcomes: (!no_cache).then(|| reusing(&stores, &keyed, id)),
         filter: Some(filter),
         fail_fast,
     };
@@ -1873,7 +1889,7 @@ fn rules(tier: Option<&str>, json: bool, stdout: &mut dyn Write) -> Result<u8, C
                     serde_json::json!({
                         "name": rule.name,
                         "family": rule.family.name(),
-                        "tier": rule.tier.name(),
+                        "tier": rule.chosen_by(),
                         "version": rule.version,
                     })
                 })
@@ -1909,7 +1925,7 @@ fn listed(selected: &[rust_mutants::rule::Rule]) -> Result<String, CliError> {
             "{:<20} {:<30} {:<9} {}",
             rule.family.name(),
             rule.name,
-            rule.tier.name(),
+            rule.chosen_by(),
             rule.version
         );
         debug_assert!(written.is_ok(), "writing to a String cannot fail");

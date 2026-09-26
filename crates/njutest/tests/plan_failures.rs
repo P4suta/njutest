@@ -52,7 +52,7 @@ fn environment(
         cache_directory: root.join("cache"),
         working_directory: root.to_path_buf(),
         temp_directory: temp,
-        program: PathBuf::from("this test never runs it"),
+        program: PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         vars,
         cancel: Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),

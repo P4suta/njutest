@@ -16,6 +16,12 @@ pub const TOUCHED: &str = "touched-v1.json";
 /// The catalog, as a document.
 pub const CATALOG: &str = "catalog-v1.json";
 
+/// Every carried record the run believed, as a document.
+pub const CARRIED: &str = crate::carry::FILE;
+
+/// Which bodies are sealed and each unit's skeleton, as a document.
+pub const SKELETONS: &str = crate::skeleton::FILE;
+
 /// One file a run kept, with what a reader can check it by.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Written {
@@ -66,12 +72,19 @@ pub enum EvidenceError {
         /// The exact in-memory size.
         bytes: usize,
     },
+    /// The carried records the run believed could not be read.
+    #[error("reading the carried records this run believed: {source}")]
+    Carried {
+        /// The engine's reason.
+        #[source]
+        source: Box<crate::EngineError>,
+    },
     /// The catalog could not be represented without changing workspace or mutation bytes.
     #[error("constructing retained catalog evidence: {source}")]
     Catalog {
         /// The exact catalog construction failure.
         #[source]
-        source: crate::EngineError,
+        source: Box<crate::EngineError>,
     },
 }
 
@@ -102,8 +115,26 @@ pub fn write(
             source,
         })?;
     written.push(keep(directory, TOUCHED, &touched)?);
-    let catalog_document = super::catalog::document(session, options)
-        .map_err(|source| EvidenceError::Catalog { source })?;
+    let skeletons =
+        serde_json::to_vec(&session.skeletons()).map_err(|source| EvidenceError::Serialize {
+            file: SKELETONS,
+            source,
+        })?;
+    written.push(keep(directory, SKELETONS, &skeletons)?);
+    let believed = session
+        .carried_evidence()
+        .map_err(|source| EvidenceError::Carried {
+            source: Box::new(source),
+        })?;
+    let carried = serde_json::to_vec(&believed).map_err(|source| EvidenceError::Serialize {
+        file: CARRIED,
+        source,
+    })?;
+    written.push(keep(directory, CARRIED, &carried)?);
+    let catalog_document =
+        super::catalog::document(session, options).map_err(|source| EvidenceError::Catalog {
+            source: Box::new(source),
+        })?;
     let catalog =
         serde_json::to_vec(&catalog_document).map_err(|source| EvidenceError::Serialize {
             file: CATALOG,

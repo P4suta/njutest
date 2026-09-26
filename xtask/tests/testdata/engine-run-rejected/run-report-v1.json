@@ -3,18 +3,22 @@
   "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260923t165251152z",
-    "started_at": "2026-09-23T16:52:51.152845Z",
-    "finished_at": "2026-09-23T16:52:52.690203Z",
-    "duration_ms": 99,
+    "id": "20260925t173158991z",
+    "started_at": "2026-09-25T17:31:58.991841Z",
+    "finished_at": "2026-09-25T17:32:01.477659Z",
+    "duration_ms": 254,
     "interrupted": false,
     "exit_code": 1,
-    "shard": null, "jobs": {"asked": "auto", "used": 1}
+    "shard": null,
+    "jobs": {
+      "asked": "auto",
+      "used": 4
+    }
   },
   "workspace": {
     "root_name": "fixture-rejectable",
-    "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-    "workspace_digest": "7b3928fcc2f5fa85b8cc58adb3722833d7239fc6242f17c3d4d9bc07dca04312",
+    "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "workspace_digest": "3f2019f69d77eaf9991acf2c7e5e2f9aabea40e6ce3edbfe99349db07950868e",
     "catalog_digest": "05ce4412ca26140ff556abf263fc400e9b1fa58b1d5908a3e491bfb14ae71d4d",
     "platform": {
       "os": "darwin",
@@ -95,6 +99,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -135,6 +140,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -175,6 +181,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -215,6 +222,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -255,6 +263,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -295,6 +304,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -335,6 +345,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -375,6 +386,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -415,6 +427,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -455,6 +468,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -495,6 +509,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -535,6 +550,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -575,6 +591,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -615,6 +632,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -655,6 +673,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -695,6 +714,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -718,7 +738,7 @@
       "path": "src/lib.rs",
       "rule": "add-to-sub",
       "code": "E0369",
-      "diagnostic": "error[E0369]: cannot subtract `&str` from `String`\n  --> src/lib.rs:12:171\n   |\n12 | ... Default::default() } else if __rm_b1a35a68::active(1) { name - \"!\" } else { name + __rm_b1a35a68::value!(if __rm_b1a35a68::activ...\n   |                                                             ---- ^ --- &str\n   |                                                             |\n   |                                                             String\n   |\nnote: `String` does not implement `Sub<&str>`\n  --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/alloc/src/string.rs:353:0\n   |\n   = note: `String` is defined in another crate\n\n",
+      "diagnostic": "error[E0369]: cannot subtract `&str` from `String`\n  --> src/lib.rs:12:171\n   |\n12 | ... Default::default() } else if __rm_b1a35a68::active(1) { name - \"!\" } else { name + __rm_b1a35a68::value!(if __rm_b1a35a68::activ...\n   |                                                             ---- ^ --- &str\n   |                                                             |\n   |                                                             String\n   |\nnote: `String` does not implement `Sub<&str>`\n  --> /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/alloc/src/string.rs:353:0\n   |\n   = note: `String` is defined in another crate\n\n",
       "isolated": true
     },
     {

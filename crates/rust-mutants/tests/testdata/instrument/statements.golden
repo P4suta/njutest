@@ -50,6 +50,7 @@ mod __rm {
     enum Selection {
         None,
         Index(u32),
+        Beside(u32, u32),
     }
     #[derive(Clone, Copy)]
     struct StepLimit(usize);
@@ -166,6 +167,7 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     enum TouchMode {
         Off,
         On,
+        ItemsOnly,
     }
     enum StepNoticeError {
         MissingPath,
@@ -190,6 +192,34 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         mutant: __rm_std::option::Option<__rm_std::string::String>,
     }
     static ACTIVE: __rm_std::sync::OnceLock<Selection> = __rm_std::sync::OnceLock::new();
+    // Boundaries this copy has already been granted by the shared state and
+    // may spend in memory, and what it last learned of the shared phase. A
+    // dormant copy asks the file only every DORMANT_POLL boundaries: another
+    // copy's activation reaches it within that many, and until then it
+    // charges nothing, which a stated bound says rather than hides.
+    static LEASED: __rm_std::sync::atomic::AtomicUsize = __rm_std::sync::atomic::AtomicUsize::new(0);
+    static POLLED: __rm_std::sync::atomic::AtomicU32 = __rm_std::sync::atomic::AtomicU32::new(0);
+    static KNOWN: __rm_std::sync::atomic::AtomicU8 = __rm_std::sync::atomic::AtomicU8::new(KNOWN_UNASKED);
+    const KNOWN_UNASKED: u8 = 0;
+    const KNOWN_DORMANT: u8 = 1;
+    const KNOWN_ACTIVE: u8 = 2;
+    const KNOWN_OTHER: u8 = 3;
+    const DORMANT_POLL: u32 = 256;
+    const LEASE_SHARE: usize = 16;
+    const LEASE_MOST: usize = 4096;
+    // Where a copy spending a reservation says it is still moving, and how
+    // often. The state changes only when a reservation is taken, and one
+    // holds up to LEASE_MOST boundaries, so a process that moves slowly
+    // would otherwise go quiet for longer than the runner's window while
+    // it spends; the runner watches this file beside the state.
+    struct Beat {
+        path: __rm_std::string::String,
+        every: u64,
+        epoch: __rm_std::time::Instant,
+    }
+    static BEAT: __rm_std::sync::OnceLock<__rm_std::option::Option<Beat>> = __rm_std::sync::OnceLock::new();
+    static BEAT_AT: __rm_std::sync::atomic::AtomicU64 = __rm_std::sync::atomic::AtomicU64::new(0);
+    static BEATS: __rm_std::sync::atomic::AtomicU64 = __rm_std::sync::atomic::AtomicU64::new(0);
     static BUDGET: __rm_std::sync::OnceLock<Budget> = __rm_std::sync::OnceLock::new();
     static TOUCHING: __rm_std::sync::OnceLock<TouchMode> = __rm_std::sync::OnceLock::new();
     static TOUCH_SINK: __rm_std::sync::OnceLock<__rm_std::sync::Mutex<__rm_std::fs::File>> = __rm_std::sync::OnceLock::new();
@@ -218,30 +248,231 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     pub(crate) use value;
 
 
+    // The failures a fault can make without guessing: an error type the
+    // standard library defines and a caller already has to be ready for.
+    // A `?` whose error is anything else does not compile under a fault,
+    // and the compiler's refusal is what says the fault was not put.
+    pub(crate) trait Injectable {
+        fn injected() -> Self;
+    }
+    impl Injectable for __rm_std::io::Error {
+        fn injected() -> Self {
+            __rm_std::io::Error::other("a failure rust-mutants injected")
+        }
+    }
+    impl Injectable for __rm_std::str::Utf8Error {
+        fn injected() -> Self {
+            match __rm_std::str::from_utf8(__rm_std::hint::black_box(&[0xff_u8])) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::string::FromUtf8Error {
+        fn injected() -> Self {
+            match __rm_std::string::String::from_utf8(__rm_std::hint::black_box(__rm_std::vec![0xff_u8])) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::num::ParseIntError {
+        fn injected() -> Self {
+            match <u8 as __rm_std::str::FromStr>::from_str(__rm_std::hint::black_box("")) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::num::ParseFloatError {
+        fn injected() -> Self {
+            match <f64 as __rm_std::str::FromStr>::from_str(__rm_std::hint::black_box("")) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::num::TryFromIntError {
+        fn injected() -> Self {
+            match <u8 as __rm_std::convert::TryFrom<u16>>::try_from(__rm_std::hint::black_box(256_u16)) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    pub(crate) fn injected<E: Injectable>() -> E {
+        E::injected()
+    }
+    // A crash lets the call that writes finish and then stops the process
+    // with nothing after it: no destructor, flush or unwinding, so what the
+    // call wrote is on disk and nothing later is.
+    pub(crate) fn crashed_after<T>(_written: T) -> T {
+        let _published = publish_crash_notice();
+        __rm_std::process::exit(93)
+    }
+
+    // The notice is what tells the supervisor this status is a stop the
+    // runtime made rather than one a test chose. A notice that cannot be
+    // published still stops the process, so the state is torn all the
+    // same; the status alone then decides nothing, and the crash is left
+    // undecided rather than read as a stop nobody confirmed.
+    fn publish_crash_notice() -> __rm_std::option::Option<()> {
+        let path = __rm_std::env::var("RUST_MUTANTS_CRASH_NOTICE").ok()?;
+        let nonce = __rm_std::env::var("RUST_MUTANTS_CRASH_NONCE").ok()?;
+        let wanted = __rm_std::env::var("RUST_MUTANTS_ACTIVE").ok()?;
+        let partial = __rm_std::format!("{}.partial", path);
+        {
+            let mut file = __rm_std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&partial)
+                .ok()?;
+            let notice = __rm_std::format!(
+                "rust-mutants-crash-notice-v1\t{}\t{}\t{}\n",
+                nonce, CATALOG, wanted
+            );
+            __rm_std::io::Write::write_all(&mut file, notice.as_bytes()).ok()?;
+            file.sync_data().ok()?;
+        }
+        __rm_std::fs::rename(partial, path).ok()
+    }
+
     #[inline(always)]
     pub(crate) fn active(index: u32) -> bool {
         watched();
         touch(index);
+        delay(index);
         match *ACTIVE.get_or_init(resolve) {
             Selection::None => false,
-            Selection::Index(selected) if selected == index => {
+            Selection::Index(selected) | Selection::Beside(selected, _) if selected == index => {
                 activate();
                 true
             }
-            Selection::Index(_) => false,
+            Selection::Beside(_, fault) if fault == index => true,
+            Selection::Index(_) | Selection::Beside(..) => false,
         }
     }
 
     /// Activates the process-wide allowance exactly once. Re-evaluating the
     /// selected guard does not spend twice; the boundaries it reaches do.
     fn activate() {
+        if KNOWN.load(__rm_std::sync::atomic::Ordering::SeqCst) == KNOWN_ACTIVE {
+            return;
+        }
         advance(StepAction::Activate);
     }
 
     /// Charges a function or loop boundary only after the mutation is active.
     #[inline(always)]
     pub(crate) fn checkpoint() {
+        let spent_in_memory = LEASED.fetch_update(
+            __rm_std::sync::atomic::Ordering::SeqCst,
+            __rm_std::sync::atomic::Ordering::SeqCst,
+            |left| left.checked_sub(1),
+        );
+        if spent_in_memory.is_ok() {
+            beat();
+            return;
+        }
+        if KNOWN.load(__rm_std::sync::atomic::Ordering::SeqCst) == KNOWN_DORMANT
+            && POLLED.fetch_add(1, __rm_std::sync::atomic::Ordering::SeqCst) % DORMANT_POLL != 0
+        {
+            return;
+        }
         advance(StepAction::Checkpoint);
+    }
+
+    /// Says the process is still moving once it has spent from reservations for as long as the runner allows between changes.
+    #[inline(always)]
+    fn beat() {
+        let beat = match BEAT.get_or_init(configured_beat) {
+            __rm_std::option::Option::Some(beat) => beat,
+            __rm_std::option::Option::None => return,
+        };
+        let now = match <u64 as __rm_std::convert::TryFrom<u128>>::try_from(beat.epoch.elapsed().as_nanos()) {
+            __rm_std::result::Result::Ok(now) => now,
+            __rm_std::result::Result::Err(_) => u64::MAX,
+        };
+        let last = BEAT_AT.load(__rm_std::sync::atomic::Ordering::SeqCst);
+        if now.saturating_sub(last) < beat.every {
+            return;
+        }
+        if BEAT_AT
+            .compare_exchange(
+                last,
+                now,
+                __rm_std::sync::atomic::Ordering::SeqCst,
+                __rm_std::sync::atomic::Ordering::SeqCst,
+            )
+            .is_err()
+        {
+            return;
+        }
+        write_beat(beat);
+    }
+
+    // The record names the process, the copy and how many times this copy
+    // has said so, so no two beats of a moving process read the same.
+    #[cold]
+    fn write_beat(beat: &Beat) {
+        let count = BEATS.fetch_add(1, __rm_std::sync::atomic::Ordering::SeqCst);
+        let copy = __rm_std::ptr::addr_of!(BEATS) as usize;
+        let record = __rm_std::format!("{}\t{}\t{}\n", __rm_std::process::id(), copy, count);
+        if __rm_std::fs::write(&beat.path, record).is_err() {
+            protocol_failure();
+        }
+    }
+
+    // Unset, the runner is not watching for quiet and nothing is said.
+    // Set, it is a promise the runner is keeping, so anything but
+    // canonical milliseconds above zero and a path is a protocol failure.
+    #[cold]
+    fn configured_beat() -> __rm_std::option::Option<Beat> {
+        let raw = __rm_std::env::var_os("RUST_MUTANTS_STEP_BEAT")?;
+        let text = match raw.to_str() {
+            __rm_std::option::Option::Some(text) => text,
+            __rm_std::option::Option::None => protocol_failure(),
+        };
+        let (every, path) = match text.split_once('@') {
+            __rm_std::option::Option::Some(parts) => parts,
+            __rm_std::option::Option::None => protocol_failure(),
+        };
+        let millis = match every.parse::<u64>() {
+            __rm_std::result::Result::Ok(millis) if millis > 0 => millis,
+            __rm_std::result::Result::Ok(_) | __rm_std::result::Result::Err(_) => protocol_failure(),
+        };
+        if __rm_std::string::ToString::to_string(&millis) != every || path.is_empty() {
+            protocol_failure();
+        }
+        __rm_std::option::Option::Some(Beat {
+            path: __rm_std::string::ToString::to_string(path),
+            every: millis.saturating_mul(1_000_000),
+            epoch: __rm_std::time::Instant::now(),
+        })
+    }
+
+    /// How many more boundaries one reservation grants when `remaining` are left: a share of them, at least one and at most a bound.
+    const fn lease_size(remaining: usize) -> usize {
+        let share = match remaining.checked_div(LEASE_SHARE) {
+            __rm_std::option::Option::Some(share) => share,
+            __rm_std::option::Option::None => 0,
+        };
+        if share > LEASE_MOST {
+            LEASE_MOST
+        } else if share == 0 && remaining > 0 {
+            1
+        } else {
+            share
+        }
+    }
+
+    /// What `phase` says this copy knows.
+    const fn known(phase: StepPhase) -> u8 {
+        match phase {
+            StepPhase::Dormant => KNOWN_DORMANT,
+            StepPhase::Active(_) => KNOWN_ACTIVE,
+            StepPhase::Counting(_) | StepPhase::Stopping(_) => KNOWN_OTHER,
+        }
     }
 
     fn advance(action: StepAction) {
@@ -334,8 +565,27 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         file.lock().map_err(|_| StepStateError::Lock)?;
         let transitioned = (|| {
             let phase = read_step_state(file, nonce, mutant, limit)?;
-            let (next, advanced) = step_transition(phase, action, limit.value())
+            let (mut next, advanced) = step_transition(phase, action, limit.value())
                 .map_err(|_| StepStateError::InvalidCount)?;
+            let mut granted = 0_usize;
+            if let (StepAction::Checkpoint, StepAdvance::Continue, StepPhase::Active(spent)) =
+                (action, advanced, next)
+            {
+                let wanted = lease_size(limit.value().saturating_sub(spent));
+                while granted < wanted {
+                    let (further, reserved) = step_transition(next, action, limit.value())
+                        .map_err(|_| StepStateError::InvalidCount)?;
+                    match (reserved, further) {
+                        (StepAdvance::Continue, StepPhase::Active(_)) => {
+                            next = further;
+                            granted = granted.saturating_add(1);
+                        }
+                        _ => break,
+                    }
+                }
+            }
+            KNOWN.store(known(next), __rm_std::sync::atomic::Ordering::SeqCst);
+            LEASED.store(granted, __rm_std::sync::atomic::Ordering::SeqCst);
             if let StepAdvance::Reached { allowed, observed } = advanced {
                 // A persisted Stopping state is a proof that the final notice
                 // was published. Publication happens while the shared state
@@ -855,6 +1105,57 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         }
     }
 
+    /// The one guard this process delays, and for how long.
+    #[derive(Clone, Copy)]
+    enum Delay {
+        None,
+        At { index: u32, millis: u64 },
+    }
+
+    static DELAY: __rm_std::sync::OnceLock<Delay> = __rm_std::sync::OnceLock::new();
+
+    __rm_std::thread_local! {
+        static DELAYED: __rm_std::cell::Cell<bool> = const { __rm_std::cell::Cell::new(false) };
+    }
+
+    fn configured_delay() -> Delay {
+        let raw = match __rm_std::env::var("RUST_MUTANTS_DELAY") {
+            __rm_std::result::Result::Ok(raw) => raw,
+            __rm_std::result::Result::Err(__rm_std::env::VarError::NotPresent) => return Delay::None,
+            __rm_std::result::Result::Err(__rm_std::env::VarError::NotUnicode(_)) => protocol_failure(),
+        };
+        if raw.is_empty() {
+            return Delay::None;
+        }
+        match __rm_std::env::var_os("RUST_MUTANTS_ACTIVE") {
+            __rm_std::option::Option::Some(active) if !active.is_empty() => protocol_failure(),
+            _ => {}
+        }
+        match __rm_std::env::var("RUST_MUTANTS_CATALOG") {
+            __rm_std::result::Result::Ok(catalog) if catalog == CATALOG => {}
+            __rm_std::result::Result::Ok(catalog) => stale_catalog(&catalog),
+            __rm_std::result::Result::Err(_) => stale_catalog("<unset>"),
+        }
+        let (index, millis) = match raw.split_once('@') {
+            __rm_std::option::Option::Some(parts) => parts,
+            __rm_std::option::Option::None => protocol_failure(),
+        };
+        match (index.parse::<u32>(), millis.parse::<u64>()) {
+            (__rm_std::result::Result::Ok(index), __rm_std::result::Result::Ok(millis)) => Delay::At { index, millis },
+            _ => protocol_failure(),
+        }
+    }
+
+    /// Pauses this thread the first time it reaches the guard this process delays.
+    #[inline(never)]
+    fn delay(index: u32) {
+        if let Delay::At { index: at, millis } = *DELAY.get_or_init(configured_delay) {
+            if at == index && !DELAYED.with(|delayed| delayed.replace(true)) {
+                __rm_std::thread::sleep(__rm_std::time::Duration::from_millis(millis));
+            }
+        }
+    }
+
     #[inline(never)]
     fn touch(index: u32) {
         if !touching() {
@@ -930,7 +1231,7 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     #[inline(always)]
     pub(crate) fn item(index: u32) {
         watched();
-        if touching() {
+        if touching_items() {
             entered_item(index);
         }
     }
@@ -995,6 +1296,13 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         matches!(*TOUCHING.get_or_init(configured_touch), TouchMode::On)
     }
 
+    fn touching_items() -> bool {
+        matches!(
+            *TOUCHING.get_or_init(configured_touch),
+            TouchMode::On | TouchMode::ItemsOnly
+        )
+    }
+
     fn configured_touch() -> TouchMode {
         let asked = match __rm_std::env::var("RUST_MUTANTS_TOUCH") {
             __rm_std::result::Result::Ok(value) => !value.is_empty(),
@@ -1004,10 +1312,14 @@ Result < (StepPhase, StepAdvance), StepMachineError >
             __rm_std::result::Result::Ok(value) => value == CATALOG,
             __rm_std::result::Result::Err(_) => false,
         };
-        if asked && ours {
-            TouchMode::On
-        } else {
-            TouchMode::Off
+        let items_only = match __rm_std::env::var("RUST_MUTANTS_TOUCH_ITEMS") {
+            __rm_std::result::Result::Ok(value) => value == "1",
+            __rm_std::result::Result::Err(_) => false,
+        };
+        match (asked && ours, items_only) {
+            (true, true) => TouchMode::ItemsOnly,
+            (true, false) => TouchMode::On,
+            (false, _) => TouchMode::Off,
         }
     }
 
@@ -1061,12 +1373,28 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         if catalog != CATALOG {
             stale_catalog(&catalog);
         }
-        for &(id, index) in IDS {
-            if id == wanted {
-                return Selection::Index(index);
+        let selected = match indexed(&wanted) {
+            __rm_std::option::Option::Some(index) => index,
+            __rm_std::option::Option::None => return Selection::None,
+        };
+        match __rm_std::env::var("RUST_MUTANTS_FAULT") {
+            __rm_std::result::Result::Ok(fault) if !fault.is_empty() => match indexed(&fault) {
+                __rm_std::option::Option::Some(beside) => Selection::Beside(selected, beside),
+                __rm_std::option::Option::None => protocol_failure(),
+            },
+            __rm_std::result::Result::Ok(_) | __rm_std::result::Result::Err(_) => {
+                Selection::Index(selected)
             }
         }
-        Selection::None
+    }
+
+    fn indexed(wanted: &str) -> __rm_std::option::Option<u32> {
+        for &(id, index) in IDS {
+            if id == wanted {
+                return __rm_std::option::Option::Some(index);
+            }
+        }
+        __rm_std::option::Option::None
     }
 
     #[cold]

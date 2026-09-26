@@ -5,8 +5,11 @@
 
 #![deny(unsafe_code)]
 
+pub mod apparatus;
 pub mod canonical;
+pub mod capdir;
 pub mod cargo;
+pub mod carry;
 pub mod catalog;
 pub mod count;
 pub mod coverage;
@@ -22,6 +25,7 @@ pub mod glob;
 pub mod id;
 pub mod instrument;
 pub mod interval;
+pub mod killers;
 pub mod limitation;
 pub mod orphan;
 pub mod outcome;
@@ -38,6 +42,7 @@ pub mod runner;
 pub mod select;
 pub mod sentinel;
 pub mod session;
+pub mod skeleton;
 pub mod snapshot;
 pub mod span;
 pub mod splice;

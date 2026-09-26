@@ -117,6 +117,9 @@ pub fn merge(
         resources: first_source.resources.clone(),
         candidates: first_source.candidates.clone(),
         seams: first_source.seams.clone(),
+        faults: first_source.faults.clone(),
+        beside: first_source.beside.clone(),
+        crashes: first_source.crashes.clone(),
         targets: first_source.targets.clone(),
         sources: first_source.sources.clone(),
         mutants: first_source.mutants.clone(),
@@ -124,6 +127,7 @@ pub fn merge(
         limitations: first_source.limitations.clone(),
         drift: first_source.drift.clone(),
         knobs: first_source.knobs.clone(),
+        concurrency: first_source.concurrency.clone(),
     };
     let ledger = BuildLedger::try_from_vec(builds).map_err(|error| MergeError::Unsound {
         because: error.to_string(),

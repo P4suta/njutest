@@ -33,8 +33,8 @@ pub enum LedgerError {
         /// The exact paragraph that was checked.
         paragraph: String,
     },
-    /// A ledger count has no deliberately reviewed English spelling.
-    #[error("no documentation ledger spells {many} yet")]
+    /// A ledger count is a hundred or more, which no page spells in words.
+    #[error("no documentation ledger spells {many} in words")]
     UnspelledCount {
         /// The count whose wording must be added explicitly.
         many: usize,
@@ -517,10 +517,10 @@ fn compare_trace_fields(
     }
 }
 
-/// The intentionally small vocabulary used by documentation ledgers.
-fn spelled(many: usize) -> Result<&'static str, LedgerError> {
-    const WORDS: [&str; 21] = [
-        "no",
+/// `many` in English words, as a documentation ledger states a count: every number below a hundred, so a table that grows by one never needs this to be taught the new number.
+fn spelled(many: usize) -> Result<String, LedgerError> {
+    const ONES: [&str; 20] = [
+        "zero",
         "one",
         "two",
         "three",
@@ -540,21 +540,19 @@ fn spelled(many: usize) -> Result<&'static str, LedgerError> {
         "seventeen",
         "eighteen",
         "nineteen",
-        "twenty",
     ];
-    let word = match WORDS.get(many) {
-        Some(word) => *word,
-        None => match many {
-            51 => "fifty-one",
-            61 => "sixty-one",
-            63 => "sixty-three",
-            69 => "sixty-nine",
-            72 => "seventy-two",
-            74 => "seventy-four",
-            _ => return Err(LedgerError::UnspelledCount { many }),
-        },
-    };
-    Ok(word)
+    const TENS: [&str; 10] = [
+        "", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
+    ];
+    if let Some(word) = ONES.get(many) {
+        return Ok((*word).to_owned());
+    }
+    let (tens, ones) = (many / 10, many % 10);
+    match (TENS.get(tens), ONES.get(ones)) {
+        (Some(ten), Some(_)) if ones == 0 => Ok((*ten).to_owned()),
+        (Some(ten), Some(one)) => Ok(format!("{ten}-{one}")),
+        (Some(_) | None, Some(_) | None) => Err(LedgerError::UnspelledCount { many }),
+    }
 }
 
 /// Every closed set a JSON Schema declares, by the pointer that declares it.
