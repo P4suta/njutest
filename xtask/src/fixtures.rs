@@ -5,6 +5,10 @@
 
 use std::path::{Path, PathBuf};
 
+use njutest_fixture_tree::{
+    FixtureDiscoveryError, FixtureEntry, FixtureEntryKind, discover_fixtures,
+};
+
 /// The rule, for the failure message.
 pub const RULE: &str = "A fixture is an independent cargo project: its Cargo.toml carries a \
     [workspace] table so cargo does not look upwards, its Cargo.lock is committed, its only \
@@ -12,7 +16,7 @@ pub const RULE: &str = "A fixture is an independent cargo project: its Cargo.tom
     offline against no registry), every .rs and Cargo.toml starts with the SPDX header, and \
     its README.md states what a run of it establishes in a ```fates block, and in a ```seams \
     block as well where it interposes on a seam. A directory under fixtures/ that holds no \
-    Cargo.toml is a group, and holds fixtures and nothing else. See fixtures/README.md.";
+    Cargo.toml is a group, and holds only groups or fixtures. See fixtures/README.md.";
 
 /// The fence that opens the block of a README stating what a run of the fixture establishes.
 pub const FATES_FENCE: &str = "```fates";
@@ -58,7 +62,7 @@ pub enum CheckError {
         /// The path whose operating-system spelling was not UTF-8.
         path: PathBuf,
     },
-    /// A directory under a group is not a fixture, so `fixtures/` would become a tree to search rather than a place to find one.
+    /// A group holds a file that belongs to no fixture.
     #[error("{} is under the group {} and is not a fixture", path.display(), group.display())]
     NotAFixture {
         /// What the group holds.
@@ -92,64 +96,32 @@ impl crate::error::Coded for CheckError {
 /// Every fixture under `dir`, as a `/`-joined name relative to it, in sorted order.
 ///
 /// A directory holding a `Cargo.toml` is a fixture.
-/// One holding no `Cargo.toml` is a group, and every child of it is a fixture; a group that holds anything else, or a group inside a group, is a refusal, because `fixtures/` is a place to find a fixture rather than a tree to search.
+/// One holding no `Cargo.toml` is a group, and every child of it is another group or fixture.
 ///
 /// # Errors
 /// A directory that could not be read, a symbolic link, a name that is not UTF-8, or a group that holds something other than a fixture.
 pub fn discover(dir: &Path) -> Result<Vec<String>, CheckError> {
-    let mut found = Vec::new();
-    for (name, path) in children(dir)? {
-        if is_file(&path.join("Cargo.toml")) {
-            found.push(name);
-            continue;
+    discover_fixtures(dir, listed_entries).map_err(|error| match error {
+        FixtureDiscoveryError::Read { source, .. } => source,
+        FixtureDiscoveryError::NotAFixture { path, group } => {
+            CheckError::NotAFixture { path, group }
         }
-        if let Some(file) = listing(&path)?
-            .into_iter()
-            .find(|relative| !relative.contains('/'))
-        {
-            return Err(CheckError::NotAFixture {
-                path: path.join(file),
-                group: path,
-            });
-        }
-        for (inner, nested) in children(&path)? {
-            if !is_file(&nested.join("Cargo.toml")) {
-                return Err(CheckError::NotAFixture {
-                    path: nested,
-                    group: path.clone(),
-                });
-            }
-            found.push(format!("{name}/{inner}"));
-        }
+    })
+}
+
+/// The immediate entries of `dir`, derived from the repository's tracked and pending files.
+fn listed_entries(dir: &Path) -> Result<Vec<FixtureEntry>, CheckError> {
+    let mut found = std::collections::BTreeMap::new();
+    for relative in listing(dir)? {
+        let (name, kind) = match relative.split_once('/') {
+            Some((name, _)) => (name, FixtureEntryKind::Directory),
+            None => (relative.as_str(), FixtureEntryKind::File),
+        };
+        found.insert(name.to_owned(), kind);
     }
-    found.sort();
-    Ok(found)
-}
-
-/// Whether `path` is a regular file, asked of the filesystem rather than of a method that answers `false` to every question it could not ask.
-fn is_file(path: &Path) -> bool {
-    std::fs::metadata(path).is_ok_and(|entry| entry.is_file())
-}
-
-/// Every subdirectory of `dir` the repository holds a file in, by name, refusing a link.
-fn children(dir: &Path) -> Result<Vec<(String, PathBuf)>, CheckError> {
-    let listed = listing(dir)?;
-    let mut names: Vec<String> = listed
-        .iter()
-        .filter_map(|relative| {
-            relative
-                .split_once('/')
-                .map(|(name, _rest)| name.to_owned())
-        })
-        .collect();
-    names.sort();
-    names.dedup();
-    Ok(names
+    Ok(found
         .into_iter()
-        .map(|name| {
-            let path = dir.join(&name);
-            (name, path)
-        })
+        .map(|(name, kind)| FixtureEntry { name, kind })
         .collect())
 }
 

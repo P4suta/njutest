@@ -391,6 +391,7 @@ dependencies = [
  "jiff",
  "jsonschema",
  "njutest-devkit",
+ "njutest-fixture-tree",
  "njutest-macros",
  "proc-macro2",
  "proptest",
@@ -1296,6 +1297,7 @@ version = "0.1.0"
 dependencies = [
  "cargo_metadata",
  "hex",
+ "njutest-fixture-tree",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -1304,6 +1306,10 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
 ]
+
+[[package]]
+name = "njutest-fixture-tree"
+version = "0.1.0"
 
 [[package]]
 name = "njutest-macros"
@@ -2855,6 +2861,7 @@ dependencies = [
  "jiff",
  "jsonschema",
  "njutest-devkit",
+ "njutest-fixture-tree",
  "njutest-macros",
  "proc-macro2",
  "regex",

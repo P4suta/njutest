@@ -43,6 +43,7 @@ hex = { workspace = true }
 getrandom = { workspace = true }
 jiff = { workspace = true, features = ["serde"] }
 jsonschema = { workspace = true }
+njutest-fixture-tree = { workspace = true }
 njutest-macros = { workspace = true }
 proc-macro2 = { workspace = true }
 proptest = { workspace = true }

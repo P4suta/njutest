@@ -116,6 +116,7 @@ njutest = { version = "0.1.0", path = "crates/njutest" }
 rust-mutants = { version = "0.1.0", path = "crates/rust-mutants" }
 njutest-macros = { version = "0.1.0", path = "crates/njutest-macros" }
 njutest-devkit = { version = "0.1.0", path = "crates/njutest-devkit" }
+njutest-fixture-tree = { version = "0.1.0", path = "crates/njutest-fixture-tree" }
 
 serde = { version = "1.0", features = ["alloc", "derive"] }
 serde_json = { version = "1.0", features = ["float_roundtrip", "unbounded_depth"] }

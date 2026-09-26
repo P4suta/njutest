@@ -32,7 +32,14 @@ fn the_runner_may_depend_on_the_engine_but_not_the_reverse() {
         edge("rust-mutants", "njutest-macros", EdgeKind::Normal),
         edge("rust-mutants-cli", "njutest-macros", EdgeKind::Normal),
         edge("xtask", "njutest-macros", EdgeKind::Normal),
+        edge("xtask", "njutest-fixture-tree", EdgeKind::Normal),
+        edge("njutest-devkit", "njutest-fixture-tree", EdgeKind::Normal),
         edge("compiler-surfaces", "rust-mutants", EdgeKind::Normal),
+        edge(
+            "compiler-surfaces",
+            "njutest-fixture-tree",
+            EdgeKind::Normal,
+        ),
     ];
     assert!(check(&allowed).is_empty());
 
@@ -41,6 +48,7 @@ fn the_runner_may_depend_on_the_engine_but_not_the_reverse() {
         edge("rust-mutants-cli", "njutest", EdgeKind::Normal),
         edge("njutest-macros", "njutest", EdgeKind::Normal),
         edge("xtask", "rust-mutants", EdgeKind::Normal),
+        edge("rust-mutants", "njutest-fixture-tree", EdgeKind::Normal),
     ];
     assert_eq!(check(&refused), refused);
 }

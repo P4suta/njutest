@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "njutest-fixture-tree"
+description = "Shared fixture-group classification for repository gates and tests"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[package.metadata.njutest]
+surface = "test-support"
+
+[lints]
+workspace = true
