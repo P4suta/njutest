@@ -3238,8 +3238,8 @@ fn declared_surfaces(root: &Path) -> Result<Vec<(String, Surface, PathBuf)>, Gat
 pub fn reached(root: &Path) -> Result<String, GateError> {
     let declared = declared_surfaces(root)?;
 
-    let mut ships = BTreeSet::new();
-    let mut tested = BTreeSet::new();
+    let mut ships: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut tested: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut candidates = Vec::new();
     for (name, surface, directory) in &declared {
         for file in rust_files_under(root, directory)? {
@@ -3248,17 +3248,23 @@ pub fn reached(root: &Path) -> Result<String, GateError> {
             let under_src = file.starts_with(directory.join("src"));
             let all = reach::facts(&text, false)
                 .map_err(|error| GateError(format!("{}: {error}", file.display())))?;
-            tested.extend(all.referenced);
+            tested
+                .entry(name.clone())
+                .or_default()
+                .extend(all.referenced);
             if *surface != Surface::TestSupport && under_src {
                 let production = reach::facts(&text, true)
                     .map_err(|error| GateError(format!("{}: {error}", file.display())))?;
-                ships.extend(production.referenced);
+                ships
+                    .entry(name.clone())
+                    .or_default()
+                    .extend(production.referenced);
                 if *surface == Surface::Incidental {
                     candidates.extend(
                         production
                             .public
                             .into_iter()
-                            .map(|function| (name, function)),
+                            .map(|function| (name.clone(), function)),
                     );
                 }
             }
@@ -3267,7 +3273,14 @@ pub fn reached(root: &Path) -> Result<String, GateError> {
 
     let mut only_tests: Vec<String> = candidates
         .into_iter()
-        .filter(|(_, function)| !ships.contains(function) && tested.contains(function))
+        .filter(|(name, function)| {
+            !ships
+                .get(name)
+                .is_some_and(|referenced| referenced.contains(function))
+                && tested
+                    .get(name)
+                    .is_some_and(|referenced| referenced.contains(function))
+        })
         .map(|(name, function)| format!("{name}::{function}"))
         .collect();
     only_tests.sort_unstable();

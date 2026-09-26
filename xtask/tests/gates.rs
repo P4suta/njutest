@@ -371,6 +371,50 @@ fn reach_tree(source: &str) -> Result<tempfile::TempDir, TestError> {
     Ok(root)
 }
 
+fn add_reach_neighbor(root: &std::path::Path, source: &str) -> Result<(), TestError> {
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/x\", \"crates/y\"]\nresolver = \"3\"\n",
+    )?;
+    std::fs::create_dir_all(root.join("crates/y/src"))?;
+    std::fs::write(
+        root.join("crates/y/Cargo.toml"),
+        "[package]\nname = \"y\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[package.metadata.njutest]\nsurface = \"public\"\n",
+    )?;
+    std::fs::write(root.join("crates/y/src/lib.rs"), source)?;
+    Ok(())
+}
+
+#[test]
+fn production_call_in_another_package_does_not_hide_test_only_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() {}\n#[cfg(test)] mod tests { #[test] fn check() { super::capability(); } }\n",
+    )?;
+    add_reach_neighbor(
+        root.path(),
+        "fn capability() {}\nfn elsewhere() { capability(); }\n",
+    )?;
+    let failure = refused(
+        gates::reached(root.path()),
+        "another package's same-named production call hid test-only reach",
+    )?;
+    require(
+        failure.to_string().contains("x::capability"),
+        failure.to_string(),
+    )
+}
+
+#[test]
+fn test_call_in_another_package_does_not_create_test_only_reach() -> Result<(), TestError> {
+    let root = reach_tree("pub fn capability() {}\n")?;
+    add_reach_neighbor(
+        root.path(),
+        "fn capability() {}\n#[cfg(test)] mod tests { #[test] fn check() { super::capability(); } }\n",
+    )?;
+    let report = gates::reached(root.path())?;
+    require(report.contains("0 public function"), report)
+}
+
 #[test]
 fn words_in_comments_and_literals_do_not_prove_production_reach() -> Result<(), TestError> {
     let root = reach_tree(
