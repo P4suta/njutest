@@ -3,10 +3,10 @@
   "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260926t042437609z",
-    "started_at": "2026-09-26T04:24:37.60907442Z",
-    "finished_at": "2026-09-26T04:24:42.359351668Z",
-    "duration_ms": 315,
+    "id": "20260926t054309947z",
+    "started_at": "2026-09-26T05:43:09.947802979Z",
+    "finished_at": "2026-09-26T05:43:12.929655047Z",
+    "duration_ms": 293,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -18,7 +18,7 @@
   "workspace": {
     "root_name": "fixture-simple",
     "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "fd4a97f012f128862804cbf70d54fb90046aed25f17e5b62d97e74d42fe93394",
+    "workspace_digest": "aae3501cbc963341e9fcd72980efbec9872e625d32f340ff0e4362939f2042fe",
     "catalog_digest": "82946360d0657b5f03d7a76baf4c58b9b82b9853b602678b838583310f27d624",
     "platform": {
       "os": "gnu",
