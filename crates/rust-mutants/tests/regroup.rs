@@ -8,7 +8,6 @@
 #![expect(
     clippy::expect_used,
     clippy::panic,
-    clippy::indexing_slicing,
     clippy::string_slice,
     clippy::arithmetic_side_effects,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads the text it wrote at offsets it computed"
@@ -265,26 +264,70 @@ fn swapped(tree: &Tree, path: &[bool]) -> Tree {
     }
 }
 
-const PREFIX: &str = "fn f() { let _ = ";
+/// Where the generated expression stands: the text before it and after it, each an item among others that hold swaps of their own.
+const PLACES: [(&str, &str); 5] = [
+    ("fn f() { let probe = ", "; }\n"),
+    (
+        "struct S;\nimpl S {\n    fn g() { let _ = v0 && v1; }\n    fn f() { let probe = ",
+        "; }\n    const K: u8 = 1 + 2;\n}\n",
+    ),
+    (
+        "mod m {\n    fn g() { let _ = v0 || v1; }\n    mod n {\n        fn f() { let probe = ",
+        "; }\n    }\n}\nfn h() { let _ = v2 & v3; }\n",
+    ),
+    ("trait T {\n    fn f() { let probe = ", "; }\n}\n"),
+    (
+        "const BEFORE: bool = v0 && v1;\nfn f() { let probe = ",
+        "; }\nconst AFTER: bool = v2 || v3;\n",
+    ),
+];
+
+/// The expression the one `let probe` in `file` is initialized with.
+fn probe(file: &syn::File) -> syn::Expr {
+    struct Find(Vec<syn::Expr>);
+    impl<'a> syn::visit::Visit<'a> for Find {
+        fn visit_local(&mut self, local: &'a syn::Local) {
+            if let (syn::Pat::Ident(name), Some(init)) = (&local.pat, &local.init)
+                && name.ident == "probe"
+            {
+                self.0.push((*init.expr).clone());
+            }
+            syn::visit::visit_local(self, local);
+        }
+    }
+    let mut find = Find(Vec::new());
+    syn::visit::Visit::visit_file(&mut find, file);
+    let [expression] = find.0.as_slice() else {
+        panic!(
+            "the file holds one `let probe`, and it holds {}",
+            find.0.len()
+        )
+    };
+    expression.clone()
+}
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
 
     #[test]
-    fn every_operator_swap_keeps_the_operands_and_their_grouping(tree in tree()) {
+    fn every_operator_swap_keeps_the_operands_and_their_grouping(
+        tree in tree(),
+        place in proptest::sample::select(PLACES.to_vec()),
+    ) {
         let mut expression = String::new();
         let mut placed = Vec::new();
         print(&tree, &mut expression, &mut Vec::new(), &mut placed);
-        let source = format!("{PREFIX}{expression}; }}\n");
+        let (before, after) = place;
+        let source = format!("{before}{expression}{after}");
         let registry = Registry::canonical();
         let discovered = discover_file("src/lib.rs", source.as_bytes(), &Selection::tier(&registry, Tier::All))
             .expect("the generated file parses");
         for node in &placed {
-            let op_at = PREFIX.len() + node.op.start;
-            let node_at = PREFIX.len() + node.node.start;
+            let op_at = before.len() + node.op.start;
+            let node_at = before.len() + node.node.start;
             let (rule, _) = at(&tree, &node.path).swapped();
-            let op_span = (op_at, PREFIX.len() + node.op.end);
-            let node_span = (node_at, PREFIX.len() + node.node.end);
+            let op_span = (op_at, before.len() + node.op.end);
+            let node_span = (node_at, before.len() + node.node.end);
             let found: Vec<_> = discovered
                 .candidates
                 .iter()
@@ -303,8 +346,10 @@ proptest! {
                     && usize::try_from(decision.offset).is_ok_and(|offset| offset == op_at)
             });
             prop_assert!(
-                found.len() == 1 || declined,
-                "every operator a rule swaps is either a candidate or a decision somebody can read, never missing: {rule} at {op_at} in {source}"
+                found.len() == 1 && !declined,
+                "an operand joined by operators is always one some writing keeps, parenthesized \
+                 whole if nothing less does, so every operator a rule swaps is exactly one \
+                 candidate and never declined: {rule} at {op_at} in {source}"
             );
             for one in found {
                 let (start, end) = (
@@ -318,9 +363,7 @@ proptest! {
                     &source[end..]
                 );
                 let file: syn::File = syn::parse_str(&written).expect("a swap writes a file that parses");
-                let syn::Item::Fn(function) = &file.items[0] else { panic!("the function") };
-                let syn::Stmt::Local(local) = &function.block.stmts[0] else { panic!("the let") };
-                let read_back = read(&local.init.as_ref().expect("an initializer").expr);
+                let read_back = read(&probe(&file));
                 prop_assert_eq!(
                     read_back,
                     bare(&swapped(&tree, &node.path)),
@@ -368,5 +411,33 @@ fn swapping_the_outer_or_of_a_chain_keeps_its_left_operand_whole() {
         "`a || b || c` is `(a || b) || c`, so swapping its outer operator makes `(a || b) && c`; \
          a token swap writes `a || b && c`, which reads as `a || (b && c)`, a different mutant \
          than the one it names: {written:?}"
+    );
+}
+
+#[test]
+fn a_swap_is_read_back_at_the_size_of_its_own_item_not_of_its_file() {
+    let functions = |count: usize| -> String {
+        (0..count)
+            .map(|n| {
+                format!("fn f{n:02}(v0: bool, v1: bool, v2: bool) -> bool {{ v0 || v1 && v2 }}\n")
+            })
+            .collect::<Vec<String>>()
+            .concat()
+    };
+    let read = |source: &str| {
+        rust_mutants::testkit::source::read_back(source)
+            .expect("the file parses")
+            .expect("what one small file reads back fits")
+    };
+    let one = read(&functions(1));
+    assert!(
+        one > 0,
+        "a swap that changes how tightly its operator binds is read back"
+    );
+    assert_eq!(
+        read(&functions(16)),
+        16 * one,
+        "sixteen functions read back sixteen times what one does: a swap is held to the item it \
+         stands in, and a file that also holds fifteen others is no more to read for it"
     );
 }

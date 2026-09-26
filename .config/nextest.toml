@@ -28,13 +28,12 @@ filter = 'test(/_while_a_run_replaces_it_is_one_whole_/)'
 test-group = "durable"
 slow-timeout = { period = "60s", terminate-after = 5 }
 
-# One in-process test whose work is not the inner loop's size: every source of this repository instrumented and parsed again,
-# which grows with the repository and is bound by the processor the rest of the suite is sharing.
-# With batch 10's tree it takes 88s alone at load 13 on Linux, and beside the whole suite at load 40 it ran past five minutes.
-# The period still names it slow each minute; the count is the backstop for one that stopped.
+# One in-process test whose work is not one test's size: every source of this repository instrumented and read again.
+# It spreads the files across one worker per core, so it asks for every core and runs alone, and then keeps the inner loop's budget.
+# Run beside the rest of the suite on one thread it took 88s alone at load 13 on Linux and ran past five minutes at load 40.
 [[profile.default.overrides]]
 filter = 'test(/::every_source_of_this_repository_still_parses_once_it_is_instrumented$/)'
-slow-timeout = { period = "60s", terminate-after = 15 }
+threads-required = "num-cpus"
 
 # The inner loop starts no toolchain, so a test there taking a minute is
 # already a test that has stopped answering.
