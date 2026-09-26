@@ -54,6 +54,9 @@ The gate was a Bash script, and the rule that decides what may run on the machin
   A holder that dies never writes it, and then the next run ends every group the record names — the holder's own and each one a run nested inside it started — asking, then killing, and goes in only once a look at each finds nobody that has not ended.
   A group is the leader's id with the start time recorded for it; a record written in another boot names nothing.
   Without a handle on a process that outlives its id, one gap stays open: after the work ended, its id can be reused by a new group whose leader then exits while its members run, and a record read in that window names it.
+  A process of the work that starts a session of its own leaves the work's group and session both, so nothing the record names reaches it, and it is left running.
+  A lock taken over a removed lock file is not taken as the holder's death: while the recorded holder still runs since the recorded time, the next run waits for it.
+  A holder whose work could not be stopped lets the lane go without writing `released`, so the next run ends what it left.
 - On Windows nothing reads a process's start time without an unsafe call, so the leader is not recorded, waiting markers are never swept, and a holder killed outright lets the next run in at once; there the lane is only the lock.
 - The work a lane admits has no terminal input: it runs apart from the terminal's foreground group, and a program that stopped to read one would hold the lane for ever.
 - The gate starts the compilation cache's server itself before the check, with an idle timeout longer than the check's budgets, so stopping the check's group never stops the server every session shares.
