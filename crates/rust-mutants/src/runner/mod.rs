@@ -1893,6 +1893,13 @@ pub fn stop_group(leader: u32, how: GroupStop) -> io::Result<Stopped> {
 ///
 /// # Errors
 /// The process could not be signalled for a reason other than having ended.
+#[cfg_attr(
+    windows,
+    expect(
+        clippy::missing_const_for_fn,
+        reason = "the Windows implementation is an inert stub, while the Unix implementation this cross-platform facade also exposes signals a process"
+    )
+)]
 pub fn stop_process(pid: u32) -> io::Result<()> {
     sys::stop_process(pid)
 }
