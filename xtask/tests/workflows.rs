@@ -130,7 +130,11 @@ fn mutation_ci_runs_one_whole_workspace() {
         .join(".github/workflows/mutation.yml");
     let source = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-    let workflow_jobs = jobs(&source);
+    let jobs_source = source
+        .split_once("\njobs:\n")
+        .map(|(_, body)| body)
+        .unwrap_or_else(|| panic!("{} has no jobs", path.display()));
+    let workflow_jobs = jobs(jobs_source);
     assert_eq!(workflow_jobs.len(), 1, "mutation CI has one job");
     let (name, body) = &workflow_jobs[0];
     assert_eq!(name, "whole");
