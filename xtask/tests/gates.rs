@@ -15,17 +15,6 @@ enum TestFailure {
     /// Test setup could not create or read its fixture.
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    /// A path returned by the production source walker escaped its root.
-    #[error("{} is outside {}", path.display(), root.display())]
-    OutsideRoot {
-        path: std::path::PathBuf,
-        root: std::path::PathBuf,
-        #[source]
-        source: std::path::StripPrefixError,
-    },
-    /// A committed source path was not exact UTF-8.
-    #[error("{} is not UTF-8", path.display())]
-    NonUtf8Path { path: std::path::PathBuf },
     /// A deliberately malformed fixture unexpectedly passed its gate.
     #[error("{0}")]
     UnexpectedSuccess(&'static str),
@@ -50,81 +39,6 @@ fn refused<T>(
         Ok(_) => Err(TestFailure::UnexpectedSuccess(if_accepted)),
         Err(failure) => Ok(failure),
     }
-}
-
-#[test]
-fn the_seam_ledger_agrees_with_the_tree() -> Result<(), TestFailure> {
-    let report = gates::devgates(&gates::workspace_root())?;
-    require(report.starts_with("devgates: "), report)
-}
-
-#[test]
-fn every_internal_dependency_points_in_the_allowed_direction() -> Result<(), TestFailure> {
-    let report = gates::deps(&gates::workspace_root())?;
-    require(report.starts_with("deps: "), report)
-}
-
-#[test]
-fn every_fixture_follows_the_conventions() -> Result<(), TestFailure> {
-    let report = gates::fixtures(&gates::workspace_root())?;
-    require(report.starts_with("fixtures: "), report)
-}
-
-#[test]
-fn the_release_versions_agree() -> Result<(), TestFailure> {
-    let report = gates::release_check(&gates::workspace_root())?;
-    require(report.starts_with("release-check: "), report)
-}
-
-#[test]
-fn every_milestone_reference_resolves_to_the_roadmap() -> Result<(), TestFailure> {
-    let report = gates::milestones(&gates::workspace_root())?;
-    require(report.starts_with("milestones: "), report)
-}
-
-#[test]
-fn every_crate_surface_has_a_compiler_checked_meaning() -> Result<(), TestFailure> {
-    let report = gates::surfaces(&gates::workspace_root())?;
-    require(report.starts_with("surfaces: "), report)
-}
-
-#[test]
-fn production_sources_exclude_test_support() -> Result<(), TestFailure> {
-    let root = gates::workspace_root();
-    let files: Vec<String> = gates::production_sources(&root)?
-        .iter()
-        .map(|path| {
-            let relative = path
-                .strip_prefix(&root)
-                .map_err(|source| TestFailure::OutsideRoot {
-                    path: path.clone(),
-                    root: root.clone(),
-                    source,
-                })?;
-            let relative = relative
-                .to_str()
-                .ok_or_else(|| TestFailure::NonUtf8Path { path: path.clone() })?;
-            Ok(relative.replace('\\', "/"))
-        })
-        .collect::<Result<_, TestFailure>>()?;
-    require(
-        files.iter().any(|f| f == "crates/rust-mutants/src/lib.rs"),
-        format!("missing production library from {files:?}"),
-    )?;
-    require(
-        files.iter().any(|f| f == "xtask/src/devgates.rs"),
-        format!("missing production gate from {files:?}"),
-    )?;
-    require(
-        files
-            .iter()
-            .all(|f| !f.starts_with("crates/njutest-devkit/")),
-        format!("test support entered production sources: {files:?}"),
-    )?;
-    require(
-        files.iter().all(|f| !f.contains("/tests/")),
-        format!("tests entered production sources: {files:?}"),
-    )
 }
 
 #[test]
@@ -431,18 +345,6 @@ fn a_public_function_only_a_test_names_is_what_the_reach_gate_reports() {
         vec!["believed_shipped".to_owned()],
         "a capability with a test is a capability somebody believed shipped (ADR 0023), so the \
          one nothing but a test names is the one to report and the one production calls is not"
-    );
-}
-
-#[test]
-fn a_function_behind_a_test_feature_is_test_support_rather_than_an_unreached_capability() {
-    let root = gates::workspace_root();
-    let report = gates::reached(&root).expect("the tree is clean under this gate");
-    assert!(
-        report.contains("0 public function"),
-        "every public function of an incidental surface is reached by something that ships. \
-         Sixteen were reported before this gate read `cfg(feature = \"testkit\")` as the \
-         declaration of test support that it is: {report}"
     );
 }
 

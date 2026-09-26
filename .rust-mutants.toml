@@ -26,17 +26,17 @@ tier = "all"
 [execution]
 offline = true
 locked = true
-# One target a run of this workspace may not start.
+# Two targets a run of this workspace may not start.
 # It is not about processes:
 #
-# `xtask/test/toolchain_gates` contains assertions about this repository, reached through `env!("CARGO_MANIFEST_DIR")`, which under measurement names the snapshot.
+# `xtask/test/toolchain_gates` and `xtask/test/this_repository` hold the assertions whose subject is this repository, reached through `env!("CARGO_MANIFEST_DIR")`, which under measurement names the snapshot.
 # The snapshot is this repository as the engine rewrote it, guards and runtime and all,
 # and each private generated support module carries the exact `#[allow(dead_code, unused_qualifications)]` that its generated boundary needs,
-# while `cargo xtask lints` refuses every `#[allow]` in repository source.
-# So the gate fails on the instrumentation and would fail on it identically under every mutation.
-# A test whose subject is the tree it is compiled from cannot be measured by copying the tree.
+# while `cargo xtask lints` refuses every `#[allow]` in repository source; the runtime's statics are seams, its step error names no code, and the copy has no git.
+# So those tests fail on the instrumentation and would fail on it identically under every mutation.
+# A test whose subject is the tree it is compiled from cannot be measured by copying the tree, which is why they are a binary apart from xtask's suite.
 # `cargo xtask all` refuses a name here that no target of the workspace has, so a rename is caught where it lands.
-skip_targets = ["xtask/test/toolchain_gates"]
+skip_targets = ["xtask/test/this_repository", "xtask/test/toolchain_gates"]
 
 # The language server reads a report and says what it holds. Four of its
 # survivors are places where the mutation names the same value the code does.
