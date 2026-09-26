@@ -225,7 +225,9 @@ pub fn reserved_names(environment: &Environment) -> Vec<String> {
         .filter_map(|(name, _)| {
             rust_mutants::execute::RESERVED_ENV
                 .iter()
-                .find(|reserved| name.as_os_str() == std::ffi::OsStr::new(reserved))
+                .find(|reserved| {
+                    rust_mutants::vars::same_name(name.as_os_str(), std::ffi::OsStr::new(reserved))
+                })
                 .map(|reserved| (*reserved).to_owned())
         })
         .collect()
