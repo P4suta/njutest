@@ -395,6 +395,7 @@ dependencies = [
  "proc-macro2",
  "proptest",
  "ratatui",
+ "regex",
  "rust-mutants",
  "rustix",
  "serde",
