@@ -87,7 +87,7 @@ fn every_job_that_runs_the_repository_tests_fetches_the_comparison_base() {
 }
 
 #[test]
-fn newest_macos_and_windows_each_run_one_whole_suite() {
+fn each_matrix_platform_runs_one_whole_suite() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join(".github/workflows/ci.yml");
@@ -97,30 +97,23 @@ fn newest_macos_and_windows_each_run_one_whole_suite() {
         .into_iter()
         .find_map(|(name, body)| (name == "test").then_some(body))
         .unwrap_or_else(|| panic!("ci.yml has the test matrix"));
-    let lines: Vec<&str> = test.lines().collect();
-    let parts_for = |wanted: &str| {
-        lines
-            .windows(2)
-            .filter_map(|pair| {
-                let [os, part] = pair else {
-                    return None;
-                };
-                (os.trim().strip_prefix("- os: ") == Some(wanted))
-                    .then(|| part.trim())
-                    .and_then(|part| part.strip_prefix("part: "))
-            })
-            .collect::<Vec<_>>()
-    };
-
+    let matrix = test
+        .split_once("      matrix:\n")
+        .and_then(|(_, rest)| rest.split_once("    steps:\n"))
+        .map(|(matrix, _)| matrix)
+        .unwrap_or_else(|| panic!("ci.yml has a test matrix before its steps"));
+    let dimensions: Vec<&str> = matrix.lines().map(str::trim).collect();
     assert_eq!(
-        parts_for("macos-26"),
-        ["whole"],
-        "macOS 26 must run the whole suite in exactly one row"
+        dimensions,
+        ["os: [macos-26, macos-15, windows-2025]"],
+        "the test matrix has only the operating-system dimension"
     );
     assert_eq!(
-        parts_for("windows-2025"),
-        ["whole"],
-        "Windows must run the whole suite in exactly one row"
+        test.lines()
+            .filter(|line| line.trim() == "run: mise run test:ci")
+            .count(),
+        1,
+        "each platform runs the full test task once"
     );
     assert!(
         !test.contains("--partition"),
