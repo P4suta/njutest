@@ -42,13 +42,12 @@ fn asked(environment: &Environment, args: &[&str]) -> Output {
 
 /// The environment a run of this suite composes: the four variables a toolchain needs, and nothing else.
 fn environment(directory: &Path, named: &[(&str, &str)]) -> Environment {
-    let mut vars: Vec<(OsString, OsString)> =
-        njutest_devkit::paths::environment_for_a_toolchain_run(&[]);
+    let mut vars: rust_mutants::vars::Variables =
+        njutest_devkit::paths::environment_for_a_toolchain_run(&[])
+            .into_iter()
+            .collect::<rust_mutants::vars::Variables>();
     for (name, value) in named {
-        vars.retain(|(held, _)| {
-            !njutest_devkit::paths::same_name(held, OsString::from(name).as_os_str())
-        });
-        vars.push((OsString::from(name), OsString::from(value)));
+        vars.set(*name, *value);
     }
     Environment {
         cache_directory: directory.join("njutest-cache"),

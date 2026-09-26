@@ -50,7 +50,7 @@ impl Place {
     /// [`ScratchError::Unusable`] naming a directory that could not be made.
     pub fn probed(
         scratch: &Path,
-        vars: &[(OsString, OsString)],
+        vars: &rust_mutants::vars::Variables,
         cancel: &Cancel,
     ) -> Result<Self, ScratchError> {
         let temp_directory = scratch.join("knobs").join("temp directory \u{e9}");
@@ -61,11 +61,7 @@ impl Place {
                 source,
             })?;
         }
-        let named = |name: &str| {
-            vars.iter()
-                .find(|(held, _)| rust_mutants::vars::same_name(held, std::ffi::OsStr::new(name)))
-                .map(|(_, value)| value.clone())
-        };
+        let named = |name: &str| vars.var(name).map(std::ffi::OsStr::to_os_string);
         let under_home = |directory: &str| {
             named("HOME").map(|home| PathBuf::from(home).join(directory).into_os_string())
         };
@@ -82,22 +78,22 @@ impl Place {
 }
 
 /// What `argv` printed on success, run with `vars` and a probe's bound, or nothing where it could not be started or did not succeed.
-fn answers(argv: &[&str], vars: &[(OsString, OsString)], cancel: &Cancel) -> Option<Vec<u8>> {
+fn answers(
+    argv: &[&str],
+    vars: &rust_mutants::vars::Variables,
+    cancel: &Cancel,
+) -> Option<Vec<u8>> {
     let argv: Vec<OsString> = argv.iter().map(OsString::from).collect();
     let mut spec = Spec::new(argv, Bound::After(rust_mutants::runner::PROBE));
-    spec.env = Some(vars.to_vec());
+    spec.env = Some(vars.clone());
     let ran = rust_mutants::runner::run(&spec, cancel);
     ran.succeeded().then_some(ran.output)
 }
 
 /// Whether the time zone database knows the zone, which it shows by printing one of the zone's own offsets rather than UTC's.
-fn zone_is_known(vars: &[(OsString, OsString)], cancel: &Cancel) -> bool {
-    let mut zoned: Vec<(OsString, OsString)> = vars
-        .iter()
-        .filter(|(name, _)| !rust_mutants::vars::same_name(name, std::ffi::OsStr::new("TZ")))
-        .cloned()
-        .collect();
-    zoned.push((OsString::from("TZ"), OsString::from(ZONE)));
+fn zone_is_known(vars: &rust_mutants::vars::Variables, cancel: &Cancel) -> bool {
+    let mut zoned = vars.clone();
+    zoned.set("TZ", ZONE);
     answers(&["date", "+%z"], &zoned, cancel).is_some_and(|printed| {
         std::str::from_utf8(&printed).is_ok_and(|offset| ZONE_OFFSETS.contains(&offset.trim()))
     })
@@ -106,17 +102,17 @@ fn zone_is_known(vars: &[(OsString, OsString)], cancel: &Cancel) -> bool {
 /// Whether the locale is installed, by the list `locale -a` prints, which spells a codeset more than one way.
 /// Whether a POSIX shell starts and exits cleanly here, which only a Unix has to say.
 #[cfg(unix)]
-fn shell_answers(vars: &[(OsString, OsString)], cancel: &Cancel) -> bool {
+fn shell_answers(vars: &rust_mutants::vars::Variables, cancel: &Cancel) -> bool {
     answers(&["sh", "-c", "exit 0"], vars, cancel).is_some()
 }
 
 /// A platform with no POSIX shell it can count on has none to answer.
 #[cfg(not(unix))]
-const fn shell_answers(_vars: &[(OsString, OsString)], _cancel: &Cancel) -> bool {
+const fn shell_answers(_vars: &rust_mutants::vars::Variables, _cancel: &Cancel) -> bool {
     false
 }
 
-fn locale_is_installed(vars: &[(OsString, OsString)], cancel: &Cancel) -> bool {
+fn locale_is_installed(vars: &rust_mutants::vars::Variables, cancel: &Cancel) -> bool {
     let spelled = |name: &str| name.to_ascii_lowercase().replace('-', "");
     let wanted = spelled(LOCALE);
     answers(&["locale", "-a"], vars, cancel).is_some_and(|printed| {

@@ -17,7 +17,10 @@ fn a_key_over_nothing_is_not_a_key_and_remembers_nothing() {
         build: Vec::new(),
         engine: "e".to_owned(),
         runner: None,
-        declared: rust_mutants::outcomes::Declared::of(&std::collections::BTreeSet::new(), &[]),
+        declared: rust_mutants::outcomes::Declared::of(
+            &std::collections::BTreeSet::new(),
+            &rust_mutants::vars::Variables::empty(),
+        ),
     };
     assert!(
         !keyed.usable(),
@@ -86,14 +89,14 @@ fn every_change_of(base: &rust_mutants::outcomes::Keyed) -> Vec<rust_mutants::ou
         rust_mutants::outcomes::Keyed {
             declared: rust_mutants::outcomes::Declared::of(
                 &std::collections::BTreeSet::from(["MODE".to_owned()]),
-                &[],
+                &rust_mutants::vars::Variables::empty(),
             ),
             ..base.clone()
         },
         rust_mutants::outcomes::Keyed {
             declared: rust_mutants::outcomes::Declared::of(
                 &std::collections::BTreeSet::from(["MODE".to_owned()]),
-                &[("MODE".into(), "one".into())],
+                &rust_mutants::vars::Variables::of([("MODE".into(), "one".into())]),
             ),
             ..base.clone()
         },
@@ -122,7 +125,10 @@ fn what_the_key_is_computed_from_is_what_could_change_the_answer() {
         build: vec!["--all-features".to_owned()],
         engine: "e".to_owned(),
         runner: None,
-        declared: rust_mutants::outcomes::Declared::of(&std::collections::BTreeSet::new(), &[]),
+        declared: rust_mutants::outcomes::Declared::of(
+            &std::collections::BTreeSet::new(),
+            &rust_mutants::vars::Variables::empty(),
+        ),
     };
     let key = base.key(&mutant);
     for other in every_change_of(&base) {
@@ -194,7 +200,10 @@ fn the_engine_is_named_by_what_it_is_and_not_by_where_it_lies() {
 
 /// What a key holds of a configuration that declared no variable.
 fn nothing_declared() -> serde_json::Value {
-    let declared = rust_mutants::outcomes::Declared::of(&std::collections::BTreeSet::new(), &[]);
+    let declared = rust_mutants::outcomes::Declared::of(
+        &std::collections::BTreeSet::new(),
+        &rust_mutants::vars::Variables::empty(),
+    );
     serde_json::json!({ "names": declared.names, "digest": declared.digest })
 }
 
@@ -261,19 +270,21 @@ fn a_record_that_does_not_say_which_runner_asked_is_refused_rather_than_read_as_
 
 #[test]
 fn a_declared_name_is_read_as_the_platform_spells_names() {
+    use rust_mutants::vars::{Spelling, Variables};
     let names = std::collections::BTreeSet::from(["REQUIRE_SHARING".to_owned()]);
-    let exact =
-        rust_mutants::outcomes::Declared::of(&names, &[("REQUIRE_SHARING".into(), "1".into())]);
-    let otherwise =
-        rust_mutants::outcomes::Declared::of(&names, &[("Require_Sharing".into(), "1".into())]);
-    assert_eq!(
-        exact == otherwise,
-        rust_mutants::vars::same_name(
-            std::ffi::OsStr::new("REQUIRE_SHARING"),
-            std::ffi::OsStr::new("Require_Sharing")
-        ),
-        "a variable the tests read under a name the platform takes as the declared one is the \
-         declared one, so the key and the process read it alike: on Windows `Require_Sharing` \
-         is `REQUIRE_SHARING`, and a key that hashed it as unset would answer a run that sets it"
-    );
+    for spelling in Spelling::ALL {
+        let given = |name: &str| {
+            Variables::spelled(spelling, [(name.into(), std::ffi::OsString::from("1"))])
+        };
+        let exact = rust_mutants::outcomes::Declared::of(&names, &given("REQUIRE_SHARING"));
+        let otherwise = rust_mutants::outcomes::Declared::of(&names, &given("Require_Sharing"));
+        assert_eq!(
+            exact == otherwise,
+            spelling == Spelling::AsciiCaseless,
+            "{spelling:?}: a variable the tests read under a name the platform takes as the \
+             declared one is the declared one, so the key and the process read it alike: on \
+             Windows `Require_Sharing` is `REQUIRE_SHARING`, and a key that hashed it as unset \
+             would answer a run that sets it"
+        );
+    }
 }

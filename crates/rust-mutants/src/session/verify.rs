@@ -1164,9 +1164,9 @@ fn target_key(
         "environment-count",
         baseline_count(BaselineQuantity::Environment, environment.len())?,
     )?;
-    for (name, value) in environment {
+    for (name, value) in environment.canonical() {
         key.os("environment-name", &name)?;
-        key.os("environment-value", &value)?;
+        key.os("environment-value", value)?;
     }
     Ok(())
 }

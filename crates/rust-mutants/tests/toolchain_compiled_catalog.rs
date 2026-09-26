@@ -114,7 +114,9 @@ fn a_session_embeds_its_complete_catalog_in_the_binary_it_builds() {
         OpenOptions {
             cargo: Some(njutest_devkit::paths::cargo_binary()),
             temp_directory: project.temporary.clone(),
-            env: njutest_devkit::paths::environment_for_a_run(),
+            env: njutest_devkit::paths::environment_for_a_run()
+                .into_iter()
+                .collect(),
             offline: true,
             locked: true,
             ..OpenOptions::default()
@@ -157,7 +159,11 @@ fn cargo_rebuilds_an_unchanged_binary_when_the_embedded_catalog_changes() {
     let toolchain = Toolchain::locate(
         &LocateOptions {
             cargo: Some(njutest_devkit::paths::cargo_binary()),
-            env: Some(njutest_devkit::paths::environment_for_a_run()),
+            env: Some(
+                njutest_devkit::paths::environment_for_a_run()
+                    .into_iter()
+                    .collect(),
+            ),
             ..LocateOptions::default()
         },
         &project.root,
@@ -181,10 +187,10 @@ fn cargo_rebuilds_an_unchanged_binary_when_the_embedded_catalog_changes() {
                 )),
                 locked: true,
                 offline: true,
-                env: vec![(
+                env: rust_mutants::vars::Variables::of([(
                     OsString::from(COMPILED_CATALOG_ENV),
                     OsString::from(catalog),
-                )],
+                )]),
                 ..CompileOptions::default()
             },
         )

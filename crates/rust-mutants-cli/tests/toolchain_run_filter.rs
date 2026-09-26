@@ -229,7 +229,9 @@ fn from_report_that_names_nothing_measures_nothing_rather_than_everything() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: njutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect(),
         temp_directory: fixture.temp().to_path_buf(),
         program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),

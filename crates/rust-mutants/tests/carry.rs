@@ -53,7 +53,10 @@ fn keyed(closure: &str) -> Keyed {
         steps: 0,
         build: Vec::new(),
         runner: None,
-        declared: rust_mutants::outcomes::Declared::of(&BTreeSet::new(), &[]),
+        declared: rust_mutants::outcomes::Declared::of(
+            &BTreeSet::new(),
+            &rust_mutants::vars::Variables::empty(),
+        ),
     }
 }
 

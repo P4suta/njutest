@@ -4,7 +4,6 @@
 //! The integration resources a run starts, and what they may tell a test.
 
 use std::collections::BTreeMap;
-use std::ffi::{OsStr, OsString};
 #[cfg(feature = "testkit")]
 use std::path::Path;
 use std::path::PathBuf;
@@ -102,7 +101,7 @@ pub struct Where {
     /// The directory a provider runs in.
     pub dir: PathBuf,
     /// The environment this run was given, from which a provider sees only what its configuration names.
-    pub env: Vec<(OsString, OsString)>,
+    pub env: rust_mutants::vars::Variables,
 }
 
 /// Every resource a run holds, started on demand and stopped together.
@@ -287,16 +286,14 @@ impl Manager {
 
 /// What a provider may see of this run's environment: exactly the names its configuration lists.
 #[must_use]
-pub fn visible(env: &[(OsString, OsString)], allowed: &[String]) -> Vec<(OsString, OsString)> {
-    env.iter()
-        .filter(|(name, _)| {
-            rust_mutants::vars::same_name(name, OsStr::new("PATH"))
-                || allowed
-                    .iter()
-                    .any(|wanted| rust_mutants::vars::same_name(name, OsStr::new(wanted)))
-        })
-        .cloned()
-        .collect()
+pub fn visible(
+    env: &rust_mutants::vars::Variables,
+    allowed: &[String],
+) -> rust_mutants::vars::Variables {
+    let kept: Vec<&str> = std::iter::once("PATH")
+        .chain(allowed.iter().map(String::as_str))
+        .collect();
+    env.only(&kept)
 }
 
 /// What a provider offered, refused if any of it is a variable the run composes itself.
@@ -328,9 +325,9 @@ pub fn admissible(
 /// Where providers run when a run has a scratch of its own.
 #[must_use]
 #[cfg(feature = "testkit")]
-pub fn place(dir: &Path, env: &[(OsString, OsString)]) -> Where {
+pub fn place(dir: &Path, env: &rust_mutants::vars::Variables) -> Where {
     Where {
         dir: dir.to_path_buf(),
-        env: env.to_vec(),
+        env: env.clone(),
     }
 }

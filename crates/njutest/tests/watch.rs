@@ -23,7 +23,7 @@ fn stopped(root: &Path) -> Environment {
     let cancel = Cancel::new();
     cancel.cancel();
     Environment {
-        vars: Vec::new(),
+        vars: rust_mutants::vars::Variables::empty(),
         working_directory: root.to_owned(),
         temp_directory: root.to_owned(),
         program: std::path::PathBuf::from(env!("CARGO_BIN_EXE_njutest")),

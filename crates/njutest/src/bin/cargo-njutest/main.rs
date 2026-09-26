@@ -8,7 +8,7 @@
 use std::process::ExitCode;
 
 pub(crate) fn main() -> ExitCode {
-    let vars: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
+    let vars: rust_mutants::vars::Variables = std::env::vars_os().collect();
     let (cancel, signalled) = match njutest::interruptible() {
         Ok(interruptible) => interruptible,
         Err(error) => {

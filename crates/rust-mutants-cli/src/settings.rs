@@ -98,7 +98,7 @@ impl Settings {
             .map_err(rust_mutants::workspace::SessionError::from)?;
         Ok(OpenOptions {
             cargo: environment.cargo.clone(),
-            search_path: rust_mutants::vars::search_path(&environment.vars),
+            search_path: environment.vars.search_path().map(ToOwned::to_owned),
             env: environment.vars.clone(),
             temp_directory: environment.temp_directory.clone(),
             report_directory: Some(report_directory),

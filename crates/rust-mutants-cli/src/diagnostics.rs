@@ -109,9 +109,9 @@ pub fn manifest(
 
 /// The names of every variable that is set, one per line, and no value of any of them.
 #[must_use]
-pub fn environment_names(vars: &[(std::ffi::OsString, std::ffi::OsString)]) -> String {
+pub fn environment_names(vars: &rust_mutants::vars::Variables) -> String {
     let mut names: Vec<String> = vars
-        .iter()
+        .for_process()
         .map(|(name, _value)| match name.to_str() {
             Some(text) => text.to_owned(),
             None => rust_mutants::telling::LosslessBytes::new(name.as_encoded_bytes()).to_string(),

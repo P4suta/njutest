@@ -57,7 +57,9 @@ fn environment(root: &Path) -> Environment {
         working_directory: root.to_path_buf(),
         temp_directory: njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
         program: PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
-        vars: njutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect(),
         cancel: Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),
     }

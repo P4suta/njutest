@@ -121,7 +121,7 @@ pub struct OpenOptions {
     /// The composition root reads the process environment; the engine never does.
     pub search_path: Option<OsString>,
     /// The complete environment every command and test process runs with.
-    pub env: Vec<(OsString, OsString)>,
+    pub env: crate::vars::Variables,
     /// The existing absolute directory snapshots and target directories are created in.
     /// An argument for the same reason `env` is; the composition root creates and names the operating system's temporary directory, and this layer binds its physical identity before minting any child path.
     pub temp_directory: PathBuf,
@@ -160,11 +160,11 @@ const TESTS_TOOLCHAIN: &str = "tests-toolchain";
 
 /// The environment the tests get: `env`, with the run's toolchain first on its search path where a bare `cargo` from the copy is not that toolchain, which the trace notes with what it said.
 fn tested(
-    env: Vec<(OsString, OsString)>,
+    env: crate::vars::Variables,
     toolchain: &Toolchain,
     (copy, trace): (&Snapshot, &Recorder),
     cancel: &Cancel,
-) -> Result<Vec<(OsString, OsString)>, crate::cargo::CargoError> {
+) -> Result<crate::vars::Variables, crate::cargo::CargoError> {
     let given = toolchain.for_tests(env, copy.root(), cancel)?;
     if let Some(said) = &given.pinned {
         trace.note(
@@ -224,7 +224,7 @@ pub struct Workspace {
     /// The claim on that directory, held and released exactly as [`Workspace::target_owner`] is.
     /// The claim on the scratch directory, taken when the run opened and `None` only once it has been released or kept.
     pub(crate) scratch_owner: Option<tempowner::Owner>,
-    pub(crate) base_env: Vec<(OsString, OsString)>,
+    pub(crate) base_env: crate::vars::Variables,
     pub(crate) swept: SweepResult,
     pub(crate) keep_temp: bool,
     pub(crate) offline: bool,
@@ -965,22 +965,15 @@ impl Workspace {
     /// The directory a process of the instrumented tree that lost the run's environment says so in, and the environment every process the run starts carries it in, whatever an outer run set.
     fn watching(
         snapshot: &Snapshot,
-        env: &[(OsString, OsString)],
-    ) -> Result<(String, Vec<(OsString, OsString)>), SessionError> {
+        env: &crate::vars::Variables,
+    ) -> Result<(String, crate::vars::Variables), SessionError> {
         let path = snapshot.dir().join(WATCHED_NAME);
         let watched = path
             .to_str()
             .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: path.clone() })?
             .to_owned();
-        let mut base_env: Vec<(OsString, OsString)> = env
-            .iter()
-            .filter(|(name, _)| name != crate::instrument::WATCHED_ENV)
-            .cloned()
-            .collect();
-        base_env.push((
-            OsString::from(crate::instrument::WATCHED_ENV),
-            OsString::from(&watched),
-        ));
+        let mut base_env = env.clone();
+        base_env.set(crate::instrument::WATCHED_ENV, &watched);
         Ok((watched, base_env))
     }
 

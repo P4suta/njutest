@@ -1191,7 +1191,7 @@ impl Session {
             });
         }
         for (name, wanted) in &under.env {
-            let given = crate::vars::var(&self.workspace.base_env, name);
+            let given = self.workspace.base_env.var(name);
             match given {
                 Some(value) if value == std::ffi::OsStr::new(wanted) => {}
                 Some(_) | None => {

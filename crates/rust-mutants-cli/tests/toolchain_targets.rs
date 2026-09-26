@@ -112,7 +112,9 @@ fn a_path_that_is_not_ascii_is_snapshotted_named_and_hashed() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: njutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect(),
         temp_directory: fixture.temp().to_path_buf(),
         program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),

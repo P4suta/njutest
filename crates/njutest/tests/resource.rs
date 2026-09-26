@@ -75,9 +75,12 @@ fn a_provider_sees_the_path_and_exactly_what_its_configuration_names() {
             std::ffi::OsString::from(value),
         )
     });
-    let seen = visible(&env, &["HOME".to_owned()]);
+    let seen = visible(
+        &env.into_iter().collect::<rust_mutants::vars::Variables>(),
+        &["HOME".to_owned()],
+    );
     let names: Vec<String> = seen
-        .iter()
+        .for_process()
         .map(|(name, _)| {
             name.to_str()
                 .expect("test protocol paths are UTF-8")

@@ -54,7 +54,7 @@ pub(crate) struct Invocation<'a> {
     /// The compiler-checked differential harness.
     pub harness: &'a Harness,
     /// The complete environment captured by the composition root.
-    pub environment: &'a [(OsString, OsString)],
+    pub environment: &'a rust_mutants::vars::Variables,
     /// Where both the version probe and proof invocation are traced.
     pub trace: &'a crate::trace::Recorder,
 }
@@ -127,13 +127,13 @@ impl Attempt {
 }
 
 struct DiscoveryInput<'a> {
-    environment: &'a [(OsString, OsString)],
+    environment: &'a rust_mutants::vars::Variables,
     catalog: &'a Path,
     elapsed: Duration,
 }
 
 struct Ready {
-    environment: Vec<(OsString, OsString)>,
+    environment: rust_mutants::vars::Variables,
     elapsed: Duration,
 }
 
@@ -272,7 +272,7 @@ pub(super) fn refused_configuration(
 
 fn probe(
     invocation: &Invocation<'_>,
-    environment: &[(OsString, OsString)],
+    environment: &rust_mutants::vars::Variables,
     cancel: &Cancel,
 ) -> ControlFlow<Attempt, Duration> {
     let mut version_spec = Spec::new(
@@ -284,7 +284,7 @@ fn probe(
         Bound::After(PROBE.min(invocation.harness.timeout())),
     );
     version_spec.dir = Some(invocation.root.to_path_buf());
-    version_spec.env = Some(environment.to_vec());
+    version_spec.env = Some(environment.clone());
     version_spec.output_limit = Some(PROBE_OUTPUT_LIMIT);
     version_spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
     let version = rust_mutants::runner::run(&version_spec, cancel);
@@ -329,7 +329,7 @@ fn discover(
     ];
     let mut spec = Spec::new(catalog_arguments, Bound::After(ceiling));
     spec.dir = Some(invocation.root.to_path_buf());
-    spec.env = Some(input.environment.to_vec());
+    spec.env = Some(input.environment.clone());
     spec.output_limit = Some(OUTPUT_LIMIT);
     let ran = rust_mutants::runner::run(&spec, cancel);
     invocation
@@ -451,21 +451,21 @@ fn invalid(invocation: &Invocation<'_>) -> Option<Configuration> {
     }
     if invocation
         .environment
-        .iter()
+        .for_process()
         .any(|(name, _value)| compiler_flags_key(name))
     {
         return Some(Configuration::CompilerFlags);
     }
     if invocation
         .environment
-        .iter()
+        .for_process()
         .any(|(name, _value)| compiler_environment_key(name))
     {
         return Some(Configuration::CompilerEnvironment);
     }
     if invocation
         .environment
-        .iter()
+        .for_process()
         .any(|(name, _value)| profile_environment_key(name))
     {
         return Some(Configuration::Profile);
@@ -498,7 +498,7 @@ fn invalid(invocation: &Invocation<'_>) -> Option<Configuration> {
     None
 }
 
-fn cargo_configuration_safe(root: &Path, environment: &[(OsString, OsString)]) -> bool {
+fn cargo_configuration_safe(root: &Path, environment: &rust_mutants::vars::Variables) -> bool {
     let mut configurations = Vec::new();
     let canonical_root = match std::fs::canonicalize(root) {
         Ok(root) => root,
@@ -576,13 +576,13 @@ enum EnvironmentLookupError {
 }
 
 fn unique_environment_value<'a>(
-    environment: &'a [(OsString, OsString)],
+    environment: &'a rust_mutants::vars::Variables,
     name: &'static str,
 ) -> Result<Option<&'a std::ffi::OsStr>, EnvironmentLookupError> {
     let mut values = environment
-        .iter()
+        .for_process()
         .filter(|(candidate, _value)| environment_key(candidate, name))
-        .map(|(_candidate, value)| value.as_os_str());
+        .map(|(_candidate, value)| value);
     let first = values.next();
     if values.next().is_some() {
         return Err(EnvironmentLookupError::Duplicate { name });
@@ -629,7 +629,7 @@ fn checker_boundary(invocation: &Invocation<'_>) -> bool {
     }
 }
 
-fn verifier_bundle_boundary(environment: &[(OsString, OsString)]) -> bool {
+fn verifier_bundle_boundary(environment: &rust_mutants::vars::Variables) -> bool {
     let home_name = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
     let home = match unique_environment_value(environment, home_name) {
         Ok(Some(home)) => PathBuf::from(home),
@@ -746,7 +746,7 @@ fn exact_entries(directory: &Path, expected: &[&str]) -> bool {
     actual == expected
 }
 
-fn environment(invocation: &Invocation<'_>) -> Option<Vec<(OsString, OsString)>> {
+fn environment(invocation: &Invocation<'_>) -> Option<rust_mutants::vars::Variables> {
     let cargo_home = match unique_environment_value(invocation.environment, "CARGO_HOME") {
         Ok(Some(cargo_home)) => PathBuf::from(cargo_home),
         Ok(None) | Err(EnvironmentLookupError::Duplicate { .. }) => return None,
@@ -774,7 +774,7 @@ fn environment(invocation: &Invocation<'_>) -> Option<Vec<(OsString, OsString)>>
         Err(_invalid_path) => return None,
     };
     let kani_home = home.join(".kani");
-    let mut environment = vec![
+    let mut environment = rust_mutants::vars::Variables::of([
         (OsString::from("CARGO_HOME"), cargo_home.into_os_string()),
         (OsString::from(home_name), home.into_os_string()),
         (OsString::from("KANI_HOME"), kani_home.into_os_string()),
@@ -791,34 +791,29 @@ fn environment(invocation: &Invocation<'_>) -> Option<Vec<(OsString, OsString)>>
             OsString::from(invocation.target),
         ),
         (OsString::from("CARGO_NET_OFFLINE"), OsString::from("true")),
-    ];
+    ]);
     #[cfg(unix)]
-    environment.push((
-        OsString::from("TMPDIR"),
-        invocation.target_dir.as_os_str().to_owned(),
-    ));
+    environment.set("TMPDIR", invocation.target_dir.as_os_str());
     #[cfg(windows)]
     {
         let temporary = invocation.target_dir.as_os_str().to_owned();
-        environment.push((OsString::from("TEMP"), temporary.clone()));
-        environment.push((OsString::from("TMP"), temporary));
+        environment.set("TEMP", temporary.clone());
+        environment.set("TMP", temporary);
         let system_root = match unique_environment_value(invocation.environment, "SYSTEMROOT") {
             Ok(Some(system_root)) => system_root.to_owned(),
             Ok(None) | Err(EnvironmentLookupError::Duplicate { .. }) => return None,
         };
-        environment.push((OsString::from("SYSTEMROOT"), system_root));
+        environment.set("SYSTEMROOT", system_root);
     }
     #[cfg(test)]
-    environment.extend(
-        invocation
-            .environment
-            .iter()
-            .filter(|(name, _value)| {
-                name.to_str()
-                    .is_some_and(|name| name.starts_with("FAKE_KANI_"))
-            })
-            .cloned(),
-    );
+    for (name, value) in invocation.environment.for_process() {
+        if name
+            .to_str()
+            .is_some_and(|name| name.starts_with("FAKE_KANI_"))
+        {
+            environment.set(name, value);
+        }
+    }
     Some(environment)
 }
 
@@ -1332,7 +1327,7 @@ mod tests {
         argv: std::path::PathBuf,
         target: std::path::PathBuf,
         harness: Harness,
-        environment: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+        environment: rust_mutants::vars::Variables,
         trace: crate::trace::Recorder,
     }
 
@@ -1379,8 +1374,9 @@ mod tests {
             let source = root.join(MODEL_SOURCE_PATH);
             std::fs::write(&source, harness.source()).expect("rendered source");
             let document = document(&harness, status, &root, &target).to_string();
-            let mut environment: Vec<_> = std::env::vars_os().collect();
-            environment.retain(|(name, _value)| !Self::refused_key(name));
+            let mut environment: rust_mutants::vars::Variables = std::env::vars_os()
+                .filter(|(name, _value)| !Self::refused_key(name))
+                .collect();
             set_env(
                 &mut environment,
                 "CARGO_HOME",
@@ -1534,12 +1530,11 @@ mod tests {
     }
 
     fn set_env(
-        environment: &mut Vec<(std::ffi::OsString, std::ffi::OsString)>,
+        environment: &mut rust_mutants::vars::Variables,
         name: &str,
         value: std::ffi::OsString,
     ) {
-        environment.retain(|(key, _value)| key != name);
-        environment.push((name.into(), value));
+        environment.set(name, value);
     }
 
     fn fake_cargo(path: &Path) {
@@ -1836,10 +1831,8 @@ exit "$FAKE_KANI_EXIT"
         let checker = Fixture::new("Success", 0);
         let cargo_home = checker
             .environment
-            .iter()
-            .find_map(|(name, value)| {
-                (name == "CARGO_HOME").then_some(std::path::PathBuf::from(value))
-            })
+            .var("CARGO_HOME")
+            .map(std::path::PathBuf::from)
             .expect("fixture Cargo home");
         let real_bin = cargo_home.join("real-bin");
         std::fs::rename(cargo_home.join("bin"), &real_bin).expect("move checker bin");
@@ -1852,8 +1845,8 @@ exit "$FAKE_KANI_EXIT"
         let bundle = Fixture::new("Success", 0);
         let home = bundle
             .environment
-            .iter()
-            .find_map(|(name, value)| (name == "HOME").then_some(std::path::PathBuf::from(value)))
+            .var("HOME")
+            .map(std::path::PathBuf::from)
             .expect("fixture home");
         let real_kani = home.join("real-kani");
         std::fs::rename(home.join(".kani"), &real_kani).expect("move Kani bundle");
@@ -2058,16 +2051,23 @@ exit "$FAKE_KANI_EXIT"
         }
 
         let mut duplicate = Fixture::new("Success", 0);
-        duplicate.environment.push((
-            std::ffi::OsString::from("cargo_home"),
-            duplicate.temporary.path().as_os_str().to_owned(),
-        ));
-        assert!(matches!(
-            duplicate.run().parsed.decision,
-            Decision::Undecided(Undecided::Configuration(
-                super::Configuration::CompilerEnvironment
-            ))
-        ));
+        duplicate
+            .environment
+            .set("cargo_home", duplicate.temporary.path().as_os_str());
+        if rust_mutants::vars::Spelling::HOST == rust_mutants::vars::Spelling::Exact {
+            assert!(matches!(
+                duplicate.run().parsed.decision,
+                Decision::Undecided(Undecided::Configuration(
+                    super::Configuration::CompilerEnvironment
+                ))
+            ));
+        } else {
+            assert_eq!(
+                duplicate.environment.var("CARGO_HOME"),
+                Some(duplicate.temporary.path().as_os_str()),
+                "where `cargo_home` is `CARGO_HOME`, the later spelling is the one variable held"
+            );
+        }
 
         #[cfg(unix)]
         {
@@ -2280,8 +2280,9 @@ exit "$FAKE_KANI_EXIT"
         std::fs::write(root.join("Cargo.toml"), MODEL_MANIFEST).expect("manifest");
         std::fs::write(root.join("Cargo.lock"), MODEL_LOCK).expect("lockfile");
         std::fs::write(root.join(MODEL_SOURCE_PATH), harness.source()).expect("rendered source");
-        let mut environment: Vec<_> = std::env::vars_os().collect();
-        environment.retain(|(name, _value)| !super::compiler_environment_key(name));
+        let environment: rust_mutants::vars::Variables = std::env::vars_os()
+            .filter(|(name, _value)| !super::compiler_environment_key(name))
+            .collect();
         let trace = crate::trace::Recorder::disabled();
         let artifact = temporary.path().join("kani.json");
         let target = temporary.path().join("target-kani");

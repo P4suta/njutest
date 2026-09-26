@@ -398,7 +398,9 @@ fn equivalence_asks_about_at_most_the_limit_it_was_given() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: njutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect(),
         temp_directory: fixture.temp().to_path_buf(),
         program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
@@ -518,17 +520,12 @@ fn a_test_that_runs_a_bare_cargo_gets_the_runs_toolchain_rather_than_a_shim_that
     let fixture = Fixture::copy("fixture-bare-cargo");
     let shims = refusing_shims(&fixture);
     let mut given = environment(&fixture);
-    let searched = given
-        .vars
-        .iter()
-        .find(|(name, _)| name == "PATH")
-        .map(|(_, value)| value.clone());
+    let searched = given.vars.search_path().map(std::ffi::OsStr::to_os_string);
     let path = std::env::join_paths(
         std::iter::once(shims).chain(searched.iter().flat_map(std::env::split_paths)),
     )
     .expect("a search path");
-    given.vars.retain(|(name, _)| name != "PATH");
-    given.vars.push(("PATH".into(), path));
+    given.vars.set("PATH", path);
     let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
@@ -587,12 +584,9 @@ fn escaping(set: &[&str]) -> (Output, Fixture, std::io::Result<Escaped>) {
     let fixture = Fixture::copy("fixture-escapes");
     let record = fixture.temp().join("escaped");
     let mut given = environment(&fixture);
-    given.vars.push((
-        "FIXTURE_ESCAPES_RECORD".into(),
-        record.clone().into_os_string(),
-    ));
+    given.vars.set("FIXTURE_ESCAPES_RECORD", record.clone());
     for name in set {
-        given.vars.push(((*name).into(), "1".into()));
+        given.vars.set(*name, "1");
     }
     let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());

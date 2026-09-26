@@ -30,7 +30,9 @@ struct Said {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: njutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect(),
         temp_directory: fixture.temp().to_path_buf(),
         program: std::path::PathBuf::from("this test measures no execution"),
         cache_directory: fixture.cache().to_path_buf(),
@@ -171,10 +173,10 @@ fn a_doctor_names_every_check_a_run_needs_and_the_lines_say_what_the_document_do
 fn a_reserved_variable_that_is_already_set_is_a_failure_that_names_it() {
     let fixture = Fixture::copy("fixture-simple");
     let mut environment = environment(&fixture);
-    environment.vars.push((
-        OsString::from("RUST_MUTANTS_CATALOG"),
-        OsString::from("/nowhere/somebody-elses-catalog.json"),
-    ));
+    environment.vars.set(
+        "RUST_MUTANTS_CATALOG",
+        "/nowhere/somebody-elses-catalog.json",
+    );
 
     let document = document(&environment);
     assert_eq!(
@@ -213,9 +215,7 @@ fn every_variable_the_engine_owns_is_one_the_doctor_reports_as_set() {
     for reserved in rust_mutants::execute::RESERVED_ENV {
         let fixture = Fixture::copy("fixture-simple");
         let mut environment = environment(&fixture);
-        environment
-            .vars
-            .push((OsString::from(reserved), OsString::from("left behind")));
+        environment.vars.set(reserved, "left behind");
 
         let document = document(&environment);
         assert_eq!(
@@ -544,9 +544,7 @@ fn what_a_doctor_is_asked_about_is_the_root_it_was_given_and_not_the_directory_i
 fn a_reserved_variable_whose_value_is_empty_is_not_one_that_is_set() {
     let fixture = Fixture::copy("fixture-simple");
     let mut environment = environment(&fixture);
-    environment
-        .vars
-        .push((OsString::from("RUST_MUTANTS_ACTIVE"), OsString::new()));
+    environment.vars.set("RUST_MUTANTS_ACTIVE", "");
 
     let root = njutest_devkit::paths::utf8(&environment.working_directory).to_owned();
     let said = asked(&environment, &["doctor", "--root", &root]);
