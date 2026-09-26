@@ -73,7 +73,8 @@ fn every_nullable_v1_report_field_is_still_a_required_key() {
             "covered": null,
             "standing": "unmatched",
             "actual": null,
-            "why": "the locator names nothing"
+            "why": "the locator names nothing",
+            "where": { "cfg": null, "env": {} }
         }]),
     );
     serde_json::from_value::<RunDocument>(with_locator.clone())
@@ -83,6 +84,8 @@ fn every_nullable_v1_report_field_is_still_a_required_key() {
         "/expectations/0/covered",
         "/expectations/0/locator/line",
         "/expectations/0/locator/count",
+        "/expectations/0/where",
+        "/expectations/0/where/cfg",
     ] {
         let mut missing = with_locator.clone();
         remove(&mut missing, pointer);

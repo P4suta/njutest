@@ -271,7 +271,7 @@ impl Session {
     }
 
     /// The record this run leaves under `mutant`'s locus: `answered`, and every execution in `asked` it rests on, each paired with the route's plan by target.
-    /// Nothing where the mutant has no locus, where an execution does not name what it entered or ran a target the plan does not, or where the record would not validate.
+    /// Nothing where the mutant has no locus, where an execution does not name what it entered or ran a target the plan does not, where a test in one declined to measure (ADR 0043), or where the record would not validate.
     ///
     /// # Errors
     /// Planning the route.
@@ -284,6 +284,9 @@ impl Session {
         let Some(locus) = self.locus(mutant) else {
             return Ok(None);
         };
+        if !crate::decline::storable(asked) {
+            return Ok(None);
+        }
         let plan = self.plan(mutant, args, cancel)?;
         let Some(executions) = self.executions(asked, &plan) else {
             return Ok(None);

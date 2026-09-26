@@ -670,6 +670,8 @@ pub struct VerifyRecord {
     pub remembered: bool,
     /// Whether the target had to be run a second time, because the first run did not pass.
     pub retried: bool,
+    /// Each test that declined to measure on it, and its words, which are the only declines a mutant execution of the target is excused (ADR 0043).
+    pub declined: Vec<crate::decline::Decline>,
 }
 
 /// Which whole-target run with nothing active one touch record was measured on.
@@ -940,6 +942,8 @@ pub struct MutantExecRecord {
     pub entered_records: Option<u32>,
     /// Whether the harness had already answered when the clock ended the process, so the verdict is the harness's.
     pub lingered: bool,
+    /// Each test of it that declined to measure, and its words, where its notice was believed (ADR 0043).
+    pub declined: Vec<crate::decline::Decline>,
 }
 
 /// What the outcome store was asked about one mutant.

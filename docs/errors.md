@@ -58,7 +58,7 @@ The first digit names an area:
 | `RM1013` | A `-vV` banner lacks its `release:` or `host:` line, so the toolchain cannot be named. | the toolchain answered something this release cannot read; `rustup update` and try again |
 | `RM1014` | A cargo command could not start, timed out, or exited unsuccessfully; cargo's own words follow. | run the same cargo command yourself: what it says there is what it said here |
 | `RM1015` | `cargo metadata` printed something that is not its document. | run `cargo metadata` yourself on this tree; what it prints is what could not be read |
-| `RM1016` | A `--message-format=json` line is not a message. | run the same cargo command with --message-format=json yourself; what it prints is what could not be read |
+| `RM1016` | A line of `cargo … --message-format=json` output is not a message. | run the same `cargo … --message-format=json` yourself; what it prints is what could not be read |
 | `RM1017` | The workspace reads code from a path outside itself, which the copy a run measures does not hold. Allow the directory with `--allow-outside`, or vendor it inside the tree. | --allow-outside DIR copies that directory into the copy where the tree reaches it, or [project] allow_outside does |
 | `RM1018` | `--root` names a member of a workspace rather than the workspace. A run measures a copy of what it was given, and a member on its own is not a buildable tree. | run with --root at the workspace root the message names, and --package to narrow it |
 | `RM1019` | A directory a run would copy has no place in the copy that keeps every path into it resolving: it is not absolute, it still climbs, it is the tree or holds it or is inside it, or it lies on another filesystem root. A copy places what it holds by substituting one prefix, so a directory it cannot place is one every path into it would stop reaching. | --allow-outside takes an existing absolute directory outside the tree and on the same filesystem root as it; a copy reproduces the shape of what it copies, and cannot hold a directory that is the tree, holds it, or lies across a volume |
@@ -82,6 +82,7 @@ The first digit names an area:
 | `RM3005` | The guards could not be applied to the file. | this is a defect in this tool: the guards could not be written back over the file they were cut from |
 | `RM3006` | A guard would have moved a line, breaking the invariant every position depends on. | this is a defect in this tool: a guard moved a line, and every position a run reports is relative to lines that did not move |
 | `RM3007` | A mutant index makes the generated runtime's inclusive window overflow. | this is a defect in this tool: the catalog outgrew the u32 window the generated runtime can represent |
+| `RM3008` | The rewritten file does not read as Rust, down to what every identity macro holds: a guard changed how the syntax around it reads. | this is a defect in this tool: a guard changed how the syntax around it reads; the line is named, and the source there is the case to report |
 | `RM4001` | The tree does not compile before any mutant is live, so nothing about the failure is the mutants' doing. | make `cargo test --no-run` pass on the tree as committed, then run again |
 | `RM4002` | The mutants a compilation failure came from could not be isolated. | run `cargo test --no-run` on the tree yourself; the compilation failed for a reason this tool could not attribute to one mutant |
 | `RM4003` | An instrumented compilation could not be attempted at all: the tree could not be written, or the toolchain could not be reached. | the compilation could not be started at all: check cargo runs on this tree and that there is room under TMPDIR |
@@ -116,7 +117,7 @@ The first digit names an area:
 | `NJ1003` | The configuration says something a run cannot honour: a harness flag njutest owns, an environment assignment, a resource that is both shared and exclusive, an acceptance without a reason. | the message says which key and why; `njutest init` writes one that is valid |
 | `NJ1004` | The configuration names a version this release does not understand. | this release reads version 1; a newer file needs a newer release |
 | `NJ1005` | A configuration file is already there, and `init` was not told to replace it. | remove the file first, or edit the one already there: init never writes over a configuration somebody wrote |
-| `NJ2001` | The tree a run is about could not be read: a directory that cannot be listed, a file that cannot be read, a lock file that is not the document cargo writes. | run this inside the tree you mean to verify, or pass --root at it |
+| `NJ2001` | The tree a run is about could not be read: a directory that cannot be listed, a file that cannot be read, a lock file that is not the document cargo writes. | run this inside the tree you mean to verify, or pass --directory at it |
 | `NJ2002` | The tree changed while it was being measured, so the measurement would describe files it did not read. | run again on a tree nothing else is writing: a measurement is kept only of the bytes it read |
 | `NJ3001` | A test binary could not be asked what tests it holds. | run `cargo test --no-run` yourself: a binary that will not list its tests is one the build did not finish |
 | `NJ3002` | The build could not be run: cargo would not start, or was stopped. A workspace that does not *compile* is a finding in the report, not this. | run the same cargo command yourself; what it says there is what it said here |
@@ -171,6 +172,7 @@ The first digit names an area: 0 the gates, their ledgers, and what runs them (t
 | `XT0007` | A decision record under the ADR directory is misnamed, shares its number, carries another's heading, is listed wrongly in the book, or is named by a link to no record. | fix the record, the book, or the link the message names |
 | `XT0008` | `docflows` could not check the workflows the documentation shows: a page could not be read, or actionlint could not be run or said something other than which workflows it refused. | check `actionlint` is installed, or name it with `--actionlint`, and read what it said |
 | `XT0009` | actionlint refused a workflow the documentation shows. | fix the snippet the message names, so a reader who copies it has a workflow that runs |
+| `XT0010` | The registry of critical decisions names an item the tree does not define, leaves a layer open that the gaps ledger does not give an owner, lists a hole it does not have, or the ledger grew past its ceiling. | fix the cell, the ledger line, or the item the message names; a new critical decision arrives with what holds it |
 | `XT0101` | The push names something the pre-push gate cannot check: an update Git did not give whole, an object other than the checked-out commit, a remote commit that is not here, a move that is not a fast-forward, or only deletions. | fetch the remote ref and push the checked-out commit as a fast-forward of it |
 | `XT0102` | The tree the pre-push gate checks stopped being the pushed commit while it ran, or the check changed it. | leave the worktree alone while a push runs, then push again |
 | `XT0103` | The check the pre-push gate runs failed. | read the check's own output above, fix what it names, and push again |
@@ -181,6 +183,10 @@ The first digit names an area: 0 the gates, their ledgers, and what runs them (t
 | `XT0301` | A program a gate runs could not be started or watched, or the signals that stop it could not be armed. | check the program the message names is installed and that this process may be signalled |
 | `XT0401` | `remote-check` could not ask the other machines: its machines file could not be read or names none, or a program, Git, a log, or the thread asking a machine failed it. | fix the machines file or what the message names, and run it again |
 | `XT0402` | At least one other machine refused the commit. | read each machine's answer and fix what it names |
+| `XT0501` | git could not list what the repository holds, so no gate can say what it read. | run the gate inside the repository's checkout, with git on the path |
+| `XT0502` | git listed a path of the repository that is not UTF-8, which no path this repository holds is. | rename the path |
+| `XT0503` | The repository holds a symbolic link, which a gate never follows. | replace the link with the file it points at |
+| `XT0504` | A path git listed could not be read. | check the path the message names exists and is readable |
 | `XT1001` | A fixture's tree could not be walked or one of its files read. | check the path the message names exists and is readable |
 | `XT1002` | A fixture tree holds a symbolic link, which the checks never follow. | replace the link with the file it points at |
 | `XT1003` | A fixture path is not UTF-8, so no protocol a fixture feeds could spell it. | rename the path |

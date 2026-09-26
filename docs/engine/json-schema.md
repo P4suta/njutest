@@ -119,9 +119,11 @@ A mutant no measured target reaches is an `unreached-mutant` finding rather than
 A `discharged-mutant` says the same thing about a mutation the tests do run and cannot observe: every target that could have noticed it was removed by a proof.
 An `unmatched-skip` is a `rust-mutants: skip` marker that hid nothing, which is a claim about code that has moved or gone.
 
-A mutant's `not_run_reason` says which of five things left it unexecuted:
+A mutant's `not_run_reason` says which of six things left it unexecuted, or left its execution measuring nothing:
 `unreached` and `discharged` are proofs and are findings, `interrupted` is a run that was killed, and `unselected` and `stopped-early` are the run doing what it was asked to — a filter took the mutant out, or `--fail-fast` stopped before reaching it.
-Neither of the last two is a finding, and both keep their row, so a report of a narrowed run still accounts for the whole catalog it was cut from.
+Neither of those two is a finding, and both keep their row, so a report of a narrowed run still accounts for the whole catalog it was cut from.
+`declined` is a mutation every test that reached it declined to measure on this machine, as it did with nothing active ([ADR 0043](../adr/0043-a-test-may-decline-to-measure.md)).
+It is not a finding either: the run says nothing this machine could measure is wrong, and the row's `declined` names each test and its words, which `accounting.declined` counts apart.
 An `unselected` row makes no compiler-acceptance claim; this is what lets the expensive preparation work scale with a filtered selection without changing catalog identity.
 
 ## The run as it happens
@@ -191,5 +193,6 @@ A recording is never evidence, so nothing here reads one to decide anything.
 `rust-mutants cache --export <file>` writes every record of the store as one `rust-mutants/outcomes-export` document (`schema/rust-mutants-outcomes-export-v1.json`), and `rust-mutants cache --import <file>` files them into another.
 Each record carries everything its key is computed from beyond its mutant, so an importer recomputes the name each is filed under rather than trusting one, and a read refuses a record filed under a name its own inputs do not derive.
 Among them `runner` names what a runner that asked decides the answer under beyond the engine, its contract, environment, platform and versions, as a digest, and is `null` where `rust-mutants` asked; a key reads it as `none` or `some:<digest>`, so an answer one runner or contract established never answers another, and a record without the field is refused rather than read as `null`.
+`declared` names every variable a claim's `where.env` asks about, which the configuration thereby declares an answer may depend on, beside one digest of what the tests were given of each: an answer measured under one value never answers a run under another, and the record says which variables it rests on without saying what they held.
 `abi` names the versions keys are computed under, and a store exported by a release that computes them differently is refused before anything is filed.
 Nothing about where a checkout sits is part of a key, so a store a run filled on one machine answers a run of the same tree on another: that is how one CI job reads what the last run on the default branch established.

@@ -17,6 +17,7 @@ Every value here also has a key in [configuration](configuration.md), and a flag
 | `--root DIR` | the workspace root; the working directory when absent |
 | `--config FILE`, `--no-config` | read the configuration elsewhere, or not at all |
 | `--color auto\|always\|never` | when to colour; `NO_COLOR` and a pipe both mean never |
+| `--cargo PATH` | run this cargo, and the rustc beside it, rather than the ones on the `PATH`; the way out when a `PATH` holds no cargo, or an entry nothing may read |
 | `--trace[=DIR]` | record what the command did, as JSON Lines |
 
 `rules` is the exception: the operator table is compiled into the release, so it reads no tree and takes none of these but `--help`.

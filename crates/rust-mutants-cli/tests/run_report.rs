@@ -25,6 +25,7 @@ fn keyed(build: &Config) -> Keyed {
         build: build.build.config().arguments(),
         engine: "e".to_owned(),
         runner: None,
+        declared: rust_mutants::outcomes::Declared::of(&std::collections::BTreeSet::new(), &[]),
     }
 }
 

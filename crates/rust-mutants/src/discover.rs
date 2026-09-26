@@ -775,7 +775,8 @@ fn relative(root: &Path, physical_root: &Path, path: &Path) -> Result<String, Di
     normalize_path(rel).map_err(|_error| outside())
 }
 
-fn walk(
+/// Every candidate of the file `path` under `root`, as the selection finds them.
+pub(crate) fn walk(
     root: &Path,
     path: &str,
     selection: &Selection<'_>,

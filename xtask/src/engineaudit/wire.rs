@@ -10,8 +10,8 @@ use serde::de::Error as _;
 use serde_json::Value;
 
 use super::{
-    Claim, ClaimStanding, Finding, FindingKind, Granularity, NotRunReason, Outcome, Refusal,
-    Report, RouteDecision, Row, StepNotice,
+    Claim, ClaimStanding, Decline, Finding, FindingKind, Granularity, NotRunReason, Outcome,
+    Refusal, Report, RouteDecision, Row, StepNotice,
 };
 
 /// Reads a nullable value while leaving absence for serde to reject at the enclosing struct boundary.
@@ -65,6 +65,7 @@ pub(super) struct Document {
     _skips: Vec<Skip>,
     expectations: Vec<Expectation>,
     findings: Vec<FindingWire>,
+    facts: Vec<String>,
 }
 
 impl Document {
@@ -93,6 +94,7 @@ impl Document {
             _skips: skips,
             expectations,
             findings,
+            facts,
         } = self;
         let Run {
             id: run_id,
@@ -137,6 +139,7 @@ impl Document {
             expectations,
             findings,
             skip_counts,
+            facts,
         }
     }
 }
@@ -214,6 +217,7 @@ struct Accounting {
     not_run: u64,
     unreached: u64,
     discharged: u64,
+    declined: u64,
     expected: u64,
 }
 
@@ -233,6 +237,7 @@ impl Accounting {
             ("not_run".to_owned(), self.not_run),
             ("unreached".to_owned(), self.unreached),
             ("discharged".to_owned(), self.discharged),
+            ("declined".to_owned(), self.declined),
             ("expected".to_owned(), self.expected),
         ])
     }
@@ -317,6 +322,7 @@ struct Mutant {
     lingered: bool,
     #[serde(deserialize_with = "required_option")]
     not_run_reason: Option<NotRunReason>,
+    declined: Vec<Decline>,
     #[serde(deserialize_with = "required_option")]
     route: Option<Route>,
     #[serde(rename = "identical")]
@@ -371,6 +377,7 @@ impl Mutant {
             retried,
             lingered,
             not_run_reason,
+            declined,
             route,
             _identical: _,
             expected,
@@ -404,6 +411,7 @@ impl Mutant {
             unreached,
             not_run_reason,
             source_run_id,
+            declined,
         }
     }
 }
@@ -556,9 +564,19 @@ struct Expectation {
     #[serde(rename = "actual")]
     #[serde(deserialize_with = "required_option")]
     _actual: Option<String>,
-    #[serde(rename = "why")]
     #[serde(deserialize_with = "required_option")]
-    _why: Option<String>,
+    why: Option<String>,
+    #[serde(rename = "where")]
+    #[serde(deserialize_with = "required_option")]
+    holds: Option<Holds>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Holds {
+    #[serde(deserialize_with = "required_option")]
+    cfg: Option<String>,
+    env: BTreeMap<String, String>,
 }
 
 impl Expectation {
@@ -572,12 +590,20 @@ impl Expectation {
             _covered: _,
             standing,
             _actual: _,
-            _why: _,
+            why,
+            holds,
         } = self;
+        let (cfg, env) = match holds {
+            Some(Holds { cfg, env }) => (cfg, !env.is_empty()),
+            None => (None, false),
+        };
         Claim {
             id,
             mutant,
             standing,
+            why,
+            cfg,
+            env,
         }
     }
 }

@@ -5,6 +5,7 @@
 
 #![expect(
     clippy::expect_used,
+    clippy::panic,
     clippy::arithmetic_side_effects,
     clippy::as_conversions,
     clippy::string_slice,
@@ -93,12 +94,24 @@ fn golden_path(name: &str) -> PathBuf {
         .join(name)
 }
 
+/// Asserts that an instrumented `text`, its runtime module named `__rm`, reads as Rust down to what every identity macro holds, which a plain parse never looks inside.
+fn reads_through(text: &str) {
+    if let Err(error) = rust_mutants::testkit::source::read_through(text, MODULE_STEM) {
+        let at = error.span().start();
+        panic!(
+            "the instrumented file reads as Rust, down to what every identity macro holds, and at \
+             line {} it does not: {error}\n{text}",
+            at.line
+        );
+    }
+}
+
 /// Instruments `<name>.input` and compares the result with `<name>.golden`.
 fn golden_case(name: &str) {
     let input = std::fs::read(golden_path(&format!("{name}.input"))).expect("input");
     let source = String::from_utf8(input).expect("utf-8");
     let text = instrument(&source);
-    syn::parse_file(&text).expect("the instrumented file parses");
+    reads_through(&text);
     let (body, runtime) = split_runtime(&text);
     assert!(runtime.contains(RUNTIME_MARKER));
     assert_eq!(
@@ -389,8 +402,8 @@ fn the_runtime_is_appended_after_the_last_line_and_names_the_catalog() {
         "{runtime}"
     );
     assert!(
-        runtime.contains("exit(97)"),
-        "a stale catalog ends the process: {runtime}"
+        runtime.contains("stop(97, Why::said(\"stale catalog\"))"),
+        "a stale catalog ends the process, through the one stop that says why: {runtime}"
     );
     assert!(!runtime.contains("unsafe"), "{runtime}");
     assert!(text.ends_with("}\n"), "{text}");
@@ -403,11 +416,10 @@ fn the_step_runtime_uses_one_locked_process_state_and_fails_closed_at_every_boun
 
     for required in [
         "type Budget = __rm_std::result::Result<__rm_std::option::Option<StepLimit>, BudgetError>",
-        "enum StepNoticeError",
         "StepPhase {",
-        "enum StepStateError",
+        "struct Why",
         "__rm_std::result::Result::Ok(__rm_std::option::Option::None) => return,",
-        "__rm_std::result::Result::Err(_) => protocol_failure(),",
+        "__rm_std::result::Result::Err(error) => protocol_failed(error),",
         "pub(crate) fn checkpoint()",
         "file.lock().map_err",
         "file.unlock().map_err",
@@ -416,7 +428,8 @@ fn the_step_runtime_uses_one_locked_process_state_and_fails_closed_at_every_boun
         "Write::write_all",
         "file.sync_data().map_err",
         "fs::rename(partial, path).map_err",
-        "process::exit(94)",
+        "stop(94, error)",
+        "rust-mutants-stop-v1",
     ] {
         assert!(
             runtime.contains(required),
@@ -477,7 +490,7 @@ fn a_file_without_a_mutant_still_carries_the_process_wide_checkpoint_runtime() {
 fn a_checkpoint_inside_a_mutant_edit_stays_in_the_original_branch() {
     let source = include_str!("../../../fixtures/fixture-modern/src/lib.rs");
     let text = instrument(source);
-    syn::parse_file(&text).expect("the checkpointed mutant file parses");
+    reads_through(&text);
     assert!(
         text.contains("filter(|one| { __rm::item(2); __rm::checkpoint(); within(**one, bound) })"),
         "the expression closure remains bounded in the original branch: {text}"
@@ -674,7 +687,7 @@ fn the_crlf_variant_of_every_recorded_case_keeps_its_lines_and_reparses() {
         let input = std::fs::read(golden_path(&format!("{name}.input"))).expect("input");
         let source = rust_mutants::testkit::source::crlf(&String::from_utf8(input).expect("utf-8"));
         let text = instrument(&source);
-        syn::parse_file(&text).expect("the instrumented file parses");
+        reads_through(&text);
         let (body, runtime) = split_runtime(&text);
         assert!(runtime.contains(RUNTIME_MARKER));
         assert_eq!(
@@ -867,7 +880,7 @@ proptest::proptest! {
             generated
         };
         let text = instrument(&source);
-        syn::parse_file(&text).expect("the instrumented file parses");
+        reads_through(&text);
         let (body, runtime) = split_runtime(&text);
         proptest::prop_assert!(runtime.contains(RUNTIME_MARKER));
         proptest::prop_assert_eq!(
@@ -889,7 +902,7 @@ proptest::proptest! {
             generated(functions)
         };
         let text = instrument(&source);
-        syn::parse_file(&text).expect("the instrumented file parses");
+        reads_through(&text);
         let (body, runtime) = split_runtime(&text);
         proptest::prop_assert!(runtime.contains(RUNTIME_MARKER));
         proptest::prop_assert_eq!(
@@ -919,15 +932,11 @@ fn a_match_arm_whose_body_is_a_block_still_parses_after_the_guard_goes_in() {
          \x20   }\n\
          }\n",
     );
-    let parsed = syn::parse_file(&text);
+    reads_through(&text);
     assert!(
-        parsed.is_ok(),
-        "an arm whose body is a block needs no comma after it, and one whose body is a \
-         parenthesised expression does: {parsed:?}\n{text}"
-    );
-    assert!(
-        text.contains("Ok(two) => __rm::value!(if "),
-        "so the macro groups the block site without a coercing call or lint-producing +         parentheses: {text}"
+        text.contains("Ok(two) => if __rm::active("),
+        "an arm whose body is a block needs no comma after it, so the guard over it has to be \
+         one too: the chain itself, not the macro call that would need a comma: {text}"
     );
 }
 
@@ -964,17 +973,12 @@ fn every_source_of_this_repository_still_parses_once_it_is_instrumented() {
                 .to_str()
                 .expect("repository source paths are exact UTF-8")
                 .replace('\\', "/");
-            let Some((text, _)) = instrumented(&relative, &source) else {
+            if instrumented(&relative, &source).is_none() {
                 continue;
-            };
+            }
             checked = checked
                 .checked_add(1)
                 .expect("the repository has fewer than u32::MAX files");
-            let parsed = syn::parse_file(&text);
-            assert!(
-                parsed.is_ok(),
-                "{relative} does not parse once instrumented: {parsed:?}"
-            );
         }
     }
     assert!(
@@ -992,19 +996,18 @@ fn instrumented(path: &str, source: &str) -> Option<(String, Catalog)> {
     };
     let mut builder = Builder::new();
     for found in &discovery.candidates {
-        if builder.add(found.candidate.clone()).is_err() {
-            return None;
-        }
+        builder
+            .add(found.candidate.clone())
+            .unwrap_or_else(|error| {
+                panic!("{path}: a candidate the walk found is refused: {error}")
+            });
     }
-    let catalog = match builder.build() {
-        Ok(catalog) => catalog,
-        Err(_) => return None,
-    };
-    let placements = match plan_file(&catalog, path, &discovery.candidates) {
-        Ok(placements) => placements,
-        Err(_) => return None,
-    };
-    let file = match instrument_file(&Instrumenting {
+    let catalog = builder
+        .build()
+        .unwrap_or_else(|error| panic!("{path}: the catalog: {error}"));
+    let placements = plan_file(&catalog, path, &discovery.candidates)
+        .unwrap_or_else(|error| panic!("{path}: the plan: {error}"));
+    let file = instrument_file(&Instrumenting {
         path,
         source: source.as_bytes(),
         placements: &placements,
@@ -1014,10 +1017,10 @@ fn instrumented(path: &str, source: &str) -> Option<(String, Catalog)> {
         catalog_digest: catalog.digest(),
         first_item: 0,
         watched: "/watched",
-    }) {
-        Ok(file) => file,
-        Err(_) => return None,
-    };
+    })
+    .unwrap_or_else(|error| {
+        panic!("{path}: a file discovery accepted is one instrumentation has to rewrite: {error}")
+    });
     Some((file.text, catalog))
 }
 
@@ -1356,4 +1359,27 @@ fn the_instrumenter_records_exactly_the_pairs_whose_fault_it_carried() {
          is not carried; no pair is recorded that the tree does not hold: {:?}",
         rules(&statement, &catalog)
     );
+}
+
+#[test]
+fn a_guard_that_breaks_inside_an_identity_macro_is_seen_where_a_plain_parse_is_blind() {
+    let planted = [
+        "fn f(a: u8) -> u8 { __rm::value!(match a { 0 => __rm::value!(1) _ => 2, }) }\n",
+        "fn f(a: u8) -> u8 { __rm::value!(if __rm::active(0) { 1 } else { { a } + 1 }) }\n",
+        "fn f(a: u8) -> u8 { __rm::value!(1 + __rm::value!(a +)) }\n",
+    ];
+    for text in planted {
+        assert!(
+            syn::parse_file(text).is_ok(),
+            "a plain parse never opens the identity macro, which is how a broken guard inside one \
+             went unseen: {text}"
+        );
+        let read = rust_mutants::testkit::source::read_through(text, MODULE_STEM);
+        assert!(
+            read.as_ref()
+                .is_err_and(|error| error.span().start().line == 1),
+            "reading through every identity macro finds the guard the compiler would refuse, and \
+             names where: {read:?} for {text}"
+        );
+    }
 }

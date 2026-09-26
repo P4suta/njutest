@@ -56,7 +56,7 @@ pub(crate) enum ModelError {
     },
     /// A supposedly compiler-derived model identity lost a typed invariant.
     #[error(transparent)]
-    EvidenceIdentity(#[from] crate::report::ModelInvariant),
+    EvidenceIdentity(#[from] crate::report::ModelInvariantError),
     /// A post-lattice model phase received no configured-build preparation.
     #[error("the completed build lattice has no model preparation")]
     EmptyPreparation,
@@ -447,7 +447,7 @@ fn refuse_written_tree(
 
 fn retained_source(admitted: &Admitted) -> Result<crate::report::ModelArtifact, ModelError> {
     let bytes = u64::try_from(admitted.harness.source().len()).map_err(|_error| {
-        ModelError::EvidenceIdentity(crate::report::ModelInvariant::ArtifactBytes)
+        ModelError::EvidenceIdentity(crate::report::ModelInvariantError::ArtifactBytes)
     })?;
     crate::report::ModelArtifact::checked(
         &format!("{}/{}.rs", ARTIFACT_PREFIX, admitted.asked.mutant.id),

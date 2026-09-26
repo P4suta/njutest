@@ -35,7 +35,7 @@ pub enum FlattenError {
 
 /// How a fragment changed when the flattened spelling was tokenized again.
 #[derive(Debug, thiserror::Error)]
-enum TokenDifference {
+enum TokenDifferenceError {
     #[error("{expected} tokens re-lexed as {actual}")]
     Count { expected: usize, actual: usize },
     #[error("token {index}: group delimiters differ")]
@@ -213,11 +213,11 @@ fn normalize_crlf(bytes: &[u8]) -> Vec<u8> {
 }
 
 /// Whether two streams are the same tokens: same shape, same identifiers and punctuation, and literals of the same value.
-fn same_tokens(want: &TokenStream, got: &TokenStream) -> Result<(), TokenDifference> {
+fn same_tokens(want: &TokenStream, got: &TokenStream) -> Result<(), TokenDifferenceError> {
     let want: Vec<TokenTree> = want.clone().into_iter().collect();
     let got: Vec<TokenTree> = got.clone().into_iter().collect();
     if want.len() != got.len() {
-        return Err(TokenDifference::Count {
+        return Err(TokenDifferenceError::Count {
             expected: want.len(),
             actual: got.len(),
         });
@@ -226,7 +226,7 @@ fn same_tokens(want: &TokenStream, got: &TokenStream) -> Result<(), TokenDiffere
         match (a, b) {
             (TokenTree::Group(x), TokenTree::Group(y)) => {
                 if x.delimiter() != y.delimiter() {
-                    return Err(TokenDifference::Delimiter { index });
+                    return Err(TokenDifferenceError::Delimiter { index });
                 }
                 same_tokens(&x.stream(), &y.stream())?;
             }
@@ -234,7 +234,7 @@ fn same_tokens(want: &TokenStream, got: &TokenStream) -> Result<(), TokenDiffere
             (TokenTree::Punct(x), TokenTree::Punct(y)) if x.as_char() == y.as_char() => {}
             (TokenTree::Literal(x), TokenTree::Literal(y)) if same_literal(x, y) => {}
             (a, b) => {
-                return Err(TokenDifference::Token {
+                return Err(TokenDifferenceError::Token {
                     index,
                     expected: a.to_string(),
                     actual: b.to_string(),
