@@ -977,22 +977,16 @@ fn every_source_of_this_repository_still_parses_once_it_is_instrumented() {
         Ok(cores) => cores.get(),
         Err(_unknown) => 1,
     };
-    let share = sources.len().div_ceil(workers).max(1);
-    let checked: usize = std::thread::scope(|scope| {
+    let per_worker = sources.len().div_ceil(workers).max(1);
+    let (checked, apart): (usize, Vec<String>) = std::thread::scope(|scope| {
         #[expect(
             clippy::needless_collect,
             reason = "every worker starts before the first is joined; joining as they are made would run them one after another"
         )]
         let running: Vec<_> = sources
-            .chunks(share)
+            .chunks(per_worker)
             .map(|files| {
-                njutest_devkit::thread::ScopedThread::launch(scope, move || {
-                    files
-                        .iter()
-                        .filter(|(_, source)| syn::parse_file(source).is_ok())
-                        .filter(|(relative, source)| instrumented(relative, source).is_some())
-                        .count()
-                })
+                njutest_devkit::thread::ScopedThread::launch(scope, move || read_share(files))
             })
             .collect();
         running
@@ -1002,8 +996,16 @@ fn every_source_of_this_repository_still_parses_once_it_is_instrumented() {
                     .join()
                     .expect("a worker instrumenting its share of the repository finished")
             })
-            .sum()
+            .fold((0, Vec::new()), |(count, mut apart), (checked, more)| {
+                apart.extend(more);
+                (count + checked, apart)
+            })
     });
+    assert!(
+        apart.is_empty(),
+        "an operator swap is held to the item it stands in, which is sound only while every \
+         item reads alone as its file reads it, and these do not: {apart:#?}"
+    );
     assert!(
         checked > 100,
         "this is the widest set of real shapes the suite has, and it read {checked} files"
@@ -1045,6 +1047,29 @@ fn instrumented(path: &str, source: &str) -> Option<(String, Catalog)> {
         panic!("{path}: a file discovery accepted is one instrumentation has to rewrite: {error}")
     });
     Some((file.text, catalog))
+}
+
+/// How many of `files` instrument and read back, and every item among them that does not read alone as its file reads it.
+fn read_share(files: &[(String, String)]) -> (usize, Vec<String>) {
+    let parsing: Vec<&(String, String)> = files
+        .iter()
+        .filter(|(_, source)| syn::parse_file(source).is_ok())
+        .collect();
+    let apart: Vec<String> = parsing
+        .iter()
+        .flat_map(|(relative, source)| {
+            rust_mutants::testkit::source::items_read_alone(source)
+                .expect("a file that parses is read item by item")
+                .1
+                .into_iter()
+                .map(move |bytes| format!("{relative}:{bytes:?}"))
+        })
+        .collect();
+    let checked = parsing
+        .iter()
+        .filter(|(relative, source)| instrumented(relative, source).is_some())
+        .count();
+    (checked, apart)
 }
 
 /// Every return replacement the syntax offers a probe for, as a run has it once the compiler has vouched for the type.
