@@ -87,7 +87,7 @@ fn every_job_that_runs_the_repository_tests_fetches_the_comparison_base() {
 }
 
 #[test]
-fn windows_runs_exactly_the_two_hash_partitions() {
+fn newest_macos_and_windows_each_run_one_whole_suite() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join(".github/workflows/ci.yml");
@@ -98,23 +98,33 @@ fn windows_runs_exactly_the_two_hash_partitions() {
         .find_map(|(name, body)| (name == "test").then_some(body))
         .unwrap_or_else(|| panic!("ci.yml has the test matrix"));
     let lines: Vec<&str> = test.lines().collect();
-    let windows: Vec<&str> = lines
-        .windows(2)
-        .filter_map(|pair| {
-            let [os, part] = pair else {
-                return None;
-            };
-            (os.trim() == "- os: windows-2025")
-                .then(|| part.trim())
-                .and_then(|part| part.strip_prefix("part: "))
-        })
-        .collect();
+    let parts_for = |wanted: &str| {
+        lines
+            .windows(2)
+            .filter_map(|pair| {
+                let [os, part] = pair else {
+                    return None;
+                };
+                (os.trim().strip_prefix("- os: ") == Some(wanted))
+                    .then(|| part.trim())
+                    .and_then(|part| part.strip_prefix("part: "))
+            })
+            .collect::<Vec<_>>()
+    };
 
     assert_eq!(
-        windows,
-        ["hash:1/2", "hash:2/2"],
-        "one whole Windows row set the pull request's wall time, so Windows must ask the two \
-         disjoint halves in parallel and neither ask the whole again nor leave one half unasked"
+        parts_for("macos-26"),
+        ["whole"],
+        "macOS 26 must run the whole suite in exactly one row"
+    );
+    assert_eq!(
+        parts_for("windows-2025"),
+        ["whole"],
+        "Windows must run the whole suite in exactly one row"
+    );
+    assert!(
+        !test.contains("--partition"),
+        "the test matrix must not partition the suite"
     );
 }
 
