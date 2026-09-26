@@ -264,6 +264,7 @@ impl Grouping {
     }
 
     /// How many units read alone as the file `text` reads them, and the bytes of every one that does not.
+    #[cfg(any(test, feature = "testkit"))]
     pub(super) fn read_alone(&self, text: &str) -> (usize, Vec<std::ops::Range<usize>>) {
         let (alike, differing): (Vec<&Leaf>, Vec<&Leaf>) = self.leaves.iter().partition(|leaf| {
             text.get(leaf.bytes.clone())

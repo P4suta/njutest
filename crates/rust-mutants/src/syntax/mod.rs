@@ -540,6 +540,7 @@ pub fn discover_file(
 }
 
 /// How many items of `text` an operator swap is held to read alone as the file reads them, and the bytes of every one that does not, counted from the end of any byte order mark or shebang line.
+#[cfg(any(test, feature = "testkit"))]
 pub(crate) fn items_read_alone(
     text: &str,
 ) -> Result<(usize, Vec<std::ops::Range<usize>>), syn::Error> {
