@@ -1568,12 +1568,14 @@ impl<'a> Watching<'a> {
             return false;
         }
         for (path, seen) in self.progress.signals().into_iter().zip(&mut self.seen) {
-            if let Ok(content) = read_between_writes(path)
-                && seen.as_ref() != Some(&content)
-            {
-                *seen = Some(content);
-                self.moved = now;
-                return false;
+            match read_between_writes(path) {
+                Ok(content) if seen.as_ref() != Some(&content) => {
+                    *seen = Some(content);
+                    self.moved = now;
+                    return false;
+                }
+                Ok(_unchanged) => {}
+                Err(_a_failed_read_is_not_a_change) => {}
             }
         }
         true
@@ -2339,18 +2341,18 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_planted_stall_cannot_stop_a_child_that_keeps_beating() {
-        let planted = std::sync::atomic::AtomicUsize::new(0);
+        let planted = std::sync::atomic::AtomicBool::new(false);
         let result = watched_with(
             "echo 0 > PROGRESS; i=0; while [ $i -lt 30 ]; do echo $i > BEAT; i=$((i+1)); sleep 0.05; done",
             Duration::from_millis(500),
             Duration::from_secs(20),
             |_| {
-                planted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                planted.store(true, std::sync::atomic::Ordering::SeqCst);
                 true
             },
         );
         let Some(result) = result else { return };
-        assert!(planted.load(std::sync::atomic::Ordering::SeqCst) > 0);
+        assert!(planted.load(std::sync::atomic::Ordering::SeqCst));
         assert!(
             matches!(
                 result.termination,

@@ -253,7 +253,7 @@ pub fn held(declined: &[Decline], baseline: &[Decline]) -> Held {
 /// A decline conclusion that disagrees with the process and baseline evidence.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("decline conclusion {decided:?} disagrees with the process notice or baseline")]
-pub(crate) struct DecisionMismatch {
+pub(crate) struct DecisionMismatchError {
     decided: MutantConclusion,
 }
 
@@ -263,7 +263,7 @@ pub(crate) fn checked_decision(
     process: (Reading, &[String]),
     baseline: &[Decline],
     decided: &MutantConclusion,
-) -> Result<(), DecisionMismatch> {
+) -> Result<(), DecisionMismatchError> {
     let (reading, passed) = process;
     let valid = match notice {
         Declines::Unbelieved { .. } => *decided == MutantConclusion::Errored,
@@ -288,7 +288,7 @@ pub(crate) fn checked_decision(
     if valid {
         Ok(())
     } else {
-        Err(DecisionMismatch {
+        Err(DecisionMismatchError {
             decided: decided.clone(),
         })
     }
