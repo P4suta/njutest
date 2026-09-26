@@ -331,12 +331,12 @@ A test is run by its path within the suite, `cargo test -p xtask --test suite do
 
 The pipeline runs the suite on Linux, macOS, and Windows, and most of what the other two answer differently needs their machine to find out.
 Code behind `#[cfg(windows)]` does not: this machine's compiler never reads it, so a workspace that builds here can fail to build there on a lint nobody could have seen.
-`mise run check:windows` asks for the reading without the machine.
+`mise run lint:windows` asks for the reading without the machine: it is clippy for the Windows target with every warning an error, since a type check passes a lint that CI's Windows job fails on.
 It needs the target's standard library once:
 
 ```console
 $ rustup target add x86_64-pc-windows-msvc
-$ mise run check:windows
+$ mise run lint:windows
 ```
 
 It is not part of `mise run check`, because a machine without that target installed would fail a gate for the want of a download rather than for anything about the change.
