@@ -11,6 +11,7 @@ pub use crate::layers::Coverage;
 mod arithmetic;
 pub mod carry;
 mod evidence;
+mod held;
 mod ledger;
 mod recording;
 pub mod sentinel;
@@ -68,11 +69,12 @@ const NOT_RUN_MUTANT: &str = "not-run-mutant";
 const STALE_EXPECTATION: &str = "stale-expectation";
 const UNMATCHED_EXPECTATION: &str = "unmatched-expectation";
 /// Every standing a claim can have, as a report writes it.
-pub const CLAIM_STANDINGS: [&str; 4] = ["met", "stale", "unmatched", "unjudged"];
+pub const CLAIM_STANDINGS: [&str; 5] = ["met", "stale", "unmatched", "unjudged", "inapplicable"];
 const MET: &str = CLAIM_STANDINGS[0];
 const STALE: &str = CLAIM_STANDINGS[1];
 const UNMATCHED: &str = CLAIM_STANDINGS[2];
 const UNJUDGED: &str = CLAIM_STANDINGS[3];
+const INAPPLICABLE: &str = CLAIM_STANDINGS[4];
 
 /// Why a run could not be re-decided at all.
 #[derive(Debug, thiserror::Error)]
@@ -870,6 +872,9 @@ struct Claim {
     id: String,
     mutant: Option<String>,
     standing: ClaimStanding,
+    why: Option<String>,
+    cfg: Option<String>,
+    env: bool,
 }
 
 /// One thing that stops the run from being clean.
@@ -887,6 +892,7 @@ enum ClaimStanding {
     Stale,
     Unmatched,
     Unjudged,
+    Inapplicable,
 }
 
 impl ClaimStanding {
@@ -896,6 +902,7 @@ impl ClaimStanding {
             Self::Stale => STALE,
             Self::Unmatched => UNMATCHED,
             Self::Unjudged => UNJUDGED,
+            Self::Inapplicable => INAPPLICABLE,
         }
     }
 }
@@ -972,6 +979,7 @@ struct Report {
     expectations: Vec<Claim>,
     findings: Vec<Finding>,
     skip_counts: Vec<u64>,
+    facts: Vec<String>,
 }
 
 impl Report {
@@ -1074,13 +1082,15 @@ mod tests {
             ClaimStanding::Stale,
             ClaimStanding::Unmatched,
             ClaimStanding::Unjudged,
+            ClaimStanding::Inapplicable,
         ];
         for standing in every {
             match standing {
                 ClaimStanding::Met
                 | ClaimStanding::Stale
                 | ClaimStanding::Unmatched
-                | ClaimStanding::Unjudged => {}
+                | ClaimStanding::Unjudged
+                | ClaimStanding::Inapplicable => {}
             }
             assert!(
                 CLAIM_STANDINGS.contains(&standing.as_str()),

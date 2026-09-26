@@ -1946,6 +1946,122 @@ fn undecided(audit: &Audit) -> u8 {
     }
 }
 
+#[test]
+fn a_claim_the_run_did_not_judge_here_names_no_mutant() {
+    let with_claim = |mutant: serde_json::Value| {
+        with(serde_json::json!({
+            "expectations": [
+                {
+                    "id": SURVIVED, "reason": "the bound is equivalent under the invariant",
+                    "outcome": "survived", "mutant": SURVIVED,
+                    "locator": null, "covered": null,
+                    "standing": "met", "actual": "survived", "why": null, "where": null
+                },
+                {
+                    "id": "src/elsewhere.rs seven return-default", "reason": "a number nothing reads",
+                    "outcome": "survived", "mutant": mutant,
+                    "locator": null, "covered": null,
+                    "standing": "inapplicable", "actual": null,
+                    "why": "no unit of this build compiled the file it names", "where": null
+                }
+            ]
+        }))
+    };
+    let quiet = audited(&with_claim(serde_json::Value::Null));
+    assert!(
+        violations(&quiet, Layer::Expectations).is_empty(),
+        "an inapplicable claim that names nothing is what a run writes for one it did not judge: \
+         {quiet}"
+    );
+    let planted = audited(&with_claim(serde_json::json!(SURVIVED)));
+    assert!(
+        violations(&planted, Layer::Expectations)
+            .iter()
+            .any(|said| said.contains("inapplicable and names a mutant")),
+        "a claim the run did not judge accounted for a mutation anyway: {planted}"
+    );
+}
+
+/// The specimen with its one met claim, and `claim` beside it.
+fn beside_the_met_claim(claim: &serde_json::Value) -> serde_json::Value {
+    with(serde_json::json!({
+        "expectations": [
+            {
+                "id": SURVIVED, "reason": "the bound is equivalent under the invariant",
+                "outcome": "survived", "mutant": SURVIVED,
+                "locator": null, "covered": null,
+                "standing": "met", "actual": "survived", "why": null, "where": null
+            },
+            claim
+        ]
+    }))
+}
+
+#[test]
+fn a_claim_is_held_to_where_it_says_it_holds_on_the_target_the_run_recorded() {
+    let claim = |standing: &str, why: serde_json::Value, holds: serde_json::Value| {
+        serde_json::json!({
+            "id": "src/watch.rs Session::refresh condition-to-false", "reason": "inotify",
+            "outcome": "survived", "mutant": null, "locator": null, "covered": null,
+            "standing": standing, "actual": null, "why": why, "where": holds
+        })
+    };
+    let on = |cfg: &str| serde_json::json!({ "cfg": cfg, "env": {} });
+    let quiet = [
+        claim(
+            "unjudged",
+            serde_json::Value::Null,
+            on("target_os = \"linux\""),
+        ),
+        claim(
+            "inapplicable",
+            serde_json::json!("the target does not satisfy cfg(windows)"),
+            on("windows"),
+        ),
+    ];
+    for one in quiet {
+        let audit = audited(&beside_the_met_claim(&one));
+        assert!(
+            violations(&audit, Layer::Expectations).is_empty(),
+            "{one}: the recorded target is linux and unix: {audit}"
+        );
+    }
+    let planted = [
+        (
+            claim("unjudged", serde_json::Value::Null, on("windows")),
+            "does not hold of the target",
+        ),
+        (
+            claim(
+                "inapplicable",
+                serde_json::json!(
+                    "the target does not satisfy cfg(all(unix, target_os = \"linux\"))"
+                ),
+                on("all(unix, target_os = \"linux\")"),
+            ),
+            "holds of the target",
+        ),
+        (
+            claim(
+                "inapplicable",
+                serde_json::json!("the tests are given no REQUIRE_SHARING"),
+                serde_json::Value::Null,
+            ),
+            "its where names none",
+        ),
+    ];
+    for (one, said) in planted {
+        let audit = audited(&beside_the_met_claim(&one));
+        assert!(
+            violations(&audit, Layer::Expectations)
+                .iter()
+                .any(|violation| violation.contains(said)),
+            "{one}: a claim judged where its where does not hold, or not judged where it does, is \
+             refused from the recorded target alone: {audit}"
+        );
+    }
+}
+
 /// Every published schema, compiled.
 fn checkers() -> xtask::schemas::Checkers {
     xtask::schemas::Checkers::compiled().expect("the published schemas compile")

@@ -682,9 +682,24 @@ impl Request {
         self.clone().with_target(target)
     }
 }
+/// What a build made of the file a claim's locator names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unread {
+    /// A unit of the build read it, so the catalog answers for it.
+    Compiled,
+    /// No unit read it, and the locator names what walking it finds.
+    Named,
+    /// No unit read it, and the locator names nothing in it, or it is not there.
+    Nothing,
+}
+
 /// A prepared workspace.
 #[derive(Debug)]
 pub struct Session {
+    /// The rules discovery applied, which a claim on a file no unit read is walked with.
+    selection: crate::syntax::Selection<'static>,
+    /// What the toolchain says the build's target is, which a claim's `where` is judged against.
+    facts: crate::facts::Facts,
     workspace: Workspace,
     /// The test executables the run starts, as the build left them, which every execution is checked against.
     apparatus: crate::apparatus::Apparatus,
@@ -1109,6 +1124,87 @@ impl Session {
             (several, None) => Err(LocateError::Several {
                 display_ids: named(several),
             }),
+        }
+    }
+
+    /// What the toolchain says the build's target is, kept to the names a target alone decides.
+    #[must_use]
+    pub const fn facts(&self) -> &crate::facts::Facts {
+        &self.facts
+    }
+
+    /// Nothing where every fact `under` names holds of this run's target and of the environment its tests are given, and otherwise the first that does not.
+    ///
+    /// # Errors
+    /// The fact that does not hold.
+    pub fn holds(&self, under: &crate::run::Where) -> Result<(), crate::run::Unheld> {
+        if let Some(predicate) = &under.cfg
+            && !predicate.holds(&self.facts)
+        {
+            return Err(crate::run::Unheld::Cfg {
+                predicate: predicate.to_string(),
+            });
+        }
+        for (name, wanted) in &under.env {
+            let given = self
+                .workspace
+                .base_env
+                .iter()
+                .find(|(held, _)| held == std::ffi::OsStr::new(name));
+            match given {
+                Some((_, value)) if value == std::ffi::OsStr::new(wanted) => {}
+                Some(_) | None => {
+                    return Err(crate::run::Unheld::Env {
+                        name: name.clone(),
+                        given: given.is_some(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// What this build made of the file `locator` names: one a unit read, or one none did, walked with the rules discovery applied to say whether the locator names something in it.
+    #[must_use]
+    pub fn unread(&self, locator: &Locator) -> Unread {
+        if self.files.iter().any(|file| file.path == locator.path) {
+            return Unread::Compiled;
+        }
+        let inside = std::path::Path::new(&locator.path)
+            .components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)));
+        if !inside {
+            return Unread::Nothing;
+        }
+        let Ok(walked) = discover::walk(self.snapshot_root(), &locator.path, &self.selection)
+        else {
+            return Unread::Nothing;
+        };
+        let matching: Vec<&crate::syntax::Found> = walked
+            .candidates
+            .iter()
+            .filter(|found| {
+                found.candidate.rule.name == locator.rule
+                    && (locator.original.is_empty()
+                        || found.candidate.original == locator.original.as_bytes())
+                    && names(&found.item, &locator.item)
+            })
+            .collect();
+        let narrowed: Vec<&crate::syntax::Found> = match locator.line {
+            Some(line) if matching.len() > 1 => matching
+                .into_iter()
+                .filter(|found| found.position.line == line)
+                .collect(),
+            _ => matching,
+        };
+        let named = match locator.count {
+            Some(wanted) => usize::try_from(wanted).is_ok_and(|wanted| narrowed.len() == wanted),
+            None => narrowed.len() == 1,
+        };
+        if named {
+            Unread::Named
+        } else {
+            Unread::Nothing
         }
     }
 

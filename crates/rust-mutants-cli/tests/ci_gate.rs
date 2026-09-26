@@ -150,6 +150,7 @@ fn document(survivors: u32) -> RunDocument {
         skips: Vec::new(),
         expectations: Vec::new(),
         findings,
+        facts: Vec::new(),
     }
 }
 

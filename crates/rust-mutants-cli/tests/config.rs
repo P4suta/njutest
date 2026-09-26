@@ -601,3 +601,62 @@ fn a_list_a_command_gives_replaces_the_files_list_rather_than_adding_to_it() {
         assert_eq!(resolved.len(), 1, "{key}: {resolved:?}");
     }
 }
+
+#[test]
+fn a_claim_says_where_it_holds_over_the_target_and_the_tests_environment() {
+    let claim = "version = 1\n[[mutation.expect]]\npath = \"src/watch.rs\"\nitem = \"Session::refresh\"\nrule = \"condition-to-false\"\noriginal = \"self.watcher.recursive()\"\nreason = \"inotify never watches a subtree\"\n";
+    let scoped = parse(&format!(
+        "{claim}where = {{ cfg = 'target_os = \"linux\"', env = {{ REQUIRE_SHARING = \"1\" }} }}\n"
+    ))
+    .expect("a claim that says where it holds");
+    let under = scoped.mutation.expect[0].expectation().under;
+    assert_eq!(
+        under.cfg,
+        Some(rust_mutants::facts::Predicate::Pair(
+            "target_os".to_owned(),
+            "linux".to_owned()
+        ))
+    );
+    assert_eq!(
+        under.env.get("REQUIRE_SHARING").map(String::as_str),
+        Some("1")
+    );
+    assert_eq!(
+        parse(claim)
+            .expect("a claim that says nothing of where")
+            .mutation
+            .expect[0]
+            .expectation()
+            .under,
+        rust_mutants::run::Where::default(),
+        "a claim that names no facts holds everywhere"
+    );
+    for (refused, named, why) in [
+        (
+            "where = { cfg = 'debug_assertions' }",
+            "debug_assertions",
+            "a profile's name is not the target's",
+        ),
+        (
+            "where = { cfg = 'target_os = linux' }",
+            "quoted value",
+            "a value is quoted",
+        ),
+        (
+            "where = { os = \"linux\" }",
+            "os",
+            "where names cfg and env and nothing else",
+        ),
+    ] {
+        let error = parse(&format!("{claim}{refused}\n")).expect_err("refused");
+        assert_eq!(
+            error.kind(),
+            ConfigErrorKind::Unparsable,
+            "{why}: {refused}"
+        );
+        assert!(
+            error.to_string().contains(named),
+            "{why}: the refusal names {named:?}: {error}"
+        );
+    }
+}

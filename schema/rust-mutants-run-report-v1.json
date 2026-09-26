@@ -18,7 +18,8 @@
     "rejections",
     "skips",
     "expectations",
-    "findings"
+    "findings",
+    "facts"
   ],
   "properties": {
     "document_type": {
@@ -744,7 +745,8 @@
           "covered",
           "standing",
           "actual",
-          "why"
+          "why",
+          "where"
         ],
         "properties": {
           "id": {
@@ -835,7 +837,8 @@
               "met",
               "stale",
               "unmatched",
-              "unjudged"
+              "unjudged",
+              "inapplicable"
             ]
           },
           "actual": {
@@ -857,6 +860,41 @@
                 "type": "string"
               }
             ]
+          },
+          "where": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "cfg",
+                  "env"
+                ],
+                "properties": {
+                  "cfg": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    ]
+                  },
+                  "env": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ],
+            "description": "The facts the claim was established under, when the file named any: a cfg predicate over the target and exact values of the tests' environment (ADR 0042)."
           },
           "covered": {
             "oneOf": [
@@ -915,6 +953,14 @@
           }
         }
       }
+    },
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "What the build's own rustc says its target is, kept to the names a target alone decides, as name or name=\"value\", sorted; every claim's where was judged against it (ADR 0042)."
     },
     "targets": {
       "description": "The test targets the run built, which is what every mutant could have been asked against.",

@@ -41,6 +41,8 @@ mod equivalence;
 mod errors_doc;
 #[path = "execute.rs"]
 mod execute;
+#[path = "facts.rs"]
+mod facts;
 #[path = "flatten.rs"]
 mod flatten;
 #[path = "forbid.rs"]

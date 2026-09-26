@@ -186,6 +186,7 @@ compares the outcome, and says which of three things happened.
 | `met` | The run established the declared outcome | The mutant is accounted for and is not a finding |
 | `stale` | The run established something else | A `stale-expectation` finding; the run is not clean |
 | `unmatched` | No mutant of this catalog answers to the identity | An `unmatched-expectation` finding; the claim verifies nothing |
+| `inapplicable` | A fact the claim was established under does not hold in this run | None; the mutant is reported as though no claim named it, and the report says which fact |
 
 `reason` is required by the shape itself.
 An expectation without one is a suppression, and a report cannot audit a suppression.
@@ -203,10 +204,31 @@ reason = "the bound is equivalent under the invariant the type carries"
 outcome = "survived"
 ```
 
+A claim on a file no unit of this build compiled — a module gated to another platform, say — is `inapplicable` without anything written, because discovery walks only the files a unit read ([ADR 0042](../adr/0042-a-claim-holds-where-its-facts-do.md)).
+That file is walked on its own to resolve the locator, so a locator that names nothing in it, or a file that is not there, is `unmatched` on every host.
+
 Never both: an identity and a locator are two ways of naming one mutant and two chances to name different ones.
 A locator whose line has moved still holds, and the report says where the mutation is now.
 `line` is part of the claim, so two claims on one item that differ only in their line are two claims, each with its own reason, and the report names each with its line.
 A mutation two claims both name — a claim on the whole item beside one on a line of it, say — has two reasons, and the run refuses it with `RM0004` naming the mutation, since a report cannot audit which reason holds.
+
+A claim that holds only where some facts do says so with `where`:
+
+```toml
+[[mutation.expect]]
+path = "src/watch.rs"
+item = "Session::refresh"
+rule = "condition-to-false"
+original = "self.watcher.recursive()"
+outcome = "survived"
+where = { cfg = 'target_os = "linux"', env = { REQUIRE_SHARING = "1" } }
+reason = "inotify never watches a subtree, so recursive() is false on every Linux run"
+```
+
+`cfg` is a Cargo `cfg` predicate over the names a target alone decides — `target_*`, `unix`, `windows`, `panic` — as `rustc --print cfg` prints them for the build's target;
+any other name, such as `debug_assertions`, `test` or `feature`, is refused when the file is read, since no probe of the target can say whether it holds.
+`env` names exact values in the environment the tests are given.
+Where a fact does not hold the claim is `inapplicable`, and two claims may name one mutation as long as no run makes both apply.
 
 A locator names one mutation.
 Where the same reason is true of several of them at once — the same call written at three places in one function, say —

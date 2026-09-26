@@ -60,6 +60,51 @@ pub struct Expectation {
     pub reason: String,
     /// The outcome the run must confirm.
     pub outcome: Outcome,
+    /// Where the claim is judged, which is everywhere unless it names facts (ADR 0042).
+    pub under: Where,
+}
+
+/// The facts a claim was established under: a `cfg` over the target and exact values of the tests' environment.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Where {
+    /// The predicate over the target that must hold, when the claim names one.
+    pub cfg: Option<crate::facts::Predicate>,
+    /// Each name of the environment the tests are given, with the value it must have.
+    pub env: std::collections::BTreeMap<String, String>,
+}
+
+/// Why a claim was not judged in this run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unheld {
+    /// The file it names is one no unit of this build read.
+    NotCompiled,
+    /// The target does not satisfy the `cfg` it names.
+    Cfg {
+        /// The predicate, as the claim wrote it.
+        predicate: String,
+    },
+    /// The environment the tests are given does not hold a value the claim names.
+    Env {
+        /// The name.
+        name: String,
+        /// Whether the tests are given the name at all; its value is never written anywhere, since it may be a secret.
+        given: bool,
+    },
+}
+
+impl Unheld {
+    /// The fact that did not hold, as a reader reads it.
+    #[must_use]
+    pub fn said(&self) -> String {
+        match self {
+            Self::NotCompiled => "no unit of this build compiled the file it names".to_owned(),
+            Self::Cfg { predicate } => format!("the target does not satisfy cfg({predicate})"),
+            Self::Env { name, given: true } => format!(
+                "the tests are given {name} with another value than the one the claim holds under"
+            ),
+            Self::Env { name, given: false } => format!("the tests are given no {name}"),
+        }
+    }
 }
 
 impl Expectation {
@@ -185,6 +230,11 @@ pub enum Standing {
     },
     /// The claim names mutations of this catalog, and this run decided none of them: a selection left them out, another shard holds them, or the run stopped first.
     Unjudged,
+    /// The claim is not judged here, because a fact it was established under does not hold (ADR 0042).
+    Inapplicable {
+        /// The fact.
+        because: Unheld,
+    },
 }
 
 /// One declared expectation, as the run left it.
@@ -205,6 +255,8 @@ pub struct Verified {
     pub covered: u32,
     /// Whether the claim held.
     pub standing: Standing,
+    /// Where the claim is judged, as the file wrote it.
+    pub under: Where,
 }
 
 /// What kind of hole a finding names.
@@ -566,7 +618,10 @@ impl Run {
         }
         for expectation in &self.expectations {
             match &expectation.standing {
-                Standing::Met | Standing::Moved { .. } | Standing::Unjudged => {}
+                Standing::Met
+                | Standing::Moved { .. }
+                | Standing::Unjudged
+                | Standing::Inapplicable { .. } => {}
                 Standing::Stale { actual } => findings.push(Finding {
                     kind: FindingKind::StaleExpectation,
                     mutant: expectation.mutant.clone(),
@@ -1076,6 +1131,72 @@ fn addressed<'s>(
         (to != from).then_some(Standing::Moved { from, to })
     });
     Ok((mutants, moved))
+}
+
+/// What a claim that applies here and names `mutants` stands as, marking the rows it accounts for: how many it was resolved against, the one that decided it, and its standing.
+fn decided(
+    judged: &mut [Judged],
+    expectation: &Expectation,
+    shard: Option<Shard>,
+    (mutants, moved): (Vec<&Mutant>, Option<Standing>),
+) -> Result<(u32, Option<String>, Standing), SessionError> {
+    let every: Vec<String> = mutants.iter().map(|mutant| mutant.id.to_string()).collect();
+    let ids: Vec<String> = mutants
+        .iter()
+        .filter(|mutant| shard.is_none_or(|part| part.holds(mutant.index)))
+        .map(|mutant| mutant.id.to_string())
+        .filter(|id| decided_here(judged, id))
+        .collect();
+    let (named, standing) = if ids.is_empty() {
+        (None, Standing::Unjudged)
+    } else {
+        standing_of(judged, expectation.outcome, &ids)
+    };
+    let standing = match standing {
+        Standing::Met => moved.unwrap_or(Standing::Met),
+        held @ (Standing::Moved { .. }
+        | Standing::Stale { .. }
+        | Standing::Unmatched { .. }
+        | Standing::Unjudged
+        | Standing::Inapplicable { .. }) => held,
+    };
+    if matches!(standing, Standing::Met | Standing::Moved { .. }) {
+        for one in judged.iter_mut().filter(|one| ids.contains(&one.id)) {
+            one.expected = true;
+        }
+    }
+    let covered = u32::try_from(every.len()).map_err(|_outside_range| {
+        SessionError::ExpectationCoverageTooLarge { count: every.len() }
+    })?;
+    Ok((covered, named, standing))
+}
+
+/// What a claim the catalog does not answer for stands as: not judged here where it names something in a file no unit read, unjudged where a narrowed run left its file out, and otherwise unmatched.
+fn unresolved(
+    session: &Session,
+    expectation: &Expectation,
+    narrowed: bool,
+    why: &AddressError,
+) -> Standing {
+    if uncompiled(session, expectation) {
+        Standing::Inapplicable {
+            because: Unheld::NotCompiled,
+        }
+    } else if narrowed && !scanned(session, expectation) {
+        Standing::Unjudged
+    } else {
+        Standing::Unmatched {
+            why: why.to_string(),
+        }
+    }
+}
+
+/// Whether a claim names something in a file no unit of this build read, found by walking that file as discovery walks the ones it did.
+fn uncompiled(session: &Session, expectation: &Expectation) -> bool {
+    expectation
+        .locator
+        .as_ref()
+        .is_some_and(|locator| session.unread(locator) == crate::session::Unread::Named)
 }
 
 /// Whether the file a claim names is one this run's catalog was built from rather than one its selection left out; a claim by identity names no file, so a narrowed run cannot say.
@@ -2138,9 +2259,10 @@ pub fn verify(
     let mut reasons: std::collections::BTreeMap<u32, String> = std::collections::BTreeMap::new();
     for expectation in expectations {
         let resolved = addressed(session, expectation);
-        let named: &[&Mutant] = match &resolved {
-            Ok((mutants, _moved)) => mutants,
-            Err(_unresolved) => &[],
+        let applies = session.holds(&expectation.under);
+        let named: &[&Mutant] = match (&resolved, &applies) {
+            (Ok((mutants, _moved)), Ok(())) => mutants,
+            (Err(_), _) | (Ok(_), Err(_)) => &[],
         };
         for mutant in named {
             if let Some(first) = reasons.insert(mutant.index, expectation.name()) {
@@ -2154,48 +2276,10 @@ pub fn verify(
                 });
             }
         }
-        let (covered, mutant, standing) = match resolved {
-            Err(_beyond) if narrowed && !scanned(session, expectation) => {
-                (0, None, Standing::Unjudged)
-            }
-            Err(why) => (
-                0,
-                None,
-                Standing::Unmatched {
-                    why: why.to_string(),
-                },
-            ),
-            Ok((mutants, moved)) => {
-                let every: Vec<String> =
-                    mutants.iter().map(|mutant| mutant.id.to_string()).collect();
-                let ids: Vec<String> = mutants
-                    .iter()
-                    .filter(|mutant| shard.is_none_or(|part| part.holds(mutant.index)))
-                    .map(|mutant| mutant.id.to_string())
-                    .filter(|id| decided_here(judged, id))
-                    .collect();
-                let (named, standing) = if ids.is_empty() {
-                    (None, Standing::Unjudged)
-                } else {
-                    standing_of(judged, expectation.outcome, &ids)
-                };
-                let standing = match standing {
-                    Standing::Met => moved.unwrap_or(Standing::Met),
-                    held @ (Standing::Moved { .. }
-                    | Standing::Stale { .. }
-                    | Standing::Unmatched { .. }
-                    | Standing::Unjudged) => held,
-                };
-                if matches!(standing, Standing::Met | Standing::Moved { .. }) {
-                    for one in judged.iter_mut().filter(|one| ids.contains(&one.id)) {
-                        one.expected = true;
-                    }
-                }
-                let covered = u32::try_from(every.len()).map_err(|_outside_range| {
-                    SessionError::ExpectationCoverageTooLarge { count: every.len() }
-                })?;
-                (covered, named, standing)
-            }
+        let (covered, mutant, standing) = match (resolved, applies) {
+            (Err(why), _) => (0, None, unresolved(session, expectation, narrowed, &why)),
+            (Ok(_), Err(because)) => (0, None, Standing::Inapplicable { because }),
+            (Ok(named), Ok(())) => decided(judged, expectation, shard, named)?,
         };
         verified.push(Verified {
             id: expectation.name(),
@@ -2205,6 +2289,7 @@ pub fn verify(
             mutant,
             covered,
             standing,
+            under: expectation.under.clone(),
         });
     }
     Ok(verified)

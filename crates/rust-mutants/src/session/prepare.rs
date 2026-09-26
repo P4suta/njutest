@@ -877,6 +877,19 @@ fn validated(
     Ok(instrumented)
 }
 
+/// What the toolchain says of the target the build compiles for (ADR 0042).
+fn target_facts(
+    workspace: &Workspace,
+    options: &PrepareOptions,
+    cancel: &Cancel,
+) -> Result<crate::facts::Facts, EngineError> {
+    Ok(workspace.toolchain.target_facts(
+        workspace.snapshot_root(),
+        options.build.target.as_deref(),
+        cancel,
+    )?)
+}
+
 /// Discovers, instruments, validates, builds, and verifies.
 ///
 /// # Errors
@@ -934,6 +947,8 @@ pub fn prepare(
     let item_refs = item_refs(&instrumented.items)?;
     let verified = narrowed(verified, instrumented.narrowing, instrumented.items.items);
     Ok(Session {
+        selection: selection(options)?,
+        facts: target_facts(&workspace, options, cancel)?,
         apparatus,
         item_refs,
         catalog: discovery.catalog,
