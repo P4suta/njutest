@@ -202,10 +202,10 @@ impl RunDirectory {
         &self.staging
     }
 
-    fn write_new(&self, name: &str, bytes: &[u8]) -> Result<(), PublicationFailure> {
+    fn write_new(&self, name: &str, bytes: &[u8]) -> Result<(), PublicationError> {
         self.capability
             .write_new(&self.staging, name, bytes)
-            .map_err(|source| PublicationFailure::NotKept {
+            .map_err(|source| PublicationError::NotKept {
                 path: self.staging.join(name).display().to_string(),
                 source,
             })
@@ -1986,7 +1986,7 @@ pub enum StoreError {
     )]
     Abort {
         /// The write or path invariant that first failed.
-        primary: PublicationFailure,
+        primary: PublicationError,
         /// The staging or just-published directory that could not be removed completely.
         path: PathBuf,
         /// What prevented cleanup.
@@ -1998,7 +1998,7 @@ pub enum StoreError {
 /// A failure that can occur after an unpublished run directory is owned.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum PublicationFailure {
+pub enum PublicationError {
     /// The host cannot bind authoritative report bytes strongly enough to publish them.
     #[error("this platform has no supported capability-rooted report backend")]
     UnsupportedCapability,
@@ -2055,16 +2055,16 @@ impl StoreError {
     }
 }
 
-impl From<PublicationFailure> for StoreError {
-    fn from(failure: PublicationFailure) -> Self {
+impl From<PublicationError> for StoreError {
+    fn from(failure: PublicationError) -> Self {
         match failure {
-            PublicationFailure::UnsupportedCapability => Self::UnsupportedCapability,
-            PublicationFailure::Report(error) => Self::Report(error),
-            PublicationFailure::Count(source) => Self::Count(source),
-            PublicationFailure::Junit(source) => Self::Junit(source),
-            PublicationFailure::RunId { source } => Self::RunId { source },
-            PublicationFailure::UnsafePath { path, message } => Self::UnsafePath { path, message },
-            PublicationFailure::NotKept { path, source } => Self::NotKept { path, source },
+            PublicationError::UnsupportedCapability => Self::UnsupportedCapability,
+            PublicationError::Report(error) => Self::Report(error),
+            PublicationError::Count(source) => Self::Count(source),
+            PublicationError::Junit(source) => Self::Junit(source),
+            PublicationError::RunId { source } => Self::RunId { source },
+            PublicationError::UnsafePath { path, message } => Self::UnsafePath { path, message },
+            PublicationError::NotKept { path, source } => Self::NotKept { path, source },
         }
     }
 }
@@ -2155,12 +2155,12 @@ pub(crate) fn keep_claimed(
     let run_id = match RunId::try_from(report.run_id()) {
         Ok(run_id) => run_id,
         Err(source) => {
-            return Err(abort_after(claimed, PublicationFailure::RunId { source }));
+            return Err(abort_after(claimed, PublicationError::RunId { source }));
         }
     };
     let document_text = match json::document_any(report) {
         Ok(document) => document,
-        Err(error) => return Err(abort_after(claimed, PublicationFailure::Report(error))),
+        Err(error) => return Err(abort_after(claimed, PublicationError::Report(error))),
     };
     let store = &claimed.store;
     let published = store.writable_run(&run_id);
@@ -2171,7 +2171,7 @@ pub(crate) fn keep_claimed(
             let path = claimed.staging.display().to_string();
             return Err(abort_after(
                 claimed,
-                PublicationFailure::NotKept { path, source },
+                PublicationError::NotKept { path, source },
             ));
         }
     };
@@ -2180,7 +2180,7 @@ pub(crate) fn keep_claimed(
         || claimed.staging != expected_staging
         || !staging_is_directory
     {
-        let error = PublicationFailure::UnsafePath {
+        let error = PublicationError::UnsafePath {
             path: claimed.staging.clone(),
             message: "the run-directory claim does not belong to this report and store".to_owned(),
         };
@@ -2220,7 +2220,7 @@ fn seal(
     if !RunCapability::supports_model_artifacts() && !report.model_artifacts().is_empty() {
         return Err(abort_after(
             claimed,
-            PublicationFailure::UnsupportedCapability,
+            PublicationError::UnsupportedCapability,
         ));
     }
     if let Err(error) = validate_model_artifacts(&claimed, report) {
@@ -2231,7 +2231,7 @@ fn seal(
         Err(error) => return Err(abort_after(claimed, error)),
     };
     if let Err(source) = claimed.sync_tree() {
-        let error = PublicationFailure::NotKept {
+        let error = PublicationError::NotKept {
             path: claimed.staging.display().to_string(),
             source,
         };
@@ -2281,7 +2281,7 @@ fn write_publication(
     directory: &RunDirectory,
     report: &ReportDocument,
     document_text: &str,
-) -> Result<Vec<PublicationFile>, PublicationFailure> {
+) -> Result<Vec<PublicationFile>, PublicationError> {
     let mut files = Vec::new();
     retain_publication_file(
         directory,
@@ -2323,7 +2323,7 @@ fn retain_publication_file(
     files: &mut Vec<PublicationFile>,
     name: &'static str,
     bytes: Vec<u8>,
-) -> Result<(), PublicationFailure> {
+) -> Result<(), PublicationError> {
     directory.write_new(name, &bytes)?;
     files.push(PublicationFile { name, bytes });
     Ok(())
@@ -2332,7 +2332,7 @@ fn retain_publication_file(
 fn validate_model_artifacts(
     directory: &RunDirectory,
     report: &ReportDocument,
-) -> Result<(), PublicationFailure> {
+) -> Result<(), PublicationError> {
     for artifact in report.model_artifacts() {
         validate_model_artifact(directory, artifact)?;
     }
@@ -2343,22 +2343,23 @@ fn validate_sealed_tree(
     directory: &RunDirectory,
     files: &[PublicationFile],
     artifacts: &[crate::report::ModelArtifact],
-) -> Result<(), PublicationFailure> {
+) -> Result<(), PublicationError> {
     directory
         .validate_closed_tree(files, artifacts)
-        .map_err(|source| PublicationFailure::NotKept {
+        .map_err(|source| PublicationError::NotKept {
             path: directory.staging.display().to_string(),
             source,
         })?;
     for file in files {
-        let retained = directory.read_publication_file(file).map_err(|source| {
-            PublicationFailure::NotKept {
-                path: directory.staging.join(file.name).display().to_string(),
-                source,
-            }
-        })?;
+        let retained =
+            directory
+                .read_publication_file(file)
+                .map_err(|source| PublicationError::NotKept {
+                    path: directory.staging.join(file.name).display().to_string(),
+                    source,
+                })?;
         if retained != file.bytes {
-            return Err(PublicationFailure::UnsafePath {
+            return Err(PublicationError::UnsafePath {
                 path: directory.staging.join(file.name),
                 message: "publication bytes changed after the sealed file was written".to_owned(),
             });
@@ -2373,11 +2374,11 @@ fn validate_sealed_tree(
 fn validate_model_artifact(
     directory: &RunDirectory,
     artifact: &crate::report::ModelArtifact,
-) -> Result<(), PublicationFailure> {
+) -> Result<(), PublicationError> {
     let bytes =
         directory
             .read_model_artifact(artifact)
-            .map_err(|source| PublicationFailure::NotKept {
+            .map_err(|source| PublicationError::NotKept {
                 path: directory
                     .staging
                     .join(artifact.path())
@@ -2386,7 +2387,7 @@ fn validate_model_artifact(
                 source,
             })?;
     if !artifact.matches(&bytes) {
-        return Err(PublicationFailure::UnsafePath {
+        return Err(PublicationError::UnsafePath {
             path: directory.staging.join(artifact.path()),
             message: "model artifact bytes no longer match their retained size and digest"
                 .to_owned(),
@@ -2395,7 +2396,7 @@ fn validate_model_artifact(
     Ok(())
 }
 
-fn abort_after(claimed: RunDirectory, primary: PublicationFailure) -> StoreError {
+fn abort_after(claimed: RunDirectory, primary: PublicationError) -> StoreError {
     let path = match claimed.ownership {
         RunOwnership::Staging => claimed.staging.clone(),
         RunOwnership::Published => claimed.published.clone(),
@@ -2413,7 +2414,7 @@ fn abort_after(claimed: RunDirectory, primary: PublicationFailure) -> StoreError
 }
 
 fn cleanup_after(
-    primary: PublicationFailure,
+    primary: PublicationError,
     path: PathBuf,
     cleanup_result: Result<(), StoreError>,
 ) -> StoreError {
@@ -2523,14 +2524,14 @@ where
         let path = directory.published.display().to_string();
         return Err(abort_after(
             directory,
-            PublicationFailure::NotKept { path, source },
+            PublicationError::NotKept { path, source },
         ));
     }
     if let Err(source) = rename(&directory, &directory.staging, &directory.published) {
         let path = directory.published.display().to_string();
         return Err(abort_after(
             directory,
-            PublicationFailure::NotKept { path, source },
+            PublicationError::NotKept { path, source },
         ));
     }
     directory.ownership = RunOwnership::Published;
@@ -2542,22 +2543,21 @@ fn validate_named_sealed(
     files: &[PublicationFile],
     artifacts: &[crate::report::ModelArtifact],
     mismatch: &str,
-) -> Result<(), PublicationFailure> {
-    let spelling =
-        directory
-            .validate_run_spelling()
-            .map_err(|source| PublicationFailure::NotKept {
-                path: directory.store.runs().display().to_string(),
-                source,
-            });
+) -> Result<(), PublicationError> {
+    let spelling = directory
+        .validate_run_spelling()
+        .map_err(|source| PublicationError::NotKept {
+            path: directory.store.runs().display().to_string(),
+            source,
+        });
     match (spelling, directory.published_entry_matches()) {
         (Ok(()), Ok(true)) => validate_sealed_tree(directory, files, artifacts),
         (Err(error), _) => Err(error),
-        (Ok(()), Ok(false)) => Err(PublicationFailure::UnsafePath {
+        (Ok(()), Ok(false)) => Err(PublicationError::UnsafePath {
             path: directory.published.clone(),
             message: mismatch.to_owned(),
         }),
-        (Ok(()), Err(source)) => Err(PublicationFailure::NotKept {
+        (Ok(()), Err(source)) => Err(PublicationError::NotKept {
             path: directory.published.display().to_string(),
             source,
         }),
@@ -2567,7 +2567,7 @@ fn validate_named_sealed(
 fn sync_publication_parents<S>(
     directory: &RunDirectory,
     sync: &mut S,
-) -> Result<(), PublicationFailure>
+) -> Result<(), PublicationError>
 where
     S: FnMut(&RunDirectory, &Path) -> io::Result<()>,
 {
@@ -2575,12 +2575,12 @@ where
         directory
             .staging
             .parent()
-            .ok_or_else(|| PublicationFailure::UnsafePath {
+            .ok_or_else(|| PublicationError::UnsafePath {
                 path: directory.staging.clone(),
                 message: "the published staging spelling has no parent".to_owned(),
             })?;
     for parent in [directory.store.runs(), staging_parent] {
-        sync(directory, parent).map_err(|source| PublicationFailure::NotKept {
+        sync(directory, parent).map_err(|source| PublicationError::NotKept {
             path: parent.display().to_string(),
             source,
         })?;
@@ -2590,7 +2590,7 @@ where
 
 fn retain_checked_directory(
     directory: RunDirectory,
-    checked: Result<(), PublicationFailure>,
+    checked: Result<(), PublicationError>,
 ) -> Result<RunDirectory, StoreError> {
     match checked {
         Ok(()) => Ok(directory),

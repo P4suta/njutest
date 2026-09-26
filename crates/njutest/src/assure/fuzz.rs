@@ -63,7 +63,7 @@ pub struct Fuzzing<'a> {
     /// The workspace root.
     pub root: &'a Path,
     /// The cargo to drive, which must be one that understands `+nightly`.
-    pub cargo: &'a Path,
+    pub cargo: rust_mutants::cargo::Selecting<'a>,
     /// The environment it runs with.
     pub env: Vec<(OsString, OsString)>,
     /// The targets to drive.
@@ -217,7 +217,7 @@ fn one(
 fn fuzz_spec(fuzzing: &Fuzzing<'_>, target: &str) -> Spec {
     Spec::new(
         [
-            fuzzing.cargo.as_os_str().to_owned(),
+            fuzzing.cargo.path().as_os_str().to_owned(),
             OsString::from("+nightly"),
             OsString::from("fuzz"),
             OsString::from("run"),

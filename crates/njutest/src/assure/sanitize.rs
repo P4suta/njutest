@@ -38,7 +38,7 @@ pub struct Sanitizing<'a> {
     /// The workspace root.
     pub root: &'a Path,
     /// The cargo to drive, which must be one that understands `+nightly`.
-    pub cargo: &'a Path,
+    pub cargo: rust_mutants::cargo::Selecting<'a>,
     /// The target triple the suite is built for, which a sanitizer needs named so the host tools are not instrumented too.
     pub host: &'a str,
     /// The environment it runs with.
@@ -98,7 +98,7 @@ fn one(
     watch: Watch<'_>,
 ) -> Result<(), RunnerError> {
     let mut argv: Vec<OsString> = vec![
-        sanitizing.cargo.as_os_str().to_owned(),
+        sanitizing.cargo.path().as_os_str().to_owned(),
         OsString::from("+nightly"),
         OsString::from("test"),
         OsString::from("--target"),

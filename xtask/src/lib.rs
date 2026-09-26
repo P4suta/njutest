@@ -266,14 +266,14 @@ where
         Gate::Fixtures => gates::fixtures(&root),
         Gate::Tracked => gates::tracked(&root),
         Gate::FuzzClippy { alternate: _ } => fuzzclippy::check(&root, process.cargo)
-            .map_err(|error| gates::GateFailure(error.coded())),
+            .map_err(|error| gates::GateError(error.coded())),
         Gate::Docflows { actionlint } => docflows::check(&root, actionlint.as_os_str())
-            .map_err(|error| gates::GateFailure(error.coded())),
+            .map_err(|error| gates::GateError(error.coded())),
         Gate::ReleaseCheck => gates::release_check(&root),
         Gate::KaniLaws { cache } => kanilaws::laws(&root, process.cargo, &cache),
         Gate::KaniLawsAudit { export } => kaniaudit::audit(&export, &root)
             .map(|()| "kani-laws: 15 production harnesses, every assertion reachable and every cover satisfiable".to_owned())
-            .map_err(|error| gates::GateFailure(error.coded())),
+            .map_err(|error| gates::GateError(error.coded())),
         Gate::Milestones => gates::milestones(&root),
         Gate::Adrs => gates::adrs(&root),
         Gate::Reached => gates::reached(&root),
@@ -316,7 +316,7 @@ where
         Gate::Sbom { output } => gates::sbom(&root, output.as_deref()),
         Gate::Waivers => gates::waivers(&root),
         Gate::RemoteCheck { machines, worktree } => remote::check(worktree.as_deref().unwrap_or(&root), &machines)
-            .map_err(|error| gates::GateFailure(error.coded())),
+            .map_err(|error| gates::GateError(error.coded())),
         Gate::All => gates::all(&root),
     };
     match outcome {

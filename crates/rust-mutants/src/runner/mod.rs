@@ -201,13 +201,41 @@ impl Spec {
     }
 }
 
-/// A file whose content changes whenever the child makes progress, and how long it may go unchanged.
+/// Files whose content changes whenever the child makes progress, and how long they may all go unchanged.
 #[derive(Debug, Clone)]
 pub(crate) struct Progress {
-    /// The file the child rewrites.
+    /// The file the child rewrites whenever it takes a reservation of its count.
     pub(crate) path: PathBuf,
-    /// How long the file may stay unchanged before the run is [`Termination::Stalled`].
+    /// The file the child rewrites while it spends a reservation, at most [`Progress::beat_every`] apart.
+    pub(crate) beat: PathBuf,
+    /// How long both files may stay unchanged before the run is [`Termination::Stalled`].
     pub(crate) quiet: Duration,
+}
+
+/// How many beats the child is told to fit into one quiet window.
+const BEATS_PER_WINDOW: u32 = 4;
+
+impl Progress {
+    /// How long the child may spend a reservation before it rewrites [`Progress::beat`]: a quarter of the window, and never less than a millisecond.
+    pub(crate) fn beat_every(&self) -> Duration {
+        let share = match self.quiet.checked_div(BEATS_PER_WINDOW) {
+            Some(share) => share,
+            None => self.quiet,
+        };
+        share.max(Duration::from_millis(1))
+    }
+
+    /// What the child is told so that it is never quiet for a window while it moves, set over its environment by the runner that watches it.
+    pub(crate) fn told(&self) -> (&'static str, OsString) {
+        let mut value = OsString::from(format!("{}@", self.beat_every().as_millis()));
+        value.push(self.beat.as_os_str());
+        (crate::instrument::STEP_BEAT_ENV, value)
+    }
+
+    /// Every file a change to which is the child moving.
+    fn signals(&self) -> [&Path; 2] {
+        [&self.path, &self.beat]
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -364,7 +392,7 @@ impl std::fmt::Display for TerminationPhase {
 
 /// Why an execution-specific monitor could not establish whether its stop request existed.
 #[derive(Debug, thiserror::Error)]
-pub enum MonitorFailure {
+pub enum MonitorError {
     /// The side-channel path existed but was not a regular file.
     #[error("the execution monitor path {path} is not a regular file")]
     InvalidType {
@@ -504,7 +532,7 @@ pub enum Termination {
     /// The execution-specific monitor could not establish whether a valid stop request existed.
     MonitorFailed {
         /// Why the monitor could not be trusted.
-        failure: MonitorFailure,
+        failure: MonitorError,
     },
     /// The caller asked the run to stop.
     Cancelled {
@@ -524,7 +552,7 @@ pub enum RunFailure<'a> {
     /// Launch, supervision, or exit-status collection failed.
     Runner(&'a RunnerError),
     /// The execution-specific monitor could not be inspected safely.
-    Monitor(&'a MonitorFailure),
+    Monitor(&'a MonitorError),
 }
 
 impl std::fmt::Display for RunFailure<'_> {
@@ -1135,6 +1163,10 @@ fn wire(spec: &Spec, program: &OsString) -> io::Result<Wired> {
         command.envs(env.iter().map(|(key, value)| (key, value)));
     }
     command.envs(PRESENTATION);
+    if let Some(progress) = &spec.progress {
+        let (name, value) = progress.told();
+        command.env(name, value);
+    }
     command.stdin(Stdio::null());
     let structured = if let Some(limit) = spec.structured_stdout {
         let (reader, writer) = io::pipe()?;
@@ -1423,7 +1455,7 @@ enum Exit {
     /// The harness said a test failed, and the declared process set was ended there.
     Answered,
     /// The execution-specific monitor could not be inspected safely.
-    MonitorFailed(MonitorFailure),
+    MonitorFailed(MonitorError),
     /// Stopping or reaping the child failed, so the triggering event cannot be reported as a trustworthy termination.
     SupervisionFailed(RunnerError),
 }
@@ -1440,10 +1472,10 @@ struct Stops<'a> {
     answered: Option<&'a AtomicBool>,
 }
 
-/// What the wait loop last saw of the progress file, and when it last saw it change.
+/// What the wait loop last saw of each progress file, and when it last saw any of them change.
 struct Watching<'a> {
     progress: &'a Progress,
-    seen: Option<Vec<u8>>,
+    seen: [Option<Vec<u8>>; 2],
     moved: Instant,
 }
 
@@ -1451,20 +1483,22 @@ impl<'a> Watching<'a> {
     const fn of(progress: &'a Progress, started: Instant) -> Self {
         Self {
             progress,
-            seen: None,
+            seen: [None, None],
             moved: started,
         }
     }
 
-    /// Looks at the file and returns the moment it counts as stalled; a failed read is not a change, since a child that is not writing never causes one.
+    /// Looks at the files and returns the moment they count as stalled; a failed read is not a change, since a child that is not writing never causes one.
     fn look(&mut self, now: Instant) -> Option<Instant> {
-        match read_between_writes(&self.progress.path) {
-            Ok(content) if self.seen.as_ref() != Some(&content) => {
-                self.seen = Some(content);
-                self.moved = now;
+        for (path, seen) in self.progress.signals().into_iter().zip(&mut self.seen) {
+            match read_between_writes(path) {
+                Ok(content) if seen.as_ref() != Some(&content) => {
+                    *seen = Some(content);
+                    self.moved = now;
+                }
+                Ok(_unchanged) => {}
+                Err(_a_failed_read_is_not_a_change) => {}
             }
-            Ok(_unchanged) => {}
-            Err(_a_failed_read_is_not_a_change) => {}
         }
         self.moved.checked_add(self.progress.quiet)
     }
@@ -1619,7 +1653,7 @@ fn await_exit(supervisor: &sys::Supervisor, child: &SupervisedChild, stops: Stop
                 }
                 MonitorState::InvalidType => {
                     return match terminate(supervisor, child) {
-                        Ok(()) => Exit::MonitorFailed(MonitorFailure::InvalidType {
+                        Ok(()) => Exit::MonitorFailed(MonitorError::InvalidType {
                             path: path.to_path_buf(),
                         }),
                         Err(error) => Exit::SupervisionFailed(error),
@@ -1627,7 +1661,7 @@ fn await_exit(supervisor: &sys::Supervisor, child: &SupervisedChild, stops: Stop
                 }
                 MonitorState::InspectFailed(source) => {
                     return match terminate(supervisor, child) {
-                        Ok(()) => Exit::MonitorFailed(MonitorFailure::Inspect {
+                        Ok(()) => Exit::MonitorFailed(MonitorError::Inspect {
                             path: path.to_path_buf(),
                             source,
                         }),
@@ -1790,15 +1824,14 @@ mod tests {
     use njutest_devkit::result::ResultState::Refused;
     use njutest_devkit::result::{ResultState::Returned, result_state};
 
-    #[cfg(unix)]
     use std::time::Duration;
 
     #[cfg(unix)]
     use super::{
-        Bound, Cancel, ProcessExit, Progress, RunResult, SIDE_CHANNEL_LIMIT, Spec, Termination,
+        Bound, Cancel, ProcessExit, RunResult, SIDE_CHANNEL_LIMIT, Spec, Termination,
         read_side_channel, run,
     };
-    use super::{MonitorState, classify_monitor, inspect_monitor};
+    use super::{MonitorState, Progress, classify_monitor, inspect_monitor};
 
     #[cfg(unix)]
     #[test]
@@ -1916,16 +1949,70 @@ mod tests {
             return None;
         };
         let file = directory.path().join("progress");
+        let beat = directory.path().join("beat");
         let mut spec = Spec::new(
             [
                 "sh".to_owned(),
                 "-c".to_owned(),
-                script.replace("PROGRESS", &file.display().to_string()),
+                script
+                    .replace("PROGRESS", &file.display().to_string())
+                    .replace("BEAT", &beat.display().to_string()),
             ],
             Bound::After(ceiling),
         );
-        spec.progress = Some(Progress { path: file, quiet });
+        spec.progress = Some(Progress {
+            path: file,
+            beat,
+            quiet,
+        });
         Some(run(&spec, &Cancel::new()))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_child_that_moves_only_its_beat_outlives_its_quiet_window() {
+        let Some(result) = watched(
+            "echo 0 > PROGRESS; i=0; while [ $i -lt 30 ]; do echo $i > BEAT; i=$((i+1)); sleep 0.05; done",
+            Duration::from_millis(500),
+            Duration::from_secs(20),
+        ) else {
+            return;
+        };
+        assert!(
+            matches!(
+                result.termination,
+                Termination::Exited(ProcessExit::Code(0))
+            ),
+            "a child spending one reservation for a second and a half leaves its state alone and \
+             rewrites its beat every fifty milliseconds, so it is never quiet for half of one: \
+             {:?} after {:?}",
+            result.termination,
+            result.duration
+        );
+    }
+
+    #[test]
+    fn a_child_is_told_to_beat_well_inside_every_window() {
+        for millis in [1, 2, 3, 4, 7, 100, 500, 5_000, 30_000, 3_600_000] {
+            let quiet = Duration::from_millis(millis);
+            let progress = Progress {
+                path: std::path::PathBuf::from("state"),
+                beat: std::path::PathBuf::from("beat"),
+                quiet,
+            };
+            let every = progress.beat_every();
+            assert!(
+                every >= Duration::from_millis(1) && (every * 2 <= quiet || every == quiet),
+                "a beat every {every:?} leaves a child moving in a {quiet:?} window time to be seen"
+            );
+            let (name, value) = progress.told();
+            assert_eq!(name, crate::instrument::STEP_BEAT_ENV);
+            assert_eq!(
+                value,
+                std::ffi::OsString::from(format!("{}@beat", every.as_millis())),
+                "the child is told the interval in whole milliseconds and the file it rewrites"
+            );
+        }
     }
 
     #[cfg(unix)]

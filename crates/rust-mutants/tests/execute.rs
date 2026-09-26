@@ -1393,16 +1393,38 @@ fn the_decision_is_the_page_s_table_for_everything_it_reads() {
         differ.is_empty(),
         "the engine decides otherwise than the page: {differ:#?}"
     );
+    let produced = produced_words();
     let dead: Vec<&[String; 7]> = table
         .iter()
         .zip(&used)
-        .filter(|(_, used)| !**used)
+        .filter(|(row, used)| !**used && reachable_here(row, &produced))
         .map(|(row, _)| row)
         .collect();
     assert!(
         dead.is_empty(),
         "a row no combination reaches says nothing: {dead:#?}"
     );
+}
+
+/// Every word each column of the page can read on this platform, which is what a row can be reached through here.
+fn produced_words() -> [std::collections::BTreeSet<&'static str>; 6] {
+    let mut produced: [std::collections::BTreeSet<&'static str>; 6] = Default::default();
+    for reading in every_reading() {
+        for (column, word) in produced.iter_mut().zip(reading.words) {
+            column.insert(word);
+        }
+    }
+    produced
+}
+
+/// Whether every word `row` asks for is one this platform produces: a `self-signal` exists only where a process can end of a signal it raised.
+fn reachable_here(
+    row: &[String; 7],
+    produced: &[std::collections::BTreeSet<&'static str>; 6],
+) -> bool {
+    row.iter()
+        .zip(produced)
+        .all(|(cell, words)| cell == "*" || cell.split(", ").any(|one| words.contains(one)))
 }
 
 #[cfg(unix)]

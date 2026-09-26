@@ -9,7 +9,7 @@ use std::process::Command;
 
 use sha2::{Digest as _, Sha256};
 
-use crate::gates::GateFailure;
+use crate::gates::GateError;
 use crate::kaniaudit::Harness;
 
 /// Everything a proof of the production laws rests on, by path from the workspace root: the prover reads the crate and its locked graph with the pinned toolchain, and the audit pins the prover.
@@ -55,7 +55,7 @@ pub fn arguments(export: &Path) -> Vec<OsString> {
 ///
 /// # Errors
 /// An input that cannot be read, or a path under the workspace that is not UTF-8.
-pub fn key(root: &Path) -> Result<String, GateFailure> {
+pub fn key(root: &Path) -> Result<String, GateError> {
     let mut hasher = Sha256::new();
     let mut part = |bytes: &[u8]| {
         hasher.update(bytes.len().to_be_bytes());
@@ -71,10 +71,10 @@ pub fn key(root: &Path) -> Result<String, GateFailure> {
         for file in files {
             let relative = file
                 .strip_prefix(root)
-                .map_err(|error| GateFailure(format!("{}: {error}", file.display())))?;
+                .map_err(|error| GateError(format!("{}: {error}", file.display())))?;
             part(spelled(relative)?.as_bytes());
             let bytes = std::fs::read(&file)
-                .map_err(|error| GateFailure(format!("{}: {error}", file.display())))?;
+                .map_err(|error| GateError(format!("{}: {error}", file.display())))?;
             part(&bytes);
         }
     }
@@ -82,16 +82,16 @@ pub fn key(root: &Path) -> Result<String, GateFailure> {
 }
 
 /// `path` as UTF-8, or the refusal to key a proof by a name that is not.
-fn spelled(path: &Path) -> Result<&str, GateFailure> {
+fn spelled(path: &Path) -> Result<&str, GateError> {
     path.to_str()
-        .ok_or_else(|| GateFailure(format!("{}: a path that is not UTF-8", path.display())))
+        .ok_or_else(|| GateError(format!("{}: a path that is not UTF-8", path.display())))
 }
 
 /// Every file at or under `path`.
-fn files_of(path: &Path) -> Result<Vec<PathBuf>, GateFailure> {
+fn files_of(path: &Path) -> Result<Vec<PathBuf>, GateError> {
     let mut files = Vec::new();
     for entry in walkdir::WalkDir::new(path) {
-        let entry = entry.map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+        let entry = entry.map_err(|error| GateError(format!("{}: {error}", path.display())))?;
         if entry.file_type().is_file() {
             files.push(entry.into_path());
         }
@@ -103,7 +103,7 @@ fn files_of(path: &Path) -> Result<Vec<PathBuf>, GateFailure> {
 ///
 /// # Errors
 /// A proof that fails, an export the audit refuses, or a cache that cannot be written.
-pub fn laws(root: &Path, cargo: &OsStr, cache: &Path) -> Result<String, GateFailure> {
+pub fn laws(root: &Path, cargo: &OsStr, cache: &Path) -> Result<String, GateError> {
     let key = key(root)?;
     let kept = cache.join(format!("{key}.json"));
     match crate::kaniaudit::audit(&kept, root) {
@@ -120,25 +120,25 @@ pub fn laws(root: &Path, cargo: &OsStr, cache: &Path) -> Result<String, GateFail
         Err(_kept_for_another_workspace_or_prover) => {}
     }
     std::fs::create_dir_all(cache)
-        .map_err(|error| GateFailure(format!("{}: {error}", cache.display())))?;
+        .map_err(|error| GateError(format!("{}: {error}", cache.display())))?;
     let fresh = tempfile::Builder::new()
         .prefix("kani-laws-")
         .suffix(".json")
         .tempfile_in(cache)
-        .map_err(|error| GateFailure(format!("{}: {error}", cache.display())))?;
+        .map_err(|error| GateError(format!("{}: {error}", cache.display())))?;
     let status = Command::new(cargo)
         .args(arguments(fresh.path()))
         .env_remove("RUSTFLAGS")
         .current_dir(root)
         .status()
-        .map_err(|error| GateFailure(format!("cargo kani could not start: {error}")))?;
+        .map_err(|error| GateError(format!("cargo kani could not start: {error}")))?;
     if !status.success() {
-        return Err(GateFailure(format!("cargo kani failed: {status}")));
+        return Err(GateError(format!("cargo kani failed: {status}")));
     }
-    crate::kaniaudit::audit(fresh.path(), root).map_err(|error| GateFailure(error.to_string()))?;
+    crate::kaniaudit::audit(fresh.path(), root).map_err(|error| GateError(error.to_string()))?;
     fresh
         .persist(&kept)
-        .map_err(|error| GateFailure(format!("{}: {error}", kept.display())))?;
+        .map_err(|error| GateError(format!("{}: {error}", kept.display())))?;
     Ok(format!(
         "kani-laws: {} production harnesses proved and audited, and the proof kept for these \
          exact inputs ({})",

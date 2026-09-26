@@ -21,11 +21,18 @@ mod tests {
     fn a_message_arrives_in_time() {
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            sender.send(super::work(1)).expect("the receiver waits");
+            let begun = std::time::Instant::now();
+            let answer = super::work(1);
+            sender
+                .send((answer, begun.elapsed()))
+                .expect("the receiver waits");
         });
-        assert_eq!(
-            receiver.recv_timeout(std::time::Duration::from_millis(50)),
-            Ok(2)
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let (answer, took) = receiver.recv().expect("the thread answers");
+        assert_eq!(answer, 2);
+        assert!(
+            took < std::time::Duration::from_millis(90),
+            "the answer took {took:?}"
         );
     }
 }

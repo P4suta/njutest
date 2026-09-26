@@ -113,11 +113,10 @@ impl Upstream {
         self.served.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    fn join(&mut self) -> Result<(), UpstreamFailure> {
+    fn join(&mut self) -> Result<(), UpstreamError> {
         self.stopping
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        TcpStream::connect(self.address)
-            .map_err(|source| UpstreamFailure::CannotWake { source })?;
+        TcpStream::connect(self.address).map_err(|source| UpstreamError::CannotWake { source })?;
         let Some(serving) = self.serving.take() else {
             return Ok(());
         };
@@ -125,7 +124,7 @@ impl Upstream {
             Ok(()) => Ok(()),
             Err(panic) => {
                 drop(panic);
-                Err(UpstreamFailure::Panicked)
+                Err(UpstreamError::Panicked)
             }
         }
     }
@@ -140,7 +139,7 @@ impl Drop for Upstream {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum UpstreamFailure {
+enum UpstreamError {
     #[error("the upstream listener could not be woken: {source}")]
     CannotWake {
         #[source]

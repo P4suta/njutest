@@ -30,7 +30,7 @@ pub use depinfo::{
     parse_dep_info, units_of,
 };
 
-pub use locate::{LocateOptions, Toolchain, command_failed, resolve_executable};
+pub use locate::{LocateOptions, Selecting, Toolchain, command_failed, resolve_executable};
 pub use messages::{
     Artifact, BuildScript, CompilerMessage, Diagnostic, DiagnosticSpan, Message, Profile,
     names_file, parse_messages,
@@ -101,13 +101,13 @@ impl CargoErrorKind {
 pub struct CargoError {
     kind: CargoErrorKind,
     message: String,
-    source: Option<CargoSource>,
+    source: Option<CargoSourceError>,
 }
 
 /// What underlies a cargo failure.
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum CargoSource {
+pub enum CargoSourceError {
     /// A document cargo printed could not be read.
     Json(serde_json::Error),
     /// A file could not be read.
@@ -116,7 +116,7 @@ pub enum CargoSource {
     Utf8(std::str::Utf8Error),
 }
 
-impl fmt::Display for CargoSource {
+impl fmt::Display for CargoSourceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Json(error) => error.fmt(f),
@@ -126,7 +126,7 @@ impl fmt::Display for CargoSource {
     }
 }
 
-impl std::error::Error for CargoSource {
+impl std::error::Error for CargoSourceError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Json(error) => Some(error),
@@ -136,19 +136,19 @@ impl std::error::Error for CargoSource {
     }
 }
 
-impl From<serde_json::Error> for CargoSource {
+impl From<serde_json::Error> for CargoSourceError {
     fn from(error: serde_json::Error) -> Self {
         Self::Json(error)
     }
 }
 
-impl From<std::io::Error> for CargoSource {
+impl From<std::io::Error> for CargoSourceError {
     fn from(error: std::io::Error) -> Self {
         Self::Io(error)
     }
 }
 
-impl From<std::str::Utf8Error> for CargoSource {
+impl From<std::str::Utf8Error> for CargoSourceError {
     fn from(error: std::str::Utf8Error) -> Self {
         Self::Utf8(error)
     }
@@ -163,7 +163,7 @@ impl CargoError {
         }
     }
 
-    pub(crate) fn with_source(mut self, source: impl Into<CargoSource>) -> Self {
+    pub(crate) fn with_source(mut self, source: impl Into<CargoSourceError>) -> Self {
         self.source = Some(source.into());
         self
     }

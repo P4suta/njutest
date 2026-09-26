@@ -27,7 +27,7 @@ Deriving the bound from the baseline's count cannot either, for the same reason:
 ## Decision
 
 For an execution that counts its steps, `timeout` is how long it may go **without raising the count**.
-The runner reads the step state the process rewrites at every boundary, and any change in its content starts the window again.
+The runner reads the step state the process rewrites as it counts, and the beat it rewrites while it spends a reservation of the count ([ADR 0039](0039-a-step-is-spent-in-memory.md)); any change in the content of either starts the window again.
 
 - A process that spins through instrumented source keeps raising the count and is ended by the allowance, at the same count everywhere.
 - A process that blocks raises nothing, and the window ends it as `stalled`, which is `waited`.
