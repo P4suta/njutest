@@ -2133,6 +2133,85 @@ fn a_catalog_measured_in_shards_and_merged_concludes_what_it_concludes_measured_
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn every_kill_a_run_reports_rests_on_a_confirmation_it_recorded() {
+    let fixture = fixture("fixture-assured");
+    let output = verify(&fixture, &["--no-cache", "--trace"]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let recording = std::fs::read_dir(fixture.root.join(".njutest/trace"))
+        .expect("the trace root")
+        .next()
+        .expect("one namespace")
+        .expect("the namespace is readable")
+        .path();
+    let text =
+        std::fs::read_to_string(recording.join(njutest::trace::FILE_NAME)).expect("the recording");
+    let events: Vec<serde_json::Value> = text
+        .lines()
+        .map(|line| njutest_devkit::strictjson::decode_str(line).expect("a recorded line"))
+        .collect();
+    assert_eq!(
+        off_the_trace_schema(&recording),
+        Vec::<String>::new(),
+        "every recorded line is on its schema"
+    );
+    let of_type = |kind: &str| -> Vec<&serde_json::Value> {
+        events
+            .iter()
+            .filter(|event| event["payload"]["type"] == kind)
+            .collect()
+    };
+    let report = document(&fixture);
+    let kills: Vec<(String, String)> = report["builds"][0]["parts"][0]["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .filter(|row| row["decision"]["outcome"] == "killed")
+        .map(|row| {
+            (
+                row["id"].as_str().unwrap_or_default().to_owned(),
+                row["decision"]["killed_by"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        })
+        .collect();
+    assert!(!kills.is_empty(), "the fixture kills something: {report}");
+    let confirmations = of_type("confirm");
+    let controls = of_type("control");
+    for (mutant, target) in &kills {
+        let confirmation = confirmations
+            .iter()
+            .find(|event| {
+                event["payload"]["confirm"]["mutant"] == mutant.as_str()
+                    && event["payload"]["confirm"]["target"] == target.as_str()
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "the kill of {mutant} by {target} names no recorded confirmation, so nothing a reader holds says the original code passed that test and the kill came back: {confirmations:?}"
+                )
+            });
+        let answered_for = &confirmation["payload"]["confirm"]["answered_for"];
+        let confirmed_at = confirmation["seq"].as_u64().expect("a recorded seq");
+        assert!(
+            controls.iter().any(|control| {
+                control["payload"]["control"]["asked_for"] == *answered_for
+                    && control["payload"]["control"]["target"] == target.as_str()
+                    && control["seq"].as_u64().expect("a recorded seq") < confirmed_at
+            }),
+            "the control a confirmation rests on is recorded before it: {controls:?}"
+        );
+    }
+}
+
 #[cfg(unix)]
 fn published(name: &str) -> serde_json::Value {
     let path = njutest_devkit::paths::workspace_root()

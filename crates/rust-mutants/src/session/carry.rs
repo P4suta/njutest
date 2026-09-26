@@ -60,6 +60,7 @@ impl Session {
                     Body {
                         digest: one.body_digest.clone(),
                         sealing,
+                        start: one.start,
                     },
                 );
                 by_index.insert(one.index, (one.item, one.body_digest));
@@ -205,9 +206,11 @@ impl Session {
                     .items
                     .iter()
                     .map(|item| {
+                        let body = tree.items.get(item)?;
                         Some(Entered {
                             item: item.clone(),
-                            body_digest: tree.items.get(item)?.digest.clone(),
+                            body_digest: body.digest.clone(),
+                            start: body.start?,
                         })
                     })
                     .collect::<Option<BTreeSet<_>>>()?;

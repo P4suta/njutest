@@ -164,3 +164,76 @@ fn a_change_set_narrows_what_is_mutated_and_never_what_is_marked() {
     narrowed.close().expect("close");
     whole.close().expect("close");
 }
+
+/// What the program compiled from `source` says `line!()` and `column!()` are where its probe calls them, and where the evidence places that call.
+fn reported_and_placed(source: &[u8]) -> ((u32, u32), Option<rust_mutants::skeleton::Position>) {
+    let dir = tempfile::tempdir().expect("a directory");
+    let path = dir.path().join("probe.rs");
+    std::fs::write(&path, source).expect("the probe");
+    let built = std::process::Command::new("rustc")
+        .args(["--edition", "2024", "--out-dir"])
+        .arg(dir.path())
+        .arg(&path)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("rustc runs");
+    assert!(
+        built.status.success(),
+        "{}",
+        njutest_devkit::process::strict_utf8(&built.stderr)
+    );
+    let ran = std::process::Command::new(dir.path().join("probe"))
+        .output()
+        .expect("the probe runs");
+    let said = njutest_devkit::process::strict_utf8(&ran.stdout);
+    let mut numbers = said
+        .split_whitespace()
+        .map(|number| number.parse::<u32>().expect("the probe prints two numbers"));
+    let reported = (
+        numbers.next().expect("a line"),
+        numbers.next().expect("a column"),
+    );
+    let at = source
+        .windows(b"column!()".len())
+        .position(|window| window == b"column!()")
+        .expect("the probe calls column!");
+    let at = u32::try_from(at).expect("a small probe");
+    (reported, rust_mutants::skeleton::position(source, at))
+}
+
+#[test]
+fn the_evidence_places_a_token_where_the_compiler_reports_it() {
+    const PROBE: &str = "fn probe() -> (u32, u32) {(line!(), column!())}";
+    const MAIN: &str =
+        "fn main() { let (line, column) = probe(); println!(\"{line} {column}\"); }\n";
+    for (case, source) in [
+        (
+            "a multi-byte character, a four-byte character and a tab before it on its line",
+            format!("/* \u{e9}\u{1f980}\t */ {PROBE}\n{MAIN}").into_bytes(),
+        ),
+        (
+            "a carriage return and a line feed ending the line before it",
+            format!("// before\r\n{PROBE}\n{MAIN}").into_bytes(),
+        ),
+        (
+            "a carriage return alone earlier on its line",
+            format!("/*\r*/ {PROBE}\n{MAIN}").into_bytes(),
+        ),
+        (
+            "a byte-order mark at the start of the file, on its line",
+            [
+                b"\xEF\xBB\xBF".as_slice(),
+                format!("{PROBE}\n{MAIN}").as_bytes(),
+            ]
+            .concat(),
+        ),
+    ] {
+        let ((line, column), placed) = reported_and_placed(&source);
+        assert_eq!(
+            placed,
+            Some(rust_mutants::skeleton::Position { line, column }),
+            "with {case}, the evidence places a token where the compiled program reports it, since \
+             that is the position an execution can read and the carry rule compares"
+        );
+    }
+}

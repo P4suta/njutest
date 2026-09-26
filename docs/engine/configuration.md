@@ -261,6 +261,7 @@ and the claim would otherwise go on exempting the other two on its strength.
 path = "src/scanner/**"        # glob against the workspace-relative path
 lines = "40-58"                # inclusive; only with a literal path
 item = "Scanner::skip_ws"      # a suffix of the item path; not with lines
+text = "while let Some(c)"     # source the hidden lines hold; follows the code
 reason = "a hand-tuned loop; a mutant here is a timeout, not a finding"
 ```
 
@@ -268,6 +269,10 @@ A configured skip is the decision a `rust-mutants: skip` comment makes,
 written where the code cannot be edited or where one entry covers what a hundred comments would.
 `reason` is required for the same reason an expectation's is.
 `lines` and `item` are two ways of saying where, so an entry says it once, and `lines` needs a literal path: line forty of every file a glob matches is not a place anybody meant.
+
+`text` anchors an entry to the source it hides: it hides only what starts on a line holding that text, so it follows the code where a line number does not.
+With `lines`, the text must still be on those lines; once code above has moved it, the entry hides nothing rather than whatever moved in, and the finding says where the text is now.
+With `item`, or with neither, it narrows what the entry hides to the lines that hold it.
 
 An entry that hid nothing is an `unmatched-skip` finding, exactly as a comment that hid nothing is.
 A skip that quietly stops meaning anything when the code under it moves is worse than no skip at all.

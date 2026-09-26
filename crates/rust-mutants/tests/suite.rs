@@ -39,6 +39,8 @@ mod devkit_environment;
 mod docs_ledger;
 #[path = "duration.rs"]
 mod duration;
+#[path = "edits_parse.rs"]
+mod edits_parse;
 #[path = "equivalence.rs"]
 mod equivalence;
 #[path = "errors_doc.rs"]

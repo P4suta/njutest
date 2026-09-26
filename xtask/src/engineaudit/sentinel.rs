@@ -483,7 +483,8 @@ fn carry_beside(
         "index": 0, "name": "larger",
         "item": { "package": "demo", "path": path, "ordinal": 0 },
         "body_digest": crate::engineaudit::carry::digest_of(body),
-        "sealed": true, "unsealed": null
+        "sealed": true, "unsealed": null,
+        "start": { "line": 1, "column": start.checked_add(1) }
     });
     merge(&mut item, claims.clone());
     vec![
@@ -502,7 +503,7 @@ fn carry_beside(
         (
             "skeletons-v1.json",
             json!({
-                "document_type": "rust-mutants/skeletons", "schema_version": 1,
+                "document_type": "rust-mutants/skeletons", "schema_version": 2,
                 "items": [item], "units": units
             }),
         ),
@@ -544,6 +545,30 @@ fn with_controls(targets: &[&str], reached: fn(&str) -> Vec<u64>) -> Vec<Value> 
     events
 }
 
+/// An execution of each of `targets`, each entering the one item whose body starts at byte `start` of its one-line file, the last detecting where `killed`.
+fn executions_of(
+    targets: [&str; 2],
+    (item, digest, start): (&Value, &str, usize),
+    killed: bool,
+) -> Vec<Value> {
+    targets
+        .iter()
+        .enumerate()
+        .map(|(at, target)| {
+            json!({
+                "target": target, "filter": null,
+                "skeleton": crate::engineaudit::carry::digest_of(b""),
+                "entered": [{
+                    "item": item, "body_digest": digest,
+                    "start": { "line": 1, "column": start.checked_add(1) }
+                }],
+                "completeness": "whole",
+                "detected": killed && at == 1
+            })
+        })
+        .collect()
+}
+
 /// A run that carried one answer about the row at `row`, whose evidence agrees with it everywhere `planted` does not change.
 fn believed_beside(
     name: &'static str,
@@ -569,23 +594,15 @@ fn believed_beside(
     } else {
         ("return-default@1", "Default::default()")
     };
-    let executions: Vec<Value> = [TARGET, other]
-        .iter()
-        .enumerate()
-        .map(|(at, target)| {
-            json!({
-                "target": target, "filter": null,
-                "skeleton": crate::engineaudit::carry::digest_of(b""),
-                "entered": [{ "item": item, "body_digest": digest }],
-                "completeness": "whole",
-                "detected": outcome == "killed" && at == 1
-            })
-        })
-        .collect();
+    let executions = executions_of(
+        [TARGET, other],
+        (&item, &digest, start),
+        outcome == "killed",
+    );
     let mut believed = json!({
         "mutant": if row == 0 { KILLED } else { SURVIVED },
         "record": {
-            "schema": "rust-mutants-carried-v1",
+            "schema": "rust-mutants-carried-v2",
             "locus": {
                 "item": item, "body_digest": digest,
                 "start": site.checked_sub(start), "end": site.checked_sub(start).and_then(|at| at.checked_add(1)),
@@ -619,7 +636,7 @@ fn believed_beside(
     beside.push((
         "carried-v1.json",
         json!({
-            "document_type": "rust-mutants/carried", "schema_version": 1,
+            "document_type": "rust-mutants/carried", "schema_version": 2,
             "records": [believed]
         }),
     ));
@@ -687,6 +704,18 @@ fn believed_plants() -> Vec<Perturbation> {
             },
         ),
         believed_beside(
+            "a kill carried though a body its killer entered starts elsewhere since",
+            (0, "killed", "demo/test/other"),
+            |believed| {
+                merge(
+                    believed,
+                    json!({ "record": { "executions": [{}, {
+                        "entered": [{ "start": { "line": 2, "column": 1 } }]
+                    }] } }),
+                );
+            },
+        ),
+        believed_beside(
             "a kill carried across a skeleton that has changed since",
             (0, "killed", "demo/test/other"),
             |believed| {
@@ -699,12 +728,58 @@ fn believed_plants() -> Vec<Perturbation> {
     ]
 }
 
+/// The defects planted in where the run places a body and where it says the compiler reads a position.
+fn placement_plants() -> Vec<Perturbation> {
+    let clean = clean();
+    let sealed = carried_source("{ if a > b { a } else { b } }");
+    vec![
+        Perturbation {
+            name: "an item placed where its body does not start, in the file the run measured",
+            document: with(json!({ "mutants": [
+                { "source_digest": crate::engineaudit::carry::digest_of(sealed.as_bytes()) },
+                { "source_digest": crate::engineaudit::carry::digest_of(sealed.as_bytes()) }
+            ] })),
+            beside: carry_beside(
+                "src/lib.rs",
+                &sealed,
+                &json!({ "start": { "line": 3, "column": 1 } }),
+                &json!([]),
+            ),
+            tree: vec![("src/lib.rs", sealed.clone())],
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "where the compiler reads a position kept as a digest its file does not hash to",
+            beside: {
+                let digest = "0".repeat(64);
+                let entries = json!({
+                    "$positions/$root/src/other.rs": digest
+                });
+                let folded = format!("$positions/$root/src/other.rs\0{digest}\n");
+                carry_beside(
+                    "src/other.rs",
+                    &sealed,
+                    &json!({}),
+                    &json!([{
+                        "package": "demo", "target": "demo", "kind": "lib", "test": false,
+                        "skeleton": crate::engineaudit::carry::digest_of(folded.as_bytes()),
+                        "entries": entries
+                    }]),
+                )
+            },
+            tree: vec![("src/other.rs", sealed)],
+            ..clean
+        },
+    ]
+}
+
 /// The defects planted for the carry layer.
 fn carry_plants() -> Vec<Perturbation> {
     let clean = clean();
     let sealed = carried_source("{ if a > b { a } else { b } }");
     let macro_body = carried_source("{ foo!(a, b) }");
     let mut plants = believed_plants();
+    plants.extend(placement_plants());
     plants.extend([
         Perturbation {
             name: "a body called sealed that invokes a macro off the page's list",
