@@ -9,7 +9,7 @@
               file that cannot be read leaves nothing to assert"
 )]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use njutest_devkit::result::{OptionState, option_state};
@@ -30,6 +30,279 @@ fn task(name: &str) -> String {
         .and_then(|after| after.find("\n[tasks"))
         .map_or(rest.len(), |at| at.saturating_add(1));
     rest.get(..end).unwrap_or_default().to_owned()
+}
+
+fn advisories_ignore_is_empty(deny: &str) -> bool {
+    let Ok(configuration) = toml::from_str::<toml::Value>(deny) else {
+        return false;
+    };
+    configuration
+        .get("advisories")
+        .and_then(|advisories| advisories.get("ignore"))
+        .and_then(toml::Value::as_array)
+        .is_some_and(Vec::is_empty)
+}
+
+fn mise_runs<'a>(configuration: &'a toml::Value, name: &str) -> Vec<&'a str> {
+    let run = configuration
+        .get("tasks")
+        .and_then(|tasks| tasks.get(name))
+        .and_then(|task| task.get("run"))
+        .unwrap_or_else(|| panic!("mise task {name} has no run command"));
+    match run {
+        toml::Value::String(command) => vec![command],
+        toml::Value::Array(commands) => commands
+            .iter()
+            .map(|command| {
+                command
+                    .as_str()
+                    .unwrap_or_else(|| panic!("mise task {name} has a non-command run entry"))
+            })
+            .collect(),
+        _ => panic!("mise task {name} has an unknown run shape"),
+    }
+}
+
+fn ci_run_steps(workflow: &str, job: &str) -> Vec<(String, String)> {
+    let header = format!("  {job}:");
+    let mut in_job = false;
+    let mut steps: Vec<Vec<&str>> = Vec::new();
+    for line in workflow.lines() {
+        if !in_job {
+            in_job = line == header;
+            continue;
+        }
+        if line
+            .strip_prefix("  ")
+            .is_some_and(|tail| !tail.starts_with([' ', '#']) && tail.ends_with(':'))
+        {
+            break;
+        }
+        if let Some(first) = line.strip_prefix("      - ") {
+            steps.push(vec![first]);
+        } else if let Some(step) = steps.last_mut() {
+            step.push(line);
+        }
+    }
+    assert!(in_job, "CI has no job {job}");
+    let mut found = Vec::new();
+    for step in steps {
+        let mut lines = step.into_iter();
+        let first = lines.next().unwrap_or_default();
+        let mut run = None;
+        let mut block = Vec::new();
+        let mut in_block = false;
+        for line in lines {
+            if let Some(command) = line.strip_prefix("        run: ") {
+                run = Some(command);
+                in_block = command == "|";
+            } else if in_block && (line.starts_with("          ") || line.is_empty()) {
+                block.push(line.strip_prefix("          ").unwrap_or_default());
+            } else {
+                in_block = false;
+            }
+        }
+        if first.starts_with("run: ") || run.is_some() {
+            let name = first
+                .strip_prefix("name: ")
+                .unwrap_or_else(|| panic!("CI {job} has an unnamed run step"));
+            let command = run.unwrap_or_else(|| panic!("CI {job}/{name} has no run"));
+            let script = if command == "|" {
+                block.join("\n")
+            } else {
+                command.to_owned()
+            };
+            found.push((name.to_owned(), script.trim_end().to_owned()));
+        }
+    }
+    found
+}
+
+const FETCH_LOCKED: &str =
+    "cargo fetch --locked\ncargo fetch --locked --manifest-path fuzz/Cargo.toml";
+const DENY_FETCH: &str = "for attempt in 1 2 3 4 5; do\n  cargo deny --locked --all-features fetch db && exit 0\n  sleep $((attempt * 15))\ndone\nexit 1";
+const AUDIT_FETCH: &str = "for attempt in 1 2 3 4 5; do\n  rm -rf \"$HOME/.cargo/advisory-db\"\n  git clone --depth 1 https://github.com/RustSec/advisory-db.git \"$HOME/.cargo/advisory-db\" && exit 0\n  sleep $((attempt * 15))\ndone\nexit 1";
+const COMMITTED_CI: &str = "git fetch --no-tags origin \"refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}\"\ngit cat-file -e \"${HEAD_SHA}^{commit}\"\ncommitted \"origin/${BASE_REF}..${HEAD_SHA}\"";
+
+#[derive(Clone, Copy)]
+enum CiCommand {
+    Task(&'static str),
+    Runs(&'static str, &'static [usize]),
+    CiOnly(&'static str, &'static str),
+}
+
+fn lint_ci_steps(fetch: CiCommand) -> Vec<(&'static str, CiCommand)> {
+    use CiCommand::{CiOnly, Runs};
+    vec![
+        ("Fetch the locked dependency graph", fetch),
+        ("fmt", Runs("fmt:check", &[0])),
+        ("clippy", Runs("clippy", &[0])),
+        ("doc", Runs("doc", &[0])),
+        (
+            "repository gates (seam ratchet, dependency direction, fixtures, release consistency)",
+            Runs("gates", &[0]),
+        ),
+        (
+            "fuzz targets satisfy the root Clippy policy",
+            Runs("fuzz:clippy", &[0]),
+        ),
+        ("typos", Runs("lint", &[0])),
+        ("taplo", Runs("fmt:check", &[1, 2])),
+        ("actionlint", Runs("lint", &[1])),
+        (
+            "every workflow the documentation shows passes actionlint against this repository's actions",
+            Runs("lint", &[2]),
+        ),
+        (
+            "committed (pull request commits)",
+            CiOnly(
+                COMMITTED_CI,
+                "CI fetches the PR base and checks its head SHA before the local committed-range rule",
+            ),
+        ),
+    ]
+}
+
+fn expected_ci_steps(job: &str) -> Vec<(&'static str, CiCommand)> {
+    use CiCommand::{CiOnly, Runs, Task};
+    let fetch = CiOnly(
+        FETCH_LOCKED,
+        "CI primes both lockfiles before an offline run",
+    );
+    match job {
+        "test" => vec![
+            ("Fetch the locked dependency graph", fetch),
+            ("Test every target", Task("test:ci")),
+            ("Doctests", Runs("test:doc", &[0])),
+            (
+                "Lint what only this platform compiles",
+                Runs("clippy", &[0]),
+            ),
+        ],
+        "lint" => lint_ci_steps(fetch),
+        "deny" => vec![
+            (
+                "Fetch the advisory database",
+                CiOnly(
+                    DENY_FETCH,
+                    "CI retries the network fetch before the shared offline deny check",
+                ),
+            ),
+            ("Check dependency policy", Runs("deny", &[1])),
+        ],
+        "audit" => vec![
+            (
+                "Fetch the advisory database",
+                CiOnly(
+                    AUDIT_FETCH,
+                    "CI uses its isolated Cargo home; the local audit task uses a target-local database",
+                ),
+            ),
+            (
+                "Audit dependency advisories",
+                CiOnly(
+                    "cargo audit --no-fetch --deny warnings",
+                    "CI audits its Cargo-home database; the local audit task passes its target-local database with --db",
+                ),
+            ),
+        ],
+        "package-install" => vec![
+            ("Fetch the locked dependency graph", fetch),
+            ("Package and install both CLIs", Task("package")),
+        ],
+        "book" => vec![(
+            "build the book, which refuses a summary naming a page nobody holds",
+            Runs("book", &[0]),
+        )],
+        "kani-verified" => vec![
+            ("Fetch the locked dependency graph", fetch),
+            (
+                "Install the exact verifier and backend",
+                CiOnly(
+                    "cargo install --locked kani-verifier --version '=0.68.0'\ncargo kani setup",
+                    "CI installs the verifier that the local Kani task requires",
+                ),
+            ),
+            (
+                "Prove the production mutation outcome laws",
+                Task("kani:laws"),
+            ),
+            (
+                "Exercise generated harnesses and the retained-result protocol with real Kani",
+                Task("kani:verified"),
+            ),
+        ],
+        _ => panic!("locally answerable CI job {job} has no step-command correspondence"),
+    }
+}
+
+#[test]
+fn every_locally_answerable_ci_step_runs_its_mise_command() {
+    let workflow = repository(".github/workflows/ci.yml");
+    let mise: toml::Value = toml::from_str(&repository("mise.toml"))
+        .unwrap_or_else(|error| panic!("mise.toml: {error}"));
+    let mut used: BTreeMap<&str, BTreeSet<usize>> = BTreeMap::new();
+    for (job, local) in GATED {
+        if local.is_none() {
+            continue;
+        }
+        let actual = ci_run_steps(&workflow, job);
+        let expected = expected_ci_steps(job);
+        assert_eq!(
+            actual
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            expected.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            "CI {job} added, removed, or reordered a run step without accounting for its local command"
+        );
+        for ((name, script), (_, command)) in actual.iter().zip(expected) {
+            let (wanted, reason) = match command {
+                CiCommand::Task(task) => {
+                    assert!(!mise_runs(&mise, task).is_empty());
+                    (format!("mise run {task}"), "CI invokes the task itself")
+                }
+                CiCommand::Runs(task, indices) => {
+                    let runs = mise_runs(&mise, task);
+                    used.entry(task)
+                        .or_default()
+                        .extend(indices.iter().copied());
+                    let selected = indices
+                        .iter()
+                        .map(|index| {
+                            *runs
+                                .get(*index)
+                                .unwrap_or_else(|| panic!("mise task {task} lost command {index}"))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" && ");
+                    (selected, "CI runs the same command as the local task")
+                }
+                CiCommand::CiOnly(script, reason) => (script.to_owned(), reason),
+            };
+            assert_eq!(script, &wanted, "CI {job}/{name}: {reason}");
+        }
+    }
+    let deny = mise_runs(&mise, "deny");
+    let deny_fetch = deny
+        .first()
+        .unwrap_or_else(|| panic!("mise deny has no fetch command"));
+    assert!(DENY_FETCH.contains(&format!("{deny_fetch} && exit 0")));
+    used.entry("deny").or_default().insert(0);
+    for (task, selected) in used {
+        let every: BTreeSet<usize> = (0..mise_runs(&mise, task).len()).collect();
+        assert_eq!(
+            selected, every,
+            "mise task {task} has a command CI does not run"
+        );
+    }
+    let audit = mise_runs(&mise, "audit");
+    assert_eq!(audit.len(), 1, "CI does not run an added audit command");
+    let audit_run = audit
+        .first()
+        .unwrap_or_else(|| panic!("mise audit has no run command"));
+    assert!(audit_run.lines().any(|line| line.trim() == "git clone --quiet --depth 1 https://github.com/RustSec/advisory-db.git \"${db}\" && fetched=true"));
+    assert!(audit_run.lines().any(|line| line.trim() == "cargo audit --no-fetch --deny warnings --db \"${db}\" || {"));
 }
 
 /// Every gate `cargo xtask all` runs, which is what CI runs.
@@ -693,11 +966,21 @@ fn nothing_shrinks_what_a_gate_sees_from_a_file_of_its_own() {
     }
     let deny = repository("deny.toml");
     assert!(
-        deny.contains("ignore = []"),
+        advisories_ignore_is_empty(&deny),
         "a waived advisory is a decision somebody made about a vulnerability, and an \
          ignore list that grows without a number going up in a file of its own is the \
          ledger this repository refuses everywhere else: {deny}"
     );
+}
+
+#[test]
+fn an_advisory_ignore_cannot_be_hidden_behind_a_comment() {
+    for deny in [
+        "[advisories]\n# ignore = []\nignore = [\"RUSTSEC-2026-0001\"]\n",
+        "[advisories]\n# ignore = []\n",
+    ] {
+        assert!(!advisories_ignore_is_empty(deny), "{deny}");
+    }
 }
 
 #[test]
