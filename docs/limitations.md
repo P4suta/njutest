@@ -290,7 +290,9 @@ And the working directory and the order of the tests are not knobs: cargo's cont
 
 ## What a run asks of a suite that starts a process of its own
 
-On unix an execution is a process group, and stopping it ends every member; a process a test starts that calls `setsid` or `setpgid` leaves that group, as a daemon does, and outlives the execution.
+On Unix an execution owns an inherited process group, and a group signal reaches every member only when the kernel permits it.
+On macOS a protected descendant can make the group signal fail; the runner then signals the child it started, while `stop_group` classifies the result as `LeaderOnly` and cannot guarantee that the descendant ended.
+A process a test starts that calls `setsid` or `setpgid` leaves the group, as a daemon does, and outlives the execution.
 A run ends every such process when it closes: it lists the processes whose working directory lies in its copy of the tree or its scratch, which only a process the run started has once its executions have ended, ends them, and names them in the trace as `escaped-processes`.
 A run that refuses or is cancelled ends them too, as it removes its copy, since a copy is never removed while a process still works in it; that path writes no trace record of them.
 On Windows the execution's Job Object ends every descendant, so nothing escapes it.
