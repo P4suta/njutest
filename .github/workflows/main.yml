@@ -36,6 +36,7 @@ jobs:
           REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
         run: |
+          set -euo pipefail
           pr=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '[.[] | select(.merged_at != null)][0].number // empty')
           if [ -z "$pr" ]; then
             echo "::error::$SHA reached main through no merged pull request, so no run of ci.yml has seen its tree"
@@ -44,12 +45,12 @@ jobs:
           head=$(gh api "repos/$REPO/pulls/$pr" --jq .head.sha)
           main_tree=$(gh api "repos/$REPO/git/commits/$SHA" --jq .tree.sha)
           head_tree=$(gh api "repos/$REPO/git/commits/$head" --jq .tree.sha)
-          if [ "$main_tree" != "$head_tree" ]; then
+          if ! [[ "$main_tree" =~ ^[0-9a-f]{40}$ && "$main_tree" == "$head_tree" ]]; then
             echo "::error::main's tree $main_tree is not the tree $head_tree that #$pr's head $head was tested as; run ci.yml on main"
             exit 1
           fi
           passed=$(gh api "repos/$REPO/commits/$head/check-runs?check_name=ci-success&per_page=100" --jq '[.check_runs[] | select(.conclusion == "success")] | length')
-          if [ "$passed" -lt 1 ]; then
+          if ! [[ "$passed" =~ ^[0-9]+$ && "$passed" -ge 1 ]]; then
             echo "::error::#$pr's head $head holds main's tree, and no ci-success of it succeeded; run ci.yml on main"
             exit 1
           fi
