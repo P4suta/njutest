@@ -116,12 +116,24 @@ fn assert_shape_subset(expected: &Value, actual: &Value, at: &str) {
 }
 
 #[test]
+fn a_typed_metadata_document_serializes_to_cargos_field_shapes() {
+    for name in ["fixture-simple", "fixture-macros"] {
+        let fixture = Fixture::copy(name);
+        let (said, real_value) = real(fixture.root());
+        let serialized = serde_json::to_value(&said).expect("typed cargo metadata serializes");
+        assert_shape_subset(&real_value, &serialized, name);
+    }
+}
+
+#[test]
 fn a_double_of_a_metadata_document_parses_to_what_cargo_parses_to() {
     for name in ["fixture-simple", "fixture-macros"] {
         let fixture = Fixture::copy(name);
         let (said, real_value) = real(fixture.root());
         let (double, double_value) = doubled(fixture.root(), &said);
         assert_shape_subset(&double_value, &real_value, name);
+        let serialized = serde_json::to_value(&double).expect("typed double serializes");
+        assert_shape_subset(&double_value, &serialized, name);
         assert_eq!(
             double.workspace_root, said.workspace_root,
             "{name}: the reader is handed a different tree"

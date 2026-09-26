@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::locate::command_failed;
 use super::{CargoError, CargoErrorKind, Driver};
@@ -26,7 +26,7 @@ pub struct MetadataOptions {
 }
 
 /// The metadata document.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Metadata {
     /// The format version, `1`.
     pub version: u32,
@@ -49,7 +49,7 @@ pub struct Metadata {
 }
 
 /// The resolved dependency graph.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Resolve {
     /// One node per package in the graph.
     #[serde(default)]
@@ -62,7 +62,7 @@ pub struct Resolve {
 }
 
 /// One package's edges in the resolved graph.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Node {
     /// The package this node is about.
     pub id: String,
@@ -74,7 +74,7 @@ pub struct Node {
 }
 
 /// One edge of the resolved graph.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct NodeDep {
     /// The package depended on.
     pub pkg: String,
@@ -87,7 +87,7 @@ pub struct NodeDep {
 }
 
 /// One way one package depends on another.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct DepKind {
     /// `null` for a normal dependency, `"dev"` or `"build"` otherwise.
     #[serde(default)]
@@ -108,7 +108,7 @@ impl DepKind {
 }
 
 /// One package.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Package {
     /// The package id, as cargo spells it.
     pub id: String,
@@ -159,7 +159,7 @@ pub struct Package {
 }
 
 /// One dependency, as the manifest declares it.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Dependency {
     /// The dependency's name.
     pub name: String,
@@ -190,7 +190,7 @@ impl Package {
 }
 
 /// One target of a package.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Target {
     /// The target name.
     pub name: String,

@@ -11,6 +11,8 @@
 
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
+
 /// The identity cargo gives a package whose manifest sits in `directory`.
 ///
 /// `path+file:///abs#version` where the directory is named after the package,
@@ -62,6 +64,17 @@ pub struct Target {
     pub source: PathBuf,
 }
 
+#[derive(Serialize)]
+struct TargetValue<'a> {
+    kind: [&'a str; 1],
+    crate_types: [&'a str; 1],
+    name: &'a str,
+    src_path: &'a str,
+    edition: &'static str,
+    test: bool,
+    doctest: bool,
+}
+
 impl Target {
     /// A library target named after its package, with the sources a fixture keeps.
     #[must_use]
@@ -75,20 +88,20 @@ impl Target {
 
     /// This target as cargo reports one.
     #[must_use]
-    fn value(&self) -> serde_json::Value {
+    fn value(&self) -> TargetValue<'_> {
         let crate_type = match self.kind.as_str() {
             "bin" | "test" | "example" | "bench" | "custom-build" => "bin",
             other => other,
         };
-        serde_json::json!({
-            "kind": [self.kind],
-            "crate_types": [crate_type],
-            "name": self.name,
-            "src_path": crate::paths::utf8(&self.source),
-            "edition": "2024",
-            "test": true,
-            "doctest": true,
-        })
+        TargetValue {
+            kind: [&self.kind],
+            crate_types: [crate_type],
+            name: &self.name,
+            src_path: crate::paths::utf8(&self.source),
+            edition: "2024",
+            test: true,
+            doctest: true,
+        }
     }
 }
 
@@ -99,6 +112,13 @@ pub struct PathDependency {
     pub name: String,
     /// The directory holding its manifest, absolute as cargo reports it.
     pub directory: PathBuf,
+}
+
+#[derive(Serialize)]
+struct PathDependencyValue<'a> {
+    name: &'a str,
+    kind: Option<&'a str>,
+    path: &'a str,
 }
 
 impl PathDependency {
@@ -122,12 +142,12 @@ impl PathDependency {
 
     /// This dependency as cargo reports one.
     #[must_use]
-    fn value(&self) -> serde_json::Value {
-        serde_json::json!({
-            "name": self.name,
-            "kind": serde_json::Value::Null,
-            "path": crate::paths::utf8(&self.directory),
-        })
+    fn value(&self) -> PathDependencyValue<'_> {
+        PathDependencyValue {
+            name: &self.name,
+            kind: None,
+            path: crate::paths::utf8(&self.directory),
+        }
     }
 }
 
@@ -144,6 +164,16 @@ pub struct Package {
     pub targets: Vec<Target>,
     /// Its path dependencies.
     pub dependencies: Vec<PathDependency>,
+}
+
+#[derive(Serialize)]
+struct PackageValue<'a> {
+    name: &'a str,
+    version: &'a str,
+    id: String,
+    manifest_path: String,
+    targets: Vec<TargetValue<'a>>,
+    dependencies: Vec<PathDependencyValue<'a>>,
 }
 
 impl Package {
@@ -187,19 +217,19 @@ impl Package {
 
     /// This package as cargo reports one.
     #[must_use]
-    fn value(&self) -> serde_json::Value {
-        serde_json::json!({
-            "name": self.name,
-            "version": self.version,
-            "id": self.id(),
-            "manifest_path": crate::paths::utf8(&self.manifest()),
-            "targets": self.targets.iter().map(Target::value).collect::<Vec<_>>(),
-            "dependencies": self
+    fn value(&self) -> PackageValue<'_> {
+        PackageValue {
+            name: &self.name,
+            version: &self.version,
+            id: self.id(),
+            manifest_path: crate::paths::utf8(&self.manifest()).to_owned(),
+            targets: self.targets.iter().map(Target::value).collect(),
+            dependencies: self
                 .dependencies
                 .iter()
                 .map(PathDependency::value)
-                .collect::<Vec<_>>(),
-        })
+                .collect(),
+        }
     }
 }
 
@@ -214,6 +244,16 @@ pub struct Document {
     pub packages: Vec<Package>,
     /// The packages cargo selects by default.
     pub workspace_default_members: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct DocumentValue<'a> {
+    version: u32,
+    workspace_root: &'a str,
+    target_directory: &'a str,
+    workspace_members: Vec<String>,
+    workspace_default_members: &'a [String],
+    packages: Vec<PackageValue<'a>>,
 }
 
 impl Document {
@@ -242,18 +282,14 @@ impl Document {
     /// When the value cannot be written as JSON, which a document of strings cannot fail to be.
     #[must_use]
     pub fn json(&self) -> String {
-        let value = serde_json::json!({
-            "version": 1,
-            "workspace_root": crate::paths::utf8(&self.root),
-            "target_directory": crate::paths::utf8(&self.target_directory),
-            "workspace_members": self
-                .packages
-                .iter()
-                .map(Package::id)
-                .collect::<Vec<_>>(),
-            "workspace_default_members": self.workspace_default_members,
-            "packages": self.packages.iter().map(Package::value).collect::<Vec<_>>(),
-        });
+        let value = DocumentValue {
+            version: 1,
+            workspace_root: crate::paths::utf8(&self.root),
+            target_directory: crate::paths::utf8(&self.target_directory),
+            workspace_members: self.packages.iter().map(Package::id).collect(),
+            workspace_default_members: &self.workspace_default_members,
+            packages: self.packages.iter().map(Package::value).collect(),
+        };
         match serde_json::to_string(&value) {
             Ok(text) => text,
             Err(error) => panic!("a metadata double is not JSON: {error}"),
