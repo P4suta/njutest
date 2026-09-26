@@ -5,6 +5,8 @@
 
 use xtask::gates;
 
+mod claims_oracle;
+
 #[test]
 fn every_gate_that_needs_no_argument_is_one_all_runs() {
     let root = gates::workspace_root();
