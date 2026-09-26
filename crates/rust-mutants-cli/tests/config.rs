@@ -475,6 +475,7 @@ fn a_root_a_command_names_is_resolved_against_where_the_command_was_told_it_is()
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        cargo: None,
         ci: rust_mutants_cli::CiHost::None,
     };
 
@@ -544,6 +545,7 @@ fn nowhere(root: &Path) -> rust_mutants_cli::Environment {
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        cargo: None,
         ci: rust_mutants_cli::CiHost::None,
     }
 }

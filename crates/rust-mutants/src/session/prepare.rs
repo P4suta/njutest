@@ -43,6 +43,9 @@ fn gate(
     pristine(workspace, options, cancel)
 }
 
+/// The directory inside the target directory the tree is checked in as it was copied, apart from every instrumented build, so neither makes the other compile again.
+const PRISTINE: &str = "pristine";
+
 /// Compiles the tree as it was copied, which is both the gate a run stands on and the source of every unit's file set.
 pub(super) fn pristine(
     workspace: &Workspace,
@@ -54,7 +57,7 @@ pub(super) fn pristine(
         &CompileOptions {
             kind: CompileKind::Check,
             packages: Vec::new(),
-            target_dir: Some(workspace.target_dir.clone()),
+            target_dir: Some(workspace.build_dir().nested(PRISTINE)),
             locked: workspace.locked,
             offline: workspace.offline,
             timeout: Workspace::timeout(options.build_timeout),
@@ -1463,7 +1466,7 @@ impl Compile for TreeCompiler<'_> {
             &CompileOptions {
                 kind: CompileKind::Tests,
                 packages: self.packages.clone(),
-                target_dir: Some(self.workspace.target_dir.clone()),
+                target_dir: Some(self.workspace.build_dir()),
                 locked: self.workspace.locked,
                 offline: self.workspace.offline,
                 timeout: self.timeout,

@@ -18,7 +18,11 @@ use rust_mutants::runner::{
 };
 
 fn sh(script: &str) -> Spec {
-    Spec::new(["sh", "-c", script], Bound::Unbounded)
+    let shell = njutest_devkit::paths::posix_sh();
+    Spec::new(
+        [njutest_devkit::paths::utf8(&shell), "-c", script],
+        Bound::Unbounded,
+    )
 }
 
 #[test]

@@ -51,6 +51,9 @@ pub const STEP_NOTICE_SCHEMA: &str = "rust-mutants-step-notice-v1";
 /// The exit status of a bounded test process whose generated runtime could not publish its nonce-correlated step notice.
 pub const STEP_PROTOCOL_EXIT: i32 = 94;
 
+/// The first field of the line the runtime writes to standard error before it ends a process, followed by the status, the check that failed, and the operating system's code, `0` where no call is what failed.
+pub const STOP_SCHEMA: &str = "rust-mutants-stop-v1";
+
 /// Names the file the guards append to, saying which of the process's threads reached them.
 pub const TOUCH_ENV: &str = "RUST_MUTANTS_TOUCH";
 
@@ -341,44 +344,42 @@ mod {{MODULE}} {
         NonCanonical,
         UnrepresentableLimit,
     }
+    impl BudgetError {
+        const fn check(self) -> &'static str {
+            match self {
+                Self::NonUnicode => "allowance: not Unicode",
+                Self::NotANumber => "allowance: not a number",
+                Self::NonCanonical => "allowance: not canonical",
+                Self::UnrepresentableLimit => "allowance: no room past it",
+            }
+        }
+    }
 {{STEP_MACHINE}}
-    enum StepStateError {
-        MissingPath,
-        MissingNonce,
-        MissingMutant,
-        Open,
-        Metadata,
-        NotRegular,
-        Lock,
-        Seek,
-        Read,
-        TooLarge,
-        NotUtf8,
-        NonCanonical,
-        Mismatch,
-        InvalidPhase,
-        InvalidCount,
-        Truncate,
-        Write,
-        Sync,
-        Publish,
-        Unlock,
-        Poisoned,
+    // Which check of the step protocol failed, and the operating system's
+    // code where a call it made is what failed: the process says both
+    // before it stops, so a run names the check rather than only a status.
+    #[derive(Clone, Copy)]
+    struct Why {
+        check: &'static str,
+        os: i32,
+    }
+    impl Why {
+        const fn said(check: &'static str) -> Self {
+            Self { check, os: 0 }
+        }
+        fn os(check: &'static str, error: &__rm_std::io::Error) -> Self {
+            let os = match error.raw_os_error() {
+                __rm_std::option::Option::Some(code) => code,
+                __rm_std::option::Option::None => 0,
+            };
+            Self { check, os }
+        }
     }
     #[derive(Clone, Copy)]
     enum TouchMode {
         Off,
         On,
         ItemsOnly,
-    }
-    enum StepNoticeError {
-        MissingPath,
-        MissingNonce,
-        MissingMutant,
-        Create,
-        Write,
-        Sync,
-        Publish,
     }
     enum TouchAccess {
         Applied,
@@ -501,7 +502,7 @@ mod {{MODULE}} {
     // call wrote is on disk and nothing later is.
     pub(crate) fn crashed_after<T>(_written: T) -> T {
         let _published = publish_crash_notice();
-        __rm_std::process::exit({{CRASH_EXIT}})
+        stop({{CRASH_EXIT}}, Why::said("crash"))
     }
 
     // The notice is what tells the supervisor this status is a stop the
@@ -672,11 +673,11 @@ mod {{MODULE}} {
         let limit = match *BUDGET.get_or_init(configured_budget) {
             __rm_std::result::Result::Ok(__rm_std::option::Option::None) => return,
             __rm_std::result::Result::Ok(__rm_std::option::Option::Some(limit)) => limit,
-            __rm_std::result::Result::Err(_) => protocol_failure(),
+            __rm_std::result::Result::Err(error) => protocol_failed(Why::said(error.check())),
         };
         let advanced = match update_state(action, limit) {
             __rm_std::result::Result::Ok(advanced) => advanced,
-            __rm_std::result::Result::Err(_) => protocol_failure(),
+            __rm_std::result::Result::Err(error) => protocol_failed(error),
         };
         match advanced {
             StepAdvance::Continue => {}
@@ -714,28 +715,28 @@ mod {{MODULE}} {
     fn update_state(
         action: StepAction,
         limit: StepLimit,
-    ) -> __rm_std::result::Result<StepAdvance, StepStateError> {
+    ) -> __rm_std::result::Result<StepAdvance, Why> {
         let identity = STEP_IDENTITY.get_or_init(read_step_identity);
         let path = match identity.path.as_deref() {
             __rm_std::option::Option::Some(path) => path,
             __rm_std::option::Option::None => {
-                return __rm_std::result::Result::Err(StepStateError::MissingPath);
+                return __rm_std::result::Result::Err(Why::said("no state path"));
             }
         };
         let nonce = match identity.nonce.as_deref() {
             __rm_std::option::Option::Some(nonce) => nonce,
             __rm_std::option::Option::None => {
-                return __rm_std::result::Result::Err(StepStateError::MissingNonce);
+                return __rm_std::result::Result::Err(Why::said("no nonce"));
             }
         };
         let mutant = match identity.mutant.as_deref() {
             __rm_std::option::Option::Some(mutant) => mutant,
             __rm_std::option::Option::None => {
-                return __rm_std::result::Result::Err(StepStateError::MissingMutant);
+                return __rm_std::result::Result::Err(Why::said("no active mutant"));
             }
         };
         let cell = STEP_STATE.get_or_init(|| __rm_std::sync::Mutex::new(__rm_std::option::Option::None));
-        let mut bound = cell.lock().map_err(|_| StepStateError::Poisoned)?;
+        let mut bound = cell.lock().map_err(|_| Why::said("poisoned"))?;
         let pid = __rm_std::process::id();
         let reopen = match &*bound {
             __rm_std::option::Option::Some(state) => state.pid != pid,
@@ -743,23 +744,23 @@ mod {{MODULE}} {
         };
         if reopen {
             let opened = open_step_state(path)?;
-            let metadata = opened.metadata().map_err(|_| StepStateError::Metadata)?;
+            let metadata = opened.metadata().map_err(|error| Why::os("metadata", &error))?;
             if !metadata.file_type().is_file() {
-                return __rm_std::result::Result::Err(StepStateError::NotRegular);
+                return __rm_std::result::Result::Err(Why::said("not a regular file"));
             }
             *bound = __rm_std::option::Option::Some(BoundStepState { pid, file: opened });
         }
         let file = match &mut *bound {
             __rm_std::option::Option::Some(state) => &mut state.file,
             __rm_std::option::Option::None => {
-                return __rm_std::result::Result::Err(StepStateError::Open);
+                return __rm_std::result::Result::Err(Why::said("open"));
             }
         };
-        file.lock().map_err(|_| StepStateError::Lock)?;
+        file.lock().map_err(|error| Why::os("lock", &error))?;
         let transitioned = (|| {
             let phase = read_step_state(file, nonce, mutant, limit)?;
             let (mut next, advanced) = step_transition(phase, action, limit.value())
-                .map_err(|_| StepStateError::InvalidCount)?;
+                .map_err(|_| Why::said("count"))?;
             let mut granted = 0_usize;
             if let (StepAction::Checkpoint, StepAdvance::Continue, StepPhase::Active(spent)) =
                 (action, advanced, next)
@@ -767,7 +768,7 @@ mod {{MODULE}} {
                 let wanted = lease_size(limit.value().saturating_sub(spent));
                 while granted < wanted {
                     let (further, reserved) = step_transition(next, action, limit.value())
-                        .map_err(|_| StepStateError::InvalidCount)?;
+                        .map_err(|_| Why::said("count"))?;
                     match (reserved, further) {
                         (StepAdvance::Continue, StepPhase::Active(_)) => {
                             next = further;
@@ -786,14 +787,14 @@ mod {{MODULE}} {
                 // fails or this process dies, the state remains Active at the
                 // boundary so another observer fails or retries instead of
                 // parking forever behind a notice that never existed.
-                publish_step_notice(allowed, observed).map_err(|_| StepStateError::Publish)?;
+                publish_step_notice(allowed, observed)?;
             }
             if next != phase {
                 write_step_state(file, nonce, mutant, limit, next)?;
             }
             __rm_std::result::Result::Ok(advanced)
         })();
-        let unlocked = file.unlock().map_err(|_| StepStateError::Unlock);
+        let unlocked = file.unlock().map_err(|error| Why::os("unlock", &error));
         match (transitioned, unlocked) {
             (__rm_std::result::Result::Err(error), _) => {
                 __rm_std::result::Result::Err(error)
@@ -810,7 +811,7 @@ mod {{MODULE}} {
     #[cfg(unix)]
     fn open_step_state(
         path: &str,
-    ) -> __rm_std::result::Result<__rm_std::fs::File, StepStateError> {
+    ) -> __rm_std::result::Result<__rm_std::fs::File, Why> {
         use __rm_std::os::unix::fs::OpenOptionsExt as _;
 
         __rm_std::fs::OpenOptions::new()
@@ -818,13 +819,13 @@ mod {{MODULE}} {
             .write(true)
             .custom_flags(no_follow_flag())
             .open(path)
-            .map_err(|_| StepStateError::Open)
+            .map_err(|error| Why::os("open", &error))
     }
 
     #[cfg(windows)]
     fn open_step_state(
         path: &str,
-    ) -> __rm_std::result::Result<__rm_std::fs::File, StepStateError> {
+    ) -> __rm_std::result::Result<__rm_std::fs::File, Why> {
         use __rm_std::os::windows::fs::OpenOptionsExt as _;
 
         // FILE_FLAG_OPEN_REPARSE_POINT makes the final component itself the
@@ -836,7 +837,7 @@ mod {{MODULE}} {
             .write(true)
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
             .open(path)
-            .map_err(|_| StepStateError::Open)
+            .map_err(|error| Why::os("open", &error))
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -978,27 +979,27 @@ mod {{MODULE}} {
         expected_nonce: &str,
         expected_mutant: &str,
         expected_limit: StepLimit,
-    ) -> __rm_std::result::Result<StepPhase, StepStateError> {
+    ) -> __rm_std::result::Result<StepPhase, Why> {
         const MAX_STATE_BYTES: u64 = 1024;
         if __rm_std::io::Seek::seek(file, __rm_std::io::SeekFrom::Start(0))
-            .map_err(|_| StepStateError::Seek)?
+            .map_err(|error| Why::os("seek", &error))?
             != 0
         {
-            return __rm_std::result::Result::Err(StepStateError::Seek);
+            return __rm_std::result::Result::Err(Why::said("seek"));
         }
         let mut bytes = __rm_std::vec::Vec::new();
         let mut capped = __rm_std::io::Read::take(&mut *file, MAX_STATE_BYTES + 1);
         let read = __rm_std::io::Read::read_to_end(&mut capped, &mut bytes)
-            .map_err(|_| StepStateError::Read)?;
+            .map_err(|error| Why::os("read", &error))?;
         if read > MAX_STATE_BYTES as usize {
-            return __rm_std::result::Result::Err(StepStateError::TooLarge);
+            return __rm_std::result::Result::Err(Why::said("too large"));
         }
-        let text = __rm_std::str::from_utf8(&bytes).map_err(|_| StepStateError::NotUtf8)?;
+        let text = __rm_std::str::from_utf8(&bytes).map_err(|_| Why::said("not UTF-8"))?;
         let line = text
             .strip_suffix('\n')
-            .ok_or(StepStateError::NonCanonical)?;
+            .ok_or(Why::said("not canonical"))?;
         if line.bytes().any(|byte| byte == b'\r' || byte == b'\n') {
-            return __rm_std::result::Result::Err(StepStateError::NonCanonical);
+            return __rm_std::result::Result::Err(Why::said("not canonical"));
         }
         let mut fields = line.split('\t');
         let schema = fields.next();
@@ -1008,27 +1009,41 @@ mod {{MODULE}} {
         let limit_field = fields.next();
         let phase_field = fields.next();
         let spent_field = fields.next();
-        if fields.next().is_some()
-            || schema != __rm_std::option::Option::Some("{{STEP_STATE_SCHEMA}}")
-            || nonce != __rm_std::option::Option::Some(expected_nonce)
-            || catalog != __rm_std::option::Option::Some(CATALOG)
-            || mutant != __rm_std::option::Option::Some(expected_mutant)
-        {
-            return __rm_std::result::Result::Err(StepStateError::Mismatch);
+        let mismatched = if fields.next().is_some() {
+            __rm_std::option::Option::Some("a field too many")
+        } else if schema != __rm_std::option::Option::Some("{{STEP_STATE_SCHEMA}}") {
+            __rm_std::option::Option::Some("another schema")
+        } else if nonce != __rm_std::option::Option::Some(expected_nonce) {
+            __rm_std::option::Option::Some("another execution's nonce")
+        } else if catalog != __rm_std::option::Option::Some(CATALOG) {
+            // A copy built from another catalog is a stale build linked into
+            // this one, which is the stop active() makes for the same fact.
+            let active = match catalog {
+                __rm_std::option::Option::Some(active) => active,
+                __rm_std::option::Option::None => "<none>",
+            };
+            stale_catalog(active)
+        } else if mutant != __rm_std::option::Option::Some(expected_mutant) {
+            __rm_std::option::Option::Some("another mutant")
+        } else {
+            __rm_std::option::Option::None
+        };
+        if let __rm_std::option::Option::Some(check) = mismatched {
+            return __rm_std::result::Result::Err(Why::said(check));
         }
-        let limit_field = limit_field.ok_or(StepStateError::InvalidCount)?;
+        let limit_field = limit_field.ok_or(Why::said("count"))?;
         let limit = limit_field
             .parse::<usize>()
-            .map_err(|_| StepStateError::InvalidCount)?;
-        let spent_field = spent_field.ok_or(StepStateError::InvalidCount)?;
+            .map_err(|_| Why::said("count"))?;
+        let spent_field = spent_field.ok_or(Why::said("count"))?;
         let spent = spent_field
             .parse::<usize>()
-            .map_err(|_| StepStateError::InvalidCount)?;
+            .map_err(|_| Why::said("count"))?;
         if __rm_std::string::ToString::to_string(&limit) != limit_field
             || __rm_std::string::ToString::to_string(&spent) != spent_field
             || limit != expected_limit.value()
         {
-            return __rm_std::result::Result::Err(StepStateError::InvalidCount);
+            return __rm_std::result::Result::Err(Why::said("count"));
         }
         let phase = match phase_field {
             __rm_std::option::Option::Some("dormant") if spent == 0 => StepPhase::Dormant,
@@ -1038,7 +1053,7 @@ mod {{MODULE}} {
             __rm_std::option::Option::Some("stopping")
                 if spent == expected_limit.first_excess() => StepPhase::Stopping(spent),
             __rm_std::option::Option::Some(_) | __rm_std::option::Option::None => {
-                return __rm_std::result::Result::Err(StepStateError::InvalidPhase);
+                return __rm_std::result::Result::Err(Why::said("phase"));
             }
         };
         __rm_std::result::Result::Ok(phase)
@@ -1058,7 +1073,7 @@ mod {{MODULE}} {
         mutant: &str,
         limit: StepLimit,
         phase: StepPhase,
-    ) -> __rm_std::result::Result<(), StepStateError> {
+    ) -> __rm_std::result::Result<(), Why> {
         // A persisted Stopping state is the proof that the notice was published,
         // so that write is the one that has to survive losing the machine. A
         // count on its way up is progress: losing it costs a process its place
@@ -1082,16 +1097,16 @@ mod {{MODULE}} {
             spent,
         );
         if __rm_std::io::Seek::seek(file, __rm_std::io::SeekFrom::Start(0))
-            .map_err(|_| StepStateError::Seek)?
+            .map_err(|error| Why::os("seek", &error))?
             != 0
         {
-            return __rm_std::result::Result::Err(StepStateError::Seek);
+            return __rm_std::result::Result::Err(Why::said("seek"));
         }
-        file.set_len(0).map_err(|_| StepStateError::Truncate)?;
+        file.set_len(0).map_err(|error| Why::os("truncate", &error))?;
         __rm_std::io::Write::write_all(file, state.as_bytes())
-            .map_err(|_| StepStateError::Write)?;
+            .map_err(|error| Why::os("write", &error))?;
         if durable {
-            file.sync_data().map_err(|_| StepStateError::Sync)?;
+            file.sync_data().map_err(|error| Why::os("sync", &error))?;
         }
         __rm_std::result::Result::Ok(())
     }
@@ -1099,35 +1114,51 @@ mod {{MODULE}} {
     fn publish_step_notice(
         allowed: usize,
         observed: usize,
-    ) -> __rm_std::result::Result<(), StepNoticeError> {
+    ) -> __rm_std::result::Result<(), Why> {
         let path = __rm_std::env::var("{{STEP_NOTICE_ENV}}")
-            .map_err(|_| StepNoticeError::MissingPath)?;
+            .map_err(|_| Why::said("notice: no path"))?;
         let nonce = __rm_std::env::var("{{STEP_NONCE_ENV}}")
-            .map_err(|_| StepNoticeError::MissingNonce)?;
+            .map_err(|_| Why::said("notice: no nonce"))?;
         let wanted = __rm_std::env::var("{{ACTIVE_ENV}}")
-            .map_err(|_| StepNoticeError::MissingMutant)?;
+            .map_err(|_| Why::said("notice: no active mutant"))?;
         let partial = __rm_std::format!("{}.partial", path);
         {
             let mut file = __rm_std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(&partial)
-                .map_err(|_| StepNoticeError::Create)?;
+                .map_err(|error| Why::os("notice: create", &error))?;
             let notice = __rm_std::format!(
                 "{{STEP_NOTICE_SCHEMA}}\t{}\t{}\t{}\t{}\t{}\n",
                 nonce, CATALOG, wanted, allowed, observed
             );
             __rm_std::io::Write::write_all(&mut file, notice.as_bytes())
-                .map_err(|_| StepNoticeError::Write)?;
-            file.sync_data().map_err(|_| StepNoticeError::Sync)?;
+                .map_err(|error| Why::os("notice: write", &error))?;
+            file.sync_data().map_err(|error| Why::os("notice: sync", &error))?;
         }
-        __rm_std::fs::rename(partial, path).map_err(|_| StepNoticeError::Publish)?;
+        __rm_std::fs::rename(partial, path).map_err(|error| Why::os("notice: publish", &error))?;
         __rm_std::result::Result::Ok(())
     }
 
     #[cold]
     fn protocol_failure() -> ! {
-        __rm_std::process::exit({{STEP_PROTOCOL_EXIT}})
+        protocol_failed(Why::said("unstated"))
+    }
+
+    #[cold]
+    fn protocol_failed(error: Why) -> ! {
+        stop({{STEP_PROTOCOL_EXIT}}, error)
+    }
+
+    // The one way this module ends the process: it says why first, as one
+    // line whose first field is the schema, then the status, the check that
+    // failed and the operating system's code, so a run that reads the
+    // status alone is never all there is.
+    #[cold]
+    fn stop(status: i32, error: Why) -> ! {
+        let said = __rm_std::format!("{{STOP_SCHEMA}}\t{}\t{}\t{}\n", status, error.check, error.os);
+        let _whether_anyone_reads_it = __rm_std::io::Write::write_all(&mut __rm_std::io::stderr(), said.as_bytes());
+        __rm_std::process::exit(status)
     }
 
     fn park_forever() -> ! {
@@ -1480,8 +1511,11 @@ mod {{MODULE}} {
         let parent = 0_u32;
         let name = __rm_std::format!("{{ORPHAN_PREFIX}}{}-{}", __rm_std::process::id(), parent);
         let path = __rm_std::path::Path::new(WATCHED).join(name);
-        if __rm_std::fs::create_dir_all(WATCHED).is_err() || __rm_std::fs::File::create(path).is_err() {
-            __rm_std::process::exit({{TOUCH_EXIT}});
+        if let __rm_std::result::Result::Err(error) = __rm_std::fs::create_dir_all(WATCHED) {
+            stop({{TOUCH_EXIT}}, Why::os("orphan: directory", &error));
+        }
+        if let __rm_std::result::Result::Err(error) = __rm_std::fs::File::create(path) {
+            stop({{TOUCH_EXIT}}, Why::os("orphan: record", &error));
         }
     }
 
@@ -1518,7 +1552,7 @@ mod {{MODULE}} {
 
     #[cold]
     fn touch_failure() -> ! {
-        __rm_std::process::exit({{TOUCH_EXIT}})
+        stop({{TOUCH_EXIT}}, Why::said("touch: poisoned"))
     }
 
     fn append(line: &str) {
@@ -1527,8 +1561,8 @@ mod {{MODULE}} {
             __rm_std::result::Result::Ok(guard) => guard,
             __rm_std::result::Result::Err(_) => touch_failure(),
         };
-        if __rm_std::io::Write::write_all(&mut *file, line.as_bytes()).is_err() {
-            __rm_std::process::exit({{TOUCH_EXIT}});
+        if let __rm_std::result::Result::Err(error) = __rm_std::io::Write::write_all(&mut *file, line.as_bytes()) {
+            stop({{TOUCH_EXIT}}, Why::os("touch: append", &error));
         }
     }
 
@@ -1536,16 +1570,16 @@ mod {{MODULE}} {
     fn opened() -> __rm_std::sync::Mutex<__rm_std::fs::File> {
         let path = match __rm_std::env::var("{{TOUCH_ENV}}") {
             __rm_std::result::Result::Ok(value) => value,
-            __rm_std::result::Result::Err(_) => __rm_std::process::exit({{TOUCH_EXIT}}),
+            __rm_std::result::Result::Err(_) => stop({{TOUCH_EXIT}}, Why::said("touch: no path")),
         };
         let opened = __rm_std::fs::OpenOptions::new().create(true).append(true).open(&path);
         let mut file = match opened {
             __rm_std::result::Result::Ok(file) => file,
-            __rm_std::result::Result::Err(_) => __rm_std::process::exit({{TOUCH_EXIT}}),
+            __rm_std::result::Result::Err(error) => stop({{TOUCH_EXIT}}, Why::os("touch: open", &error)),
         };
         let header = __rm_std::format!("{{TOUCH_SCHEMA}} {}\n", CATALOG);
-        if __rm_std::io::Write::write_all(&mut file, header.as_bytes()).is_err() {
-            __rm_std::process::exit({{TOUCH_EXIT}});
+        if let __rm_std::result::Result::Err(error) = __rm_std::io::Write::write_all(&mut file, header.as_bytes()) {
+            stop({{TOUCH_EXIT}}, Why::os("touch: header", &error));
         }
         __rm_std::sync::Mutex::new(file)
     }
@@ -1597,10 +1631,8 @@ mod {{MODULE}} {
             CATALOG,
             active,
         );
-        if __rm_std::io::Write::write_all(&mut __rm_std::io::stderr(), said.as_bytes()).is_err() {
-            __rm_std::process::exit({{EXIT}});
-        }
-        __rm_std::process::exit({{EXIT}})
+        let _whether_anyone_reads_it = __rm_std::io::Write::write_all(&mut __rm_std::io::stderr(), said.as_bytes());
+        stop({{EXIT}}, Why::said("stale catalog"))
     }
 }
 "#;
@@ -1627,6 +1659,7 @@ fn with_protocol(text: &str) -> String {
         .replace("{{STEP_STATE_SCHEMA}}", STEP_STATE_SCHEMA)
         .replace("{{STEP_NOTICE_SCHEMA}}", STEP_NOTICE_SCHEMA)
         .replace("{{STEP_PROTOCOL_EXIT}}", &STEP_PROTOCOL_EXIT.to_string())
+        .replace("{{STOP_SCHEMA}}", STOP_SCHEMA)
         .replace("{{WATCHED_ENV}}", WATCHED_ENV)
         .replace("{{ORPHAN_PREFIX}}", ORPHAN_PREFIX)
         .replace("{{FAULT_ENV}}", FAULT_ENV)
@@ -1764,7 +1797,27 @@ struct Window {
 
 #[cfg(test)]
 mod tests {
-    use super::{StepAction, StepAdvance, StepMachineError, StepPhase, step_transition};
+    use super::{StepAction, StepAdvance, StepMachineError, StepPhase, TEMPLATE, step_transition};
+
+    #[test]
+    fn the_runtime_ends_a_process_in_one_place_and_says_why_there_first() {
+        let exits: Vec<usize> = TEMPLATE
+            .match_indices("process::exit(")
+            .map(|(at, _)| at)
+            .collect();
+        let stop = TEMPLATE.find("fn stop(status: i32");
+        let said = TEMPLATE.find("{{STOP_SCHEMA}}");
+        assert!(
+            matches!(
+                (exits.as_slice(), stop, said),
+                ([exit], Some(stop), Some(said)) if stop < said && said < *exit
+                    && !TEMPLATE.get(stop..*exit).is_some_and(|between| between.contains("\n    fn "))
+            ),
+            "a process the runtime ends has to say which check stopped it before it goes, so the \
+             one call that ends it is inside `stop`, after the line it writes: exits at \
+             {exits:?}, `stop` at {stop:?}, the line at {said:?}"
+        );
+    }
 
     #[test]
     fn activation_is_idempotent_and_a_dormant_checkpoint_is_inert() {

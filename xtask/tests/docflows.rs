@@ -11,6 +11,7 @@
 
 fn shaped(fence: &str) -> String {
     let root = tempfile::tempdir().expect("a scratch documentation root");
+    xtask::repository::init(root.path()).expect("a repository to read the tree as git lists it");
     std::fs::create_dir_all(root.path().join("docs")).expect("docs");
     std::fs::write(root.path().join("README.md"), "").expect("readme");
     std::fs::write(
@@ -62,6 +63,7 @@ fn a_workflow_that_names_its_trigger_keeps_it() {
 #[test]
 fn a_documented_action_this_repository_does_not_ship_is_refused_by_name() {
     let root = tempfile::tempdir().expect("a scratch repository");
+    xtask::repository::init(root.path()).expect("a repository to read the tree as git lists it");
     std::fs::create_dir_all(root.path().join("docs")).expect("docs");
     std::fs::create_dir_all(root.path().join(".github/actions/shipped")).expect("an action");
     std::fs::write(

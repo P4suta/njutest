@@ -66,7 +66,7 @@ pub fn key(root: &Path) -> Result<String, GateError> {
         part(harness.as_bytes());
     }
     for input in INPUTS {
-        let mut files = files_of(&root.join(input))?;
+        let mut files = files_of(root, input)?;
         files.sort();
         for file in files {
             let relative = file
@@ -87,16 +87,14 @@ fn spelled(path: &Path) -> Result<&str, GateError> {
         .ok_or_else(|| GateError(format!("{}: a path that is not UTF-8", path.display())))
 }
 
-/// Every file at or under `path`.
-fn files_of(path: &Path) -> Result<Vec<PathBuf>, GateError> {
-    let mut files = Vec::new();
-    for entry in walkdir::WalkDir::new(path) {
-        let entry = entry.map_err(|error| GateError(format!("{}: {error}", path.display())))?;
-        if entry.file_type().is_file() {
-            files.push(entry.into_path());
-        }
-    }
-    Ok(files)
+/// Every file of the repository at `root` that is `input` or lies under it.
+fn files_of(root: &Path, input: &str) -> Result<Vec<PathBuf>, GateError> {
+    let under = format!("{}/", input.trim_end_matches('/'));
+    Ok(crate::repository::files(root)?
+        .into_iter()
+        .filter(|relative| relative == input || relative.starts_with(&under))
+        .map(|relative| root.join(relative))
+        .collect())
 }
 
 /// Proves the production laws in `root` with `cargo`, or reads back from `cache` the proof of exactly these inputs, and audits the export either way.

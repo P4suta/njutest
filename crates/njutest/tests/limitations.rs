@@ -318,32 +318,56 @@ fn a_limitation_spelled_at_a_call_site_is_one_the_registers_hold() {
     );
 }
 
+/// The text of a register file as the tree holds it.
+fn register_text(module: &str) -> String {
+    std::fs::read_to_string(njutest_devkit::paths::workspace_root().join(module))
+        .expect("the register")
+}
+
 /// Every limitation a register file declares, and every one its `ALL` names.
 fn declared_and_registered(module: &str) -> (Vec<String>, Vec<String>) {
-    let text = std::fs::read_to_string(njutest_devkit::paths::workspace_root().join(module))
-        .expect("the register");
-    let (declarations, register) = text
-        .split_once("pub const ALL:")
-        .expect("the register names the limitations it holds");
-    let declared: Vec<String> = declarations
-        .lines()
-        .map(str::trim)
-        .filter_map(|line| line.strip_prefix("pub const "))
-        .filter_map(|line| line.split_once(':'))
-        .filter(|(_, rest)| rest.trim_start().starts_with("&str"))
-        .map(|(name, _)| name.to_owned())
-        .collect();
-    let held: Vec<String> = register
-        .lines()
-        .map(str::trim)
-        .filter_map(|line| line.strip_suffix(','))
-        .filter(|line| {
-            line.chars()
-                .all(|one| one.is_ascii_uppercase() || one == '_')
+    registered(&register_text(module))
+}
+
+/// Every limitation the register `text` declares, and every one its `ALL` names.
+fn registered(text: &str) -> (Vec<String>, Vec<String>) {
+    (
+        njutest_devkit::rust_source::public_text_constants(text)
+            .expect("the register is Rust")
+            .into_iter()
+            .filter(|name| name != "ALL")
+            .collect(),
+        njutest_devkit::rust_source::names_listed(text, "ALL")
+            .expect("the register names each limitation it holds in ALL"),
+    )
+}
+
+#[test]
+fn a_register_reads_the_same_in_the_tree_the_engine_instruments() {
+    for module in [
+        "crates/njutest/src/limitation.rs",
+        "crates/rust-mutants/src/limitation.rs",
+    ] {
+        let text = register_text(module);
+        let runtime = rust_mutants::instrument::render(&rust_mutants::instrument::Rendering {
+            module: "__rust_mutants_limitation",
+            catalog_digest: &"0".repeat(64),
+            placements: &[],
+            markers: &[],
+            first_item: 0,
+            item_count: 1,
+            newline: "\n",
+            watched: "/nowhere",
         })
-        .map(ToOwned::to_owned)
-        .collect();
-    (declared, held)
+        .expect("the engine renders the runtime it appends to an instrumented file");
+        assert_eq!(
+            registered(&format!("{text}{runtime}")),
+            registered(&text),
+            "{module}: when njutest measures itself this suite runs in the tree the engine \
+             instrumented, where the file ends with the engine's runtime, and the register must \
+             read the same there as here"
+        );
+    }
 }
 
 #[test]

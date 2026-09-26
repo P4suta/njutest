@@ -115,6 +115,8 @@ mod provider_process;
 mod reach_schema;
 #[path = "recording.rs"]
 mod recording;
+#[path = "remedies.rs"]
+mod remedies;
 #[path = "repair.rs"]
 mod repair;
 #[path = "replace.rs"]

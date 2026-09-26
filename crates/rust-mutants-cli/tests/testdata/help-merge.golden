@@ -20,6 +20,10 @@ Options:
       --root <DIR>
           The workspace root whose report directory the parts are under
 
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
+
       --runs <IDS>
           The runs to combine, by name or as a glob against the report directory
 

@@ -1209,6 +1209,12 @@ impl Session {
         Ok(())
     }
 
+    /// What the tests are given of each of `names`, which the configuration declared an answer may depend on.
+    #[must_use]
+    pub fn declared(&self, names: &BTreeSet<String>) -> crate::outcomes::Declared {
+        crate::outcomes::Declared::of(names, &self.workspace.base_env)
+    }
+
     /// What this build made of the file `locator` names: one a unit read, or one none did, walked with the rules discovery applied to say whether the locator names something in it.
     #[must_use]
     pub fn unread(&self, locator: &Locator) -> Unread {

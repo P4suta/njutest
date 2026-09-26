@@ -9,7 +9,8 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Accepted, 2026-09-26.
 Implemented for expectations by `facts::{Predicate, Facts}`, `Session::{unread, holds, facts}`, `run::{Where, Unheld, Standing::Inapplicable}`, the run report's `facts` and `where`, `MergeError::TargetsDisagree`, and engine-audit's `held` rule.
-Configured skips take the same resolution with the skip anchors that follow, and the declared environment enters the outcome key and carry's premises in the change that first reads it.
+Configured skips take the same resolution with the skip anchors that follow.
+The declared environment enters the outcome key and carry's premises through `outcomes::Declared`, from `Config::declared_env`.
 
 ## Context
 
