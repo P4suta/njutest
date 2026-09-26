@@ -86,7 +86,7 @@ fn counted(rows: &[MutantRecord]) -> MutantAccounting {
                 counts.executed += 1;
                 counts.model_proved += 1;
             }
-            Outcome::Unconfirmed | Outcome::Errored => counts.executed += 1,
+            Outcome::Unconfirmed | Outcome::Errored | Outcome::Declined => counts.executed += 1,
         }
     }
     counts

@@ -61,6 +61,7 @@ Among them, `cargo xtask all` is this repository's own:
 | `deps` | an internal dependency in the wrong direction ([ADR 0012](adr/0012-one-workspace-two-products.md)); a direct dependency on `anyhow`/`eyre`/`color-eyre`/`miette` that erases typed error variants behind downcasts; or a direct dependency on `async-trait`/`async-recursion`/`typetag`. Those procedural macros can introduce owned trait objects only after the source gate has inspected their input. Cargo metadata reports the canonical package name even when a manifest renames it, so an alias cannot conceal one |
 | `fixtures` | a fixture project without a `[workspace]` table, a committed `Cargo.lock`, the SPDX header, or with a dependency that is not a path inside itself |
 | `tracked` | a committed path under a directory named `target`, which is build output: the next build writes it again, and `git add -A` picked up 196 files of trybuild's output from a crate-level `target/` that `.gitignore`, anchored at the root, did not name. `.gitignore` now names every `target/`, and the gate refuses a force-added one too. It reads what git tracks, so it runs git with every variable that could point it at another repository removed, and it finds three planted build outputs and passes three lookalikes before its silence about the tree is believed |
+| `skipped` | a name in `.rust-mutants.toml`'s `[execution] skip_targets` that no member of the workspace declares. The engine refuses one with `RM5004` when a run starts, which is after the rename that made it stale has landed; `xtask/test/gates` stayed in the file after the target became `xtask/test/toolchain_gates`, and every measurement of this repository refused to start. It names targets from cargo's metadata the way the engine does, `package/kind/name`, and refuses a planted unknown name and finds a target of every member before its silence is believed |
 | `release-check` | a workspace version that disagrees with the release manifest, or a member that does not inherit it |
 | `milestones` | a milestone-shaped reference in the book that has no unique row in the roadmap |
 | `adrs` | a file under `docs/adr/` not named `NNNN-slug.md`, two decision records of one number, a heading that does not carry its own number, a record the book lists under another number, twice, or not at all, and a name of a decision record, anywhere in the tree, that no record has |
@@ -80,6 +81,11 @@ A human-only boundary may display a platform path or losslessly escape invalid b
 The `forgotten-value` lint rejects `mem::forget` and `ManuallyDrop`, including renamed imports, macro tokens, and code compiled only under another `cfg`.
 Proof harnesses run the same destructors as shipped code: suppressing a destructor only for Kani would establish a theorem about weaker ownership semantics than the program has.
 An intentional ownership transfer is a named owner or state transition, not a value silently made immortal.
+
+Every production Kani harness has a ceiling in its entry of the harness table in `xtask/src/kaniaudit.rs`: the most program steps CBMC may unfold it into, which the audit of every export holds (`XT4006`).
+It is a count, which no load moves, set at the measured size times 1.1 rounded up to two significant figures, and a harness added to the table cannot compile without one.
+It exists because a law pays for every field of what it builds: the ledger's duration law built two whole execution records, a decline payload added to that record took it from 1,855,715 to 2,135,073 steps, and the SAT instance that followed ran a 16 GB runner out of memory.
+A law whose subject carries data it does not reason about runs on a stand-in the law's type admits (the ledger's `Attempt`), passes its subject through `plain`, which demands `Copy`, and leaves the real record's side of the seam to an ordinary test.
 
 The `fabricated-overflow` lint applies to report, accounting, identity, cache,
 key, offset, and count code.

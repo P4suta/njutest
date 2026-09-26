@@ -62,7 +62,7 @@ fn a_mutation_the_compiler_renders_identically_is_identical_and_one_it_renders_i
         .expect("a comparison");
     assert_eq!(
         prover.withdrawn(),
-        !njutest_devkit::reproducible::builds_the_same_twice(),
+        !njutest_devkit::reproducible::builds_a_reverted_change_to_the_same_bytes(),
         "what this layer can speak for is what the machine builds the same way twice, and \
          the suites that read it end to end ask that question the same way"
     );

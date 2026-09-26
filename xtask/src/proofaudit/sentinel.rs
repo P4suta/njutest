@@ -1555,13 +1555,14 @@ fn unobserved_repair_called_a_survival() -> Perturbation {
 }
 
 /// The outcomes the executions layer is planted a report lying about, told consistently.
-const LIED_OUTCOMES: [&str; 6] = [
+const LIED_OUTCOMES: [&str; 7] = [
     "killed",
     "unconfirmed",
     "waited",
     "unreached",
     "errored",
     "equivalent",
+    "declined",
 ];
 
 /// The defect planted for `rule` of the merge layer, on the clean specimen measured in two shards and merged.
@@ -1915,6 +1916,12 @@ fn telling(outcome: &str) -> Option<Telling> {
             true,
             None,
             Some("failing-test"),
+        ),
+        "declined" => (
+            "a survivor reported as declined",
+            true,
+            None,
+            Some("not-measured"),
         ),
         "waited" => (
             "a survivor reported as waited",

@@ -124,6 +124,8 @@ pub enum XtCode {
     KaniUnproven,
     /// Kani's counts exceed their evidence type.
     KaniArithmetic,
+    /// A Kani harness unfolded past its ceiling.
+    KaniGrown,
     /// A report's model evidence is malformed.
     ModelReport,
     /// A retained model artifact cannot be audited.
@@ -473,6 +475,11 @@ impl XtCode {
                 "XT4005",
                 "Kani's result arithmetic exceeded the type its evidence is held in.",
                 "report it; a count that cannot be held is a count this audit refuses to guess",
+            ),
+            Self::KaniGrown => (
+                "XT4006",
+                "CBMC unfolded a production harness into more program steps than its entry in the harness table allows, so the law has started paying for state it does not reason about, which is what ran a 16 GB runner out of memory.",
+                "take the payload out of the law's subject, or raise the harness's ceiling in `xtask/src/kaniaudit.rs` in the same change that says why",
             ),
             Self::ModelReport => (
                 "XT4101",

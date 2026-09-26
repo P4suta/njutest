@@ -19,6 +19,8 @@ use std::time::{Duration, Instant};
 use njutest_devkit::process::SupervisedChild;
 use njutest_devkit::result::{ResultState, result_state};
 
+include!("support/turns.rs");
+
 const SAYS_A_GREAT_DEAL: &str = "printf '%s\\n' \"$*\" >> \"$CALLS\"; case \"$*\" in 'run check') head -c 1048576 /dev/zero | tr '\\0' x; echo ;; *) exit 99 ;; esac";
 
 const ACCEPTS_THE_CHECK: &str =
@@ -675,11 +677,12 @@ fn a_check_is_told_which_commit_it_answers_for() {
 
 #[test]
 fn two_gates_take_turns_on_one_machine() {
-    let taking_turns = "mkdir \"$TURNS/inside\" 2>/dev/null || { : > \"$TURNS/overlapped\"; exit 97; }; \
-         while [ ! -e \"$TURNS/go\" ]; do sleep 0.05; done; \
-         rmdir \"$TURNS/inside\"";
-    let first = Repository::new(taking_turns);
-    let second = Repository::new(taking_turns).sharing_the_machine_with(&first);
+    let taking_turns = format!(
+        "mkdir \"$TURNS/inside\" 2>/dev/null || {{ : > \"$TURNS/overlapped\"; exit 97; }}; \
+         {UNTIL_GO}; rmdir \"$TURNS/inside\""
+    );
+    let first = Repository::new(&taking_turns);
+    let second = Repository::new(&taking_turns).sharing_the_machine_with(&first);
     let line = |repository: &Repository| update(&repository.head, &"0".repeat(40), "\n");
 
     let running = first.launch(first.directory.path(), &line(&first), &[]);
@@ -771,10 +774,14 @@ fn a_check_that_outlives_its_budget_is_stopped_with_everything_it_started() {
     );
 }
 
-const TAKES_TURNS: &str = "printf '%s\\n' \"$*\" >> \"$CALLS\"; \
-     mkdir \"$TURNS/inside\" 2>/dev/null || { : > \"$TURNS/overlapped\"; exit 97; }; \
-     while [ ! -e \"$TURNS/go\" ]; do sleep 0.05; done; \
-     rmdir \"$TURNS/inside\"";
+/// A check that records how it was called, refuses to share the machine, and waits in the lane until it is let go.
+fn takes_turns() -> String {
+    format!(
+        "printf '%s\\n' \"$*\" >> \"$CALLS\"; \
+         mkdir \"$TURNS/inside\" 2>/dev/null || {{ : > \"$TURNS/overlapped\"; exit 97; }}; \
+         {UNTIL_GO}; rmdir \"$TURNS/inside\""
+    )
+}
 
 /// Whether any file under `root` is a run waiting for the lane `lane`.
 fn waiting_under(root: &Path, lane: &str) -> bool {
@@ -801,7 +808,7 @@ fn waiting_under(root: &Path, lane: &str) -> bool {
 
 #[test]
 fn a_second_push_of_a_commit_that_passed_while_it_waited_is_not_checked_again() {
-    let repository = Repository::new(TAKES_TURNS);
+    let repository = Repository::new(&takes_turns());
     let line = update(&repository.head, &"0".repeat(40), "\n");
     let first = repository.launch(repository.directory.path(), &line, &[]);
     assert!(
@@ -836,7 +843,7 @@ fn a_second_push_of_a_commit_that_passed_while_it_waited_is_not_checked_again() 
 
 #[test]
 fn two_gates_of_one_repository_take_turns_even_inside_a_held_lane() {
-    let repository = Repository::new(TAKES_TURNS);
+    let repository = Repository::new(&takes_turns());
     let (linked, linked_head) = repository.link("linked");
     let held: [(&str, &std::ffi::OsStr); 1] = [("NJUTEST_SLOT_HELD", "heavy".as_ref())];
     let first = repository.launch(

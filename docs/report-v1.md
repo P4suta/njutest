@@ -31,6 +31,9 @@ They do not fall back to pathname checks whose object could change between valid
 A kill names its target.
 A `step-limit-reached` record names the target and carries a nonzero allowance plus exactly its first excluded count.
 `waited`, `unconfirmed`, and `errored` name the target on which no verdict was established.
+`declined` names the first target on which every test that reached the mutation declined to measure on this machine, as it did with nothing active ([ADR 0043](adr/0043-a-test-may-decline-to-measure.md)).
+It is a hole, like `errored`: its `not-measured` finding names each test and its words, it is never cached or checkpointed, and no acceptance answers it.
+A target that measured and noticed nothing outweighs one that declined, so a survivor is never hidden behind a decline elsewhere.
 Outcomes that did not occur on a target name none.
 A boundary on any other outcome, or a step-limit outcome without one, is not a v1 document.
 
@@ -97,7 +100,7 @@ in the same closed order as `Decision::ALL`:
 | `unreached` | no measured target reached the mutation | `unreached` |
 | `step-limit-reached` | a verified execution boundary was crossed, without a verdict | `step-limit-reached` |
 | `waited` | the wall-clock bound expired before completion | `waited` |
-| `errored` | no verdict could be established | `unconfirmed`, `errored` |
+| `errored` | no verdict could be established | `unconfirmed`, `errored`, `declined` |
 
 The accounting is re-derived exactly from the ID-level records.
 Mutation and target identities are unique, target rows are in canonical order, every target status column is reproduced from the rows, and every mutation outcome,
@@ -259,7 +262,7 @@ A tree with no call that writes in a measured file states `crash-no-site`, and o
 A report is read along six dimensions, `mutation`, `repeatable`, `fault`, `schedule`, `wire` and `durable` ([ADR 0033](adr/0033-every-dimension-or-a-hole.md)).
 The matrix is derived from the records above and never stored: a stored column would be a second copy of them a reader could find disagreeing.
 Each column is `measured` with `catalogued`, `answered`, `holes` (which add up) and what it `speaks_not_about`, or `unmeasured` with why, `not-asked`, or `nothing-to-ask` with why.
-Mutation holes are the waited, step-limited, unconfirmed and errored mutations; knob holes the uncompared and unsettled records, and knobs not put are what it does not speak about; fault holes the waited and undecided sites, and sites not put are what it does not speak about; wire holes the questions not reached and the seams not watched, and it never speaks about a seam the configuration does not name.
+Mutation holes are the waited, step-limited, unconfirmed, errored and declined mutations; knob holes the uncompared and unsettled records, and knobs not put are what it does not speak about; fault holes the waited and undecided sites, and sites not put are what it does not speak about; wire holes the questions not reached and the seams not watched, and it never speaks about a seam the configuration does not name.
 The record stream carries one `DIMENSION` record per column.
 Under `whole-v1`, every column that is not `measured` without a hole or `nothing-to-ask` is a `dimension-not-measured` finding whose subject is the dimension's name; a run of the whole catalog raises them, a shard raises none, and a merge raises them over every part.
 

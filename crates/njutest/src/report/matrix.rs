@@ -167,7 +167,8 @@ pub const fn unsettled(outcome: super::Outcome) -> bool {
         super::Outcome::Waited
         | super::Outcome::StepLimitReached
         | super::Outcome::Unconfirmed
-        | super::Outcome::Errored => true,
+        | super::Outcome::Errored
+        | super::Outcome::Declined => true,
         super::Outcome::CompileRejected
         | super::Outcome::Killed
         | super::Outcome::ModelNoticed

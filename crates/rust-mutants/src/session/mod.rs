@@ -1191,13 +1191,9 @@ impl Session {
             });
         }
         for (name, wanted) in &under.env {
-            let given = self
-                .workspace
-                .base_env
-                .iter()
-                .find(|(held, _)| held == std::ffi::OsStr::new(name));
+            let given = crate::vars::var(&self.workspace.base_env, name);
             match given {
-                Some((_, value)) if value == std::ffi::OsStr::new(wanted) => {}
+                Some(value) if value == std::ffi::OsStr::new(wanted) => {}
                 Some(_) | None => {
                     return Err(crate::run::Unheld::Env {
                         name: name.clone(),
@@ -2129,7 +2125,8 @@ impl Session {
                 let retry = request.retrying_target(&first.result().target);
                 let repeated = quiet.alone(|| self.execute(&retry, running(true), cancel))??;
                 asked.extend(repeated.asked);
-                AttemptLedger::with_retry(first, repeated.taken, cancel.is_cancelled())?
+                AttemptLedger::with_retry(first, repeated.taken, cancel.is_cancelled())
+                    .ok_or(SessionError::ExecutionDurationOverflow)?
             }
         };
         let judgement = Judgement {
@@ -3036,16 +3033,48 @@ impl EstablishmentState {
 ///
 /// let _empty = AttemptLedger {};
 /// ```
-#[derive(Debug, Clone)]
-pub struct AttemptLedger {
-    first: MutantResult,
-    retry: Option<MutantResult>,
+#[derive(Debug, Clone, Copy)]
+pub struct AttemptLedger<R = MutantResult> {
+    first: R,
+    retry: Option<R>,
     duration: Duration,
 }
 
-impl AttemptLedger {
-    const fn single(first: MutantResult) -> Self {
-        let duration = first.duration;
+/// What a ledger reads of one execution, so its laws hold whatever else the execution's record carries.
+pub trait Attempt: sealed::Attempt {
+    /// How long the execution took.
+    fn duration(&self) -> Duration;
+    /// What it concluded.
+    fn outcome(&self) -> crate::outcome::Outcome;
+    /// Settles its conclusion as `outcome`, which is how a retry enters the ledger.
+    fn reconcile(&mut self, outcome: crate::outcome::Outcome);
+}
+
+/// The records a ledger may hold, which only this crate names.
+mod sealed {
+    /// A record this crate lets a ledger hold.
+    pub trait Attempt {}
+}
+
+impl sealed::Attempt for MutantResult {}
+
+impl Attempt for MutantResult {
+    fn duration(&self) -> Duration {
+        self.duration
+    }
+
+    fn outcome(&self) -> crate::outcome::Outcome {
+        Self::outcome(self)
+    }
+
+    fn reconcile(&mut self, outcome: crate::outcome::Outcome) {
+        self.reconcile_outcome(outcome);
+    }
+}
+
+impl<R: Attempt> AttemptLedger<R> {
+    fn single(first: R) -> Self {
+        let duration = first.duration();
         Self {
             first,
             retry: None,
@@ -3053,27 +3082,23 @@ impl AttemptLedger {
         }
     }
 
-    fn with_retry(
-        first: WaitedAttempt,
-        mut repeated: MutantResult,
-        cancelled: bool,
-    ) -> Result<Self, SessionError> {
-        repeated.reconcile_outcome(retry_outcome(repeated.outcome(), cancelled));
+    /// The ledger of a waited attempt and its retry, or none where their durations together do not fit.
+    fn with_retry(first: WaitedAttempt<R>, mut repeated: R, cancelled: bool) -> Option<Self> {
+        repeated.reconcile(retry_outcome(repeated.outcome(), cancelled));
         let first = first.into_result();
-        let duration = first
-            .duration
-            .checked_add(repeated.duration)
-            .ok_or(SessionError::ExecutionDurationOverflow)?;
-        Ok(Self {
+        let duration = first.duration().checked_add(repeated.duration())?;
+        Some(Self {
             first,
             retry: Some(repeated),
             duration,
         })
     }
+}
 
+impl<R> AttemptLedger<R> {
     /// The conclusion this ordered ledger establishes.
     #[must_use]
-    pub const fn result(&self) -> &MutantResult {
+    pub const fn result(&self) -> &R {
         match &self.retry {
             Some(repeated) => repeated,
             None => &self.first,
@@ -3082,7 +3107,7 @@ impl AttemptLedger {
 
     /// Consumes the ledger and returns the conclusion it establishes.
     #[must_use]
-    pub fn into_result(self) -> MutantResult {
+    pub fn into_result(self) -> R {
         match self.retry {
             Some(repeated) => repeated,
             None => self.first,
@@ -3090,7 +3115,7 @@ impl AttemptLedger {
     }
 
     /// Every execution in causal order.
-    pub fn iter(&self) -> impl Iterator<Item = &MutantResult> {
+    pub fn iter(&self) -> impl Iterator<Item = &R> {
         std::iter::once(&self.first).chain(self.retry.iter())
     }
 
@@ -3117,15 +3142,15 @@ impl AttemptLedger {
 }
 
 /// A first attempt whose only possible conclusion is a wall-clock wait.
-#[derive(Debug, Clone)]
-struct WaitedAttempt(MutantResult);
+#[derive(Debug, Clone, Copy)]
+struct WaitedAttempt<R = MutantResult>(R);
 
-impl WaitedAttempt {
-    const fn result(&self) -> &MutantResult {
+impl<R> WaitedAttempt<R> {
+    const fn result(&self) -> &R {
         &self.0
     }
 
-    fn into_result(self) -> MutantResult {
+    fn into_result(self) -> R {
         self.0
     }
 }
@@ -3402,6 +3427,34 @@ mod kani_laws {
         }
     }
 
+    /// An execution as a ledger reads it and nothing more, so a law about the ledger's arithmetic does not grow with the record an engine execution carries.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct Timed {
+        duration: Duration,
+        outcome: Outcome,
+    }
+
+    impl super::sealed::Attempt for Timed {}
+
+    impl super::Attempt for Timed {
+        fn duration(&self) -> Duration {
+            self.duration
+        }
+
+        fn outcome(&self) -> Outcome {
+            self.outcome
+        }
+
+        fn reconcile(&mut self, outcome: Outcome) {
+            self.outcome = outcome;
+        }
+    }
+
+    /// `value`, which must hold nothing on the heap, so a law that passes its subject through here cannot grow with a payload somebody adds to a record.
+    const fn plain<T: Copy>(value: T) -> T {
+        value
+    }
+
     fn symbolic_duration() -> Duration {
         let seconds = kani::any::<u64>();
         let nanoseconds = kani::any::<u32>();
@@ -3559,10 +3612,10 @@ mod kani_laws {
                 false,
             );
             kani::assert(
-                constructed.is_ok(),
+                constructed.is_some(),
                 "njutest-law-assertion:attempt-retry-constructs",
             );
-            let Ok(ledger) = constructed else {
+            let Some(ledger) = constructed else {
                 return;
             };
             ledger
@@ -3596,18 +3649,24 @@ mod kani_laws {
     fn attempt_duration_is_the_checked_sum_of_every_execution() {
         let first_duration = symbolic_duration();
         let retry_duration = symbolic_duration();
-        let ledger = AttemptLedger::with_retry(
-            WaitedAttempt(result(MutantConclusion::Waited, first_duration)),
-            result(MutantConclusion::Killed, retry_duration),
+        let ledger = plain(AttemptLedger::with_retry(
+            WaitedAttempt(Timed {
+                duration: first_duration,
+                outcome: Outcome::Waited,
+            }),
+            Timed {
+                duration: retry_duration,
+                outcome: Outcome::Killed,
+            },
             false,
-        );
+        ));
         match first_duration.checked_add(retry_duration) {
             Some(expected) => {
                 kani::assert(
-                    ledger.is_ok(),
+                    ledger.is_some(),
                     "njutest-law-assertion:duration-sum-constructs",
                 );
-                let Ok(actual) = ledger else {
+                let Some(actual) = ledger else {
                     return;
                 };
                 kani::assert(
@@ -3618,10 +3677,7 @@ mod kani_laws {
             }
             None => {
                 kani::assert(
-                    matches!(
-                        ledger,
-                        Err(crate::workspace::SessionError::ExecutionDurationOverflow)
-                    ),
+                    ledger.is_none(),
                     "njutest-law-assertion:duration-overflow-refused",
                 );
                 kani::cover!(true, "njutest-law-branch:overflow");
@@ -3639,10 +3695,10 @@ mod kani_laws {
             true,
         );
         kani::assert(
-            constructed.is_ok(),
+            constructed.is_some(),
             "njutest-law-assertion:cancelled-retry-constructs",
         );
-        let Ok(ledger) = constructed else {
+        let Some(ledger) = constructed else {
             return;
         };
         kani::assert(
@@ -3802,8 +3858,6 @@ pub fn target_name(package: &str, kind: TargetKind, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use njutest_devkit::result::{ResultState::Returned, result_state};
-
     use super::{AttemptLedger, InitialAttempt, WaitedAttempt, aggregate_outcomes, retry_outcome};
     use crate::execute::{MutantConclusion, MutantResult, StepLimitNotice};
     use crate::outcome::Outcome;
@@ -3899,13 +3953,61 @@ mod tests {
             ),
             false,
         );
-        assert_eq!(result_state(&retried), Returned, "ledger: {retried:?}");
-        let Ok(retried) = retried else { return };
+        assert!(retried.is_some(), "ledger: {retried:?}");
+        let Some(retried) = retried else { return };
         assert_eq!(retried.attempt_count(), 2);
         assert!(retried.retried());
         assert_eq!(retried.result().outcome(), Outcome::StepLimitReached);
         assert_eq!(retried.result().step_notice(), Some(&notice));
         assert_eq!(retried.duration(), Duration::from_secs(3));
+    }
+
+    #[test]
+    fn a_ledger_reads_a_mutant_result_as_its_execution_whatever_payload_it_carries() {
+        use super::Attempt as _;
+        let decline = crate::decline::Decline {
+            test: "tests::shares".to_owned(),
+            why: "this machine cannot share blocks".to_owned(),
+        };
+        for conclusion in [
+            MutantConclusion::Declined {
+                tests: vec![decline.clone(), decline.clone()],
+            },
+            MutantConclusion::DeclinedUnderTheMutant {
+                by: decline.clone(),
+            },
+            MutantConclusion::Waited,
+            MutantConclusion::Killed,
+        ] {
+            let mut carried = result(conclusion, Duration::from_millis(1_234));
+            carried.declines = crate::decline::Declines::Read {
+                declined: vec![decline.clone(); 3],
+                quoted: vec!["words no test was named with".to_owned(); 2],
+            };
+            carried.output = b"what the tests printed".to_vec();
+            assert_eq!(
+                super::Attempt::duration(&carried),
+                Duration::from_millis(1_234),
+                "the duration a ledger sums is the execution's own: {:?}",
+                carried.conclusion
+            );
+            assert_eq!(
+                super::Attempt::outcome(&carried),
+                carried.outcome(),
+                "the outcome a ledger reads is the execution's own: {:?}",
+                carried.conclusion
+            );
+            for outcome in Outcome::ALL {
+                let (mut through, mut direct) = (carried.clone(), carried.clone());
+                through.reconcile(outcome);
+                direct.reconcile_outcome(outcome);
+                assert_eq!(
+                    (&through.conclusion, through.duration, &through.declines),
+                    (&direct.conclusion, direct.duration, &direct.declines),
+                    "a ledger reconciles a retry exactly as the execution does: {outcome:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -3915,10 +4017,7 @@ mod tests {
             result(MutantConclusion::Killed, Duration::from_nanos(1)),
             false,
         );
-        assert!(matches!(
-            ledger,
-            Err(crate::workspace::SessionError::ExecutionDurationOverflow)
-        ));
+        assert!(ledger.is_none(), "{ledger:?}");
     }
 
     #[test]
@@ -3933,8 +4032,8 @@ mod tests {
             ),
             true,
         );
-        assert_eq!(result_state(&ledger), Returned, "ledger: {ledger:?}");
-        let Ok(ledger) = ledger else { return };
+        assert!(ledger.is_some(), "ledger: {ledger:?}");
+        let Some(ledger) = ledger else { return };
         assert_eq!(ledger.result().outcome(), Outcome::NotRun);
         assert!(ledger.result().step_notice().is_none());
     }
