@@ -755,7 +755,7 @@ fn claim(item: &str, rule: &str, original: &str) -> String {
 }
 
 #[test]
-fn list_claims_refuses_every_claim_that_names_nothing_or_more_than_it_says() {
+fn list_claims_refuses_every_claim_that_says_what_is_not_so() {
     let fixture = Fixture::copy("fixture-simple");
     let good = claim("max", "gt-to-ge", ">");
     std::fs::write(
@@ -764,6 +764,7 @@ fn list_claims_refuses_every_claim_that_names_nothing_or_more_than_it_says() {
             good.as_str(),
             &claim("max", "eq-to-neq", "=="),
             &format!("{}count = 2\n", claim("is_even", "eq-to-neq", "==")),
+            &format!("{}line = 99\n", claim("is_even", "rem-to-mul", "%")),
             "[[mutation.expect]]\nid = \"0000000000000000000000000000000000000000000000000000000000000000\"\n\
              outcome = \"survived\"\nreason = \"a claim for this test\"\n",
         ]
@@ -778,16 +779,25 @@ fn list_claims_refuses_every_claim_that_names_nothing_or_more_than_it_says() {
     assert_eq!(
         rotted.status.code(),
         Some(1),
-        "a claim that names nothing or more than it says verifies nothing, and a push that \
-         carries one fails rather than waiting for a run to notice: {said}\n{}",
+        "a claim that names nothing, more than it says, or a line its mutation left says \
+         something that is not so, and a push that carries one fails rather than waiting for a \
+         run to notice: {said}\n{}",
         stderr(&rotted)
     );
-    for rotten in [
-        "src/lib.rs max eq-to-neq \"==\"",
-        "src/lib.rs is_even eq-to-neq \"==\"",
-        "0000000000000000000000000000000000000000000000000000000000000000",
+    for (kind, rotten) in [
+        ("unmatched ", "src/lib.rs max eq-to-neq \"==\""),
+        ("unmatched ", "src/lib.rs is_even eq-to-neq \"==\""),
+        (
+            "unmatched ",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ),
+        ("moved ", "src/lib.rs is_even rem-to-mul \"%\" @99"),
     ] {
-        assert!(said.contains(rotten), "{rotten} is named: {said}");
+        assert!(
+            said.lines()
+                .any(|line| line.starts_with(kind) && line.contains(rotten)),
+            "{rotten} is named as {kind}: {said}"
+        );
     }
     assert!(
         said.lines()

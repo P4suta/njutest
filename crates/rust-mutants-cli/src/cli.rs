@@ -58,7 +58,7 @@ pub enum Command {
         /// Write the candidates as one JSON document instead of as lines.
         #[arg(long)]
         json: bool,
-        /// Resolve every claim the configuration makes, and fail where one names nothing or not as many as it says.
+        /// Resolve every claim the configuration makes, and fail where one names nothing, not as many as it says, or a line its mutation left.
         #[arg(long, conflicts_with_all = ["file", "json", "changed", "changed_from"])]
         claims: bool,
     },

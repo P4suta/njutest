@@ -16,6 +16,15 @@ const ROTTEN: (&str, &str, &str) = ("max", "eq-to-neq", "==");
 /// A claim of the fixture that names its one mutation, which the gate must not refuse.
 const SOUND: (&str, &str, &str) = ("is_even", "eq-to-neq", "==");
 
+/// A claim of the fixture that names its one mutation on a line it is not on, which the gate must refuse.
+const MOVED: (&str, &str, &str) = ("is_even", "rem-to-mul", "%");
+
+/// The line the moved claim holds, which the fixture's source does not reach.
+const MOVED_FROM: u32 = 99;
+
+/// The kinds of line on which `rust-mutants list --claims` names a claim it refuses.
+const REFUSED: [&str; 2] = ["unmatched ", "moved "];
+
 /// What `rust-mutants list --claims` said of one workspace.
 struct Listed {
     refused: bool,
@@ -89,7 +98,11 @@ fn listed(repository: &Path, workspace: &Path) -> Result<Listed, GateError> {
             )));
         }
     };
-    if refused != said.lines().any(|line| line.starts_with("unmatched ")) {
+    if refused
+        != said
+            .lines()
+            .any(|line| REFUSED.iter().any(|kind| line.starts_with(kind)))
+    {
         return Err(GateError(format!(
             "claims: rust-mutants list --claims on {} exited {} and printed a list that says \
              otherwise:\n{said}",
@@ -112,30 +125,39 @@ pub fn claims(root: &Path) -> Result<String, GateError> {
     let configuration = fixture.join(".rust-mutants.toml");
     std::fs::write(
         &configuration,
-        format!("{}\n{}", planted(ROTTEN), planted(SOUND)),
+        format!(
+            "{}\n{}\n{}line = {MOVED_FROM}\n",
+            planted(ROTTEN),
+            planted(SOUND),
+            planted(MOVED)
+        ),
     )
     .map_err(|error| GateError(format!("claims: {}: {error}", configuration.display())))?;
     let control = listed(root, &fixture)?;
-    if !(control.refused && control.named("unmatched ", ROTTEN) && control.named("names ", SOUND)) {
+    if !(control.refused
+        && control.named("unmatched ", ROTTEN)
+        && control.named("moved ", MOVED)
+        && control.named("names ", SOUND))
+    {
         return Err(GateError(format!(
-            "claims: of two claims planted in {FIXTURE}, the one naming nothing is not refused \
-             or the one naming its mutation is, so the gate's silence about the repository \
-             would not be evidence:\n{}",
+            "claims: of three claims planted in {FIXTURE}, the one naming nothing or the one \
+             holding a line its mutation is not on is not refused, or the one naming its \
+             mutation is, so the gate's silence about the repository would not be evidence:\n{}",
             control.said
         )));
     }
     let repository = listed(root, root)?;
     if repository.refused {
         return Err(GateError(format!(
-            "claims: a claim of .rust-mutants.toml names nothing or not as many as it says, so a \
-             run would find it unmatched; re-point it with `rust-mutants explain`, or drop it \
-             where its code is gone:\n{}",
+            "claims: a claim of .rust-mutants.toml names nothing, not as many as it says, or a \
+             line its mutation left; write the line it names, re-point it with `rust-mutants \
+             explain`, or drop it where its code is gone:\n{}",
             repository.said.trim_end()
         )));
     }
     Ok(format!(
         "claims: {} of .rust-mutants.toml name what they say and {} a file only another build \
-         reads, after a planted claim naming nothing was refused",
+         reads, after planted claims naming nothing and a line their mutation left were refused",
         repository.counted("names "),
         repository.counted("elsewhere ")
     ))

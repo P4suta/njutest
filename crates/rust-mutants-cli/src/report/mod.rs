@@ -164,6 +164,12 @@ pub fn claims(expectations: &[Expectation], resolved: &[Resolution]) -> String {
                     mutants.join(" ")
                 )
             }
+            Resolution::Moved { mutants, from, to } => writeln!(
+                text,
+                "moved      {}  {}  is on line {to} now, not {from}; write `line = {to}`",
+                expectation.name(),
+                mutants.join(" ")
+            ),
             Resolution::Uncompiled => writeln!(
                 text,
                 "elsewhere  {}  a file no unit of this build reads",
@@ -179,7 +185,7 @@ pub fn claims(expectations: &[Expectation], resolved: &[Resolution]) -> String {
     let written = writeln!(
         text,
         "\n{} claims: {} name what they say, {} name a file only another build reads, and {} \
-         name nothing or not as many as they say.",
+         name nothing, not as many as they say, or a line their mutation left.",
         resolved.len(),
         counted(|one| !one.rotted() && !one.uncompiled()),
         counted(Resolution::uncompiled),

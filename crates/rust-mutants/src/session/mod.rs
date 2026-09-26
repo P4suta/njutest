@@ -2913,6 +2913,15 @@ pub enum Resolution {
         /// The display identities, in catalog order.
         mutants: Vec<String>,
     },
+    /// It names as many mutations as it says, and the line it holds is not where the first of them now is.
+    Moved {
+        /// The display identities, in catalog order.
+        mutants: Vec<String>,
+        /// The line the claim holds.
+        from: u32,
+        /// The line the first of them is on now.
+        to: u32,
+    },
     /// What it names sits only in a file no unit of this build reads, so it is judged where one does (ADR 0042).
     Uncompiled,
     /// It names nothing, or not as many as it says, so a run finds it unmatched.
@@ -2923,11 +2932,11 @@ pub enum Resolution {
 }
 
 impl Resolution {
-    /// Whether a run would find the claim unmatched.
+    /// Whether the claim says something that is not so: it names nothing, not as many as it says, or a line its mutation left.
     #[must_use]
     pub const fn rotted(&self) -> bool {
         match self {
-            Self::Unmatched { .. } => true,
+            Self::Unmatched { .. } | Self::Moved { .. } => true,
             Self::Names { .. } | Self::Uncompiled => false,
         }
     }
@@ -2937,7 +2946,7 @@ impl Resolution {
     pub const fn uncompiled(&self) -> bool {
         match self {
             Self::Uncompiled => true,
-            Self::Names { .. } | Self::Unmatched { .. } => false,
+            Self::Names { .. } | Self::Moved { .. } | Self::Unmatched { .. } => false,
         }
     }
 }
@@ -2982,7 +2991,13 @@ pub fn resolve_claims(
                 label,
             ),
         )
-        .map(|found| found.iter().map(label).collect::<Vec<_>>())
+        .map(|found| {
+            let moved = locator.line.zip(found.first()).and_then(|(from, first)| {
+                let to = first.found.position.line;
+                (to != from).then_some((from, to))
+            });
+            (found.iter().map(label).collect::<Vec<_>>(), moved)
+        })
     };
     Ok(expectations
         .iter()
@@ -2993,14 +3008,15 @@ pub fn resolve_claims(
                     None => discovery
                         .catalog
                         .resolve_prefix(id)
-                        .map(|mutant| vec![mutant.display_id.to_string()])
+                        .map(|mutant| (vec![mutant.display_id.to_string()], None))
                         .map_err(|error| error.to_string()),
                 },
                 (None, Some(locator)) => located(locator).map_err(|error| error.to_string()),
                 (None, None) => Err("the claim names no mutant".to_owned()),
             };
             match named {
-                Ok(mutants) => Resolution::Names { mutants },
+                Ok((mutants, None)) => Resolution::Names { mutants },
+                Ok((mutants, Some((from, to)))) => Resolution::Moved { mutants, from, to },
                 Err(_)
                     if expectation.locator.as_ref().is_some_and(|locator| {
                         unread_in(
