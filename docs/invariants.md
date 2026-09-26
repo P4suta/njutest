@@ -5,7 +5,9 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Invariants of the critical decisions
 
-**Status: implemented.** `cargo xtask invariants` holds this page to the tree, and the ledger of holes is the work still owed.
+**Status: the registry is implemented, but the campaign remains incomplete while the gap ledger is non-empty.**
+
+`cargo xtask invariants` holds this page to the tree, and the ledger of holes is the work still owed.
 
 A critical decision is one whose mistake changes a verdict, a score, or what a reader is told was measured.
 Each has one row here, and the row says what holds it at every layer: a cell names the items of the tree that do, or says `none`.
