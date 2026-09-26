@@ -1068,7 +1068,7 @@ impl Session {
         if result.conclusion != MutantConclusion::Survived {
             return result;
         }
-        result.conclusion = match &result.declines {
+        let decided = match &result.declines {
             crate::decline::Declines::Unbelieved { because } => {
                 self.workspace.trace.note(
                     crate::decline::DECLINE_NOTICE_FILE,
@@ -1090,6 +1090,20 @@ impl Session {
                 }
             }
         };
+        if let Err(error) = crate::decline::checked_decision(
+            &result.declines,
+            (result.reading(), &result.passed_tests),
+            self.declined_in_baseline(target),
+            &decided,
+        ) {
+            self.workspace.trace.note(
+                crate::decline::DECLINE_NOTICE_FILE,
+                &format!("{target}: {error}"),
+            );
+            result.conclusion = MutantConclusion::Errored;
+        } else {
+            result.conclusion = decided;
+        }
         result
     }
 

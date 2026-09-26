@@ -3,7 +3,9 @@
 
 //! What a test process wrote, on the file the engine named for it, about the tests of it that could not measure where they ran (ADR 0043).
 
-use crate::execute::Reading;
+use std::collections::BTreeSet;
+
+use crate::execute::{MutantConclusion, Reading};
 
 /// The variable that names, to every test process the engine starts, the file a test that cannot measure there appends a line to.
 pub const DECLINE_NOTICE_ENV: &str = "RUST_MUTANTS_DECLINE_NOTICE";
@@ -245,5 +247,138 @@ pub fn held(declined: &[Decline], baseline: &[Decline]) -> Held {
     match declined.iter().find(|one| !baseline.contains(one)) {
         Some(by) => Held::Detected { by: by.clone() },
         None => Held::SetAside(declined.to_vec()),
+    }
+}
+
+/// A decline conclusion that disagrees with the process and baseline evidence.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("decline conclusion {decided:?} disagrees with the process notice or baseline")]
+pub(crate) struct DecisionMismatch {
+    decided: MutantConclusion,
+}
+
+/// Checks the execution's decline conclusion against the notice, the whole-process reading, and the baseline independently of the classifier.
+pub(crate) fn checked_decision(
+    notice: &Declines,
+    process: (Reading, &[String]),
+    baseline: &[Decline],
+    decided: &MutantConclusion,
+) -> Result<(), DecisionMismatch> {
+    let (reading, passed) = process;
+    let valid = match notice {
+        Declines::Unbelieved { .. } => *decided == MutantConclusion::Errored,
+        Declines::Read { declined, .. } => {
+            let mut named = BTreeSet::new();
+            let whole = declined.is_empty()
+                || (reading == Reading::Whole
+                    && declined
+                        .iter()
+                        .all(|one| passed.contains(&one.test) && named.insert(one.test.as_str())));
+            if !whole {
+                false
+            } else if let Some(changed) = declined.iter().find(|one| !baseline.contains(one)) {
+                matches!(decided, MutantConclusion::DeclinedUnderTheMutant { by } if by == changed)
+            } else if !declined.is_empty() && declined.len() == passed.len() {
+                matches!(decided, MutantConclusion::Declined { tests } if tests == declined)
+            } else {
+                *decided == MutantConclusion::Survived
+            }
+        }
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(DecisionMismatch {
+            decided: decided.clone(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Decline, Declines, checked_decision};
+    use crate::execute::{MutantConclusion, Reading};
+
+    #[test]
+    fn a_planted_wrong_execution_decline_decision_is_refused() {
+        let first = Decline {
+            test: "tests::a".to_owned(),
+            why: "no network".to_owned(),
+        };
+        let changed = Decline {
+            test: "tests::a".to_owned(),
+            why: "different words".to_owned(),
+        };
+        let baseline = [first.clone()];
+        let notice = |one| Declines::Read {
+            declined: vec![one],
+            quoted: Vec::new(),
+        };
+        let matching = notice(first.clone());
+        let new_words = notice(changed.clone());
+        let candidates = [
+            MutantConclusion::Survived,
+            MutantConclusion::Errored,
+            MutantConclusion::Declined {
+                tests: vec![first.clone()],
+            },
+            MutantConclusion::DeclinedUnderTheMutant {
+                by: changed.clone(),
+            },
+        ];
+        for (notice, reading, passed, expected) in [
+            (
+                matching.clone(),
+                Reading::Whole,
+                vec!["tests::a".to_owned()],
+                MutantConclusion::Declined { tests: vec![first] },
+            ),
+            (
+                matching.clone(),
+                Reading::Whole,
+                vec!["tests::a".to_owned(), "tests::b".to_owned()],
+                MutantConclusion::Survived,
+            ),
+            (
+                new_words,
+                Reading::Whole,
+                vec!["tests::a".to_owned()],
+                MutantConclusion::DeclinedUnderTheMutant { by: changed },
+            ),
+            (
+                Declines::Unbelieved {
+                    because: super::Unbelieved::ReadingNotWhole,
+                },
+                Reading::Short,
+                vec!["tests::a".to_owned()],
+                MutantConclusion::Errored,
+            ),
+        ] {
+            assert!(
+                checked_decision(&notice, (reading, &passed), &baseline, &expected).is_ok(),
+                "the actual {expected:?} was refused for {notice:?} under {reading:?}"
+            );
+            for planted in &candidates {
+                if *planted == expected {
+                    continue;
+                }
+                assert!(
+                    checked_decision(&notice, (reading, &passed), &baseline, planted).is_err(),
+                    "a planted {planted:?} passed for {notice:?} under {reading:?}"
+                );
+            }
+        }
+        for planted in &candidates {
+            assert!(
+                checked_decision(
+                    &matching,
+                    (Reading::Short, &["tests::a".to_owned()]),
+                    &baseline,
+                    planted,
+                )
+                .is_err(),
+                "a planted {planted:?} passed for a notice from an incomplete process"
+            );
+        }
     }
 }
