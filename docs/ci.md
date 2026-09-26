@@ -45,7 +45,6 @@ To diagnose a run that only misbehaves on the runner, set `NJUTEST_TRACE: '1'` o
 | `mutation.yml` | `cargo-mutants` over each package | weekly, and on request |
 | `dogfood.yml` | `whole` runs the engine over its own catalog in one job through the `rust-mutants` action, checks the recording, and re-decides the run against the ledger | weekly, and on request |
 | `fuzz.yml` | every fuzz target for a fixed time | weekly, and on an engine pull request |
-| `dependabot-auto-merge.yml` | asks for the merge of a dependency bump, which GitHub performs once `ci-success` passes; the label `no-auto-merge` says not to | on a dependabot pull request |
 | `release-plz.yml`, `release.yml` | the release train | every push to `main`, and on a tag |
 | `codeql.yml` | CodeQL over Rust and over the workflows, with the `security-extended` queries; `CodeQL required` is the one name a protection rule asks for | every push and pull request, and weekly |
 | `dependency-review.yml` | what a pull request adds to the dependency graph, refused at moderate severity in any scope | on a pull request |
@@ -66,7 +65,8 @@ A page that neither side notices is one a reader of the book cannot reach.
 
 `codeql.yml`, `dependency-review.yml`, and `scorecard.yml` answer about the supply chain rather than about this code: what a query finds in it, what a change adds to the graph below it, and what the posture of the repository looks like from outside.
 `cargo deny` and `cargo audit` in `ci.yml` ask the same question of the graph that is already here, on every push; dependency review asks it of the difference, and says so on the pull request.
-Secret scanning, push protection, Dependabot security updates, and private vulnerability reporting are repository settings rather than workflows, and are on.
+Secret scanning, push protection, Dependabot security alerts, and private vulnerability reporting are repository settings rather than workflows, and are on.
+Renovate opens dependency and security-fix pull requests from the shared P4suta configuration.
 
 Every workflow declares `shell: bash` as its default, which GitHub runs as `bash -e -o pipefail` on each of the three platforms, and no step or composite action names another shell (`cargo test -p xtask --test workflows`).
 Without that default a Linux or macOS step runs in `bash -e`, where `njutest verify | tee out` has the status of `tee`, and a Windows step runs in PowerShell, which goes on past a native command that failed.

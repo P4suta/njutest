@@ -88,11 +88,10 @@ the review. Compile-error goldens of the attribute macros are rewritten with
 
 ## Dependencies
 
-- Cargo dependencies and GitHub Actions are updated weekly by Dependabot.
+- Cargo dependencies and GitHub Actions are updated weekly by Renovate.
   Actions are pinned to commit SHAs with a version comment; keep that format.
-- Tool versions in `mise.toml` are not managed by Dependabot. Bump them by
-  hand and update the matching `taiki-e/install-action` pins in
-  `.github/workflows` in the same change.
+- Tool versions in `mise.toml` are not managed by Renovate.
+  Bump them by hand and update the matching `taiki-e/install-action` pins in `.github/workflows` in the same change.
 
 ## License
 
