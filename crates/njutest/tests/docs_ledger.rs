@@ -14,7 +14,7 @@
 
 use njutest::config::Config;
 use njutest::report::{Decision, FindingKind};
-use njutest_devkit::docs::{TraceSpecimen, table_count, trace_field_ledger};
+use njutest_devkit::docs::{TraceSpecimen, named_set_ledger, table_count, trace_field_ledger};
 
 fn page(relative: &str) -> String {
     let path = njutest_devkit::paths::workspace_root().join(relative);
@@ -50,26 +50,57 @@ fn a_count_a_page_states_is_read_from_the_paragraph_that_states_it() {
     );
 }
 
+fn routing_ledger(text: &str) -> Result<(), njutest_devkit::docs::LedgerError> {
+    let granularities: Vec<&str> = rust_mutants::session::Granularity::ALL
+        .iter()
+        .map(|one| one.name())
+        .collect();
+    let proofs: Vec<&str> = rust_mutants::session::Proof::ALL
+        .iter()
+        .map(|one| one.name())
+        .collect();
+    let fallbacks: Vec<&str> = rust_mutants::session::Fallback::ALL
+        .iter()
+        .map(|one| one.name())
+        .collect();
+    named_set_ledger(
+        text,
+        ("## Routing", "| field | what it says |"),
+        Some(1),
+        &[
+            ("granularity", &granularities),
+            ("reaching", &[]),
+            ("discharged", &proofs),
+            ("fallback", &fallbacks),
+            ("answered", &[]),
+        ],
+    )
+}
+
 #[test]
 fn every_way_a_run_can_choose_and_every_reason_it_widened_is_on_the_report_page() {
     let text = page("docs/report-v1.md");
-    let missing: Vec<&str> = rust_mutants::session::Granularity::ALL
-        .iter()
-        .map(|one| one.name())
-        .chain(
-            rust_mutants::session::Fallback::ALL
-                .iter()
-                .map(|one| one.name()),
-        )
-        .filter(|word| !text.contains(&format!("`{word}`")))
-        .collect();
-    assert!(
-        missing.is_empty(),
-        "a survivor is a claim about the targets a run chose, so the page names \
-         every way it can choose and every reason it gave up narrowing. A word the \
-         page does not carry is one a reader finds in a record and cannot look up: \
-         {missing:?}"
+    assert_eq!(
+        routing_ledger(&text).map_err(|error| error.to_string()),
+        Ok(())
     );
+}
+
+#[test]
+fn a_report_page_with_a_missing_or_extra_routing_row_is_refused() {
+    let text = page("docs/report-v1.md");
+    let fallback = text
+        .lines()
+        .find(|line| line.starts_with("| `fallback` |"))
+        .expect("the routing table has a fallback row");
+    let missing = text.replace(fallback, "");
+    let extra = text.replace(fallback, &format!("{fallback}\n| `invented` | `made-up` |"));
+    for changed in [missing, extra] {
+        assert!(
+            routing_ledger(&changed).is_err(),
+            "the page may name exactly the rows the route records: {changed}"
+        );
+    }
 }
 
 #[test]
@@ -846,13 +877,16 @@ fn every_fault_decision_is_one_the_schema_publishes_and_the_page_documents() {
         "the schema and the set it publishes are one list"
     );
     let text = page("docs/report-v1.md");
-    let undocumented: Vec<&&str> = produced
-        .iter()
-        .filter(|name| !text.contains(&format!("| `{name}` |")))
-        .collect();
-    assert!(
-        undocumented.is_empty(),
-        "docs/report-v1.md has no row for {undocumented:?}"
+    let rows: Vec<(&str, &[&str])> = produced.iter().map(|name| (*name, &[][..])).collect();
+    assert_eq!(
+        named_set_ledger(
+            &text,
+            ("## Faults", "| `decision` | what it says | carries |"),
+            None,
+            &rows,
+        )
+        .map_err(|error| error.to_string()),
+        Ok(())
     );
     for decision in &every {
         let wire = serde_json::to_value(decision).expect("a decision serialises");
@@ -887,13 +921,16 @@ fn every_crash_decision_is_one_the_schema_publishes_and_the_page_documents() {
         "the schema and the set it publishes are one list"
     );
     let text = page("docs/report-v1.md");
-    let undocumented: Vec<&&str> = produced
-        .iter()
-        .filter(|name| !text.contains(&format!("| `{name}` |")))
-        .collect();
-    assert!(
-        undocumented.is_empty(),
-        "docs/report-v1.md has no row for {undocumented:?}"
+    let rows: Vec<(&str, &[&str])> = produced.iter().map(|name| (*name, &[][..])).collect();
+    assert_eq!(
+        named_set_ledger(
+            &text,
+            ("## Crashes", "| `decision` | what it says | carries |"),
+            None,
+            &rows,
+        )
+        .map_err(|error| error.to_string()),
+        Ok(())
     );
     for decision in &every {
         let wire = serde_json::to_value(decision).expect("a decision serialises");

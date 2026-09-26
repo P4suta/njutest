@@ -168,6 +168,14 @@ pub enum LedgerError {
         /// Every difference, already rendered as one deterministic report.
         detail: String,
     },
+    /// A named table cannot be read unambiguously or differs from its closed Rust sets.
+    #[error("named set table {marker}: {detail}")]
+    NamedSetDrift {
+        /// The section and table header.
+        marker: String,
+        /// The malformed row or the names that differ.
+        detail: String,
+    },
 }
 
 /// Holds the count stated in the paragraph immediately above a table to the count derived from code.
@@ -694,4 +702,198 @@ pub fn schema_enum_ledger(schema: &str, expected: &[(&str, &[&str])]) -> Result<
         }
     }
     Ok(())
+}
+
+/// Holds one named table's rows and their listed names to closed Rust sets.
+///
+/// # Errors
+/// The section or table is absent or malformed, or its rows and names differ from `expected`.
+pub fn named_set_ledger(
+    text: &str,
+    table: (&str, &str),
+    member_column: Option<usize>,
+    expected: &[(&str, &[&str])],
+) -> Result<(), LedgerError> {
+    let (section, header) = table;
+    let marker = format!("{section} / {header}");
+    let documented = documented_named_sets(text, table, member_column, &marker)?;
+    compare_named_sets(&documented, expected, &marker)
+}
+
+fn named_section<'a>(
+    text: &'a str,
+    table: (&str, &str),
+    marker: &str,
+) -> Result<Vec<&'a str>, LedgerError> {
+    let (section, header) = table;
+    let drift = |detail: String| LedgerError::NamedSetDrift {
+        marker: marker.to_owned(),
+        detail,
+    };
+    if text.lines().filter(|line| line.trim() == section).count() != 1 {
+        return Err(drift(format!(
+            "the section {section:?} must occur exactly once"
+        )));
+    }
+    let section_lines: Vec<&str> = text
+        .lines()
+        .skip_while(|line| line.trim() != section)
+        .skip(1)
+        .take_while(|line| !line.starts_with("## "))
+        .collect();
+    if section_lines
+        .iter()
+        .filter(|line| line.trim() == header)
+        .count()
+        != 1
+    {
+        return Err(drift(format!(
+            "the table {header:?} must occur exactly once"
+        )));
+    }
+    Ok(section_lines)
+}
+
+fn documented_named_sets(
+    text: &str,
+    table: (&str, &str),
+    member_column: Option<usize>,
+    marker: &str,
+) -> Result<BTreeMap<String, BTreeSet<String>>, LedgerError> {
+    let (_, header) = table;
+    let drift = |detail: String| LedgerError::NamedSetDrift {
+        marker: marker.to_owned(),
+        detail,
+    };
+    let section_lines = named_section(text, table, marker)?;
+    let width = table_cells(header)?.len();
+    if width < 2 || member_column.is_some_and(|column| column >= width) {
+        return Err(drift("the table has no requested member column".to_owned()));
+    }
+    let mut lines = section_lines
+        .iter()
+        .copied()
+        .skip_while(|line| line.trim() != header)
+        .skip(1);
+    let divider = lines
+        .next()
+        .ok_or_else(|| drift("the table has no divider".to_owned()))?;
+    let cells = table_cells(divider)?;
+    if cells.len() != width
+        || cells
+            .iter()
+            .any(|cell| cell.len() < 3 || !cell.bytes().all(|byte| byte == b'-'))
+    {
+        return Err(drift(format!(
+            "the table divider is malformed: {divider:?}"
+        )));
+    }
+    let mut documented = BTreeMap::new();
+    for line in lines.take_while(|line| line.trim_start().starts_with('|')) {
+        let cells = table_cells(line)?;
+        if cells.len() != width {
+            return Err(drift(format!("the row has {width} columns: {line:?}")));
+        }
+        let row_cell = cells
+            .first()
+            .ok_or_else(|| drift(format!("the row has no name: {line:?}")))?;
+        let row = backticked(row_cell, "named set row")?.to_owned();
+        let members = if let Some(column) = member_column {
+            let cell = cells
+                .get(column)
+                .ok_or_else(|| drift(format!("the row has no member column: {line:?}")))?;
+            named_members(cell, marker)?
+        } else {
+            BTreeSet::new()
+        };
+        if documented.insert(row.clone(), members).is_some() {
+            return Err(drift(format!("row {row:?} occurs twice")));
+        }
+    }
+    if documented.is_empty() {
+        return Err(drift("the table has no rows".to_owned()));
+    }
+    Ok(documented)
+}
+
+fn compare_named_sets(
+    documented: &BTreeMap<String, BTreeSet<String>>,
+    expected: &[(&str, &[&str])],
+    marker: &str,
+) -> Result<(), LedgerError> {
+    let drift = |detail: String| LedgerError::NamedSetDrift {
+        marker: marker.to_owned(),
+        detail,
+    };
+    let mut rust = BTreeMap::new();
+    for (row, names) in expected {
+        let members: BTreeSet<String> = names.iter().map(|name| (*name).to_owned()).collect();
+        if members.len() != names.len() {
+            return Err(drift(format!("Rust set {row:?} repeats a name")));
+        }
+        if rust.insert((*row).to_owned(), members).is_some() {
+            return Err(drift(format!("Rust row {row:?} occurs twice")));
+        }
+    }
+    let missing: Vec<&String> = rust
+        .keys()
+        .filter(|row| !documented.contains_key(*row))
+        .collect();
+    let extra: Vec<&String> = documented
+        .keys()
+        .filter(|row| !rust.contains_key(*row))
+        .collect();
+    if !missing.is_empty() || !extra.is_empty() {
+        return Err(drift(format!(
+            "rows differ: missing {missing:?}; extra {extra:?}"
+        )));
+    }
+    for (row, actual) in &rust {
+        let Some(written) = documented.get(row) else {
+            continue;
+        };
+        let missing: Vec<&String> = actual.difference(written).collect();
+        let extra: Vec<&String> = written.difference(actual).collect();
+        if !missing.is_empty() || !extra.is_empty() {
+            return Err(drift(format!(
+                "row {row:?} names differ: missing {missing:?}; extra {extra:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn named_members(cell: &str, marker: &str) -> Result<BTreeSet<String>, LedgerError> {
+    let drift = |detail: String| LedgerError::NamedSetDrift {
+        marker: marker.to_owned(),
+        detail,
+    };
+    let mut names = BTreeSet::new();
+    let mut rest = cell;
+    while let Some(open) = rest.find('`') {
+        let after = rest.get(open.saturating_add(1)..).ok_or_else(|| {
+            drift(format!(
+                "the member cell breaks between characters: {cell:?}"
+            ))
+        })?;
+        let close = after
+            .find('`')
+            .ok_or_else(|| drift(format!("the member cell has an unclosed name: {cell:?}")))?;
+        let name = after.get(..close).ok_or_else(|| {
+            drift(format!(
+                "the member cell breaks between characters: {cell:?}"
+            ))
+        })?;
+        if name.is_empty() || !names.insert(name.to_owned()) {
+            return Err(drift(format!(
+                "the member cell has an empty or repeated name: {cell:?}"
+            )));
+        }
+        rest = after.get(close.saturating_add(1)..).ok_or_else(|| {
+            drift(format!(
+                "the member cell breaks between characters: {cell:?}"
+            ))
+        })?;
+    }
+    Ok(names)
 }
