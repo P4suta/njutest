@@ -2379,8 +2379,8 @@ fn finished(
 /// Configures [`build`].
 #[derive(Debug, Clone, Default)]
 pub struct BuildOptions {
-    /// `--target-dir`.
-    pub target_dir: Option<PathBuf>,
+    /// `--target-dir`, with the members a build into it may compile.
+    pub target_dir: Option<crate::cargo::BuildDir>,
     /// Pass `--locked`.
     pub locked: bool,
     /// Pass `--offline`.
@@ -2420,7 +2420,14 @@ pub fn build(
             "the test binaries could not be built",
         ));
     }
-    targets_of(&compiled.messages, packages, options.target_dir.as_deref())
+    targets_of(
+        &compiled.messages,
+        packages,
+        options
+            .target_dir
+            .as_ref()
+            .map(crate::cargo::BuildDir::path),
+    )
 }
 
 /// The targets a run may start, which is every one `skipped` does not name.

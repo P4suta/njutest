@@ -131,13 +131,14 @@ fn measure(
     if let Some(named) = refusal(&flags) {
         return Ok(refused(named, trace));
     }
-    let target_dir = workspace.target_dir.join("coverage");
+    let coverage = workspace.build_dir().nested("coverage");
+    let target_dir = coverage.path().to_path_buf();
     let built = compile(
         &workspace.driver(cancel),
         &CompileOptions {
             kind: CompileKind::Tests,
             packages: options.packages.clone(),
-            target_dir: Some(target_dir.clone()),
+            target_dir: Some(coverage),
             locked: workspace.locked,
             offline: workspace.offline,
             timeout: Workspace::timeout(options.build_timeout),

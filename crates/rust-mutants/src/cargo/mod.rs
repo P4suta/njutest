@@ -4,6 +4,7 @@
 //! The cargo boundary: locating the toolchain, reading `cargo metadata`, parsing `--message-format=json`, and reading dep-info to learn which files a unit really compiled.
 
 mod build_identity;
+mod built;
 mod compile;
 pub mod config;
 mod depinfo;
@@ -22,6 +23,7 @@ use crate::runner::Cancel;
 use crate::trace::Recorder;
 
 pub use build_identity::{BUILD_SELECTION_DOMAIN, BuildSelection, BuildSelectionDigest};
+pub use built::{BuildDir, LEDGER_NAME, LEDGER_SCHEMA, Member, MemberFile, fingerprint_of};
 pub use compile::{
     BuildConfig, Compilation, CompileKind, CompileOptions, Compiled, compile, compile_arguments,
 };
@@ -76,6 +78,8 @@ pub enum CargoErrorKind {
     DepInfoMissing,
     /// The caller cancelled before the command finished, so what it printed says nothing.
     Cancelled,
+    /// A target directory's record of what its members were built from could not be read or written, or a unit it names as stale could not be forgotten.
+    BuildLedger,
 }
 
 impl CargoErrorKind {
@@ -92,6 +96,7 @@ impl CargoErrorKind {
             Self::DepInfoUnreadable => error::DEP_INFO_UNREADABLE,
             Self::DepInfoMissing => error::DEP_INFO_MISSING,
             Self::Cancelled => error::INTERRUPTED,
+            Self::BuildLedger => error::BUILD_LEDGER_UNREADABLE,
         }
     }
 }

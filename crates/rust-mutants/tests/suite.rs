@@ -9,6 +9,8 @@ mod annotate;
 mod branch;
 #[path = "build_identity.rs"]
 mod build_identity;
+#[path = "built.rs"]
+mod built;
 #[path = "canonical.rs"]
 mod canonical;
 #[path = "capdir.rs"]

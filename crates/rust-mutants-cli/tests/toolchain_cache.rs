@@ -721,3 +721,136 @@ fn an_answer_is_never_read_back_under_another_value_of_a_variable_a_claim_declar
         said(&same)
     );
 }
+
+#[test]
+fn a_crate_an_earlier_run_instrumented_is_built_again_when_this_run_leaves_it_as_written() {
+    let fixture = Fixture::copy("fixture-witness-downstream");
+    let quietly = [
+        "run",
+        "--offline",
+        "--locked",
+        "--tier",
+        "all",
+        "--no-coverage",
+        "--ui",
+        "quiet",
+    ];
+    let whole = against(&fixture, &quietly);
+    assert!(
+        whole.status.code().is_some_and(|code| code < 2),
+        "the arranging run instruments both crates and reaches a verdict: {whole:?}"
+    );
+    let narrowed = against(
+        &fixture,
+        &[
+            &quietly[..],
+            &["--no-cache", "--include", "crates/downstream/src/lib.rs"],
+        ]
+        .concat(),
+    );
+    let document: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&njutest_devkit::fixture::stored_report(
+            &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+        ))
+        .expect("the report is a document");
+    let undecided: Vec<String> = document["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .filter(|row| row["outcome"] != "killed")
+        .map(|row| format!("{} {} {}", row["path"], row["rule"], row["outcome"]))
+        .collect();
+    assert!(
+        narrowed.status.code() == Some(0) && undecided.is_empty(),
+        "a run that catalogs only downstream leaves upstream as written, and cargo decides by a \
+         file's time whether to compile it again; the copy keeps the time the file was written, \
+         which is older than the instrumented upstream the first run built, so a build that \
+         trusts the time links that upstream, whose runtime belongs to another catalog: \
+         {undecided:?}\n{narrowed:?}"
+    );
+}
+
+/// Every fingerprint cargo keeps under `temp`, beside the time it was last written.
+fn fingerprints_under(
+    temp: &std::path::Path,
+) -> std::collections::BTreeMap<String, std::time::SystemTime> {
+    let mut found = std::collections::BTreeMap::new();
+    let mut pending = vec![temp.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries {
+            let entry = entry.expect("an entry of a directory being listed");
+            let path = entry.path();
+            let kind = entry.file_type().expect("an entry's type");
+            if !kind.is_dir() {
+                continue;
+            }
+            let fingerprint = path
+                .parent()
+                .and_then(std::path::Path::file_name)
+                .is_some_and(|name| name == ".fingerprint");
+            if fingerprint {
+                for unit in std::fs::read_dir(&path).expect("a unit's fingerprint") {
+                    let unit = unit.expect("a fingerprint file");
+                    let written = unit
+                        .metadata()
+                        .and_then(|metadata| metadata.modified())
+                        .expect("a fingerprint file's time");
+                    found.insert(
+                        unit.path()
+                            .strip_prefix(temp)
+                            .expect("under the temporary root")
+                            .display()
+                            .to_string(),
+                        written,
+                    );
+                }
+            } else {
+                pending.push(path);
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn a_repeat_run_of_an_unchanged_tree_compiles_nothing_again() {
+    let fixture = Fixture::copy("fixture-simple");
+    let quietly = [
+        "run",
+        "--offline",
+        "--locked",
+        "--tier",
+        "all",
+        "--no-coverage",
+        "--ui",
+        "quiet",
+    ];
+    for arranging in 0..2 {
+        let output = against(&fixture, &quietly);
+        assert!(
+            output.status.code().is_some_and(|code| code < 2),
+            "arranging run {arranging}: {output:?}"
+        );
+    }
+    let before = fingerprints_under(fixture.temp());
+    assert!(!before.is_empty(), "the runs built something");
+    let repeated = against(&fixture, &quietly);
+    assert!(
+        repeated.status.code().is_some_and(|code| code < 2),
+        "{repeated:?}"
+    );
+    let after = fingerprints_under(fixture.temp());
+    let compiled: Vec<&String> = after
+        .iter()
+        .filter(|(unit, written)| before.get(*unit) != Some(*written))
+        .map(|(unit, _)| unit)
+        .collect();
+    assert!(
+        compiled.is_empty(),
+        "a run of a tree whose bytes are the ones the last run built compiles nothing: every \
+         unit it wrote a fingerprint for is work the last run had already done: {compiled:#?}"
+    );
+}

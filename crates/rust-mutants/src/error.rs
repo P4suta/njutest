@@ -102,6 +102,8 @@ mod table {
         ManifestUnreadable,
         /// A name handed to a capability directory is not one path component.
         CapdirNameRefused,
+        /// A target directory's record of what its members were built from could not be read or written, or a unit it names as stale could not be forgotten.
+        BuildLedgerUnreadable,
         /// A dep-info file has no rule to read.
         DepInfoUnreadable,
         /// An artifact's dep-info file could not be read.
@@ -478,6 +480,14 @@ mod table {
                     summary: "a name handed to a capability directory is not one path component",
                     remedy: Some(
                         "a store names its entries itself; a name that could reach a parent, a stream or a device is a defect in the caller, so report it",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::BuildLedgerUnreadable => ErrorCode {
+                    code: "RM1022",
+                    summary: "a target directory's record of what its members were built from could not be read or written, or a unit it names as stale could not be forgotten",
+                    remedy: Some(
+                        "remove the target directory the message names: a run compiles again what it cannot vouch for, and a record it cannot read is one it cannot vouch by",
                     ),
                     sealed: Sealed,
                 },
@@ -882,6 +892,7 @@ pub(crate) const ROOT_IS_NOT_THE_WORKSPACE: ErrorCode = RmCode::RootIsNotTheWork
 pub(crate) const SNAPSHOT_LAYOUT: ErrorCode = RmCode::SnapshotLayout.error_code();
 pub(crate) const MANIFEST_UNREADABLE: ErrorCode = RmCode::ManifestUnreadable.error_code();
 pub(crate) const CAPDIR_NAME_REFUSED: ErrorCode = RmCode::CapdirNameRefused.error_code();
+pub(crate) const BUILD_LEDGER_UNREADABLE: ErrorCode = RmCode::BuildLedgerUnreadable.error_code();
 pub(crate) const DEP_INFO_UNREADABLE: ErrorCode = RmCode::DepInfoUnreadable.error_code();
 pub(crate) const DEP_INFO_MISSING: ErrorCode = RmCode::DepInfoMissing.error_code();
 pub(crate) const DISCOVER_FILE_UNREADABLE: ErrorCode = RmCode::DiscoverFileUnreadable.error_code();

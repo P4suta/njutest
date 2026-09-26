@@ -492,7 +492,7 @@ fn checking(
     Ok(CompileOptions {
         kind: CompileKind::Check,
         packages: Vec::new(),
-        target_dir: Some(workspace.target_dir.join("witness")),
+        target_dir: Some(workspace.build_dir().nested("witness")),
         locked: workspace.locked,
         offline: workspace.offline,
         timeout: Workspace::timeout(options.build_timeout),
