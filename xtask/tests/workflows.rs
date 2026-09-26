@@ -129,6 +129,51 @@ fn newest_macos_and_windows_each_run_one_whole_suite() {
 }
 
 #[test]
+fn ci_and_mise_execute_one_coverage_ratchet() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mise_path = root.join("mise.toml");
+    let mise = std::fs::read_to_string(&mise_path)
+        .unwrap_or_else(|error| panic!("{}: {error}", mise_path.display()));
+    let table = mise
+        .parse::<toml::Table>()
+        .unwrap_or_else(|error| panic!("{}: {error}", mise_path.display()));
+    let local = table
+        .get("tasks")
+        .and_then(|tasks| tasks.get("coverage"))
+        .and_then(|coverage| coverage.get("run"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or_else(|| panic!("mise.toml declares the coverage task's command"));
+    let ci_path = root.join(".github/workflows/ci.yml");
+    let ci = std::fs::read_to_string(&ci_path)
+        .unwrap_or_else(|error| panic!("{}: {error}", ci_path.display()));
+    let coverage = jobs(&ci)
+        .into_iter()
+        .find_map(|(name, body)| (name == "coverage").then_some(body))
+        .unwrap_or_else(|| panic!("ci.yml has the coverage job"));
+
+    assert_eq!(
+        local
+            .lines()
+            .filter(|line| line.trim() == "cargo xtask coverage-ratchet")
+            .count(),
+        1,
+        "the local coverage task runs the shared ratchet once"
+    );
+    assert_eq!(
+        coverage
+            .lines()
+            .filter(|line| line.trim() == "run: cargo xtask coverage-ratchet")
+            .count(),
+        1,
+        "the CI coverage job runs the same ratchet once"
+    );
+    assert!(
+        !local.contains("--fail-under-regions") && !coverage.contains("--fail-under-regions"),
+        "floor values and exclusion rules belong to the shared ratchet, not either caller"
+    );
+}
+
+#[test]
 fn every_step_runs_in_a_shell_that_stops_at_the_first_failure_even_inside_a_pipe() {
     let mut loose = Vec::new();
     for path in workflows() {

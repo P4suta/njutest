@@ -10,6 +10,7 @@ pub mod adrs;
 pub mod claims;
 pub mod concurrency;
 pub mod confirm;
+mod coverage;
 pub mod crashes;
 pub mod defaulted;
 pub mod deps;
@@ -192,6 +193,8 @@ enum Gate {
     /// A second opinion, by body shape alone, on every catch-all the ledger waives.
     /// Refuses nothing.
     Waivers,
+    /// Enforce the region-coverage floors recorded in this tree.
+    CoverageRatchet,
     /// The whole suite of this commit on the other machines, before it is pushed.
     RemoteCheck {
         /// The file that names the machines, how each is reached, and what each runs.
@@ -328,10 +331,19 @@ where
         Gate::ReportDiff { before, after } => gates::report_diff(&before, &after),
         Gate::Sbom { output } => gates::sbom(&root, output.as_deref()),
         Gate::Waivers => gates::waivers(&root),
+        Gate::CoverageRatchet => coverage::ratchet(&root, process.cargo),
         Gate::RemoteCheck { machines, worktree } => remote::check(worktree.as_deref().unwrap_or(&root), &machines)
             .map_err(|error| gates::GateError(error.coded())),
         Gate::All => gates::all(&root),
     };
+    report(outcome, stdout, stderr)
+}
+
+fn report(
+    outcome: Result<String, gates::GateError>,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> ExitCode {
     match outcome {
         Ok(report) => after_output(writeln!(stdout, "{report}"), ExitCode::SUCCESS),
         Err(failure) => after_output(writeln!(stderr, "{}", failure.coded()), ExitCode::FAILURE),

@@ -2856,6 +2856,7 @@ dependencies = [
  "njutest-devkit",
  "njutest-macros",
  "proc-macro2",
+ "regex",
  "rustix",
  "serde",
  "serde_json",

@@ -42,6 +42,7 @@ rustix = { workspace = true }
 
 [dev-dependencies]
 njutest-devkit = { workspace = true }
+regex = "1.13"
 xtask = { path = ".", features = ["testkit"] }
 
 [lints]
