@@ -904,7 +904,7 @@ fn a_mutation_the_compiler_renders_identically_is_only_equivalent_where_the_test
 #[cfg(unix)]
 fn proved_equivalent(root: &std::path::Path) {
     let report = report_of(root);
-    if !njutest_devkit::reproducible::builds_the_same_twice() {
+    if !njutest_devkit::reproducible::builds_a_reverted_change_to_the_same_bytes() {
         assert_eq!(
             part_of(&report)["accounting"]["mutants"]["equivalent"].as_u64(),
             Some(0),

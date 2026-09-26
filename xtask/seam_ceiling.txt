@@ -3,11 +3,9 @@
 #
 # How many seams `xtask/seam_allowlist.txt` may carry.
 #
-# **This file may shrink and never grow.** The ledger's own header has always
-# said so and nothing held it: `devgates::compare` is set equality, so a new
-# seam and the line recording it could arrive in one commit, written by the
-# same hand, and the gate would be green. The ledger stands at zero, so the
-# first growth would also have been the first test of the rule.
+# **This file may shrink and never grow**, which `cargo xtask ratchets` holds against the same file where the change meets origin/main, since a bound kept beside what it bounds is one the same change could raise.
+# The ledger's own header has always said so and nothing held it: `devgates::compare` is set equality, so a new seam and the line recording it could arrive in one commit, written by the same hand, and the gate would be green.
+# The ledger stands at zero, so the first growth would also have been the first test of the rule.
 #
 # This is `xtask/waiver_ceiling.txt` applied to the other ledger. The argument
 # is the same one, and that it was made once and not carried across is why

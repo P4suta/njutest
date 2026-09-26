@@ -1628,7 +1628,7 @@ fn a_mutation_the_compiler_renders_identically_is_not_a_gap_in_the_tests() {
         "killed",
         "`n * 2` and `n / 2` are not the same instructions"
     );
-    if !njutest_devkit::reproducible::builds_the_same_twice() {
+    if !njutest_devkit::reproducible::builds_a_reverted_change_to_the_same_bytes() {
         assert_eq!(
             report["builds"][0]["parts"][0]["accounting"]["mutants"]["equivalent"], 0,
             "a machine that renders one unchanged tree two ways establishes nothing here, \

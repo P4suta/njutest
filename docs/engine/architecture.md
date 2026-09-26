@@ -349,6 +349,9 @@ POSIX uses an inherited process group (`InheritedProcessGroup`): descendants rem
 The leader remains waitable until the group has been forcefully signalled, so its numeric process-group id cannot be recycled into an unrelated process before supervision is released.
 This POSIX boundary establishes forceful signalling, not kernel quiescence: a member in an uninterruptible kernel wait may remain until the kernel can finish it.
 Windows Job Objects provide the stronger contained-tree lifetime boundary.
+A POSIX descendant that did leave the group is ended when the run closes, cancelled or refused alike: `escaped::working_under` lists every process whose working directory lies in the run's copy or its scratch, which none but a process the run started has once its executions have ended, and `Workspace::close` ends each and notes it as `escaped-processes`.
+`Snapshot`'s drop does the same before it removes the copy, so no path out of a run leaves a process working in a directory that is gone.
+The listing is `/proc/<pid>/cwd` on Linux and `lsof -d cwd` elsewhere, since macOS hides the environment of platform binaries from `ps`; what the sweep cannot see is stated in [limitations](../limitations.md).
 
 ### The scratch a test process is given
 
@@ -371,6 +374,16 @@ A test process the engine starts is told what cargo would have told it:
 | `CARGO_BIN_EXE_<name>` | the file the build produced, for an integration test or a tested example. Composing it from a profile name and a target name guesses at both and on Windows guesses wrong |
 | `CARGO_TARGET_TMPDIR` | the build directory, for an integration test or a tested example |
 | `OUT_DIR` and every `cargo::rustc-env` value | the package's own build script, from the `build-script-executed` message |
+
+### The toolchain a test process finds
+
+A test that runs `cargo` by its bare name finds whatever the search path holds first, and a shim that chooses a toolchain by the directory it runs in, as mise and direnv do, may refuse the copy a run measures: mise refuses a `mise.toml` nobody trusted in that place, and the copy's is one.
+Such a test would fail for a reason no code of it holds, under every mutation alike.
+So when the workspace opens, the engine asks a bare `cargo -vV` from the copy's root, with the environment the tests get.
+Where it answers as the run's own toolchain does — a rustup proxy honouring `rust-toolchain.toml`, say — the search path is left as it is, and a test's `cargo +nightly` still reaches rustup.
+Where it fails, or names another toolchain, every test is given the run's toolchain directory, `<sysroot>/bin`, first on its search path, the trace notes `tests-toolchain` with what the bare `cargo` said, and the engine asks again to be sure.
+Where even that does not answer as the run's toolchain, the run refuses with `RM1023`, quoting both answers, rather than letting each test fail on its own.
+The copy's configuration is never trusted on the user's behalf.
 
 ### The environment a test process gets
 

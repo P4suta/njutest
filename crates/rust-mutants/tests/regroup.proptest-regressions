@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 4959c76443abc1aa0a8213abf6586f80e43df9e4428cc77ad31ce320e2109742 # shrinks to tree = Node(Node { op: Or, left: Node(Node { op: BitOr, left: Node(Node { op: BitOr, left: Leaf(0), right: Leaf(0), wrapped: false }), right: Leaf(0), wrapped: false }), right: Leaf(0), wrapped: false })
+cc d9189d80da24353cf831c9cda2b3f6183c0c5d0598c8aa911bab169cdb6f9c5a # shrinks to tree = Node(Node { op: BitOr, left: Leaf(0), right: Leaf(0), wrapped: false }), place = ("mod m {\n    fn g() { let _ = v0 || v1; }\n    mod n {\n        fn f() { let probe = ", "; }\n    }\n}\nfn h() { let _ = v2 & v3; }\n")

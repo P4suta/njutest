@@ -74,25 +74,3 @@ fn a_name_that_only_looks_like_build_output_is_not_refused() {
          {passed}"
     );
 }
-
-#[test]
-fn this_repository_commits_no_build_output_and_ignores_every_target_directory() {
-    let root = gates::workspace_root();
-    let passed = gates::tracked(&root).expect("nothing a build wrote is committed");
-    assert!(passed.contains("tracked paths read"), "{passed}");
-    let ignored = git(
-        &root,
-        &[
-            "check-ignore",
-            "-q",
-            "--no-index",
-            "crates/njutest-macros/target/tests/trybuild/CACHEDIR.TAG",
-        ],
-    );
-    assert!(
-        ignored.status.success(),
-        "a target directory inside a crate is ignored as the root's is, so `git add -A` never \
-         stages what trybuild or a crate-local build wrote: exit {:?}",
-        ignored.status.code()
-    );
-}

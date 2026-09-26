@@ -3,11 +3,8 @@
 #
 # How many catch-all waivers `xtask/wildcard_allowlist.txt` may carry.
 #
-# **This file may shrink and never grow.** The ledger's own header has always
-# said so and nothing held it: the count was printed in the pass line and
-# compared against nothing, so a waiver could be added by the same hand that
-# wrote the code needing one, which is the decision the ledger exists to take
-# away from that hand.
+# **This file may shrink and never grow**, which `cargo xtask ratchets` holds against the same file where the change meets origin/main, since a bound kept beside what it bounds is one the same change could raise.
+# The ledger's own header has always said so and nothing held it: the count was printed in the pass line and compared against nothing, so a waiver could be added by the same hand that wrote the code needing one, which is the decision the ledger exists to take away from that hand.
 #
 # It is a number rather than a fraction or a duration: the same on every
 # machine, at every job count, under every load, and a thing measured in

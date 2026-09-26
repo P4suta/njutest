@@ -267,3 +267,24 @@ fn a_record_that_does_not_say_which_runner_asked_is_refused_rather_than_read_as_
         "`null` says the engine asked"
     );
 }
+
+#[test]
+fn a_declared_name_is_read_as_the_platform_spells_names() {
+    use rust_mutants::vars::{Spelling, Variables};
+    let names = std::collections::BTreeSet::from(["REQUIRE_SHARING".to_owned()]);
+    for spelling in Spelling::ALL {
+        let given = |name: &str| {
+            Variables::spelled(spelling, [(name.into(), std::ffi::OsString::from("1"))])
+        };
+        let exact = rust_mutants::outcomes::Declared::of(&names, &given("REQUIRE_SHARING"));
+        let otherwise = rust_mutants::outcomes::Declared::of(&names, &given("Require_Sharing"));
+        assert_eq!(
+            exact == otherwise,
+            spelling == Spelling::AsciiCaseless,
+            "{spelling:?}: a variable the tests read under a name the platform takes as the \
+             declared one is the declared one, so the key and the process read it alike: on \
+             Windows `Require_Sharing` is `REQUIRE_SHARING`, and a key that hashed it as unset \
+             would answer a run that sets it"
+        );
+    }
+}

@@ -141,6 +141,13 @@ const fn umask_argv(_mask: u32) -> Option<Vec<OsString>> {
 impl Launcher {
     /// The program and arguments that start the test binary this way, or nothing on a platform that has no such program.
     #[must_use]
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::missing_const_for_fn,
+            reason = "unix builds the shell line at run time, and one signature serves both platforms"
+        )
+    )]
     pub fn argv(self) -> Option<Vec<OsString>> {
         match self {
             Self::Umask { mask } => umask_argv(mask),
