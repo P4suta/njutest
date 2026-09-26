@@ -64,7 +64,8 @@ fn without(document: &mut serde_json::Value, group: &str, column: &str) {
 
 fn audited(document: &serde_json::Value) -> Audit {
     let directory = run_directory(document);
-    let concluded = sentinel::concluding(document, &[]);
+    let confirmed = confirmations(document);
+    let concluded = sentinel::concluding(document, &confirmed);
     if concluded.is_empty() {
         return gates::proofaudit(&checkers(), directory.path(), None)
             .expect("a recording this audit can read");
@@ -72,6 +73,70 @@ fn audited(document: &serde_json::Value) -> Audit {
     let trace = recorded(&concluded);
     gates::proofaudit(&checkers(), directory.path(), Some(trace.path()))
         .expect("a recording this audit can read")
+}
+
+/// Valid confirmation evidence for every new kill, wait and unconfirmed disposition in a flat test document, so a test of another layer changes only that layer.
+fn confirmations(document: &serde_json::Value) -> Vec<serde_json::Value> {
+    let relevant: Vec<(&str, &str, &str)> = document
+        .get("mutants")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|row| {
+            row.pointer("/reuse/reused")
+                .and_then(serde_json::Value::as_bool)
+                != Some(true)
+        })
+        .filter_map(|row| {
+            let id = row.get("id")?.as_str()?;
+            let decision = row.get("decision")?;
+            let outcome = decision.get("outcome")?.as_str()?;
+            let target = decision.get("killed_by")?.as_str()?;
+            matches!(outcome, "killed" | "waited" | "unconfirmed").then_some((id, target, outcome))
+        })
+        .collect();
+    let mut answered = std::collections::BTreeMap::<&str, &str>::new();
+    let mut events = Vec::new();
+    for (id, target, outcome) in relevant {
+        let asked_for = match answered.entry(target) {
+            std::collections::btree_map::Entry::Occupied(entry) => *entry.get(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(id);
+                events.push(serde_json::json!({
+                    "type": "control",
+                    "control": {
+                        "target": target,
+                        "test": null,
+                        "asked_for": id,
+                        "answer": { "kind": "passed" }
+                    }
+                }));
+                id
+            }
+        };
+        let expected = if outcome == "waited" {
+            "waited"
+        } else {
+            "killed"
+        };
+        let reproduced = match outcome {
+            "killed" => "killed",
+            "waited" => "waited",
+            _ => "survived",
+        };
+        events.push(serde_json::json!({
+            "type": "confirm",
+            "confirm": {
+                "mutant": id,
+                "target": target,
+                "test": null,
+                "expected": expected,
+                "answered_for": asked_for,
+                "reproduced": reproduced
+            }
+        }));
+    }
+    events
 }
 
 fn off_schema(document: &serde_json::Value) -> bool {
@@ -1151,7 +1216,14 @@ fn a_route_that_kept_nothing_and_ran_something_is_one_violation_and_not_two() {
                     "duration_ms": 5
                 }
             }),
-        ],
+        ]
+        .into_iter()
+        .chain(sentinel::confirmation(
+            &"a".repeat(64),
+            "passed",
+            Some("killed"),
+        ))
+        .collect::<Vec<_>>(),
     );
 
     assert_eq!(
@@ -1527,7 +1599,13 @@ fn one_fact_said_twice_is_one_line() {
     if let Some(seq) = second.get_mut("seq") {
         *seq = serde_json::json!(2);
     }
-    let audit = audited_with(&base(), &[twice, second]);
+    let mut recording = vec![twice, second];
+    recording.extend(sentinel::confirmation(
+        &"a".repeat(64),
+        "passed",
+        Some("killed"),
+    ));
+    let audit = audited_with(&base(), &recording);
 
     assert_eq!(
         audit.violations(),
@@ -3600,6 +3678,24 @@ fn an_audit_that_left_something_unaudited_does_not_exit_as_one_that_checked_ever
          the exit code must not read that as an audit that checked everything"
     );
     assert_eq!(xtask::proofaudit::EXIT_UNAUDITED, 3);
+}
+
+#[test]
+fn every_layer_the_audit_re_decides_is_one_the_development_guide_names() {
+    let guide = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/development.md"),
+    )
+    .expect("the development guide");
+    let unnamed: Vec<&str> = Layer::ALL
+        .iter()
+        .map(|layer| layer.label())
+        .filter(|label| !guide.contains(&format!("`{label}`")))
+        .collect();
+    assert_eq!(
+        unnamed,
+        Vec::<&str>::new(),
+        "a layer nobody can read about is one a reader of its remarks cannot interpret"
+    );
 }
 
 /// Every published schema, compiled.

@@ -158,6 +158,21 @@ pub enum Payload {
         /// The record.
         drift: DriftRecord,
     },
+    /// What the original code answered to one test asked to confirm a kill or a wait, once however many mutations asked it.
+    Control {
+        /// The record.
+        control: ControlRecord,
+    },
+    /// How one kill or wait was confirmed: whose control answered, and what the mutation came to the second time.
+    Confirm {
+        /// The record.
+        confirm: ConfirmRecord,
+    },
+    /// A kill inherited from an interrupted run's checkpoint.
+    Resumed {
+        /// The record.
+        resumed: ResumedRecord,
+    },
     /// One disposition that rested on a moved target, run again against it (ADR 0036).
     Repair {
         /// The record.
@@ -210,6 +225,9 @@ impl Payload {
             Self::Sentinel { .. } => "sentinel",
             Self::Model { .. } => "model",
             Self::Drift { .. } => "drift",
+            Self::Control { .. } => "control",
+            Self::Confirm { .. } => "confirm",
+            Self::Resumed { .. } => "resumed",
             Self::Repair { .. } => "repair",
             Self::Knob { .. } => "knob",
             Self::Note { .. } => "note",
@@ -688,6 +706,76 @@ pub struct DriftRecord {
     pub mutant: Option<String>,
     /// What it established, as the report records it.
     pub observed: crate::report::drift::Drift,
+}
+
+/// What the original code answered to one test, asked once for every mutation that wanted to know.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlRecord {
+    /// The target the test belongs to.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub target: Option<String>,
+    /// The one test, where the question named one.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub test: Option<String>,
+    /// The mutation, in full, whose confirmation asked it first and so ran it.
+    pub asked_for: String,
+    /// What the original code said.
+    pub answer: ControlAnswer,
+}
+
+/// What the original code said about one test.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum ControlAnswer {
+    /// It passed, so a failure under the mutation was the mutation's.
+    Passed,
+    /// It failed on the original code too.
+    Failed {
+        /// What it said.
+        detail: String,
+    },
+}
+
+/// What a confirmation expected the second run of a mutation to come to again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Expected {
+    /// A kill.
+    Killed,
+    /// A wait on the step or time limit.
+    Waited,
+}
+
+/// How one kill or wait was confirmed: the control that answered for the test, and what the mutation came to when run a second time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfirmRecord {
+    /// The mutation, in full.
+    pub mutant: String,
+    /// The target it was confirmed against.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub target: Option<String>,
+    /// The one test, where the confirmation named one.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub test: Option<String>,
+    /// What it was expected to come to again.
+    pub expected: Expected,
+    /// The mutation, in full, whose asking ran the control that answered; this mutation itself where it asked first.
+    pub answered_for: String,
+    /// What the second run came to; nothing where the control failed and there was no second run.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub reproduced: Option<rust_mutants::outcome::Outcome>,
+}
+
+/// One kill an interrupted run established and this run inherited from its checkpoint, so it was confirmed in that run's recording and not in this one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResumedRecord {
+    /// The mutation, in full.
+    pub mutant: String,
+    /// The target the interrupted run said killed it.
+    pub killed_by: String,
 }
 
 /// One disposition that rested on a target whose reach moved, run again against that target with its reach recorded, and what it was before and is now (ADR 0036).

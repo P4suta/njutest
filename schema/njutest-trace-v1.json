@@ -623,6 +623,83 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "resumed"],
+          "properties": {
+            "type": { "const": "resumed" },
+            "resumed": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["mutant", "killed_by"],
+              "description": "One kill an interrupted run established and this run inherited from its checkpoint, confirmed in that run's recording and not in this one.",
+              "properties": {
+                "mutant": { "type": "string", "minLength": 1 },
+                "killed_by": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "control"],
+          "properties": {
+            "type": { "const": "control" },
+            "control": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["target", "test", "asked_for", "answer"],
+              "description": "What the original code answered to one test asked to confirm a kill or a wait, recorded the one time it ran however many mutations asked it.",
+              "properties": {
+                "target": { "type": ["string", "null"], "minLength": 1 },
+                "test": { "type": ["string", "null"], "minLength": 1 },
+                "asked_for": { "type": "string", "minLength": 1 },
+                "answer": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["kind"],
+                      "properties": { "kind": { "const": "passed" } }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["kind", "detail"],
+                      "properties": { "kind": { "const": "failed" }, "detail": { "type": "string" } }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "confirm"],
+          "properties": {
+            "type": { "const": "confirm" },
+            "confirm": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["mutant", "target", "test", "expected", "answered_for", "reproduced"],
+              "description": "How one kill or wait was confirmed: the mutation whose asking ran the control that answered, and what the mutation came to when run a second time, or null where the control failed and it was not run again.",
+              "properties": {
+                "mutant": { "type": "string", "minLength": 1 },
+                "target": { "type": ["string", "null"], "minLength": 1 },
+                "test": { "type": ["string", "null"], "minLength": 1 },
+                "expected": { "enum": ["killed", "waited"] },
+                "answered_for": { "type": "string", "minLength": 1 },
+                "reproduced": {
+                  "enum": [null, "not_run", "killed", "survived", "step_limit_reached", "waited", "inconclusive", "errored"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "repair"],
           "properties": {
             "type": { "const": "repair" },

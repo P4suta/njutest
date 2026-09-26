@@ -931,3 +931,28 @@ fn a_stage_and_the_work_inside_it_do_not_answer_to_one_name() {
          reading it goes looking for time the run never spent there: {problems:?}"
     );
 }
+
+#[test]
+fn a_confirmation_can_only_record_an_outcome_the_engine_has() {
+    let path = njutest_devkit::paths::workspace_root().join("schema/njutest-trace-v1.json");
+    let text = fs::read_to_string(&path).expect("the published schema");
+    let schema: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&text).expect("the schema is JSON");
+    let listed: Vec<serde_json::Value> = schema["properties"]["payload"]["oneOf"]
+        .as_array()
+        .expect("one branch per type")
+        .iter()
+        .find(|branch| branch["properties"]["type"]["const"] == "confirm")
+        .and_then(|branch| {
+            branch["properties"]["confirm"]["properties"]["reproduced"]["enum"].as_array()
+        })
+        .expect("a confirmation closes what it can have reproduced")
+        .clone();
+    let mut known = vec![serde_json::Value::Null];
+    known.extend(
+        rust_mutants::outcome::Outcome::ALL
+            .iter()
+            .map(|outcome| serde_json::Value::from(outcome.name())),
+    );
+    assert_eq!(listed, known);
+}

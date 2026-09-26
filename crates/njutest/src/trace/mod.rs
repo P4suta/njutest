@@ -20,12 +20,13 @@ use sha2::{Digest as _, Sha256};
 #[cfg(feature = "testkit")]
 pub use event::SCHEMA;
 pub use event::{
-    ArtifactRecord, AskedRecord, CrashAsked, CrashExecRecord, CrashNoticeRecord, CrashStep,
-    CrashStepRecord, DischargeRecord, DriftRecord, Event, ExecRecord, FaultAttributionRecord,
-    FaultControlRecord, FaultExecRecord, FaultRejectedRecord, FaultRole, FaultRouteRecord,
-    MutantExecRecord, NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read,
-    RepairRecord, ReuseRule, RouteRecord, RunAccounting, RunRecord, SentinelRecord, SiteReached,
-    StartRecord, Unfaulted, WireExchangeRecord, WireExecRecord,
+    ArtifactRecord, AskedRecord, ConfirmRecord, ControlAnswer, ControlRecord, CrashAsked,
+    CrashExecRecord, CrashNoticeRecord, CrashStep, CrashStepRecord, DischargeRecord, DriftRecord,
+    Event, ExecRecord, Expected, FaultAttributionRecord, FaultControlRecord, FaultExecRecord,
+    FaultRejectedRecord, FaultRole, FaultRouteRecord, MutantExecRecord, NoteRecord, Payload,
+    PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RepairRecord, ResumedRecord, ReuseRule,
+    RouteRecord, RunAccounting, RunRecord, SentinelRecord, SiteReached, StartRecord, Unfaulted,
+    WireExchangeRecord, WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{DirSink, FILE_NAME, OUTPUT_DIRECTORY_NAME, Sink};
@@ -463,6 +464,21 @@ impl Recorder {
     /// Records what one control established about one target's baseline reach.
     pub fn drift(&self, record: DriftRecord) {
         self.emit(Payload::Drift { drift: record });
+    }
+
+    /// Records what the original code answered to one test, the one time it was asked.
+    pub fn control(&self, record: ControlRecord) {
+        self.emit(Payload::Control { control: record });
+    }
+
+    /// Records how one kill or wait was confirmed.
+    pub fn confirm(&self, record: ConfirmRecord) {
+        self.emit(Payload::Confirm { confirm: record });
+    }
+
+    /// Records one kill inherited from an interrupted run's checkpoint.
+    pub fn resumed(&self, record: ResumedRecord) {
+        self.emit(Payload::Resumed { resumed: record });
     }
 
     /// Records one disposition that rested on a moved target, run again against it.

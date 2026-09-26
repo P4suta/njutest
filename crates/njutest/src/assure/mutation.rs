@@ -764,6 +764,15 @@ fn compared_alone(
     Ok(compared)
 }
 
+/// Decodes both source fragments carried by one catalog entry.
+fn mutation_text(mutant: &Mutant) -> Result<(&str, &str), MutationTextError> {
+    let original = std::str::from_utf8(&mutant.candidate.original)
+        .map_err(|source| MutationTextError::Original { source })?;
+    let replacement = std::str::from_utf8(&mutant.candidate.replacement)
+        .map_err(|source| MutationTextError::Replacement { source })?;
+    Ok((original, replacement))
+}
+
 /// What one mutant comes to, without committing anything a report will carry.
 fn establish(
     mutant: &Mutant,
@@ -782,6 +791,12 @@ fn establish(
     let disposition = if let Some(saved) = state.and_then(|state| state.mutant(mutant.id.as_str()))
     {
         let crate::checkpoint::SavedDisposition::Killed { by, before } = &saved.disposition;
+        if judging.subject.perturbing == Perturbing::Mutants {
+            watch.trace.resumed(crate::trace::ResumedRecord {
+                mutant: mutant.id.as_str().to_owned(),
+                killed_by: by.clone(),
+            });
+        }
         routing = Some(crate::report::Routing::of(
             &session.route(mutant),
             through(before.iter().cloned(), by),
@@ -823,10 +838,7 @@ fn establish(
             established
         }
     };
-    let original = std::str::from_utf8(&mutant.candidate.original)
-        .map_err(|source| MutationTextError::Original { source })?;
-    let replacement = std::str::from_utf8(&mutant.candidate.replacement)
-        .map_err(|source| MutationTextError::Replacement { source })?;
+    let (original, replacement) = mutation_text(mutant)?;
     Ok(Judged {
         catalog_index: mutant.index,
         id: mutant.id.to_string(),
@@ -1959,7 +1971,10 @@ fn confirm(
     expected: ExpectedReproduction,
 ) -> Result<Result<(), Unconfirmed>, crate::error::RunnerError> {
     let (mutant, on) = asked;
-    let control = judging
+    let Answer {
+        original,
+        asked_for: answered_for,
+    } = judging
         .controls
         .ask(judging.subject, request, judging.watch)?;
     let faulted = judging.subject.perturbing == Perturbing::Faults;
@@ -1970,10 +1985,21 @@ fn confirm(
             .fault_control(crate::trace::FaultControlRecord {
                 fault: mutant.display_id.to_string(),
                 target: on.to_owned(),
-                passed: control.is_none(),
+                passed: original == Original::Passed,
             });
     }
-    if let Some(failure) = control {
+    let confirmed = |reproduced: Option<Outcome>| crate::trace::ConfirmRecord {
+        mutant: request.mutant.clone(),
+        target: request.target.clone(),
+        test: request.test.clone(),
+        expected: expected.recorded(),
+        answered_for: answered_for.clone(),
+        reproduced,
+    };
+    if let Original::Failed(failure) = original {
+        if !faulted {
+            judging.watch.trace.confirm(confirmed(None));
+        }
         return Ok(Err(Unconfirmed::ControlFailed { detail: failure }));
     }
     let second = judging
@@ -1997,6 +2023,11 @@ fn confirm(
                 duration_ms,
                 alone: false,
             });
+    } else {
+        judging
+            .watch
+            .trace
+            .confirm(confirmed(Some(second.outcome())));
     }
     Ok(expected.compare(second.outcome()))
 }
@@ -2011,6 +2042,14 @@ enum ExpectedReproduction {
 }
 
 impl ExpectedReproduction {
+    /// How the recording names it.
+    const fn recorded(self) -> crate::trace::Expected {
+        match self {
+            Self::Killed => crate::trace::Expected::Killed,
+            Self::Waited => crate::trace::Expected::Waited,
+        }
+    }
+
     const fn compare(self, actual: Outcome) -> Result<(), Unconfirmed> {
         match self {
             Self::Killed => match actual {
@@ -2039,9 +2078,16 @@ impl ExpectedReproduction {
 #[derive(Debug, Default)]
 struct Controls {
     /// One slot per question, which the first asker fills while every other asker of it waits.
-    asked: Mutex<BTreeMap<ControlKey, Arc<Mutex<Option<Original>>>>>,
+    asked: Mutex<BTreeMap<ControlKey, Arc<Mutex<Option<Answer>>>>>,
     /// What each control established about its target's baseline reach, by the mutation whose kill it confirmed.
     observed: Mutex<BTreeMap<String, Vec<Drift>>>,
+}
+
+/// What the original code answered to one test, and the mutation whose asking ran it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Answer {
+    original: Original,
+    asked_for: String,
 }
 
 /// What a control of the original code came to.
@@ -2071,13 +2117,13 @@ impl ControlKey {
 }
 
 impl Controls {
-    /// Why this test fails on the original, or nothing when it passes, running the control once for every asker of the same question.
+    /// What the original code answered to this test, and the mutation whose asking ran the control, running it once for every asker of the same question and recording it the one time it runs.
     fn ask(
         &self,
         subject: Subject<'_>,
         request: &Request,
         watch: Watch<'_>,
-    ) -> Result<Option<String>, crate::error::RunnerError> {
+    ) -> Result<Answer, crate::error::RunnerError> {
         let session = subject.session;
         let slot = Arc::clone(
             self.asked
@@ -2089,7 +2135,7 @@ impl Controls {
         let mut answer = slot
             .lock()
             .map_err(|_poisoned| schedule::ScheduleError::ControlStatePoisoned)?;
-        let original = match answer.as_ref() {
+        let known = match answer.as_ref() {
             Some(known) => known.clone(),
             None => {
                 let control = session.control(request, watch.cancel, Observing::Reach)?;
@@ -2105,15 +2151,29 @@ impl Controls {
                         tail(&control.result.output)
                     ))
                 };
-                *answer = Some(original.clone());
-                original
+                if subject.perturbing == Perturbing::Mutants {
+                    watch.trace.control(crate::trace::ControlRecord {
+                        target: request.target.clone(),
+                        test: request.test.clone(),
+                        asked_for: request.mutant.clone(),
+                        answer: match &original {
+                            Original::Passed => crate::trace::ControlAnswer::Passed,
+                            Original::Failed(detail) => crate::trace::ControlAnswer::Failed {
+                                detail: detail.clone(),
+                            },
+                        },
+                    });
+                }
+                let known = Answer {
+                    original,
+                    asked_for: request.mutant.clone(),
+                };
+                *answer = Some(known.clone());
+                known
             }
         };
         drop(answer);
-        Ok(match original {
-            Original::Passed => None,
-            Original::Failed(failure) => Some(failure),
-        })
+        Ok(known)
     }
 
     /// Keeps what one control established about each target's baseline reach under the mutation it was confirming, and says so in the recording.
