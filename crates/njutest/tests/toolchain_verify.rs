@@ -458,6 +458,16 @@ fn a_mutation_every_test_declined_to_measure_is_a_gap_the_report_names_as_declin
         "a test that measured and noticed nothing is a survivor however many others declined \
          beside it: {document}"
     );
+    let halved = of("halved");
+    assert!(
+        !halved.is_empty()
+            && halved
+                .iter()
+                .all(|one| one["decision"]["outcome"] == "survived"),
+        "the unit tests declined to measure `halved` and the integration test measured it and \
+         noticed nothing: that is a survivor, and the declines of one target do not outweigh \
+         what another measured: {document}"
+    );
     let findings = findings_of(&fixture, "not-measured");
     assert!(
         findings.iter().any(|finding| finding["detail"]

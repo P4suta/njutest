@@ -3471,10 +3471,13 @@ fn contradicted(reported: &str, recorded: &[&str]) -> Option<String> {
         KILLED | UNCONFIRMED => requires(KILLED),
         WAITED => requires(WAITED),
         STEP_LIMIT_REACHED => requires(STEP_LIMIT_EXEC),
-        SURVIVED => recorded.iter().any(|one| *one != SURVIVED).then(|| {
+        SURVIVED => (recorded.iter().any(|one| *one != SURVIVED && *one != "not_run")
+            || (!recorded.is_empty() && !any(SURVIVED)))
+        .then(|| {
             format!(
                 "the report says every reaching test ran and none noticed, and the recorded \
-                 executions of it came to {recorded:?}; a mutation a proof removed every \
+                 executions of it came to {recorded:?}; a target whose every test declined \
+                 measured nothing and counts neither way, a mutation a proof removed every \
                  execution of has none, and the proofs layer holds that"
             )
         }),

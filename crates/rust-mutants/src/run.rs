@@ -204,7 +204,7 @@ pub struct Judged {
     pub measured: bool,
     /// What comparison of the compiler artifacts established.
     pub identical: CodegenIdentity,
-    /// Each test that declined to measure in the execution the outcome rests on, in its words (ADR 0043).
+    /// Each test that declined to measure in any execution of it, in its words, which is also why its answer is never kept (ADR 0043).
     pub declined: Vec<crate::decline::Decline>,
 }
 
@@ -1913,10 +1913,12 @@ fn execute(
     let outcome = result.outcome();
     let tests_run = result.tests_run();
     let not_run_reason = not_run_because(&result.conclusion, &route);
-    let declined = match &result.declines {
-        crate::decline::Declines::Read { declined, .. } => declined.clone(),
-        crate::decline::Declines::Unbelieved { .. } => Vec::new(),
-    };
+    let mut declined: Vec<crate::decline::Decline> = asked
+        .iter()
+        .flat_map(|one| one.declines.believed().iter().cloned())
+        .collect();
+    declined.sort();
+    declined.dedup();
     let failed_tests = match &result.conclusion {
         crate::execute::MutantConclusion::DeclinedUnderTheMutant { by } => vec![by.test.clone()],
         crate::execute::MutantConclusion::NotRun

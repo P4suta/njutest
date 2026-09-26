@@ -673,7 +673,9 @@ const fn carried_on_past(outcome: Outcome) -> bool {
     }
 }
 
-/// Whether `routing` asked every target its route kept exactly once, and each answered `outcome`.
+/// Whether `routing` asked every target its route kept exactly once, each answering `outcome` or declining to measure, and, where any answered, at least one answering `outcome` (ADR 0043).
+///
+/// A target whose every test declined measured nothing, so it neither makes nor unmakes the mutation's outcome; a route a proof emptied answers nothing at all.
 fn asked_once_each(routing: &super::Routing, outcome: Outcome) -> bool {
     let asked: BTreeSet<&str> = routing
         .answered
@@ -683,7 +685,12 @@ fn asked_once_each(routing: &super::Routing, outcome: Outcome) -> bool {
     let kept: BTreeSet<&str> = routing.reaching.iter().map(String::as_str).collect();
     asked == kept
         && asked.len() == routing.answered.len()
-        && routing.answered.iter().all(|one| one.outcome == outcome)
+        && routing
+            .answered
+            .iter()
+            .all(|one| one.outcome == outcome || one.outcome == Outcome::Declined)
+        && (routing.answered.is_empty()
+            || routing.answered.iter().any(|one| one.outcome == outcome))
 }
 
 /// Whether each row this run decided by a route it asked agrees with that route's answers: a kill is the last of them and the only kill, and a survivor was asked once of every target the route kept and each survived.
