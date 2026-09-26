@@ -16,8 +16,8 @@ use crate::cargo::{
 use crate::id::{is_digest, is_id};
 use crate::instrument::{
     ACTIVE_ENV, CATALOG_ENV, CRASH_NONCE_ENV, CRASH_NOTICE_ENV, DELAY_ENV, FAULT_ENV,
-    STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_PROTOCOL_EXIT, STEP_STATE_ENV,
-    STEP_STATE_SCHEMA, STEPS_ENV, TOUCH_ENV,
+    STEP_BEAT_ENV, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_PROTOCOL_EXIT,
+    STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, TOUCH_ENV,
 };
 use crate::outcome::Outcome;
 use crate::runner::{
@@ -27,7 +27,7 @@ use crate::trace::{ExecRecord, Recorder};
 
 /// Every variable the engine owns.
 /// A test process sees exactly the ones this run set, never one an outer run left behind.
-pub const RESERVED_ENV: [&str; 12] = [
+pub const RESERVED_ENV: [&str; 13] = [
     ACTIVE_ENV,
     CRASH_NOTICE_ENV,
     CRASH_NONCE_ENV,
@@ -40,10 +40,11 @@ pub const RESERVED_ENV: [&str; 12] = [
     STEP_NOTICE_ENV,
     STEP_NONCE_ENV,
     STEP_STATE_ENV,
+    STEP_BEAT_ENV,
 ];
 
 /// The variables a run composes for every test process it starts, which it therefore never lets one inherit.
-pub const COMPOSED_ENV: [&str; 13] = [
+pub const COMPOSED_ENV: [&str; 14] = [
     ACTIVE_ENV,
     CRASH_NOTICE_ENV,
     CRASH_NONCE_ENV,
@@ -56,6 +57,7 @@ pub const COMPOSED_ENV: [&str; 13] = [
     STEP_NOTICE_ENV,
     STEP_NONCE_ENV,
     STEP_STATE_ENV,
+    STEP_BEAT_ENV,
     crate::coverage::PROFILE_ENV,
 ];
 
@@ -996,6 +998,7 @@ fn said(output: &[u8], needle: &str) -> bool {
 struct ExpectedStep {
     path: PathBuf,
     state_path: PathBuf,
+    beat_path: PathBuf,
     nonce: String,
     catalog: String,
     mutant: String,
@@ -1156,6 +1159,7 @@ impl ExpectedStep {
         let directory = scratch.ok_or(StepSetupError::ScratchRequired)?;
         let path = directory.join(format!("rust-mutants-step-{nonce}.notice"));
         let state_path = directory.join(format!("rust-mutants-step-{nonce}.state"));
+        let beat_path = directory.join(format!("rust-mutants-step-{nonce}.beat"));
         match std::fs::symlink_metadata(&path) {
             Ok(_metadata) => return Err(StepSetupError::FreshPathExists { path }),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -1188,6 +1192,7 @@ impl ExpectedStep {
         Ok(Some(Self {
             path,
             state_path,
+            beat_path,
             nonce,
             catalog: catalog.to_owned(),
             mutant: mutant.to_owned(),
@@ -1336,7 +1341,8 @@ impl ExpectedStep {
         remove_notice(&self.path)?;
         let partial = self.path.with_extension("notice.partial");
         remove_notice(&partial)?;
-        remove_notice(&self.state_path)
+        remove_notice(&self.state_path)?;
+        remove_notice(&self.beat_path)
     }
 }
 
@@ -2205,6 +2211,7 @@ fn watched(timeout: Option<Duration>, step: Option<&ExpectedStep>) -> (Bound, Op
             Bound::After(quiet.saturating_mul(QUIET_WINDOWS_PER_CEILING)),
             Some(Progress {
                 path: step.state_path.clone(),
+                beat: step.beat_path.clone(),
                 quiet,
             }),
         ),
@@ -2707,6 +2714,7 @@ mod tests {
         ExpectedStep {
             path: directory.join("step.notice"),
             state_path: directory.join("step.state"),
+            beat_path: directory.join("step.beat"),
             nonce: hex::encode(bytes),
             catalog: CATALOG_A.to_owned(),
             mutant: MUTANT_A.to_owned(),
@@ -3188,9 +3196,10 @@ mod tests {
         let (bound, progress) = watched(Some(second), Some(&step));
         assert_eq!(bound, Bound::After(second * QUIET_WINDOWS_PER_CEILING));
         assert_eq!(
-            progress.map(|progress| (progress.path, progress.quiet)),
-            Some((step.state_path.clone(), second)),
-            "a counted execution is watched through its step state for a window of its bound"
+            progress.map(|progress| (progress.path, progress.beat, progress.quiet)),
+            Some((step.state_path.clone(), step.beat_path.clone(), second)),
+            "a counted execution is watched through its step state and its beat for a window of \
+             its bound"
         );
 
         let (bound, progress) = watched(None, Some(&step));
