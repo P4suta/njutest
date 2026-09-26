@@ -147,7 +147,7 @@ fn measure(
         &CompileOptions {
             kind: CompileKind::Tests,
             packages: options.packages.clone(),
-            target_dir: Some(coverage),
+            target_dir: coverage,
             locked: workspace.locked,
             offline: workspace.offline,
             timeout: Workspace::timeout(options.build_timeout),
@@ -162,11 +162,7 @@ fn measure(
         return Ok(refused(UNBUILDABLE, trace));
     }
     let targets = execute::startable(
-        &execute::targets_of(
-            &built.messages,
-            &workspace.metadata.packages,
-            Some(&target_dir),
-        )?,
+        &execute::targets_of(&built.messages, &workspace.metadata.packages, &target_dir)?,
         &options.skip_targets,
     );
     if targets.is_empty() {

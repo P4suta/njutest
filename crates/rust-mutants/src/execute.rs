@@ -2792,10 +2792,10 @@ fn finished(
 }
 
 /// Configures [`build`].
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct BuildOptions {
     /// `--target-dir`, with the members a build into it may compile.
-    pub target_dir: Option<crate::cargo::BuildDir>,
+    pub target_dir: crate::cargo::BuildDir,
     /// Pass `--locked`.
     pub locked: bool,
     /// Pass `--offline`.
@@ -2835,14 +2835,7 @@ pub fn build(
             "the test binaries could not be built",
         ));
     }
-    targets_of(
-        &compiled.messages,
-        packages,
-        options
-            .target_dir
-            .as_ref()
-            .map(crate::cargo::BuildDir::path),
-    )
+    targets_of(&compiled.messages, packages, options.target_dir.path())
 }
 
 /// The targets a run may start, which is every one `skipped` does not name.
@@ -2866,7 +2859,7 @@ pub fn startable(targets: &[TestTarget], skipped: &[String]) -> Vec<TestTarget> 
 pub fn targets_of(
     messages: &[Message],
     packages: &[Package],
-    target_dir: Option<&Path>,
+    target_dir: &Path,
 ) -> Result<Vec<TestTarget>, CargoError> {
     let binaries = binaries_built(messages)?;
     let mut harnesses: BTreeMap<String, BTreeMap<(String, String), bool>> = BTreeMap::new();
@@ -2996,14 +2989,12 @@ pub fn documentation_targets(
 fn cargo_environment(
     package: &Package,
     kind: TargetKind,
-    target_dir: Option<&Path>,
+    target_dir: &Path,
     binaries: &BTreeMap<String, PathBuf>,
 ) -> crate::vars::Variables {
     let mut env = package_environment(package);
     if matches!(kind, TargetKind::Test | TargetKind::Example) {
-        if let Some(target_dir) = target_dir {
-            env.set("CARGO_TARGET_TMPDIR", target_dir.join("tmp"));
-        }
+        env.set("CARGO_TARGET_TMPDIR", target_dir.join("tmp"));
         for target in &package.targets {
             if !target.is_bin() {
                 continue;

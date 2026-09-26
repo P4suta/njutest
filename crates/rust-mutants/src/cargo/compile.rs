@@ -125,8 +125,7 @@ pub struct CompileOptions {
     /// Which command to run.
     pub kind: CompileKind,
     /// `--target-dir`, with the members a build into it may compile, which [`compile`] settles before cargo reads a file.
-    /// `None` lets cargo choose, which inside a snapshot is the snapshot's own `target`.
-    pub target_dir: Option<super::BuildDir>,
+    pub target_dir: super::BuildDir,
     /// Pass `--locked`.
     pub locked: bool,
     /// Pass `--offline`.
@@ -142,11 +141,13 @@ pub struct CompileOptions {
     pub build: BuildConfig,
 }
 
-impl Default for CompileOptions {
-    fn default() -> Self {
+impl CompileOptions {
+    /// Configures a check in a target directory chosen by the caller.
+    #[must_use]
+    pub fn new(target_dir: super::BuildDir) -> Self {
         Self {
             kind: CompileKind::Check,
-            target_dir: None,
+            target_dir,
             locked: false,
             offline: false,
             timeout: None,
@@ -171,10 +172,8 @@ pub fn compile_arguments(options: &CompileOptions) -> Vec<OsString> {
     if options.offline {
         args.push(OsString::from("--offline"));
     }
-    if let Some(target_dir) = &options.target_dir {
-        args.push(OsString::from("--target-dir"));
-        args.push(target_dir.path().as_os_str().to_owned());
-    }
+    args.push(OsString::from("--target-dir"));
+    args.push(options.target_dir.path().as_os_str().to_owned());
     args.extend(options.build.arguments().into_iter().map(OsString::from));
     args.extend(
         options
@@ -233,9 +232,7 @@ impl Compilation {
 /// # Errors
 /// [`CargoErrorKind::BuildLedger`] when the target directory cannot be settled, [`CargoErrorKind::CommandFailed`] when cargo itself could not run or timed out, [`CargoErrorKind::MessageUnparsable`] for a stream that is not messages, and the dep-info errors of [`units_of`].
 pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled, CargoError> {
-    if let Some(target_dir) = &options.target_dir {
-        target_dir.settle()?;
-    }
+    options.target_dir.settle()?;
     let mut spec = driver
         .toolchain
         .command(driver.dir, compile_arguments(options));

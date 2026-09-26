@@ -210,7 +210,7 @@ pub fn build(
             ),
         });
     }
-    let units = targets_of(&messages, packages, Some(&options.target_dir))
+    let units = targets_of(&messages, packages, &options.target_dir)
         .map_err(|error| BuildError::Protocol {
             message: error.to_string(),
         })?

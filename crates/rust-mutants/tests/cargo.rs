@@ -18,11 +18,15 @@ use njutest_devkit::result::{
     option_state, result_state,
 };
 use rust_mutants::cargo::{
-    BuildConfig, CargoError, CargoErrorKind, CompileKind, CompileOptions, Diagnostic,
+    BuildConfig, BuildDir, CargoError, CargoErrorKind, CompileKind, CompileOptions, Diagnostic,
     LocateOptions, Message, Metadata, Toolchain, compile_arguments, dep_info_path, env_deps,
     parse_dep_info, parse_messages, parse_version, resolve_executable,
 };
 use rust_mutants::runner::Cancel;
+
+fn compile_options() -> CompileOptions {
+    CompileOptions::new(BuildDir::new(PathBuf::from("/tmp/out"), Vec::new()))
+}
 
 #[test]
 fn verbose_version_output_is_parsed_into_its_fields() {
@@ -390,10 +394,6 @@ fn compile_arguments_spell_every_build_option_once() {
     let options = CompileOptions {
         kind: CompileKind::Tests,
         packages: vec!["one".to_owned()],
-        target_dir: Some(rust_mutants::cargo::BuildDir::new(
-            PathBuf::from("/tmp/out"),
-            Vec::new(),
-        )),
         locked: true,
         offline: true,
         build: BuildConfig {
@@ -405,7 +405,7 @@ fn compile_arguments_spell_every_build_option_once() {
             jobs: Some(3),
             debug: false,
         },
-        ..CompileOptions::default()
+        ..compile_options()
     };
     assert_eq!(
         compile_arguments(&options),
@@ -434,8 +434,8 @@ fn compile_arguments_spell_every_build_option_once() {
 }
 
 #[test]
-fn a_build_configured_with_nothing_asks_for_nothing_but_the_bytes_nobody_reads() {
-    let bare = compile_arguments(&CompileOptions::default());
+fn a_build_with_default_settings_names_its_target_dir_and_writes_no_debug_information() {
+    let bare = compile_arguments(&compile_options());
     assert_eq!(
         bare,
         [
@@ -443,6 +443,8 @@ fn a_build_configured_with_nothing_asks_for_nothing_but_the_bytes_nobody_reads()
             "--workspace",
             "--all-targets",
             "--message-format=json",
+            "--target-dir",
+            "/tmp/out",
             "--config",
             "profile.dev.debug=0",
             "--config",
@@ -459,7 +461,7 @@ fn all_features_and_a_named_feature_are_both_spelled_because_cargo_accepts_both(
             all_features: true,
             ..BuildConfig::default()
         },
-        ..CompileOptions::default()
+        ..compile_options()
     };
     let args = compile_arguments(&options);
     assert!(args.iter().any(|argument| argument == "--all-features"));
@@ -472,10 +474,10 @@ fn all_features_and_a_named_feature_are_both_spelled_because_cargo_accepts_both(
 
 #[test]
 fn a_build_writes_no_debug_information_unless_it_is_asked_to() {
-    use rust_mutants::cargo::{BuildConfig, CompileKind, CompileOptions, compile_arguments};
+    use rust_mutants::cargo::{BuildConfig, CompileKind, compile_arguments};
     let plain = compile_arguments(&CompileOptions {
         kind: CompileKind::Tests,
-        ..CompileOptions::default()
+        ..compile_options()
     });
     assert!(
         plain
@@ -497,7 +499,7 @@ fn a_build_writes_no_debug_information_unless_it_is_asked_to() {
             debug: true,
             ..BuildConfig::default()
         },
-        ..CompileOptions::default()
+        ..compile_options()
     });
     assert!(
         !asked
@@ -513,7 +515,7 @@ fn a_build_writes_no_debug_information_unless_it_is_asked_to() {
             profile: Some("bench".to_owned()),
             ..BuildConfig::default()
         },
-        ..CompileOptions::default()
+        ..compile_options()
     });
     assert!(
         !named

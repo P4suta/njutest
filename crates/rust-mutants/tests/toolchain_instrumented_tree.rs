@@ -95,10 +95,7 @@ fn prepare(fixture: &str) -> Tree {
         &CompileOptions {
             kind: CompileKind::Check,
             packages: Vec::new(),
-            target_dir: Some(rust_mutants::cargo::BuildDir::new(
-                target.path().to_path_buf(),
-                Vec::new(),
-            )),
+            target_dir: rust_mutants::cargo::BuildDir::new(target.path().to_path_buf(), Vec::new()),
             locked: true,
             offline: true,
             timeout: None,

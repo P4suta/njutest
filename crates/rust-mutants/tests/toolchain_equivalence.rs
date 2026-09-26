@@ -20,12 +20,20 @@ use rust_mutants::workspace::OpenOptions;
 static REGISTRY: rust_mutants::rule::Registry = rust_mutants::rule::Registry::canonical();
 
 fn prover(fixture: &Fixture, cancel: &Cancel) -> Prover {
+    prover_with_env(fixture, cancel, std::env::vars_os().collect())
+}
+
+fn prover_with_env(
+    fixture: &Fixture,
+    cancel: &Cancel,
+    env: rust_mutants::vars::Variables,
+) -> Prover {
     Prover::open(
         fixture.root(),
         &ProveOptions {
             open: OpenOptions {
                 cargo: Some(njutest_devkit::paths::cargo_binary()),
-                env: std::env::vars_os().collect(),
+                env,
                 temp_directory: fixture.temp().to_path_buf(),
                 locked: true,
                 offline: true,
@@ -38,6 +46,53 @@ fn prover(fixture: &Fixture, cancel: &Cancel) -> Prover {
     )
     .expect("the tree is copied and built")
 }
+
+#[test]
+fn equivalence_builds_leave_an_ambient_cargo_target_directory_untouched() {
+    let fixture = Fixture::copy("fixture-equivalent");
+    let ambient = fixture.temp().join("ambient-cargo-target");
+    std::fs::create_dir_all(&ambient).expect("the ambient target directory");
+    let marker = ambient.join("untouched");
+    std::fs::write(&marker, b"outside the prover").expect("the marker");
+    let mut env = std::env::vars_os().collect::<rust_mutants::vars::Variables>();
+    env.set("CARGO_TARGET_DIR", ambient.as_os_str());
+    let cancel = Cancel::new();
+    let mut prover = prover_with_env(&fixture, &cancel, env);
+    let source = std::fs::read(fixture.root().join("src/lib.rs")).expect("the library");
+    let selection = rust_mutants::syntax::Selection::tier(&REGISTRY, rust_mutants::rule::Tier::All);
+    let candidate = rust_mutants::syntax::discover_file("src/lib.rs", &source, &selection)
+        .expect("discover")
+        .candidates
+        .into_iter()
+        .find(|found| found.candidate.rule.name == "mul-to-div")
+        .expect("the rendered mutation")
+        .candidate;
+    prover
+        .identical(&candidate, &cancel)
+        .expect("the mutated build");
+    let own_target = rust_mutants::workspace::target_of(fixture.temp(), fixture.root())
+        .join("equivalence")
+        .join("debug");
+    assert!(
+        std::fs::metadata(own_target)
+            .expect("the prover's target directory")
+            .is_dir(),
+        "the prover built inside its own target directory"
+    );
+    prover.close().expect("the prover closes");
+    assert_eq!(
+        std::fs::read_dir(&ambient)
+            .expect("the ambient directory remains")
+            .count(),
+        1,
+        "the ambient target directory holds only its original marker"
+    );
+    assert_eq!(
+        std::fs::read(marker).expect("the marker remains"),
+        b"outside the prover"
+    );
+}
+
 #[test]
 fn a_mutation_the_compiler_renders_identically_is_identical_and_one_it_renders_is_not() {
     let fixture = Fixture::copy("fixture-equivalent");

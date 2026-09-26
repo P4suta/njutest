@@ -615,7 +615,7 @@ fn a_compile_stopped_by_cancellation_is_an_error_not_a_failed_build() {
             kind: rust_mutants::cargo::CompileKind::Check,
             locked: true,
             offline: true,
-            ..rust_mutants::cargo::CompileOptions::default()
+            ..rust_mutants::cargo::CompileOptions::new(workspace.build_dir())
         },
     );
     assert_eq!(

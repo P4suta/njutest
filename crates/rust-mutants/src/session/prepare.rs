@@ -57,7 +57,7 @@ pub(super) fn pristine(
         &CompileOptions {
             kind: CompileKind::Check,
             packages: Vec::new(),
-            target_dir: Some(workspace.build_dir().nested(PRISTINE)),
+            target_dir: workspace.build_dir().nested(PRISTINE),
             locked: workspace.locked,
             offline: workspace.offline,
             timeout: Workspace::timeout(options.build_timeout),
@@ -488,7 +488,7 @@ fn built_untraced(building: &Building<'_>) -> Result<Built, EngineError> {
     let mut targets = execute::targets_of(
         last_build,
         &workspace.metadata.packages,
-        Some(&workspace.target_dir),
+        &workspace.target_dir,
     )?;
     if targets.is_empty() {
         return Err(EngineError::from(SessionError::NoTargets {
@@ -1494,7 +1494,7 @@ impl Compile for TreeCompiler<'_> {
             &CompileOptions {
                 kind: CompileKind::Tests,
                 packages: self.packages.clone(),
-                target_dir: Some(self.workspace.build_dir()),
+                target_dir: self.workspace.build_dir(),
                 locked: self.workspace.locked,
                 offline: self.workspace.offline,
                 timeout: self.timeout,

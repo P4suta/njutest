@@ -157,21 +157,23 @@ impl Prover {
 
     /// What one build of the tree produced, or nothing when the tree did not build.
     fn build(&self, cancel: &Cancel) -> Result<Option<Artifacts>, EngineError> {
-        let built = compile(
-            &self.workspace.driver(cancel),
-            &CompileOptions {
-                kind: CompileKind::Tests,
-                locked: self.options.open.locked,
-                offline: self.options.open.offline,
-                timeout: self.options.timeout,
-                build: self.options.build.clone(),
-                ..CompileOptions::default()
-            },
-        )?;
+        let options = CompileOptions {
+            kind: CompileKind::Tests,
+            locked: self.options.open.locked,
+            offline: self.options.open.offline,
+            timeout: self.options.timeout,
+            build: self.options.build.clone(),
+            ..CompileOptions::new(self.workspace.build_dir().nested("equivalence"))
+        };
+        let built = compile(&self.workspace.driver(cancel), &options)?;
         if !built.success {
             return Ok(None);
         }
-        let targets = targets_of(&built.messages, &self.workspace.metadata().packages, None)?;
+        let targets = targets_of(
+            &built.messages,
+            &self.workspace.metadata().packages,
+            options.target_dir.path(),
+        )?;
         let executables: Vec<(&str, &Path)> = targets
             .iter()
             .map(|target| (target.id.as_str(), target.executable.as_path()))

@@ -181,17 +181,16 @@ fn cargo_rebuilds_an_unchanged_binary_when_the_embedded_catalog_changes() {
             &driver,
             &CompileOptions {
                 kind: CompileKind::Tests,
-                target_dir: Some(rust_mutants::cargo::BuildDir::new(
-                    target.clone(),
-                    Vec::new(),
-                )),
                 locked: true,
                 offline: true,
                 env: rust_mutants::vars::Variables::of([(
                     OsString::from(COMPILED_CATALOG_ENV),
                     OsString::from(catalog),
                 )]),
-                ..CompileOptions::default()
+                ..CompileOptions::new(rust_mutants::cargo::BuildDir::new(
+                    target.clone(),
+                    Vec::new(),
+                ))
             },
         )
         .expect("compile")
