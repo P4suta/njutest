@@ -100,8 +100,14 @@ fn windows_runs_exactly_the_two_hash_partitions() {
     let lines: Vec<&str> = test.lines().collect();
     let windows: Vec<&str> = lines
         .windows(2)
-        .filter(|pair| pair[0].trim() == "- os: windows-2025")
-        .filter_map(|pair| pair[1].trim().strip_prefix("part: "))
+        .filter_map(|pair| {
+            let [os, part] = pair else {
+                return None;
+            };
+            (os.trim() == "- os: windows-2025")
+                .then(|| part.trim())
+                .and_then(|part| part.strip_prefix("part: "))
+        })
         .collect();
 
     assert_eq!(
