@@ -95,7 +95,6 @@ pub(super) fn opens_a_block(text: &str) -> bool {
     const OPENERS: [&str; 8] = [
         "if", "match", "loop", "while", "for", "unsafe", "const", "async",
     ];
-    let text = text.trim_start();
     if text.starts_with(['{', '#', '\'']) {
         return true;
     }
@@ -316,6 +315,46 @@ mod tests {
             text: "false".to_owned(),
             comparable,
             probe: None,
+        }
+    }
+
+    #[test]
+    fn every_way_an_expression_can_open_a_block_is_read_as_one_and_nothing_else_is() {
+        for opening in [
+            "{ a }",
+            "#[cfg(x)] { a }",
+            "'label: { break 'label a; }",
+            "if a { b } else { c }",
+            "match a { _ => b }",
+            "loop { break a; }",
+            "while a { b(); }",
+            "for x in a { b(x); }",
+            "unsafe { a }",
+            "const { 1 }",
+            "async { a }",
+        ] {
+            assert!(
+                super::opens_a_block(opening),
+                "{opening} ends at its own closing brace, so its guard has to as well"
+            );
+        }
+        for plain in [
+            "a",
+            "iffy()",
+            "matches!(a, b)",
+            "looping()",
+            "whilst",
+            "fortune()",
+            "unsafely()",
+            "constant",
+            "asyncio()",
+            "f({ a })",
+            "(match a { _ => b })",
+        ] {
+            assert!(
+                !super::opens_a_block(plain),
+                "{plain} begins with no block, so the identity macro can hold its guard"
+            );
         }
     }
 
