@@ -380,7 +380,7 @@ fn an_allowed_directory_outside_the_root_is_read_rather_than_refused() {
     );
     let Ok(workspace) = opened else { return };
     let as_written = between(fixture.root(), &allowed);
-    let in_the_copy = folded(&workspace.snapshot_root().join(&as_written));
+    let in_the_copy = workspace.snapshot_root().join(&as_written);
     let reached = std::fs::metadata(in_the_copy.join("Cargo.toml"));
     assert!(
         matches!(reached, Ok(entry) if entry.is_file()),
@@ -410,25 +410,6 @@ fn between(from: &Path, to: &Path) -> PathBuf {
         found.push(part);
     }
     found
-}
-
-/// `path` with every `..` folded, which is what cargo does with a declared path.
-fn folded(path: &Path) -> PathBuf {
-    let mut parts: Vec<OsString> = Vec::new();
-    for part in path.components() {
-        match part {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if let Some(last) = parts.len().checked_sub(1)
-                    && last > 0
-                {
-                    parts.truncate(last);
-                }
-            }
-            other => parts.push(other.as_os_str().to_owned()),
-        }
-    }
-    parts.iter().collect()
 }
 
 /// The one package every document below reports, at `root`.
