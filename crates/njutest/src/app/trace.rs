@@ -143,6 +143,9 @@ pub fn slowest(events: &[Event]) -> Vec<(u64, String)> {
             | Payload::Sentinel { .. }
             | Payload::Model { .. }
             | Payload::Drift { .. }
+            | Payload::Control { .. }
+            | Payload::Confirm { .. }
+            | Payload::Resumed { .. }
             | Payload::Repair { .. }
             | Payload::Knob { .. }
             | Payload::Note { .. }

@@ -657,12 +657,14 @@ fn a_configured_skip_is_counted_per_entry_and_an_unmatched_one_is_reported() {
             path: Pattern::compile("src/lib.rs").expect("pattern"),
             lines: None,
             item: Some("is_even".to_owned()),
+            text: None,
             reason: "parity is checked by the integration test".to_owned(),
         },
         rust_mutants::discover::SkipRule {
             path: Pattern::compile("src/nowhere.rs").expect("pattern"),
             lines: None,
             item: None,
+            text: None,
             reason: "a file that is not there".to_owned(),
         },
     ];

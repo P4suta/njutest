@@ -15,7 +15,7 @@
       "const": "rust-mutants/carried"
     },
     "schema_version": {
-      "const": 1
+      "const": 2
     },
     "records": {
       "description": "Each believed record, by the full identity of the mutant it answered for, in the order of those identities.",
@@ -29,6 +29,25 @@
     "digest": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
+    },
+    "position": {
+      "description": "Where an entered body's opening brace stood as the compiler reports a position: a line counted from 1 that only a line feed ends, and a column counted from 1 in characters, a leading byte-order mark not among them.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "line",
+        "column"
+      ],
+      "properties": {
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
     },
     "item": {
       "type": "object",
@@ -113,7 +132,7 @@
       ],
       "properties": {
         "schema": {
-          "const": "rust-mutants-carried-v1"
+          "const": "rust-mutants-carried-v2"
         },
         "locus": {
           "type": "object",
@@ -294,7 +313,8 @@
             "additionalProperties": false,
             "required": [
               "item",
-              "body_digest"
+              "body_digest",
+              "start"
             ],
             "properties": {
               "item": {
@@ -302,6 +322,9 @@
               },
               "body_digest": {
                 "$ref": "#/$defs/digest"
+              },
+              "start": {
+                "$ref": "#/$defs/position"
               }
             }
           }

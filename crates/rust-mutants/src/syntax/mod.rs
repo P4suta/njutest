@@ -77,6 +77,9 @@ pub struct SiteHint {
     pub super_depth: u32,
 }
 
+/// What an arm with no guard is given before the guard a mutation writes, so the edit a catalog records is the source the mutant compiles to rather than an expression spliced against the pattern.
+pub const ARM_GUARD_OPENING: &str = " if ";
+
 /// Which inline modules between a site and its file root glob-import their parent, which decides how the site names the runtime module that lives at the root.
 #[derive(Debug, Clone)]
 pub(crate) struct ModuleScope {

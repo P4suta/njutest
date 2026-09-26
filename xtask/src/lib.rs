@@ -9,6 +9,7 @@
 pub mod adrs;
 pub mod claims;
 pub mod concurrency;
+pub mod confirm;
 pub mod crashes;
 pub mod defaulted;
 pub mod deps;

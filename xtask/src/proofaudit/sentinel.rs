@@ -713,11 +713,48 @@ pub fn with(overrides: Value) -> Value {
 /// A route and an execution for each mutant of [`base`], with no proof removing anything.
 #[must_use]
 pub fn routes() -> Vec<Value> {
-    routes_for(&[(KILLED, "killed"), (SURVIVED, "survived")])
+    let mut events = unconfirmed_routes();
+    events.extend(confirmation(&"a".repeat(64), "passed", Some("killed")));
+    numbered(events)
+}
+
+/// The control and the confirmation of `mutant`'s kill by [`TARGET`]: the control's `answer`, and what the second run came to.
+#[must_use]
+pub fn confirmation(mutant: &str, answer: &str, reproduced: Option<&str>) -> Vec<Value> {
+    let answer = if answer == "passed" {
+        json!({ "kind": "passed" })
+    } else {
+        json!({ "kind": "failed", "detail": answer })
+    };
+    vec![
+        json!({
+            "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
+            "type": "control",
+            "control": { "target": TARGET, "test": null, "asked_for": mutant, "answer": answer }
+        }),
+        json!({
+            "timestamp": "2026-09-06T00:00:03Z", "elapsed_ms": 3,
+            "type": "confirm",
+            "confirm": {
+                "mutant": mutant, "target": TARGET, "test": null, "expected": "killed",
+                "answered_for": mutant, "reproduced": reproduced
+            }
+        }),
+    ]
+}
+
+/// [`routes`] without the confirmation its kill rests on.
+fn unconfirmed_routes() -> Vec<Value> {
+    route_events(&[(KILLED, "killed"), (SURVIVED, "survived")])
 }
 
 /// A route and an execution for each of `mutants`, each with the outcome it came to, with no proof removing anything.
 fn routes_for(mutants: &[(&str, &str)]) -> Vec<Value> {
+    numbered(route_events(mutants))
+}
+
+/// The unnumbered route and execution events for `mutants`.
+fn route_events(mutants: &[(&str, &str)]) -> Vec<Value> {
     let mut events = Vec::new();
     for &(mutant, outcome) in mutants {
         events.push(json!({
@@ -737,7 +774,7 @@ fn routes_for(mutants: &[(&str, &str)]) -> Vec<Value> {
             }
         }));
     }
-    numbered(events)
+    events
 }
 
 /// `events` with every sequence number counted again from one.
@@ -1040,9 +1077,15 @@ pub struct Shard {
 /// [`SpecimenError::Incomplete`] where the shard's report cannot be completed.
 fn shard_of((mutant, outcome): (&str, &str), index: u64) -> Result<Shard, SpecimenError> {
     let flat = shard_flat(mutant, index);
+    let mut events = routes_for(&[(mutant, outcome)]);
+    if outcome == "killed"
+        && let Some(id) = flat.pointer("/mutants/0/id").and_then(Value::as_str)
+    {
+        events.extend(confirmation(id, "passed", Some("killed")));
+    }
     Ok(Shard {
         document: crate::specimen::shard(&flat, (&format!("{MERGED}-s{index}"), index, 2))?,
-        events: Some(concluding(&flat, &routes_for(&[(mutant, outcome)]))),
+        events: Some(concluding(&flat, &events)),
         engine: Some(vec![touch("baseline", &[0, 1]), touch("control", &[0, 1])]),
     })
 }
@@ -1678,6 +1721,152 @@ fn keep_first(document: &mut Value, pointer: &str) {
     }
 }
 
+/// A `control` event: what the original code answered to [`TARGET`], asked for `asked_for`.
+fn control_event(asked_for: &str, answer: &Value) -> Value {
+    json!({
+        "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
+        "type": "control",
+        "control": { "target": TARGET, "test": null, "asked_for": asked_for, "answer": answer }
+    })
+}
+
+/// A `confirm` event: `mutant` confirmed against `target`, expecting `expected`, on the control asked for `answered_for`, whose second run came to `reproduced`.
+fn confirm_event(
+    (mutant, target): (&str, &str),
+    (expected, answered_for, reproduced): (&str, &str, Option<&str>),
+) -> Value {
+    json!({
+        "timestamp": "2026-09-06T00:00:03Z", "elapsed_ms": 3,
+        "type": "confirm",
+        "confirm": {
+            "mutant": mutant, "target": target, "test": null, "expected": expected,
+            "answered_for": answered_for, "reproduced": reproduced
+        }
+    })
+}
+
+/// The clean specimen whose recording holds its routes and then `extra`, with no confirmation of its one kill but what `extra` says.
+fn confirmed_by(name: &'static str, extra: Vec<Value>) -> Perturbation {
+    let mut events = unconfirmed_routes();
+    events.extend(extra);
+    Perturbation {
+        name,
+        events: Some(numbered(events)),
+        ..clean()
+    }
+}
+
+/// The confirmation of the clean specimen's one kill by [`TARGET`], on the control asked for `answered_for`, whose second run came to `reproduced`.
+fn kill_confirmed(answered_for: &str, reproduced: Option<&str>) -> Value {
+    confirm_event(
+        (&"a".repeat(64), TARGET),
+        ("killed", answered_for, reproduced),
+    )
+}
+
+/// The defects planted for [`crate::confirm::ConfirmRule::Missing`]: no confirmation, one against another target, and a wait confirmed only as a kill.
+fn missing_plants() -> Vec<Perturbation> {
+    let killed = "a".repeat(64);
+    let passed = json!({ "kind": "passed" });
+    vec![
+        confirmed_by("a kill the recording holds no confirmation of", Vec::new()),
+        confirmed_by(
+            "a kill confirmed against a target other than the one said to kill it",
+            vec![
+                control_event(&killed, &passed),
+                confirm_event((&killed, "elsewhere"), ("killed", &killed, Some("killed"))),
+            ],
+        ),
+        Perturbation {
+            name: "a wait confirmed only as a kill",
+            document: with(json!({ "mutants": [{ "decision": { "outcome": "waited" } }] })),
+            ..confirmed_by(
+                "",
+                vec![
+                    control_event(&killed, &passed),
+                    kill_confirmed(&killed, Some("killed")),
+                ],
+            )
+        },
+    ]
+}
+
+/// The defects planted for `rule` of the confirmation layer, each on the clean specimen with the confirmation of its one kill changed.
+#[must_use]
+pub fn confirm_plants(rule: crate::confirm::ConfirmRule) -> Vec<Perturbation> {
+    use crate::confirm::ConfirmRule;
+    let killed = "a".repeat(64);
+    let passed = json!({ "kind": "passed" });
+    let failed = json!({ "kind": "failed", "detail": "failed: also on the original" });
+    match rule {
+        ConfirmRule::Missing => missing_plants(),
+        ConfirmRule::Uncontrolled => vec![
+            confirmed_by(
+                "a confirmation recorded before the control it rests on",
+                vec![
+                    kill_confirmed(&killed, Some("killed")),
+                    control_event(&killed, &passed),
+                ],
+            ),
+            confirmed_by(
+                "a confirmation resting on a control asked for another mutation",
+                vec![
+                    control_event(&"b".repeat(64), &passed),
+                    kill_confirmed(&killed, Some("killed")),
+                ],
+            ),
+        ],
+        ConfirmRule::Twice => vec![confirmed_by(
+            "the original code asked the same question twice",
+            vec![
+                control_event(&killed, &passed),
+                control_event(&killed, &passed),
+                kill_confirmed(&killed, Some("killed")),
+            ],
+        )],
+        ConfirmRule::Rerun => vec![confirmed_by(
+            "a kill run a second time on a control that failed",
+            vec![
+                control_event(&killed, &failed),
+                kill_confirmed(&killed, Some("killed")),
+            ],
+        )],
+        ConfirmRule::NoRerun => vec![confirmed_by(
+            "a kill never run a second time on a control that passed",
+            vec![
+                control_event(&killed, &passed),
+                kill_confirmed(&killed, None),
+            ],
+        )],
+        ConfirmRule::Unconfirmed => vec![confirmed_by(
+            "a kill that did not come back the second time",
+            vec![
+                control_event(&killed, &passed),
+                kill_confirmed(&killed, Some("survived")),
+            ],
+        )],
+        ConfirmRule::Confirmed => vec![Perturbation {
+            name: "an unconfirmed disposition whose confirmation came back",
+            document: with(json!({ "mutants": [{ "decision": { "outcome": "unconfirmed" } }] })),
+            ..confirmed_by(
+                "",
+                vec![
+                    control_event(&killed, &passed),
+                    kill_confirmed(&killed, Some("killed")),
+                ],
+            )
+        }],
+    }
+}
+
+/// The defects planted for every rule of the confirmation layer.
+fn confirmation_plants() -> Vec<Perturbation> {
+    crate::confirm::ConfirmRule::ALL
+        .into_iter()
+        .flat_map(confirm_plants)
+        .collect()
+}
+
 impl Layer {
     /// The defects planted for this layer, each of which it must report as a violation.
     #[must_use]
@@ -1750,6 +1939,7 @@ impl Layer {
             ],
             Self::Knobs => knobs_planted(clean),
             Self::Concurrency => concurrency_planted(&clean),
+            Self::Confirmations => confirmation_plants(),
             Self::Soundness => soundness_planted(&clean),
             Self::Executions => LIED_OUTCOMES.into_iter().filter_map(lie).collect(),
         }

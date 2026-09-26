@@ -19,7 +19,7 @@ pub const FILE: &str = "skeletons-v1.json";
 pub const DOCUMENT_TYPE: &str = "rust-mutants/skeletons";
 
 /// The version of that shape.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// The standard macros a sealed body may invoke: each expands to an expression or a statement and declares nothing.
 pub const SEALABLE_MACROS: [&str; 28] = [
@@ -120,6 +120,50 @@ pub struct ItemEvidence {
     pub sealed: bool,
     /// Why it is not sealed, absent exactly when it is.
     pub unsealed: Option<Unsealing>,
+    /// Where its body's opening brace stands, as the compiler reports a position, or nothing where no unit read its file or its file is not text.
+    pub start: Option<Position>,
+}
+
+/// Where a token stands as the compiler reports it: a line, counted from one, that only a line feed ends, and a column, counted from one, in characters, a leading byte-order mark not among them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Position {
+    /// The line.
+    pub line: u32,
+    /// The column.
+    pub column: u32,
+}
+
+/// The bytes a file may start with that name its encoding and are no column of its first line.
+const BYTE_ORDER_MARK: &[u8] = b"\xEF\xBB\xBF";
+
+/// Where the byte at `offset` of `bytes` stands, or nothing where the bytes before it are not text or a count does not fit.
+#[must_use]
+pub fn position(bytes: &[u8], offset: u32) -> Option<Position> {
+    let end = match usize::try_from(offset) {
+        Ok(end) => end,
+        Err(_does_not_fit) => return None,
+    };
+    let before = bytes.get(..end)?;
+    let before = match before.strip_prefix(BYTE_ORDER_MARK) {
+        Some(rest) => rest,
+        None => before,
+    };
+    let text = match std::str::from_utf8(before) {
+        Ok(text) => text,
+        Err(_not_text) => return None,
+    };
+    let mut lines = text.split('\n');
+    let last = lines.next_back()?;
+    let line = match u32::try_from(lines.count()) {
+        Ok(breaks) => breaks.checked_add(1)?,
+        Err(_does_not_fit) => return None,
+    };
+    let column = match u32::try_from(last.chars().count()) {
+        Ok(characters) => characters.checked_add(1)?,
+        Err(_does_not_fit) => return None,
+    };
+    Some(Position { line, column })
 }
 
 /// Why a body is not sealed.
@@ -258,12 +302,14 @@ pub fn evidence(units: &[UnitSource], items: &[(&Item, &ItemRef)]) -> Skeletons 
             body_digest: crate::id::digest(body.unwrap_or_default()),
             sealed: unsealed.is_none(),
             unsealed,
+            start: source.and_then(|bytes| position(bytes, item.body.start)),
         });
     }
+    let read = read_positions(units, items, &item_evidence);
     let mut unit_skeletons: Vec<UnitSkeleton> = units
         .iter()
         .map(|unit| {
-            let entries = entries(unit, items, &item_evidence);
+            let entries = entries(unit, (items, &item_evidence), &read);
             UnitSkeleton {
                 package: unit.package.clone(),
                 target: unit.target.clone(),
@@ -315,11 +361,11 @@ fn reading<T: Send>(unread: T, work: impl FnOnce(&crate::parsing::Parsing) -> T 
     }
 }
 
-/// What one unit's skeleton folds: its files with each sealed body replaced, its variables, and what its build scripts emitted.
+/// What one unit's skeleton folds: its files with each sealed body replaced, where the compiler reads a position in each of them, its variables, and what its build scripts emitted.
 fn entries(
     unit: &UnitSource,
-    items: &[(&Item, &ItemRef)],
-    evidence: &[ItemEvidence],
+    (items, evidence): (&[(&Item, &ItemRef)], &[ItemEvidence]),
+    read: &BTreeMap<String, String>,
 ) -> BTreeMap<String, String> {
     let mut entries: BTreeMap<String, String> = BTreeMap::new();
     for (name, bytes) in &unit.files {
@@ -338,6 +384,9 @@ fn entries(
             name.clone(),
             crate::id::digest(&with_placeholders(bytes, name, &sealed)),
         );
+        if let Some(positions) = read.get(name) {
+            entries.insert(format!("{POSITIONS}{name}"), positions.clone());
+        }
     }
     for (name, value) in &unit.env {
         entries.insert(format!("$env/{name}"), value.clone());
@@ -360,7 +409,10 @@ fn folded(entries: &BTreeMap<String, String>) -> String {
     crate::id::digest(text.as_bytes())
 }
 
-/// `bytes` with every sealed body replaced by `{sealed:<file>#<ordinal>}`.
+/// The prefix of the entry that holds where the compiler reads a position in a file, before the file's own name.
+pub const POSITIONS: &str = "$positions/";
+
+/// `bytes` with every sealed body replaced by `{sealed:<file>#<ordinal>}`, which names neither its bytes nor its lines: a position inside it moves only what runs after it, which records its entry (ADR 0041).
 fn with_placeholders(bytes: &[u8], name: &str, sealed: &[(u32, &Item)]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
     let mut from = 0_usize;
@@ -373,27 +425,259 @@ fn with_placeholders(bytes: &[u8], name: &str, sealed: &[(u32, &Item)]) -> Vec<u
         ) else {
             continue;
         };
-        let (Some(before), Some(body)) = (bytes.get(from..start), bytes.get(start..end)) else {
+        let (Some(before), Some(_body)) = (bytes.get(from..start), bytes.get(start..end)) else {
             continue;
         };
         out.extend_from_slice(before);
-        out.extend_from_slice(format!("{{sealed:{name}#{ordinal}/{}}}", shape(body)).as_bytes());
+        out.extend_from_slice(format!("{{sealed:{name}#{ordinal}}}").as_bytes());
         from = end;
     }
     out.extend_from_slice(bytes.get(from..).unwrap_or_default());
     out
 }
 
-/// Where a body leaves what follows it: its line breaks, and its last line's length in bytes and in characters.
-fn shape(body: &[u8]) -> String {
-    let mut lines = body.split(|byte| *byte == b'\n');
-    let last = lines.next_back().unwrap_or_default();
-    let newlines = lines.count();
-    let characters = match std::str::from_utf8(last) {
-        Ok(text) => text.chars().count().to_string(),
-        Err(_not_text) => "bytes".to_owned(),
+/// Where the compiler reads a position in each workspace file a unit read, as one digest per file under its entry name: the start of every body that is not sealed, and outside every cataloged body each item-level macro invocation, each attribute off the list, each documentation code block, and each expression evaluated at compile time that could read a position.
+fn read_positions(
+    units: &[UnitSource],
+    items: &[(&Item, &ItemRef)],
+    evidence: &[ItemEvidence],
+) -> BTreeMap<String, String> {
+    let mut read = BTreeMap::new();
+    for unit in units {
+        for (name, bytes) in &unit.files {
+            let Some(path) = name.strip_prefix("$root/") else {
+                continue;
+            };
+            if read.contains_key(name) {
+                continue;
+            }
+            let Some((base, file)) = parsed(bytes) else {
+                continue;
+            };
+            let in_file: Vec<(&Item, &ItemEvidence)> = items
+                .iter()
+                .zip(evidence)
+                .filter(|((_, reference), _)| reference.path == path)
+                .map(|((item, _), said)| (*item, said))
+                .collect();
+            let bodies: Vec<(u32, u32)> = in_file
+                .iter()
+                .map(|(item, _)| (item.body.start, item.body.end))
+                .collect();
+            let mut consumers = Consumers {
+                base,
+                bodies: &bodies,
+                found: Vec::new(),
+            };
+            consumers.visit_file(&file);
+            let mut lines: Vec<String> = consumers
+                .found
+                .into_iter()
+                .map(|(kind, at)| match position(bytes, at) {
+                    Some(Position { line, column }) => format!("{kind} {line}:{column}"),
+                    None => format!("{kind} @{at}"),
+                })
+                .collect();
+            for (_, said) in in_file.iter().filter(|(_, said)| !said.sealed) {
+                lines.push(match said.start {
+                    Some(Position { line, column }) => {
+                        format!("body {} {line}:{column}", said.item.ordinal)
+                    }
+                    None => format!("body {} unplaced", said.item.ordinal),
+                });
+            }
+            lines.sort();
+            read.insert(name.clone(), crate::id::digest(lines.join("\n").as_bytes()));
+        }
+    }
+    read
+}
+
+/// The walk over one file that finds, outside every cataloged body, what the compiler reads a position of, each by the token the page names for it.
+struct Consumers<'a> {
+    base: u32,
+    bodies: &'a [(u32, u32)],
+    found: Vec<(&'static str, u32)>,
+}
+
+impl Consumers<'_> {
+    /// Where `node` starts in the file, when that fits.
+    fn start_of(&self, node: &impl Spanned) -> Option<u32> {
+        match u32::try_from(node.span().byte_range().start) {
+            Ok(start) => self.base.checked_add(start),
+            Err(_does_not_fit) => None,
+        }
+    }
+
+    /// Whether `node` is where a cataloged body starts, which the walk does not enter.
+    fn is_body(&self, node: &impl Spanned) -> bool {
+        self.start_of(node)
+            .is_some_and(|at| self.bodies.iter().any(|(start, _)| *start == at))
+    }
+
+    /// Records that the compiler reads a position of what `anchor` marks, as a consumer of `kind`: the token the page names for that kind, which moves exactly when the consumer does.
+    fn at(&mut self, kind: &'static str, anchor: proc_macro2::Span) {
+        let at = match u32::try_from(anchor.byte_range().start) {
+            Ok(start) => self.base.checked_add(start),
+            Err(_does_not_fit) => None,
+        };
+        match at {
+            Some(at) => self.found.push((kind, at)),
+            None => self.found.push((kind, u32::MAX)),
+        }
+    }
+}
+
+impl Consumers<'_> {
+    /// Records an item-level macro invocation by the last segment of its path, a `macro_rules!` definition aside.
+    fn invoked(&mut self, invocation: &syn::Macro) {
+        if invocation.path.is_ident("macro_rules") {
+            return;
+        }
+        if let Some(last) = invocation.path.segments.last() {
+            self.at("macro", last.ident.span());
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for Consumers<'_> {
+    fn visit_block(&mut self, node: &'ast syn::Block) {
+        if !self.is_body(node) {
+            visit::visit_block(self, node);
+        }
+    }
+
+    fn visit_expr(&mut self, node: &'ast syn::Expr) {
+        if !self.is_body(node) {
+            visit::visit_expr(self, node);
+        }
+    }
+
+    fn visit_item_macro(&mut self, node: &'ast syn::ItemMacro) {
+        self.invoked(&node.mac);
+        for attribute in &node.attrs {
+            self.visit_attribute(attribute);
+        }
+    }
+
+    fn visit_impl_item_macro(&mut self, node: &'ast syn::ImplItemMacro) {
+        self.invoked(&node.mac);
+        visit::visit_impl_item_macro(self, node);
+    }
+
+    fn visit_trait_item_macro(&mut self, node: &'ast syn::TraitItemMacro) {
+        self.invoked(&node.mac);
+        visit::visit_trait_item_macro(self, node);
+    }
+
+    fn visit_foreign_item_macro(&mut self, node: &'ast syn::ForeignItemMacro) {
+        self.invoked(&node.mac);
+        visit::visit_foreign_item_macro(self, node);
+    }
+
+    fn visit_attribute(&mut self, node: &'ast syn::Attribute) {
+        let Some(first) = node.path().segments.first() else {
+            return;
+        };
+        if node.path().is_ident("doc") {
+            if documents_code(node) {
+                self.at("doctest", first.ident.span());
+            }
+        } else if attribute(node).is_some() {
+            self.at("attribute", first.ident.span());
+        }
+    }
+
+    fn visit_type_array(&mut self, node: &'ast syn::TypeArray) {
+        if computes(&node.len) {
+            self.at("length", node.semi_token.span);
+        }
+        visit::visit_type_array(self, node);
+    }
+
+    fn visit_variant(&mut self, node: &'ast syn::Variant) {
+        if let Some((_, discriminant)) = &node.discriminant
+            && computes(discriminant)
+        {
+            self.at("discriminant", node.ident.span());
+        }
+        visit::visit_variant(self, node);
+    }
+
+    fn visit_const_param(&mut self, node: &'ast syn::ConstParam) {
+        if let Some((_, default)) = &node.default
+            && computes(default)
+        {
+            self.at("const-default", node.ident.span());
+        }
+        visit::visit_const_param(self, node);
+    }
+
+    fn visit_generic_argument(&mut self, node: &'ast syn::GenericArgument) {
+        if let syn::GenericArgument::Const(argument) = node
+            && computes(argument)
+        {
+            match argument {
+                syn::Expr::Block(block) => {
+                    self.at("const-argument", block.block.brace_token.span.open());
+                }
+                _ => self.at("const-argument", proc_macro2::Span::call_site()),
+            }
+        }
+        visit::visit_generic_argument(self, node);
+    }
+}
+
+/// Whether a documentation attribute holds a line rustdoc may test as code: one that opens a fence, or one indented as an indented code block is.
+fn documents_code(attribute: &syn::Attribute) -> bool {
+    let syn::Meta::NameValue(pair) = &attribute.meta else {
+        return true;
     };
-    format!("{newlines}:{}:{characters}", last.len())
+    let syn::Expr::Lit(syn::ExprLit {
+        lit: syn::Lit::Str(text),
+        ..
+    }) = &pair.value
+    else {
+        return true;
+    };
+    text.value().lines().any(|line| {
+        let line = match line.strip_prefix(' ') {
+            Some(rest) => rest,
+            None => line,
+        };
+        let trimmed = line.trim_start_matches(' ');
+        trimmed.starts_with("```")
+            || trimmed.starts_with("~~~")
+            || line.starts_with("    ")
+            || line.starts_with('\t')
+    })
+}
+
+/// Whether evaluating `expression` can read a position: it holds a macro invocation or a call.
+fn computes(expression: &syn::Expr) -> bool {
+    let mut computing = Computing::default();
+    computing.visit_expr(expression);
+    computing.found
+}
+
+/// The walk over an expression that finds a macro invocation or a call in it.
+#[derive(Debug, Default)]
+struct Computing {
+    found: bool,
+}
+
+impl<'ast> Visit<'ast> for Computing {
+    fn visit_macro(&mut self, _node: &'ast syn::Macro) {
+        self.found = true;
+    }
+
+    fn visit_expr_call(&mut self, _node: &'ast syn::ExprCall) {
+        self.found = true;
+    }
+
+    fn visit_expr_method_call(&mut self, _node: &'ast syn::ExprMethodCall) {
+        self.found = true;
+    }
 }
 
 /// Why no body of this unit is sealed, when a file of it can rename a listed macro.

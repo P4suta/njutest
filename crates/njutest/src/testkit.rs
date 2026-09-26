@@ -351,7 +351,7 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::BesideRun { .. } => "pair",
         Payload::CrashExec { .. } | Payload::Crash { .. } => "crash",
         Payload::CrashStep { .. } => "step",
-        Payload::FaultControl { .. } => "control",
+        Payload::FaultControl { .. } | Payload::Control { .. } => "control",
         Payload::FaultAttribution { .. } => "attribution",
         Payload::FaultRejected { .. } => "rejected",
         Payload::ProbeExec { .. } => "probe",
@@ -360,6 +360,8 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::Sentinel { .. } => "sentinel",
         Payload::Model { .. } => "model",
         Payload::Drift { .. } => "drift",
+        Payload::Confirm { .. } => "confirm",
+        Payload::Resumed { .. } => "resumed",
         Payload::Repair { .. } => "repair",
         Payload::Knob { .. } => "knob",
         Payload::Note { .. } => "note",
@@ -429,6 +431,12 @@ pub mod payload {
         Model,
         /// A control's drift observation.
         Drift(&'a crate::trace::DriftRecord),
+        /// What the original code answered to one test.
+        Control(&'a crate::trace::ControlRecord),
+        /// How one kill or wait was confirmed.
+        Confirm(&'a crate::trace::ConfirmRecord),
+        /// A kill inherited from a checkpoint.
+        Resumed(&'a crate::trace::ResumedRecord),
         /// A disposition run again against a moved target.
         Repair(&'a crate::trace::RepairRecord),
         /// A knob record.
@@ -469,6 +477,9 @@ pub mod payload {
             Payload::Sentinel { sentinel } => Ref::Sentinel(sentinel),
             Payload::Model { .. } => Ref::Model,
             Payload::Drift { drift } => Ref::Drift(drift),
+            Payload::Control { control } => Ref::Control(control),
+            Payload::Confirm { confirm } => Ref::Confirm(confirm),
+            Payload::Resumed { resumed } => Ref::Resumed(resumed),
             Payload::Repair { repair } => Ref::Repair(repair),
             Payload::Knob { knob } => Ref::Knob(knob),
             Payload::Note { note } => Ref::Note(note),
@@ -780,6 +791,32 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
             model: Box::new(crate::report::ModelRecord::specimen_ineligible(
                 crate::report::ModelIneligibility::Effect,
             )),
+        },
+        Payload::Control {
+            control: crate::trace::ControlRecord {
+                target: Some("demo/lib/demo".to_owned()),
+                test: None,
+                asked_for: "a".repeat(64),
+                answer: crate::trace::ControlAnswer::Failed {
+                    detail: "failed: assertion `left == right` failed".to_owned(),
+                },
+            },
+        },
+        Payload::Confirm {
+            confirm: crate::trace::ConfirmRecord {
+                mutant: "b".repeat(64),
+                target: Some("demo/lib/demo".to_owned()),
+                test: None,
+                expected: crate::trace::Expected::Killed,
+                answered_for: "a".repeat(64),
+                reproduced: Some(rust_mutants::outcome::Outcome::Killed),
+            },
+        },
+        Payload::Resumed {
+            resumed: crate::trace::ResumedRecord {
+                mutant: "c".repeat(64),
+                killed_by: "demo/lib/demo".to_owned(),
+            },
         },
         Payload::Repair {
             repair: crate::trace::RepairRecord {

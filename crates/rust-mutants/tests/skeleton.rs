@@ -383,6 +383,7 @@ fn a_skeleton_is_the_fold_of_the_entries_it_names() {
         [
             "$emitted/$target/out",
             "$env/LIMIT",
+            "$positions/$root/src/lib.rs",
             "$root/src/answer.txt",
             "$root/src/lib.rs"
         ],
@@ -400,44 +401,98 @@ fn a_skeleton_is_the_fold_of_the_entries_it_names() {
         rust_mutants::id::digest(folded.as_bytes()),
         "and the skeleton is exactly their fold, so a reader re-derives it from them"
     );
-    let rendered = "pub fn f() -> i32 {sealed:$root/src/lib.rs#0/0:5:5}\nconst K: i32 = 2;\n";
+    let rendered = "pub fn f() -> i32 {sealed:$root/src/lib.rs#0}\nconst K: i32 = 2;\n";
     assert_eq!(
         one.entries.get("$root/src/lib.rs"),
         Some(&rust_mutants::id::digest(rendered.as_bytes())),
         "a Rust file's entry is its bytes with each sealed body replaced by a placeholder \
-         naming the file, the item's position in it, and the body's shape"
+         naming the file and the item's position among its items, and nothing of the body's \
+         bytes or lines"
+    );
+    assert_eq!(
+        one.entries.get("$positions/$root/src/lib.rs"),
+        Some(&rust_mutants::id::digest(b"body 1 2:16")),
+        "and where the compiler reads a position in it is the start of each body that is not \
+         sealed, here the constant's initialiser, by its ordinal, line and column"
     );
 }
 
 #[test]
-fn an_edit_that_moves_what_follows_a_sealed_body_moves_the_skeleton() {
-    let before = [(
-        "src/lib.rs",
-        "pub fn f() -> i32 { 1 }\npub fn g() { panic!() }\n",
-    )];
-    let taller = [(
-        "src/lib.rs",
-        "pub fn f() -> i32 {\n    1\n}\npub fn g() { panic!() }\n",
-    )];
-    let wider = [(
-        "src/lib.rs",
-        "pub fn f() -> i32 { 1 } pub fn g() { panic!() }\n",
-    )];
-    let widened = [(
-        "src/lib.rs",
-        "pub fn f() -> i32 { 10 } pub fn g() { panic!() }\n",
-    )];
-    assert_ne!(
-        evidence_of(&unit(&before), &before).units,
-        evidence_of(&unit(&taller), &taller).units,
-        "a line added inside a sealed body moves every line after it, and `panic!` in `g` \
-         reports the line it is on"
+fn a_line_added_inside_a_sealed_body_moves_only_what_the_compiler_reads_a_position_of() {
+    let below = |tail: &str| {
+        [
+            (
+                "src/lib.rs",
+                format!("pub fn f() -> i32 {{ 1 }}\npub fn g() {{ panic!() }}\n{tail}"),
+            ),
+            (
+                "src/lib.rs",
+                format!("pub fn f() -> i32 {{\n    1\n}}\npub fn g() {{ panic!() }}\n{tail}"),
+            ),
+        ]
+    };
+    let [before, taller] = below("");
+    let (before, taller) = (
+        [(before.0, before.1.as_str())],
+        [(taller.0, taller.1.as_str())],
+    );
+    let (was, now) = (
+        evidence_of(&unit(&before), &before),
+        evidence_of(&unit(&taller), &taller),
+    );
+    assert_eq!(
+        was.units, now.units,
+        "the placeholder of a sealed body names neither its bytes nor its lines, so a line added \
+         inside one moves no skeleton"
     );
     assert_ne!(
-        evidence_of(&unit(&wider), &wider).units,
-        evidence_of(&unit(&widened), &widened).units,
-        "and a body that grows on its last line moves the columns after it on that line"
+        item(&was, "g").start,
+        item(&now, "g").start,
+        "and moves the start of every body after it, which an execution that entered `g`, whose \
+         `panic!` reports the line it is on, is held to"
     );
+    for (tail, consumer) in [
+        ("pub const HERE: u32 = line!();\n", "a constant initialiser"),
+        ("m!{}\n", "an item-level macro invocation"),
+        (
+            "/// ```\n/// assert!(true);\n/// ```\npub fn h() {}\n",
+            "a documentation code block",
+        ),
+        ("pub struct S([u8; size()]);\n", "a compile-time call"),
+        ("#[derive(Debug)]\npub struct T;\n", "a derive"),
+    ] {
+        let [before, taller] = below(tail);
+        let (before, taller) = (
+            [(before.0, before.1.as_str())],
+            [(taller.0, taller.1.as_str())],
+        );
+        assert_ne!(
+            evidence_of(&unit(&before), &before).units,
+            evidence_of(&unit(&taller), &taller).units,
+            "{consumer} below the edit is read by the compiler where it stands, and runs where no \
+             test enters, so the line it moved to is in the skeleton"
+        );
+    }
+    for (tail, inert) in [
+        (
+            "/// A plain sentence.\npub fn h() {}\n",
+            "a documentation line with no code",
+        ),
+        ("pub struct S([u8; 4]);\n", "a literal length"),
+        ("#[cfg(test)]\nmod tests {}\n", "a listed attribute"),
+        ("#[test]\nfn t() {}\n", "a test attribute"),
+    ] {
+        let [before, taller] = below(tail);
+        let (before, taller) = (
+            [(before.0, before.1.as_str())],
+            [(taller.0, taller.1.as_str())],
+        );
+        assert_eq!(
+            evidence_of(&unit(&before), &before).units,
+            evidence_of(&unit(&taller), &taller).units,
+            "{inert} below the edit reads no position, so it moves no skeleton"
+        );
+    }
 }
 
 #[test]
@@ -477,7 +532,7 @@ fn an_item_is_named_by_the_reference_every_record_joins_on() {
         .first()
         .and_then(|one| one.entries.get("$root/src/lib.rs"))
         .expect("the file's entry");
-    let rendered = "const K: i32 = 1;\npub fn f() -> i32 {sealed:$root/src/lib.rs#1/0:5:5}\npub fn g() -> i32 {sealed:$root/src/lib.rs#2/0:5:5}\n";
+    let rendered = "const K: i32 = 1;\npub fn f() -> i32 {sealed:$root/src/lib.rs#1}\npub fn g() -> i32 {sealed:$root/src/lib.rs#2}\n";
     assert_eq!(
         entry,
         &rust_mutants::id::digest(rendered.as_bytes()),

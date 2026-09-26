@@ -142,3 +142,97 @@ fn every_reason_a_body_can_be_unsealed_has_a_word() {
         Unsealed::ALL.iter().map(|reason| reason.name()).collect();
     assert_eq!(words.len(), Unsealed::ALL.len());
 }
+
+/// Every string literal of `text`, in order.
+fn literals(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut rest = text;
+    while let Some(open) = rest.find('"') {
+        let Some(after) = rest.get(open.saturating_add(1)..) else {
+            break;
+        };
+        let mut literal = String::new();
+        let mut escaped = false;
+        let mut end = None;
+        for (at, character) in after.char_indices() {
+            match (escaped, character) {
+                (true, _) => {
+                    literal.push(character);
+                    escaped = false;
+                }
+                (false, '\\') => escaped = true,
+                (false, '"') => {
+                    end = Some(at);
+                    break;
+                }
+                (false, _) => literal.push(character),
+            }
+        }
+        let Some(end) = end else {
+            break;
+        };
+        found.push(literal);
+        rest = after.get(end.saturating_add(1)..).unwrap_or_default();
+    }
+    found
+}
+
+/// Each `--list` in `text` that asks libtest for JSON within the words after it, which is where libtest writes the line each test starts and ends on.
+fn lists_positions(text: &str) -> Vec<String> {
+    let words = literals(text);
+    words
+        .iter()
+        .enumerate()
+        .filter(|(_, word)| word.as_str() == "--list")
+        .filter_map(|(at, _)| {
+            let after: Vec<&String> = words.iter().skip(at.saturating_add(1)).take(4).collect();
+            after
+                .iter()
+                .any(|word| word.as_str() == "json" || word.as_str() == "--format=json")
+                .then(|| format!("--list {after:?}"))
+        })
+        .collect()
+}
+
+#[test]
+fn no_runner_reads_where_libtest_lists_a_test() {
+    assert_eq!(
+        lists_positions(
+            r#"[OsString::from("--list"), OsString::from("--format"), OsString::from("json")]"#
+        )
+        .len(),
+        1,
+        "the law finds a listing that asks for JSON, or its silence below proves nothing"
+    );
+    assert!(
+        lists_positions(r#"["--list", "--format", "terse"]"#).is_empty(),
+        "and passes one that asks for names alone"
+    );
+    let root = njutest_devkit::paths::workspace_root();
+    let mut asked = Vec::new();
+    for relative in xtask::repository::files(&root).expect("the repository's files") {
+        let runner = [
+            "crates/rust-mutants/src/",
+            "crates/rust-mutants-cli/src/",
+            "crates/njutest/src/",
+        ]
+        .iter()
+        .any(|prefix| relative.starts_with(prefix));
+        let rust = std::path::Path::new(&relative)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("rs"));
+        if !runner || !rust {
+            continue;
+        }
+        let text = std::fs::read_to_string(root.join(&relative)).expect("a source file");
+        for found in lists_positions(&text) {
+            asked.push(format!("{relative}: {found}"));
+        }
+    }
+    assert!(
+        asked.is_empty(),
+        "libtest's JSON listing holds the line each test starts and ends on, and the carry rule \
+         lets a `#[test]` body move where no execution entered it (ADR 0041), so no runner asks \
+         for it: {asked:#?}"
+    );
+}
