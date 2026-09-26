@@ -699,3 +699,300 @@ fn a_process_that_holds_a_refused_runs_output_ends_with_it() {
     );
     drop(fixture);
 }
+
+/// A test that reads a setting only the home the run was given holds, which a confined execution cannot see.
+const READS_THE_GIVEN_HOME: &str = "// SPDX-FileCopyrightText: 2026 njutest contributors\n// SPDX-License-Identifier: MIT OR Apache-2.0\n\n//! Reads a setting only the given home holds.\n\n#[test]\nfn the_setting_the_home_already_holds_is_the_one_recalled() {\n    assert_eq!(fixture_home::recall().expect(\"the home holds a setting\"), \"already there\");\n}\n";
+
+/// The environment every run gets, with `home` as the home directory and the toolchain's own homes still where they are.
+fn given_home(fixture: &Fixture, home: &std::path::Path) -> Environment {
+    let mut given = environment(fixture);
+    let real = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .map(std::path::PathBuf::from);
+    for (name, beside) in [("CARGO_HOME", ".cargo"), ("RUSTUP_HOME", ".rustup")] {
+        let pinned = std::env::var_os(name)
+            .or_else(|| real.as_ref().map(|home| home.join(beside).into_os_string()));
+        match pinned {
+            Some(pinned) => given.vars.set(name, pinned),
+            None => given.vars.remove(name),
+        }
+    }
+    for name in ["HOME", "USERPROFILE"] {
+        given.vars.set(name, home.as_os_str().to_owned());
+    }
+    given
+}
+
+#[test]
+fn a_write_a_test_makes_under_its_home_lands_in_its_execution() {
+    let fixture = Fixture::copy("fixture-home");
+    std::fs::write(fixture.root().join("tests/reads.rs"), READS_THE_GIVEN_HOME)
+        .expect("a test that reads the given home");
+    let home = fixture.temp().join("given-home");
+    let setting = home.join(".fixture-home").join("setting");
+    std::fs::create_dir_all(setting.parent().expect("the setting's directory"))
+        .expect("the given home");
+    std::fs::write(&setting, "already there").expect("a setting the given home holds");
+    let given = given_home(&fixture, &home);
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        [
+            "rust-mutants",
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-coverage",
+            "--ui",
+            "quiet",
+            "--root",
+            root.as_str(),
+        ]
+        .map(OsString::from),
+        &given,
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    let output = njutest_devkit::process::answered(code, out, err);
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "the run reaches a verdict: {output:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&setting).expect("the given home's setting"),
+        "already there",
+        "a test that writes under its home writes the home of its own execution, so the home the \
+         run was given keeps what it held, whatever a mutation did to the path: {output:?}"
+    );
+    let document: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&njutest_devkit::fixture::stored_report(
+            &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+        ))
+        .expect("the report is a document");
+    let limited: Vec<String> = document["targets"]
+        .as_array()
+        .expect("the targets")
+        .iter()
+        .filter(|target| {
+            target["limitations"]
+                .as_array()
+                .is_some_and(|said| said.iter().any(|one| one == "unconfined-target"))
+        })
+        .map(|target| target["id"].to_string())
+        .collect();
+    assert_eq!(
+        limited,
+        vec!["\"fixture-home/test/reads\"".to_owned()],
+        "a target that passes only with the given home is measured with it, and the run says \
+         which, every time: {}",
+        document["targets"]
+    );
+}
+
+/// A traced run of `fixture` with `given`.
+fn run_given(fixture: &Fixture, given: &Environment) -> Output {
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        [
+            "rust-mutants",
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-coverage",
+            "--ui",
+            "quiet",
+            "--trace",
+            "--root",
+            root.as_str(),
+        ]
+        .map(OsString::from),
+        given,
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    njutest_devkit::process::answered(code, out, err)
+}
+
+/// The trace of the newest run of `fixture`.
+#[expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking"
+)]
+fn newest_trace(fixture: &Fixture) -> String {
+    std::fs::read_to_string(
+        njutest_devkit::fixture::newest_run(
+            &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+        )
+        .join("trace/trace.jsonl"),
+    )
+    .expect("the run's trace")
+}
+
+/// The targets the newest stored report of `fixture` says ran with the home the run was given.
+#[expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking"
+)]
+fn unconfined_targets(fixture: &Fixture) -> Vec<String> {
+    let document: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&njutest_devkit::fixture::stored_report(
+            &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+        ))
+        .expect("the report is a document");
+    document["targets"]
+        .as_array()
+        .expect("the targets")
+        .iter()
+        .filter(|target| {
+            target["limitations"]
+                .as_array()
+                .is_some_and(|said| said.iter().any(|one| one == "unconfined-target"))
+        })
+        .map(|target| target["id"].to_string())
+        .collect()
+}
+
+#[test]
+fn a_remembered_baseline_that_needed_the_given_home_answers_only_for_that_home() {
+    let fixture = Fixture::copy("fixture-home");
+    std::fs::write(fixture.root().join("tests/reads.rs"), READS_THE_GIVEN_HOME)
+        .expect("a test that reads the given home");
+    let home = fixture.temp().join("given-home");
+    let setting = home.join(".fixture-home").join("setting");
+    std::fs::create_dir_all(setting.parent().expect("the setting's directory"))
+        .expect("the given home");
+    std::fs::write(&setting, "already there").expect("a setting the given home holds");
+    let mut given = given_home(&fixture, &home);
+    let first = run_given(&fixture, &given);
+    assert!(
+        first.status.code().is_some_and(|code| code < 2),
+        "the run reaches a verdict: {first:?}"
+    );
+    let second = run_given(&fixture, &given);
+    let trace = newest_trace(&fixture);
+    assert!(
+        trace.contains("baseline-remembered"),
+        "an unchanged tree recalls its baseline, which is the path this test is about: {:?}; {}",
+        second.status,
+        trace
+            .lines()
+            .filter(|line| line.contains("baseline"))
+            .collect::<Vec<&str>>()
+            .join("\n")
+    );
+    assert_eq!(
+        unconfined_targets(&fixture),
+        vec!["\"fixture-home/test/reads\"".to_owned()],
+        "a recalled baseline says the target runs with the given home, as the run that measured \
+         it did, since every execution of it is measured with that home"
+    );
+    given.vars.set(
+        "XDG_CONFIG_HOME",
+        fixture
+            .temp()
+            .join("another-configuration")
+            .into_os_string(),
+    );
+    let third = run_given(&fixture, &given);
+    assert!(
+        !newest_trace(&fixture).contains("baseline-remembered"),
+        "a target that runs with the given home reads what the given home's variables name, so a \
+         baseline measured under some of them answers for no other: {third:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_home_the_run_cannot_make_refuses_the_run_with_its_code() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let fixture = Fixture::copy("fixture-home");
+    let home = fixture.temp().join("given-home");
+    std::fs::create_dir_all(&home).expect("the given home");
+    let identity = home.join(".gitconfig");
+    std::fs::write(&identity, "[user]\n\tname = Somebody\n").expect("an identity");
+    std::fs::set_permissions(&identity, std::fs::Permissions::from_mode(0o000))
+        .expect("an identity nobody may read");
+    let output = run_given(&fixture, &given_home(&fixture, &home));
+    std::fs::set_permissions(&identity, std::fs::Permissions::from_mode(0o600))
+        .expect("the identity readable again");
+    let said = njutest_devkit::process::strict_utf8(&output.stderr);
+    assert!(
+        output.status.code() == Some(2) && said.contains("RM5012"),
+        "a home the engine cannot make for an execution is the engine's failure, refused with its \
+         code and the file that stopped it, never a baseline that fails and so passes with the \
+         given home instead: {output:?}"
+    );
+}
+
+/// A directory holding `cargo` and `rustc` scripts that run the real ones only where the state home holds `trusted`, as mise answers only for what its state says somebody trusted.
+#[cfg(unix)]
+#[expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking"
+)]
+fn state_trusting_shims(fixture: &Fixture) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+    let sysroot = std::process::Command::new("rustc")
+        .args(["--print", "sysroot"])
+        .current_dir(fixture.root())
+        .output()
+        .expect("rustc names its toolchain");
+    let sysroot =
+        std::path::PathBuf::from(njutest_devkit::process::strict_utf8(&sysroot.stdout).trim());
+    let shims = fixture.temp().join("state-shims");
+    std::fs::create_dir_all(&shims).expect("the shims' directory");
+    for name in ["cargo", "rustc"] {
+        let path = shims.join(name);
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\nif [ ! -e \"${{XDG_STATE_HOME:-$HOME/.local/state}}/trusted\" ]; then echo \"mise ERROR nothing here is trusted\" >&2; exit 1; fi\nexec '{}' \"$@\"\n",
+                sysroot.join("bin").join(name).display()
+            ),
+        )
+        .expect("a shim");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+            .expect("a shim that runs");
+    }
+    shims
+}
+
+#[cfg(unix)]
+#[test]
+fn a_shim_that_answers_only_in_the_given_home_is_asked_as_a_confined_test_asks_it() {
+    let fixture = Fixture::copy("fixture-bare-cargo");
+    let shims = state_trusting_shims(&fixture);
+    let home = fixture.temp().join("given-home");
+    std::fs::create_dir_all(home.join(".local/state")).expect("the given home");
+    std::fs::write(home.join(".local/state/trusted"), "").expect("a trust the given home holds");
+    let mut given = given_home(&fixture, &home);
+    let searched = given.vars.search_path().map(std::ffi::OsStr::to_os_string);
+    let path = std::env::join_paths(
+        std::iter::once(shims).chain(searched.iter().flat_map(std::env::split_paths)),
+    )
+    .expect("a search path");
+    given.vars.set("PATH", path);
+    let output = run_given(&fixture, &given);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "the run reaches a clean verdict: {output:?}"
+    );
+    assert_eq!(
+        unconfined_targets(&fixture),
+        Vec::<String>::new(),
+        "a shim that answers only where the given home's state says so answers the engine and \
+         refuses a test in a home of its own, so the engine asks a bare `cargo` the way a \
+         confined test does, and gives the tests the run's toolchain first where that refuses"
+    );
+}

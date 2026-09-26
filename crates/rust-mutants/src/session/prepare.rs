@@ -550,6 +550,32 @@ fn built_untraced(building: &Building<'_>) -> Result<Built, EngineError> {
     Ok((targets, scratch, verified))
 }
 
+/// The trace note saying a target's reach is not read because it runs with the home the run was given.
+const REACH_UNCONFINED: &str = "reach-unconfined";
+
+/// `reached` without what a target that runs with the given home reached in a home of its own, which is not what its executions reach (ADR 0044).
+fn reached_where_it_runs(
+    mut reached: crate::reach::Reached,
+    verified: &Verified,
+    trace: &crate::trace::Recorder,
+) -> crate::reach::Reached {
+    for (target, measured) in &verified.targets {
+        if measured.baseline().home == execute::Home::Given && reached.targets.contains_key(target)
+        {
+            reached.unmeasured(target);
+            trace.note(
+                REACH_UNCONFINED,
+                &format!(
+                    "{target}: its reach was measured in a home of its own and it runs with the \
+                     home the run was given, so every mutant routes to it as to a target nothing \
+                     measured"
+                ),
+            );
+        }
+    }
+    reached
+}
+
 /// Which of the built targets a run was told never to start, refusing a name no target of the workspace has.
 fn left_out(
     workspace: &Workspace,
@@ -950,6 +976,7 @@ pub fn prepare(
     let (packages, items) = attributed(&discovery);
     let item_refs = item_refs(&instrumented.items)?;
     let verified = narrowed(verified, instrumented.narrowing, instrumented.items.items);
+    let reached = reached_where_it_runs(reached, &verified, &trace);
     Ok(Session {
         selection: selection(options)?,
         facts: target_facts(&workspace, options, cancel)?,

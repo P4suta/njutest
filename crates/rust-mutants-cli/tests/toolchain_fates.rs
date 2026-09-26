@@ -409,6 +409,11 @@ fn fixture_hang() {
 }
 
 #[test]
+fn fixture_home() {
+    holds("fixture-home");
+}
+
+#[test]
 fn fixture_hollow() {
     holds("fixture-hollow");
 }

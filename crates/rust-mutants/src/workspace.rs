@@ -155,17 +155,37 @@ fn within(root: &Path, path: &Path) -> Result<Option<String>, crate::id::Slashed
     Ok((!named.is_empty()).then_some(named))
 }
 
+/// What sweeping `parent` of what earlier runs left came to, a sweep that could not start being one failure of it.
+fn swept(parent: &Path, now: jiff::Timestamp) -> SweepResult {
+    match tempowner::sweep(parent, &SWEPT_PREFIXES, now) {
+        Ok(swept) => swept,
+        Err(source) => SweepResult {
+            failures: vec![tempowner::SweepFailure {
+                dir: parent.to_path_buf(),
+                source,
+            }],
+            ..SweepResult::default()
+        },
+    }
+}
+
 /// The trace note saying the tests were given the run's toolchain first on their search path, and why.
 const TESTS_TOOLCHAIN: &str = "tests-toolchain";
 
-/// The environment the tests get: `env`, with the run's toolchain first on its search path where a bare `cargo` from the copy is not that toolchain, which the trace notes with what it said.
+/// The environment the tests get: `env`, with the run's toolchain first on its search path where a bare `cargo` from the copy is not that toolchain, with the home the run was given or with one of a test's own, which the trace notes with what it said.
 fn tested(
     env: crate::vars::Variables,
     toolchain: &Toolchain,
-    (copy, trace): (&Snapshot, &Recorder),
+    (copy, scratch, trace): (&Snapshot, &Path, &Recorder),
     cancel: &Cancel,
-) -> Result<crate::vars::Variables, crate::cargo::CargoError> {
-    let given = toolchain.for_tests(env, copy.root(), cancel)?;
+) -> Result<crate::vars::Variables, crate::EngineError> {
+    let probe = crate::execute::Scratch::made(
+        &scratch.join(TESTS_TOOLCHAIN),
+        crate::execute::Home::Confined,
+        &env,
+    )?;
+    let confined = crate::execute::within(&env, &probe);
+    let given = toolchain.for_tests((env, confined), copy.root(), cancel)?;
     if let Some(said) = &given.pinned {
         trace.note(
             TESTS_TOOLCHAIN,
@@ -701,6 +721,35 @@ pub enum SessionError {
         /// What the system said.
         error: getrandom::Error,
     },
+    /// A directory of the home an execution is given could not be made.
+    #[error(
+        "{}: cannot make the home an execution is given at {}: {source}",
+        error::SESSION_HOME_UNBUILT.code,
+        path.display()
+    )]
+    HomeUnbuilt {
+        /// The directory that could not be made.
+        path: PathBuf,
+        /// What making it said.
+        #[source]
+        source: std::io::Error,
+    },
+    /// A file of the given home's git identity could not be read or copied into the home an execution is given.
+    #[error(
+        "{}: cannot copy {} into the home an execution is given as {}: {source}",
+        error::SESSION_HOME_UNBUILT.code,
+        from.display(),
+        to.display()
+    )]
+    IdentityUncopied {
+        /// The file of the given home.
+        from: PathBuf,
+        /// Where the execution's home keeps it.
+        to: PathBuf,
+        /// What reading or copying it said.
+        #[source]
+        source: std::io::Error,
+    },
     /// A fresh execution scratch directory could not be created exclusively.
     #[error(
         "{}: cannot reserve the fresh execution scratch directory {}: {source}",
@@ -747,6 +796,7 @@ impl SessionError {
             Self::UnknownMutant { .. } => error::SESSION_UNKNOWN_MUTANT,
             Self::NotBeside { .. } => error::SESSION_NOT_BESIDE,
             Self::CrashNonceUnavailable { .. } => error::SESSION_NONCE_UNAVAILABLE,
+            Self::HomeUnbuilt { .. } | Self::IdentityUncopied { .. } => error::SESSION_HOME_UNBUILT,
             Self::UnknownTarget { .. } | Self::SkippedTargetUnknown { .. } => {
                 error::SESSION_UNKNOWN_TARGET
             }
@@ -887,16 +937,7 @@ impl Workspace {
         };
         let parent = TemporaryRoot::open(&options.temp_directory)?;
         let now = jiff::Timestamp::now();
-        let swept = match tempowner::sweep(parent.path(), &SWEPT_PREFIXES, now) {
-            Ok(swept) => swept,
-            Err(source) => SweepResult {
-                failures: vec![tempowner::SweepFailure {
-                    dir: parent.path().to_path_buf(),
-                    source,
-                }],
-                ..SweepResult::default()
-            },
-        };
+        let swept = swept(parent.path(), now);
 
         let toolchain = Toolchain::locate(
             &LocateOptions {
@@ -912,7 +953,13 @@ impl Workspace {
         let rules = Self::rules_for(&root, build_dir, parent.path(), &options)?;
         let snapshot = Self::copy(&root, &rules, &options, now)?;
         let (watched, base_env) = Self::watching(&snapshot, &options.env)?;
-        let base_env = tested(base_env, &toolchain, (&snapshot, &options.trace), cancel)?;
+        let (scratch_dir, scratch_owner) = claim_scratch(parent.path(), now)?;
+        let base_env = tested(
+            base_env,
+            &toolchain,
+            (&snapshot, &scratch_dir, &options.trace),
+            cancel,
+        )?;
         options.trace.open(OpenRecord {
             root: root.display().to_string(),
             snapshot_dir: snapshot.dir().display().to_string(),
@@ -940,7 +987,6 @@ impl Workspace {
         )?;
         let target_dir = target_of(parent.path(), &root);
         let target_owner = claim_target(&target_dir, now, &root);
-        let (scratch_dir, scratch_owner) = claim_scratch(parent.path(), now)?;
         let scratch_owner = Some(scratch_owner);
         phase.end();
         Ok(Self {
