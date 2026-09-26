@@ -8,12 +8,13 @@ use std::path::{Path, PathBuf};
 
 use njutest_devkit::result::{ResultState::Returned, result_state};
 use rust_mutants::execute::{
-    Context, ExecRequest, Lines, Observation, StartFailure, StepLimitNotice, StepProtocolFailure,
-    Stopped, Summary, TargetKind, TestTarget, environment, outcome_of, parse_lines, parse_summary,
-    target_id,
+    Context, ExecRequest, Home, Lines, Observation, Scratch, StartFailure, StepLimitNotice,
+    StepProtocolFailure, Stopped, Summary, TargetKind, TestTarget, environment, outcome_of,
+    parse_lines, parse_summary, target_id,
 };
 use rust_mutants::outcome::Outcome;
 use rust_mutants::runner::ProcessExit;
+use rust_mutants::vars::{Spelling, Variables};
 
 fn exact_os_text(value: &OsStr) -> String {
     let exact = value.to_str();
@@ -272,18 +273,18 @@ fn target() -> TestTarget {
         PathBuf::from("/t/debug/deps/cli-abc"),
         PathBuf::from("/w/demo"),
     )
-    .with_cargo_env(vec![
+    .with_cargo_env(Variables::of([
         (
             OsString::from("CARGO_MANIFEST_DIR"),
             OsString::from("/w/demo"),
         ),
         (OsString::from("CARGO_PKG_NAME"), OsString::from("demo")),
-    ])
+    ]))
 }
 
 #[test]
 fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
-    let base = vec![
+    let base = Variables::of([
         (OsString::from("PATH"), OsString::from("/usr/bin")),
         (
             OsString::from("RUST_MUTANTS_ACTIVE"),
@@ -294,7 +295,7 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
             OsString::from("stale"),
         ),
         (OsString::from("TMPDIR"), OsString::from("/tmp")),
-    ];
+    ]);
     let scratch = Path::new("/scratch/worker-3");
     let env = environment(
         &Context {
@@ -310,7 +311,7 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
             crash: None,
         },
         &target(),
-        (Some(scratch), Some(scratch)),
+        Some(&Scratch::under(scratch, Home::Given)),
     );
     assert_eq!(
         result_state(&env),
@@ -318,11 +319,7 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
         "compose the execution environment: {env:?}"
     );
     let Ok(env) = env else { return };
-    let lookup = |key: &str| -> Option<String> {
-        env.iter()
-            .find(|(name, _)| name == key)
-            .map(|(_, value)| exact_os_text(value))
-    };
+    let lookup = |key: &str| -> Option<String> { env.var(key).map(exact_os_text) };
     assert_eq!(lookup("PATH").as_deref(), Some("/usr/bin"));
     assert_eq!(lookup("CARGO_MANIFEST_DIR").as_deref(), Some("/w/demo"));
     assert_eq!(lookup("CARGO_PKG_NAME").as_deref(), Some("demo"));
@@ -333,14 +330,18 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
         None,
         "a stale record variable is removed, never inherited"
     );
+    let expected_tmp = exact_os_text(scratch.join("tmp").as_os_str());
     for key in ["TMPDIR", "TMP", "TEMP"] {
         assert_eq!(
             lookup(key).as_deref(),
-            Some("/scratch/worker-3"),
+            Some(expected_tmp.as_str()),
             "{key} points at the worker's own scratch"
         );
     }
-    let names: Vec<String> = env.iter().map(|(name, _)| exact_os_text(name)).collect();
+    let names: Vec<String> = env
+        .for_process()
+        .map(|(name, _)| exact_os_text(name))
+        .collect();
     let mut sorted = names.clone();
     sorted.sort();
     sorted.dedup();
@@ -353,7 +354,7 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
 
 #[test]
 fn a_baseline_inherits_none_of_the_variables_a_run_composes_for_itself() {
-    let base = vec![
+    let base = Variables::of([
         (OsString::from("PATH"), OsString::from("/usr/bin")),
         (
             OsString::from("RUST_MUTANTS_ACTIVE"),
@@ -372,7 +373,7 @@ fn a_baseline_inherits_none_of_the_variables_a_run_composes_for_itself() {
             OsString::from("9"),
         ),
         (OsString::from("TMPDIR"), OsString::from("/tmp")),
-    ];
+    ]);
     let baseline = environment(
         &Context {
             leaders: None,
@@ -387,7 +388,7 @@ fn a_baseline_inherits_none_of_the_variables_a_run_composes_for_itself() {
             crash: None,
         },
         &target(),
-        (None, None),
+        None,
     );
     assert_eq!(
         result_state(&baseline),
@@ -396,11 +397,11 @@ fn a_baseline_inherits_none_of_the_variables_a_run_composes_for_itself() {
     );
     let Ok(baseline) = baseline else { return };
     let names: Vec<String> = baseline
-        .iter()
+        .for_process()
         .map(|(name, _)| exact_os_text(name))
         .collect();
     assert!(
-        !baseline.iter().any(|(name, _)| {
+        !baseline.for_process().any(|(name, _)| {
             rust_mutants::execute::COMPOSED_ENV
                 .iter()
                 .any(|composed| rust_mutants::vars::same_name(name, OsStr::new(composed)))
@@ -421,7 +422,7 @@ fn the_guards_are_told_where_to_record_exactly_when_the_run_asks_them_to() {
     let asked = environment(
         &Context {
             leaders: None,
-            base_env: &[],
+            base_env: &Variables::empty(),
             cargo: None,
             sysroot: None,
             active: None,
@@ -436,7 +437,7 @@ fn the_guards_are_told_where_to_record_exactly_when_the_run_asks_them_to() {
             crash: None,
         },
         &target(),
-        (None, None),
+        None,
     );
     assert_eq!(
         result_state(&asked),
@@ -445,15 +446,11 @@ fn the_guards_are_told_where_to_record_exactly_when_the_run_asks_them_to() {
     );
     let Ok(asked) = asked else { return };
     assert!(
-        asked
-            .iter()
-            .any(|(name, value)| name == "RUST_MUTANTS_TOUCH" && value == log.as_os_str()),
+        asked.var("RUST_MUTANTS_TOUCH") == Some(log.as_os_str()),
         "{asked:?}"
     );
     assert!(
-        asked
-            .iter()
-            .any(|(name, value)| name == "RUST_MUTANTS_CATALOG" && value == "digest"),
+        asked.var("RUST_MUTANTS_CATALOG") == Some(OsStr::new("digest")),
         "a record is about one catalog, and a process records into it only when it was built \
          from that one: {asked:?}"
     );
@@ -519,7 +516,7 @@ fn a_test_process_learns_which_cargo_built_it() {
     let composed = environment(
         &Context {
             leaders: None,
-            base_env: &[],
+            base_env: &Variables::empty(),
             cargo: Some(Path::new("/opt/toolchain/bin/cargo")),
             sysroot: None,
             active: None,
@@ -530,7 +527,7 @@ fn a_test_process_learns_which_cargo_built_it() {
             crash: None,
         },
         &target,
-        (None, None),
+        None,
     );
     assert_eq!(
         result_state(&composed),
@@ -538,10 +535,7 @@ fn a_test_process_learns_which_cargo_built_it() {
         "compose the cargo environment: {composed:?}"
     );
     let Ok(composed) = composed else { return };
-    let cargo = composed
-        .iter()
-        .find(|(name, _)| name == "CARGO")
-        .map(|(_, value)| value.clone());
+    let cargo = composed.var("CARGO").map(OsStr::to_os_string);
     assert_eq!(
         cargo,
         Some(OsString::from("/opt/toolchain/bin/cargo")),
@@ -552,7 +546,7 @@ fn a_test_process_learns_which_cargo_built_it() {
     let without = environment(
         &Context {
             leaders: None,
-            base_env: &[],
+            base_env: &Variables::empty(),
             cargo: None,
             sysroot: None,
             active: None,
@@ -563,7 +557,7 @@ fn a_test_process_learns_which_cargo_built_it() {
             crash: None,
         },
         &target,
-        (None, None),
+        None,
     );
     assert_eq!(
         result_state(&without),
@@ -572,7 +566,7 @@ fn a_test_process_learns_which_cargo_built_it() {
     );
     let Ok(without) = without else { return };
     assert!(
-        !without.iter().any(|(name, _)| name == "CARGO"),
+        !without.holds("CARGO"),
         "a caller that names no cargo says nothing about it"
     );
 }
@@ -635,13 +629,13 @@ fn a_runtime_that_named_another_catalog_is_an_error_however_the_process_exited()
 
 #[test]
 fn an_inherited_coverage_profile_path_never_reaches_a_test_process() {
-    let base = vec![
+    let base = Variables::of([
         (OsString::from("PATH"), OsString::from("/usr/bin")),
         (
             OsString::from("LLVM_PROFILE_FILE"),
             OsString::from("default_%p.profraw"),
         ),
-    ];
+    ]);
     let scratch = Path::new("/scratch/worker-3");
     let env = environment(
         &Context {
@@ -657,7 +651,7 @@ fn an_inherited_coverage_profile_path_never_reaches_a_test_process() {
             crash: None,
         },
         &target(),
-        (Some(scratch), Some(scratch)),
+        Some(&Scratch::under(scratch, Home::Given)),
     );
     assert_eq!(
         result_state(&env),
@@ -665,11 +659,7 @@ fn an_inherited_coverage_profile_path_never_reaches_a_test_process() {
         "compose the instrumented environment: {env:?}"
     );
     let Ok(env) = env else { return };
-    let lookup = |key: &str| -> Option<String> {
-        env.iter()
-            .find(|(name, _)| name == key)
-            .map(|(_, value)| exact_os_text(value))
-    };
+    let lookup = |key: &str| -> Option<String> { env.var(key).map(exact_os_text) };
     let profile = lookup("LLVM_PROFILE_FILE");
     assert!(profile.is_some(), "a path of the run's own");
     let Some(profile) = profile else { return };
@@ -687,10 +677,10 @@ fn an_inherited_coverage_profile_path_never_reaches_a_test_process() {
 
 #[test]
 fn the_profile_path_a_coverage_pass_composes_is_the_one_it_gets() {
-    let base = vec![(
+    let base = Variables::of([(
         OsString::from("LLVM_PROFILE_FILE"),
         OsString::from("inherited.profraw"),
-    )];
+    )]);
     let mine = Path::new("/scratch/coverage/demo-%m.profraw");
     let env = environment(
         &Context {
@@ -706,7 +696,7 @@ fn the_profile_path_a_coverage_pass_composes_is_the_one_it_gets() {
             crash: None,
         },
         &target(),
-        (None, None),
+        None,
     );
     assert_eq!(
         result_state(&env),
@@ -714,10 +704,7 @@ fn the_profile_path_a_coverage_pass_composes_is_the_one_it_gets() {
         "compose the coverage environment: {env:?}"
     );
     let Ok(env) = env else { return };
-    let value = env
-        .iter()
-        .find(|(name, _)| name == "LLVM_PROFILE_FILE")
-        .map(|(_, value)| value.clone());
+    let value = env.var("LLVM_PROFILE_FILE").map(OsStr::to_os_string);
     assert_eq!(value.as_deref(), Some(mine.as_os_str()));
 }
 
@@ -730,10 +717,10 @@ fn a_test_target_built_step_by_step_equals_the_literal_it_replaces() {
         PathBuf::from("/w/target/debug/deps/demo-1"),
         PathBuf::from("/w/demo"),
     )
-    .with_cargo_env(vec![(
+    .with_cargo_env(Variables::of([(
         OsString::from("CARGO_MANIFEST_DIR"),
         OsString::from("/w/demo"),
-    )])
+    )]))
     .with_through(vec![OsString::from("test"), OsString::from("--doc")]);
     assert_eq!(built.id, "demo/lib/demo");
     assert_eq!(built.package, "demo");
@@ -782,11 +769,7 @@ fn the_environment_reproduces_cargos_documented_set() {
     );
     let Ok(package) = package else { return };
     let env = rust_mutants::execute::package_environment(&package);
-    let lookup = |key: &str| -> Option<String> {
-        env.iter()
-            .find(|(name, _)| name == key)
-            .map(|(_, value)| exact_os_text(value))
-    };
+    let lookup = |key: &str| -> Option<String> { env.var(key).map(exact_os_text) };
     for (name, value) in [
         ("CARGO_PKG_NAME", "demo"),
         ("CARGO_PKG_VERSION", "1.2.3-rc.4"),
@@ -831,7 +814,10 @@ fn a_package_that_says_nothing_about_itself_still_sets_what_cargo_sets() {
     );
     let Ok(package) = package else { return };
     let env = rust_mutants::execute::package_environment(&package);
-    let names: Vec<String> = env.iter().map(|(name, _)| exact_os_text(name)).collect();
+    let names: Vec<String> = env
+        .for_process()
+        .map(|(name, _)| exact_os_text(name))
+        .collect();
     for name in [
         "CARGO_PKG_DESCRIPTION",
         "CARGO_PKG_LICENSE",
@@ -843,11 +829,7 @@ fn a_package_that_says_nothing_about_itself_still_sets_what_cargo_sets() {
              reads it back must see what cargo would show it: {names:?}"
         );
     }
-    let lookup = |key: &str| -> Option<String> {
-        env.iter()
-            .find(|(name, _)| name == key)
-            .map(|(_, value)| exact_os_text(value))
-    };
+    let lookup = |key: &str| -> Option<String> { env.var(key).map(exact_os_text) };
     assert_eq!(lookup("CARGO_PKG_VERSION_PRE").as_deref(), Some(""));
     assert_eq!(lookup("CARGO_PKG_AUTHORS").as_deref(), Some(""));
 }
@@ -1151,7 +1133,7 @@ fn a_harness_that_never_started_says_why() {
         &ExecRequest::new(&target()),
         &Context {
             leaders: None,
-            base_env: &[],
+            base_env: &Variables::empty(),
             cargo: None,
             sysroot: None,
             active: None,
@@ -1489,4 +1471,214 @@ fn the_signals_a_process_raises_by_itself_are_the_page_s() {
         raised, expected,
         "the engine's self-raised signals are the page's: {listed:?}"
     );
+}
+
+#[test]
+fn a_confined_home_is_the_executions_with_the_build_homes_pinned_and_gits_identity_copied() {
+    let temp = tempfile::tempdir().expect("a directory");
+    let given = temp.path().join("given");
+    std::fs::create_dir_all(&given).expect("the given home");
+    std::fs::write(given.join(".gitconfig"), "[user]\n\tname = Somebody\n").expect("an identity");
+    let own = temp.path().join("scratch");
+    let home_name = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    let base = Variables::of([(OsString::from(home_name), given.clone().into_os_string())]);
+    let scratch = Scratch::made(&own, Home::Confined, &base).expect("the execution's scratch");
+    let env = environment(
+        &Context {
+            leaders: None,
+            base_env: &base,
+            cargo: None,
+            sysroot: None,
+            active: None,
+            beside: None,
+            touch: None,
+            steps: None,
+            profile: None,
+            crash: None,
+        },
+        &target(),
+        Some(&scratch),
+    )
+    .expect("the environment is composed");
+    let lookup = |key: &str| env.var(key).map(PathBuf::from);
+    let home = own.join("home");
+    for (name, under) in [
+        ("HOME", ""),
+        ("USERPROFILE", ""),
+        ("XDG_CONFIG_HOME", ".config"),
+        ("XDG_CACHE_HOME", ".cache"),
+        ("XDG_STATE_HOME", ".local/state"),
+        ("XDG_DATA_HOME", ".local/share"),
+    ] {
+        assert_eq!(
+            lookup(name),
+            Some(home.join(under)),
+            "{name} names a directory the execution's scratch holds, so a write through it is \
+             emptied with the scratch"
+        );
+        assert!(
+            std::fs::symlink_metadata(home.join(under))
+                .is_ok_and(|metadata| metadata.file_type().is_dir()),
+            "{name}'s directory exists"
+        );
+    }
+    assert_eq!(
+        lookup("CARGO_HOME"),
+        Some(given.join(".cargo")),
+        "cargo keeps its registry where the given home does, spelled out, since the home a test \
+         sees is no longer that one"
+    );
+    assert_eq!(lookup("RUSTUP_HOME"), Some(given.join(".rustup")));
+    assert_eq!(
+        std::fs::read_to_string(home.join(".gitconfig")).expect("the copied identity"),
+        "[user]\n\tname = Somebody\n",
+        "a commit a test makes keeps the author it had, from a copy a test may write"
+    );
+}
+
+/// The environment a confined execution under `own` is given, over `base`, with its directories made.
+#[expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking"
+)]
+fn confined(base: &Variables, own: &Path) -> Variables {
+    let scratch = Scratch::made(own, Home::Confined, base).expect("the execution's scratch");
+    environment(
+        &Context {
+            leaders: None,
+            base_env: base,
+            cargo: None,
+            sysroot: None,
+            active: None,
+            beside: None,
+            touch: None,
+            steps: None,
+            profile: None,
+            crash: None,
+        },
+        &target(),
+        Some(&scratch),
+    )
+    .expect("the environment is composed")
+}
+
+/// The value `env` gives `name`, as a path.
+fn only(env: &Variables, name: &str) -> Option<PathBuf> {
+    env.var(name).map(PathBuf::from)
+}
+
+#[test]
+fn a_confined_home_copies_gits_identity_from_where_git_reads_it() {
+    let temp = tempfile::tempdir().expect("a directory");
+    let given = temp.path().join("given");
+    std::fs::create_dir_all(given.join(".config/git")).expect("the given home");
+    std::fs::write(given.join(".config/git/config"), "[user]\n\tname = Xdg\n")
+        .expect("an identity");
+    let elsewhere = temp.path().join("elsewhere");
+    std::fs::create_dir_all(elsewhere.join("git")).expect("a configuration directory");
+    std::fs::write(elsewhere.join("git/config"), "[user]\n\tname = Moved\n").expect("an identity");
+    let home_name = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    for (named, expected) in [
+        (None, "[user]\n\tname = Xdg\n"),
+        (Some(&elsewhere), "[user]\n\tname = Moved\n"),
+    ] {
+        let scratch = temp.path().join(format!("scratch-{}", named.is_some()));
+        std::fs::create_dir_all(&scratch).expect("the execution's scratch");
+        let mut base = Variables::of([(OsString::from(home_name), given.clone().into_os_string())]);
+        if let Some(named) = named {
+            base.set("XDG_CONFIG_HOME", named.clone().into_os_string());
+        }
+        let env = confined(&base, &scratch);
+        let config = only(&env, "XDG_CONFIG_HOME").expect("a configuration home");
+        let copied = std::fs::read_to_string(config.join("git/config"));
+        assert!(
+            copied.as_deref().is_ok_and(|copied| copied == expected),
+            "git reads a user's identity from $XDG_CONFIG_HOME/git/config, or from \
+             ~/.config/git/config where that is unset, and a commit a test makes keeps the \
+             author it has there; given XDG_CONFIG_HOME {named:?}, the copy is {copied:?}"
+        );
+    }
+}
+
+#[test]
+fn a_confined_home_lies_beside_the_temporary_directory_not_in_it() {
+    let temp = tempfile::tempdir().expect("a directory");
+    let scratch = temp.path().join("scratch");
+    std::fs::create_dir_all(&scratch).expect("the execution's scratch");
+    let env = confined(&Variables::empty(), &scratch);
+    let temporary = only(&env, "TMPDIR").expect("a temporary directory");
+    let home = only(&env, "HOME").expect("a home");
+    assert!(
+        !home.starts_with(&temporary),
+        "what a run reads in a process's temporary directory is the process's own, and a test \
+         that empties its temporary directory empties nothing else, so the home the engine makes \
+         lies beside it: HOME {} under TMPDIR {}",
+        home.display(),
+        temporary.display()
+    );
+}
+
+#[test]
+fn a_confined_home_replaces_a_home_the_base_spells_another_way() {
+    let temp = tempfile::tempdir().expect("a directory");
+    let scratch = temp.path().join("scratch");
+    std::fs::create_dir_all(&scratch).expect("the execution's scratch");
+    let given = temp.path().join("given");
+    std::fs::create_dir_all(&given).expect("the given home");
+    let base = Variables::spelled(
+        Spelling::AsciiCaseless,
+        [
+            (
+                OsString::from("UserProfile"),
+                given.clone().into_os_string(),
+            ),
+            (
+                OsString::from("LocalAppData"),
+                given.join("local").into_os_string(),
+            ),
+        ],
+    );
+    let env = confined(&base, &scratch);
+    for name in ["USERPROFILE", "LOCALAPPDATA"] {
+        let value = only(&env, name).expect("a confined home");
+        assert!(
+            !value.starts_with(&given),
+            "Windows reads {name} whatever its case, so a base spelling of it that survives \
+             beside the confined one can be the one a process sees: {}",
+            value.display()
+        );
+    }
+}
+
+#[test]
+fn a_global_configuration_that_is_no_file_is_nothing_to_copy() {
+    let temp = tempfile::tempdir().expect("a directory");
+    let given = temp.path().join("given");
+    std::fs::create_dir_all(&given).expect("the given home");
+    let directory = temp.path().join("a-directory");
+    std::fs::create_dir_all(&directory).expect("a directory where a file would be");
+    let home_name = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    let mut named = vec![directory.into_os_string()];
+    if cfg!(unix) {
+        named.push(OsString::from("/dev/null"));
+    }
+    for (at, global) in named.into_iter().enumerate() {
+        let base = Variables::of([
+            (OsString::from(home_name), given.clone().into_os_string()),
+            (OsString::from("GIT_CONFIG_GLOBAL"), global.clone()),
+        ]);
+        let own = temp.path().join(format!("scratch-{at}"));
+        let made = Scratch::made(&own, Home::Confined, &base);
+        assert!(
+            made.is_ok(),
+            "GIT_CONFIG_GLOBAL={global:?} names no regular file, as `/dev/null` does when git is \
+             told to read no global configuration, and a source that is no regular file is \
+             nothing to copy, never a home the engine cannot make: {made:?}"
+        );
+        let copied = std::fs::symlink_metadata(own.join("home/.gitconfig"));
+        assert!(
+            copied.is_err(),
+            "and the execution's home holds no identity in its place: {copied:?}"
+        );
+    }
 }

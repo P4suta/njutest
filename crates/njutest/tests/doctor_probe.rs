@@ -27,10 +27,10 @@ struct Said {
 fn environment(
     root: &Path,
     path: Option<OsString>,
-    mut vars: Vec<(OsString, OsString)>,
+    mut vars: rust_mutants::vars::Variables,
 ) -> Environment {
     if let Some(path) = path {
-        vars.push((OsString::from("PATH"), path));
+        vars.set("PATH", path);
     }
     Environment {
         cache_directory: root.join("cache"),
@@ -89,7 +89,11 @@ fn with_fake(
             .iter()
             .map(|(name, value)| (OsString::from(name), OsString::from(value))),
     );
-    environment(root, Some(path), vars)
+    environment(
+        root,
+        Some(path),
+        vars.into_iter().collect::<rust_mutants::vars::Variables>(),
+    )
 }
 
 fn executable(name: &str) -> String {
@@ -106,7 +110,11 @@ fn a_configuration_that_is_present_is_named_by_its_path() {
     let path = root.path().join(njutest::config::FILE_NAME);
     std::fs::write(&path, "version = 1\n").expect("a configuration");
 
-    let said = asked(&environment(root.path(), None, Vec::new()));
+    let said = asked(&environment(
+        root.path(),
+        None,
+        rust_mutants::vars::Variables::empty(),
+    ));
 
     assert!(row(&said, "configuration").contains(&path.display().to_string()));
 }
@@ -115,7 +123,11 @@ fn a_configuration_that_is_present_is_named_by_its_path() {
 fn a_configuration_that_is_absent_says_the_defaults_apply() {
     let root = tempfile::tempdir().expect("a directory");
 
-    let said = asked(&environment(root.path(), None, Vec::new()));
+    let said = asked(&environment(
+        root.path(),
+        None,
+        rust_mutants::vars::Variables::empty(),
+    ));
 
     let configuration = row(&said, "configuration");
     assert!(configuration.contains("none"), "{configuration}");
@@ -213,7 +225,7 @@ fn a_probe_that_cannot_be_started_says_it_is_installed_and_would_not_start() {
     let said = asked(&environment(
         root.path(),
         Some(bin.into_os_string()),
-        Vec::new(),
+        rust_mutants::vars::Variables::empty(),
     ));
 
     assert!(
@@ -286,7 +298,11 @@ fn a_non_file_candidate_is_skipped_for_a_later_executable() {
 fn a_missing_path_is_an_absent_probe_and_not_a_panic() {
     let root = tempfile::tempdir().expect("a directory");
 
-    let said = asked(&environment(root.path(), None, Vec::new()));
+    let said = asked(&environment(
+        root.path(),
+        None,
+        rust_mutants::vars::Variables::empty(),
+    ));
 
     assert_eq!(
         said.code,
@@ -310,7 +326,11 @@ fn the_program_name_is_a_file_before_a_probe_uses_it() {
         .expect("a directory named like a program");
     let path = std::env::join_paths([first.as_path()]).expect("a search path");
 
-    let said = asked(&environment(root.path(), Some(path), Vec::new()));
+    let said = asked(&environment(
+        root.path(),
+        Some(path),
+        rust_mutants::vars::Variables::empty(),
+    ));
 
     assert!(
         row(&said, "git").ends_with("missing"),

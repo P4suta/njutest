@@ -48,8 +48,11 @@ pub const TOUCH_LOG_UNREADABLE: &str = "touch-log-unreadable";
 /// A process of the target's tree ran without the environment the run gave it, so no mutant could be active in it and nothing recorded what it entered: the target's reach is not measured and a survival it reports is not one.
 pub const UNCONTROLLED_CHILD: &str = "uncontrolled-child";
 
+/// The target's tests pass only with the home the run was given, so every execution of it runs with that home, and a mutation of it can write there (ADR 0044).
+pub const UNCONFINED_TARGET: &str = "unconfined-target";
+
 /// Every limitation, in the order a reader meets them.
-pub const ALL: [&str; 15] = [
+pub const ALL: [&str; 16] = [
     CUSTOM_HARNESS,
     TARGET_SKIPPED_BY_CONFIGURATION,
     DOCTESTS_ROUTED_BY_FILE,
@@ -60,6 +63,7 @@ pub const ALL: [&str; 15] = [
     TOUCH_NOT_RECORDED,
     TOUCH_LOG_UNREADABLE,
     UNCONTROLLED_CHILD,
+    UNCONFINED_TARGET,
     COVERAGE_BUILD_FAILED,
     COVERAGE_TOOLS_MISSING,
     COVERAGE_NOT_MEASURED,

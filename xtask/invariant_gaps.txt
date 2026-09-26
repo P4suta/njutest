@@ -26,3 +26,4 @@ operator-swap plant njutest-14
 operator-swap mutation njutest-14
 instrument-shape mutation njutest-14
 instrument-shape states njutest-14
+execution-confinement mutation ci-mutation-testing-speedup

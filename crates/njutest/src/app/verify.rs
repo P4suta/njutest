@@ -1129,7 +1129,7 @@ fn evidence_of(
     let toolchain = rust_mutants::cargo::Toolchain::locate(
         &rust_mutants::cargo::LocateOptions {
             cargo: None,
-            search_path: rust_mutants::vars::search_path(&environment.vars),
+            search_path: environment.vars.search_path().map(ToOwned::to_owned),
             env: Some(environment.vars.clone()),
         },
         root,
@@ -1883,7 +1883,7 @@ mod tests {
             .expect("replacement document");
 
             let environment = Environment {
-                vars: Vec::new(),
+                vars: rust_mutants::vars::Variables::empty(),
                 working_directory: project.path().to_path_buf(),
                 temp_directory: project.path().join("tmp"),
                 program: std::path::PathBuf::from("unused-test-program"),

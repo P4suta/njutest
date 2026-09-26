@@ -18,7 +18,7 @@ use njutest::trace::Recorder;
 use njutest::watch::Watch;
 use rust_mutants::runner::Cancel;
 
-fn env() -> Vec<(OsString, OsString)> {
+fn env() -> rust_mutants::vars::Variables {
     std::env::vars_os()
         .filter(|(key, _)| {
             ["PATH", "HOME"]
@@ -58,7 +58,7 @@ fn repository() -> tempfile::TempDir {
             .args(args)
             .current_dir(dir.path())
             .env_clear()
-            .envs(env())
+            .envs(env().for_process())
             .env("GIT_AUTHOR_NAME", "fixture")
             .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
             .env("GIT_AUTHOR_DATE", "2026-09-05T00:00:00Z")
@@ -142,7 +142,10 @@ fn a_machine_without_git_is_unavailable_rather_than_a_failure() {
     let trace = Recorder::disabled();
     let facts = git::describe(&git::Asked {
         root: dir.path(),
-        env: &[(OsString::from("PATH"), OsString::from("/nonexistent"))],
+        env: &rust_mutants::vars::Variables::of([(
+            OsString::from("PATH"),
+            OsString::from("/nonexistent"),
+        )]),
         excluded: &excluded(),
         watch: Watch::new(&cancel, &trace),
     });

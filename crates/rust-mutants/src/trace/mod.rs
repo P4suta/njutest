@@ -61,13 +61,11 @@ fn trace_text(value: &std::ffi::OsStr, field: &'static str) -> Result<String, Ex
         .ok_or(ExecRecordError::NonUtf8 { field })
 }
 
-fn trace_env_names(
-    env: Option<&[(std::ffi::OsString, std::ffi::OsString)]>,
-) -> Result<Vec<String>, ExecRecordError> {
+fn trace_env_names(env: Option<&crate::vars::Variables>) -> Result<Vec<String>, ExecRecordError> {
     let Some(env) = env else {
         return Ok(Vec::new());
     };
-    env.iter()
+    env.for_process()
         .map(|(key, _value)| trace_text(key, "environment name"))
         .collect()
 }
@@ -93,7 +91,7 @@ impl ExecRecord {
                 .as_ref()
                 .map(|dir| trace_text(dir.as_os_str(), "working directory"))
                 .transpose()?,
-            env_names: trace_env_names(spec.env.as_deref())?,
+            env_names: trace_env_names(spec.env.as_ref())?,
             timeout_ms: spec
                 .timeout
                 .map(|timeout| trace_milliseconds(timeout, "timeout"))

@@ -120,7 +120,7 @@ fn two_binaries_of_one_package_that_hold_the_same_test_are_two_targets() {
         ignored: false,
         executable: std::path::PathBuf::from("/nowhere"),
         cwd: std::path::PathBuf::from("/nowhere"),
-        env: Vec::new(),
+        env: rust_mutants::vars::Variables::empty(),
     };
     let alpha = of("alpha");
     let beta = of("beta");
@@ -186,7 +186,7 @@ fn an_ignored_listing_failure_refuses_the_whole_enumeration() {
         harness: true,
         executable,
         cwd: temporary.path().to_path_buf(),
-        env: Vec::new(),
+        env: rust_mutants::vars::Variables::empty(),
     };
     assert!(
         enumerate(&unit, Watch::new(&Cancel::new(), &Recorder::disabled())).is_err(),
@@ -306,7 +306,7 @@ fn a_plan_and_a_run_name_a_whole_binary_the_same_way() {
         harness: false,
         executable: std::path::PathBuf::from("/tmp/harnessed"),
         cwd: std::path::PathBuf::from("/tmp"),
-        env: Vec::new(),
+        env: rust_mutants::vars::Variables::empty(),
     };
     let named = whole_binary(&unit).expect("bounded fields");
 

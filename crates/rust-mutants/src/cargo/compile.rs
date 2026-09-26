@@ -134,7 +134,7 @@ pub struct CompileOptions {
     /// How long the check may take.
     pub timeout: Option<Duration>,
     /// What this compilation alone adds to the toolchain's environment, such as the flags a coverage build needs.
-    pub env: Vec<(OsString, OsString)>,
+    pub env: crate::vars::Variables,
     /// The member packages this compilation is about.
     /// Empty is the whole workspace, and a check is always about the whole workspace whatever this says.
     pub packages: Vec<String>,
@@ -150,7 +150,7 @@ impl Default for CompileOptions {
             locked: false,
             offline: false,
             timeout: None,
-            env: Vec::new(),
+            env: crate::vars::Variables::empty(),
             packages: Vec::new(),
             build: BuildConfig::default(),
         }
@@ -240,9 +240,11 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
         .toolchain
         .command(driver.dir, compile_arguments(options));
     if !options.env.is_empty() {
-        let mut env = spec.env.clone().unwrap_or_default();
-        env.retain(|(name, _)| !options.env.iter().any(|(other, _)| other == name));
-        env.extend(options.env.iter().cloned());
+        let mut env = spec
+            .env
+            .clone()
+            .unwrap_or_else(crate::vars::Variables::empty);
+        env.overlay(&options.env);
         spec.env = Some(env);
     }
     spec.structured_stdout = Some(MESSAGE_OUTPUT_LIMIT);

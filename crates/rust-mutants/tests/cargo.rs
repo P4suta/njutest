@@ -674,7 +674,7 @@ fn a_toolchain_chosen_where_the_run_was_asked_is_the_one_every_later_command_run
     let options = LocateOptions {
         cargo: None,
         search_path: Some(path.clone()),
-        env: Some(vec![("PATH".into(), path)]),
+        env: Some(rust_mutants::vars::Variables::of([("PATH".into(), path)])),
     };
     let toolchain = Toolchain::locate(&options, &asked, &Cancel::new())
         .unwrap_or_else(|error| panic!("the shims answer where the run was asked: {error}"));
@@ -702,8 +702,8 @@ fn a_toolchain_chosen_where_the_run_was_asked_is_the_one_every_later_command_run
     let rustc = spec
         .env
         .as_ref()
-        .and_then(|env| env.iter().find(|(name, _)| name == "RUSTC"))
-        .map(|(_, value)| PathBuf::from(value));
+        .and_then(|env| env.var("RUSTC"))
+        .map(PathBuf::from);
     assert_eq!(
         rustc,
         Some(bin.join("rustc")),
@@ -750,7 +750,7 @@ fn a_cargo_named_by_its_path_is_the_one_every_command_runs() {
     let options = LocateOptions {
         cargo: Some(named.clone()),
         search_path: Some(path.clone()),
-        env: Some(vec![("PATH".into(), path)]),
+        env: Some(rust_mutants::vars::Variables::of([("PATH".into(), path)])),
     };
     let toolchain = Toolchain::locate(&options, &root, &Cancel::new())
         .unwrap_or_else(|error| panic!("the named cargo answers: {error}"));

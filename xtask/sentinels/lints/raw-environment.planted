@@ -1,0 +1,6 @@
+=== returned source crates/app/src/lib.rs
+fn given() -> Vec<(std::ffi::OsString, std::ffi::OsString)> { Vec::new() }
+=== borrowed source crates/app/src/lib.rs
+fn read(env: &[(OsString, OsString)]) -> bool { env.is_empty() }
+=== one-pair source crates/app/tests/env.rs
+fn one() -> (OsString, OsString) { (OsString::new(), OsString::new()) }
