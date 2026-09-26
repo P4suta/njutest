@@ -54,7 +54,7 @@ pub(super) fn pristine(
         &CompileOptions {
             kind: CompileKind::Check,
             packages: Vec::new(),
-            target_dir: Some(workspace.target_dir.clone()),
+            target_dir: Some(workspace.build_dir()),
             locked: workspace.locked,
             offline: workspace.offline,
             timeout: Workspace::timeout(options.build_timeout),
@@ -1448,7 +1448,7 @@ impl Compile for TreeCompiler<'_> {
             &CompileOptions {
                 kind: CompileKind::Tests,
                 packages: self.packages.clone(),
-                target_dir: Some(self.workspace.target_dir.clone()),
+                target_dir: Some(self.workspace.build_dir()),
                 locked: self.workspace.locked,
                 offline: self.workspace.offline,
                 timeout: self.timeout,

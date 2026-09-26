@@ -633,3 +633,51 @@ fn decided_rows(fixture: &Fixture) -> usize {
         .filter(|row| row["outcome"] == "killed" || row["outcome"] == "survived")
         .count()
 }
+
+#[test]
+fn a_crate_an_earlier_run_instrumented_is_built_again_when_this_run_leaves_it_as_written() {
+    let fixture = Fixture::copy("fixture-witness-downstream");
+    let quietly = [
+        "run",
+        "--offline",
+        "--locked",
+        "--tier",
+        "all",
+        "--no-coverage",
+        "--ui",
+        "quiet",
+    ];
+    let whole = against(&fixture, &quietly);
+    assert!(
+        whole.status.code().is_some_and(|code| code < 2),
+        "the arranging run instruments both crates and reaches a verdict: {whole:?}"
+    );
+    let narrowed = against(
+        &fixture,
+        &[
+            &quietly[..],
+            &["--no-cache", "--include", "crates/downstream/src/lib.rs"],
+        ]
+        .concat(),
+    );
+    let document: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&njutest_devkit::fixture::stored_report(
+            &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+        ))
+        .expect("the report is a document");
+    let undecided: Vec<String> = document["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .filter(|row| row["outcome"] != "killed")
+        .map(|row| format!("{} {} {}", row["path"], row["rule"], row["outcome"]))
+        .collect();
+    assert!(
+        narrowed.status.code() == Some(0) && undecided.is_empty(),
+        "a run that catalogs only downstream leaves upstream as written, and cargo decides by a \
+         file's time whether to compile it again; the copy keeps the time the file was written, \
+         which is older than the instrumented upstream the first run built, so a build that \
+         trusts the time links that upstream, whose runtime belongs to another catalog: \
+         {undecided:?}\n{narrowed:?}"
+    );
+}

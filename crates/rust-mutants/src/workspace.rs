@@ -155,6 +155,16 @@ fn within(root: &Path, path: &Path) -> Result<Option<String>, crate::id::Slashed
     Ok((!named.is_empty()).then_some(named))
 }
 
+/// Whether a file of the copy lies under a member's directory, where a member whose directory cannot be named holds every file.
+fn member_holds(under: Option<&str>, rel_path: &str) -> bool {
+    match under {
+        None | Some("") => true,
+        Some(dir) => rel_path
+            .strip_prefix(dir)
+            .is_some_and(|rest| rest.starts_with('/')),
+    }
+}
+
 /// Claims the build cache for the life of this workspace, so a sweep elsewhere leaves it alone while cargo is writing into it.
 /// A cache that cannot be claimed is one another run is already using, which is not this run's business and not a reason to fail: cargo takes its own lock.
 fn claim_target(dir: &Path, now: jiff::Timestamp, root: &Path) -> Option<tempowner::Owner> {
@@ -1112,6 +1122,39 @@ impl Workspace {
     #[must_use]
     pub fn target_dir(&self) -> &Path {
         &self.target_dir
+    }
+
+    /// The target directory with every member and the files of the copy under it, which a build settles before cargo judges a unit fresh.
+    #[must_use]
+    pub fn build_dir(&self) -> crate::cargo::BuildDir {
+        let root = &self.metadata.workspace_root;
+        let members = self
+            .metadata
+            .members()
+            .map(|package| {
+                let under = match package.manifest_dir().strip_prefix(root) {
+                    Ok(relative) => match crate::id::slashed(relative) {
+                        Ok(named) => Some(named),
+                        Err(_unnameable) => None,
+                    },
+                    Err(_outside_the_root) => None,
+                };
+                crate::cargo::Member {
+                    name: package.name.clone(),
+                    files: self
+                        .snapshot
+                        .manifest()
+                        .iter()
+                        .filter(|entry| member_holds(under.as_deref(), &entry.rel_path))
+                        .map(|entry| crate::cargo::MemberFile {
+                            rel_path: entry.rel_path.clone(),
+                            path: self.snapshot.root().join(&entry.rel_path),
+                        })
+                        .collect(),
+                }
+            })
+            .collect();
+        crate::cargo::BuildDir::new(self.target_dir.clone(), members)
     }
 
     /// The directory this run's test processes work in: beside the target directory, and removed when the run closes.
