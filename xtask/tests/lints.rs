@@ -697,6 +697,11 @@ fn vacuous_cfg_cannot_hide_code_or_pretend_to_condition_it() {
         "#[cfg(all(unix, not(unix)))] fn impossible() {}\n",
         "#[cfg(any(unix, windows))] #[cfg(not(any(unix, windows)))] fn impossible() {}\n",
         "#[cfg(unix)] mod platform { #[cfg(not(unix))] fn impossible() {} }\n",
+        "#[cfg(unix)] #[cfg_attr(unix, cfg(not(unix)))] fn impossible() {}\n",
+        "#[cfg_attr(unix, cfg(not(unix)))] #[cfg(unix)] fn impossible() {}\n",
+        "#[cfg_attr(unix, cfg_attr(unix, cfg(not(unix))))] #[cfg(unix)] fn impossible() {}\n",
+        "#[cfg_attr(unix, cfg(not(unix)))] #[cfg_attr(not(unix), cfg(unix))] fn impossible() {}\n",
+        "#[cfg(unix)] mod platform { #[cfg_attr(unix, cfg(not(unix)))] fn impossible() {} }\n",
         "#[cfg_attr(test, cfg(any()))] fn nested() {}\n",
         "macro_rules! hidden { () => { #[cfg(any())] fn dormant() {} } }\n",
         "fn active() -> bool { cfg!(all()) }\n",
@@ -714,6 +719,9 @@ fn vacuous_cfg_cannot_hide_code_or_pretend_to_condition_it() {
         "#[cfg(unix)] fn platform() {}\n",
         "#[cfg(unix)] #[cfg(feature = \"extra\")] fn platform() {}\n",
         "#[cfg(any(unix, windows))] #[cfg(not(unix))] fn windows_only() {}\n",
+        "#[cfg_attr(unix, cfg(not(unix)))] fn other_platform() {}\n",
+        "#[cfg(unix)] #[cfg_attr(not(unix), cfg(not(unix)))] fn unix_only() {}\n",
+        "#[cfg(not(unix))] #[cfg_attr(unix, cfg(unix))] fn other_platform() {}\n",
         "#[cfg_attr(test, derive(Debug))] struct Conditional;\n",
         "fn platform() -> bool { cfg!(windows) }\n",
     ] {
@@ -734,6 +742,18 @@ fn contradictory_child_cfg_is_reported_at_the_child_attribute() {
         .map(|finding| finding.line)
         .collect();
     assert_eq!(lines, [3]);
+}
+
+#[test]
+fn contradictory_cfg_attr_is_reported_at_the_attribute_that_closes_the_contradiction() {
+    let source = "#[cfg(unix)]\n#[cfg_attr(unix, cfg(not(unix)))]\nfn impossible() {}\n";
+    let lines: Vec<_> = scan_source("a.rs", source)
+        .expect("the source parses")
+        .into_iter()
+        .filter(|finding| finding.kind == Kind::VacuousCfg)
+        .map(|finding| finding.line)
+        .collect();
+    assert_eq!(lines, [2]);
 }
 
 #[test]

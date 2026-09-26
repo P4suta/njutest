@@ -6410,6 +6410,11 @@ enum CfgTruth {
     Variable,
 }
 
+struct CfgConstraint {
+    guards: Vec<syn::Meta>,
+    requirement: syn::Meta,
+}
+
 fn cfg_constant(meta: &syn::Meta) -> CfgTruth {
     cfg_truth(meta, &BTreeMap::new())
 }
@@ -6518,24 +6523,77 @@ fn cfg_atoms(meta: &syn::Meta, found: &mut BTreeSet<String>) {
     found.insert(cfg_atom(meta));
 }
 
-fn cfg_conjunction_possible(conditions: &[syn::Meta]) -> bool {
+fn cfg_constraints(meta: &syn::Meta, guards: &[syn::Meta], found: &mut Vec<CfgConstraint>) {
+    let syn::Meta::List(list) = meta else {
+        return;
+    };
+    if list.path.is_ident("cfg") {
+        match list.parse_args::<syn::Meta>() {
+            Ok(requirement) => found.push(CfgConstraint {
+                guards: guards.to_vec(),
+                requirement,
+            }),
+            Err(_opaque_condition) => {}
+        }
+        return;
+    }
+    if !list.path.is_ident("cfg_attr") {
+        return;
+    }
+    let arguments = match list
+        .parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
+    {
+        Ok(arguments) => arguments,
+        Err(_opaque_attributes) => return,
+    };
+    let mut arguments = arguments.iter();
+    let Some(condition) = arguments.next() else {
+        return;
+    };
+    let mut nested_guards = guards.to_vec();
+    nested_guards.push(condition.clone());
+    for attribute in arguments {
+        cfg_constraints(attribute, &nested_guards, found);
+    }
+}
+
+fn cfg_constraint_truth(constraint: &CfgConstraint, values: &BTreeMap<String, bool>) -> CfgTruth {
+    let mut guard = CfgTruth::Always;
+    for condition in &constraint.guards {
+        match cfg_truth(condition, values) {
+            CfgTruth::Never => return CfgTruth::Always,
+            CfgTruth::Variable => guard = CfgTruth::Variable,
+            CfgTruth::Always => {}
+        }
+    }
+    match (guard, cfg_truth(&constraint.requirement, values)) {
+        (CfgTruth::Always, requirement) => requirement,
+        (CfgTruth::Variable, CfgTruth::Always) | (CfgTruth::Never, _) => CfgTruth::Always,
+        (CfgTruth::Variable, CfgTruth::Never | CfgTruth::Variable) => CfgTruth::Variable,
+    }
+}
+
+fn cfg_conjunction_possible(conditions: &[CfgConstraint]) -> bool {
     let mut atoms = BTreeSet::new();
     for condition in conditions {
-        cfg_atoms(condition, &mut atoms);
+        for guard in &condition.guards {
+            cfg_atoms(guard, &mut atoms);
+        }
+        cfg_atoms(&condition.requirement, &mut atoms);
     }
     let atoms: Vec<String> = atoms.into_iter().collect();
     cfg_assignment_possible(conditions, &atoms, 0, &mut BTreeMap::new())
 }
 
 fn cfg_assignment_possible(
-    conditions: &[syn::Meta],
+    conditions: &[CfgConstraint],
     atoms: &[String],
     next: usize,
     values: &mut BTreeMap<String, bool>,
 ) -> bool {
     let mut unresolved = false;
     for condition in conditions {
-        match cfg_truth(condition, values) {
+        match cfg_constraint_truth(condition, values) {
             CfgTruth::Never => return false,
             CfgTruth::Variable => unresolved = true,
             CfgTruth::Always => {}
@@ -6941,7 +6999,6 @@ impl Visit<'_> for BareShell<'_> {
     }
 }
 
-/// Every `#[cfg]` whose condition an enclosing item's `#[cfg]` already guarantees, which a reader takes for a second condition the item is under.
 fn implied_cfgs(parsed: &syn::File, file: &str) -> Vec<Finding> {
     let mut visitor = ImpliedCfg {
         file,
@@ -6953,53 +7010,44 @@ fn implied_cfgs(parsed: &syn::File, file: &str) -> Vec<Finding> {
     visitor.found
 }
 
-/// The conditions the items around the walk are compiled under, and what repeated one of them.
 struct ImpliedCfg<'a> {
     file: &'a str,
     held: Vec<String>,
-    conditions: Vec<syn::Meta>,
+    conditions: Vec<CfgConstraint>,
     found: Vec<Finding>,
 }
 
 impl ImpliedCfg<'_> {
-    /// Notes every condition of `attributes` the enclosing ones imply, then walks the item under all of them.
     fn within(&mut self, attributes: &[syn::Attribute], walk: impl FnOnce(&mut Self)) {
-        let conditions: Vec<(proc_macro2::TokenStream, proc_macro2::Span)> = attributes
-            .iter()
-            .filter_map(|attribute| match &attribute.meta {
-                syn::Meta::List(list) if list.path.is_ident("cfg") => {
-                    Some((list.tokens.clone(), attribute.pound_token.span))
-                }
-                syn::Meta::List(_) | syn::Meta::Path(_) | syn::Meta::NameValue(_) => None,
-            })
-            .collect();
         let depth = self.held.len();
         let condition_depth = self.conditions.len();
         let mut possible = cfg_conjunction_possible(&self.conditions);
-        for (condition, span) in &conditions {
-            if implied(condition, &self.held) {
-                self.found.push(Finding {
-                    kind: Kind::VacuousCfg,
-                    file: self.file.to_owned(),
-                    line: span.start().line,
-                });
-            }
-            match syn::parse2::<syn::Meta>(condition.clone()) {
-                Ok(parsed) => {
-                    self.conditions.push(parsed);
-                    let now = cfg_conjunction_possible(&self.conditions);
-                    if possible && !now {
-                        self.found.push(Finding {
-                            kind: Kind::VacuousCfg,
-                            file: self.file.to_owned(),
-                            line: span.start().line,
-                        });
-                    }
-                    possible = now;
+        for attribute in attributes {
+            if let syn::Meta::List(list) = &attribute.meta
+                && list.path.is_ident("cfg")
+            {
+                if implied(&list.tokens, &self.held) {
+                    self.found.push(Finding {
+                        kind: Kind::VacuousCfg,
+                        file: self.file.to_owned(),
+                        line: attribute.pound_token.span.start().line,
+                    });
                 }
-                Err(_opaque_condition) => {}
+                self.held.extend(conjuncts(&list.tokens));
             }
-            self.held.extend(conjuncts(condition));
+            let before = self.conditions.len();
+            cfg_constraints(&attribute.meta, &[], &mut self.conditions);
+            if self.conditions.len() > before {
+                let now = cfg_conjunction_possible(&self.conditions);
+                if possible && !now {
+                    self.found.push(Finding {
+                        kind: Kind::VacuousCfg,
+                        file: self.file.to_owned(),
+                        line: attribute.pound_token.span.start().line,
+                    });
+                }
+                possible = now;
+            }
         }
         walk(self);
         self.held.truncate(depth);
