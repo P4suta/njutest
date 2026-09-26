@@ -98,10 +98,10 @@ reason = "the restore that always follows attempts the same path with the same c
 
 [[mutation.expect]]
 path = "crates/rust-mutants/src/prove.rs"
-item = "establish"
+item = "checked_until_compiled"
 rule = "question-to-unwrap"
 original = "?"
-line = 151
+line = 246
 reason = "the restore on the line above runs first and reports the same condition, so this one is reached only when a write failed and putting it back did not, which no deterministic test can arrange; a fail-open the suite cannot reach rather than an equivalence, and a_source_the_pass_cannot_write_stops_it_rather_than_letting_it_vouch holds the contract"
 
 # What the rewrite refuses when it cannot be applied, which it never is.
@@ -115,10 +115,10 @@ reason = "the restore on the line above runs first and reports the same conditio
 # question nobody wrote.
 [[mutation.expect]]
 path = "crates/rust-mutants/src/instrument/witness.rs"
-item = "witness_file"
+item = "apply_plan"
 rule = "question-to-unwrap"
 original = "?"
-line = 204
+line = 195
 reason = "plan emits one rewrite per span, so the splices apply is handed never overlap and it never fails; two_claims_over_one_span_are_one_rewrite_rather_than_two holds that grouping, and this is an equivalence under it rather than an unreachable fail-open"
 
 # Which of the mutations a locator names is asked where its line has moved to.
@@ -150,7 +150,7 @@ path = "crates/njutest/src/checkpoint.rs"
 item = "write"
 rule = "question-to-unwrap"
 original = "?"
-line = 251
+line = 336
 reason = "serialising a State cannot fail: it is strings, numbers and vectors of them, and what_an_interrupted_run_saved_is_what_the_next_one_reads holds the round trip that would show a field which can refuse"
 
 # `RunKind` derives `Default` with `#[default]` on `Full`, because a run
@@ -181,21 +181,6 @@ original = "?"
 line = 393
 reason = "discovery refuses a file that is not UTF-8 before anything is proposed in it, so every source a session holds is text; a_file_that_does_not_parse_is_an_error_naming_the_line holds that, and this is an equivalence under it rather than a fail-open the suite cannot reach"
 
-# The code a clean run exits with, which is the same number either way.
-#
-# `EXIT_DETECTED` is zero, and zero is what `u8::default()` is, so a run that
-# established detection for everything it executed exits with the same status
-# whichever of the two the code names. The constant is there so a reader of
-# `exit_code` sees which of the four codes this is rather than a bare literal.
-# `run.rs::the_exit_code_says_what_the_run_established_and_nothing_more` holds
-# the number for a run with no findings.
-[[mutation.expect]]
-path = "crates/rust-mutants/src/run.rs"
-item = "Run::exit_code"
-rule = "return-default"
-original = "EXIT_DETECTED"
-reason = "EXIT_DETECTED is zero and so is u8::default(), so a clean run exits with the same status either way; the_exit_code_says_what_the_run_established_and_nothing_more holds that number, and this is an equivalence under it rather than a fail-open the suite cannot reach"
-
 # Which way a run measures its mutants, which is two ways of one thing.
 #
 # Measuring one mutant at a time and measuring several at once are the same
@@ -217,7 +202,7 @@ path = "crates/rust-mutants/src/run.rs"
 item = "run"
 rule = "eq-to-neq"
 original = "=="
-line = 709
+line = 1076
 reason = "serially and the pool are two ways of doing one thing and a catalog answers the same either way; one_job_and_several_judge_a_catalog_the_same_way holds that by running one catalog both ways, and this is an equivalence under it rather than a fail-open the suite cannot reach"
 
 # A `Record` is strings and an enum of strings, so `serde_json::to_string` has
@@ -230,7 +215,7 @@ path = "crates/njutest/src/evidence/store.rs"
 item = "write"
 rule = "question-to-unwrap"
 original = "?"
-line = 260
+line = 311
 reason = "a Record is strings and an enum of strings, so rendering it as JSON has no failure arm; a_record_says_what_shape_it_is_and_what_established_it renders both of its shapes and reads them back"
 
 # The mutation phase's `Phase` is the third of the same design and the same
@@ -243,30 +228,6 @@ item = "run_resuming"
 rule = "delete-call-statement"
 original = "phase.end();"
 reason = "the runner's Phase ends its phase on Drop, so the explicit end at the tail of run_resuming changes no recording; a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest holds that"
-
-# The code `njutest trace` exits with when it has nothing to complain about,
-# which is the same number either way.
-#
-# `EXIT_ASSURED` is zero and zero is what `u8::default()` is, so a summary of a
-# recording that holds together and a difference between two of them exit with
-# the same status whichever of the two the code names. The constant is there so
-# a reader of the line sees which of the four codes this is rather than a bare
-# literal, and `trace_command.rs::a_summary_says_what_the_recording_holds_and_whether_it_holds_together`
-# and `a_difference_says_what_moved_and_leaves_out_what_did_not` each assert the
-# number for a recording with nothing wrong with it.
-[[mutation.expect]]
-path = "crates/njutest/src/app/trace.rs"
-item = "summary"
-rule = "return-default"
-original = "EXIT_ASSURED"
-reason = "EXIT_ASSURED is zero and so is u8::default(), so a summary with no problems exits with the same status either way; a_summary_says_what_the_recording_holds_and_whether_it_holds_together holds that number"
-
-[[mutation.expect]]
-path = "crates/njutest/src/app/trace.rs"
-item = "diff"
-rule = "return-default"
-original = "EXIT_ASSURED"
-reason = "EXIT_ASSURED is zero and so is u8::default(), so a difference exits with the same status either way; a_difference_says_what_moved_and_leaves_out_what_did_not holds that number"
 
 # How much of a command fits on the line, which is the same line either way.
 #
@@ -283,19 +244,3 @@ item = "said"
 rule = "lt-to-le"
 original = "<"
 reason = "the line is cut to the width and marked whichever side of it the loop stopped on, so both render the same line; a_command_is_shown_by_its_own_name_and_cut_where_it_stops_being_readable holds the width, the mark and the beginning"
-
-# Turning an empty ledger into text, which cannot fail.
-#
-# `clear` writes `Ledger::default()` back: a document type, a version number,
-# and an empty list. `serde_json` refuses a map whose keys are not strings or a
-# `Serialize` that returns an error of its own, and neither is reachable from
-# those three fields. The sibling `?` in `record` is a different matter and is
-# killed — that one serialises the paths a run kept, and a filesystem takes a
-# name that is not text. `kept_ledger.rs::a_path_no_document_can_hold_is_a_refusal_and_never_a_ledger_that_lost_it`
-# holds the failure that does exist, and this is the one that does not.
-[[mutation.expect]]
-path = "crates/rust-mutants-cli/src/kept.rs"
-item = "Ledger::clear"
-rule = "question-to-unwrap"
-original = "?"
-reason = "an empty ledger is a document type, a version and an empty list, so rendering it as JSON has no failure arm; the sibling ? in record carries the paths and is killed by a_path_no_document_can_hold_is_a_refusal_and_never_a_ledger_that_lost_it"
