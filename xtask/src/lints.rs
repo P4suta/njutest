@@ -190,6 +190,11 @@ const BARE_SHELL_REMEDY: &str = "a POSIX `sh` is on every Unix and on no Windows
     this repository can count on, so a program named `sh` outside `#[cfg(unix)]` is a precondition \
     nobody states: a test takes its shell from `njutest_devkit::paths::posix_sh()`, which says what \
     to install when there is none, and code that names `sh` for itself is compiled only for Unix";
+const RAW_ENVIRONMENT_REMEDY: &str = "hold an environment as `rust_mutants::vars::Variables`, \
+    which reads, changes, selects and digests a name only as the platform takes it. Pairs of \
+    `OsString` let each reader compare names its own way, and four did it by bytes where Windows \
+    takes any case: a declared variable hashed as unset, a composed one inherited beside its \
+    replacement, a reserved one let through, and a home the tests were never given";
 const RAW_READ_REMEDY: &str = "ask `crate::observe` what the path is. A reader of evidence that \
     touches the filesystem itself decides at its own call site what an I/O failure means, which is \
     how a lock file beside the profiles became a directory that could not be read and how running \
@@ -278,6 +283,7 @@ declare_kinds! {
     LoneTemporaryVariable => "lone-temporary-variable",
     ErrorName => "error-name",
     BareShell => "bare-shell",
+    RawEnvironment => "raw-environment",
 }
 
 impl Kind {
@@ -330,6 +336,7 @@ impl Kind {
             Self::RawRead => RAW_READ_REMEDY,
             Self::RawTreeWalk => RAW_TREE_WALK_REMEDY,
             Self::BareShell => BARE_SHELL_REMEDY,
+            Self::RawEnvironment => RAW_ENVIRONMENT_REMEDY,
             Self::LoneTemporaryVariable => LONE_TEMPORARY_VARIABLE_REMEDY,
             Self::ErrorName => ERROR_NAME_REMEDY,
         }
@@ -602,6 +609,12 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     scan.found.extend(implied_cfgs(&parsed, file));
     if file != SHELL_FINDER {
         scan.found.extend(bare_shells(&parsed, file));
+    }
+    if !ENVIRONMENT_READERS
+        .iter()
+        .any(|reader| file.starts_with(reader))
+    {
+        scan.found.extend(raw_environments(&parsed, file));
     }
     scan.found.sort();
     scan.found.dedup();
@@ -3798,6 +3811,7 @@ fn manual_default_allowed(file: &str, item: &str) -> bool {
         ),
         ("crates/rust-mutants/src/trace/mod.rs", &["Recorder"]),
         ("crates/rust-mutants/src/validate.rs", &["ValidateOptions"]),
+        ("crates/rust-mutants/src/vars.rs", &["Variables"]),
     ];
     ALLOWED
         .iter()
@@ -6426,6 +6440,56 @@ fn cfg_constant(meta: &syn::Meta) -> CfgTruth {
 }
 
 /// Every `#[cfg]` whose condition an enclosing item's `#[cfg]` already guarantees, which a reader takes for a second condition the item is under.
+/// Where an environment is read as pairs: the one type that holds it, and the tooling the engine cannot be a dependency of.
+const ENVIRONMENT_READERS: [&str; 3] = [
+    "crates/rust-mutants/src/vars.rs",
+    "crates/njutest-devkit/",
+    "xtask/",
+];
+
+/// Every type that holds an environment variable as a pair of `OsString`s.
+fn raw_environments(parsed: &syn::File, file: &str) -> Vec<Finding> {
+    let mut visitor = RawEnvironment {
+        file,
+        found: Vec::new(),
+    };
+    visitor.visit_file(parsed);
+    visitor.found
+}
+
+/// Every pair of `OsString`s named as a type in one file.
+struct RawEnvironment<'a> {
+    file: &'a str,
+    found: Vec<Finding>,
+}
+
+/// Whether `ty` names `OsString`, however its path is spelled.
+fn names_os_string(ty: &syn::Type) -> bool {
+    match ty {
+        syn::Type::Path(path) => path
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "OsString"),
+        syn::Type::Group(group) => names_os_string(&group.elem),
+        syn::Type::Paren(paren) => names_os_string(&paren.elem),
+        _ => false,
+    }
+}
+
+impl Visit<'_> for RawEnvironment<'_> {
+    fn visit_type_tuple(&mut self, tuple: &syn::TypeTuple) {
+        if tuple.elems.len() == 2 && tuple.elems.iter().all(names_os_string) {
+            self.found.push(Finding {
+                kind: Kind::RawEnvironment,
+                file: self.file.to_owned(),
+                line: tuple.paren_token.span.open().start().line,
+            });
+        }
+        syn::visit::visit_type_tuple(self, tuple);
+    }
+}
+
 /// The one place a POSIX shell is looked for rather than assumed.
 const SHELL_FINDER: &str = "crates/njutest-devkit/src/paths.rs";
 

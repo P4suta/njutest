@@ -2388,3 +2388,45 @@ fn a_shell_compiled_only_for_unix_or_only_compared_against_is_not_a_bare_one() {
         "the one place that looks for the shell names what it looks for"
     );
 }
+
+#[test]
+fn an_environment_held_as_raw_pairs_is_refused_wherever_it_is_named() {
+    for refused in [
+        "fn given() -> Vec<(OsString, OsString)> { Vec::new() }",
+        "struct Options { env: Vec<(std::ffi::OsString, std::ffi::OsString)> }",
+        "fn read(env: &[(OsString, OsString)]) {}",
+        "fn one() -> (OsString, OsString) { unimplemented!() }",
+    ] {
+        assert!(
+            kinds(refused).contains(&Kind::RawEnvironment),
+            "an environment held as raw pairs is one any reader compares names in by bytes, \
+             which is the comparison Windows does not make: {refused}"
+        );
+    }
+    for passing in [
+        "fn given() -> Variables { Variables::of([(OsString::from(\"A\"), OsString::from(\"b\"))]) }",
+        "fn names(env: &Variables) -> Vec<&OsStr> { env.for_process().map(|(n, _)| n).collect() }",
+        "fn pair() -> (OsString, String) { unimplemented!() }",
+        "fn paths() -> Vec<(PathBuf, OsString)> { Vec::new() }",
+    ] {
+        assert!(
+            !kinds(passing).contains(&Kind::RawEnvironment),
+            "a pair built to hand to `Variables`, or one that is not two names and values, is \
+             no environment: {passing}"
+        );
+    }
+    for held in [
+        "crates/rust-mutants/src/vars.rs",
+        "crates/njutest-devkit/src/paths.rs",
+    ] {
+        let found = scan_source(
+            held,
+            "fn given() -> Vec<(OsString, OsString)> { Vec::new() }",
+        );
+        assert!(
+            found.is_ok_and(|found| found.iter().all(|one| one.kind != Kind::RawEnvironment)),
+            "{held} is where the pairs are read, or test support the engine cannot be a \
+             dependency of"
+        );
+    }
+}
