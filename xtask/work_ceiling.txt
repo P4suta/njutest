@@ -1,14 +1,10 @@
 # SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# What a run of each fixture costs, in two units. A **pair** is one mutant
-# asked of one target, which is one test process started. A **test** is what
-# that process is asked for: a route that puts a mutation to one test of a
-# target rather than to all of its two hundred costs the same pair and a
-# two-hundredth of the tests, so the two fall separately and both are here.
-# Neither is a duration: both are the same number on every machine, at every
-# job count, under every load, and a thing measured in durations cannot be
-# ratcheted.
+# What a run of four sampled fixtures costs, in two units.
+# A **pair** is one mutant asked of one target, which is one test process started.
+# A **test** is what that process is asked for: a route that puts a mutation to one test of a target rather than to all of its two hundred costs the same pair and a two-hundredth of the tests, so the two fall separately and both are here.
+# Neither is a duration: both are the same number on every machine, at every job count, under every load, and a thing measured in durations cannot be ratcheted.
 #
 # `whole` is what a run that asked every target about every mutant would start,
 # and `started` is what this engine starts. **This file may shrink and never

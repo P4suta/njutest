@@ -20,8 +20,8 @@ Every test a run started is in it, including the ones it started to establish th
 
 The unit is a count and not a duration on purpose.
 A second is about this machine, this load, this job count; it cannot be compared between two runs and it cannot be ratcheted.
-A pair is the same number everywhere, so a change that makes the engine do less is a change a test can see —
-`xtask/work_ceiling.txt` holds each fixture's count, and like the seam allowlist it may shrink and never grow.
+A pair is the same number everywhere, so a change that makes the engine do less is a change a test can see.
+`xtask/work_ceiling.txt` holds a four-fixture sample of counts, and like the seam allowlist it may shrink and never grow.
 
 ```
 WORK  started=15 of 42 pairs across 3 targets; 64.3% removed
