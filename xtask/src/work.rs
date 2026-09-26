@@ -258,22 +258,26 @@ impl Group {
         let Some(child) = self.child.as_mut() else {
             return Ok(());
         };
-        signal(child, Sent::Ask)?;
+        let asked_to_stop = signal(child, Sent::Ask);
         let asked = Instant::now();
         while asked.elapsed() < GRACE && !exited(child)? {
             std::thread::sleep(POLL);
         }
-        signal(child, Sent::Kill)?;
+        let killed = signal(child, Sent::Kill);
         child.wait().map_err(|source| WorkError::Watch { source })?;
         self.child = None;
-        Ok(())
+        killed.and(asked_to_stop)
     }
 }
 
 impl Drop for Group {
     fn drop(&mut self) {
-        if self.stop().is_err() {
-            std::process::abort();
+        if let Err(unstopped) = self.stop() {
+            let said = std::io::Write::write_all(&mut std::io::stderr(),
+                format!("xtask: the work's group could not be stopped, so this process ends here: {unstopped}\n").as_bytes());
+            match said {
+                Ok(()) | Err(_) => std::process::abort(),
+            }
         }
     }
 }
@@ -407,6 +411,7 @@ fn others_than(leader: i32) -> Others {
 }
 
 /// One process as the machine lists it: its id, the group it belongs to, and whether it has ended and waits only to be reaped.
+#[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Listed {
     /// Its id.
@@ -418,6 +423,7 @@ pub struct Listed {
 }
 
 /// Every process of the machine with its group and whether it has ended, as `ps` lists them, or nothing when they could not be listed.
+#[cfg(unix)]
 #[must_use]
 pub fn listed() -> Option<Vec<Listed>> {
     let output = match Command::new("ps")

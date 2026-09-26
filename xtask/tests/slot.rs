@@ -395,85 +395,175 @@ fn a_group_started_inside_the_held_lane_is_ended_with_the_holder_s_own() {
 }
 
 #[test]
-fn a_group_is_alive_while_it_holds_a_process_that_has_not_ended_and_unseen_when_none_could_be_listed()
- {
-    use xtask::lanes::{Liveness, group_liveness};
+#[expect(
+    clippy::too_many_lines,
+    reason = "one row for each state the decision meets, which is the point of the table"
+)]
+fn a_group_is_the_work_s_while_its_leader_runs_or_a_member_shares_its_session() {
+    use xtask::lanes::{Liveness, Recorded, Session, Start, group_liveness};
     use xtask::work::Listed;
 
-    let listed = |processes: &[(u32, u32, bool)]| -> Vec<Listed> {
-        processes
-            .iter()
-            .map(|&(pid, group, ended)| Listed { pid, group, ended })
-            .collect()
-    };
     let born = "Sat Sep 26 12:00:00 2026";
-    for (case, started_now, processes, expected) in [
+    let recorded = |session: Option<u32>| Recorded {
+        pid: 40,
+        born: born.to_owned(),
+        session,
+    };
+    let running = || Start::Running(born.to_owned());
+    let member = |ended: bool| {
+        vec![Listed {
+            pid: 41,
+            group: 40,
+            ended,
+        }]
+    };
+    let leader = |ended: bool| {
+        vec![Listed {
+            pid: 40,
+            group: 40,
+            ended,
+        }]
+    };
+    let session = |of: u32| move |_member: u32| Session::Of(of);
+    for (case, group, start, processes, sessions, expected) in [
         (
             "the leader runs",
-            Some(born),
-            Some(listed(&[(40, 40, false)])),
+            recorded(Some(7)),
+            running(),
+            Some(leader(false)),
+            session(9),
             Liveness::Alive,
         ),
         (
-            "only a member runs",
-            None,
-            Some(listed(&[(41, 40, false)])),
+            "a zombie leader and nobody else",
+            recorded(Some(7)),
+            running(),
+            Some(leader(true)),
+            session(7),
+            Liveness::Gone,
+        ),
+        (
+            "the id is somebody else's now",
+            recorded(Some(7)),
+            Start::Running("then".to_owned()),
+            Some(leader(false)),
+            session(7),
+            Liveness::Gone,
+        ),
+        (
+            "the leader's start could not be read",
+            recorded(Some(7)),
+            Start::Unread,
+            Some(member(false)),
+            session(7),
+            Liveness::Unseen,
+        ),
+        (
+            "gone leader, member in its session",
+            recorded(Some(7)),
+            Start::Absent,
+            Some(member(false)),
+            session(7),
             Liveness::Alive,
         ),
         (
-            "the leader waits to be reaped",
-            Some(born),
-            Some(listed(&[(40, 40, true)])),
+            "gone leader, member in another session",
+            recorded(Some(7)),
+            Start::Absent,
+            Some(member(false)),
+            session(8),
             Liveness::Gone,
         ),
         (
-            "nobody is left",
+            "gone leader, no session recorded",
+            recorded(None),
+            Start::Absent,
+            Some(member(false)),
+            session(7),
+            Liveness::Gone,
+        ),
+        (
+            "gone leader, nobody left",
+            recorded(Some(7)),
+            Start::Absent,
+            Some(Vec::new()),
+            session(7),
+            Liveness::Gone,
+        ),
+        (
+            "nothing could be listed",
+            recorded(Some(7)),
+            running(),
             None,
-            Some(listed(&[(7, 7, false)])),
-            Liveness::Gone,
-        ),
-        (
-            "the id names somebody else now",
-            Some("Sat Sep 26 13:00:00 2026"),
-            Some(listed(&[(40, 40, false)])),
-            Liveness::Gone,
-        ),
-        ("nothing could be listed", None, None, Liveness::Unseen),
-        (
-            "the leader runs but nothing could be listed",
-            Some(born),
-            None,
+            session(7),
             Liveness::Unseen,
         ),
     ] {
         assert_eq!(
-            group_liveness(40, born, started_now, processes.as_deref()),
+            group_liveness(&group, &start, processes.as_deref(), sessions),
             expected,
-            "{case}: a group is gone only when a look at it finds nobody that has not ended, and a \
-             look that could not be taken answers neither way"
+            "{case}: a group is the work's while its leader runs since the recorded time, or while \
+             a member shares the session the gone leader had; a look that could not be taken \
+             answers neither way"
         );
     }
+    let unread = group_liveness(
+        &recorded(Some(7)),
+        &Start::Absent,
+        Some(&member(false)),
+        |_| Session::Unread,
+    );
+    assert_eq!(
+        unread,
+        Liveness::Unseen,
+        "a member whose session could not be read ties nothing and frees nothing"
+    );
 }
 
 #[test]
 fn a_record_from_another_boot_names_no_group_and_one_without_a_boot_still_does() {
-    use xtask::lanes::groups_of;
+    use xtask::lanes::{Recorded, groups_of};
 
-    let written = "pid=1\nboot=A\ngroup=40 then\n";
-    assert_eq!(groups_of(written, Some("A")), [(40, "then".to_owned())]);
+    let group = Recorded {
+        pid: 40,
+        born: "then".to_owned(),
+        session: Some(7),
+    };
+    let written = "pid=1\nboot=A\ngroup=40 holder=1 session=7 born=then\n";
+    assert_eq!(groups_of(written, Some("A")), std::slice::from_ref(&group));
     assert!(
         groups_of(written, Some("B")).is_empty(),
         "after a reboot every id in the record names something else, so nothing is ended for it"
     );
     assert_eq!(
         groups_of(written, None),
-        [(40, "then".to_owned())],
+        std::slice::from_ref(&group),
         "a boot this run cannot read is no reason to leave the record's work running"
     );
+    assert!(
+        groups_of(
+            "pid=1\nboot=A\ngroup=40 holder=2 session=7 born=then\n",
+            Some("A")
+        )
+        .is_empty(),
+        "a line another holder's run wrote, arriving after this holder took the record, is not this holder's"
+    );
+    assert!(
+        groups_of(
+            "pid=1\nboot=A\ngroup=40 holder=1 session=7 born=th",
+            Some("A")
+        )
+        .is_empty(),
+        "a line still being written is not read as a group started at some other time"
+    );
     assert_eq!(
-        groups_of("pid=1\nboot=\ngroup=40 then\n", Some("B")),
-        [(40, "then".to_owned())],
-        "a record that could not say its boot is read as this boot's"
+        groups_of("pid=1\ngroup=40 then\n", Some("A")),
+        [Recorded {
+            pid: 40,
+            born: "then".to_owned(),
+            session: None
+        }],
+        "a line from before sessions were recorded still names its group"
     );
 }
 
@@ -487,10 +577,13 @@ fn a_live_group_a_record_from_another_boot_names_is_left_alone() {
     let mut stranger = SupervisedChild::launch(&mut sleeping).expect("a live group to name");
     let pid = stranger.id().expect("a live stranger");
     let born = xtask::lanes::started(pid).expect("when the stranger started");
+    let session = xtask::lanes::session(pid).expect("the stranger's session");
     let record = machine.slots.path().join("heavy.holder");
     std::fs::write(
         &record,
-        format!("pid=1\nboot=a-boot-long-gone\ngroup={pid} {born}\n"),
+        format!(
+            "pid=1\nboot=a-boot-long-gone\ngroup={pid} holder=1 session={session} born={born}\n"
+        ),
     )
     .expect("a record from another boot");
     let mut next = machine.run("true");
@@ -502,7 +595,7 @@ fn a_live_group_a_record_from_another_boot_names_is_left_alone() {
     std::fs::write(
         &record,
         format!(
-            "pid=1\nboot={}\ngroup={pid} {born}\n",
+            "pid=1\nboot={}\ngroup={pid} holder=1 session={session} born={born}\n",
             xtask::lanes::boot().unwrap_or_default()
         ),
     )
@@ -555,5 +648,59 @@ fn what_a_holder_that_let_go_itself_left_in_its_group_is_left_alone() {
         "a holder that ended and let the lane go left a server in its group the way a build \
          leaves the compilation cache's, and the next run went in beside it without ending it: \
          {went_in:?}"
+    );
+}
+
+#[test]
+fn a_group_whose_leader_is_gone_is_ended_only_where_it_shares_the_recorded_session() {
+    use std::os::unix::process::CommandExt as _;
+
+    let machine = Machine::new();
+    let turns = machine.turns.path().to_owned();
+    let mut orphaning = Command::new("sh");
+    orphaning
+        .args(["-c", "sleep 300 & echo $! > \"$TURNS/member\""])
+        .env("TURNS", &turns)
+        .process_group(0);
+    let mut leader = SupervisedChild::launch(&mut orphaning).expect("a leader that leaves");
+    let group = leader.id().expect("the leader's id");
+    leader.wait().expect("the leader ends at once");
+    assert!(
+        until(Duration::from_secs(60), || machine.marker("member")),
+        "the member never started"
+    );
+    let member = written(&machine, "member");
+    let member_pid = member.parse::<u32>().expect("the member's id");
+    let session = xtask::lanes::session(member_pid).expect("the member's session");
+    let record = machine.slots.path().join("heavy.holder");
+    let boot = xtask::lanes::boot().unwrap_or_default();
+    let line = |recorded: u32| {
+        format!(
+            "pid=1\nboot={boot}\ngroup={group} holder=1 session={recorded} born=a long time ago\n"
+        )
+    };
+    std::fs::write(&record, line(session.saturating_add(1))).expect("a record in another session");
+    let mut next = machine.run("true");
+    let went_in = finished_within(Duration::from_secs(60), &mut next);
+    let spared = Command::new("kill")
+        .args(["-0", &member])
+        .status()
+        .expect("kill -0")
+        .success();
+    std::fs::write(&record, line(session)).expect("a record in the member's session");
+    let mut control = machine.run(&format!("if kill -0 {member} 2>/dev/null; then exit 7; fi"));
+    let control_in = finished_within(Duration::from_secs(60), &mut control);
+    assert!(
+        went_in.is_some_and(|status| status.success()),
+        "{went_in:?}"
+    );
+    assert!(
+        spared,
+        "a group whose leader is gone and whose members are in another session is whoever reused \
+         the id, and the next run went in without touching it"
+    );
+    assert!(
+        control_in.is_some_and(|status| status.success()),
+        "the same group in the recorded session is the work's, and it is ended: {control_in:?}"
     );
 }
