@@ -890,7 +890,7 @@ fn a_move_one_part_saw_is_raised_by_the_merge_over_every_part_s_rows() {
         conclusion
             .limitations
             .iter()
-            .all(|limitation| limitation.name != njutest::limitation::DRIFT_NOT_MEASURED),
+            .all(|limitation| limitation.name() != njutest::limitation::DRIFT_NOT_MEASURED),
         "a target one part compared is not unmeasured because another part ran no control \
          of it: {:?}",
         conclusion.limitations
@@ -1140,7 +1140,7 @@ fn concluded(report: &Report) -> (Verdict, Vec<(String, String)>, Vec<String>) {
     let mut limitations: Vec<String> = conclusion
         .limitations
         .iter()
-        .map(|limitation| limitation.name.clone())
+        .map(|limitation| limitation.name().to_owned())
         .collect();
     limitations.sort();
     (conclusion.verdict, findings, limitations)

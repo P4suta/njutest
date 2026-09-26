@@ -124,7 +124,7 @@ fn a_measured_target_no_control_compared_is_not_measured_and_says_why() {
     else {
         panic!("a target nothing compared is stated");
     };
-    assert_eq!(limitation.name, njutest::limitation::DRIFT_NOT_MEASURED);
+    assert_eq!(limitation.name(), njutest::limitation::DRIFT_NOT_MEASURED);
     assert!(
         limitation.detail.ends_with("(pkg/test/it)") && limitation.detail.contains("1 target"),
         "{}",

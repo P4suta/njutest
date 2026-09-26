@@ -3,9 +3,10 @@
 
 //! The baseline: what the one verified run of every target observed.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use rust_mutants::execute::TestTarget;
+use rust_mutants::limitation::{Limited, TargetId};
 use rust_mutants::outcome::Outcome;
 use rust_mutants::session::Session;
 
@@ -41,8 +42,44 @@ pub struct Baseline {
     /// What the compiler said, when the workspace did not build.
     /// Then there are no targets, and that is a finding rather than an error.
     pub failure: Option<String>,
-    /// What this phase could not honour, by name.
-    pub limitations: Vec<String>,
+    /// What this phase could not honour.
+    pub limitations: Vec<BaselineLimitation>,
+}
+
+/// One known limitation stated by a baseline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BaselineLimitation {
+    /// A limitation from the engine, optionally about one target.
+    Engine(Limited),
+    /// A limitation of the runner's own measurement.
+    Runner(crate::limitation::Limitation),
+}
+
+impl BaselineLimitation {
+    /// The report name of this limitation.
+    #[must_use]
+    pub fn name(&self) -> crate::limitation::Name {
+        match self {
+            Self::Engine(limited) => limited.limitation.into(),
+            Self::Runner(limitation) => (*limitation).into(),
+        }
+    }
+
+    /// The target this limitation is about, where it names one.
+    #[must_use]
+    pub const fn target(&self) -> Option<&TargetId> {
+        match self {
+            Self::Engine(limited) => limited.target.as_ref(),
+            Self::Runner(_) => None,
+        }
+    }
+
+    fn wire_name(&self) -> String {
+        match self {
+            Self::Engine(limited) => limited.to_string(),
+            Self::Runner(limitation) => limitation.name().to_owned(),
+        }
+    }
 }
 
 /// Where a phase says what it is doing, and what it is watched by.
@@ -188,32 +225,31 @@ pub fn unmeasurable(target: &TestTarget) -> bool {
 
 /// Every limitation `targets` and the run's own `touched` record state, each named once.
 #[must_use]
-pub fn limitations(
-    targets: &[TestTarget],
-    touched: &[rust_mutants::limitation::Limited],
-) -> Vec<String> {
-    let mut named = BTreeSet::new();
+pub fn limitations(targets: &[TestTarget], touched: &[Limited]) -> Vec<BaselineLimitation> {
+    let mut named = BTreeMap::new();
     for target in targets {
         if unmeasurable(target) {
             continue;
         }
-        named.extend(
-            target
-                .limitations
-                .iter()
-                .map(|limitation| limitation.name().to_owned()),
-        );
+        for limitation in &target.limitations {
+            let limited = BaselineLimitation::Engine(Limited::whole(*limitation));
+            named.insert(limited.wire_name(), limited);
+        }
     }
-    named.extend(touched.iter().map(ToString::to_string));
+    for limitation in touched {
+        let limited = BaselineLimitation::Engine(limitation.clone());
+        named.insert(limited.wire_name(), limited);
+    }
     if targets
         .iter()
         .any(|target| target.kind() == rust_mutants::execute::TargetKind::ProcMacro)
     {
-        named.extend(std::iter::once(
-            crate::limitation::PROC_MACRO_EXPANSION_NOT_MEASURED.to_owned(),
-        ));
+        let limited = BaselineLimitation::Runner(
+            crate::limitation::Limitation::ProcMacroExpansionNotMeasured,
+        );
+        named.insert(limited.wire_name(), limited);
     }
-    named.into_iter().collect()
+    named.into_values().collect()
 }
 
 /// The runner's name for one of the engine's targets.

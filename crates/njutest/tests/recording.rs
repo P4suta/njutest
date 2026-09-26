@@ -5,12 +5,21 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use njutest::assure::baseline::Baseline;
+use njutest::assure::baseline::{Baseline, BaselineLimitation};
 use njutest::assure::mutation::{Disposition, Judged, Mutation};
 use njutest::assure::route::{BRANCH_NEVER_TAKEN, Discharge, Route};
 use njutest::assure::run::{about, absorb, record};
 use njutest::config::Contract;
 use njutest::report::{BuildReport, RunKind};
+use rust_mutants::limitation::{Limitation as EngineLimitation, Limited, TargetId};
+
+#[expect(
+    clippy::expect_used,
+    reason = "an invalid fixture target name is a test setup failure"
+)]
+fn target_id(name: &str) -> TargetId {
+    name.parse::<TargetId>().expect("a built target identity")
+}
 
 fn judged(display_id: &str, disposition: Disposition, reused: bool) -> Judged {
     Judged {
@@ -41,19 +50,25 @@ fn blank() -> BuildReport {
 #[test]
 fn one_limitation_about_five_targets_is_one_row_and_not_five() {
     let folded = about(&[
-        "custom-harness:pkg/test/one".to_owned(),
-        "doctests-none".to_owned(),
-        "custom-harness:pkg/test/two".to_owned(),
+        BaselineLimitation::Engine(Limited::for_target(
+            EngineLimitation::CustomHarness,
+            target_id("pkg/test/one"),
+        )),
+        BaselineLimitation::Engine(Limited::whole(EngineLimitation::DoctestsNone)),
+        BaselineLimitation::Engine(Limited::for_target(
+            EngineLimitation::CustomHarness,
+            target_id("pkg/test/two"),
+        )),
     ]);
 
     assert_eq!(
         folded,
         vec![
             (
-                "custom-harness".to_owned(),
-                vec!["pkg/test/one".to_owned(), "pkg/test/two".to_owned()]
+                EngineLimitation::CustomHarness.into(),
+                vec![target_id("pkg/test/one"), target_id("pkg/test/two")]
             ),
-            ("doctests-none".to_owned(), Vec::new()),
+            (EngineLimitation::DoctestsNone.into(), Vec::new()),
         ],
         "the name is what the ledger of limitations is keyed by, so it is what reaches \
          the report once, and which targets it was about goes into the sentence: five \
@@ -68,8 +83,14 @@ fn what_the_baseline_could_not_do_reaches_the_report_with_the_targets_it_was_abo
         targets: Vec::new(),
         failure: None,
         limitations: vec![
-            "custom-harness:pkg/test/one".to_owned(),
-            "custom-harness:pkg/test/two".to_owned(),
+            BaselineLimitation::Engine(Limited::for_target(
+                EngineLimitation::CustomHarness,
+                target_id("pkg/test/one"),
+            )),
+            BaselineLimitation::Engine(Limited::for_target(
+                EngineLimitation::CustomHarness,
+                target_id("pkg/test/two"),
+            )),
         ],
     };
 
@@ -77,23 +98,11 @@ fn what_the_baseline_could_not_do_reaches_the_report_with_the_targets_it_was_abo
 
     assert_eq!(report.limitations.len(), 1, "{:?}", report.limitations);
     let stated = report.limitations.first().expect("one limitation");
-    assert_eq!(stated.name, "custom-harness");
+    assert_eq!(stated.name(), "custom-harness");
     assert!(
         stated.detail.contains("pkg/test/one") && stated.detail.contains("pkg/test/two"),
         "which targets it was stated about is what a reader acts on: {stated:?}"
     );
-}
-
-#[test]
-fn a_baseline_cannot_state_a_limitation_the_report_does_not_know() {
-    let mut report = blank();
-    let baseline = Baseline {
-        limitations: vec!["fictional-limitation:pkg/test/one".to_owned()],
-        ..Baseline::default()
-    };
-
-    assert!(absorb(&mut report, &baseline).is_err());
-    assert!(report.limitations.is_empty());
 }
 
 #[test]
@@ -189,7 +198,7 @@ fn every_mutation_judged_is_a_row_that_says_what_became_of_it() {
     let skipped = report
         .limitations
         .iter()
-        .find(|one| one.name == "skipped-macro-invocation")
+        .find(|one| one.name() == "skipped-macro-invocation")
         .expect("what was not mutated");
     assert_eq!(
         skipped.detail, "7 places were not mutated: macro-invocation",

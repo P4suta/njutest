@@ -171,7 +171,7 @@ fn a_knob_asked_for_and_not_put_or_compared_is_a_limitation_that_says_why() {
     let limitations = limited(&knobs);
     let named: Vec<(&str, &str)> = limitations
         .iter()
-        .map(|one| (one.name.as_str(), one.detail.as_str()))
+        .map(|one| (one.name(), one.detail.as_str()))
         .collect();
     assert!(
         named.iter().any(|(name, detail)| *name == "knob-not-put"

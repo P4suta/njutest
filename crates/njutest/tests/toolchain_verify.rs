@@ -2032,7 +2032,7 @@ fn concluded_from(text: &str) -> (Verdict, Vec<(String, String)>, Vec<String>) {
     let mut limitations: Vec<String> = conclusion
         .limitations
         .iter()
-        .map(|limitation| limitation.name.clone())
+        .map(|limitation| limitation.name().to_owned())
         .collect();
     limitations.sort();
     (conclusion.verdict, findings, limitations)

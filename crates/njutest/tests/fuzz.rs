@@ -50,7 +50,7 @@ fn a_tree_with_no_fuzz_directory_holds_no_targets() {
 #[test]
 fn targets_that_are_here_and_were_not_driven_are_said_to_be() {
     let limitation = found(&["parse".to_owned()]);
-    assert_eq!(limitation.name, "fuzz-not-executed");
+    assert_eq!(limitation.name(), "fuzz-not-executed");
     assert!(limitation.detail.contains("parse"), "{limitation:?}");
 }
 
@@ -235,7 +235,7 @@ mod driving {
         );
         assert!(done.ran.is_empty(), "{done:?}");
         assert_eq!(
-            done.limitations.first().map(|one| one.name.clone()),
+            done.limitations.first().map(|one| one.name().to_owned()),
             Some("cargo-fuzz-unavailable".to_owned())
         );
         assert_eq!(

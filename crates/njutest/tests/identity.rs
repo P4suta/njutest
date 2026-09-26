@@ -109,7 +109,7 @@ fn a_tree_no_number_could_be_read_from_says_so_and_names_no_digest() {
         report
             .limitations
             .iter()
-            .any(|limitation| limitation.name == WORKSPACE_DIGEST_NOT_COMPUTED),
+            .any(|limitation| limitation.name() == WORKSPACE_DIGEST_NOT_COMPUTED),
         "and the run says why, because a result nothing can be keyed to is one no later \
          run may reuse: {:?}",
         report.limitations
@@ -230,7 +230,7 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
         report
             .limitations
             .iter()
-            .any(|limitation| limitation.name == njutest::limitation::GIT_METADATA_UNAVAILABLE),
+            .any(|limitation| limitation.name() == njutest::limitation::GIT_METADATA_UNAVAILABLE),
         "and the run says so here, before it compiles anything, because a report that \
          cannot name the commit it verified is one nobody can go back to: {:?}",
         report.limitations
@@ -239,7 +239,7 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
         !report
             .limitations
             .iter()
-            .any(|limitation| limitation.name == njutest::limitation::TEMP_DIRECTORY_UNCLAIMED),
+            .any(|limitation| limitation.name() == njutest::limitation::TEMP_DIRECTORY_UNCLAIMED),
         "the directory it works in was claimed, so nothing is said about a sweep taking \
          it: {:?}",
         report.limitations
@@ -265,7 +265,7 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
         !committed
             .limitations
             .iter()
-            .any(|limitation| limitation.name == njutest::limitation::GIT_METADATA_UNAVAILABLE),
+            .any(|limitation| limitation.name() == njutest::limitation::GIT_METADATA_UNAVAILABLE),
         "and states nothing, because there is nothing it could not do: {:?}",
         committed.limitations
     );
@@ -312,7 +312,7 @@ fn every_limitation_a_report_states_before_it_runs_is_a_finished_sentence() {
     );
     for limitation in &report.limitations {
         assert!(
-            !limitation.name.trim().is_empty(),
+            !limitation.name().trim().is_empty(),
             "a limitation with no name is one nobody can look up: {limitation:?}"
         );
         assert!(

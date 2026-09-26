@@ -161,9 +161,6 @@ pub fn every_failure() -> Vec<RunnerError> {
             crate::report::json::parse("{}"),
             "an empty object is not a report",
         )),
-        RunnerError::LimitationName {
-            source: crate::limitation::NameError("unknown-limitation".to_owned()),
-        },
         RunnerError::Scratch(crate::scratch::ScratchError::Unusable {
             path: nowhere.to_path_buf(),
             source: std::io::Error::other("no"),
@@ -256,7 +253,6 @@ pub fn every_failure() -> Vec<RunnerError> {
             | RunnerError::Resource(_)
             | RunnerError::Report(_)
             | RunnerError::ReportCount { .. }
-            | RunnerError::LimitationName { .. }
             | RunnerError::Scratch(_)
             | RunnerError::Build(_)
             | RunnerError::Measure(_)

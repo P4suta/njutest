@@ -84,7 +84,7 @@ fn a_suite_a_sanitizer_passes_is_one_it_ran_under() {
     assert_eq!(
         done.limitations
             .iter()
-            .map(|one| one.name.clone())
+            .map(|one| one.name().to_owned())
             .collect::<Vec<String>>(),
         ["sanitizer-standard-library-not-instrumented"],
         "every sanitizer run says what it did not instrument"
@@ -130,7 +130,7 @@ fn a_sanitizer_that_was_asked_for_and_could_not_run_is_a_gap_and_not_a_pass() {
     assert!(
         done.limitations
             .iter()
-            .any(|one| one.name == "sanitizer-unavailable"),
+            .any(|one| one.name() == "sanitizer-unavailable"),
         "{done:?}"
     );
 }

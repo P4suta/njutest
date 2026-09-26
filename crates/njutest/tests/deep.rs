@@ -121,7 +121,7 @@ fn what_the_interpreter_will_not_interpret_is_stated_and_never_read_as_a_pass() 
     let done = interpreted(said, 1, dir.path()).expect("ran");
     assert!(done.executed);
     assert_eq!(
-        done.limitations.first().map(|one| one.name.clone()),
+        done.limitations.first().map(|one| one.name().to_owned()),
         Some("miri-unsupported".to_owned())
     );
     assert_eq!(
@@ -536,7 +536,7 @@ fn an_interpreter_that_ran_out_of_time_interpreted_nothing_whole() {
     assert_eq!(
         done.limitations
             .first()
-            .map(|one| one.name.clone())
+            .map(|one| one.name().to_owned())
             .as_deref(),
         Some(njutest::limitation::MIRI_TIMED_OUT),
         "and the reason is the time rather than anything about the code, which is the \
@@ -560,7 +560,7 @@ fn a_contract_that_asks_every_dimension_names_a_missing_interpreter_as_a_hole() 
             .expect("a machine with no interpreter is a hole under this contract, not an error");
         assert!(!done.executed, "{done:?}");
         assert_eq!(
-            done.limitations.first().map(|one| one.name.clone()),
+            done.limitations.first().map(|one| one.name().to_owned()),
             Some("miri-unavailable".to_owned()),
             "{done:?}"
         );
@@ -594,7 +594,7 @@ fn an_interpreter_that_ran_no_test_found_nothing_to_fail_and_interpreted_nothing
         "{done:?}"
     );
     assert_eq!(
-        done.limitations.first().map(|one| one.name.clone()),
+        done.limitations.first().map(|one| one.name().to_owned()),
         Some("miri-ran-no-test".to_owned()),
         "{done:?}"
     );
@@ -647,7 +647,7 @@ fn the_phase_comes_to_the_verdict_the_published_contract_gives_every_case() {
         let limitations: Vec<&str> = done
             .limitations
             .iter()
-            .map(|one| one.name.as_str())
+            .map(njutest::report::Limitation::name)
             .collect();
         let came = match (done.executed, kinds.as_slice(), limitations.as_slice()) {
             (true, [], []) => "passed",

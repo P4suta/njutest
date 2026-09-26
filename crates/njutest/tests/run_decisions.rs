@@ -439,7 +439,7 @@ fn a_tree_the_compiler_vouches_for_entirely_has_no_limitation_to_state() {
     assert_eq!(
         found_states
             .iter()
-            .map(|one| one.name.clone())
+            .map(|one| one.name().to_owned())
             .collect::<Vec<_>>(),
         vec!["soundness-not-executed".to_owned()],
         "while a place the compiler stops vouching for is one this contract counts and \
@@ -455,7 +455,7 @@ fn a_tree_the_compiler_vouches_for_entirely_has_no_limitation_to_state() {
     assert_eq!(
         unread_states
             .iter()
-            .map(|one| one.name.clone())
+            .map(|one| one.name().to_owned())
             .collect::<Vec<_>>(),
         vec![
             "soundness-source-unreadable".to_owned(),

@@ -34,7 +34,7 @@ fn a_corrupt_crash_is_a_defect_and_one_the_run_could_not_decide_is_a_hole() {
     );
     let stated: Vec<String> = limited(&records)
         .into_iter()
-        .map(|limitation| limitation.name)
+        .map(|limitation| limitation.name().to_owned())
         .collect();
     assert_eq!(
         stated,

@@ -1759,36 +1759,49 @@ pub fn record(
 
 /// Each limitation the baseline stated, once, beside the targets it was stated about.
 #[must_use]
-pub fn about(limitations: &[String]) -> Vec<(String, Vec<String>)> {
-    let mut named: BTreeMap<String, Vec<String>> = BTreeMap::new();
+pub fn about(
+    limitations: &[baseline::BaselineLimitation],
+) -> Vec<(
+    crate::limitation::Name,
+    Vec<rust_mutants::limitation::TargetId>,
+)> {
+    let mut named = BTreeMap::new();
     for limitation in limitations {
-        let (name, target) = limitation
-            .split_once(':')
-            .map_or((limitation.as_str(), None), |(head, tail)| {
-                (head, Some(tail))
-            });
-        let targets = named.entry(name.to_owned()).or_default();
-        if let Some(target) = target {
-            targets.push(target.to_owned());
+        let name = limitation.name();
+        let targets: &mut Vec<rust_mutants::limitation::TargetId> = &mut named
+            .entry(name.name())
+            .or_insert_with(|| (name, Vec::new()))
+            .1;
+        if let Some(target) = limitation.target() {
+            targets.push(target.clone());
         }
     }
-    named.into_iter().collect()
+    named.into_values().collect()
 }
 
 /// Puts what the baseline observed into the report.
 ///
 /// # Errors
-/// Returns a typed refusal when the baseline names an unknown limitation or an exact report counter cannot represent its ledger.
-pub fn absorb(report: &mut BuildReport, baseline: &baseline::Baseline) -> Result<(), RunnerError> {
+/// Returns [`crate::report::CountError`] when exact report counters cannot represent the baseline ledger.
+pub fn absorb(
+    report: &mut BuildReport,
+    baseline: &baseline::Baseline,
+) -> Result<(), crate::report::CountError> {
     for (name, targets) in about(&baseline.limitations) {
-        let named = name.parse::<crate::limitation::Name>()?;
-        let detail = limitation_detail(&name);
+        let detail = limitation_detail(&name.name());
         let detail = if targets.is_empty() {
             detail
         } else {
-            format!("{detail} ({})", targets.join(", "))
+            format!(
+                "{detail} ({})",
+                targets
+                    .iter()
+                    .map(rust_mutants::limitation::TargetId::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
         };
-        report.limitations.push(Limitation::new(named, &detail));
+        report.limitations.push(Limitation::new(name, &detail));
     }
     if let Some(failure) = &baseline.failure {
         report.findings.push(Finding::new(

@@ -5,11 +5,12 @@
 
 use std::path::PathBuf;
 
-use njutest::assure::baseline::{failure, limitations, named, refused, target_of, unmeasurable};
-use njutest::limitation::PROC_MACRO_EXPANSION_NOT_MEASURED;
+use njutest::assure::baseline::{
+    BaselineLimitation, failure, limitations, named, refused, target_of, unmeasurable,
+};
 use njutest::targets::UnitKind;
 use rust_mutants::execute::{TargetKind, TestTarget};
-use rust_mutants::limitation::{CUSTOM_HARNESS, Limitation, Limited};
+use rust_mutants::limitation::{Limitation, Limited};
 
 fn target(id: &str, kind: TargetKind, states: &[Limitation]) -> TestTarget {
     let mut target = TestTarget::new(
@@ -71,8 +72,8 @@ fn what_a_run_could_not_do_is_said_once_by_whoever_could_not_do_it() {
     assert_eq!(
         stated,
         vec![
-            rust_mutants::limitation::COVERAGE_NOT_MEASURED.to_owned(),
-            CUSTOM_HARNESS.to_owned()
+            BaselineLimitation::Engine(Limited::whole(Limitation::CoverageNotMeasured)),
+            BaselineLimitation::Engine(Limited::whole(Limitation::CustomHarness)),
         ],
         "the two targets that brought their own harness state one limitation between \
          them, the run states its own, and the library that documents nothing states \
@@ -89,12 +90,16 @@ fn a_proc_macro_in_the_workspace_is_a_limitation_of_the_run_and_not_of_a_target(
     ];
 
     assert!(
-        !limitations(&without, &[]).contains(&PROC_MACRO_EXPANSION_NOT_MEASURED.to_owned()),
+        !limitations(&without, &[]).contains(&BaselineLimitation::Runner(
+            njutest::limitation::Limitation::ProcMacroExpansionNotMeasured
+        )),
         "a workspace with no macro of its own expands nothing this run did not measure"
     );
     assert_eq!(
         limitations(&with, &[]),
-        vec![PROC_MACRO_EXPANSION_NOT_MEASURED.to_owned()],
+        vec![BaselineLimitation::Runner(
+            njutest::limitation::Limitation::ProcMacroExpansionNotMeasured
+        )],
         "and one macro crate is enough: what it expands is decided during the build, so \
          no target of any package carries it, and a run that said nothing would let a \
          reader take the score as covering code that was never mutated"

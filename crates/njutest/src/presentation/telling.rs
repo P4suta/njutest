@@ -43,7 +43,7 @@ impl Told {
                 .limitations
                 .iter()
                 .map(|limitation| Stated {
-                    name: limitation.name.clone(),
+                    name: limitation.name().to_owned(),
                     detail: limitation.detail.clone(),
                 })
                 .collect(),

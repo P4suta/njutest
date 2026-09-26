@@ -4730,12 +4730,18 @@ pub struct CandidateRecord {
 pub struct Limitation {
     /// The stable name a reader can grep for.
     #[serde(deserialize_with = "limitation_name")]
-    pub name: String,
+    name: String,
     /// One sentence saying what is not claimed.
     pub detail: String,
 }
 
 impl Limitation {
+    /// The stable report name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     /// A limitation named `name`.
     #[must_use]
     pub fn new(name: impl Into<crate::limitation::Name>, detail: &str) -> Self {

@@ -579,13 +579,6 @@ pub enum RunnerError {
         #[from]
         source: crate::report::CountError,
     },
-    /// A phase named a limitation this release cannot report.
-    #[error("{}: {source}", REPORT_UNSOUND.code)]
-    LimitationName {
-        /// The unrecognized name.
-        #[from]
-        source: crate::limitation::NameError,
-    },
     /// A measured run fact could not be represented exactly.
     #[error("{}: {source}", REPORT_UNSOUND.code)]
     RunInvariant {
@@ -649,7 +642,6 @@ impl RunnerError {
             Self::MutationText { .. }
             | Self::Equivalence { .. }
             | Self::ReportCount { .. }
-            | Self::LimitationName { .. }
             | Self::RunInvariant { .. }
             | Self::WireIdentity { .. } => REPORT_UNSOUND,
             Self::MiriMissing { .. } => MIRI_MISSING,
