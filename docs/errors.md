@@ -80,6 +80,7 @@ The first digit names an area:
 | `RM3005` | The guards could not be applied to the file. | this is a defect in this tool: the guards could not be written back over the file they were cut from |
 | `RM3006` | A guard would have moved a line, breaking the invariant every position depends on. | this is a defect in this tool: a guard moved a line, and every position a run reports is relative to lines that did not move |
 | `RM3007` | A mutant index makes the generated runtime's inclusive window overflow. | this is a defect in this tool: the catalog outgrew the u32 window the generated runtime can represent |
+| `RM3008` | The rewritten file does not read as Rust, down to what every identity macro holds: a guard changed how the syntax around it reads. | this is a defect in this tool: a guard changed how the syntax around it reads; the line is named, and the source there is the case to report |
 | `RM4001` | The tree does not compile before any mutant is live, so nothing about the failure is the mutants' doing. | make `cargo test --no-run` pass on the tree as committed, then run again |
 | `RM4002` | The mutants a compilation failure came from could not be isolated. | run `cargo test --no-run` on the tree yourself; the compilation failed for a reason this tool could not attribute to one mutant |
 | `RM4003` | An instrumented compilation could not be attempted at all: the tree could not be written, or the toolchain could not be reached. | the compilation could not be started at all: check cargo runs on this tree and that there is room under TMPDIR |
