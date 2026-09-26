@@ -682,9 +682,24 @@ impl Request {
         self.clone().with_target(target)
     }
 }
+/// What a build made of the file a claim's locator names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unread {
+    /// A unit of the build read it, so the catalog answers for it.
+    Compiled,
+    /// No unit read it, and the locator names what walking it finds.
+    Named,
+    /// No unit read it, and the locator names nothing in it, or it is not there.
+    Nothing,
+}
+
 /// A prepared workspace.
 #[derive(Debug)]
 pub struct Session {
+    /// The rules discovery applied, which a claim on a file no unit read is walked with.
+    selection: crate::syntax::Selection<'static>,
+    /// What the toolchain says the build's target is, which a claim's `where` is judged against.
+    facts: crate::facts::Facts,
     workspace: Workspace,
     /// The test executables the run starts, as the build left them, which every execution is checked against.
     apparatus: crate::apparatus::Apparatus,
@@ -898,7 +913,52 @@ impl Session {
                 entered.completeness = crate::touch::Completeness::Cut;
             }
         }
-        Ok(result)
+        Ok(self.declined(&exec.target().id, result))
+    }
+
+    /// `result`, a mutant execution against `target`, with its survival held to the tests that declined in it (ADR 0043).
+    ///
+    /// A survival whose every passing test declined as the baseline's did measured nothing; a decline the baseline did not make is a detection; and a notice that cannot be believed leaves no survival to believe.
+    fn declined(&self, target: &str, mut result: MutantResult) -> MutantResult {
+        if result.conclusion != MutantConclusion::Survived {
+            return result;
+        }
+        result.conclusion = match &result.declines {
+            crate::decline::Declines::Unbelieved { because } => {
+                self.workspace.trace.note(
+                    crate::decline::DECLINE_NOTICE_FILE,
+                    &format!("{target}: {}", because.said()),
+                );
+                MutantConclusion::Errored
+            }
+            crate::decline::Declines::Read { declined, .. } => {
+                match crate::decline::held(declined, self.declined_in_baseline(target)) {
+                    crate::decline::Held::Detected { by } => {
+                        MutantConclusion::DeclinedUnderTheMutant { by }
+                    }
+                    crate::decline::Held::SetAside(tests)
+                        if !tests.is_empty() && tests.len() == result.passed_tests.len() =>
+                    {
+                        MutantConclusion::Declined { tests }
+                    }
+                    crate::decline::Held::SetAside(_) => MutantConclusion::Survived,
+                }
+            }
+        };
+        result
+    }
+
+    /// The declines `target`'s baseline made, or none where the target has no baseline a mutation may be judged against.
+    fn declined_in_baseline(&self, target: &str) -> &[crate::decline::Decline] {
+        match self
+            .verified
+            .targets
+            .get(target)
+            .and_then(Measured::judgeable)
+        {
+            Some(passing) => &passing.baseline().declined,
+            None => &[],
+        }
     }
 
     /// The short name a person reads for the mutant whose full identity is `id`, or the identity itself where the catalog holds no such mutant.
@@ -1109,6 +1169,93 @@ impl Session {
             (several, None) => Err(LocateError::Several {
                 display_ids: named(several),
             }),
+        }
+    }
+
+    /// What the toolchain says the build's target is, kept to the names a target alone decides.
+    #[must_use]
+    pub const fn facts(&self) -> &crate::facts::Facts {
+        &self.facts
+    }
+
+    /// Nothing where every fact `under` names holds of this run's target and of the environment its tests are given, and otherwise the first that does not.
+    ///
+    /// # Errors
+    /// The fact that does not hold.
+    pub fn holds(&self, under: &crate::run::Where) -> Result<(), crate::run::Unheld> {
+        if let Some(predicate) = &under.cfg
+            && !predicate.holds(&self.facts)
+        {
+            return Err(crate::run::Unheld::Cfg {
+                predicate: predicate.to_string(),
+            });
+        }
+        for (name, wanted) in &under.env {
+            let given = self
+                .workspace
+                .base_env
+                .iter()
+                .find(|(held, _)| held == std::ffi::OsStr::new(name));
+            match given {
+                Some((_, value)) if value == std::ffi::OsStr::new(wanted) => {}
+                Some(_) | None => {
+                    return Err(crate::run::Unheld::Env {
+                        name: name.clone(),
+                        given: given.is_some(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// What the tests are given of each of `names`, which the configuration declared an answer may depend on.
+    #[must_use]
+    pub fn declared(&self, names: &BTreeSet<String>) -> crate::outcomes::Declared {
+        crate::outcomes::Declared::of(names, &self.workspace.base_env)
+    }
+
+    /// What this build made of the file `locator` names: one a unit read, or one none did, walked with the rules discovery applied to say whether the locator names something in it.
+    #[must_use]
+    pub fn unread(&self, locator: &Locator) -> Unread {
+        if self.files.iter().any(|file| file.path == locator.path) {
+            return Unread::Compiled;
+        }
+        let inside = std::path::Path::new(&locator.path)
+            .components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)));
+        if !inside {
+            return Unread::Nothing;
+        }
+        let Ok(walked) = discover::walk(self.snapshot_root(), &locator.path, &self.selection)
+        else {
+            return Unread::Nothing;
+        };
+        let matching: Vec<&crate::syntax::Found> = walked
+            .candidates
+            .iter()
+            .filter(|found| {
+                found.candidate.rule.name == locator.rule
+                    && (locator.original.is_empty()
+                        || found.candidate.original == locator.original.as_bytes())
+                    && names(&found.item, &locator.item)
+            })
+            .collect();
+        let narrowed: Vec<&crate::syntax::Found> = match locator.line {
+            Some(line) if matching.len() > 1 => matching
+                .into_iter()
+                .filter(|found| found.position.line == line)
+                .collect(),
+            _ => matching,
+        };
+        let named = match locator.count {
+            Some(wanted) => usize::try_from(wanted).is_ok_and(|wanted| narrowed.len() == wanted),
+            None => narrowed.len() == 1,
+        };
+        if named {
+            Unread::Named
+        } else {
+            Unread::Nothing
         }
     }
 
@@ -1779,7 +1926,10 @@ impl Session {
         if let Some(test) = &request.test {
             exec = exec.with_test(test.clone());
         }
-        let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
+        let result = self.declined(
+            &target.id,
+            execute::exec(&exec, &context, cancel, &self.workspace.trace),
+        );
         let evidence = Notice {
             mutant: mutant.id.to_string(),
             catalog: self.catalog.digest().to_owned(),
@@ -1979,7 +2129,8 @@ impl Session {
                 let retry = request.retrying_target(&first.result().target);
                 let repeated = quiet.alone(|| self.execute(&retry, running(true), cancel))??;
                 asked.extend(repeated.asked);
-                AttemptLedger::with_retry(first, repeated.taken, cancel.is_cancelled())?
+                AttemptLedger::with_retry(first, repeated.taken, cancel.is_cancelled())
+                    .ok_or(SessionError::ExecutionDurationOverflow)?
             }
         };
         let judgement = Judgement {
@@ -2176,6 +2327,7 @@ impl Session {
             alone,
             entered_records: result.entered.as_ref().map(|entered| entered.records),
             lingered: result.lingered,
+            declined: result.declines.believed().to_vec(),
         });
         Ok(())
     }
@@ -2203,6 +2355,7 @@ impl Session {
             timeout_source: source.name().to_owned(),
             alone: false,
             lingered: result.lingered,
+            declined: result.declines.believed().to_vec(),
         });
         Ok(())
     }
@@ -2884,16 +3037,48 @@ impl EstablishmentState {
 ///
 /// let _empty = AttemptLedger {};
 /// ```
-#[derive(Debug, Clone)]
-pub struct AttemptLedger {
-    first: MutantResult,
-    retry: Option<MutantResult>,
+#[derive(Debug, Clone, Copy)]
+pub struct AttemptLedger<R = MutantResult> {
+    first: R,
+    retry: Option<R>,
     duration: Duration,
 }
 
-impl AttemptLedger {
-    const fn single(first: MutantResult) -> Self {
-        let duration = first.duration;
+/// What a ledger reads of one execution, so its laws hold whatever else the execution's record carries.
+pub trait Attempt: sealed::Attempt {
+    /// How long the execution took.
+    fn duration(&self) -> Duration;
+    /// What it concluded.
+    fn outcome(&self) -> crate::outcome::Outcome;
+    /// Settles its conclusion as `outcome`, which is how a retry enters the ledger.
+    fn reconcile(&mut self, outcome: crate::outcome::Outcome);
+}
+
+/// The records a ledger may hold, which only this crate names.
+mod sealed {
+    /// A record this crate lets a ledger hold.
+    pub trait Attempt {}
+}
+
+impl sealed::Attempt for MutantResult {}
+
+impl Attempt for MutantResult {
+    fn duration(&self) -> Duration {
+        self.duration
+    }
+
+    fn outcome(&self) -> crate::outcome::Outcome {
+        Self::outcome(self)
+    }
+
+    fn reconcile(&mut self, outcome: crate::outcome::Outcome) {
+        self.reconcile_outcome(outcome);
+    }
+}
+
+impl<R: Attempt> AttemptLedger<R> {
+    fn single(first: R) -> Self {
+        let duration = first.duration();
         Self {
             first,
             retry: None,
@@ -2901,27 +3086,23 @@ impl AttemptLedger {
         }
     }
 
-    fn with_retry(
-        first: WaitedAttempt,
-        mut repeated: MutantResult,
-        cancelled: bool,
-    ) -> Result<Self, SessionError> {
-        repeated.reconcile_outcome(retry_outcome(repeated.outcome(), cancelled));
+    /// The ledger of a waited attempt and its retry, or none where their durations together do not fit.
+    fn with_retry(first: WaitedAttempt<R>, mut repeated: R, cancelled: bool) -> Option<Self> {
+        repeated.reconcile(retry_outcome(repeated.outcome(), cancelled));
         let first = first.into_result();
-        let duration = first
-            .duration
-            .checked_add(repeated.duration)
-            .ok_or(SessionError::ExecutionDurationOverflow)?;
-        Ok(Self {
+        let duration = first.duration().checked_add(repeated.duration())?;
+        Some(Self {
             first,
             retry: Some(repeated),
             duration,
         })
     }
+}
 
+impl<R> AttemptLedger<R> {
     /// The conclusion this ordered ledger establishes.
     #[must_use]
-    pub const fn result(&self) -> &MutantResult {
+    pub const fn result(&self) -> &R {
         match &self.retry {
             Some(repeated) => repeated,
             None => &self.first,
@@ -2930,7 +3111,7 @@ impl AttemptLedger {
 
     /// Consumes the ledger and returns the conclusion it establishes.
     #[must_use]
-    pub fn into_result(self) -> MutantResult {
+    pub fn into_result(self) -> R {
         match self.retry {
             Some(repeated) => repeated,
             None => self.first,
@@ -2938,7 +3119,7 @@ impl AttemptLedger {
     }
 
     /// Every execution in causal order.
-    pub fn iter(&self) -> impl Iterator<Item = &MutantResult> {
+    pub fn iter(&self) -> impl Iterator<Item = &R> {
         std::iter::once(&self.first).chain(self.retry.iter())
     }
 
@@ -2965,15 +3146,15 @@ impl AttemptLedger {
 }
 
 /// A first attempt whose only possible conclusion is a wall-clock wait.
-#[derive(Debug, Clone)]
-struct WaitedAttempt(MutantResult);
+#[derive(Debug, Clone, Copy)]
+struct WaitedAttempt<R = MutantResult>(R);
 
-impl WaitedAttempt {
-    const fn result(&self) -> &MutantResult {
+impl<R> WaitedAttempt<R> {
+    const fn result(&self) -> &R {
         &self.0
     }
 
-    fn into_result(self) -> MutantResult {
+    fn into_result(self) -> R {
         self.0
     }
 }
@@ -3108,16 +3289,19 @@ fn duration_ms(duration: Duration) -> Result<u64, SessionError> {
         .map_err(|_overflow| SessionError::DurationMillisOverflow { duration })
 }
 
-/// Whether a target said anything at all.
+/// Whether a target said anything at all: one whose every passing test declined to measure measured nothing, so it cannot outweigh a target that did (ADR 0043).
 const fn spoke(result: &MutantResult) -> bool {
     match result.conclusion {
-        MutantConclusion::Inconclusive | MutantConclusion::StepLimitReached { .. } => false,
+        MutantConclusion::Inconclusive
+        | MutantConclusion::StepLimitReached { .. }
+        | MutantConclusion::Declined { .. } => false,
         MutantConclusion::NotRun
         | MutantConclusion::Killed
         | MutantConclusion::Survived
         | MutantConclusion::Waited
         | MutantConclusion::Unobserved
-        | MutantConclusion::Errored => true,
+        | MutantConclusion::Errored
+        | MutantConclusion::DeclinedUnderTheMutant { .. } => true,
     }
 }
 
@@ -3198,7 +3382,9 @@ const fn completeness_of(
     use execute::Stopped;
     match stopped {
         Stopped::Exited { .. } => match conclusion {
-            MutantConclusion::Survived => Completeness::Whole,
+            MutantConclusion::Survived
+            | MutantConclusion::Declined { .. }
+            | MutantConclusion::DeclinedUnderTheMutant { .. } => Completeness::Whole,
             MutantConclusion::Killed => Completeness::UpToFirstFailure,
             MutantConclusion::NotRun
             | MutantConclusion::StepLimitReached { .. }
@@ -3215,7 +3401,9 @@ const fn completeness_of(
             | MutantConclusion::Waited
             | MutantConclusion::Inconclusive
             | MutantConclusion::Unobserved
-            | MutantConclusion::Errored => Completeness::Cut,
+            | MutantConclusion::Errored
+            | MutantConclusion::Declined { .. }
+            | MutantConclusion::DeclinedUnderTheMutant { .. } => Completeness::Cut,
         },
         Stopped::NotStarted { .. }
         | Stopped::TimedOut { .. }
@@ -3241,6 +3429,34 @@ mod kani_laws {
             output: Vec::new(),
             ..MutantResult::apparatus_error("", String::new())
         }
+    }
+
+    /// An execution as a ledger reads it and nothing more, so a law about the ledger's arithmetic does not grow with the record an engine execution carries.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct Timed {
+        duration: Duration,
+        outcome: Outcome,
+    }
+
+    impl super::sealed::Attempt for Timed {}
+
+    impl super::Attempt for Timed {
+        fn duration(&self) -> Duration {
+            self.duration
+        }
+
+        fn outcome(&self) -> Outcome {
+            self.outcome
+        }
+
+        fn reconcile(&mut self, outcome: Outcome) {
+            self.outcome = outcome;
+        }
+    }
+
+    /// `value`, which must hold nothing on the heap, so a law that passes its subject through here cannot grow with a payload somebody adds to a record.
+    const fn plain<T: Copy>(value: T) -> T {
+        value
     }
 
     fn symbolic_duration() -> Duration {
@@ -3400,10 +3616,10 @@ mod kani_laws {
                 false,
             );
             kani::assert(
-                constructed.is_ok(),
+                constructed.is_some(),
                 "njutest-law-assertion:attempt-retry-constructs",
             );
-            let Ok(ledger) = constructed else {
+            let Some(ledger) = constructed else {
                 return;
             };
             ledger
@@ -3437,18 +3653,24 @@ mod kani_laws {
     fn attempt_duration_is_the_checked_sum_of_every_execution() {
         let first_duration = symbolic_duration();
         let retry_duration = symbolic_duration();
-        let ledger = AttemptLedger::with_retry(
-            WaitedAttempt(result(MutantConclusion::Waited, first_duration)),
-            result(MutantConclusion::Killed, retry_duration),
+        let ledger = plain(AttemptLedger::with_retry(
+            WaitedAttempt(Timed {
+                duration: first_duration,
+                outcome: Outcome::Waited,
+            }),
+            Timed {
+                duration: retry_duration,
+                outcome: Outcome::Killed,
+            },
             false,
-        );
+        ));
         match first_duration.checked_add(retry_duration) {
             Some(expected) => {
                 kani::assert(
-                    ledger.is_ok(),
+                    ledger.is_some(),
                     "njutest-law-assertion:duration-sum-constructs",
                 );
-                let Ok(actual) = ledger else {
+                let Some(actual) = ledger else {
                     return;
                 };
                 kani::assert(
@@ -3459,10 +3681,7 @@ mod kani_laws {
             }
             None => {
                 kani::assert(
-                    matches!(
-                        ledger,
-                        Err(crate::workspace::SessionError::ExecutionDurationOverflow)
-                    ),
+                    ledger.is_none(),
                     "njutest-law-assertion:duration-overflow-refused",
                 );
                 kani::cover!(true, "njutest-law-branch:overflow");
@@ -3480,10 +3699,10 @@ mod kani_laws {
             true,
         );
         kani::assert(
-            constructed.is_ok(),
+            constructed.is_some(),
             "njutest-law-assertion:cancelled-retry-constructs",
         );
-        let Ok(ledger) = constructed else {
+        let Some(ledger) = constructed else {
             return;
         };
         kani::assert(
@@ -3631,6 +3850,7 @@ const fn unreached() -> MutantResult {
             cause: execute::StartFailure::NotAsked,
         },
         lingered: false,
+        declines: crate::decline::Declines::none(),
     }
 }
 
@@ -3642,8 +3862,6 @@ pub fn target_name(package: &str, kind: TargetKind, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use njutest_devkit::result::{ResultState::Returned, result_state};
-
     use super::{AttemptLedger, InitialAttempt, WaitedAttempt, aggregate_outcomes, retry_outcome};
     use crate::execute::{MutantConclusion, MutantResult, StepLimitNotice};
     use crate::outcome::Outcome;
@@ -3739,13 +3957,61 @@ mod tests {
             ),
             false,
         );
-        assert_eq!(result_state(&retried), Returned, "ledger: {retried:?}");
-        let Ok(retried) = retried else { return };
+        assert!(retried.is_some(), "ledger: {retried:?}");
+        let Some(retried) = retried else { return };
         assert_eq!(retried.attempt_count(), 2);
         assert!(retried.retried());
         assert_eq!(retried.result().outcome(), Outcome::StepLimitReached);
         assert_eq!(retried.result().step_notice(), Some(&notice));
         assert_eq!(retried.duration(), Duration::from_secs(3));
+    }
+
+    #[test]
+    fn a_ledger_reads_a_mutant_result_as_its_execution_whatever_payload_it_carries() {
+        use super::Attempt as _;
+        let decline = crate::decline::Decline {
+            test: "tests::shares".to_owned(),
+            why: "this machine cannot share blocks".to_owned(),
+        };
+        for conclusion in [
+            MutantConclusion::Declined {
+                tests: vec![decline.clone(), decline.clone()],
+            },
+            MutantConclusion::DeclinedUnderTheMutant {
+                by: decline.clone(),
+            },
+            MutantConclusion::Waited,
+            MutantConclusion::Killed,
+        ] {
+            let mut carried = result(conclusion, Duration::from_millis(1_234));
+            carried.declines = crate::decline::Declines::Read {
+                declined: vec![decline.clone(); 3],
+                quoted: vec!["words no test was named with".to_owned(); 2],
+            };
+            carried.output = b"what the tests printed".to_vec();
+            assert_eq!(
+                super::Attempt::duration(&carried),
+                Duration::from_millis(1_234),
+                "the duration a ledger sums is the execution's own: {:?}",
+                carried.conclusion
+            );
+            assert_eq!(
+                super::Attempt::outcome(&carried),
+                carried.outcome(),
+                "the outcome a ledger reads is the execution's own: {:?}",
+                carried.conclusion
+            );
+            for outcome in Outcome::ALL {
+                let (mut through, mut direct) = (carried.clone(), carried.clone());
+                through.reconcile(outcome);
+                direct.reconcile_outcome(outcome);
+                assert_eq!(
+                    (&through.conclusion, through.duration, &through.declines),
+                    (&direct.conclusion, direct.duration, &direct.declines),
+                    "a ledger reconciles a retry exactly as the execution does: {outcome:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -3755,10 +4021,7 @@ mod tests {
             result(MutantConclusion::Killed, Duration::from_nanos(1)),
             false,
         );
-        assert!(matches!(
-            ledger,
-            Err(crate::workspace::SessionError::ExecutionDurationOverflow)
-        ));
+        assert!(ledger.is_none(), "{ledger:?}");
     }
 
     #[test]
@@ -3773,8 +4036,8 @@ mod tests {
             ),
             true,
         );
-        assert_eq!(result_state(&ledger), Returned, "ledger: {ledger:?}");
-        let Ok(ledger) = ledger else { return };
+        assert!(ledger.is_some(), "ledger: {ledger:?}");
+        let Some(ledger) = ledger else { return };
         assert_eq!(ledger.result().outcome(), Outcome::NotRun);
         assert!(ledger.result().step_notice().is_none());
     }

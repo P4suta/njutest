@@ -316,7 +316,7 @@ fn equivalence_says_what_the_compiler_renders_identically_and_never_says_equival
         }
         assert_eq!(columns.len(), 4, "{row}");
         assert!(
-            if njutest_devkit::reproducible::builds_the_same_twice() {
+            if njutest_devkit::reproducible::builds_a_reverted_change_to_the_same_bytes() {
                 columns[1] == "identical" || columns[1] == "differs"
             } else {
                 columns[1] == "not-established"
@@ -351,7 +351,7 @@ fn the_equivalence_tally_counts_the_rows_it_printed() {
         .iter()
         .filter(|columns| columns.get(1) == Some(&"identical"))
         .count();
-    if njutest_devkit::reproducible::builds_the_same_twice() {
+    if njutest_devkit::reproducible::builds_a_reverted_change_to_the_same_bytes() {
         assert!(
             identical > 0,
             "this fixture is built at an optimisation level where the compiler renders \
@@ -406,6 +406,7 @@ fn environment(fixture: &Fixture) -> Environment {
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        cargo: None,
         ci: rust_mutants_cli::CiHost::None,
     }
 }

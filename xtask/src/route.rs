@@ -165,6 +165,8 @@ pub struct Exec {
     pub signal: Option<i64>,
     /// Every test the harness said failed, which only the engine records.
     pub failed_tests: Vec<String>,
+    /// Each test that declined to measure and its words, as `(test, why)`, which only the engine records (ADR 0043).
+    pub declined: Vec<(String, String)>,
 }
 
 /// What a recording establishes about whether a process outlived its harness's answer.
@@ -416,7 +418,32 @@ fn exec(record: &Value) -> Result<Exec, ReadCauseError> {
         lingered: Linger::recorded(record.get("lingered")),
         signal: record.get("signal").and_then(Value::as_i64),
         failed_tests: strings(record, "failed_tests"),
+        declined: declines(record)?,
     })
+}
+
+/// Each test a record says declined to measure, with its words; none where the producer records no declines, since the runner's records carry none.
+///
+/// # Errors
+/// [`ReadCauseError::Absent`] for an entry that is not a test and its words.
+pub fn declines(record: &Value) -> Result<Vec<(String, String)>, ReadCauseError> {
+    let Some(entries) = record.get("declined") else {
+        return Ok(Vec::new());
+    };
+    let Some(entries) = entries.as_array() else {
+        return Err(ReadCauseError::Absent {
+            field: "declined".to_owned(),
+        });
+    };
+    entries
+        .iter()
+        .map(|entry| match (text(entry, "test"), text(entry, "why")) {
+            (Some(test), Some(why)) => Ok((test, why)),
+            (None, _) | (_, None) => Err(ReadCauseError::Absent {
+                field: "declined[].test and declined[].why".to_owned(),
+            }),
+        })
+        .collect()
 }
 
 /// The mutant a record is about: the runner writes `mutant`, the engine writes `id`.

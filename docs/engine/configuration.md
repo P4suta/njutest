@@ -186,6 +186,7 @@ compares the outcome, and says which of three things happened.
 | `met` | The run established the declared outcome | The mutant is accounted for and is not a finding |
 | `stale` | The run established something else | A `stale-expectation` finding; the run is not clean |
 | `unmatched` | No mutant of this catalog answers to the identity | An `unmatched-expectation` finding; the claim verifies nothing |
+| `inapplicable` | A fact the claim was established under does not hold in this run | None; the mutant is reported as though no claim named it, and the report says which fact |
 
 `reason` is required by the shape itself.
 An expectation without one is a suppression, and a report cannot audit a suppression.
@@ -203,10 +204,32 @@ reason = "the bound is equivalent under the invariant the type carries"
 outcome = "survived"
 ```
 
+A claim on a file no unit of this build compiled — a module gated to another platform, say — is `inapplicable` without anything written, because discovery walks only the files a unit read ([ADR 0042](../adr/0042-a-claim-holds-where-its-facts-do.md)).
+That file is walked on its own to resolve the locator, so a locator that names nothing in it, or a file that is not there, is `unmatched` on every host.
+
 Never both: an identity and a locator are two ways of naming one mutant and two chances to name different ones.
 A locator whose line has moved still holds, and the report says where the mutation is now.
 `line` is part of the claim, so two claims on one item that differ only in their line are two claims, each with its own reason, and the report names each with its line.
 A mutation two claims both name — a claim on the whole item beside one on a line of it, say — has two reasons, and the run refuses it with `RM0004` naming the mutation, since a report cannot audit which reason holds.
+
+A claim that holds only where some facts do says so with `where`:
+
+```toml
+[[mutation.expect]]
+path = "src/watch.rs"
+item = "Session::refresh"
+rule = "condition-to-false"
+original = "self.watcher.recursive()"
+outcome = "survived"
+where = { cfg = 'target_os = "linux"', env = { REQUIRE_SHARING = "1" } }
+reason = "inotify never watches a subtree, so recursive() is false on every Linux run"
+```
+
+`cfg` is a Cargo `cfg` predicate over the names a target alone decides — `target_*`, `unix`, `windows`, `panic` — as `rustc --print cfg` prints them for the build's target;
+any other name, such as `debug_assertions`, `test` or `feature`, is refused when the file is read, since no probe of the target can say whether it holds.
+`env` names exact values in the environment the tests are given.
+Every name it asks about is part of the outcome store's key and of carry's premises, because the claim declares that an answer depends on it: an answer measured under one value is never read back in a run whose tests are given another.
+Where a fact does not hold the claim is `inapplicable`, and two claims may name one mutation as long as no run makes both apply.
 
 A locator names one mutation.
 Where the same reason is true of several of them at once — the same call written at three places in one function, say —
@@ -270,6 +293,10 @@ Unset, or `0`, counts nothing and leaves the clock as the only bound.
 `RUST_MUTANTS_STEP_BEAT` is `<ms>@<path>`, set by the runner that watches a counted execution for quiet: a process spending a reservation of its allowance rewrites the file at most `<ms>` apart, a quarter of the window, since the state only changes when a reservation is taken ([ADR 0039](../adr/0039-a-step-is-spent-in-memory.md)).
 Anything but canonical milliseconds above zero and a path is a protocol failure.
 
+Every stop the generated runtime makes first writes one line to standard error — `rust-mutants-stop-v1`, the status, the check that failed, and the operating system's code, tab-separated — and the run records that check on the errored mutant and in its trace.
+A copy of the runtime built from another catalog stops as a stale catalog wherever it meets the run, at its first boundary as at its first guard.
+A step-protocol status with no such line comes from a runtime this release did not generate, which is a stale build linked into the tree, and the run says so.
+
 `RUST_MUTANTS_CRASH_NOTICE` and `RUST_MUTANTS_CRASH_NONCE` are set for a run that keeps its scratch for a next run ([ADR 0035](../adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
 When a crash stops the process after its call, the runtime first publishes a notice carrying the schema, the fresh nonce, the catalog and the mutant, in a directory apart from the scratch the test sees.
 A stop is the crash's exit status together with that notice: a test that returns 93 by itself stopped at nothing, and nothing is decided on it.
@@ -280,3 +307,36 @@ Cargo compiles every instrumented tree with an internal RUST_MUTANTS_COMPILED_CA
 A nonempty inherited catalog is accepted only when it equals that embedded digest and exactly one of `ACTIVE` or `TOUCH` is also nonempty.
 A normal binary, a partial pair, a stale catalog, or both modes still earns `RM0006`.
 The internal value is a build input, not a variable a user sets or a test process inherits.
+
+## Declining to measure
+
+A run also names, to every test process it starts, a file a test that cannot measure on this machine says so in, and a test suite adopts it with nothing but the file API it already uses ([ADR 0043](../adr/0043-a-test-may-decline-to-measure.md)).
+The variable is `RUST_MUTANTS_DECLINE_NOTICE`; it is composed for each process and never inherited, and unlike the reserved ones it does not stop a run that finds it set, since a run started from inside a test process composes its own.
+A test that cannot measure here appends one line, its libtest name, a tab, why, and a newline, in one write, and returns:
+
+```rust
+fn decline(why: &str) -> std::io::Result<()> {
+    if let Some(path) = std::env::var_os("RUST_MUTANTS_DECLINE_NOTICE") {
+        let name = std::thread::current().name().unwrap_or_default().to_owned();
+        let mut notice = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+        std::io::Write::write_all(&mut notice, format!("{name}\t{why}\n").as_bytes())?;
+    }
+    Ok(())
+}
+```
+
+libtest names the thread a test runs on after the test, with one thread or many, so the name is taken from there rather than typed: a name that is not a test the process passed makes its notice unbelievable, and every pass of that process with it.
+A decline is the test's last act.
+It sets the whole test aside, so a test that measured part of its work and then declines the rest would hide what the measured part let survive; a test that skips a section and goes on measuring does not decline, and passes on what it measured.
+
+One write matters: libtest runs tests on several threads, and a line appended in pieces can have another test's land inside it, which the run refuses rather than reads.
+The words are compared with the baseline's, so they are the same on every run of the same machine: a temporary path, a process id or a time in them makes every decline under a mutation one the baseline did not make, which is a kill; that detail belongs on standard error.
+A line whose name is empty is the one test's when the process ran exactly one, and is only quoted otherwise.
+
+What the run makes of it:
+
+- A decline is read only where libtest's own count of the tests that passed is whole, and names a test that passed; anything else is not believed, and a pass it came with is not one.
+- A decline the baseline made in the same words is set aside, and where every test that passed was set aside, the mutation is `not_run` with the reason `declined`: nothing on this machine measured it, and that is neither a finding nor a survivor.
+- A decline the baseline did not make, or made in other words, means the mutation changed what the test did, which is a kill.
+- A survivor that stood on other tests stands, with the declines recorded beside it.
+- No answer resting on an execution in which a test declined is kept in the outcome store or carried to another tree.

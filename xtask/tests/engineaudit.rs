@@ -952,11 +952,31 @@ fn every_layer_is_silent_on_the_clean_run_and_loud_on_the_perturbations_that_are
 }
 
 /// The runs of three fixtures, recorded by the engine and committed beside this test.
-const SAMPLES: [(&str, usize, usize); 3] = [
+const SAMPLES: [(&str, usize, usize); 4] = [
     ("engine-run-simple", 13, 0),
     ("engine-run-rejected", 16, 4),
     ("engine-run-unreached", 8, 0),
+    ("engine-run-declined", 25, 0),
 ];
+
+#[test]
+fn every_committed_engine_run_is_one_the_audit_re_decides() {
+    let kept: std::collections::BTreeSet<String> =
+        std::fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata"))
+            .expect("the committed runs")
+            .map(|entry| entry.expect("a committed entry").file_name())
+            .filter_map(|name| name.to_str().map(str::to_owned))
+            .filter(|name| name.starts_with("engine-run-"))
+            .collect();
+    let audited: std::collections::BTreeSet<String> = SAMPLES
+        .iter()
+        .map(|(name, ..)| (*name).to_owned())
+        .collect();
+    assert_eq!(
+        kept, audited,
+        "a committed engine run the audit does not re-decide is evidence nobody reads"
+    );
+}
 
 fn sample(name: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1034,7 +1054,7 @@ fn a_run_the_interruption_stopped_is_not_a_run_that_lost_its_routes() {
             "original": ">", "replacement": ">=",
             "outcome": "not_run", "target": "", "exit_code": 0,
             "duration_ms": 0, "tests_run": null, "killed_by": [], "signal": null,
-            "step_notice": null, "retried": false, "lingered": false, "not_run_reason": "interrupted",
+            "step_notice": null, "retried": false, "lingered": false, "not_run_reason": "interrupted", "declined": [],
             "route": null, "identical": "not-measured",
             "expected": false, "unreached": false, "source_run_id": null
         }]
@@ -1772,7 +1792,7 @@ fn a_filter_decision_needs_a_select_record_and_no_route_for_an_unvalidated_mutan
     document["accounting"] = serde_json::json!({
         "cataloged": 2, "refused": 1, "skipped": 0, "executed": 1,
         "killed": 1, "survived": 0, "step_limit_reached": 0, "waited": 0,
-        "inconclusive": 0, "errored": 0, "not_run": 1, "unreached": 0, "discharged": 0,
+        "inconclusive": 0, "errored": 0, "not_run": 1, "unreached": 0, "discharged": 0, "declined": 0,
         "expected": 0
     });
     document["score"] = serde_json::json!({"detected": 1, "decided": 1, "value": 1.0});
@@ -1946,7 +1966,220 @@ fn undecided(audit: &Audit) -> u8 {
     }
 }
 
+#[test]
+fn a_claim_the_run_did_not_judge_here_names_no_mutant() {
+    let with_claim = |mutant: serde_json::Value| {
+        with(serde_json::json!({
+            "expectations": [
+                {
+                    "id": SURVIVED, "reason": "the bound is equivalent under the invariant",
+                    "outcome": "survived", "mutant": SURVIVED,
+                    "locator": null, "covered": null,
+                    "standing": "met", "actual": "survived", "why": null, "where": null
+                },
+                {
+                    "id": "src/elsewhere.rs seven return-default", "reason": "a number nothing reads",
+                    "outcome": "survived", "mutant": mutant,
+                    "locator": null, "covered": null,
+                    "standing": "inapplicable", "actual": null,
+                    "why": "no unit of this build compiled the file it names", "where": null
+                }
+            ]
+        }))
+    };
+    let quiet = audited(&with_claim(serde_json::Value::Null));
+    assert!(
+        violations(&quiet, Layer::Expectations).is_empty(),
+        "an inapplicable claim that names nothing is what a run writes for one it did not judge: \
+         {quiet}"
+    );
+    let planted = audited(&with_claim(serde_json::json!(SURVIVED)));
+    assert!(
+        violations(&planted, Layer::Expectations)
+            .iter()
+            .any(|said| said.contains("inapplicable and names a mutant")),
+        "a claim the run did not judge accounted for a mutation anyway: {planted}"
+    );
+}
+
+/// The specimen with its one met claim, and `claim` beside it.
+fn beside_the_met_claim(claim: &serde_json::Value) -> serde_json::Value {
+    with(serde_json::json!({
+        "expectations": [
+            {
+                "id": SURVIVED, "reason": "the bound is equivalent under the invariant",
+                "outcome": "survived", "mutant": SURVIVED,
+                "locator": null, "covered": null,
+                "standing": "met", "actual": "survived", "why": null, "where": null
+            },
+            claim
+        ]
+    }))
+}
+
+#[test]
+fn a_claim_is_held_to_where_it_says_it_holds_on_the_target_the_run_recorded() {
+    let claim = |standing: &str, why: serde_json::Value, holds: serde_json::Value| {
+        serde_json::json!({
+            "id": "src/watch.rs Session::refresh condition-to-false", "reason": "inotify",
+            "outcome": "survived", "mutant": null, "locator": null, "covered": null,
+            "standing": standing, "actual": null, "why": why, "where": holds
+        })
+    };
+    let on = |cfg: &str| serde_json::json!({ "cfg": cfg, "env": {} });
+    let quiet = [
+        claim(
+            "unjudged",
+            serde_json::Value::Null,
+            on("target_os = \"linux\""),
+        ),
+        claim(
+            "inapplicable",
+            serde_json::json!("the target does not satisfy cfg(windows)"),
+            on("windows"),
+        ),
+    ];
+    for one in quiet {
+        let audit = audited(&beside_the_met_claim(&one));
+        assert!(
+            violations(&audit, Layer::Expectations).is_empty(),
+            "{one}: the recorded target is linux and unix: {audit}"
+        );
+    }
+    let planted = [
+        (
+            claim("unjudged", serde_json::Value::Null, on("windows")),
+            "does not hold of the target",
+        ),
+        (
+            claim(
+                "inapplicable",
+                serde_json::json!(
+                    "the target does not satisfy cfg(all(unix, target_os = \"linux\"))"
+                ),
+                on("all(unix, target_os = \"linux\")"),
+            ),
+            "holds of the target",
+        ),
+        (
+            claim(
+                "inapplicable",
+                serde_json::json!("the tests are given no REQUIRE_SHARING"),
+                serde_json::Value::Null,
+            ),
+            "its where names none",
+        ),
+    ];
+    for (one, said) in planted {
+        let audit = audited(&beside_the_met_claim(&one));
+        assert!(
+            violations(&audit, Layer::Expectations)
+                .iter()
+                .any(|violation| violation.contains(said)),
+            "{one}: a claim judged where its where does not hold, or not judged where it does, is \
+             refused from the recorded target alone: {audit}"
+        );
+    }
+}
+
 /// Every published schema, compiled.
 fn checkers() -> xtask::schemas::Checkers {
     xtask::schemas::Checkers::compiled().expect("the published schemas compile")
+}
+
+/// The specimen with its survivor turned into a mutation whose one test declined, as the baseline's did, and the recording of it: the baseline says `excused`, and the execution ran `tests_run` tests and recorded `recorded`.
+fn declined_specimen(
+    excused: &serde_json::Value,
+    (tests_run, recorded): (u64, &serde_json::Value),
+    row: &serde_json::Value,
+) -> (serde_json::Value, Vec<serde_json::Value>) {
+    let report = with(serde_json::json!({
+        "mutants": [{}, row],
+        "accounting": {"survived": 0, "not_run": 1, "declined": 1, "executed": 1, "expected": 0},
+        "score": {"detected": 1, "decided": 1, "value": 1.0}
+    }));
+    let mut events = recording();
+    for event in &mut events {
+        match event["type"].as_str() {
+            Some("verify") => event["verify"]["declined"] = excused.clone(),
+            Some("mutant-exec") if event["mutant"]["index"] == 1 => {
+                event["mutant"]["outcome"] = serde_json::json!("not_run");
+                event["mutant"]["tests_run"] = serde_json::json!(tests_run);
+                event["mutant"]["declined"] = recorded.clone();
+            }
+            _ => {}
+        }
+    }
+    (report, events)
+}
+
+/// The row of a mutation every test that reached it declined to measure, naming `declined`.
+fn declined_row(declined: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "outcome": "not_run", "not_run_reason": "declined", "declined": declined,
+        "expected": false, "tests_run": 1
+    })
+}
+
+fn decline_rulings(audit: &Audit) -> Vec<String> {
+    violations(audit, Layer::Trace)
+        .into_iter()
+        .filter(|said| said.contains("declin"))
+        .collect()
+}
+
+#[test]
+fn a_mutation_every_test_declined_as_the_baseline_did_is_one_the_recording_holds() {
+    let decline = serde_json::json!([{"test": "larger_ties", "why": "no disk here"}]);
+    let (report, events) = declined_specimen(&decline, (1, &decline), &declined_row(&decline));
+    let audit = audited_with(&report, &events);
+    assert!(
+        decline_rulings(&audit).is_empty(),
+        "every test that ran declined in the words the baseline did, so the execution measured \
+         nothing and the row says so: {audit}"
+    );
+}
+
+#[test]
+fn a_decline_the_row_misstates_is_refused_from_the_recording_alone() {
+    let decline = serde_json::json!([{"test": "larger_ties", "why": "no disk here"}]);
+    let other = serde_json::json!([{"test": "larger_ties", "why": "no network here"}]);
+    for (case, specimen, said) in [
+        (
+            "the baseline made no such decline",
+            declined_specimen(
+                &serde_json::json!([]),
+                (1, &decline),
+                &declined_row(&decline),
+            ),
+            "which its baseline did not say",
+        ),
+        (
+            "the baseline declined in other words",
+            declined_specimen(&other, (1, &decline), &declined_row(&decline)),
+            "which its baseline did not say",
+        ),
+        (
+            "a test that ran measured",
+            declined_specimen(&decline, (2, &decline), &declined_row(&decline)),
+            "holds a test that measured",
+        ),
+        (
+            "the row names other declines than its execution recorded",
+            declined_specimen(
+                &decline,
+                (1, &decline),
+                &declined_row(&serde_json::json!([])),
+            ),
+            "the row says 0 declined",
+        ),
+    ] {
+        let (report, events) = specimen;
+        let audit = audited_with(&report, &events);
+        let rulings = decline_rulings(&audit);
+        assert!(
+            rulings.iter().any(|ruling| ruling.contains(said)),
+            "{case}: {rulings:#?}\n{audit}"
+        );
+    }
 }

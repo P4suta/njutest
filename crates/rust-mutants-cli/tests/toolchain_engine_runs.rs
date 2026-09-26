@@ -19,10 +19,11 @@ use rust_mutants::run::Exit;
 const UPDATE: &str = "UPDATE_ENGINE_RUNS";
 
 /// Each committed run, by the directory it is kept in, and the fixture it is a run of.
-const SAMPLES: [(&str, &str); 3] = [
+const SAMPLES: [(&str, &str); 4] = [
     ("engine-run-simple", "fixture-simple"),
     ("engine-run-rejected", "fixture-rejectable"),
     ("engine-run-unreached", "fixture-unreached"),
+    ("engine-run-declined", "fixture-declines"),
 ];
 
 /// Every document a run left at the top of `directory`, by name, which is every document a committed run keeps: a list written here would miss the next one the engine learns to write.
@@ -182,5 +183,22 @@ fn every_committed_engine_run_has_the_shape_todays_engine_records() {
         "a committed engine run the engine no longer records is a sample the audit re-decides \
          for nobody: read the difference, then record them again with {UPDATE}=1:\n{}",
         stale.join("\n")
+    );
+}
+
+#[test]
+fn every_committed_engine_run_is_one_this_test_records_again() {
+    let kept: BTreeSet<String> =
+        std::fs::read_dir(njutest_devkit::paths::workspace_root().join("xtask/tests/testdata"))
+            .expect("the committed runs")
+            .map(|entry| entry.expect("a committed entry").file_name())
+            .filter_map(|name| name.to_str().map(str::to_owned))
+            .filter(|name| name.starts_with("engine-run-"))
+            .collect();
+    let recorded: BTreeSet<String> = SAMPLES.iter().map(|(name, _)| (*name).to_owned()).collect();
+    assert_eq!(
+        kept, recorded,
+        "a committed engine run this test does not record again drifts from the engine without \
+         anything noticing, and one it names that is not committed is a sample of nothing"
     );
 }

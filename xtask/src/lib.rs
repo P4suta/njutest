@@ -20,6 +20,7 @@ pub mod faults;
 pub mod fixtures;
 pub mod fuzzclippy;
 pub mod gates;
+pub mod invariants;
 pub mod kaniaudit;
 pub mod kanilaws;
 pub mod knobs;
@@ -34,6 +35,7 @@ pub mod release;
 pub mod remote;
 pub mod repair;
 pub mod reportdiff;
+pub mod repository;
 pub mod route;
 pub mod sbom;
 pub mod schemas;
@@ -124,6 +126,8 @@ enum Gate {
     Milestones,
     /// Every decision record has one number, carries it in its heading, is listed once in the book under it, and is named only as it is.
     Adrs,
+    /// Every critical decision has a row saying what holds it at every layer, each naming what the tree defines, and every hole is one somebody owns.
+    Invariants,
     /// Every public function of an incidental surface is reached by something that ships.
     Reached,
     /// No audit reader supplies more values its input never gave than its ceiling allows.
@@ -276,6 +280,7 @@ where
             .map_err(|error| gates::GateError(error.coded())),
         Gate::Milestones => gates::milestones(&root),
         Gate::Adrs => gates::adrs(&root),
+        Gate::Invariants => gates::invariants(&root),
         Gate::Reached => gates::reached(&root),
         Gate::Defaulted => gates::defaulted(&root),
         Gate::Surfaces => gates::surfaces(&root),
@@ -571,12 +576,15 @@ fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> 
 
 /// The run's own exit `code` where it left nothing in `scratch`, and a refusal naming each entry where it did.
 fn left_behind(scratch: &Path, code: u8, stderr: &mut dyn Write) -> ExitCode {
-    let left = match std::fs::read_dir(scratch) {
-        Ok(entries) => entries
-            .map(|entry| entry.map(|entry| entry.file_name().display().to_string()))
-            .collect::<std::io::Result<Vec<String>>>(),
-        Err(source) => Err(source),
-    };
+    let left = repository::entries(scratch).map(|entries| {
+        entries
+            .iter()
+            .map(|entry| match entry.file_name() {
+                Some(name) => name.display().to_string(),
+                None => entry.display().to_string(),
+            })
+            .collect::<Vec<String>>()
+    });
     match left {
         Ok(left) if left.is_empty() => ExitCode::from(code),
         Ok(mut left) => {

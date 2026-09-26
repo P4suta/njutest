@@ -17,6 +17,10 @@ Options:
       --root <DIR>
           The workspace root. Defaults to the working directory
 
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
+
   -p, --package <NAME>
           Ask about these packages rather than every member. Repeatable
 

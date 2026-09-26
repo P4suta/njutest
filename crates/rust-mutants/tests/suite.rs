@@ -9,6 +9,8 @@ mod annotate;
 mod branch;
 #[path = "build_identity.rs"]
 mod build_identity;
+#[path = "built.rs"]
+mod built;
 #[path = "canonical.rs"]
 mod canonical;
 #[path = "capdir.rs"]
@@ -29,6 +31,8 @@ mod census;
 mod count;
 #[path = "coverage.rs"]
 mod coverage;
+#[path = "decline.rs"]
+mod decline;
 #[path = "devkit_environment.rs"]
 mod devkit_environment;
 #[path = "docs_ledger.rs"]
@@ -41,6 +45,8 @@ mod equivalence;
 mod errors_doc;
 #[path = "execute.rs"]
 mod execute;
+#[path = "facts.rs"]
+mod facts;
 #[path = "flatten.rs"]
 mod flatten;
 #[path = "forbid.rs"]
@@ -73,6 +79,8 @@ mod probe_form;
 mod prove;
 #[path = "reach.rs"]
 mod reach;
+#[path = "regroup.rs"]
+mod regroup;
 #[path = "replace.rs"]
 mod replace;
 #[path = "route.rs"]
@@ -89,6 +97,8 @@ mod runner;
 mod sentinel;
 #[path = "session.rs"]
 mod session;
+#[path = "shape.rs"]
+mod shape;
 #[path = "skeleton.rs"]
 mod skeleton;
 #[path = "snapshot.rs"]

@@ -172,7 +172,7 @@ fn what_is_recorded_is_what_the_next_run_can_check_and_nothing_else() {
     keep(
         &held,
         &id(1),
-        (&reaching(&["core/lib/core"]), &[]),
+        (&reaching(&["core/lib/core"]), &[], &[]),
         &Disposition::Killed {
             by: "core/lib/nobody".to_owned(),
         },
@@ -190,7 +190,7 @@ fn what_is_recorded_is_what_the_next_run_can_check_and_nothing_else() {
     keep(
         &held,
         &id(2),
-        (&reaching(&["core/lib/core", "core/lib/newcomer"]), &[]),
+        (&reaching(&["core/lib/core", "core/lib/newcomer"]), &[], &[]),
         &Disposition::Survived {
             route: reaching(&["core/lib/core", "core/lib/newcomer"]),
         },
@@ -216,7 +216,7 @@ fn what_is_recorded_is_what_the_next_run_can_check_and_nothing_else() {
         keep(
             &held,
             &mutant,
-            (&reaching(&["core/lib/core"]), &[]),
+            (&reaching(&["core/lib/core"]), &[], &[]),
             &disposition,
         )
         .expect("a non-cacheable disposition writes nothing successfully");
@@ -243,7 +243,7 @@ fn recorded(root: &std::path::Path, held: &MutationOptions) {
     keep(
         held,
         &id(5),
-        (&reaching(&["core/lib/core"]), &[]),
+        (&reaching(&["core/lib/core"]), &[], &[]),
         &Disposition::Killed {
             by: "core/lib/core".to_owned(),
         },
@@ -252,7 +252,7 @@ fn recorded(root: &std::path::Path, held: &MutationOptions) {
     keep(
         held,
         &id(6),
-        (&reaching(&["core/lib/core", "core/test/wide"]), &[]),
+        (&reaching(&["core/lib/core", "core/test/wide"]), &[], &[]),
         &Disposition::Survived {
             route: reaching(&["core/lib/core", "core/test/wide"]),
         },
@@ -276,7 +276,7 @@ fn recorded(root: &std::path::Path, held: &MutationOptions) {
     keep(
         held,
         &id(8),
-        (&reaching(&["core/lib/core"]), &[]),
+        (&reaching(&["core/lib/core"]), &[], &[]),
         &Disposition::StepLimitReached {
             on: "core/lib/core".to_owned(),
             boundary: StepBoundary::new(10, 11).expect("the first count beyond the allowance"),
@@ -291,7 +291,7 @@ fn recorded(root: &std::path::Path, held: &MutationOptions) {
     keep(
         held,
         &id(7),
-        (&reaching(&[]), &[]),
+        (&reaching(&[]), &[], &[]),
         &Disposition::Survived {
             route: reaching(&[]),
         },
@@ -386,7 +386,7 @@ fn a_run_with_nowhere_to_read_or_write_evidence_neither_believes_nor_records() {
     keep(
         &none,
         &id(1),
-        (&reaching(&["core/lib/core"]), &[]),
+        (&reaching(&["core/lib/core"]), &[], &[]),
         &Disposition::Killed {
             by: "core/lib/core".to_owned(),
         },

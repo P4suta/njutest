@@ -76,6 +76,7 @@ fn mutant(index: u32, outcome: Outcome, rule: &str) -> RunMutantDocument {
         killed_by: Vec::new(),
         signal: None,
         not_run_reason: None,
+        declined: Vec::new(),
         route: None,
         identical: rust_mutants::run::CodegenIdentity::NotMeasured,
         retried: false,
@@ -141,6 +142,7 @@ fn document() -> RunDocument {
             not_run: 0_u32.into(),
             unreached: 0_u32.into(),
             discharged: 0_u32.into(),
+            declined: 0_u32.into(),
             expected: 0_u32.into(),
         },
         score: Some(ScoreDocument {
@@ -157,6 +159,7 @@ fn document() -> RunDocument {
         skips: Vec::new(),
         expectations: Vec::new(),
         findings: Vec::new(),
+        facts: Vec::new(),
     }
 }
 

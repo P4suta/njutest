@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 /// The name of the shape.
-pub const SCHEMA: &str = "rust-mutants-outcome-v2";
+pub const SCHEMA: &str = "rust-mutants-outcome-v3";
 
 /// The directory records live in, below the user's cache directory.
-pub const LAYOUT: &str = "rust-mutants/outcomes-v2";
+pub const LAYOUT: &str = "rust-mutants/outcomes-v3";
 
 /// Bumped when a rule changes what it writes, so a record about the old edit stops answering.
 pub const RULE_ABI: u32 = 1;
@@ -28,7 +28,7 @@ pub const INSTRUMENTATION_ABI: u32 = 3;
 pub const STEP_POLICY_ABI: u32 = 1;
 
 /// Bumped when a record changes what it holds, or when the recipe changes what a key is computed from.
-pub const CACHE_ABI: u32 = 8;
+pub const CACHE_ABI: u32 = 9;
 
 /// An outcome strong enough to answer a later identical run.
 ///
@@ -109,6 +109,49 @@ pub struct Keyed {
     /// `None` where the engine itself asked, as rust-mutants does, which is a different question from any runner's.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub runner: Option<String>,
+    /// The variables the configuration declared an answer depends on, and what the tests were given of them.
+    pub declared: Declared,
+}
+
+/// The variables a claim's `where.env` names, which the configuration thereby declares an answer may depend on, and the digest of what the tests were given of each.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Declared {
+    /// Every declared name, sorted and once each.
+    pub names: Vec<String>,
+    /// The digest of each name beside its absence or its value, so a record says which variables it rests on without saying what they held.
+    pub digest: String,
+}
+
+impl Declared {
+    /// What `given`, the environment the tests are given, holds of each of `names`.
+    #[must_use]
+    pub fn of(
+        names: &std::collections::BTreeSet<String>,
+        given: &[(std::ffi::OsString, std::ffi::OsString)],
+    ) -> Self {
+        let mut hasher = Sha256::new();
+        for name in names {
+            hash_length(&mut hasher, name.len());
+            hasher.update(name.as_bytes());
+            match given
+                .iter()
+                .find(|(held, _)| held.as_os_str() == std::ffi::OsStr::new(name))
+            {
+                None => hasher.update(b"unset"),
+                Some((_, value)) => {
+                    let bytes = value.as_encoded_bytes();
+                    hasher.update(b"set");
+                    hash_length(&mut hasher, bytes.len());
+                    hasher.update(bytes);
+                }
+            }
+        }
+        Self {
+            names: names.iter().cloned().collect(),
+            digest: HexDigest::finish(hasher).to_string(),
+        }
+    }
 }
 
 impl Keyed {
@@ -145,6 +188,7 @@ impl Keyed {
             &self.steps.to_string(),
             &self.engine,
             &self.runner_tag(),
+            &self.declared.digest,
         ] {
             hash_length(&mut hasher, field.len());
             hasher.update(field.as_bytes());

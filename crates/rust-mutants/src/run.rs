@@ -60,6 +60,51 @@ pub struct Expectation {
     pub reason: String,
     /// The outcome the run must confirm.
     pub outcome: Outcome,
+    /// Where the claim is judged, which is everywhere unless it names facts (ADR 0042).
+    pub under: Where,
+}
+
+/// The facts a claim was established under: a `cfg` over the target and exact values of the tests' environment.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Where {
+    /// The predicate over the target that must hold, when the claim names one.
+    pub cfg: Option<crate::facts::Predicate>,
+    /// Each name of the environment the tests are given, with the value it must have.
+    pub env: std::collections::BTreeMap<String, String>,
+}
+
+/// Why a claim was not judged in this run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unheld {
+    /// The file it names is one no unit of this build read.
+    NotCompiled,
+    /// The target does not satisfy the `cfg` it names.
+    Cfg {
+        /// The predicate, as the claim wrote it.
+        predicate: String,
+    },
+    /// The environment the tests are given does not hold a value the claim names.
+    Env {
+        /// The name.
+        name: String,
+        /// Whether the tests are given the name at all; its value is never written anywhere, since it may be a secret.
+        given: bool,
+    },
+}
+
+impl Unheld {
+    /// The fact that did not hold, as a reader reads it.
+    #[must_use]
+    pub fn said(&self) -> String {
+        match self {
+            Self::NotCompiled => "no unit of this build compiled the file it names".to_owned(),
+            Self::Cfg { predicate } => format!("the target does not satisfy cfg({predicate})"),
+            Self::Env { name, given: true } => format!(
+                "the tests are given {name} with another value than the one the claim holds under"
+            ),
+            Self::Env { name, given: false } => format!("the tests are given no {name}"),
+        }
+    }
 }
 
 impl Expectation {
@@ -134,6 +179,8 @@ pub struct Judged {
     pub exit_code: i32,
     /// Why the last execution's process never started, where it did not.
     pub start_failure: Option<crate::execute::StartFailure>,
+    /// How the step protocol failed in the last execution, where that is what stopped it.
+    pub protocol_failure: Option<crate::execute::StepProtocolFailure>,
     /// How long every execution of this mutant took together.
     pub duration: Duration,
     /// How many tests ran, when the harness said.
@@ -159,6 +206,8 @@ pub struct Judged {
     pub measured: bool,
     /// What comparison of the compiler artifacts established.
     pub identical: CodegenIdentity,
+    /// Each test that declined to measure in the execution the outcome rests on, in its words (ADR 0043).
+    pub declined: Vec<crate::decline::Decline>,
 }
 
 /// Whether a reviewer's claim about one mutant held.
@@ -185,6 +234,11 @@ pub enum Standing {
     },
     /// The claim names mutations of this catalog, and this run decided none of them: a selection left them out, another shard holds them, or the run stopped first.
     Unjudged,
+    /// The claim is not judged here, because a fact it was established under does not hold (ADR 0042).
+    Inapplicable {
+        /// The fact.
+        because: Unheld,
+    },
 }
 
 /// One declared expectation, as the run left it.
@@ -205,6 +259,8 @@ pub struct Verified {
     pub covered: u32,
     /// Whether the claim held.
     pub standing: Standing,
+    /// Where the claim is judged, as the file wrote it.
+    pub under: Where,
 }
 
 /// What kind of hole a finding names.
@@ -413,6 +469,8 @@ pub struct Tally {
     pub unreached: u32,
     /// How many of those never ran because a proof removed every target that could have noticed them.
     pub discharged: u32,
+    /// How many of those measured nothing because every test that reached them declined to measure on this machine (ADR 0043).
+    pub declined: u32,
     /// How many survivors a reviewer had declared, and the run confirmed.
     pub expected: u32,
 }
@@ -496,6 +554,12 @@ impl Run {
                     .checked_add(1)
                     .ok_or(SessionError::RunCountOverflow)?;
             }
+            if one.not_run_reason == Some(NotRunReason::Declined) {
+                tally.declined = tally
+                    .declined
+                    .checked_add(1)
+                    .ok_or(SessionError::RunCountOverflow)?;
+            }
             if one.expected {
                 tally.expected = tally
                     .expected
@@ -533,30 +597,15 @@ impl Run {
     pub fn findings(&self) -> Vec<Finding> {
         let mut findings = Vec::new();
         for one in &self.judged {
-            let kind = match one.outcome {
-                Outcome::Survived if one.expected => continue,
-                Outcome::Survived => FindingKind::SurvivingMutant,
-                Outcome::Inconclusive => FindingKind::InconclusiveMutant,
-                Outcome::NotRun if one.not_run_reason == Some(NotRunReason::Unreached) => {
-                    FindingKind::UnreachedMutant
-                }
-                Outcome::NotRun if one.not_run_reason == Some(NotRunReason::Discharged) => {
-                    FindingKind::DischargedMutant
-                }
-                Outcome::NotRun
-                    if matches!(
-                        one.not_run_reason,
-                        Some(NotRunReason::Unselected | NotRunReason::StoppedEarly)
-                    ) =>
-                {
-                    continue;
-                }
-                Outcome::NotRun if self.interrupted => continue,
-                Outcome::NotRun => FindingKind::NotRunMutant,
-                Outcome::Killed => continue,
-                Outcome::StepLimitReached => FindingKind::StepLimitReachedMutant,
-                Outcome::Waited => FindingKind::WaitedMutant,
-                Outcome::Errored => FindingKind::ErroredMutant,
+            let Some(kind) = verdict_finding(
+                RowVerdict {
+                    outcome: one.outcome,
+                    not_run_reason: one.not_run_reason,
+                    expected: one.expected,
+                },
+                self.interrupted,
+            ) else {
+                continue;
             };
             findings.push(Finding {
                 kind,
@@ -566,7 +615,10 @@ impl Run {
         }
         for expectation in &self.expectations {
             match &expectation.standing {
-                Standing::Met | Standing::Moved { .. } | Standing::Unjudged => {}
+                Standing::Met
+                | Standing::Moved { .. }
+                | Standing::Unjudged
+                | Standing::Inapplicable { .. } => {}
                 Standing::Stale { actual } => findings.push(Finding {
                     kind: FindingKind::StaleExpectation,
                     mutant: expectation.mutant.clone(),
@@ -665,13 +717,20 @@ fn detail(kind: FindingKind, one: &Judged) -> String {
                 &one.target
             }
         ),
-        FindingKind::ErroredMutant => match &one.start_failure {
-            Some(cause) => format!(
+        FindingKind::ErroredMutant => match (&one.start_failure, &one.protocol_failure) {
+            (Some(cause), _) => format!(
                 "the harness never started on {}: {}, so nothing about the tests was established",
                 one.display_id,
                 cause.sentence()
             ),
-            None => format!(
+            (None, Some(failure)) => format!(
+                "{} ended its test process with exit {}: {}, so nothing about the tests was \
+                 established",
+                one.display_id,
+                one.exit_code,
+                failure.sentence()
+            ),
+            (None, None) => format!(
                 "the harness itself failed on {} with exit {}, so nothing about the tests was \
                  established",
                 one.display_id, one.exit_code
@@ -1078,6 +1137,72 @@ fn addressed<'s>(
     Ok((mutants, moved))
 }
 
+/// What a claim that applies here and names `mutants` stands as, marking the rows it accounts for: how many it was resolved against, the one that decided it, and its standing.
+fn decided(
+    judged: &mut [Judged],
+    expectation: &Expectation,
+    shard: Option<Shard>,
+    (mutants, moved): (Vec<&Mutant>, Option<Standing>),
+) -> Result<(u32, Option<String>, Standing), SessionError> {
+    let every: Vec<String> = mutants.iter().map(|mutant| mutant.id.to_string()).collect();
+    let ids: Vec<String> = mutants
+        .iter()
+        .filter(|mutant| shard.is_none_or(|part| part.holds(mutant.index)))
+        .map(|mutant| mutant.id.to_string())
+        .filter(|id| decided_here(judged, id))
+        .collect();
+    let (named, standing) = if ids.is_empty() {
+        (None, Standing::Unjudged)
+    } else {
+        standing_of(judged, expectation.outcome, &ids)
+    };
+    let standing = match standing {
+        Standing::Met => moved.unwrap_or(Standing::Met),
+        held @ (Standing::Moved { .. }
+        | Standing::Stale { .. }
+        | Standing::Unmatched { .. }
+        | Standing::Unjudged
+        | Standing::Inapplicable { .. }) => held,
+    };
+    if matches!(standing, Standing::Met | Standing::Moved { .. }) {
+        for one in judged.iter_mut().filter(|one| ids.contains(&one.id)) {
+            one.expected = true;
+        }
+    }
+    let covered = u32::try_from(every.len()).map_err(|_outside_range| {
+        SessionError::ExpectationCoverageTooLarge { count: every.len() }
+    })?;
+    Ok((covered, named, standing))
+}
+
+/// What a claim the catalog does not answer for stands as: not judged here where it names something in a file no unit read, unjudged where a narrowed run left its file out, and otherwise unmatched.
+fn unresolved(
+    session: &Session,
+    expectation: &Expectation,
+    narrowed: bool,
+    why: &AddressError,
+) -> Standing {
+    if uncompiled(session, expectation) {
+        Standing::Inapplicable {
+            because: Unheld::NotCompiled,
+        }
+    } else if narrowed && !scanned(session, expectation) {
+        Standing::Unjudged
+    } else {
+        Standing::Unmatched {
+            why: why.to_string(),
+        }
+    }
+}
+
+/// Whether a claim names something in a file no unit of this build read, found by walking that file as discovery walks the ones it did.
+fn uncompiled(session: &Session, expectation: &Expectation) -> bool {
+    expectation
+        .locator
+        .as_ref()
+        .is_some_and(|locator| session.unread(locator) == crate::session::Unread::Named)
+}
+
 /// Whether the file a claim names is one this run's catalog was built from rather than one its selection left out; a claim by identity names no file, so a narrowed run cannot say.
 fn scanned(session: &Session, expectation: &Expectation) -> bool {
     expectation.locator.as_ref().is_some_and(|locator| {
@@ -1368,7 +1493,7 @@ fn one_mutant(
         return Ok(one);
     }
     let (established, asked) = execute(session, mutant, options, cancel)?;
-    keep(mutant, options, &established)?;
+    keep(mutant, options, (&established, &asked))?;
     carry(session, mutant, (options, cancel), (&established, &asked))?;
     Ok(established)
 }
@@ -1727,6 +1852,8 @@ pub enum NotRunReason {
     Unselected,
     /// The run stopped at the first finding, as it was asked to.
     StoppedEarly,
+    /// Every test that reached it declined to measure on this machine, as the baseline's did (ADR 0043).
+    Declined,
 }
 
 impl NotRunReason {
@@ -1745,6 +1872,7 @@ impl NotRunReason {
             Self::Interrupted => "interrupted",
             Self::Unselected => "unselected",
             Self::StoppedEarly => "stopped-early",
+            Self::Declined => "declined",
         }
     }
 
@@ -1793,6 +1921,23 @@ fn execute(
     let result = attempts.into_result();
     let outcome = result.outcome();
     let tests_run = result.tests_run();
+    let not_run_reason = not_run_because(&result.conclusion, &route);
+    let declined = match &result.declines {
+        crate::decline::Declines::Read { declined, .. } => declined.clone(),
+        crate::decline::Declines::Unbelieved { .. } => Vec::new(),
+    };
+    let failed_tests = match &result.conclusion {
+        crate::execute::MutantConclusion::DeclinedUnderTheMutant { by } => vec![by.test.clone()],
+        crate::execute::MutantConclusion::NotRun
+        | crate::execute::MutantConclusion::Killed
+        | crate::execute::MutantConclusion::Survived
+        | crate::execute::MutantConclusion::StepLimitReached { .. }
+        | crate::execute::MutantConclusion::Waited
+        | crate::execute::MutantConclusion::Inconclusive
+        | crate::execute::MutantConclusion::Unobserved
+        | crate::execute::MutantConclusion::Errored
+        | crate::execute::MutantConclusion::Declined { .. } => result.failed_tests.clone(),
+    };
     let judged = Judged {
         index: mutant.index,
         id: mutant.id.to_string(),
@@ -1802,25 +1947,75 @@ fn execute(
         target: result.target,
         exit_code: result.exit_code,
         start_failure: result.stopped.start_failure().cloned(),
+        protocol_failure: result.stopped.protocol_failure().cloned(),
         duration,
         tests_run,
-        failed_tests: result.failed_tests,
+        failed_tests,
         signal: result.signal,
         retried,
         lingered: result.lingered,
         expected: false,
-        not_run_reason: not_run_because(outcome, &route),
+        not_run_reason,
         route: Some(crate::report::run::route_document(&route, executed)),
         measured: true,
         identical: CodegenIdentity::NotMeasured,
         source_run_id: None,
+        declined,
     };
     Ok((judged, asked))
 }
 
-/// Why a mutant that was never executed was not, when it was not.
-fn not_run_because(outcome: Outcome, route: &crate::session::Route) -> Option<NotRunReason> {
-    if outcome != Outcome::NotRun {
+/// What a mutant's finding is decided from, whether the row is the run's or its report's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RowVerdict {
+    /// What the execution says.
+    pub outcome: Outcome,
+    /// Why it was never executed, or measured nothing where it was, when it was not.
+    pub not_run_reason: Option<NotRunReason>,
+    /// Whether a reviewer declared this outcome in advance and the run confirmed the claim.
+    pub expected: bool,
+}
+
+/// The finding `row` raises in a run that was or was not `interrupted`, when it raises one: the one place that says which verdicts keep a run from being clean, for the run and for every reader of its report.
+#[must_use]
+pub const fn verdict_finding(row: RowVerdict, interrupted: bool) -> Option<FindingKind> {
+    let RowVerdict {
+        outcome,
+        not_run_reason: reason,
+        expected,
+    } = row;
+    match outcome {
+        Outcome::Killed => None,
+        Outcome::Survived if expected => None,
+        Outcome::Survived => Some(FindingKind::SurvivingMutant),
+        Outcome::StepLimitReached => Some(FindingKind::StepLimitReachedMutant),
+        Outcome::Waited => Some(FindingKind::WaitedMutant),
+        Outcome::Inconclusive => Some(FindingKind::InconclusiveMutant),
+        Outcome::Errored => Some(FindingKind::ErroredMutant),
+        Outcome::NotRun => match reason {
+            Some(NotRunReason::Unreached) => Some(FindingKind::UnreachedMutant),
+            Some(NotRunReason::Discharged) => Some(FindingKind::DischargedMutant),
+            Some(
+                NotRunReason::Interrupted
+                | NotRunReason::Unselected
+                | NotRunReason::StoppedEarly
+                | NotRunReason::Declined,
+            ) => None,
+            None if interrupted => None,
+            None => Some(FindingKind::NotRunMutant),
+        },
+    }
+}
+
+/// Why a mutant that was never executed, or measured nothing where it was, was not, when it was not.
+fn not_run_because(
+    conclusion: &crate::execute::MutantConclusion,
+    route: &crate::session::Route,
+) -> Option<NotRunReason> {
+    if let crate::execute::MutantConclusion::Declined { .. } = conclusion {
+        return Some(NotRunReason::Declined);
+    }
+    if conclusion.outcome() != Outcome::NotRun {
         return None;
     }
     match route {
@@ -1961,6 +2156,7 @@ fn remembered(mutant: &Mutant, outcome: Outcome, record: Remembered) -> Judged {
         target: record.target,
         exit_code: 0,
         start_failure: None,
+        protocol_failure: None,
         duration: Duration::ZERO,
         tests_run: record.tests_run,
         failed_tests: record.failed_tests,
@@ -1973,6 +2169,7 @@ fn remembered(mutant: &Mutant, outcome: Outcome, record: Remembered) -> Judged {
         measured: false,
         identical: CodegenIdentity::NotMeasured,
         source_run_id: Some(record.run_id),
+        declined: Vec::new(),
     }
 }
 
@@ -2058,8 +2255,12 @@ fn carry(
 }
 
 /// Records what this run established, for the next run of this exact tree.
-/// Only an outcome about the mutant is kept: a run that could not decide, or that never ran, says nothing the next run could inherit.
-fn keep(mutant: &Mutant, options: &Options<'_>, judged: &Judged) -> Result<(), EngineError> {
+/// Only an outcome about the mutant is kept: a run that could not decide, or that never ran, says nothing the next run could inherit, and neither does one resting on an execution in which a test declined to measure.
+fn keep(
+    mutant: &Mutant,
+    options: &Options<'_>,
+    (judged, asked): (&Judged, &[crate::execute::MutantResult]),
+) -> Result<(), EngineError> {
     if let Some(reusing) = options.outcomes.as_ref()
         && judged.outcome == Outcome::Killed
     {
@@ -2079,7 +2280,7 @@ fn keep(mutant: &Mutant, options: &Options<'_>, judged: &Judged) -> Result<(), E
         | Outcome::Inconclusive
         | Outcome::Errored => return Ok(()),
     };
-    if !reusing.keyed.usable() {
+    if !reusing.keyed.usable() || !crate::decline::storable(asked) {
         return Ok(());
     }
     let mutant_id = crate::id::HexDigest::try_from(mutant.id.as_str())?;
@@ -2106,6 +2307,7 @@ fn unexecuted(mutant: &Mutant, reason: NotRunReason) -> Judged {
         target: String::new(),
         exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
         start_failure: None,
+        protocol_failure: None,
         duration: Duration::ZERO,
         tests_run: None,
         failed_tests: Vec::new(),
@@ -2118,6 +2320,7 @@ fn unexecuted(mutant: &Mutant, reason: NotRunReason) -> Judged {
         measured: false,
         identical: CodegenIdentity::NotMeasured,
         source_run_id: None,
+        declined: Vec::new(),
     }
 }
 
@@ -2138,9 +2341,10 @@ pub fn verify(
     let mut reasons: std::collections::BTreeMap<u32, String> = std::collections::BTreeMap::new();
     for expectation in expectations {
         let resolved = addressed(session, expectation);
-        let named: &[&Mutant] = match &resolved {
-            Ok((mutants, _moved)) => mutants,
-            Err(_unresolved) => &[],
+        let applies = session.holds(&expectation.under);
+        let named: &[&Mutant] = match (&resolved, &applies) {
+            (Ok((mutants, _moved)), Ok(())) => mutants,
+            (Err(_), _) | (Ok(_), Err(_)) => &[],
         };
         for mutant in named {
             if let Some(first) = reasons.insert(mutant.index, expectation.name()) {
@@ -2154,48 +2358,10 @@ pub fn verify(
                 });
             }
         }
-        let (covered, mutant, standing) = match resolved {
-            Err(_beyond) if narrowed && !scanned(session, expectation) => {
-                (0, None, Standing::Unjudged)
-            }
-            Err(why) => (
-                0,
-                None,
-                Standing::Unmatched {
-                    why: why.to_string(),
-                },
-            ),
-            Ok((mutants, moved)) => {
-                let every: Vec<String> =
-                    mutants.iter().map(|mutant| mutant.id.to_string()).collect();
-                let ids: Vec<String> = mutants
-                    .iter()
-                    .filter(|mutant| shard.is_none_or(|part| part.holds(mutant.index)))
-                    .map(|mutant| mutant.id.to_string())
-                    .filter(|id| decided_here(judged, id))
-                    .collect();
-                let (named, standing) = if ids.is_empty() {
-                    (None, Standing::Unjudged)
-                } else {
-                    standing_of(judged, expectation.outcome, &ids)
-                };
-                let standing = match standing {
-                    Standing::Met => moved.unwrap_or(Standing::Met),
-                    held @ (Standing::Moved { .. }
-                    | Standing::Stale { .. }
-                    | Standing::Unmatched { .. }
-                    | Standing::Unjudged) => held,
-                };
-                if matches!(standing, Standing::Met | Standing::Moved { .. }) {
-                    for one in judged.iter_mut().filter(|one| ids.contains(&one.id)) {
-                        one.expected = true;
-                    }
-                }
-                let covered = u32::try_from(every.len()).map_err(|_outside_range| {
-                    SessionError::ExpectationCoverageTooLarge { count: every.len() }
-                })?;
-                (covered, named, standing)
-            }
+        let (covered, mutant, standing) = match (resolved, applies) {
+            (Err(why), _) => (0, None, unresolved(session, expectation, narrowed, &why)),
+            (Ok(_), Err(because)) => (0, None, Standing::Inapplicable { because }),
+            (Ok(named), Ok(())) => decided(judged, expectation, shard, named)?,
         };
         verified.push(Verified {
             id: expectation.name(),
@@ -2205,6 +2371,7 @@ pub fn verify(
             mutant,
             covered,
             standing,
+            under: expectation.under.clone(),
         });
     }
     Ok(verified)

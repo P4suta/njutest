@@ -35,8 +35,8 @@ pub use runtime::{
     CRASH_NOTICE_SCHEMA, CRASHED_CALL, DELAY_ENV, FAULT_ENV, INJECTED, INJECTED_CALL, MODULE_STEM,
     ModuleNameError, ORPHAN_PREFIX, RUNTIME_MARKER, Rendering, RuntimeRenderError,
     STALE_CATALOG_EXIT, STEP_BEAT_ENV, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA,
-    STEP_PROTOCOL_EXIT, STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, TOUCH_ENV, TOUCH_ITEMS_ENV,
-    TOUCH_UNAVAILABLE_EXIT, WATCHED_ENV, module_name, render,
+    STEP_PROTOCOL_EXIT, STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, STOP_SCHEMA, TOUCH_ENV,
+    TOUCH_ITEMS_ENV, TOUCH_UNAVAILABLE_EXIT, WATCHED_ENV, module_name, render,
 };
 
 /// The first words the runtime prints before it exits [`runtime::STALE_CATALOG_EXIT`].
@@ -318,6 +318,8 @@ pub enum InstrumentErrorKind {
     LinesMoved,
     /// A mutant index makes the runtime's inclusive `u32` window unrepresentable.
     IndexReserved,
+    /// The rewritten file does not read as Rust, down to what every identity macro holds: a guard changed how the syntax around it reads.
+    Unparsable,
 }
 
 impl InstrumentErrorKind {
@@ -332,6 +334,7 @@ impl InstrumentErrorKind {
             Self::SpliceFailed => error::INSTRUMENT_SPLICE_FAILED,
             Self::LinesMoved => error::INSTRUMENT_LINES_MOVED,
             Self::IndexReserved => error::INSTRUMENT_INDEX_RESERVED,
+            Self::Unparsable => error::INSTRUMENT_UNPARSABLE,
         }
     }
 }
@@ -628,6 +631,7 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
+    worker.reparsed(&text)?;
     worker.append_runtime(
         &mut text,
         &Rendering {
@@ -746,6 +750,51 @@ struct File<'a> {
     probed: &'a BTreeMap<u32, crate::probe::Question>,
 }
 
+/// Whether `text` reads as Rust down to what every identity macro of the runtime module `module` holds, which the compiler reads only once it expands them.
+///
+/// One parse reads all of it: every call of the macro is read as the parentheses it expands to.
+///
+/// # Errors
+/// The first place that does not read, as the parser says it, at the line and column it has in `text`.
+pub(crate) fn read_through(text: &str, module: &str) -> Result<(), syn::Error> {
+    read_through_with(text, module, syn::parse_file)
+}
+
+/// [`read_through`] with the parser given, which it calls exactly once whatever the guards hold.
+fn read_through_with(
+    text: &str,
+    module: &str,
+    mut parse: impl FnMut(&str) -> Result<syn::File, syn::Error>,
+) -> Result<(), syn::Error> {
+    parse(&unwrapped(text, module)).map(|_file| ())
+}
+
+/// `text` with the path and `!` of every call of `module`'s identity macro written as spaces, so the call reads as the parentheses it expands to and every byte keeps its place.
+fn unwrapped(text: &str, module: &str) -> String {
+    const OUTER: &str = "super::";
+    let call = format!("{module}::value!");
+    let mut kept = String::with_capacity(text.len());
+    let mut from = 0_usize;
+    while let Some((before, rest)) = text.get(from..).and_then(|rest| rest.split_once(&call)) {
+        let mut path_start = before.len();
+        while before
+            .get(..path_start)
+            .is_some_and(|head| head.ends_with(OUTER))
+        {
+            path_start = path_start.saturating_sub(OUTER.len());
+        }
+        kept.push_str(before.get(..path_start).unwrap_or_default());
+        let blanked = before
+            .len()
+            .saturating_sub(path_start)
+            .saturating_add(call.len());
+        kept.extend(std::iter::repeat_n(' ', blanked));
+        from = text.len().saturating_sub(rest.len());
+    }
+    kept.push_str(text.get(from..).unwrap_or_default());
+    kept
+}
+
 impl File<'_> {
     /// The line ending the file uses, so the appended runtime matches it.
     fn newline(&self) -> &'static str {
@@ -774,6 +823,23 @@ impl File<'_> {
         })?;
         text.push_str(&runtime);
         Ok(())
+    }
+
+    /// Whether the rewritten file reads as Rust down to what every identity macro holds, which the compiler reads only once it expands them.
+    fn reparsed(&self, text: &str) -> Result<(), InstrumentError> {
+        read_through(text, &self.module).map_err(|error| self.unparsable(&error))
+    }
+
+    fn unparsable(&self, error: &syn::Error) -> InstrumentError {
+        let at = error.span().start();
+        self.error(
+            InstrumentErrorKind::Unparsable,
+            format!(
+                "the rewritten file does not read as Rust at line {}, column {}: {error}",
+                at.line,
+                at.column.saturating_add(1)
+            ),
+        )
     }
 
     fn slice(&self, span: Span) -> Result<&str, InstrumentError> {
@@ -1278,5 +1344,65 @@ impl File<'_> {
             original: self.slice(span)?.as_bytes().to_vec(),
             replacement: replacement.into_bytes(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read_through_with, unwrapped};
+
+    /// A function whose tail holds `depth` guards, each inside the original branch of the one around it, the innermost holding `inner`.
+    fn nested(depth: usize, inner: &str) -> String {
+        let mut guard = inner.to_owned();
+        for index in 0..depth {
+            guard = format!(
+                "super::rt::value!(if super::rt::active({index}) {{ 0 }} else {{ {guard} }})"
+            );
+        }
+        format!("mod m {{\n    fn f() -> u8 {{\n        {guard}\n    }}\n}}\n")
+    }
+
+    #[test]
+    fn one_parse_reads_every_identity_macro_however_deep_the_guards_nest() {
+        for depth in [0, 1, 8, 64] {
+            let mut parses = 0_usize;
+            let read = read_through_with(&nested(depth, "1"), "rt", |text| {
+                parses = parses.saturating_add(1);
+                syn::parse_file(text)
+            });
+            assert!(read.is_ok(), "{depth} nested guards read: {read:?}");
+            assert_eq!(
+                parses, 1,
+                "reading what {depth} nested identity macros hold is one parse of the file, not one \
+                 more for every guard a byte sits inside"
+            );
+        }
+    }
+
+    #[test]
+    fn a_guard_that_breaks_deep_inside_is_found_where_it_is() {
+        let text = nested(16, "{ 1 } + ");
+        let read = read_through_with(&text, "rt", syn::parse_file);
+        assert!(
+            read.as_ref()
+                .is_err_and(|error| error.span().start().line == 3),
+            "the innermost guard does not read, and the error names its line in the file: {read:?}"
+        );
+    }
+
+    #[test]
+    fn a_call_is_blanked_to_its_parentheses_and_every_byte_keeps_its_place() {
+        let text = "a(super::super::rt::value!(b), rt::value!(c), other::value!(d))";
+        let read = unwrapped(text, "rt");
+        assert_eq!(read.len(), text.len(), "{read}");
+        assert_eq!(
+            read,
+            format!(
+                "a({}(b), {}(c), other::value!(d))",
+                " ".repeat("super::super::rt::value!".len()),
+                " ".repeat("rt::value!".len())
+            ),
+            "only the module's own identity macro is read as its parentheses, `super::` and all"
+        );
     }
 }

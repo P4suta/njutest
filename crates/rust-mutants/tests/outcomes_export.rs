@@ -30,6 +30,7 @@ fn record(byte: char) -> Record {
             build: Vec::new(),
             engine: "e".to_owned(),
             runner: None,
+            declared: rust_mutants::outcomes::Declared::of(&std::collections::BTreeSet::new(), &[]),
         },
     }
 }

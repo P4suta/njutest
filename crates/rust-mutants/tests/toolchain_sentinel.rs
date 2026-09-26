@@ -252,7 +252,7 @@ fn a_run_that_routes_by_coverage_or_asks_equivalence_has_each_sighted_too() {
         })
         .collect();
     assert!(sighted.blind().is_none(), "{said:#?}");
-    if njutest_devkit::reproducible::builds_the_same_twice() {
+    if njutest_devkit::reproducible::builds_a_reverted_change_to_the_same_bytes() {
         let compared: Vec<String> = sighted
             .sightings
             .iter()

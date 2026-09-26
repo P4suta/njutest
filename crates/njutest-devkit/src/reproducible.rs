@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Whether this machine builds one tree to the same bytes twice.
+//! Whether this machine builds a change made and reverted back to the bytes it built before, and the bytes a build left.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -11,12 +11,12 @@ use sha2::{Digest as _, Sha256};
 /// What one build produced, by target name, each executable digested.
 type Built = BTreeMap<String, String>;
 
-/// Whether a tree built, changed, and built back comes out as the bytes it came out as.
+/// Whether a tree built, changed, and built back comes out as the bytes it came out as, which is not whether a second build of an unchanged tree runs the first one's bytes.
 ///
 /// # Panics
 /// When the fixture cannot be copied, which is a setup failure rather than an answer.
 #[must_use]
-pub fn builds_the_same_twice() -> bool {
+pub fn builds_a_reverted_change_to_the_same_bytes() -> bool {
     let fixture = crate::fixture::Fixture::copy("fixture-equivalent");
     let target = fixture.temp().join("twice");
     let source = fixture.root().join("src/lib.rs");
@@ -40,6 +40,22 @@ pub fn builds_the_same_twice() -> bool {
     let again = built(fixture.root(), &target);
 
     !first.is_empty() && first == again
+}
+
+/// The SHA-256 of the file at `path`, in hex: what a test compares to know two runs ran the same program.
+///
+/// # Panics
+/// When the file cannot be read, which is a setup failure rather than an answer.
+#[must_use]
+#[track_caller]
+#[expect(
+    clippy::expect_used,
+    reason = "a test that cannot read the program it ran has nothing to compare, and saying so is its only honest answer"
+)]
+pub fn digest(path: &Path) -> String {
+    hex::encode(Sha256::digest(
+        std::fs::read(path).expect("the file a test digests is readable"),
+    ))
 }
 
 /// One build of the tree at `root`, or nothing at all when it did not build.

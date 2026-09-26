@@ -46,6 +46,7 @@ fn good_fixture(dir: &Path) {
 #[test]
 fn a_conforming_fixture_has_no_problems() {
     let dir = tempfile::tempdir().expect("tempdir");
+    xtask::repository::init(dir.path()).expect("a repository to read the tree as git lists it");
     good_fixture(dir.path());
     assert_eq!(checked(dir.path()), Vec::<String>::new());
 }
@@ -53,6 +54,7 @@ fn a_conforming_fixture_has_no_problems() {
 #[test]
 fn a_fixture_that_cannot_be_walked_never_passes_as_missing_files() {
     let dir = tempfile::tempdir().expect("tempdir");
+    xtask::repository::init(dir.path()).expect("a repository to read the tree as git lists it");
     let absent = dir.path().join("absent");
     check_fixture(&absent).expect_err("a hidden fixture subtree is not a convention finding");
 }
@@ -61,6 +63,7 @@ fn a_fixture_that_cannot_be_walked_never_passes_as_missing_files() {
 #[test]
 fn a_symbolic_link_never_hides_part_of_a_fixture() {
     let dir = tempfile::tempdir().expect("tempdir");
+    xtask::repository::init(dir.path()).expect("a repository to read the tree as git lists it");
     good_fixture(dir.path());
     let target = dir.path().join("target.rs");
     fs::write(&target, format!("{RS_HEADER}pub fn hidden() {{}}\n")).expect("target");
@@ -72,6 +75,7 @@ fn a_symbolic_link_never_hides_part_of_a_fixture() {
 #[test]
 fn a_path_dependency_inside_the_fixture_is_allowed_and_every_other_kind_is_not() {
     let dir = tempfile::tempdir().expect("tempdir");
+    xtask::repository::init(dir.path()).expect("a repository to read the tree as git lists it");
     good_fixture(dir.path());
     write(
         dir.path(),
@@ -123,6 +127,7 @@ fn a_path_dependency_inside_the_fixture_is_allowed_and_every_other_kind_is_not()
 #[test]
 fn every_broken_convention_is_named() {
     let dir = tempfile::tempdir().expect("tempdir");
+    xtask::repository::init(dir.path()).expect("a repository to read the tree as git lists it");
     write(
         dir.path(),
         "Cargo.toml",
@@ -146,6 +151,7 @@ fn every_broken_convention_is_named() {
 #[test]
 fn a_missing_manifest_is_reported_and_the_build_directory_is_ignored() {
     let dir = tempfile::tempdir().expect("tempdir");
+    xtask::repository::init(dir.path()).expect("a repository to read the tree as git lists it");
     write(dir.path(), "target/debug/build/x.rs", "no header here");
     let problems = checked(dir.path());
     assert_eq!(
@@ -161,6 +167,7 @@ fn a_missing_manifest_is_reported_and_the_build_directory_is_ignored() {
 #[test]
 fn a_readme_that_states_no_fates_is_a_fixture_a_change_can_quietly_re_decide() {
     let dir = tempfile::tempdir().expect("tempdir");
+    xtask::repository::init(dir.path()).expect("a repository to read the tree as git lists it");
     good_fixture(dir.path());
     write(dir.path(), "README.md", "# x\n\nWhat it is for.\n");
     let problems = checked(dir.path());
@@ -176,6 +183,7 @@ fn a_readme_that_states_no_fates_is_a_fixture_a_change_can_quietly_re_decide() {
 #[test]
 fn an_interposer_requires_its_seam_ledger_and_an_unreadable_config_never_hides_it() {
     let dir = tempfile::tempdir().expect("tempdir");
+    xtask::repository::init(dir.path()).expect("a repository to read the tree as git lists it");
     good_fixture(dir.path());
     write(
         dir.path(),
@@ -195,6 +203,7 @@ fn an_interposer_requires_its_seam_ledger_and_an_unreadable_config_never_hides_i
 #[test]
 fn a_sibling_fixture_library_is_the_one_path_allowed_to_climb() {
     let dir = tempfile::tempdir().expect("tempdir");
+    xtask::repository::init(dir.path()).expect("a repository to read the tree as git lists it");
     good_fixture(dir.path());
     write(
         dir.path(),
