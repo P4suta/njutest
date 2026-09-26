@@ -2209,7 +2209,7 @@ fn declared_targets(metadata: &cargo_metadata::Metadata) -> BTreeSet<String> {
 /// Every critical decision has a row saying what holds it at every layer, each cell naming an item the tree defines, and every open layer is a hole the gaps ledger gives an owner.
 ///
 /// # Errors
-/// The registry, the ledger or its ceiling cannot be read or is malformed, or they and the tree disagree.
+/// The registry or ledger cannot be read or is malformed, or they and the tree disagree.
 pub fn invariants(root: &Path) -> Result<String, GateError> {
     let read = |relative: &str| {
         std::fs::read_to_string(root.join(relative))
@@ -2410,6 +2410,7 @@ pub fn all(root: &Path) -> Result<String, GateError> {
         waivers,
         tracked,
         skipped,
+        crate::claims::claims,
     ] {
         line(&mut report, format_args!("{}", gate(root)?));
     }

@@ -228,7 +228,7 @@ impl XtCode {
             ),
             Self::InvariantRegistry => (
                 "XT0010",
-                "The registry of critical decisions names an item the tree does not define, leaves a layer open that the gaps ledger does not give an owner, lists a hole it does not have, or the ledger grew past its ceiling.",
+                "The registry of critical decisions names an item the tree does not define, leaves a layer open that the gaps ledger does not give an owner, or lists a hole it does not have.",
                 "fix the cell, the ledger line, or the item the message names; a new critical decision arrives with what holds it",
             ),
             Self::PushUnverifiable => (
