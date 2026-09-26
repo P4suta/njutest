@@ -73,6 +73,8 @@ mod outcomes;
 mod outcomes_export;
 #[path = "outside.rs"]
 mod outside;
+#[path = "parsing.rs"]
+mod parsing;
 #[path = "probe_form.rs"]
 mod probe_form;
 #[path = "prove.rs"]

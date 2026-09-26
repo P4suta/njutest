@@ -204,9 +204,14 @@ pub(super) struct Walked {
     pub(super) annotations: Vec<Claim>,
 }
 
-/// A walk whose internal offsets or exact counters contradicted the bounded source established at discovery entry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct WalkBoundsError;
+/// Why a walk releases none of its candidates.
+#[derive(Debug)]
+pub(super) enum WalkError {
+    /// Its internal offsets or exact counters contradicted the bounded source established at discovery entry.
+    Bounds,
+    /// Text it had to read back could not be read at all.
+    Unread(crate::parsing::ReadingError),
+}
 
 /// The file being walked.
 #[derive(Debug, Clone, Copy)]
@@ -220,7 +225,9 @@ pub(super) struct Input<'a> {
     /// The lowercase hex SHA-256 of the bytes.
     pub(super) digest: &'a str,
     /// The file's tree, which every operator swap is held to.
-    pub(super) grouping: &'a super::regroup::Grouping,
+    pub(super) grouping: &'a super::regroup::Grouping<'a>,
+    /// The right to read the few texts a walk reads: the operator a swap writes.
+    pub(super) parsing: &'a crate::parsing::Parsing,
 }
 
 /// One proposed edit.
@@ -243,7 +250,8 @@ pub(super) struct Walker<'a> {
     src: &'a str,
     base: u32,
     /// The file's tree, which every operator swap is held to.
-    grouping: &'a super::regroup::Grouping,
+    grouping: &'a super::regroup::Grouping<'a>,
+    parsing: &'a crate::parsing::Parsing,
     path: &'a str,
     digest: &'a str,
     selection: &'a Selection<'a>,
@@ -270,6 +278,8 @@ pub(super) struct Walker<'a> {
     /// Poisoned on the first impossible conversion or counter overflow.
     /// The walk may keep traversing, but [`Self::finish`] then fails closed and releases none of its candidates.
     bounds_failed: Cell<bool>,
+    /// The first text the walk could not read at all; [`Self::finish`] then fails with it.
+    unread: std::cell::OnceCell<crate::parsing::ReadingError>,
 }
 
 impl<'a> Walker<'a> {
@@ -282,6 +292,7 @@ impl<'a> Walker<'a> {
             src: input.text,
             base: input.base,
             grouping: input.grouping,
+            parsing: input.parsing,
             path: input.path,
             digest: input.digest,
             selection,
@@ -300,6 +311,7 @@ impl<'a> Walker<'a> {
             items: Vec::new(),
             includes: Vec::new(),
             bounds_failed: Cell::new(false),
+            unread: std::cell::OnceCell::new(),
         }
     }
 
@@ -310,9 +322,12 @@ impl<'a> Walker<'a> {
         self.markers = markers;
     }
 
-    pub(super) fn finish(self) -> Result<Walked, WalkBoundsError> {
+    pub(super) fn finish(mut self) -> Result<Walked, WalkError> {
+        if let Some(unread) = self.unread.take() {
+            return Err(WalkError::Unread(unread));
+        }
         if self.bounds_failed.get() {
-            return Err(WalkBoundsError);
+            return Err(WalkError::Bounds);
         }
         let annotations = self
             .markers
@@ -1177,9 +1192,13 @@ impl<'a> Walker<'a> {
     fn swap(&self, binary: &syn::ExprBinary, replacement: &str) -> Option<(Span, String)> {
         use super::regroup::{Binding, Side, regroups};
         let op = self.span(&binary.op);
-        let new = match syn::parse_str::<BinOp>(replacement) {
+        let new = match self.parsing.read::<BinOp>(replacement) {
             Ok(new) => new,
-            Err(_not_an_operator) => return None,
+            Err(crate::parsing::ReadingError::Syntax { .. }) => return None,
+            Err(unread) => {
+                self.unread_once(unread);
+                return None;
+            }
         };
         let (was, now) = (Binding::of(&binary.op)?, Binding::of(&new)?);
         let token = (op, replacement.to_owned());
@@ -1234,7 +1253,20 @@ impl<'a> Walker<'a> {
         ) else {
             return false;
         };
-        self.grouping.keeps(text, (start..end, written), (at, new))
+        match self.grouping.keeps(text, (start..end, written), (at, new)) {
+            Ok(kept) => kept,
+            Err(unread) => {
+                self.unread_once(unread);
+                false
+            }
+        }
+    }
+
+    /// Keeps the first text the walk could not read, so the whole file fails with it rather than losing the swaps after it without a word.
+    fn unread_once(&self, unread: crate::parsing::ReadingError) {
+        match self.unread.set(unread) {
+            Ok(()) | Err(_) => {}
+        }
     }
 
     fn walk_binary(&mut self, b: &syn::ExprBinary, ctx: Ctx) {
