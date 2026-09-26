@@ -603,7 +603,7 @@ fn a_live_group_a_record_from_another_boot_names_is_left_alone() {
     )
     .expect("an old record without the holder's start");
     let mut unknown = machine.run("true");
-    let refused = finished_within(Duration::from_secs(60), &mut unknown);
+    let went_past = finished_within(Duration::from_secs(60), &mut unknown);
     let spared = stranger
         .try_wait()
         .expect("the stranger can still be looked at")
@@ -632,10 +632,9 @@ fn a_live_group_a_record_from_another_boot_names_is_left_alone() {
          run went in without touching it"
     );
     assert!(
-        refused.is_some_and(|status| !status.success()) && spared,
+        went_past.is_some_and(|status| status.success()) && spared,
         "a record from before holders recorded their start proves neither that the holder died \
-         nor that its groups are orphaned, so the next run refused the lane and spared the group: \
-         {refused:?}"
+         nor that its groups are orphaned, so the next run left the group alone: {went_past:?}"
     );
     assert!(
         control_in.is_some_and(|status| status.success()),
