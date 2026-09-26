@@ -2082,6 +2082,45 @@ fn written_into(path: &str) -> &str {
     path.get(..end).unwrap_or(path)
 }
 
+/// Every critical decision has a row saying what holds it at every layer, each cell naming an item the tree defines, and every open layer is a hole the gaps ledger gives an owner.
+///
+/// # Errors
+/// The registry, the ledger or its ceiling cannot be read or is malformed, or they and the tree disagree.
+pub fn invariants(root: &Path) -> Result<String, GateError> {
+    let read = |relative: &str| {
+        std::fs::read_to_string(root.join(relative))
+            .map_err(|error| GateError(format!("invariants: {relative}: {error}")))
+    };
+    let coded = |error: crate::invariants::InvariantError| {
+        GateError(format!("invariants: {}", error.coded()))
+    };
+    let rows = crate::invariants::rows(&read("docs/invariants.md")?).map_err(coded)?;
+    let gaps = crate::invariants::gaps(&read("xtask/invariant_gaps.txt")?).map_err(coded)?;
+    let most = ceiling(root, "xtask/invariant_gap_ceiling.txt")?;
+    let mut defined = BTreeSet::new();
+    for path in all_sources(root)? {
+        let text = std::fs::read_to_string(&path)
+            .map_err(|error| GateError(format!("invariants: {}: {error}", path.display())))?;
+        defined.extend(crate::invariants::defined(&text));
+    }
+    let (decisions, held) =
+        crate::invariants::check(&rows, &gaps, &defined, most).map_err(|refused| {
+            GateError(format!(
+                "invariants: the registry and the tree disagree:\n  {}",
+                refused
+                    .iter()
+                    .map(crate::error::Coded::coded)
+                    .collect::<Vec<_>>()
+                    .join("\n  ")
+            ))
+        })?;
+    Ok(format!(
+        "invariants: {decisions} critical decisions, {held} layer cells each naming what the tree \
+         defines, and {} open, each owned in xtask/invariant_gaps.txt (at most {most})",
+        gaps.len()
+    ))
+}
+
 /// Every gate, in order, stopping at the first failure.
 ///
 /// # Errors
@@ -2096,6 +2135,7 @@ pub fn all(root: &Path) -> Result<String, GateError> {
         release_check,
         milestones,
         adrs,
+        invariants,
         surfaces,
         reached,
         defaulted,

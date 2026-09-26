@@ -20,6 +20,7 @@ pub mod faults;
 pub mod fixtures;
 pub mod fuzzclippy;
 pub mod gates;
+pub mod invariants;
 pub mod kaniaudit;
 pub mod kanilaws;
 pub mod knobs;
@@ -125,6 +126,8 @@ enum Gate {
     Milestones,
     /// Every decision record has one number, carries it in its heading, is listed once in the book under it, and is named only as it is.
     Adrs,
+    /// Every critical decision has a row saying what holds it at every layer, each naming what the tree defines, and every hole is one somebody owns.
+    Invariants,
     /// Every public function of an incidental surface is reached by something that ships.
     Reached,
     /// No audit reader supplies more values its input never gave than its ceiling allows.
@@ -277,6 +280,7 @@ where
             .map_err(|error| gates::GateError(error.coded())),
         Gate::Milestones => gates::milestones(&root),
         Gate::Adrs => gates::adrs(&root),
+        Gate::Invariants => gates::invariants(&root),
         Gate::Reached => gates::reached(&root),
         Gate::Defaulted => gates::defaulted(&root),
         Gate::Surfaces => gates::surfaces(&root),

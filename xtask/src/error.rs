@@ -24,6 +24,8 @@ pub enum XtCode {
     DocflowsUnchecked,
     /// actionlint refused a documented workflow.
     DocflowsRefused,
+    /// The registry of critical decisions names what the tree does not define, leaves a hole nobody owns, or its ledger of holes grew.
+    InvariantRegistry,
     /// The pre-push gate cannot check what the push names.
     PushUnverifiable,
     /// The pre-push tree moved or was changed during its check.
@@ -221,6 +223,11 @@ impl XtCode {
                 "XT0009",
                 "actionlint refused a workflow the documentation shows.",
                 "fix the snippet the message names, so a reader who copies it has a workflow that runs",
+            ),
+            Self::InvariantRegistry => (
+                "XT0010",
+                "The registry of critical decisions names an item the tree does not define, leaves a layer open that the gaps ledger does not give an owner, lists a hole it does not have, or the ledger grew past its ceiling.",
+                "fix the cell, the ledger line, or the item the message names; a new critical decision arrives with what holds it",
             ),
             Self::PushUnverifiable => (
                 "XT0101",
