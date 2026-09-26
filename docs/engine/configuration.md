@@ -293,6 +293,10 @@ Unset, or `0`, counts nothing and leaves the clock as the only bound.
 `RUST_MUTANTS_STEP_BEAT` is `<ms>@<path>`, set by the runner that watches a counted execution for quiet: a process spending a reservation of its allowance rewrites the file at most `<ms>` apart, a quarter of the window, since the state only changes when a reservation is taken ([ADR 0039](../adr/0039-a-step-is-spent-in-memory.md)).
 Anything but canonical milliseconds above zero and a path is a protocol failure.
 
+Every stop the generated runtime makes first writes one line to standard error — `rust-mutants-stop-v1`, the status, the check that failed, and the operating system's code, tab-separated — and the run records that check on the errored mutant and in its trace.
+A copy of the runtime built from another catalog stops as a stale catalog wherever it meets the run, at its first boundary as at its first guard.
+A step-protocol status with no such line comes from a runtime this release did not generate, which is a stale build linked into the tree, and the run says so.
+
 `RUST_MUTANTS_CRASH_NOTICE` and `RUST_MUTANTS_CRASH_NONCE` are set for a run that keeps its scratch for a next run ([ADR 0035](../adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
 When a crash stops the process after its call, the runtime first publishes a notice carrying the schema, the fresh nonce, the catalog and the mutant, in a directory apart from the scratch the test sees.
 A stop is the crash's exit status together with that notice: a test that returns 93 by itself stopped at nothing, and nothing is decided on it.

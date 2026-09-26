@@ -389,8 +389,8 @@ fn the_runtime_is_appended_after_the_last_line_and_names_the_catalog() {
         "{runtime}"
     );
     assert!(
-        runtime.contains("exit(97)"),
-        "a stale catalog ends the process: {runtime}"
+        runtime.contains("stop(97, Why::said(\"stale catalog\"))"),
+        "a stale catalog ends the process, through the one stop that says why: {runtime}"
     );
     assert!(!runtime.contains("unsafe"), "{runtime}");
     assert!(text.ends_with("}\n"), "{text}");
@@ -403,11 +403,10 @@ fn the_step_runtime_uses_one_locked_process_state_and_fails_closed_at_every_boun
 
     for required in [
         "type Budget = __rm_std::result::Result<__rm_std::option::Option<StepLimit>, BudgetError>",
-        "enum StepNoticeError",
         "StepPhase {",
-        "enum StepStateError",
+        "struct Why",
         "__rm_std::result::Result::Ok(__rm_std::option::Option::None) => return,",
-        "__rm_std::result::Result::Err(_) => protocol_failure(),",
+        "__rm_std::result::Result::Err(error) => protocol_failed(error),",
         "pub(crate) fn checkpoint()",
         "file.lock().map_err",
         "file.unlock().map_err",
@@ -416,7 +415,8 @@ fn the_step_runtime_uses_one_locked_process_state_and_fails_closed_at_every_boun
         "Write::write_all",
         "file.sync_data().map_err",
         "fs::rename(partial, path).map_err",
-        "process::exit(94)",
+        "stop(94, error)",
+        "rust-mutants-stop-v1",
     ] {
         assert!(
             runtime.contains(required),

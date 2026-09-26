@@ -17,7 +17,7 @@ use crate::id::{is_digest, is_id};
 use crate::instrument::{
     ACTIVE_ENV, CATALOG_ENV, CRASH_NONCE_ENV, CRASH_NOTICE_ENV, DELAY_ENV, FAULT_ENV,
     STEP_BEAT_ENV, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_PROTOCOL_EXIT,
-    STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, TOUCH_ENV,
+    STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, STOP_SCHEMA, TOUCH_ENV,
 };
 use crate::outcome::Outcome;
 use crate::runner::{
@@ -557,8 +557,15 @@ pub enum StepProtocolFailure {
         /// The operating-system diagnostic.
         detail: String,
     },
-    /// The generated runtime reported that it could not publish a notice.
+    /// The generated runtime exited for a failed protocol and said nothing this release can read.
     Publication {},
+    /// The generated runtime exited for a failed protocol and named the check that failed.
+    Stated {
+        /// The check, as the runtime names it.
+        check: String,
+        /// The operating system's code where a call the runtime made is what failed, and `0` where none did.
+        os: i32,
+    },
     /// A monitor stop had no completed notice.
     NoticeMissing {},
     /// The opened notice was not a regular file.
@@ -622,7 +629,80 @@ pub enum StepProtocolFailure {
     },
 }
 
+impl StepProtocolFailure {
+    /// What a reader is told the protocol failure was, and what it means for the build or the run.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        match self {
+            Self::MonitorInvalid { path } => {
+                format!("the notice path {path} was not a regular file")
+            }
+            Self::MonitorInspect { path, detail } => {
+                format!("the notice path {path} could not be inspected: {detail}")
+            }
+            Self::Publication {} => "the step protocol's status came with no word of which check \
+                                     failed, which only a runtime this release did not generate \
+                                     leaves: a stale build is linked into the tree"
+                .to_owned(),
+            Self::Stated { check, os: 0 } => {
+                format!("the generated runtime stopped at its step-protocol check `{check}`")
+            }
+            Self::Stated { check, os } => format!(
+                "the generated runtime stopped at its step-protocol check `{check}`, where the \
+                 operating system answered {os}"
+            ),
+            Self::NoticeMissing {} => "the runtime stopped for its allowance and no complete \
+                                       notice was there"
+                .to_owned(),
+            Self::NoticeNotRegular { path } => format!("the notice {path} was not a regular file"),
+            Self::NoticeMetadata { path, detail } => {
+                format!("the notice {path} could not be inspected: {detail}")
+            }
+            Self::NoticeOpen { path, detail } => {
+                format!("the notice {path} could not be opened without following a link: {detail}")
+            }
+            Self::NoticeRead { path, detail } => {
+                format!("the notice {path} could not be read: {detail}")
+            }
+            Self::NoticeTooLarge { path, limit } => {
+                format!("the notice {path} was larger than the {limit} bytes the protocol allows")
+            }
+            Self::NoticeNotUtf8 { path } => format!("the notice {path} was not UTF-8"),
+            Self::NoticeEmpty {} => "the notice held no record".to_owned(),
+            Self::NoticeNonCanonical {} => {
+                "the notice was not in the one-line form the runtime writes".to_owned()
+            }
+            Self::NoticeExtraRecord {} => "the notice held more than one record".to_owned(),
+            Self::ExecutionMismatch {} => "the notice named another execution".to_owned(),
+            Self::InvalidLimit {} => "the notice's allowance was malformed".to_owned(),
+            Self::InvalidObserved {} => "the notice's observed count was malformed".to_owned(),
+            Self::BoundaryMismatch {} => {
+                "the notice did not carry the boundary one past the allowance".to_owned()
+            }
+            Self::Cleanup { path, detail } => {
+                format!("the consumed notice {path} could not be removed: {detail}")
+            }
+        }
+    }
+}
+
 impl Stopped {
+    /// How the step protocol failed, where that is what stopped the process.
+    #[must_use]
+    pub const fn protocol_failure(&self) -> Option<&StepProtocolFailure> {
+        match self {
+            Self::StepProtocolFailed { reason } => Some(reason),
+            Self::NotStarted { .. }
+            | Self::Exited { .. }
+            | Self::TimedOut { .. }
+            | Self::Stalled { .. }
+            | Self::Cancelled { .. }
+            | Self::WaitFailed
+            | Self::Answered
+            | Self::StepLimitReached { .. } => None,
+        }
+    }
+
     /// Why the process never started, where it did not.
     #[must_use]
     pub const fn start_failure(&self) -> Option<&StartFailure> {
@@ -1438,7 +1518,7 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
             ) =>
         {
             Stopped::StepProtocolFailed {
-                reason: StepProtocolFailure::Publication {},
+                reason: stated(&result.output),
             }
         }
         Ok(None) if matches!(result.termination, Termination::StoppedByMonitor) => {
@@ -1456,6 +1536,42 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
         Err(reason) => Stopped::StepProtocolFailed {
             reason: reason.failure(),
         },
+    }
+}
+
+/// What the generated runtime said on its way out of a failed step protocol: the last line it wrote in the shape it writes, or that it said nothing this release reads.
+fn stated(output: &[u8]) -> StepProtocolFailure {
+    let said = output.split(|byte| *byte == b'\n').rev().find_map(|line| {
+        let line = match std::str::from_utf8(line) {
+            Ok(line) => line,
+            Err(_not_a_line_the_runtime_wrote) => return None,
+        };
+        let line = match line.strip_suffix('\r') {
+            Some(line) => line,
+            None => line,
+        };
+        let mut fields = line
+            .strip_prefix(STOP_SCHEMA)?
+            .strip_prefix('\t')?
+            .split('\t');
+        let (status, check, os, rest) = (
+            fields.next()?,
+            fields.next()?,
+            fields.next()?,
+            fields.next(),
+        );
+        let protocol = STEP_PROTOCOL_EXIT.to_string();
+        match (status == protocol, os.parse::<i32>(), rest) {
+            (true, Ok(os), None) => Some(StepProtocolFailure::Stated {
+                check: check.to_owned(),
+                os,
+            }),
+            (false, _, _) | (true, Err(_), _) | (true, Ok(_), Some(_)) => None,
+        }
+    });
+    match said {
+        Some(stated) => stated,
+        None => StepProtocolFailure::Publication {},
     }
 }
 
@@ -2733,9 +2849,10 @@ mod tests {
     };
 
     use super::{
-        Context, ExpectedStep, NoticeError, Observation, QUIET_WINDOWS_PER_CEILING, STEP_STATE_ENV,
-        STEP_STATE_SCHEMA, StepBoundaryScope, StepLimitNotice, StepProtocolFailure, StepSetupError,
-        Stopped, observed_stop, outcome_of, rustlib_targets, watched,
+        Context, ExpectedStep, NoticeError, Observation, QUIET_WINDOWS_PER_CEILING,
+        STEP_PROTOCOL_EXIT, STEP_STATE_ENV, STEP_STATE_SCHEMA, STOP_SCHEMA, StepBoundaryScope,
+        StepLimitNotice, StepProtocolFailure, StepSetupError, Stopped, observed_stop, outcome_of,
+        rustlib_targets, watched,
     };
     use crate::outcome::Outcome;
     use crate::runner::{Bound, ProcessExit, RunResult, Termination};
@@ -3236,6 +3353,41 @@ mod tests {
     }
 
     #[test]
+    fn a_protocol_stop_is_named_by_the_last_line_the_runtime_wrote_for_it() {
+        let line = |status: &str, check: &str, os: &str| {
+            format!("{STOP_SCHEMA}\t{status}\t{check}\t{os}\n")
+        };
+        let protocol = STEP_PROTOCOL_EXIT.to_string();
+        let output = format!(
+            "running 1 test\n{}{}",
+            line(&protocol, "open", "2"),
+            line(&protocol, "lock", "33")
+        );
+        assert_eq!(
+            super::stated(output.as_bytes()),
+            StepProtocolFailure::Stated {
+                check: "lock".to_owned(),
+                os: 33
+            },
+            "the last stop the runtime said is the one that ended it"
+        );
+        for unread in [
+            String::new(),
+            "running 1 test\n".to_owned(),
+            line("96", "touch: open", "5"),
+            line(&protocol, "lock", "not a code"),
+            format!("{STOP_SCHEMA}\t{protocol}\tlock\t33\tmore\n"),
+            format!("said: {}", line(&protocol, "lock", "33")),
+        ] {
+            assert_eq!(
+                super::stated(unread.as_bytes()),
+                StepProtocolFailure::Publication {},
+                "a line for another stop, or one out of shape, names nothing: {unread:?}"
+            );
+        }
+    }
+
+    #[test]
     fn only_an_execution_counting_its_steps_is_watched_for_progress() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
         let step = expected(directory.path());
@@ -3338,9 +3490,7 @@ mod tests {
     fn the_runtime_protocol_status_is_special_only_for_a_step_bounded_execution() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
         let step = expected(directory.path());
-        let exited = result(Termination::Exited(ProcessExit::Code(
-            crate::instrument::STEP_PROTOCOL_EXIT,
-        )));
+        let exited = result(Termination::Exited(ProcessExit::Code(STEP_PROTOCOL_EXIT)));
 
         assert!(matches!(
             observed_stop(&exited, Some(&step)),
@@ -3351,7 +3501,7 @@ mod tests {
         assert_eq!(
             observed_stop(&exited, None),
             Stopped::Exited {
-                exit: ProcessExit::Code(crate::instrument::STEP_PROTOCOL_EXIT)
+                exit: ProcessExit::Code(STEP_PROTOCOL_EXIT)
             }
         );
     }

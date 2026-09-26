@@ -23,6 +23,7 @@ fn judged(index: u32, outcome: Outcome) -> Judged {
         target: "demo/lib/demo".to_owned(),
         exit_code: 0,
         start_failure: None,
+        protocol_failure: None,
         duration: Duration::from_millis(1),
         tests_run: Some(1),
         failed_tests: Vec::new(),
@@ -661,5 +662,40 @@ fn an_errored_mutant_whose_process_never_started_says_why_rather_than_an_exit_no
             .any(|detail| detail.contains("its test binary was not there")
                 && !detail.contains("exit -1")),
         "a row about a process that never started names why, which `exit -1` never did: {said:?}"
+    );
+}
+
+#[test]
+fn an_errored_mutant_says_which_check_of_the_step_protocol_stopped_it_or_that_nothing_said() {
+    use rust_mutants::execute::StepProtocolFailure;
+
+    let detail = |failure: StepProtocolFailure| {
+        let mut errored = judged(0, Outcome::Errored);
+        errored.exit_code = 94;
+        errored.protocol_failure = Some(failure);
+        of(vec![errored])
+            .findings()
+            .into_iter()
+            .find(|finding| finding.kind == FindingKind::ErroredMutant)
+            .map(|finding| finding.detail)
+    };
+    let stated = detail(StepProtocolFailure::Stated {
+        check: "lock".to_owned(),
+        os: 33,
+    });
+    assert!(
+        stated
+            .as_deref()
+            .is_some_and(|said| said.contains("`lock`") && said.contains("33")),
+        "a reader is told the check that stopped the process and what the system answered, not \
+         only a status: {stated:?}"
+    );
+    let silent = detail(StepProtocolFailure::Publication {});
+    assert!(
+        silent
+            .as_deref()
+            .is_some_and(|said| said.contains("stale build")),
+        "every runtime this release generates says why it stops, so silence names a runtime from \
+         another build: {silent:?}"
     );
 }
