@@ -124,6 +124,34 @@ fn each_matrix_platform_runs_one_whole_suite() {
 }
 
 #[test]
+fn mutation_ci_runs_one_whole_workspace() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/workflows/mutation.yml");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let workflow_jobs = jobs(&source);
+    assert_eq!(workflow_jobs.len(), 1, "mutation CI has one job");
+    let (name, body) = &workflow_jobs[0];
+    assert_eq!(name, "whole");
+    assert!(!body.contains("matrix:"), "mutation CI has no matrix");
+    assert_eq!(
+        body.matches("cargo mutants --config .cargo/mutants.toml")
+            .count(),
+        1,
+        "mutation CI invokes cargo-mutants once"
+    );
+    assert!(
+        body.contains("--workspace"),
+        "mutation CI measures the whole workspace"
+    );
+    assert!(
+        !body.contains("--shard") && !body.contains("--package"),
+        "mutation CI does not partition the catalog"
+    );
+}
+
+#[test]
 fn ci_and_mise_execute_one_coverage_ratchet() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mise_path = root.join("mise.toml");

@@ -42,7 +42,7 @@ To diagnose a run that only misbehaves on the runner, set `NJUTEST_TRACE: '1'` o
 | --- | --- | --- |
 | `ci.yml` | the cross-platform test matrix, lint (fmt, clippy, rustdoc, the `cargo xtask` gates, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, the coverage ratchet which is also the Linux suite, the `book` build, `soundness`, `action-smoke`, `action-smoke-rust-mutants`, and `ci-success` which gathers them | every pull request, weekly on `main`, and on request |
 | `main.yml` | `tested-tree` proves that the tree a push to `main` brings is the tree a pull request head passed `ci-success` with | every push to `main` |
-| `mutation.yml` | `cargo-mutants` over each package | weekly, and on request |
+| `mutation.yml` | `cargo-mutants` over the whole workspace | weekly, and on request |
 | `dogfood.yml` | `whole` runs the engine over its own catalog in one job through the `rust-mutants` action, checks the recording, and re-decides the run against the ledger | weekly, and on request |
 | `fuzz.yml` | every fuzz target for a fixed time | weekly, and on an engine pull request |
 | `dependabot-auto-merge.yml` | asks for the merge of a dependency bump, which GitHub performs once `ci-success` passes; the label `no-auto-merge` says not to | on a dependabot pull request |
