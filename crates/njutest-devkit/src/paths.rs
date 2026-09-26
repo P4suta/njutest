@@ -3,7 +3,9 @@
 
 //! Where things are: the workspace root, the fixture projects, the cargo that built the test binary.
 
+use std::collections::BTreeSet;
 use std::fs;
+use std::io as std_io;
 use std::path::{Path, PathBuf};
 
 /// The root of this workspace, resolved from this crate's manifest directory at compile time, so it does not depend on the working directory of the test process.
@@ -43,55 +45,175 @@ pub fn cargo_binary() -> PathBuf {
 pub fn posix_sh() -> PathBuf {
     let path = std::env::var_os("PATH").unwrap_or_default();
     let directories: Vec<PathBuf> = std::env::split_paths(&path).collect();
-    let named = ["sh", "sh.exe"];
-    let on_path = directories
-        .iter()
-        .flat_map(|directory| named.iter().map(move |name| directory.join(name)))
-        .find(|candidate| a_file(candidate));
-    if let Some(found) = on_path {
-        return found;
-    }
-    let beside_git = directories
-        .iter()
-        .filter(|directory| a_file(&directory.join("git.exe")))
-        .filter_map(|directory| directory.parent())
-        .flat_map(|git| {
-            [
-                git.join("usr").join("bin").join("sh.exe"),
-                git.join("bin").join("sh.exe"),
-            ]
-        })
-        .find(|candidate| a_file(candidate));
-    match beside_git {
-        Some(found) => found,
-        None => panic!(
-            "this test writes its child as a POSIX shell script and needs `sh`: none is on PATH, \
-             and none is beside a Git for Windows on it; on Windows put Git's usr\\bin on PATH"
-        ),
+    match find_posix_sh(&directories, |candidate| fs::metadata(candidate)) {
+        Ok(found) => found,
+        Err(skipped) => panic!("{}", missing_shell(&skipped)),
     }
 }
 
-/// Whether `candidate` is a file, where a path that is not there, or goes through something that is not a directory, is simply not one.
-///
-/// # Panics
-/// The path is there and cannot be inspected, which is not the same as absent.
-#[track_caller]
-#[expect(
-    clippy::panic,
-    reason = "a shell that is there and unreadable is a broken machine, not a missing shell"
-)]
-fn a_file(candidate: &Path) -> bool {
-    match fs::metadata(candidate) {
-        Ok(metadata) => metadata.is_file(),
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-            ) =>
-        {
-            false
+/// One search-path entry that could not be inspected, with the candidate that proved it.
+#[derive(Debug)]
+struct SkippedPath {
+    entry: PathBuf,
+    candidate: PathBuf,
+    source: std_io::Error,
+}
+
+/// Finds a shell among `directories`, remembering an entry whose candidates cannot be inspected and continuing after it.
+fn find_posix_sh(
+    directories: &[PathBuf],
+    inspect: impl FnMut(&Path) -> std_io::Result<fs::Metadata>,
+) -> Result<PathBuf, Vec<SkippedPath>> {
+    let mut search = Search {
+        inspect,
+        uninspectable: BTreeSet::new(),
+        skipped: Vec::new(),
+    };
+    let named = ["sh", "sh.exe"];
+    for directory in directories {
+        for name in named {
+            let candidate = directory.join(name);
+            if search.is_file(directory, &candidate) {
+                return Ok(candidate);
+            }
         }
-        Err(error) => panic!("{} cannot be inspected: {error}", candidate.display()),
+    }
+    for directory in directories {
+        if !search.is_file(directory, &directory.join("git.exe")) {
+            continue;
+        }
+        let Some(git) = directory.parent() else {
+            continue;
+        };
+        for candidate in [
+            git.join("usr").join("bin").join("sh.exe"),
+            git.join("bin").join("sh.exe"),
+        ] {
+            if search.is_file(directory, &candidate) {
+                return Ok(candidate);
+            }
+        }
+    }
+    Err(search.skipped)
+}
+
+/// One search that stops asking about an entry after the first candidate the operating system refuses to inspect.
+struct Search<F> {
+    inspect: F,
+    uninspectable: BTreeSet<PathBuf>,
+    skipped: Vec<SkippedPath>,
+}
+
+impl<F: FnMut(&Path) -> std_io::Result<fs::Metadata>> Search<F> {
+    /// Whether `candidate` is a file, recording and skipping `entry` when that cannot be answered.
+    fn is_file(&mut self, entry: &Path, candidate: &Path) -> bool {
+        if self.uninspectable.contains(entry) {
+            return false;
+        }
+        match (self.inspect)(candidate) {
+            Ok(metadata) => metadata.is_file(),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std_io::ErrorKind::NotFound | std_io::ErrorKind::NotADirectory
+                ) =>
+            {
+                false
+            }
+            Err(source) => {
+                self.uninspectable.insert(entry.to_path_buf());
+                self.skipped.push(SkippedPath {
+                    entry: entry.to_path_buf(),
+                    candidate: candidate.to_path_buf(),
+                    source,
+                });
+                false
+            }
+        }
+    }
+}
+
+/// The missing-shell diagnostic, including every search-path entry that could not be inspected.
+fn missing_shell(skipped: &[SkippedPath]) -> String {
+    let mut message = String::from(
+        "this test writes its child as a POSIX shell script and needs `sh`: none is on PATH, and \
+         none is beside a Git for Windows on it; on Windows put Git's usr\\bin on PATH",
+    );
+    if !skipped.is_empty() {
+        message.push_str("; these PATH entries could not be inspected");
+        for one in skipped {
+            message.push_str("; ");
+            message.push_str(&one.entry.display().to_string());
+            message.push_str(" while checking ");
+            message.push_str(&one.candidate.display().to_string());
+            message.push_str(": ");
+            message.push_str(&one.source.to_string());
+        }
+    }
+    message
+}
+
+#[cfg(test)]
+mod shell_tests {
+    use std::fs;
+    use std::io;
+
+    use super::{find_posix_sh, missing_shell};
+
+    #[test]
+    fn an_uninspectable_search_path_entry_is_skipped_for_a_later_shell() -> io::Result<()> {
+        let scratch = tempfile::tempdir()?;
+        let uninspectable = scratch.path().join("current");
+        let usable = scratch.path().join("usable");
+        fs::create_dir_all(usable.join("sh"))?;
+        fs::write(usable.join("sh.exe"), "")?;
+        let directories = [uninspectable.clone(), usable.clone()];
+        let found = find_posix_sh(&directories, |candidate| {
+            if candidate.starts_with(&uninspectable) {
+                Err(io::Error::from_raw_os_error(448))
+            } else {
+                fs::metadata(candidate)
+            }
+        })
+        .map_err(|skipped| io::Error::other(missing_shell(&skipped)))?;
+
+        let expected = usable.join("sh.exe");
+        if found == expected {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!(
+                "the refused entry was not passed over to {expected:?}, or a directory named `sh` was returned as the executable: {found:?}"
+            )))
+        }
+    }
+
+    #[test]
+    fn a_missing_shell_names_an_entry_that_could_not_be_inspected() -> io::Result<()> {
+        let scratch = tempfile::tempdir()?;
+        let uninspectable = scratch.path().join("current");
+        let result = find_posix_sh(std::slice::from_ref(&uninspectable), |_candidate| {
+            Err(io::Error::from_raw_os_error(448))
+        });
+        let skipped = match result {
+            Ok(found) => {
+                return Err(io::Error::other(format!(
+                    "an injected inspection failure found a shell at {}",
+                    found.display()
+                )));
+            }
+            Err(skipped) => skipped,
+        };
+        let message = missing_shell(&skipped);
+
+        if message.contains(&uninspectable.display().to_string())
+            && message.contains("os error 448")
+        {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!(
+                "the final refusal did not name both the entry and why it was skipped: {message}"
+            )))
+        }
     }
 }
 

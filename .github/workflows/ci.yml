@@ -53,6 +53,7 @@ jobs:
       #
       # `part` is how much of the suite a row runs.
       # `macos-26` is the slowest runner and the one every pull request waited for, so it runs the suite in two halves nextest chooses by hash, each on its own runner.
+      # Windows whole then became the longest row, so it takes the same two halves rather than making every pull request wait for both in series.
       # Linux runs the whole suite in `coverage`, which has to run all of it to measure it, so a second uninstrumented Linux run would ask the same questions again.
       fail-fast: false
       matrix:
@@ -64,7 +65,9 @@ jobs:
           - os: macos-15
             part: kernel
           - os: windows-2025
-            part: whole
+            part: hash:1/2
+          - os: windows-2025
+            part: hash:2/2
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
