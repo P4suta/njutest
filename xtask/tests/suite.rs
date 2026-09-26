@@ -37,6 +37,8 @@ mod fuzz_ledger;
 mod fuzzclippy;
 #[path = "gates.rs"]
 mod gates;
+#[path = "invariants.rs"]
+mod invariants;
 #[path = "kani.rs"]
 mod kani;
 #[path = "libtest_options.rs"]

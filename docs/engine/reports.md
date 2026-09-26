@@ -40,7 +40,7 @@ JUnit has four states and this engine has seven, so the mapping is a decision ra
 | killed | a passing case | not a result | the tests noticed it, which is the tests working |
 | survived | `<failure>` | `warning` | a gap in the tests is what a failing case means to a reader |
 | step limit reached, waited, inconclusive, errored | `<error>` | `error` | the run established no verdict, which is about the run |
-| not run | `<skipped>` with the reason | `note` | unreached, discharged, unselected, or stopped early |
+| not run | `<skipped>` with the reason | `note` | unreached, discharged, unselected, stopped early, or declined |
 
 SARIF carries a result **only** for a finding.
 A killed mutant is not a finding, and a report full of results for code that is fine is a report nobody reads.

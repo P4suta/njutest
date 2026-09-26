@@ -1673,6 +1673,7 @@ fn evidence_of(mutating: &Mutating<'_>) -> Result<Option<mutation::Evidence>, Ru
         build: vec![keying.common.build.digest().to_string()],
         engine: keying.common.engine.clone(),
         runner: Some(crate::evidence::key::runner(&keying.common)),
+        declared: mutating.session.declared(&BTreeSet::new()),
     };
     let carry = keyed.usable().then(|| mutation::Carry {
         store: rust_mutants::carry::Store::new(root),

@@ -666,7 +666,7 @@ fn a_fixture_cannot_hold_a_rule_no_run_writes() {
         panic!("a row naming a versioned rule is one no report carries");
     };
     assert!(
-        matches!(error, njutest::testkit::reports::UnmadeReport::Rule { ref name } if name == "gt-to-ge@1"),
+        matches!(error, njutest::testkit::reports::UnmadeReportError::Rule { ref name } if name == "gt-to-ge@1"),
         "a report names a rule bare, so a fixture that versions it prints a locator no \
          command resolves: {error}"
     );

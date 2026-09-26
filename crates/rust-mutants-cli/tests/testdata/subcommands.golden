@@ -21,6 +21,10 @@ Options:
       --root <DIR>
           The workspace root. Defaults to the working directory
 
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
+
       --config <FILE>
           Read this configuration file instead of the one in the workspace root
 
@@ -220,6 +224,10 @@ Options:
       --root <DIR>
           The workspace root. Defaults to the working directory
 
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
+
       --config <FILE>
           Read this configuration file instead of the one in the workspace root
 
@@ -352,6 +360,10 @@ Options:
 
       --root <DIR>
           The workspace root. Defaults to the working directory
+
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
 
       --config <FILE>
           Read this configuration file instead of the one in the workspace root
@@ -490,6 +502,10 @@ Options:
       --root <DIR>
           The workspace root. Defaults to the working directory
 
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
+
       --config <FILE>
           Read this configuration file instead of the one in the workspace root
 
@@ -626,6 +642,10 @@ Options:
       --root <DIR>
           The workspace root. Defaults to the working directory
 
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
+
       --config <FILE>
           Read this configuration file instead of the one in the workspace root
 
@@ -758,6 +778,10 @@ Options:
 
       --root <DIR>
           The workspace root. Defaults to the working directory
+
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
 
       --config <FILE>
           Read this configuration file instead of the one in the workspace root
@@ -896,6 +920,10 @@ Options:
       --root <DIR>
           The workspace root. Defaults to the working directory
 
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
+
       --config <FILE>
           Read this configuration file instead of the one in the workspace root
 
@@ -1025,6 +1053,10 @@ Options:
 
       --root <DIR>
           The workspace root. Defaults to the working directory
+
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
 
       --config <FILE>
           Read this configuration file instead of the one in the workspace root
@@ -1158,6 +1190,10 @@ Options:
       --tier <TIER>
           Only the rules this tier selects. Every tier when none is named
 
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
+
       --json
           Print the rules as a document rather than the lines a person reads
 
@@ -1182,6 +1218,10 @@ Options:
 
       --root <DIR>
           The workspace root. Defaults to the working directory
+
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
 
       --force
           Overwrite a file that is already there
@@ -1208,6 +1248,10 @@ Options:
 
       --root <DIR>
           The workspace root. Defaults to the working directory
+
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
 
   -p, --package <NAME>
           Ask about these packages rather than every member. Repeatable
@@ -1241,6 +1285,10 @@ Options:
       --root <DIR>
           The workspace root. Defaults to the working directory
 
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
+
       --output <DIR>
           Write the bundle here rather than beside the run
 
@@ -1269,6 +1317,10 @@ Options:
 
       --root <DIR>
           The workspace root whose report directory the parts are under
+
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
 
       --runs <IDS>
           The runs to combine, by name or as a glob against the report directory
@@ -1302,6 +1354,10 @@ Options:
           
           [default: auto]
 
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -1323,6 +1379,10 @@ Options:
 
       --root <DIR>
           The workspace root. Defaults to the working directory
+
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
 
       --run <ID>
           The run, by its identity. Defaults to the newest
@@ -1368,6 +1428,10 @@ Options:
 
       --root <DIR>
           The workspace root, whose report directory holds the ledger of what was kept
+
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
 
       --gc
           Remove every abandoned snapshot, and the build caches no run can look up again
@@ -1416,6 +1480,10 @@ Options:
           
           [default: auto]
 
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -1438,6 +1506,10 @@ Options:
 
       --root <DIR>
           The workspace root. Defaults to the working directory
+
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
 
       --run <ID>
           The stored run to gate on, by its identity. Defaults to the newest

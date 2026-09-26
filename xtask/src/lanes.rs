@@ -358,23 +358,22 @@ impl Place<'_> {
             return Ok(());
         }
         let prefix = format!("{}.waiting.", lane.name());
-        let entries =
-            std::fs::read_dir(self.directory).map_err(|source| io(self.directory, source))?;
+        let entries = crate::repository::entries(self.directory)
+            .map_err(|source| io(self.directory, source))?;
         for entry in entries {
-            let entry = entry.map_err(|source| io(self.directory, source))?;
-            let name = entry.file_name();
-            let Some(pid) = name
-                .to_str()
+            let Some(pid) = entry
+                .file_name()
+                .and_then(OsStr::to_str)
                 .and_then(|name| name.strip_prefix(prefix.as_str()))
                 .and_then(number)
             else {
                 continue;
             };
             if started_at(pid).is_none() {
-                match std::fs::remove_file(entry.path()) {
+                match std::fs::remove_file(&entry) {
                     Ok(()) => {}
                     Err(gone) if gone.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(source) => return Err(io(&entry.path(), source)),
+                    Err(source) => return Err(io(&entry, source)),
                 }
             }
         }

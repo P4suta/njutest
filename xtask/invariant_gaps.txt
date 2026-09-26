@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# Every layer docs/invariants.md leaves open, and who closes it: `<decision> <layer> <owner>`.
+#
+# **This ledger may shrink and never grow**; xtask/invariant_gap_ceiling.txt holds its size.
+# A line leaves when its cell names what holds the decision there, and `cargo xtask invariants`
+# refuses a line the table no longer leaves open, so a closed hole cannot stay listed.
+
+answered-stop self-check njutest-14
+answered-stop plant njutest-14
+answered-stop mutation njutest-14
+group-stop types njutest-14
+group-stop self-check njutest-14
+group-stop oracle njutest-14
+group-stop plant njutest-14
+group-stop mutation njutest-14
+stall-watch types njutest-14
+stall-watch self-check njutest-14
+stall-watch plant njutest-14
+stall-watch mutation njutest-14
+stall-watch states njutest-14
+step-transition plant njutest-14
+step-transition mutation njutest-14
+step-stop-said types njutest-14
+step-stop-said self-check njutest-14
+step-stop-said oracle njutest-14
+step-stop-said plant njutest-14
+step-stop-said mutation njutest-14
+step-stop-said states njutest-14
+operator-swap types njutest-14
+operator-swap self-check njutest-14
+operator-swap oracle njutest-14
+operator-swap plant njutest-14
+operator-swap mutation njutest-14
+operator-swap states njutest-14
+instrument-shape types njutest-14
+instrument-shape self-check njutest-14
+instrument-shape oracle njutest-14
+instrument-shape plant njutest-14
+instrument-shape mutation njutest-14
+instrument-shape states njutest-14

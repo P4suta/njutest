@@ -72,7 +72,7 @@ impl Place {
         Ok(Self {
             zone: cfg!(unix) && zone_is_known(vars, cancel),
             locale: cfg!(unix) && locale_is_installed(vars, cancel),
-            shell: cfg!(unix) && answers(&["sh", "-c", "exit 0"], vars, cancel).is_some(),
+            shell: shell_answers(vars, cancel),
             temp_directory,
             home,
             cargo_home: named("CARGO_HOME").or_else(|| under_home(".cargo")),
@@ -104,6 +104,18 @@ fn zone_is_known(vars: &[(OsString, OsString)], cancel: &Cancel) -> bool {
 }
 
 /// Whether the locale is installed, by the list `locale -a` prints, which spells a codeset more than one way.
+/// Whether a POSIX shell starts and exits cleanly here, which only a Unix has to say.
+#[cfg(unix)]
+fn shell_answers(vars: &[(OsString, OsString)], cancel: &Cancel) -> bool {
+    answers(&["sh", "-c", "exit 0"], vars, cancel).is_some()
+}
+
+/// A platform with no POSIX shell it can count on has none to answer.
+#[cfg(not(unix))]
+const fn shell_answers(_vars: &[(OsString, OsString)], _cancel: &Cancel) -> bool {
+    false
+}
+
 fn locale_is_installed(vars: &[(OsString, OsString)], cancel: &Cancel) -> bool {
     let spelled = |name: &str| name.to_ascii_lowercase().replace('-', "");
     let wanted = spelled(LOCALE);

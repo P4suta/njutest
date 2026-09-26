@@ -390,7 +390,10 @@ fn compile_arguments_spell_every_build_option_once() {
     let options = CompileOptions {
         kind: CompileKind::Tests,
         packages: vec!["one".to_owned()],
-        target_dir: Some(PathBuf::from("/tmp/out")),
+        target_dir: Some(rust_mutants::cargo::BuildDir::new(
+            PathBuf::from("/tmp/out"),
+            Vec::new(),
+        )),
         locked: true,
         offline: true,
         build: BuildConfig {

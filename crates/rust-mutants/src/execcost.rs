@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::runner::{MonitorFailure, ProcessExit, RunnerError};
+use crate::runner::{MonitorError, ProcessExit, RunnerError};
 
 /// Why the cost of executing a newly written program could not be measured.
 #[derive(Debug, thiserror::Error)]
@@ -71,7 +71,7 @@ pub enum ExecCostError {
         path: PathBuf,
         /// The monitor failure.
         #[source]
-        source: MonitorFailure,
+        source: MonitorError,
     },
     /// The program exceeded the deliberately generous probe bound.
     #[error("{} did not finish within {seconds} seconds, which is itself the answer", path.display())]

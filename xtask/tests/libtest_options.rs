@@ -28,21 +28,8 @@ fn one_thread(words: &[&str]) -> bool {
 }
 
 fn table(name: &str) -> Vec<String> {
-    let source = include_str!("../src/concurrency.rs");
-    let start = source
-        .find(&format!("const {name}:"))
-        .expect("the source writes the table");
-    let body = source
-        .get(start..)
-        .and_then(|rest| rest.split_once("= ["))
-        .and_then(|(_, rest)| rest.split_once("];"))
-        .map(|(literal, _)| literal)
-        .expect("a table literal");
-    body.split('"')
-        .skip(1)
-        .step_by(2)
-        .map(ToOwned::to_owned)
-        .collect()
+    njutest_devkit::rust_source::strings_listed(include_str!("../src/concurrency.rs"), name)
+        .expect("the source writes the table as an array of string literals")
 }
 
 #[test]

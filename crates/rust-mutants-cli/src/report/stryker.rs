@@ -161,6 +161,7 @@ const fn status_of(mutant: &super::run::RunMutantDocument) -> &'static str {
         Outcome::Survived => "Survived",
         Outcome::Inconclusive | Outcome::Errored => "RuntimeError",
         Outcome::NotRun if mutant.unreached => "NoCoverage",
+        Outcome::NotRun if !mutant.declined.is_empty() => "Ignored",
         Outcome::NotRun | Outcome::StepLimitReached | Outcome::Waited => "Pending",
     }
 }
@@ -184,6 +185,15 @@ fn reason_of(mutant: &super::run::RunMutantDocument) -> Option<String> {
             mutant.exit_code
         )),
         Outcome::NotRun if mutant.unreached => Some("no measured test reaches it".to_owned()),
+        Outcome::NotRun if !mutant.declined.is_empty() => Some(format!(
+            "every test that reached it declined to measure on this machine: {}",
+            mutant
+                .declined
+                .iter()
+                .map(|one| format!("{} ({})", one.test, one.why))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
         Outcome::NotRun => Some("this run did not execute it".to_owned()),
         Outcome::Killed | Outcome::Survived => None,
     }

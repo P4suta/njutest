@@ -99,7 +99,7 @@ pub enum AuditError {
         path: String,
         /// Which field.
         #[source]
-        cause: crate::route::ReadCause,
+        cause: crate::route::ReadCauseError,
     },
     /// A report given with its shards is not the merge of any.
     #[error("{path}: not a report merged from shards, so there are no shards to hold it to")]
@@ -143,7 +143,7 @@ pub enum AuditError {
         path: String,
         /// Where and how.
         #[source]
-        source: crate::schemas::OffSchema,
+        source: crate::schemas::OffSchemaError,
     },
     /// The published report schema itself does not compile.
     #[error(transparent)]
@@ -154,7 +154,7 @@ pub enum AuditError {
         /// The document.
         path: String,
         /// What it holds instead.
-        shape: Unprojectable,
+        shape: UnprojectableError,
     },
 }
 
@@ -180,7 +180,7 @@ impl crate::error::Coded for AuditError {
 /// What a report holds instead of the one configured build measured whole this audit re-decides.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
-pub enum Unprojectable {
+pub enum UnprojectableError {
     /// The report measured more than one configured build, or none.
     #[error("a report of {count} configured builds")]
     Builds {
@@ -198,7 +198,7 @@ pub enum Unprojectable {
     Flat,
 }
 
-impl crate::error::Coded for Unprojectable {
+impl crate::error::Coded for UnprojectableError {
     fn code(&self) -> crate::error::XtCode {
         crate::error::XtCode::ProofUnprojected
     }
@@ -757,14 +757,14 @@ fn concluded(recorded: &crate::route::Checked<crate::schemas::RunnerLines>) -> O
 }
 
 /// The flat view of the one part of one configured build that every layer re-decides: a complete report's one build measured whole, or a shard's one build with the shard it is written into its scope.
-fn projected(document: &serde_json::Value) -> Result<serde_json::Value, Unprojectable> {
+fn projected(document: &serde_json::Value) -> Result<serde_json::Value, UnprojectableError> {
     let Some(kind) = document.get("document_type") else {
-        return Err(Unprojectable::Flat);
+        return Err(UnprojectableError::Flat);
     };
     let mut report = document.get("report").cloned().unwrap_or_default();
     let builds = rows(&report, "builds");
     let [build] = builds else {
-        return Err(Unprojectable::Builds {
+        return Err(UnprojectableError::Builds {
             count: builds.len(),
         });
     };
@@ -773,7 +773,7 @@ fn projected(document: &serde_json::Value) -> Result<serde_json::Value, Unprojec
     } else {
         let parts = rows(build, "parts");
         let [part] = parts else {
-            return Err(Unprojectable::Parts { count: parts.len() });
+            return Err(UnprojectableError::Parts { count: parts.len() });
         };
         part.clone()
     };
@@ -1473,7 +1473,7 @@ fn one_repair(
     else {
         notes.violated(
             subject,
-            crate::repair::Contradiction::NotRun {
+            crate::repair::RepairContradictionError::NotRun {
                 target: repair.target.clone(),
             }
             .to_string(),
@@ -3737,7 +3737,7 @@ struct Recording<'a> {
 
 impl<'a> Recording<'a> {
     /// The rows every layer reads, each field its schema requires demanded rather than supplied.
-    fn of(document: &'a serde_json::Value) -> Result<Self, crate::route::ReadCause> {
+    fn of(document: &'a serde_json::Value) -> Result<Self, crate::route::ReadCauseError> {
         use crate::route::required;
         let text = |value: &serde_json::Value| value.as_str().map(str::to_owned);
         let targets = rows(document, "targets")
@@ -3749,7 +3749,7 @@ impl<'a> Recording<'a> {
                     status: required(row, "status", text)?,
                 })
             })
-            .collect::<Result<Vec<_>, crate::route::ReadCause>>()?;
+            .collect::<Result<Vec<_>, crate::route::ReadCauseError>>()?;
         let mutants = rows(document, "mutants")
             .iter()
             .map(|row| {
@@ -3766,7 +3766,7 @@ impl<'a> Recording<'a> {
                         .and_then(|reuse| field(reuse, "source_run_id")),
                 })
             })
-            .collect::<Result<Vec<_>, crate::route::ReadCause>>()?;
+            .collect::<Result<Vec<_>, crate::route::ReadCauseError>>()?;
         let findings = rows(document, "findings")
             .iter()
             .map(|row| {
@@ -3775,7 +3775,7 @@ impl<'a> Recording<'a> {
                     subject: required(row, "subject", text)?,
                 })
             })
-            .collect::<Result<Vec<_>, crate::route::ReadCause>>()?;
+            .collect::<Result<Vec<_>, crate::route::ReadCauseError>>()?;
         let models = rows(document, "models")
             .iter()
             .map(|row| {
@@ -3789,7 +3789,7 @@ impl<'a> Recording<'a> {
                     raw: row.clone(),
                 })
             })
-            .collect::<Result<Vec<_>, crate::route::ReadCause>>()?;
+            .collect::<Result<Vec<_>, crate::route::ReadCauseError>>()?;
         Ok(Self {
             document,
             run_id: required(document, "run_id", text)?,

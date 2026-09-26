@@ -411,7 +411,7 @@ A run that is cancelled leaves every mutant it never claimed as not run, `interr
 An execution that narrowed by anything else would run fewer targets than the route says,
 and a survivor it reported would be one nobody measured — which is what happened to a target whose profile the measurement could not read: the route kept it and the execution dropped it.
 
-A mutant that was never executed says why: `unreached`, `discharged`, or `interrupted`.
+A mutant that was never executed says why: `unreached`, `discharged`, `interrupted`, `unselected`, `stopped-early`, or `declined` for one whose every reaching test declined to measure on this machine.
 A process the runner never got a status from is `interrupted`,
 not a mutation no test can notice.
 Its row also carries the route — which targets could have noticed it, which a proof removed, and which of them ran — so a reader can see a proof layer remove work without a recording.

@@ -18,7 +18,8 @@
     "rejections",
     "skips",
     "expectations",
-    "findings"
+    "findings",
+    "facts"
   ],
   "properties": {
     "document_type": {
@@ -233,6 +234,7 @@
         "not_run",
         "unreached",
         "discharged",
+        "declined",
         "expected"
       ],
       "properties": {
@@ -290,6 +292,11 @@
         },
         "discharged": {
           "description": "Of the mutants that never ran, how many a proof removed every target from.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "declined": {
+          "description": "Of the mutants that never ran, how many measured nothing because every test that reached them declined to measure on this machine, as the baseline's did (ADR 0043).",
           "type": "integer",
           "minimum": 0
         },
@@ -364,6 +371,7 @@
           "retried",
           "lingered",
           "not_run_reason",
+          "declined",
           "route",
           "identical",
           "expected",
@@ -506,11 +514,25 @@
                   "discharged",
                   "interrupted",
                   "unselected",
-                  "stopped-early"
+                  "stopped-early",
+                  "declined"
                 ]
               }
             ],
-            "description": "Why execution did not occur. unselected may mean the scoped preparation deliberately omitted compiler validation and instrumentation for this candidate."
+            "description": "Why execution did not occur, or measured nothing where it did. unselected may mean the scoped preparation deliberately omitted compiler validation and instrumentation for this candidate; declined means every test that reached it declined to measure on this machine, as the baseline's did."
+          },
+          "declined": {
+            "description": "Each test that declined to measure in the execution the outcome rests on, and its words (ADR 0043).",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["test", "why"],
+              "properties": {
+                "test": { "type": "string", "minLength": 1 },
+                "why": { "type": "string" }
+              }
+            }
           },
           "identical": {
             "enum": [
@@ -744,7 +766,8 @@
           "covered",
           "standing",
           "actual",
-          "why"
+          "why",
+          "where"
         ],
         "properties": {
           "id": {
@@ -835,7 +858,8 @@
               "met",
               "stale",
               "unmatched",
-              "unjudged"
+              "unjudged",
+              "inapplicable"
             ]
           },
           "actual": {
@@ -857,6 +881,41 @@
                 "type": "string"
               }
             ]
+          },
+          "where": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "cfg",
+                  "env"
+                ],
+                "properties": {
+                  "cfg": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    ]
+                  },
+                  "env": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ],
+            "description": "The facts the claim was established under, when the file named any: a cfg predicate over the target and exact values of the tests' environment (ADR 0042)."
           },
           "covered": {
             "oneOf": [
@@ -915,6 +974,14 @@
           }
         }
       }
+    },
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "What the build's own rustc says its target is, kept to the names a target alone decides, as name or name=\"value\", sorted; every claim's where was judged against it (ADR 0042)."
     },
     "targets": {
       "description": "The test targets the run built, which is what every mutant could have been asked against.",
