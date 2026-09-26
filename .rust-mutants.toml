@@ -164,23 +164,6 @@ rule = "return-default"
 original = "RunKind::Full"
 reason = "Full is what RunKind derives Default as, because a run nobody narrowed looked at everything; a_new_report_names_the_schema_the_run_and_what_it_ran_on holds both names to the one value"
 
-# Where an edit is, in a file whose bytes are not text, which there are none of.
-#
-# A session keeps the pristine bytes of the files discovery parsed, and
-# discovery refuses a file that is not UTF-8 before it proposes anything in it
-# (`SyntaxError::NotUtf8`, held by `syntax.rs::a_file_that_does_not_parse_is_an_error_naming_the_line`).
-# So every source a session holds is text, and reading it as text cannot fail.
-# The guard stays because `sources` is a public map a caller may one day fill
-# itself, and answering with a position counted in replacement characters
-# would put a line number on bytes nobody has.
-[[mutation.expect]]
-path = "crates/rust-mutants/src/session/mod.rs"
-item = "position"
-rule = "question-to-unwrap"
-original = "?"
-line = 393
-reason = "discovery refuses a file that is not UTF-8 before anything is proposed in it, so every source a session holds is text; a_file_that_does_not_parse_is_an_error_naming_the_line holds that, and this is an equivalence under it rather than a fail-open the suite cannot reach"
-
 # Which way a run measures its mutants, which is two ways of one thing.
 #
 # Measuring one mutant at a time and measuring several at once are the same
