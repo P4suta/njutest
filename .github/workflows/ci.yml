@@ -69,17 +69,9 @@ jobs:
         run: |
           cargo fetch --locked
           cargo fetch --locked --manifest-path fuzz/Cargo.toml
-      # `cargo test --all-targets` builds an example as a test harness, not as the program it is, and part of this suite drives a scripted `cargo` that is one.
-      # Building it plainly is what makes those tests able to run.
-      - name: Build the scripted toolchain the suite drives
-        shell: bash
-        run: cargo build --locked --examples --workspace --all-features --profile test
-      # `shell: bash` rather than the default, which is PowerShell on Windows:
-      # a native command that fails there does not stop the script, so the suite below ran on after the first half had already failed and the step's status became the second half's.
-      # A failing test took the job's forty-five minute timeout to be reported, and would have been reported as a pass had the second half succeeded.
       - name: Test every target
         shell: bash
-        run: cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2
+        run: mise run test:ci
       - name: Doctests
         shell: bash
         run: cargo test --locked --workspace --all-features --doc

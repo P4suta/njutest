@@ -372,14 +372,18 @@ fn every_ci_platform_runs_the_same_complete_suite() {
         !test_job.contains("matrix.part") && !test_job.contains("part:"),
         "no CI test row selects only part of the suite"
     );
-    let run = "cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2";
     assert_eq!(
-        test_job.matches(run).count(),
+        test_job.matches("mise run test:ci").count(),
         1,
         "one complete suite run per row"
     );
+    let local = task("\"test:ci\"");
     assert!(
-        !test_job.contains(" -E ") && !test_job.contains("--exclude"),
+        local.contains("cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2"),
+        "the CI task covers every target: {local}"
+    );
+    assert!(
+        !local.contains(" -E ") && !local.contains("--exclude"),
         "the CI test row must not filter or shard the suite"
     );
 }
@@ -610,7 +614,7 @@ fn the_gate_catalogue_names_the_compiler_backed_methods_the_policy_holds() {
 
 #[test]
 fn every_task_that_runs_the_suite_builds_the_scripted_toolchain_first() {
-    for name in ["\"test:fast\"", "\"test:slow\"", "coverage"] {
+    for name in ["\"test:fast\"", "\"test:slow\"", "\"test:ci\"", "coverage"] {
         let body = task(name);
         let depends = body
             .lines()
@@ -630,15 +634,9 @@ fn every_task_that_runs_the_suite_builds_the_scripted_toolchain_first() {
 #[test]
 fn the_pipeline_builds_the_scripted_toolchain_before_it_runs_the_suite() {
     let workflow = repository(".github/workflows/ci.yml");
-    let built = workflow
-        .find("cargo build --locked --examples")
-        .unwrap_or_else(|| panic!("no step builds the examples: {workflow}"));
-    let tested = workflow
-        .find("cargo nextest run --locked --workspace")
-        .unwrap_or_else(|| panic!("no step runs the suite: {workflow}"));
     assert!(
-        built < tested,
-        "the suite runs before the scripted cargo it drives is built"
+        workflow.contains("run: mise run test:ci"),
+        "CI must use the task that builds its scripted example before testing"
     );
 }
 
