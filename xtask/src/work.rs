@@ -269,9 +269,9 @@ impl Drop for Group {
     }
 }
 
-/// How hard work is asked to stop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Sent {
+/// How hard work is asked to stop, in the order the asking escalates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub(crate) enum Sent {
     /// `SIGTERM`, the chance to stop cleanly.
     Ask,
     /// `SIGKILL`, after the grace a hung member ignores.
@@ -326,15 +326,21 @@ fn leader_pid(child: &Child) -> Option<rustix::process::Pid> {
 /// Signals the leader's whole group; a group the kernel will not let this process signal whole gets its leader signalled by name, and a group already gone is success.
 #[cfg(unix)]
 fn signal(child: &mut Child, sent: Sent) -> Result<(), WorkError> {
-    use rustix::io::Errno;
-    use rustix::process::{Signal, kill_process, kill_process_group};
-
     let Some(leader) = leader_pid(child) else {
         return match sent {
             Sent::Ask => Ok(()),
             Sent::Kill => child.kill().map_err(|source| WorkError::Watch { source }),
         };
     };
+    signal_group(leader, sent).map_err(|source| WorkError::Watch { source })
+}
+
+/// Signals the group `leader` leads; a group the kernel will not let this process signal whole gets its leader signalled by name, and a group already gone is success.
+#[cfg(unix)]
+pub(crate) fn signal_group(leader: rustix::process::Pid, sent: Sent) -> std::io::Result<()> {
+    use rustix::io::Errno;
+    use rustix::process::{Signal, kill_process, kill_process_group};
+
     let signal = match sent {
         Sent::Ask => Signal::TERM,
         Sent::Kill => Signal::KILL,
@@ -343,13 +349,9 @@ fn signal(child: &mut Child, sent: Sent) -> Result<(), WorkError> {
         Ok(()) | Err(Errno::SRCH) => Ok(()),
         Err(Errno::PERM) => match kill_process(leader, signal) {
             Ok(()) | Err(Errno::SRCH) => Ok(()),
-            Err(errno) => Err(WorkError::Watch {
-                source: std::io::Error::from(errno),
-            }),
+            Err(errno) => Err(std::io::Error::from(errno)),
         },
-        Err(errno) => Err(WorkError::Watch {
-            source: std::io::Error::from(errno),
-        }),
+        Err(errno) => Err(std::io::Error::from(errno)),
     }
 }
 

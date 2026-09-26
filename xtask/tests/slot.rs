@@ -70,7 +70,7 @@ impl Machine {
 }
 
 const HOLDS_UNTIL_GO: &str = "mkdir \"$TURNS/inside\"; \
-     while [ ! -e \"$TURNS/go\" ]; do sleep 0.05; done; \
+     i=0; while [ ! -e \"$TURNS/go\" ] && [ $i -lt 2400 ]; do sleep 0.05; i=$((i+1)); done; \
      rmdir \"$TURNS/inside\"";
 
 /// Waits until `ready` says so, or `limit` passes, and says which.
@@ -151,13 +151,8 @@ fn a_run_inside_a_held_lane_does_not_wait_for_itself() {
     );
 }
 
-#[test]
-fn a_killed_holder_keeps_the_lane_until_the_work_it_started_has_ended() {
-    let machine = Machine::new();
-    let mut holder = machine.run(
-        "echo $$ > \"$TURNS/work\"; mkdir \"$TURNS/inside\"; \
-         while [ ! -e \"$TURNS/go\" ]; do sleep 0.05; done",
-    );
+/// Kills the run `holder` outright once the work it started is recorded, and says which process that work is.
+fn orphan_the_work(machine: &Machine, holder: &mut SupervisedChild) -> String {
     assert!(
         until(Duration::from_secs(60), || machine.marker("inside")),
         "the holder never started"
@@ -176,18 +171,51 @@ fn a_killed_holder_keeps_the_lane_until_the_work_it_started_has_ended() {
         .expect("kill");
     assert!(killed.success(), "the holder could not be killed");
     holder.wait().expect("the killed holder is reaped");
-    let mut next = machine.run("true");
-    let early = finished_within(Duration::from_secs(3), &mut next);
-    machine.release();
-    let late = finished_within(Duration::from_secs(60), &mut next);
-    assert!(
-        early.is_none(),
-        "the next run went in while the work the killed holder started was still running in the \
-         lane, which is two runs on the machine and two writers in the gate's tree"
+    std::fs::read_to_string(machine.turns.path().join("work"))
+        .expect("the work said who it is")
+        .trim()
+        .to_owned()
+}
+
+/// A run whose command succeeds only if the process `work` is gone by the time it runs.
+fn after_it(machine: &Machine, work: &str) -> SupervisedChild {
+    machine.run(&format!("if kill -0 {work} 2>/dev/null; then exit 7; fi"))
+}
+
+#[test]
+fn a_killed_holder_s_work_is_ended_before_the_next_run_goes_in() {
+    let machine = Machine::new();
+    let mut holder = machine.run(
+        "echo $$ > \"$TURNS/work\"; mkdir \"$TURNS/inside\"; \
+         i=0; while [ ! -e \"$TURNS/go\" ] && [ $i -lt 2400 ]; do sleep 0.05; i=$((i+1)); done",
     );
+    let work = orphan_the_work(&machine, &mut holder);
+    let mut next = after_it(&machine, &work);
+    let ended = finished_within(Duration::from_secs(60), &mut next);
+    machine.release();
     assert!(
-        late.is_some_and(|status| status.success()),
-        "once the orphaned work ended, the next run never got the lane"
+        ended.is_some_and(|status| status.success()),
+        "the work a killed holder left running answers to nobody, so the next run ends it and goes \
+         in once it has ended, rather than sharing the lane with it or waiting for as long as it \
+         chooses to run: {ended:?}"
+    );
+}
+
+#[test]
+fn work_that_will_not_stop_when_asked_is_killed_before_the_next_run_goes_in() {
+    let machine = Machine::new();
+    let mut holder = machine.run(
+        "trap '' TERM; echo $$ > \"$TURNS/work\"; mkdir \"$TURNS/inside\"; \
+         i=0; while [ ! -e \"$TURNS/go\" ] && [ $i -lt 2400 ]; do sleep 0.05; i=$((i+1)); done",
+    );
+    let work = orphan_the_work(&machine, &mut holder);
+    let mut next = after_it(&machine, &work);
+    let ended = finished_within(Duration::from_secs(60), &mut next);
+    machine.release();
+    assert!(
+        ended.is_some_and(|status| status.success()),
+        "a loop that ignores the request to stop is how a lane stayed held by an orphan for every \
+         session on the machine; after the grace it is killed, and the next run goes in: {ended:?}"
     );
 }
 
@@ -197,7 +225,7 @@ fn a_run_asked_to_stop_stops_its_work_first() {
         let machine = Machine::new();
         let mut command = machine.command(
             "echo $$ > \"$TURNS/work\"; mkdir \"$TURNS/inside\"; \
-             while [ ! -e \"$TURNS/go\" ]; do sleep 0.05; done",
+             i=0; while [ ! -e \"$TURNS/go\" ] && [ $i -lt 2400 ]; do sleep 0.05; i=$((i+1)); done",
         );
         let mut run = SupervisedChild::launch(&mut command).expect("a run in the lane");
         assert!(

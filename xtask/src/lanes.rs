@@ -23,6 +23,9 @@ const POLL: Duration = Duration::from_millis(200);
 /// How often a waiting run repeats whom it is waiting for.
 const REPORT: Duration = Duration::from_secs(30);
 
+/// How long work a dead holder left behind is given to end once asked, and again once killed.
+const ORPHAN_GRACE: Duration = Duration::from_secs(10);
+
 /// A lane a run can queue for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lane {
@@ -108,6 +111,17 @@ pub enum LaneError {
         /// The output failure.
         source: std::io::Error,
     },
+    /// The work a dead holder left running in the lane would not end when this run stopped it.
+    #[error(
+        "the {lane} lane's last holder is gone and the work it started (pid {pid}) outlived both \
+         the request to stop and the kill; nothing else will take the lane while it runs"
+    )]
+    Unended {
+        /// The lane.
+        lane: &'static str,
+        /// The work's leader.
+        pid: u32,
+    },
     /// This process was asked to stop while it waited.
     #[error("stopped by signal {signal} while waiting for the {lane} lane")]
     Interrupted {
@@ -125,7 +139,8 @@ impl crate::error::Coded for LaneError {
             | Self::Nowhere
             | Self::Io { .. }
             | Self::Lock { .. }
-            | Self::Progress { .. } => crate::error::XtCode::LaneUnavailable,
+            | Self::Progress { .. }
+            | Self::Unended { .. } => crate::error::XtCode::LaneUnavailable,
             Self::Interrupted { .. } => crate::error::XtCode::LaneInterrupted,
         }
     }
@@ -141,7 +156,8 @@ impl LaneError {
             | Self::Nowhere
             | Self::Io { .. }
             | Self::Lock { .. }
-            | Self::Progress { .. } => None,
+            | Self::Progress { .. }
+            | Self::Unended { .. } => None,
         }
     }
 }
@@ -365,35 +381,78 @@ impl Place<'_> {
         Ok(())
     }
 
-    /// Waits for the work the last holder started to end, when that holder died before its work did.
+    /// Ends the work the last holder started, when that holder is gone and its work is not.
+    ///
+    /// This run holds the lock, so the last holder has let go of it, and a holder lets go only by ending or by dying.
+    /// Work still running is then work nobody will read the answer of: it is asked to stop, then killed, and this run goes in only once it has ended, so two runs never share the lane.
+    /// Waiting for it instead was waiting for as long as it chose to run, which for a loop that never ends was every run on the machine, for good.
     fn outlast(&self, request: &Request<'_>, progress: &mut dyn Write) -> Result<(), LaneError> {
         let Some((pid, born)) = leader_of(self.record) else {
             return Ok(());
         };
-        let started = Instant::now();
-        let mut reported: Option<Instant> = None;
-        while started_at(pid).as_deref() == Some(born.as_str()) {
-            if let Some(signal) = request.stops.raised() {
-                return Err(LaneError::Interrupted {
-                    lane: request.lane.name(),
-                    signal,
-                });
+        let running = || started_at(pid).as_deref() == Some(born.as_str());
+        for sent in crate::work::Sent::ALL {
+            if !running() {
+                return Ok(());
             }
-            if reported.is_none_or(|last| last.elapsed() >= REPORT) {
-                reported = Some(Instant::now());
-                say(
-                    progress,
-                    &format!(
-                        "slot: the {} lane is free, but the work its last holder started (pid {pid}) is still running; waited {} so far",
-                        request.lane.name(),
-                        span(started.elapsed().as_secs())
-                    ),
-                )?;
+            say(
+                progress,
+                &format!(
+                    "slot: the {} lane is free, but the work its last holder started (pid {pid}) is still running with nobody to answer to; {} it",
+                    request.lane.name(),
+                    match sent {
+                        crate::work::Sent::Ask => "asking it to stop",
+                        crate::work::Sent::Kill => "it did not stop when asked, so killing",
+                    }
+                ),
+            )?;
+            stop_orphan(pid, sent).map_err(|source| io(self.record, source))?;
+            let asked = Instant::now();
+            while running() && asked.elapsed() < ORPHAN_GRACE {
+                if let Some(signal) = request.stops.raised() {
+                    return Err(LaneError::Interrupted {
+                        lane: request.lane.name(),
+                        signal,
+                    });
+                }
+                std::thread::sleep(POLL);
             }
-            std::thread::sleep(POLL);
+        }
+        if running() {
+            return Err(LaneError::Unended {
+                lane: request.lane.name(),
+                pid,
+            });
         }
         Ok(())
     }
+}
+
+/// Stops the group the work's leader `pid` leads.
+#[cfg(unix)]
+fn stop_orphan(pid: u32, sent: crate::work::Sent) -> std::io::Result<()> {
+    let unled = || {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("{pid} is not a process id a group can be led by"),
+        )
+    };
+    let raw = match i32::try_from(pid) {
+        Ok(raw) => raw,
+        Err(_wider_than_a_pid) => return Err(unled()),
+    };
+    let leader = rustix::process::Pid::from_raw(raw).ok_or_else(unled)?;
+    crate::work::signal_group(leader, sent)
+}
+
+/// Nothing to stop where a recorded leader cannot be found alive in the first place.
+#[cfg(not(unix))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the same signature as the platform that records leaders it can signal"
+)]
+const fn stop_orphan(_pid: u32, _sent: crate::work::Sent) -> std::io::Result<()> {
+    Ok(())
 }
 
 /// A lane this process holds; dropping it lets the next run in, which overwrites the record when it starts.

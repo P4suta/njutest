@@ -34,6 +34,8 @@ The gate was a Bash script, and the rule that decides what may run on the machin
    The tree is checked out in place, so what is compiled again is what the diff from the last push feeds.
 3. **One whole-workspace run at a time, by lane.** `cargo xtask slot heavy -- <command>` holds this machine's `heavy` lane for the command's life; the gate holds it from before it touches its tree until it has put the tree back.
    The lane is an operating-system file lock held by the xtask process, opened close-on-exec, so no child — and no daemon a child starts — inherits it, and a holder that dies, however it dies, releases it.
+   The work a dead holder started, which the record names by its leader's process id and start time, answers to nobody: the next holder asks its group to stop, kills it after a grace, and goes in only once it has ended, refusing the lane rather than sharing it when it will not end.
+   Waiting for it to end on its own was the first form of this decision, and a loop that never ended held the lane for every session on the machine (2026-09-26).
    A waiting run says whom it is waiting for and repeats it; `NJUTEST_SLOT_HELD` lets a run already inside the lane through.
    A narrowed run does not take the lane.
 4. **A pass is remembered for an hour**, keyed by the commit, the base the commit-message check reads, and the bytes of the gate binary.
