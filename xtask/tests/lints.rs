@@ -1547,6 +1547,8 @@ fn a_macro_cannot_make_a_checked_attribute_opaque_to_the_gate() {
         "//! A file.\nmacro_rules! input { ($policy:meta) => { #[serde($policy)] struct Input { value: String } } }\n",
         "//! A file.\nmacro_rules! input { ($condition:meta) => { #[cfg_attr($condition, derive(serde::Deserialize))] struct Input { value: String } } }\n",
         "//! A file.\n#[cfg_attr(test, derive($derive))]\nstruct Input { value: String }\n",
+        "#[cfg(all(,))] fn hidden() {}\n",
+        "macro_rules! hidden { ($condition:meta) => { #[cfg($condition)] fn hidden() {} } }\n",
     ] {
         assert!(
             kinds(source).contains(&Kind::OpaqueMacroSyntax),

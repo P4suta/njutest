@@ -6351,6 +6351,12 @@ fn opaque_sensitive_meta(meta: &syn::Meta) -> bool {
     let syn::Meta::List(list) = meta else {
         return false;
     };
+    if list.path.is_ident("cfg") {
+        return match list.parse_args::<syn::Meta>() {
+            Ok(condition) => opaque_cfg_condition(&condition),
+            Err(_opaque_cfg) => true,
+        };
+    }
     if list.path.is_ident("derive") {
         return list
             .parse_args_with(
@@ -6373,6 +6379,18 @@ fn opaque_sensitive_meta(meta: &syn::Meta) -> bool {
     {
         Ok(nested) => nested.iter().skip(1).any(opaque_sensitive_meta),
         Err(_unrecognised_generated_cfg_attr) => true,
+    }
+}
+
+fn opaque_cfg_condition(meta: &syn::Meta) -> bool {
+    let syn::Meta::List(list) = meta else {
+        return false;
+    };
+    match list
+        .parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
+    {
+        Ok(nested) => nested.iter().any(opaque_cfg_condition),
+        Err(_opaque_condition) => true,
     }
 }
 
