@@ -125,6 +125,7 @@ fn write_package(root: &std::path::Path, path: &str, name: &str) -> Result<(), T
 fn real_manifests_cannot_hide_generators_by_rename_kind_target_or_fuzz() -> Result<(), TestFailure>
 {
     let root = tempfile::tempdir()?;
+    xtask::repository::init(root.path())?;
     for (path, name) in [
         ("vendor/async-trait", "async-trait"),
         ("vendor/async-recursion", "async-recursion"),

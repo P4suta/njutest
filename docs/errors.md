@@ -179,6 +179,10 @@ The first digit names an area: 0 the gates, their ledgers, and what runs them (t
 | `XT0301` | A program a gate runs could not be started or watched, or the signals that stop it could not be armed. | check the program the message names is installed and that this process may be signalled |
 | `XT0401` | `remote-check` could not ask the other machines: its machines file could not be read or names none, or a program, Git, a log, or the thread asking a machine failed it. | fix the machines file or what the message names, and run it again |
 | `XT0402` | At least one other machine refused the commit. | read each machine's answer and fix what it names |
+| `XT0501` | git could not list what the repository holds, so no gate can say what it read. | run the gate inside the repository's checkout, with git on the path |
+| `XT0502` | git listed a path of the repository that is not UTF-8, which no path this repository holds is. | rename the path |
+| `XT0503` | The repository holds a symbolic link, which a gate never follows. | replace the link with the file it points at |
+| `XT0504` | A path git listed could not be read. | check the path the message names exists and is readable |
 | `XT1001` | A fixture's tree could not be walked or one of its files read. | check the path the message names exists and is readable |
 | `XT1002` | A fixture tree holds a symbolic link, which the checks never follow. | replace the link with the file it points at |
 | `XT1003` | A fixture path is not UTF-8, so no protocol a fixture feeds could spell it. | rename the path |

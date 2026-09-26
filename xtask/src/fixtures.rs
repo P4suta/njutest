@@ -5,8 +5,6 @@
 
 use std::path::{Path, PathBuf};
 
-use walkdir::WalkDir;
-
 /// The rule, for the failure message.
 pub const RULE: &str = "A fixture is an independent cargo project: its Cargo.toml carries a \
     [workspace] table so cargo does not look upwards, its Cargo.lock is committed, its only \
@@ -37,7 +35,7 @@ pub enum CheckError {
         root: PathBuf,
         /// What stopped the walk.
         #[source]
-        source: walkdir::Error,
+        source: crate::repository::ListingError,
     },
     /// A source file found by the walk could not be read.
     #[error("reading {}: {source}", path.display())]
@@ -124,37 +122,41 @@ fn is_file(path: &Path) -> bool {
     std::fs::metadata(path).is_ok_and(|entry| entry.is_file())
 }
 
-/// Every subdirectory of `dir`, by name, refusing a link or a name this gate cannot spell.
+/// Every subdirectory of `dir` the repository holds a file in, by name, refusing a link.
 fn children(dir: &Path) -> Result<Vec<(String, PathBuf)>, CheckError> {
-    let mut found = Vec::new();
-    let entries = std::fs::read_dir(dir).map_err(|source| CheckError::Read {
-        path: dir.to_path_buf(),
-        source,
-    })?;
-    for entry in entries {
-        let entry = entry.map_err(|source| CheckError::Read {
+    let listed = listing(dir)?;
+    let mut names: Vec<String> = listed
+        .iter()
+        .filter_map(|relative| {
+            relative
+                .split_once('/')
+                .map(|(name, _rest)| name.to_owned())
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    Ok(names
+        .into_iter()
+        .map(|name| {
+            let path = dir.join(&name);
+            (name, path)
+        })
+        .collect())
+}
+
+/// Every file the repository holds under `dir`, relative to it; a link is refused, since a checked tree never depends on one.
+fn listing(dir: &Path) -> Result<Vec<String>, CheckError> {
+    crate::repository::files(dir).map_err(|error| match error {
+        crate::repository::ListingError::Symlink { path } => CheckError::Symlink { path },
+        crate::repository::ListingError::NotUtf8 { .. } => CheckError::NonUtf8Path {
             path: dir.to_path_buf(),
-            source,
-        })?;
-        let path = entry.path();
-        let kind = entry.file_type().map_err(|source| CheckError::Read {
-            path: path.clone(),
-            source,
-        })?;
-        if kind.is_symlink() {
-            return Err(CheckError::Symlink { path });
-        }
-        if !kind.is_dir() {
-            continue;
-        }
-        let name = entry
-            .file_name()
-            .into_string()
-            .map_err(|_non_utf8| CheckError::NonUtf8Path { path: path.clone() })?;
-        found.push((name, path));
-    }
-    found.sort();
-    Ok(found)
+        },
+        failed @ (crate::repository::ListingError::Unlisted { .. }
+        | crate::repository::ListingError::Unreadable { .. }) => CheckError::Walk {
+            root: dir.to_path_buf(),
+            source: failed,
+        },
+    })
 }
 
 /// Every convention `dir` breaks, one line each, sorted.
@@ -170,29 +172,17 @@ pub fn check_fixture(dir: &Path) -> Result<Vec<String>, CheckError> {
     }
     check_lockfile(dir, &mut problems)?;
     problems.extend(check_readme(dir)?);
-    for entry in WalkDir::new(dir).sort_by_file_name() {
-        let entry = entry.map_err(|source| CheckError::Walk {
-            root: dir.to_path_buf(),
-            source,
-        })?;
-        let path = entry.path();
-        if entry.path_is_symlink() {
-            return Err(CheckError::Symlink {
-                path: path.to_path_buf(),
-            });
-        }
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let relative = relative_name(path, dir)?;
+    for relative in listing(dir)? {
+        let path = dir.join(&relative);
         if relative.starts_with("target/") {
             continue;
         }
-        let is_source =
-            path.extension().is_some_and(|ext| ext == "rs") || entry.file_name() == "Cargo.toml";
+        let is_source = crate::repository::extension_is(&relative, "rs")
+            || relative == "Cargo.toml"
+            || relative.ends_with("/Cargo.toml");
         if is_source {
-            let text = std::fs::read_to_string(path).map_err(|source| CheckError::Read {
-                path: path.to_path_buf(),
+            let text = std::fs::read_to_string(&path).map_err(|source| CheckError::Read {
+                path: path.clone(),
                 source,
             })?;
             if !has_spdx_header(&text) {
@@ -225,19 +215,6 @@ fn check_lockfile(dir: &Path, problems: &mut Vec<String>) -> Result<(), CheckErr
         }
         Err(source) => Err(CheckError::Read { path, source }),
     }
-}
-
-fn relative_name(path: &Path, dir: &Path) -> Result<String, CheckError> {
-    let relative_path = match path.strip_prefix(dir) {
-        Ok(relative) => relative,
-        Err(_outside) => path,
-    };
-    let Some(relative) = relative_path.to_str() else {
-        return Err(CheckError::NonUtf8Path {
-            path: path.to_path_buf(),
-        });
-    };
-    Ok(relative.replace('\\', "/"))
 }
 
 /// The README, and the ledgers of fates a fixture has to keep.
@@ -374,25 +351,4 @@ fn is_sibling_fixture(parts: &[&str]) -> bool {
         && parts
             .get(climbed)
             .is_some_and(|last| last.starts_with("fixture-"))
-}
-
-#[cfg(all(test, unix))]
-mod tests {
-
-    use std::ffi::OsString;
-    use std::os::unix::ffi::OsStringExt;
-    use std::path::Path;
-
-    use super::{CheckError, relative_name};
-
-    #[test]
-    fn a_non_utf8_fixture_path_is_a_typed_refusal() {
-        let path = Path::new("fixtures").join(OsString::from_vec(vec![b'b', 0xff, b'd']));
-        let error = relative_name(&path, Path::new("fixtures"))
-            .expect_err("the path cannot be named exactly");
-        let CheckError::NonUtf8Path { path: refused } = error else {
-            panic!("the wrong fixture error was returned: {error}");
-        };
-        assert_eq!(refused, path);
-    }
 }

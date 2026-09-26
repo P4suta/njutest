@@ -8,8 +8,6 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt::Arguments;
 use std::path::{Component, Path, PathBuf};
 
-use walkdir::WalkDir;
-
 use crate::{
     deps, devgates, engineaudit, fixtures, lints as lint_scan, proofaudit, release, reportdiff,
     shapes,
@@ -46,62 +44,47 @@ fn line(output: &mut String, arguments: Arguments<'_>) {
 /// Every Rust file the repository commits, tests included.
 ///
 /// # Errors
-/// Any directory entry cannot be read; an incomplete source set proves no gate.
+/// The repository cannot be listed; an incomplete source set proves no gate.
 pub fn all_sources(root: &Path) -> Result<Vec<PathBuf>, GateFailure> {
-    validate_closed_source_inventory(root)?;
-    let mut files = Vec::new();
-    for base in SOURCE_ROOTS {
-        for entry in WalkDir::new(root.join(base)).sort_by_file_name() {
-            let entry = walked(entry)?;
-            let path = entry.path();
-            let relative = relative_slash(root, path)?;
-            if entry.file_type().is_file()
-                && path.extension().is_some_and(|extension| extension == "rs")
-                && !relative.split('/').any(|part| part == "target")
-            {
-                files.push(path.to_path_buf());
-            }
-        }
-    }
-    Ok(files)
+    let files = crate::repository::files(root)?;
+    validate_closed_source_inventory(&files)?;
+    Ok(files
+        .iter()
+        .filter(|relative| {
+            in_source_roots(relative) && crate::repository::extension_is(relative, "rs")
+        })
+        .map(|relative| root.join(relative))
+        .collect())
 }
 
 const SOURCE_ROOTS: [&str; 4] = ["compiler-surfaces", "crates", "xtask", "fuzz"];
 
-fn validate_closed_source_inventory(root: &Path) -> Result<(), GateFailure> {
-    let entries = WalkDir::new(root)
-        .sort_by_file_name()
-        .into_iter()
-        .filter_entry(|entry| {
-            if entry.depth() != 1 {
-                return true;
-            }
-            entry
-                .file_name()
-                .as_encoded_bytes()
-                .first()
-                .is_none_or(|byte| *byte != b'.')
-                && entry.file_name() != std::ffi::OsStr::new("target")
-                && !SOURCE_ROOTS
-                    .iter()
-                    .any(|source| entry.file_name() == std::ffi::OsStr::new(source))
-        });
-    for entry in entries {
-        let entry = walked(entry)?;
-        if !entry.file_type().is_file()
-            || entry
-                .path()
-                .extension()
-                .is_none_or(|extension| extension != "rs")
+/// Whether a workspace-relative path lies under one of the source roots.
+fn in_source_roots(relative: &str) -> bool {
+    SOURCE_ROOTS
+        .iter()
+        .any(|root| relative.starts_with(&format!("{root}/")))
+}
+
+fn validate_closed_source_inventory(files: &[String]) -> Result<(), GateFailure> {
+    if !files.iter().any(|file| in_source_roots(file)) {
+        return Err(GateFailure(format!(
+            "walking the repository: it holds nothing under the source roots {}, so an empty \
+             tree would pass as a proved one",
+            SOURCE_ROOTS.join(", ")
+        )));
+    }
+    for relative in files {
+        if !crate::repository::extension_is(relative, "rs")
+            || in_source_roots(relative)
+            || relative.starts_with('.')
+            || relative.starts_with("fixtures/")
         {
             continue;
         }
-        let relative = relative_slash(root, entry.path())?;
-        if !relative.starts_with("fixtures/") {
-            return Err(GateFailure(format!(
-                "walking the repository: {relative} is Rust outside the four scanned source roots; only fixtures/ is an explicit unproved input corpus"
-            )));
-        }
+        return Err(GateFailure(format!(
+            "walking the repository: {relative} is Rust outside the four scanned source roots; only fixtures/ is an explicit unproved input corpus"
+        )));
     }
     Ok(())
 }
@@ -140,20 +123,6 @@ const ALLOWED_PATH_REDIRECTS: [(&str, &str); 8] = [
         "../../../xtask/src/main.rs",
     ),
 ];
-
-fn walked(
-    entry: Result<walkdir::DirEntry, walkdir::Error>,
-) -> Result<walkdir::DirEntry, GateFailure> {
-    let entry = entry.map_err(|error| GateFailure(format!("walking the repository: {error}")))?;
-    if entry.path_is_symlink() {
-        return Err(GateFailure(format!(
-            "walking the repository: {} is a symbolic link; a gate does not follow a name that \
-             can hide or escape the tree it proves",
-            entry.path().display()
-        )));
-    }
-    Ok(entry)
-}
 
 #[derive(Debug)]
 struct ProcMacroPackage {
@@ -550,19 +519,9 @@ fn cargo_package_sources(
 
 fn preflight_cargo_manifests(root: &Path) -> Result<(), GateFailure> {
     preflight_cargo_manifest(root, &root.join("Cargo.toml"))?;
-    for base in SOURCE_ROOTS {
-        for entry in WalkDir::new(root.join(base)).sort_by_file_name() {
-            let entry = walked(entry)?;
-            if !entry.file_type().is_file()
-                || entry.file_name() != std::ffi::OsStr::new("Cargo.toml")
-                || entry
-                    .path()
-                    .components()
-                    .any(|component| matches!(component, Component::Normal(part) if part == std::ffi::OsStr::new("target")))
-            {
-                continue;
-            }
-            preflight_cargo_manifest(root, entry.path())?;
+    for relative in crate::repository::files(root)? {
+        if in_source_roots(&relative) && relative.ends_with("/Cargo.toml") {
+            preflight_cargo_manifest(root, &root.join(relative))?;
         }
     }
     Ok(())
@@ -1356,42 +1315,31 @@ fn loose_layouts(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Findin
 
 /// Every test source of the workspace, which is where a layout being joined freezes it.
 fn tests_under(root: &Path) -> Result<Vec<PathBuf>, GateFailure> {
-    let mut found = Vec::new();
-    for base in SOURCE_ROOTS {
-        for entry in WalkDir::new(root.join(base)).sort_by_file_name() {
-            let entry = walked(entry)?;
-            let path = entry.path();
-            let relative = relative_slash(root, path)?;
-            if entry.file_type().is_file()
-                && path.extension().is_some_and(|one| one == "rs")
+    Ok(crate::repository::files(root)?
+        .into_iter()
+        .filter(|relative| {
+            in_source_roots(relative)
+                && crate::repository::extension_is(relative, "rs")
                 && relative.contains("/tests/")
-            {
-                found.push(path.to_path_buf());
-            }
-        }
-    }
-    Ok(found)
+        })
+        .map(|relative| root.join(relative))
+        .collect())
 }
 
 /// The production source files the seam ratchet scans.
 ///
 /// # Errors
-/// Any directory entry cannot be read; an incomplete source set proves no gate.
+/// The repository cannot be listed; an incomplete source set proves no gate.
 pub fn production_sources(root: &Path) -> Result<Vec<PathBuf>, GateFailure> {
-    let mut files = Vec::new();
-    for base in SOURCE_ROOTS {
-        for entry in WalkDir::new(root.join(base)).sort_by_file_name() {
-            let entry = walked(entry)?;
-            let path = entry.path();
-            if entry.file_type().is_file() && path.extension().is_some_and(|ext| ext == "rs") {
-                let relative = relative_slash(root, path)?;
-                if is_production(&relative) {
-                    files.push(path.to_path_buf());
-                }
-            }
-        }
-    }
-    Ok(files)
+    Ok(crate::repository::files(root)?
+        .into_iter()
+        .filter(|relative| {
+            in_source_roots(relative)
+                && crate::repository::extension_is(relative, "rs")
+                && is_production(relative)
+        })
+        .map(|relative| root.join(relative))
+        .collect())
 }
 
 fn is_production(relative: &str) -> bool {
@@ -1704,21 +1652,14 @@ fn census(root: &Path) -> Result<String, GateFailure> {
     let fixtures = root.join("fixtures");
     let mut counted = [0_usize; 3];
     let mut loose = Vec::new();
-    let walk = WalkDir::new(root)
-        .sort_by_file_name()
-        .into_iter()
-        .filter_entry(|entry| {
-            entry.depth() == 0
-                || entry.file_name().as_encoded_bytes().first() != Some(&b'.')
-                    && entry.file_name() != std::ffi::OsStr::new("target")
-        });
-    for entry in walk {
-        let entry = walked(entry)?;
-        let path = entry.path();
-        if !entry.file_type().is_file() || entry.file_name() != std::ffi::OsStr::new("Cargo.toml") {
+    for relative in crate::repository::files(root)? {
+        if !(relative == "Cargo.toml" || relative.ends_with("/Cargo.toml"))
+            || relative.starts_with('.')
+        {
             continue;
         }
-        let relative = relative_slash(root, path)?;
+        let whole = root.join(&relative);
+        let path = whole.as_path();
         let at = if path == root.join("Cargo.toml") || members.contains(path) {
             0
         } else if path.starts_with(&fuzz) {
@@ -1793,13 +1734,9 @@ pub fn release_check(root: &Path) -> Result<String, GateFailure> {
     };
     let workspace = read("Cargo.toml")?;
     let mut members = Vec::new();
-    for entry in WalkDir::new(root.join("crates"))
-        .max_depth(2)
-        .sort_by_file_name()
-    {
-        let entry = walked(entry)?;
-        if entry.file_name() == "Cargo.toml" {
-            let label = relative_slash(root, entry.path())?;
+    for label in crate::repository::files(root)? {
+        let depth = label.split('/').count();
+        if label.starts_with("crates/") && label.ends_with("/Cargo.toml") && depth <= 3 {
             members.push((label.clone(), read(&label)?));
         }
     }
@@ -1843,22 +1780,16 @@ pub fn milestones(root: &Path) -> Result<String, GateFailure> {
         .map_err(|error| GateFailure(format!("milestones: docs/roadmap.md: {error}")))?;
     let mut unresolved = Vec::new();
     let mut pages = 0usize;
-    for entry in WalkDir::new(root.join("docs")) {
-        let entry = walked(entry)?;
-        if !entry.file_type().is_file()
-            || entry.path().extension() != Some(std::ffi::OsStr::new("md"))
-        {
+    for page in crate::repository::files(root)? {
+        if !(page.starts_with("docs/") && crate::repository::extension_is(&page, "md")) {
             continue;
         }
         pages = pages.saturating_add(1);
-        let text = std::fs::read_to_string(entry.path())
-            .map_err(|error| GateFailure(format!("{}: {error}", entry.path().display())))?;
+        let text = std::fs::read_to_string(root.join(&page))
+            .map_err(|error| GateFailure(format!("{page}: {error}")))?;
         for reference in crate::milestones::references(&text) {
             if !registered.contains(&reference) {
-                unresolved.push(format!(
-                    "{} names {reference}",
-                    relative_slash(root, entry.path())?
-                ));
+                unresolved.push(format!("{page} names {reference}"));
             }
         }
     }
@@ -1980,23 +1911,20 @@ fn surface_harnesses(
 /// # Errors
 /// The first record that does not hold together, or every name of a record that no record has.
 pub fn adrs(root: &Path) -> Result<String, GateFailure> {
-    let directory = root.join("docs/adr");
+    let repository = crate::repository::files(root)?;
     let mut files = Vec::new();
-    for entry in WalkDir::new(&directory)
-        .min_depth(1)
-        .max_depth(1)
-        .sort_by_file_name()
-    {
-        let entry = walked(entry)?;
-        let name = relative_slash(&directory, entry.path())?;
-        if !entry.file_type().is_file() {
+    for relative in &repository {
+        let Some(name) = relative.strip_prefix("docs/adr/") else {
+            continue;
+        };
+        if let Some((directory, _inside)) = name.split_once('/') {
             return Err(GateFailure(format!(
-                "adrs: docs/adr/{name} is not a file, and the directory holds decision records only"
+                "adrs: docs/adr/{directory} is not a file, and the directory holds decision records only"
             )));
         }
-        let text = std::fs::read_to_string(entry.path())
-            .map_err(|error| GateFailure(format!("{}: {error}", entry.path().display())))?;
-        files.push((name, text));
+        let text = std::fs::read_to_string(root.join(relative))
+            .map_err(|error| GateFailure(format!("{relative}: {error}")))?;
+        files.push((name.to_owned(), text));
     }
     let records = crate::adrs::records(&files)
         .map_err(|error| GateFailure(format!("adrs: {}", error.coded())))?;
@@ -2007,30 +1935,19 @@ pub fn adrs(root: &Path) -> Result<String, GateFailure> {
         .map_err(|error| GateFailure(format!("adrs: {}", error.coded())))?;
     let mut dangling = Vec::new();
     let mut pages = 0_usize;
-    for entry in WalkDir::new(root)
-        .sort_by_file_name()
-        .into_iter()
-        .filter_entry(|entry| {
-            entry.depth() == 0
-                || !(entry.file_name().as_encoded_bytes().first() == Some(&b'.')
-                    || entry.file_name() == "target")
-        })
-    {
-        let entry = walked(entry)?;
-        let read = entry.file_type().is_file()
-            && entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension == "md" || extension == "rs");
+    for page in &repository {
+        let read = !page.starts_with('.')
+            && !page.split('/').any(|part| part.starts_with('.'))
+            && (crate::repository::extension_is(page, "md")
+                || crate::repository::extension_is(page, "rs"));
         if !read {
             continue;
         }
         pages = pages.saturating_add(1);
-        let page = relative_slash(root, entry.path())?;
-        let text = std::fs::read_to_string(entry.path())
+        let text = std::fs::read_to_string(root.join(page))
             .map_err(|error| GateFailure(format!("{page}: {error}")))?;
         dangling.extend(
-            crate::adrs::dangling(&page, &text, &records)
+            crate::adrs::dangling(page, &text, &records)
                 .iter()
                 .map(crate::error::Coded::coded),
         );
@@ -2408,16 +2325,11 @@ fn engine_recordings(trace: &Path) -> Result<Vec<(String, String)>, proofaudit::
         path: path.display().to_string(),
         source,
     };
-    let entries = match std::fs::read_dir(&builds) {
+    let namespaces = match crate::repository::entries(&builds) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(source) => return Err(unreadable(&builds, source)),
     };
-    let mut namespaces = Vec::new();
-    for entry in entries {
-        namespaces.push(entry.map_err(|source| unreadable(&builds, source))?.path());
-    }
-    namespaces.sort();
     namespaces
         .into_iter()
         .map(|namespace| {
@@ -2787,7 +2699,7 @@ fn read_optional_engine_document(
 }
 
 fn read_probe_logs(path: &Path) -> Result<Vec<String>, engineaudit::AuditError> {
-    let entries = match std::fs::read_dir(path) {
+    let entries = match crate::repository::entries(path) {
         Ok(entries) => entries,
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
             match std::fs::symlink_metadata(path) {
@@ -2816,21 +2728,26 @@ fn read_probe_logs(path: &Path) -> Result<Vec<String>, engineaudit::AuditError> 
         }
     };
     entries
+        .into_iter()
         .map(|entry| {
-            let entry = entry.map_err(|source| engineaudit::AuditError::Unreadable {
-                path: path.display().to_string(),
-                source,
-            })?;
-            entry
-                .file_name()
-                .into_string()
-                .map_err(|_name| engineaudit::AuditError::Unreadable {
-                    path: entry.path().display().to_string(),
+            let Some(named) = entry.file_name() else {
+                return Err(engineaudit::AuditError::Unreadable {
+                    path: entry.display().to_string(),
+                    source: std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "a probe log path ends in no name",
+                    ),
+                });
+            };
+            named.to_os_string().into_string().map_err(|_name| {
+                engineaudit::AuditError::Unreadable {
+                    path: entry.display().to_string(),
                     source: std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
                         "probe log name is not UTF-8",
                     ),
-                })
+                }
+            })
         })
         .collect()
 }
@@ -3104,7 +3021,7 @@ pub fn reached(root: &Path) -> Result<String, GateFailure> {
     let mut ships = String::new();
     let mut tested = String::new();
     for (_name, surface, directory) in &declared {
-        for file in rust_files_under(directory)? {
+        for file in rust_files_under(root, directory)? {
             let text = std::fs::read_to_string(&file)
                 .map_err(|error| GateFailure(format!("{}: {error}", file.display())))?;
             let under_src = file.starts_with(directory.join("src"));
@@ -3122,7 +3039,7 @@ pub fn reached(root: &Path) -> Result<String, GateFailure> {
         if *surface != Surface::Incidental {
             continue;
         }
-        for file in rust_files_under(&directory.join("src"))? {
+        for file in rust_files_under(root, &directory.join("src"))? {
             let text = std::fs::read_to_string(&file)
                 .map_err(|error| GateFailure(format!("{}: {error}", file.display())))?;
             let shipped = without_test_items(&text);
@@ -3171,7 +3088,7 @@ pub fn reached(root: &Path) -> Result<String, GateFailure> {
 /// Every file above or below its ceiling, and a source or ceiling that does not read.
 pub fn defaulted(root: &Path) -> Result<String, GateFailure> {
     let mut counted = BTreeMap::new();
-    for file in rust_files_under(&root.join("xtask/src"))? {
+    for file in rust_files_under(root, &root.join("xtask/src"))? {
         let relative = file
             .strip_prefix(root)
             .map_err(|error| GateFailure(format!("{}: {error}", file.display())))?
@@ -3209,17 +3126,10 @@ pub fn defaulted(root: &Path) -> Result<String, GateFailure> {
 }
 
 /// Every `.rs` file under `directory`, skipping anything built.
-fn rust_files_under(directory: &Path) -> Result<Vec<PathBuf>, GateFailure> {
-    let mut files = Vec::new();
-    for entry in WalkDir::new(directory).sort_by_file_name() {
-        let entry = walked(entry)?;
-        let path = entry.path();
-        if entry.file_type().is_file()
-            && path.extension().is_some_and(|extension| extension == "rs")
-            && !path.components().any(|part| part.as_os_str() == "target")
-        {
-            files.push(path.to_path_buf());
-        }
-    }
-    Ok(files)
+fn rust_files_under(root: &Path, directory: &Path) -> Result<Vec<PathBuf>, GateFailure> {
+    let base = relative_slash(root, directory)?;
+    Ok(crate::repository::under(root, &base)?
+        .into_iter()
+        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+        .collect())
 }
