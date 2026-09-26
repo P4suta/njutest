@@ -58,7 +58,7 @@ pub struct Interpreting<'a> {
     /// The workspace root.
     pub root: &'a Path,
     /// The cargo to drive, which must be one that understands `+nightly`.
-    pub cargo: &'a Path,
+    pub cargo: rust_mutants::cargo::Selecting<'a>,
     /// The environment it runs with.
     pub env: Vec<(OsString, OsString)>,
     /// The packages to interpret.
@@ -106,7 +106,7 @@ pub fn interpret(
     watch: Watch<'_>,
 ) -> Result<Interpreted, RunnerError> {
     let mut argv: Vec<OsString> = vec![
-        interpreting.cargo.as_os_str().to_owned(),
+        interpreting.cargo.path().as_os_str().to_owned(),
         OsString::from("+nightly"),
         OsString::from("miri"),
         OsString::from("test"),
@@ -191,7 +191,7 @@ fn missing(
 ) -> Result<Option<String>, RunnerError> {
     let mut spec = Spec::new(
         [
-            interpreting.cargo.as_os_str().to_owned(),
+            interpreting.cargo.path().as_os_str().to_owned(),
             OsString::from("+nightly"),
             OsString::from("miri"),
             OsString::from("--version"),

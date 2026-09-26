@@ -30,7 +30,7 @@ pub use depinfo::{
     parse_dep_info, units_of,
 };
 
-pub use locate::{LocateOptions, Toolchain, command_failed, resolve_executable};
+pub use locate::{LocateOptions, Selecting, Toolchain, command_failed, resolve_executable};
 pub use messages::{
     Artifact, BuildScript, CompilerMessage, Diagnostic, DiagnosticSpan, Message, Profile,
     names_file, parse_messages,

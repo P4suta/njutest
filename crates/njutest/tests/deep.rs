@@ -79,7 +79,7 @@ fn interpreted_when_absent(
     interpret(
         &Interpreting {
             root: dir,
-            cargo: &cargo,
+            cargo: rust_mutants::cargo::Selecting::named(&cargo),
             env: saying(said, code),
             packages: &[],
             flags: &[],
@@ -182,7 +182,7 @@ fn a_cargo_that_is_not_there_is_a_toolchain_with_no_interpreter() {
     let refused = interpret(
         &Interpreting {
             root: dir.path(),
-            cargo: &dir.path().join("nothing"),
+            cargo: rust_mutants::cargo::Selecting::named(&dir.path().join("nothing")),
             env: saying("", 0),
             packages: &[],
             flags: &[],
@@ -207,7 +207,7 @@ fn what_a_run_promised_cargo_it_would_not_do_is_said_to_this_cargo_too() {
     let done = interpret(
         &Interpreting {
             root: dir.path(),
-            cargo: &cargo,
+            cargo: rust_mutants::cargo::Selecting::named(&cargo),
             env: saying(PASSED, 0),
             packages: &[],
             flags: &[],
@@ -265,7 +265,7 @@ fn a_run_that_named_packages_asks_the_interpreter_for_those_and_not_the_workspac
     let done = interpret(
         &Interpreting {
             root: dir.path(),
-            cargo: &cargo,
+            cargo: rust_mutants::cargo::Selecting::named(&cargo),
             env: saying(PASSED, 0),
             packages: &packages,
             flags: &[],
@@ -330,7 +330,7 @@ fn the_flags_a_configuration_gives_the_interpreter_are_the_ones_it_ran_with() {
     let done = interpret(
         &Interpreting {
             root: dir.path(),
-            cargo: &cargo,
+            cargo: rust_mutants::cargo::Selecting::named(&cargo),
             env,
             packages: &[],
             flags: &flags,
@@ -379,7 +379,7 @@ fn an_interpreter_left_to_run_as_it_was_started_keeps_the_variable_it_was_given(
     let done = interpret(
         &Interpreting {
             root: dir.path(),
-            cargo: &cargo,
+            cargo: rust_mutants::cargo::Selecting::named(&cargo),
             env,
             packages: &[],
             flags: &[],
@@ -417,7 +417,7 @@ fn an_interpreter_that_runs_out_of_time_has_interpreted_nothing() {
     let done = interpret(
         &Interpreting {
             root: dir.path(),
-            cargo: &cargo,
+            cargo: rust_mutants::cargo::Selecting::named(&cargo),
             env,
             packages: &[],
             flags: &[],
@@ -538,7 +538,7 @@ fn an_interpreter_that_ran_out_of_time_interpreted_nothing_whole() {
     let done = interpret(
         &Interpreting {
             root: dir.path(),
-            cargo: &cargo,
+            cargo: rust_mutants::cargo::Selecting::named(&cargo),
             env,
             packages: &[],
             flags: &[],

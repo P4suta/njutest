@@ -270,10 +270,7 @@ fn examine(environment: &Environment) -> Vec<Finding> {
             Needed::Nightly,
             probe.version_of("rustup", &["run", "nightly", "rustc", "--version"]),
         ),
-        optional(
-            Needed::Miri,
-            probe.version_of("cargo", &["+nightly", "miri", "--version"]),
-        ),
+        optional(Needed::Miri, probe.miri()),
         optional(
             Needed::CargoFuzz,
             probe.version_of("cargo", &["fuzz", "--version"]),
@@ -425,6 +422,14 @@ impl Probe<'_> {
                 || State::Refused(String::from("it is installed and printed no version")),
                 |line| State::Found(line.to_owned()),
             )
+    }
+
+    /// Miri, as a run would reach it: through the cargo on `PATH` selecting `+nightly`, which only rustup's proxy can, so a cargo that selects no toolchain has no Miri to offer rather than one that failed.
+    fn miri(&self) -> State {
+        match self.version_of("cargo", &["+nightly", "--version"]) {
+            State::Found(_) => self.version_of("cargo", &["+nightly", "miri", "--version"]),
+            State::Missing | State::Refused(_) => State::Missing,
+        }
     }
 
     /// Where `program` is on the environment's `PATH`, if it is anywhere.
