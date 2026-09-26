@@ -608,7 +608,7 @@ fn a_directory_a_command_names_is_resolved_against_where_the_command_was_told_it
     use rust_mutants::runner::Cancel;
 
     let environment = Environment {
-        vars: Vec::new(),
+        vars: rust_mutants::vars::Variables::empty(),
         working_directory: PathBuf::from("/somewhere/a/caller/named"),
         temp_directory: PathBuf::from("/tmp"),
         program: PathBuf::from(env!("CARGO_BIN_EXE_njutest")),

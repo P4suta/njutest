@@ -7,9 +7,9 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 A suite whose reach is not a function of the target.
 
-Its one test looks for a mark beside the temporary directory it was given.
+Its one test looks for a mark in the run scratch above the temporary directory it was given.
 A mutation run gives every process of one run a temporary directory of its own inside one run scratch, `rm-scratch-*`, and removes the scratch when the run ends,
-so that parent is the one place every process of a run shares and no process of another run sees.
+so that scratch is the one place every process of a run shares and no process of another run sees.
 The first process to look — the baseline — finds no mark, leaves one, and calls `first_visit`.
 Every process after it finds the mark and calls `return_visit` instead.
 Outside a run scratch the test leaves nothing anywhere and always takes the first path.

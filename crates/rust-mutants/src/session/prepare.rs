@@ -61,7 +61,7 @@ pub(super) fn pristine(
             locked: workspace.locked,
             offline: workspace.offline,
             timeout: Workspace::timeout(options.build_timeout),
-            env: Vec::new(),
+            env: crate::vars::Variables::empty(),
             build: options.build.clone(),
         },
     )?;
@@ -195,7 +195,7 @@ fn scripts_of(
 /// The paths and the variables one build script's output named as what it depends on.
 fn said_by(
     text: &str,
-    env: &[(std::ffi::OsString, std::ffi::OsString)],
+    env: &crate::vars::Variables,
 ) -> (Vec<String>, BTreeMap<String, Option<String>>) {
     let mut changed = Vec::new();
     let mut watched = BTreeMap::new();
@@ -207,7 +207,8 @@ fn said_by(
         if let Some(path) = line.strip_prefix("rerun-if-changed=") {
             changed.push(path.to_owned());
         } else if let Some(name) = line.strip_prefix("rerun-if-env-changed=") {
-            let value = crate::vars::var(env, name)
+            let value = env
+                .var(name)
                 .and_then(std::ffi::OsStr::to_str)
                 .map(ToOwned::to_owned);
             watched.insert(name.to_owned(), value);
@@ -547,6 +548,32 @@ fn built_untraced(building: &Building<'_>) -> Result<Built, EngineError> {
         Verified::default()
     };
     Ok((targets, scratch, verified))
+}
+
+/// The trace note saying a target's reach is not read because it runs with the home the run was given.
+const REACH_UNCONFINED: &str = "reach-unconfined";
+
+/// `reached` without what a target that runs with the given home reached in a home of its own, which is not what its executions reach (ADR 0044).
+fn reached_where_it_runs(
+    mut reached: crate::reach::Reached,
+    verified: &Verified,
+    trace: &crate::trace::Recorder,
+) -> crate::reach::Reached {
+    for (target, measured) in &verified.targets {
+        if measured.baseline().home == execute::Home::Given && reached.targets.contains_key(target)
+        {
+            reached.unmeasured(target);
+            trace.note(
+                REACH_UNCONFINED,
+                &format!(
+                    "{target}: its reach was measured in a home of its own and it runs with the \
+                     home the run was given, so every mutant routes to it as to a target nothing \
+                     measured"
+                ),
+            );
+        }
+    }
+    reached
 }
 
 /// Which of the built targets a run was told never to start, refusing a name no target of the workspace has.
@@ -949,6 +976,7 @@ pub fn prepare(
     let (packages, items) = attributed(&discovery);
     let item_refs = item_refs(&instrumented.items)?;
     let verified = narrowed(verified, instrumented.narrowing, instrumented.items.items);
+    let reached = reached_where_it_runs(reached, &verified, &trace);
     Ok(Session {
         selection: selection(options)?,
         facts: target_facts(&workspace, options, cancel)?,
@@ -1470,10 +1498,10 @@ impl Compile for TreeCompiler<'_> {
                 locked: self.workspace.locked,
                 offline: self.workspace.offline,
                 timeout: self.timeout,
-                env: vec![(
+                env: crate::vars::Variables::of([(
                     std::ffi::OsString::from(crate::instrument::COMPILED_CATALOG_ENV),
                     std::ffi::OsString::from(self.catalog.digest()),
-                )],
+                )]),
                 build: self.build.clone(),
             },
         )?;

@@ -25,12 +25,9 @@ use rust_mutants::workspace::{OpenOptions, Workspace};
 /// A hundred takes spend about 789ms on Windows against this two-second bound, a margin of two and a half that load closes; ten spend 129ms and do not.
 /// What settles the race is the cost of the count, not the length of the bound: a longer bound wins it by making every failure wait the bound out twice, which is the worst moment to make a suite slow to read (ADR 0023).
 fn prepared(fixture: &Fixture, env: &[(&str, String)]) -> Session {
-    let mut vars: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
+    let mut vars: rust_mutants::vars::Variables = std::env::vars_os().collect();
     for (name, value) in env {
-        vars.push((
-            std::ffi::OsString::from(name),
-            std::ffi::OsString::from(value),
-        ));
+        vars.set(*name, value);
     }
     let workspace = Workspace::open(
         fixture.root(),

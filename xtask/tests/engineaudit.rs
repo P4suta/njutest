@@ -896,10 +896,12 @@ fn layers_of(name: &str) -> &'static [Layer] {
         | "a route narrowed by guards that kept no record"
         | "a test the guards say reached a mutation and the route dropped" => &[Layer::Trace],
         "a route that says a target ran that no execution ran" => &[Layer::Work],
-        "a body digest its bytes do not hash to, in the file the run measured" => {
+        "a body digest its bytes do not hash to, in the file the run measured"
+        | "an item placed where its body does not start, in the file the run measured" => {
             &[Layer::Identity]
         }
         "a kill carried across a body its killer entered that has changed since"
+        | "a kill carried though a body its killer entered starts elsewhere since"
         | "a survival carried though the route runs a target no recorded execution ran"
         | "a kill carried across a skeleton that has changed since"
         | "a kill carried by an execution whose record omits what it entered"

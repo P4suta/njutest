@@ -39,6 +39,8 @@ mod devkit_environment;
 mod docs_ledger;
 #[path = "duration.rs"]
 mod duration;
+#[path = "edits_parse.rs"]
+mod edits_parse;
 #[path = "equivalence.rs"]
 mod equivalence;
 #[path = "errors_doc.rs"]
@@ -55,6 +57,8 @@ mod forbid;
 mod git;
 #[path = "glob.rs"]
 mod glob;
+#[path = "group_stop.rs"]
+mod group_stop;
 #[path = "id.rs"]
 mod id;
 #[path = "instrument.rs"]

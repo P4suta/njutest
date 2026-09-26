@@ -513,6 +513,37 @@ struct ItemClaim {
     sealed: bool,
     #[serde(rename = "unsealed", deserialize_with = "super::wire::required_option")]
     _unsealed: Option<serde_json::Value>,
+    #[serde(deserialize_with = "super::wire::required_option")]
+    start: Option<Place>,
+}
+
+/// Where a token stands as the page counts it: a line from 1 that only a line feed ends, and a column from 1 in characters, a leading byte-order mark not among them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Place {
+    line: u64,
+    column: u64,
+}
+
+/// Where the byte at `offset` of `text` stands as the page counts it, or `None` past its end or inside a character.
+fn placed(text: &str, offset: usize) -> Option<Place> {
+    let before = text.get(..offset)?;
+    let before = match before.strip_prefix('\u{feff}') {
+        Some(rest) => rest,
+        None => before,
+    };
+    let (line, last) = match before.rsplit_once('\n') {
+        Some((above, last)) => (above.matches('\n').count().checked_add(2)?, last),
+        None => (1, before),
+    };
+    let (Ok(line), Ok(characters)) = (u64::try_from(line), u64::try_from(last.chars().count()))
+    else {
+        return None;
+    };
+    Some(Place {
+        line,
+        column: characters.checked_add(1)?,
+    })
 }
 
 /// One item as the carry evidence names it: its package, its file, and its place among that file's cataloged items.
@@ -614,6 +645,7 @@ struct Execution {
 struct Entered {
     item: NamedItem,
     body_digest: String,
+    start: Place,
 }
 
 /// One execution the run's route would have made.
@@ -686,6 +718,7 @@ struct Cataloged {
     body: std::ops::Range<usize>,
     digest: String,
     sealed: bool,
+    start: Option<Place>,
 }
 
 /// Every item the carry evidence names, joined to the body span the guards' record gives it; an item it cannot be joined to is said.
@@ -717,6 +750,7 @@ fn cataloged(skeletons: &Skeletons, spans: &Spans, notes: &mut super::Notes<'_>)
             body: start..end,
             digest: item.body_digest.clone(),
             sealed: item.sealed,
+            start: item.start,
         });
     }
     found
@@ -786,11 +820,11 @@ fn documents(
         ("skeletons-v1.json", "rust-mutants/skeletons"),
         notes,
     )?;
-    if skeletons.document_type != "rust-mutants/skeletons" || skeletons.schema_version != 1 {
+    if skeletons.document_type != "rust-mutants/skeletons" || skeletons.schema_version != 2 {
         notes.violated(
             "skeletons-v1.json",
             format!(
-                "the document says it is {} version {}, not rust-mutants/skeletons version 1",
+                "the document says it is {} version {}, not rust-mutants/skeletons version 2",
                 skeletons.document_type, skeletons.schema_version
             ),
         );
@@ -879,7 +913,7 @@ pub(super) fn layer(
         bodies(item, &mut read, (page.lists(), &skeletons), &mut notes);
     }
     refs(&items, &mut notes);
-    skeleton_folds(&skeletons, &items, &mut read, &mut notes);
+    skeleton_folds((&skeletons, &items, page.lists()), &mut read, &mut notes);
     notes.looked()
 }
 
@@ -955,6 +989,9 @@ fn bodies(
         }
         return;
     }
+    if !placed_as_claimed(item, (&text, proven), &subject, notes) {
+        return;
+    }
     if !item.sealed {
         return;
     }
@@ -1003,6 +1040,30 @@ fn bodies(
     }
 }
 
+/// Whether the run places `item`'s body where the page does in `text`, saying so where it does not: a violation where `proven` says the file is the one measured.
+fn placed_as_claimed(
+    item: &Cataloged,
+    (text, proven): (&str, bool),
+    subject: &str,
+    notes: &mut super::Notes<'_>,
+) -> bool {
+    let start = placed(text, item.body.start);
+    if start == item.start {
+        return true;
+    }
+    let detail = format!(
+        "{} is placed at {:?}, and the page places its body at {start:?}, so a body that moved \
+         would not be told from one that did not",
+        item.name, item.start
+    );
+    if proven {
+        notes.violated(subject, detail);
+    } else {
+        notes.unaudited(subject, detail);
+    }
+    false
+}
+
 /// Whether a unit that runs inside the compiler, a `proc-macro` or a `custom-build` one, read `path`.
 fn read_by_the_compiler(path: &str, skeletons: &Skeletons) -> bool {
     let named = format!("$root/{path}");
@@ -1043,8 +1104,7 @@ fn unit_files(path: &str, skeletons: &Skeletons, tree: &mut Tree<'_>) -> Option<
 
 /// Every unit's skeleton against the fold of its entries, and every `$root` entry against this audit's own placeholder rendering of the file.
 fn skeleton_folds(
-    skeletons: &Skeletons,
-    items: &[Cataloged],
+    (skeletons, items, lists): (&Skeletons, &[Cataloged], Lists<'_>),
     tree: &mut Tree<'_>,
     notes: &mut super::Notes<'_>,
 ) {
@@ -1064,6 +1124,33 @@ fn skeleton_folds(
             );
         }
         for (entry, digest) in &unit.entries {
+            if let Some(read) = entry.strip_prefix(POSITIONS) {
+                let Some(path) = read.strip_prefix("$root/") else {
+                    notes.violated(
+                        &name,
+                        format!("{entry} names where the compiler reads a file outside the root"),
+                    );
+                    continue;
+                };
+                let Some((text, _)) = tree.text(path) else {
+                    continue;
+                };
+                match positions_read(path, &text, items, lists) {
+                    Some(listed) if *digest == sha256(listed.as_bytes()) => {}
+                    Some(listed) => notes.violated(
+                        &name,
+                        format!(
+                            "{entry} is kept as a digest that where the page says the compiler \
+                             reads a position in {path} does not hash to: {listed:?}"
+                        ),
+                    ),
+                    None => notes.violated(
+                        &name,
+                        format!("{entry} is kept for a file the page's parser cannot read"),
+                    ),
+                }
+                continue;
+            }
             let Some(path) = entry.strip_prefix("$root/") else {
                 continue;
             };
@@ -1103,21 +1190,11 @@ fn rendering(entry: &str, path: &str, text: &str, items: &[Cataloged]) -> Option
             continue;
         }
         rendered.push_str(text.get(at..item.body.start)?);
-        let body = text.get(item.body.clone())?;
-        let last = match body.rsplit_once('\n') {
-            Some((_, last)) => last,
-            None => body,
-        };
+        text.get(item.body.clone())?;
         rendered.push_str("{sealed:");
         rendered.push_str(entry);
         rendered.push('#');
         rendered.push_str(&ordinal.to_string());
-        rendered.push('/');
-        rendered.push_str(&body.matches('\n').count().to_string());
-        rendered.push(':');
-        rendered.push_str(&last.len().to_string());
-        rendered.push(':');
-        rendered.push_str(&last.chars().count().to_string());
         rendered.push('}');
         at = item.body.end;
     }
@@ -1125,10 +1202,195 @@ fn rendering(entry: &str, path: &str, text: &str, items: &[Cataloged]) -> Option
     Some(rendered)
 }
 
+/// How the entry that holds where the compiler reads a position in a file is named, before the file's own entry name.
+const POSITIONS: &str = "$positions/";
+
+/// Where the page says the compiler reads a position in the file at `path`, one line each in byte order: every body that is not sealed by its ordinal, and outside every cataloged body each item-level macro invocation but a `macro_rules!` definition, each documentation attribute holding a line rustdoc may test, each other attribute off the list, and each array length, enum discriminant, const parameter default and const generic argument that holds a macro invocation or a call; `None` where the file does not parse.
+fn positions_read(path: &str, text: &str, items: &[Cataloged], lists: Lists<'_>) -> Option<String> {
+    let file = match syn::parse_file(text) {
+        Ok(file) => file,
+        Err(_not_rust) => return None,
+    };
+    let mut found = Candidates {
+        lists,
+        seen: Vec::new(),
+    };
+    found.visit_file(&file);
+    let mut in_file: Vec<&Cataloged> = items.iter().filter(|item| item.path == path).collect();
+    in_file.sort_by_key(|item| item.index);
+    let mut bodies = Vec::new();
+    for item in &in_file {
+        let from = line_column(text, item.body.start)?;
+        let to = line_column(text, item.body.end)?;
+        bodies.push(((from.line, from.column), (to.line, to.column)));
+    }
+    let mut lines = Vec::new();
+    for (kind, at) in found.seen {
+        let here = (at.line, at.column);
+        if bodies.iter().any(|(from, to)| *from <= here && here < *to) {
+            continue;
+        }
+        lines.push(format!("{kind} {}:{}", at.line, at.column.checked_add(1)?));
+    }
+    for (ordinal, item) in in_file.iter().enumerate() {
+        if item.sealed {
+            continue;
+        }
+        lines.push(match item.start {
+            Some(Place { line, column }) => format!("body {ordinal} {line}:{column}"),
+            None => format!("body {ordinal} unplaced"),
+        });
+    }
+    lines.sort();
+    Some(lines.join("\n"))
+}
+
+/// Every place of one file the page says the compiler may read a position of, by its kind and where the page's token for that kind stands, bodies not yet set aside.
+struct Candidates<'a> {
+    lists: Lists<'a>,
+    seen: Vec<(&'static str, LineColumn)>,
+}
+
+impl Candidates<'_> {
+    fn saw(&mut self, kind: &'static str, token: proc_macro2::Span) {
+        self.seen.push((kind, token.start()));
+    }
+
+    /// An item-level macro invocation, by the last segment of its path, a `macro_rules!` definition aside.
+    fn invocation(&mut self, invoked: &syn::Macro) {
+        if invoked.path.is_ident("macro_rules") {
+            return;
+        }
+        if let Some(last) = invoked.path.segments.last() {
+            self.saw("macro", last.ident.span());
+        }
+    }
+}
+
+/// Whether `expression` holds a macro invocation or a call anywhere in it.
+fn calls_or_expands(expression: &syn::Expr) -> bool {
+    struct Finds(bool);
+    impl<'ast> Visit<'ast> for Finds {
+        fn visit_macro(&mut self, _node: &'ast syn::Macro) {
+            self.0 = true;
+        }
+        fn visit_expr_call(&mut self, _node: &'ast syn::ExprCall) {
+            self.0 = true;
+        }
+        fn visit_expr_method_call(&mut self, _node: &'ast syn::ExprMethodCall) {
+            self.0 = true;
+        }
+    }
+    let mut finds = Finds(false);
+    finds.visit_expr(expression);
+    finds.0
+}
+
+/// Whether a documentation attribute holds a line rustdoc may test: one that opens a fence, or one indented four spaces or a tab past the space a doc comment starts with.
+fn tests_code(attribute: &syn::Attribute) -> bool {
+    let syn::Meta::NameValue(named) = &attribute.meta else {
+        return true;
+    };
+    let syn::Expr::Lit(syn::ExprLit {
+        lit: syn::Lit::Str(written),
+        ..
+    }) = &named.value
+    else {
+        return true;
+    };
+    written.value().lines().any(|line| {
+        let after = match line.strip_prefix(' ') {
+            Some(after) => after,
+            None => line,
+        };
+        let text = after.trim_start_matches(' ');
+        text.starts_with("```")
+            || text.starts_with("~~~")
+            || after.starts_with("    ")
+            || after.starts_with('\t')
+    })
+}
+
+impl<'ast> Visit<'ast> for Candidates<'_> {
+    fn visit_item_macro(&mut self, node: &'ast syn::ItemMacro) {
+        self.invocation(&node.mac);
+        for attribute in &node.attrs {
+            self.visit_attribute(attribute);
+        }
+    }
+
+    fn visit_impl_item_macro(&mut self, node: &'ast syn::ImplItemMacro) {
+        self.invocation(&node.mac);
+        syn::visit::visit_impl_item_macro(self, node);
+    }
+
+    fn visit_trait_item_macro(&mut self, node: &'ast syn::TraitItemMacro) {
+        self.invocation(&node.mac);
+        syn::visit::visit_trait_item_macro(self, node);
+    }
+
+    fn visit_foreign_item_macro(&mut self, node: &'ast syn::ForeignItemMacro) {
+        self.invocation(&node.mac);
+        syn::visit::visit_foreign_item_macro(self, node);
+    }
+
+    fn visit_attribute(&mut self, node: &'ast syn::Attribute) {
+        let Some(first) = node.path().segments.first() else {
+            return;
+        };
+        let doc = node.path().is_ident("doc");
+        if (doc && tests_code(node)) || (!doc && !allowed(node, self.lists)) {
+            self.saw(
+                if doc { "doctest" } else { "attribute" },
+                first.ident.span(),
+            );
+        }
+    }
+
+    fn visit_type_array(&mut self, node: &'ast syn::TypeArray) {
+        if calls_or_expands(&node.len) {
+            self.saw("length", node.semi_token.span);
+        }
+        syn::visit::visit_type_array(self, node);
+    }
+
+    fn visit_variant(&mut self, node: &'ast syn::Variant) {
+        if let Some((_, value)) = &node.discriminant
+            && calls_or_expands(value)
+        {
+            self.saw("discriminant", node.ident.span());
+        }
+        syn::visit::visit_variant(self, node);
+    }
+
+    fn visit_const_param(&mut self, node: &'ast syn::ConstParam) {
+        if let Some((_, value)) = &node.default
+            && calls_or_expands(value)
+        {
+            self.saw("const-default", node.ident.span());
+        }
+        syn::visit::visit_const_param(self, node);
+    }
+
+    fn visit_generic_argument(&mut self, node: &'ast syn::GenericArgument) {
+        if let syn::GenericArgument::Const(value) = node
+            && calls_or_expands(value)
+        {
+            match value {
+                syn::Expr::Block(block) => {
+                    self.saw("const-argument", block.block.brace_token.span.open());
+                }
+                _ => self.saw("const-argument", proc_macro2::Span::call_site()),
+            }
+        }
+        syn::visit::visit_generic_argument(self, node);
+    }
+}
+
 /// The evidence a believed record is held to, read once.
 struct Held<'a> {
     tree: String,
-    bodies: std::collections::BTreeMap<NamedItem, (String, bool)>,
+    bodies: std::collections::BTreeMap<NamedItem, (String, bool, Option<Place>)>,
     by_index: std::collections::BTreeMap<u64, (NamedItem, String)>,
     spans: &'a Spans,
     touched: &'a serde_json::Value,
@@ -1150,7 +1412,10 @@ impl<'a> Held<'a> {
         let mut bodies = std::collections::BTreeMap::new();
         let mut by_index = std::collections::BTreeMap::new();
         for item in &skeletons.items {
-            bodies.insert(item.item.clone(), (item.body_digest.clone(), item.sealed));
+            bodies.insert(
+                item.item.clone(),
+                (item.body_digest.clone(), item.sealed, item.start),
+            );
             by_index.insert(item.index, (item.item.clone(), item.body_digest.clone()));
         }
         Self {
@@ -1173,11 +1438,11 @@ fn believed(
     ),
     notes: &mut super::Notes<'_>,
 ) {
-    if carried.document_type != "rust-mutants/carried" || carried.schema_version != 1 {
+    if carried.document_type != "rust-mutants/carried" || carried.schema_version != 2 {
         notes.violated(
             "carried-v1.json",
             format!(
-                "the document says it is {} version {}, not rust-mutants/carried version 1",
+                "the document says it is {} version {}, not rust-mutants/carried version 2",
                 carried.document_type, carried.schema_version
             ),
         );
@@ -1394,7 +1659,7 @@ fn premise_fails(record: &Carried, plan: &[Planned], held: &Held<'_>) -> Option<
         .find_map(|(execution, enough)| execution_fails(execution, enough, held))
 }
 
-/// Why one execution would not do on this tree what it did on its own: its record does not reach far enough, its skeleton moved, or a body it entered changed or is no longer sealed.
+/// Why one execution would not do on this tree what it did on its own: its record does not reach far enough, its skeleton moved, or a body it entered changed, is no longer sealed, or starts elsewhere.
 fn execution_fails(execution: &Execution, enough: &[&str], held: &Held<'_>) -> Option<String> {
     if !enough.contains(&execution.completeness.as_str()) {
         return Some(format!("entry-incomplete: {}", execution.completeness));
@@ -1404,11 +1669,17 @@ fn execution_fails(execution: &Execution, enough: &[&str], held: &Held<'_>) -> O
     }
     for entered in &execution.entered {
         match held.bodies.get(&entered.item) {
-            Some((now, _)) if *now != entered.body_digest => {
+            Some((now, _, _)) if *now != entered.body_digest => {
                 return Some(format!("item-changed: {}", entered.item));
             }
-            Some((_, false)) => return Some(format!("unsealed: {}", entered.item)),
-            Some((_, true)) => {}
+            Some((_, false, _)) => return Some(format!("unsealed: {}", entered.item)),
+            Some((_, true, now)) if *now != Some(entered.start) => {
+                return Some(format!(
+                    "item-moved: {} started at {:?} and starts at {now:?}",
+                    entered.item, entered.start
+                ));
+            }
+            Some((_, true, _)) => {}
             None => return Some(format!("item-changed: {} is gone", entered.item)),
         }
     }

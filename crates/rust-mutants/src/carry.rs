@@ -12,10 +12,11 @@ use std::path::{Path, PathBuf};
 
 use crate::id::HexDigest;
 use crate::outcomes::{CacheOutcome, Keyed, StoreError};
+use crate::skeleton::Position;
 use crate::touch::{Completeness, ItemRef};
 
 /// The schema every carried record names.
-pub const SCHEMA: &str = "rust-mutants-carried-v1";
+pub const SCHEMA: &str = "rust-mutants-carried-v2";
 
 /// Where carried records live under the cache directory.
 pub const LAYOUT: &str = "rust-mutants/carried-v1";
@@ -27,7 +28,7 @@ pub const FILE: &str = "carried-v1.json";
 pub const DOCUMENT: &str = "rust-mutants/carried";
 
 /// The version of [`DOCUMENT`] this release writes.
-pub const DOCUMENT_VERSION: u32 = 1;
+pub const DOCUMENT_VERSION: u32 = 2;
 
 /// Every carried record one run believed, which is what an audit re-derives each carried answer from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,7 +90,7 @@ pub struct Execution {
     pub detected: bool,
 }
 
-/// One item an execution entered, with the digest its body had then.
+/// One item an execution entered, with the digest its body had then and where the body started.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Entered {
@@ -97,6 +98,8 @@ pub struct Entered {
     pub item: ItemRef,
     /// The digest of its body.
     pub body_digest: String,
+    /// Where its body's opening brace stood, as the compiler reports a position.
+    pub start: Position,
 }
 
 /// An answer about one mutation, with every execution it rests on.
@@ -193,6 +196,8 @@ pub struct Body {
     pub digest: String,
     /// Whether it is sealed.
     pub sealing: Sealing,
+    /// Where its opening brace stands, or nothing where its file cannot say.
+    pub start: Option<Position>,
 }
 
 /// Whether a body contributes anything to the program but its own execution.
@@ -223,6 +228,8 @@ pub enum Refusal {
     ItemChanged,
     /// An item an execution entered is not sealed now.
     Unsealed,
+    /// An item an execution entered starts somewhere else now, so a position inside it that the execution could read is another.
+    ItemMoved,
     /// An execution's record of what it entered does not reach far enough for this answer.
     EntryIncomplete,
     /// The route executes a target no recorded execution ran.
@@ -243,6 +250,7 @@ impl Refusal {
             Self::SkeletonChanged => "skeleton-changed",
             Self::ItemChanged => "item-changed",
             Self::Unsealed => "unsealed",
+            Self::ItemMoved => "item-moved",
             Self::EntryIncomplete => "entry-incomplete",
             Self::RouteGrew => "route-grew",
             Self::FilterDiffers => "filter-differs",
@@ -343,7 +351,7 @@ pub fn believe(record: &Carried, now: &Now<'_>, plan: &[Planned]) -> Result<(), 
     }
 }
 
-/// Whether one execution would do on this tree what it did on its own: its record reaches far enough, its target holds its reach, its skeleton is unchanged, and every item it entered has the same sealed body.
+/// Whether one execution would do on this tree what it did on its own: its record reaches far enough, its target holds its reach, its skeleton is unchanged, and every item it entered has the same sealed body where it stood.
 fn held(execution: &Execution, now: &Now<'_>, enough: &[Completeness]) -> Result<(), Refusal> {
     if !enough.contains(&execution.completeness) {
         return Err(Refusal::EntryIncomplete);
@@ -363,6 +371,9 @@ fn held(execution: &Execution, now: &Now<'_>, enough: &[Completeness]) -> Result
         }
         if body.sealing == Sealing::Unsealed {
             return Err(Refusal::Unsealed);
+        }
+        if body.start != Some(entered.start) {
+            return Err(Refusal::ItemMoved);
         }
     }
     Ok(())

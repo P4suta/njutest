@@ -33,7 +33,9 @@ struct Said {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: njutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect(),
         temp_directory: fixture.temp().to_path_buf(),
         program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
@@ -374,7 +376,7 @@ fn emptying_what_earlier_runs_established_says_how_much_was_in_it() {
                 runner: None,
                 declared: rust_mutants::outcomes::Declared::of(
                     &std::collections::BTreeSet::new(),
-                    &[],
+                    &rust_mutants::vars::Variables::empty(),
                 ),
             },
         })

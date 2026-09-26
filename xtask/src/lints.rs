@@ -108,6 +108,12 @@ const UNOWNED_SPAWN_REMEDY: &str = "construct threads and child processes only i
     owner that must join, kill, or reap them on every path. Raw `thread::spawn`, \
     `Builder::spawn`, and `Command::spawn` make cleanup an optional convention; scoped work must \
     likewise pass through a typed scope helper whose lifetime proves the join";
+const RAW_GROUP_SIGNAL_REMEDY: &str = "stop a process group through \
+    `rust_mutants::runner::stop_group`. What the kernel answers a group signal is one question \
+    wherever it is asked: on macOS a group whose members have all ended while its leader waits to \
+    be reaped refuses it with EPERM, which is the group being gone, and a second place that sends \
+    the signal itself decides that again, which is how the provider kept reporting a failed \
+    cleanup after the runner had stopped doing so";
 const UNBOUNDED_CHANNEL_REMEDY: &str = "use a bounded `sync_channel` whose capacity and full or \
     disconnected policy are named at the construction boundary. `mpsc::channel` lets a stalled \
     consumer turn producer progress into unbounded memory growth";
@@ -190,6 +196,11 @@ const BARE_SHELL_REMEDY: &str = "a POSIX `sh` is on every Unix and on no Windows
     this repository can count on, so a program named `sh` outside `#[cfg(unix)]` is a precondition \
     nobody states: a test takes its shell from `njutest_devkit::paths::posix_sh()`, which says what \
     to install when there is none, and code that names `sh` for itself is compiled only for Unix";
+const RAW_ENVIRONMENT_REMEDY: &str = "hold an environment as `rust_mutants::vars::Variables`, \
+    which reads, changes, selects and digests a name only as the platform takes it. Pairs of \
+    `OsString` let each reader compare names its own way, and four did it by bytes where Windows \
+    takes any case: a declared variable hashed as unset, a composed one inherited beside its \
+    replacement, a reserved one let through, and a home the tests were never given";
 const RAW_READ_REMEDY: &str = "ask `crate::observe` what the path is. A reader of evidence that \
     touches the filesystem itself decides at its own call site what an I/O failure means, which is \
     how a lock file beside the profiles became a directory that could not be read and how running \
@@ -266,6 +277,7 @@ declare_kinds! {
     WrappingCounter => "wrapping-counter",
     UncheckedCast => "unchecked-cast",
     UnownedSpawn => "unowned-spawn",
+    RawGroupSignal => "raw-group-signal",
     UnboundedChannel => "unbounded-channel",
     PoisonRecovery => "poison-recovery",
     LossyText => "lossy-text",
@@ -278,6 +290,7 @@ declare_kinds! {
     LoneTemporaryVariable => "lone-temporary-variable",
     ErrorName => "error-name",
     BareShell => "bare-shell",
+    RawEnvironment => "raw-environment",
 }
 
 impl Kind {
@@ -320,6 +333,7 @@ impl Kind {
             Self::WrappingCounter => WRAPPING_COUNTER_REMEDY,
             Self::UncheckedCast => UNCHECKED_CAST_REMEDY,
             Self::UnownedSpawn => UNOWNED_SPAWN_REMEDY,
+            Self::RawGroupSignal => RAW_GROUP_SIGNAL_REMEDY,
             Self::UnboundedChannel => UNBOUNDED_CHANNEL_REMEDY,
             Self::PoisonRecovery => POISON_RECOVERY_REMEDY,
             Self::LossyText => LOSSY_TEXT_REMEDY,
@@ -330,6 +344,7 @@ impl Kind {
             Self::RawRead => RAW_READ_REMEDY,
             Self::RawTreeWalk => RAW_TREE_WALK_REMEDY,
             Self::BareShell => BARE_SHELL_REMEDY,
+            Self::RawEnvironment => RAW_ENVIRONMENT_REMEDY,
             Self::LoneTemporaryVariable => LONE_TEMPORARY_VARIABLE_REMEDY,
             Self::ErrorName => ERROR_NAME_REMEDY,
         }
@@ -599,9 +614,18 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
         scan.found.extend(foreign_remainders(&parsed, file));
     }
     scan.found.extend(broad_expectations(&parsed, file));
+    if signals_are_held(file) {
+        scan.found.extend(raw_group_signals(&parsed, file));
+    }
     scan.found.extend(implied_cfgs(&parsed, file));
     if file != SHELL_FINDER {
         scan.found.extend(bare_shells(&parsed, file));
+    }
+    if !ENVIRONMENT_READERS
+        .iter()
+        .any(|reader| file.starts_with(reader))
+    {
+        scan.found.extend(raw_environments(&parsed, file));
     }
     scan.found.sort();
     scan.found.dedup();
@@ -3798,6 +3822,7 @@ fn manual_default_allowed(file: &str, item: &str) -> bool {
         ),
         ("crates/rust-mutants/src/trace/mod.rs", &["Recorder"]),
         ("crates/rust-mutants/src/validate.rs", &["ValidateOptions"]),
+        ("crates/rust-mutants/src/vars.rs", &["Variables"]),
     ];
     ALLOWED
         .iter()
@@ -6425,7 +6450,253 @@ fn cfg_constant(meta: &syn::Meta) -> CfgTruth {
     }
 }
 
-/// Every `#[cfg]` whose condition an enclosing item's `#[cfg]` already guarantees, which a reader takes for a second condition the item is under.
+/// Where an environment is read as pairs: the one type that holds it, and the tooling the engine cannot be a dependency of.
+const ENVIRONMENT_READERS: [&str; 3] = [
+    "crates/rust-mutants/src/vars.rs",
+    "crates/njutest-devkit/",
+    "xtask/",
+];
+
+/// Every type that holds an environment variable as a pair of `OsString`s.
+fn raw_environments(parsed: &syn::File, file: &str) -> Vec<Finding> {
+    let mut visitor = RawEnvironment {
+        file,
+        found: Vec::new(),
+    };
+    visitor.visit_file(parsed);
+    visitor.found
+}
+
+/// The one file for each platform that may signal a process by id: the engine's runner on Unix and on Windows, and xtask's work, which cannot depend on the engine.
+const SIGNALLERS: [&str; 3] = [
+    "crates/rust-mutants/src/runner/unix.rs",
+    "crates/rust-mutants/src/runner/windows.rs",
+    "xtask/src/work.rs",
+];
+
+/// Every name that sends a signal to a process or a group by id, from any crate that offers one.
+const SIGNALLING_NAMES: [&str; 16] = [
+    "kill",
+    "killpg",
+    "kill_process",
+    "kill_process_group",
+    "kill_current_process_group",
+    "tgkill",
+    "tkill",
+    "sigqueue",
+    "pidfd_send_signal",
+    "SYS_kill",
+    "SYS_tgkill",
+    "SYS_tkill",
+    "SYS_pidfd_send_signal",
+    "TerminateProcess",
+    "TerminateJobObject",
+    "GenerateConsoleCtrlEvent",
+];
+
+/// Programs that signal the processes they are given.
+const SIGNALLING_PROGRAMS: [&str; 8] = [
+    "kill",
+    "pkill",
+    "killall",
+    "taskkill",
+    "kill.exe",
+    "taskkill.exe",
+    "/bin/kill",
+    "/usr/bin/kill",
+];
+
+/// The file that defines this rule, which names every way to signal in order to refuse it.
+const SIGNAL_RULE: &str = "xtask/src/lints.rs";
+
+/// Whether `file` is code that runs for somebody, crate or xtask, where signalling by id is held to one place.
+fn signals_are_held(file: &str) -> bool {
+    (file.starts_with("crates/") || file.starts_with("xtask/"))
+        && file.contains("/src/")
+        && ships(file)
+        && !SIGNALLERS.contains(&file)
+        && file != SIGNAL_RULE
+}
+
+/// Every place a file names a way to signal a process by id, but for the one place that does it and code compiled only for tests.
+fn raw_group_signals(parsed: &syn::File, file: &str) -> Vec<Finding> {
+    let mut visitor = RawSignal {
+        file,
+        tests: 0,
+        found: Vec::new(),
+    };
+    visitor.visit_file(parsed);
+    visitor.found
+}
+
+/// Every pair of `OsString`s named as a type in one file.
+struct RawEnvironment<'a> {
+    file: &'a str,
+    found: Vec<Finding>,
+}
+
+/// Whether `ty` names `OsString`, however its path is spelled.
+fn names_os_string(ty: &syn::Type) -> bool {
+    match ty {
+        syn::Type::Path(path) => path
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "OsString"),
+        syn::Type::Group(group) => names_os_string(&group.elem),
+        syn::Type::Paren(paren) => names_os_string(&paren.elem),
+        _ => false,
+    }
+}
+
+impl Visit<'_> for RawEnvironment<'_> {
+    fn visit_type_tuple(&mut self, tuple: &syn::TypeTuple) {
+        if tuple.elems.len() == 2 && tuple.elems.iter().all(names_os_string) {
+            self.found.push(Finding {
+                kind: Kind::RawEnvironment,
+                file: self.file.to_owned(),
+                line: tuple.paren_token.span.open().start().line,
+            });
+        }
+        syn::visit::visit_type_tuple(self, tuple);
+    }
+}
+
+/// How many enclosing items are compiled only for tests, and every signalling name outside them, by path, import, macro token or program.
+struct RawSignal<'a> {
+    file: &'a str,
+    tests: usize,
+    found: Vec<Finding>,
+}
+
+/// Whether `attributes` compile what they sit on only for tests.
+fn compiled_only_for_tests(attributes: &[syn::Attribute]) -> bool {
+    attributes.iter().any(|attribute| match &attribute.meta {
+        syn::Meta::List(list) if list.path.is_ident("cfg") => {
+            list.tokens.to_string() == "test"
+                || all_of(&list.tokens)
+                    .is_some_and(|parts| parts.iter().any(|part| part.to_string() == "test"))
+        }
+        syn::Meta::List(_) | syn::Meta::Path(_) | syn::Meta::NameValue(_) => false,
+    })
+}
+
+/// Whether `name` is one of the ways to signal by id.
+fn signalling(name: &proc_macro2::Ident) -> bool {
+    SIGNALLING_NAMES.contains(&name.to_string().as_str())
+}
+
+impl RawSignal<'_> {
+    fn within(&mut self, attributes: &[syn::Attribute], walk: impl FnOnce(&mut Self)) {
+        let tests = compiled_only_for_tests(attributes);
+        if tests {
+            self.tests = self.tests.saturating_add(1);
+        }
+        walk(self);
+        if tests {
+            self.tests = self.tests.saturating_sub(1);
+        }
+    }
+
+    fn note(&mut self, span: proc_macro2::Span) {
+        if self.tests == 0 {
+            self.found.push(Finding {
+                kind: Kind::RawGroupSignal,
+                file: self.file.to_owned(),
+                line: span.start().line,
+            });
+        }
+    }
+
+    /// Every signalling name among `tokens` that is not a method, and every signalling program spelled there.
+    fn scan_tokens(&mut self, tokens: &proc_macro2::TokenStream) {
+        let trees: Vec<proc_macro2::TokenTree> = tokens.clone().into_iter().collect();
+        for (at, tree) in trees.iter().enumerate() {
+            match tree {
+                proc_macro2::TokenTree::Ident(name) if signalling(name) => {
+                    let method = at > 0
+                        && matches!(
+                            trees.get(at.saturating_sub(1)),
+                            Some(proc_macro2::TokenTree::Punct(dot)) if dot.as_char() == '.'
+                        );
+                    if !method {
+                        self.note(name.span());
+                    }
+                }
+                proc_macro2::TokenTree::Literal(literal) => {
+                    let program = match syn::parse2::<syn::LitStr>(proc_macro2::TokenStream::from(
+                        tree.clone(),
+                    )) {
+                        Ok(text) => SIGNALLING_PROGRAMS.contains(&text.value().as_str()),
+                        Err(_not_a_string) => false,
+                    };
+                    if program {
+                        self.note(literal.span());
+                    }
+                }
+                proc_macro2::TokenTree::Group(group) => self.scan_tokens(&group.stream()),
+                proc_macro2::TokenTree::Ident(_) | proc_macro2::TokenTree::Punct(_) => {}
+            }
+        }
+    }
+}
+
+impl Visit<'_> for RawSignal<'_> {
+    fn visit_item(&mut self, item: &syn::Item) {
+        self.within(item_attributes(item), |walk| {
+            syn::visit::visit_item(walk, item);
+        });
+    }
+
+    fn visit_impl_item(&mut self, item: &syn::ImplItem) {
+        let attributes: &[syn::Attribute] = match item {
+            syn::ImplItem::Const(one) => &one.attrs,
+            syn::ImplItem::Fn(one) => &one.attrs,
+            syn::ImplItem::Type(one) => &one.attrs,
+            syn::ImplItem::Macro(one) => &one.attrs,
+            _ => &[],
+        };
+        self.within(attributes, |walk| syn::visit::visit_impl_item(walk, item));
+    }
+
+    fn visit_path(&mut self, path: &syn::Path) {
+        let names: Vec<&syn::PathSegment> = path.segments.iter().collect();
+        for (at, segment) in names.iter().enumerate() {
+            let child_kill = segment.ident == "kill"
+                && at > 0
+                && names
+                    .get(at.saturating_sub(1))
+                    .is_some_and(|before| before.ident == "Child");
+            if signalling(&segment.ident) && !child_kill {
+                self.note(segment.ident.span());
+            }
+        }
+        syn::visit::visit_path(self, path);
+    }
+
+    fn visit_use_name(&mut self, name: &syn::UseName) {
+        if signalling(&name.ident) {
+            self.note(name.ident.span());
+        }
+    }
+
+    fn visit_use_rename(&mut self, rename: &syn::UseRename) {
+        if signalling(&rename.ident) {
+            self.note(rename.ident.span());
+        }
+    }
+
+    fn visit_lit_str(&mut self, literal: &syn::LitStr) {
+        if SIGNALLING_PROGRAMS.contains(&literal.value().as_str()) {
+            self.note(literal.span());
+        }
+    }
+
+    fn visit_macro(&mut self, invocation: &syn::Macro) {
+        self.scan_tokens(&invocation.tokens);
+    }
+}
+
 /// The one place a POSIX shell is looked for rather than assumed.
 const SHELL_FINDER: &str = "crates/njutest-devkit/src/paths.rs";
 
@@ -6562,6 +6833,7 @@ impl Visit<'_> for BareShell<'_> {
     }
 }
 
+/// Every `#[cfg]` whose condition an enclosing item's `#[cfg]` already guarantees, which a reader takes for a second condition the item is under.
 fn implied_cfgs(parsed: &syn::File, file: &str) -> Vec<Finding> {
     let mut visitor = ImpliedCfg {
         file,

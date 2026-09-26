@@ -40,7 +40,7 @@ To diagnose a run that only misbehaves on the runner, set `NJUTEST_TRACE: '1'` o
 
 | Workflow | Jobs | When |
 | --- | --- | --- |
-| `ci.yml` | the test matrix (macOS 26 in two halves, macOS 15 on what meets the kernel, Windows whole), lint (fmt, clippy, rustdoc, the `cargo xtask` gates, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, the coverage ratchet which is also the Linux suite, the `book` build, `soundness`, `action-smoke`, `action-smoke-rust-mutants`, and `ci-success` which gathers them | every pull request, weekly on `main`, and on request |
+| `ci.yml` | the test matrix (macOS 26 and Windows in two halves, macOS 15 on what meets the kernel), lint (fmt, clippy, rustdoc, the `cargo xtask` gates, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, the coverage ratchet which is also the Linux suite, the `book` build, `soundness`, `action-smoke`, `action-smoke-rust-mutants`, and `ci-success` which gathers them | every pull request, weekly on `main`, and on request |
 | `main.yml` | `tested-tree` proves that the tree a push to `main` brings is the tree a pull request head passed `ci-success` with | every push to `main` |
 | `mutation.yml` | `cargo-mutants` over each package | weekly, and on request |
 | `dogfood.yml` | `whole` runs the engine over its own catalog in one job through the `rust-mutants` action, checks the recording, and re-decides the run against the ledger | weekly, and on request |
@@ -60,7 +60,7 @@ Within a pull request's run, each row answers for something no other row does.
 Linux runs the whole suite once, instrumented, in `coverage`, which has to run all of it to measure it; the uninstrumented Linux row it replaced asked the same questions again.
 `macos-26` is the slowest runner and set how long every pull request waited, so it runs the suite in two halves nextest chooses by hash, each on its own runner.
 `macos-15` is there for its kernel, where `proc_listpgrppids` reports an empty process group after a timeout, so on a pull request it runs the in-process suite and the suites that drive a real cargo and answer with a process group, a signal, a crash, a durable write or a schedule; weekly it runs everything.
-Windows runs whole.
+Windows set the wall time after the macOS split, so it also runs the suite in two halves nextest chooses by hash.
 
 The `book` job builds `docs/` with mdbook, which refuses a summary that names a page the repository does not hold; `cargo test -p xtask --test suite docs::` refuses the other direction, a page the summary does not name.
 A page that neither side notices is one a reader of the book cannot reach.

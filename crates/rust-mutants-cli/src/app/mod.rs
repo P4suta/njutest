@@ -220,13 +220,16 @@ const fn diagnoses(command: &cli::Command) -> bool {
 pub fn reserved_names(environment: &Environment) -> Vec<String> {
     environment
         .vars
-        .iter()
+        .for_process()
         .filter(|(_, value)| !value.is_empty())
         .filter_map(|(name, _)| {
             rust_mutants::execute::RESERVED_ENV
                 .iter()
                 .find(|reserved| {
-                    rust_mutants::vars::same_name(name.as_os_str(), std::ffi::OsStr::new(reserved))
+                    environment
+                        .vars
+                        .spelling()
+                        .same(name, std::ffi::OsStr::new(reserved))
                 })
                 .map(|reserved| (*reserved).to_owned())
         })
@@ -246,13 +249,7 @@ fn reserved(environment: &Environment, compiled_catalog: Option<&str>) -> Result
 /// Whether this binary belongs to exactly the catalog the inherited activation or touch run names.
 #[must_use]
 pub fn is_self_measurement(environment: &Environment, compiled_catalog: Option<&str>) -> bool {
-    let value = |name: &str| {
-        environment
-            .vars
-            .iter()
-            .find(|(candidate, value)| candidate == name && !value.is_empty())
-            .map(|(_, value)| value.as_os_str())
-    };
+    let value = |name: &str| environment.vars.var(name).filter(|value| !value.is_empty());
     let Some(compiled) = compiled_catalog.filter(|catalog| !catalog.is_empty()) else {
         return false;
     };
@@ -541,6 +538,15 @@ fn measured(
             )?;
             write(stdout, &rendered(&said, cataloged)?)?;
             Ok(0)
+        }
+        cli::Command::List { claims: true, .. } => {
+            let discovery = session::preview(&workspace, &options, cancel)?;
+            let expectations = expectations(settings);
+            let resolved =
+                session::resolve_claims(&workspace, &options, &discovery, &expectations)?;
+            write(stdout, &report::claims(&expectations, &resolved))?;
+            workspace.close()?;
+            Ok(u8::from(resolved.iter().any(session::Resolution::rotted)))
         }
         cli::Command::List { .. }
         | cli::Command::WhySkipped { .. }
@@ -1950,7 +1956,7 @@ fn listed(selected: &[rust_mutants::rule::Rule]) -> Result<String, CliError> {
 fn locating(environment: &Environment) -> rust_mutants::cargo::LocateOptions {
     rust_mutants::cargo::LocateOptions {
         cargo: environment.cargo.clone(),
-        search_path: rust_mutants::vars::search_path(&environment.vars),
+        search_path: environment.vars.search_path().map(ToOwned::to_owned),
         env: Some(environment.vars.clone()),
     }
 }
@@ -2193,7 +2199,6 @@ fn merge(
     Ok(merged.run.exit_code)
 }
 
-/// A closed stream is the reader's choice, not a failure of ours.
 /// The claims the file wrote, as the engine reads them.
 fn expectations(settings: &Settings) -> Vec<Expectation> {
     settings
@@ -2205,6 +2210,7 @@ fn expectations(settings: &Settings) -> Vec<Expectation> {
         .collect()
 }
 
+/// Writes `text` to `stream`, where a closed stream is the reader's choice, not a failure of ours.
 pub(crate) fn write(stream: &mut dyn Write, text: &str) -> Result<(), CliError> {
     match stream
         .write_all(text.as_bytes())

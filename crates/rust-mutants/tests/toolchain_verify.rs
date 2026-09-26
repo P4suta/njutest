@@ -463,7 +463,7 @@ fn a_failing_baseline_is_never_remembered() {
     );
 }
 
-/// A target whose first run fails and whose second passes, keyed by a file it leaves in the directory the run gives it: both baseline runs of one target share that directory, so the second finds what the first wrote.
+/// A target whose first run fails and whose second passes, keyed by a file it leaves in the run scratch above the temporary directory the run gives it: every process of one run shares that scratch, so the second finds what the first wrote, as a failure something outside the code decided is gone the second time.
 const PASSES_ON_RETRY: &str = r#"// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -481,7 +481,16 @@ mod tests {
 
     #[test]
     fn doubling_two_is_four_once_this_has_run_before() {
-        let mark = std::env::temp_dir().join("been-here-before");
+        let temporary = std::env::temp_dir();
+        let run = temporary
+            .ancestors()
+            .find(|dir| {
+                dir.file_name()
+                    .and_then(std::ffi::OsStr::to_str)
+                    .is_some_and(|name| name.starts_with("rm-scratch-"))
+            })
+            .expect("a run scratch above the temporary directory");
+        let mark = run.join("been-here-before");
         assert!(mark.exists() || std::fs::write(&mark, b"1").is_err());
         assert_eq!(double(2), 4);
     }

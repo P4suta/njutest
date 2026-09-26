@@ -86,7 +86,7 @@ impl Compile for CargoScripted {
                 locked: true,
                 offline: true,
                 timeout: None,
-                env: Vec::new(),
+                env: rust_mutants::vars::Variables::empty(),
                 build: rust_mutants::cargo::BuildConfig::default(),
             },
         )
@@ -163,7 +163,7 @@ fn prepare_fixture_with(name: &str, arrange: impl FnOnce(&std::path::Path)) -> C
             locked: true,
             offline: true,
             timeout: None,
-            env: Vec::new(),
+            env: rust_mutants::vars::Variables::empty(),
             build: rust_mutants::cargo::BuildConfig::default(),
         },
     )
@@ -337,7 +337,7 @@ pub fn name(flag: bool) -> &'static str {
             locked: true,
             offline: true,
             timeout: None,
-            env: Vec::new(),
+            env: rust_mutants::vars::Variables::empty(),
             build: rust_mutants::cargo::BuildConfig::default(),
         },
     )
@@ -447,10 +447,7 @@ fn prepared(
         fixture.temp(),
     );
     if let Some(flags) = flags {
-        options.env.push((
-            std::ffi::OsString::from("RUSTFLAGS"),
-            std::ffi::OsString::from(flags),
-        ));
+        options.env.set("RUSTFLAGS", flags);
     }
     rust_mutants::workspace::Workspace::open(fixture.root(), options, &cancel)
         .expect("the workspace opens")

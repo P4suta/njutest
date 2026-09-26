@@ -209,6 +209,9 @@ fn fault(id: &str, events: &[Event]) -> Why {
             | Payload::Sentinel { .. }
             | Payload::Model { .. }
             | Payload::Drift { .. }
+            | Payload::Control { .. }
+            | Payload::Confirm { .. }
+            | Payload::Resumed { .. }
             | Payload::Repair { .. }
             | Payload::Note { .. }
             | Payload::RunEnd { .. } => {}
@@ -262,12 +265,7 @@ fn mutation(id: &str, events: &[Event]) -> Why {
                     .or(came_to);
             }
             Payload::Model { model } if model.mutant() == id => {
-                came_to = match model.answer() {
-                    crate::report::ModelDecision::Noticed { .. } => Some(Decided::ModelNoticed),
-                    crate::report::ModelDecision::Proved { .. } => Some(Decided::ModelProved),
-                    crate::report::ModelDecision::Ineligible { .. }
-                    | crate::report::ModelDecision::Undecided { .. } => came_to,
-                };
+                came_to = model_decision(model).or(came_to);
             }
             Payload::RunStart { .. }
             | Payload::FaultControl { .. }
@@ -294,6 +292,9 @@ fn mutation(id: &str, events: &[Event]) -> Why {
             | Payload::Sentinel { .. }
             | Payload::Model { .. }
             | Payload::Drift { .. }
+            | Payload::Control { .. }
+            | Payload::Confirm { .. }
+            | Payload::Resumed { .. }
             | Payload::Repair { .. }
             | Payload::Knob { .. }
             | Payload::Note { .. }
@@ -309,6 +310,16 @@ fn mutation(id: &str, events: &[Event]) -> Why {
         Some(_) | None => Why::Unknown {
             recorded: mutations(events),
         },
+    }
+}
+
+/// Projects the two affirmative model answers into the mutation explanation.
+const fn model_decision(model: &crate::report::ModelRecord) -> Option<Decided> {
+    match model.answer() {
+        crate::report::ModelDecision::Noticed { .. } => Some(Decided::ModelNoticed),
+        crate::report::ModelDecision::Proved { .. } => Some(Decided::ModelProved),
+        crate::report::ModelDecision::Ineligible { .. }
+        | crate::report::ModelDecision::Undecided { .. } => None,
     }
 }
 
@@ -389,6 +400,9 @@ fn mutations(events: &[Event]) -> usize {
             | Payload::Sentinel { .. }
             | Payload::Model { .. }
             | Payload::Drift { .. }
+            | Payload::Control { .. }
+            | Payload::Confirm { .. }
+            | Payload::Resumed { .. }
             | Payload::Repair { .. }
             | Payload::Knob { .. }
             | Payload::Note { .. }

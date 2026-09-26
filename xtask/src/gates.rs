@@ -2209,7 +2209,7 @@ fn declared_targets(metadata: &cargo_metadata::Metadata) -> BTreeSet<String> {
 /// Every critical decision has a row saying what holds it at every layer, each cell naming an item the tree defines, and every open layer is a hole the gaps ledger gives an owner.
 ///
 /// # Errors
-/// The registry, the ledger or its ceiling cannot be read or is malformed, or they and the tree disagree.
+/// The registry or ledger cannot be read or is malformed, or they and the tree disagree.
 pub fn invariants(root: &Path) -> Result<String, GateError> {
     let read = |relative: &str| {
         std::fs::read_to_string(root.join(relative))
@@ -2410,6 +2410,7 @@ pub fn all(root: &Path) -> Result<String, GateError> {
         waivers,
         tracked,
         skipped,
+        crate::claims::claims,
     ] {
         line(&mut report, format_args!("{}", gate(root)?));
     }
@@ -2668,7 +2669,43 @@ pub fn proofaudit_sentinels(checkers: &crate::schemas::Checkers) -> Result<usize
     for rule in proofaudit::merge::MergeRule::ALL {
         merge_rule_sighted(checkers, rule)?;
     }
+    for rule in crate::confirm::ConfirmRule::ALL {
+        confirm_rule_sighted(checkers, rule)?;
+    }
     Ok(found)
+}
+
+/// Nothing, where every defect planted for `rule` draws a confirmation violation of that rule by name.
+///
+/// # Errors
+/// A rule with nothing planted for it, or a plant no violation of its rule names.
+fn confirm_rule_sighted(
+    checkers: &crate::schemas::Checkers,
+    rule: crate::confirm::ConfirmRule,
+) -> Result<(), GateError> {
+    let planted = proofaudit::sentinel::confirm_plants(rule);
+    if planted.is_empty() {
+        return Err(GateError(format!(
+            "proofaudit: the confirmation rule {} has nothing planted for it",
+            rule.label()
+        )));
+    }
+    let prefix = format!("{}: ", rule.label());
+    for plant in &planted {
+        let audit = proofaudit_specimen(checkers, plant)?;
+        if !audit.remarks.iter().any(|remark| {
+            remark.layer == proofaudit::Layer::Confirmations
+                && remark.standing == proofaudit::Standing::Violated
+                && remark.detail.starts_with(&prefix)
+        }) {
+            return Err(GateError(format!(
+                "proofaudit: the confirmation rule {label} is blind. Its planted defect `{name}` drew no violation of it, so a run it is silent about says nothing. Nothing this gate would have said is believed until the planted defect is found again.\n{audit}",
+                label = rule.label(),
+                name = plant.name,
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Nothing, where the defect planted for `rule` draws a merge violation of that rule by name.

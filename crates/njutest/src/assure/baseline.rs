@@ -262,7 +262,7 @@ pub fn named(id: &str) -> Result<Target, crate::targets::TargetError> {
         ignored: false,
         executable: std::path::PathBuf::new(),
         cwd: std::path::PathBuf::new(),
-        env: Vec::new(),
+        env: rust_mutants::vars::Variables::empty(),
     })
 }
 

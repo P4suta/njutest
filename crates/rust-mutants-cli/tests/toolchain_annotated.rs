@@ -96,7 +96,9 @@ fn every_marker_hides_what_it_says_and_the_one_that_hides_nothing_is_a_finding()
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: njutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect(),
         temp_directory: fixture.temp().to_path_buf(),
         program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
@@ -107,4 +109,57 @@ fn environment(fixture: &Fixture) -> Environment {
         cargo: None,
         ci: rust_mutants_cli::CiHost::None,
     }
+}
+
+#[test]
+fn a_skip_that_names_its_text_hides_nothing_once_the_text_has_moved_and_says_where_it_went() {
+    let fixture = Fixture::copy("fixture-simple");
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        "version = 1\n[[mutation.skip]]\npath = \"src/lib.rs\"\nlines = \"11-11\"\ntext = \"if a > b\"\nreason = \"the comparison is the fixture's own\"\n",
+    )
+    .expect("the configuration");
+    let held = run(&fixture, &[]);
+    let report = document(&fixture);
+    let findings = report["findings"].as_array().expect("findings");
+    assert!(
+        findings.iter().all(|one| one["kind"] != "unmatched-skip"),
+        "the text is on the lines the entry names, so it hides what starts there: {findings:?} {}",
+        njutest_devkit::process::strict_utf8(&held.stderr)
+    );
+    let configured = |report: &serde_json::Value| {
+        report["skips"]
+            .as_array()
+            .expect("skips")
+            .iter()
+            .filter(|skip| skip["reason"] == "configured")
+            .filter_map(|skip| skip["count"].as_u64())
+            .sum::<u64>()
+    };
+    assert!(configured(&report) > 0, "{}", report["skips"]);
+    let lib = fixture.root().join("src/lib.rs");
+    let text = std::fs::read_to_string(&lib).expect("the library");
+    std::fs::write(&lib, format!("// a line above everything\n{text}")).expect("the edit");
+    let moved = run(&fixture, &[]);
+    let report = document(&fixture);
+    let findings = report["findings"].as_array().expect("findings");
+    let unmatched: Vec<&serde_json::Value> = findings
+        .iter()
+        .filter(|one| one["kind"] == "unmatched-skip")
+        .collect();
+    assert_eq!(
+        unmatched.len(),
+        1,
+        "line 11 now holds other code, and an entry whose text is not on its lines hides \
+         nothing rather than whatever moved in: {findings:?} {}",
+        njutest_devkit::process::strict_utf8(&moved.stderr)
+    );
+    assert!(
+        unmatched[0]["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("src/lib.rs:12")),
+        "the finding says where the text went, so the entry is fixed by reading it: {}",
+        unmatched[0]["detail"]
+    );
+    assert_eq!(configured(&report), 0, "{}", report["skips"]);
 }

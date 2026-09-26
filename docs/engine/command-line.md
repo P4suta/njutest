@@ -76,6 +76,7 @@ These narrow a run, and `list`, `catalog`, `why-skipped` and `instrument` read t
 | `explain PREFIX` | `--run RUN`, `--fresh`, `--json` |
 | `replay PREFIX` | `--run RUN` |
 | `why-skipped` | `--file PATH`, `--line N` |
+| `list` | `--json`, and `--claims`, which resolves every claim of the configuration as a run would and exits 1 where one names nothing, not as many as it says, or a line its mutation is no longer on |
 | `catalog` | `--rejections`, `--json` |
 | `instrument` | `--mutant PREFIX` |
 | `equivalence` | `--limit N` |

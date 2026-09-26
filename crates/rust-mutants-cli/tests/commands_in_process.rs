@@ -26,7 +26,9 @@ type RefusalCase<'a> = (&'a str, Vec<(&'a str, &'a str)>, Option<&'a str>);
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: njutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect(),
         temp_directory: fixture.temp().to_path_buf(),
         program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
@@ -76,10 +78,9 @@ fn rooted_with_catalog(
     compiled_catalog: Option<&str>,
 ) -> Said {
     let mut environment = environment(fixture);
-    environment.vars.extend(
-        vars.iter()
-            .map(|(name, value)| (OsString::from(*name), OsString::from(*value))),
-    );
+    for (name, value) in vars {
+        environment.vars.set(*name, *value);
+    }
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from_compiled(
         [OsString::from("rust-mutants"), OsString::from("rules")],

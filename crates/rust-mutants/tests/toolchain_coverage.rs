@@ -45,13 +45,12 @@ fn measure(fixture: &str, test: &str) -> Measured {
     let trace = Recorder::disabled();
     let engine_trace = Recorder::disabled();
 
-    let mut env: Vec<(OsString, OsString)> = std::env::vars_os()
-        .filter(|(name, _)| name != "RUSTFLAGS" && name != "CARGO_ENCODED_RUSTFLAGS")
-        .collect();
-    env.push((
-        OsString::from("CARGO_ENCODED_RUSTFLAGS"),
-        OsString::from(INSTRUMENT_FLAG.replace(' ', "\u{1f}")),
-    ));
+    let mut env: rust_mutants::vars::Variables = std::env::vars_os().collect();
+    env.remove("RUSTFLAGS");
+    env.set(
+        "CARGO_ENCODED_RUSTFLAGS",
+        INSTRUMENT_FLAG.replace(' ', "\u{1f}"),
+    );
 
     let toolchain = Toolchain::locate(
         &LocateOptions {
@@ -90,7 +89,7 @@ fn measure(fixture: &str, test: &str) -> Measured {
             locked: true,
             offline: true,
             timeout: None,
-            env: Vec::new(),
+            env: rust_mutants::vars::Variables::empty(),
             build: rust_mutants::cargo::BuildConfig::default(),
         },
     )
@@ -117,10 +116,7 @@ fn measure(fixture: &str, test: &str) -> Measured {
     );
     spec.dir = Some(root.clone());
     let mut run_env = env;
-    run_env.push((
-        OsString::from(PROFILE_ENV),
-        profile_pattern(profiles.path(), "one").into_os_string(),
-    ));
+    run_env.set(PROFILE_ENV, profile_pattern(profiles.path(), "one"));
     spec.env = Some(run_env);
     let ran = run(&spec, &cancel);
     assert!(
@@ -222,5 +218,70 @@ fn a_region_column_is_a_byte_column_and_the_fixture_holds_the_tool_to_it() {
     assert!(
         !covered.iter().any(|one| one.contains(&source, position)),
         "and uncovered"
+    );
+}
+
+/// A test that reads a setting only the home the run was given holds, which a confined execution cannot see.
+const READS_THE_GIVEN_HOME: &str = "// SPDX-FileCopyrightText: 2026 njutest contributors\n// SPDX-License-Identifier: MIT OR Apache-2.0\n\n//! Reads a setting only the given home holds.\n\n#[test]\nfn the_setting_the_home_already_holds_is_the_one_recalled() {\n    assert_eq!(fixture_home::recall().expect(\"the home holds a setting\"), \"already there\");\n}\n";
+
+#[test]
+fn a_target_that_runs_with_the_given_home_is_routed_as_one_nothing_measured() {
+    use rust_mutants::execute::Home;
+    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-home");
+    fixture.write("tests/reads.rs", READS_THE_GIVEN_HOME.as_bytes());
+    let home = fixture.temp().join("given-home");
+    std::fs::create_dir_all(home.join(".fixture-home")).expect("the given home");
+    std::fs::write(home.join(".fixture-home/setting"), "already there").expect("a setting");
+    let mut options = rust_mutants::testkit::opening::opening(
+        &njutest_devkit::paths::cargo_binary(),
+        fixture.temp(),
+    );
+    let real = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .map(PathBuf::from)
+        .expect("a real home");
+    for (name, beside) in [("CARGO_HOME", ".cargo"), ("RUSTUP_HOME", ".rustup")] {
+        if !options.env.holds(name) {
+            options.env.set(name, real.join(beside).into_os_string());
+        }
+    }
+    for name in ["HOME", "USERPROFILE"] {
+        options.env.set(name, home.clone().into_os_string());
+    }
+    let session = rust_mutants::workspace::Workspace::open(
+        fixture.root(),
+        options,
+        &rust_mutants::runner::Cancel::new(),
+    )
+    .expect("open")
+    .prepare(
+        &rust_mutants::session::PrepareOptions {
+            coverage: true,
+            ..rust_mutants::session::PrepareOptions::default()
+        },
+        &rust_mutants::runner::Cancel::new(),
+    )
+    .expect("prepare");
+    let reads = "fixture-home/test/reads";
+    assert_eq!(
+        session
+            .verified()
+            .targets
+            .get(reads)
+            .map(|measured| measured.baseline().home),
+        Some(Home::Given),
+        "the target passes only with the given home"
+    );
+    let reached = session.reached();
+    assert!(
+        reached.measured() && reached.targets.contains_key("fixture-home/test/writes"),
+        "the run measured what its targets reach: {reached:?}"
+    );
+    assert!(
+        !reached.targets.contains_key(reads)
+            && reached
+                .limitations
+                .contains(&format!("{}:{reads}", rust_mutants::reach::UNMEASURED)),
+        "what a target reached in a home of its own is not what it reaches with the given one, \
+         so every mutant routes to it as to a target nothing measured: {reached:?}"
     );
 }

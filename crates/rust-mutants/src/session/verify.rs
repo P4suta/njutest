@@ -153,33 +153,18 @@ fn verify_target(
             .join("touch")
             .join(format!("{}.log", slug(&target.id)))
     });
-    let own = baseline_scratch(scratch, index);
     let watched = Path::new(building.workspace.watched());
     crate::orphan::clear(watched).map_err(|source| SessionError::WriteFailed {
         path: watched.display().to_string(),
         source,
     })?;
-    let mut result = ran(target, &own, recording.as_deref(), building);
-    let mut retried = false;
-    let recording = if result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT {
-        building.trace.note(
-            crate::touch::UNRECORDED,
-            &format!(
-                "{}: the process could not write what its guards reached, so it is run \
-                 again with nothing to record and every test of it stays in every route",
-                target.id
-            ),
-        );
-        result = ran(target, &own, None, building);
-        None
-    } else {
-        recording
-    };
-    if let Some(again) = again(&result, target, (&own, recording.as_deref()), building) {
-        result = again;
-        retried = true;
-    }
-    let baseline = baseline_of(&result)?;
+    let Attempted {
+        result,
+        home,
+        retried,
+        recording,
+    } = attempted((target, index), (scratch, recording), building)?;
+    let baseline = baseline_of(&result, home)?;
     building.trace.verify(crate::trace::VerifyRecord {
         target: target.id.clone(),
         outcome: baseline.outcome.name().to_owned(),
@@ -195,8 +180,13 @@ fn verify_target(
             .limitations
             .push(crate::limitation::DOCTESTS_NONE.to_owned());
     }
-    if baseline.passed() && retried {
+    if baseline.passed() && retried && home == execute::Home::Confined {
         touched.limited(crate::limitation::BASELINE_PASSED_ON_RETRY, &target.id);
+    }
+    if baseline.passed() && home == execute::Home::Given {
+        target
+            .limitations
+            .push(crate::limitation::UNCONFINED_TARGET.to_owned());
     }
     if baseline.passed() && result.reading() == Reading::Short {
         touched.limited(crate::limitation::BASELINE_PASSED_UNPARSED, &target.id);
@@ -220,6 +210,83 @@ fn verify_target(
         touched.limited(crate::limitation::BASELINE_NOT_PASSING, &target.id);
     }
     Ok((baseline, result.tests_run()))
+}
+
+/// What one target's baseline came to over every run it took, and what it was recorded into.
+struct Attempted {
+    /// The answer that stands.
+    result: MutantResult,
+    /// The home it came from.
+    home: execute::Home,
+    /// Whether it was run again in a home of its own.
+    retried: bool,
+    /// Where its guards recorded what they reached, where they could.
+    recording: Option<PathBuf>,
+}
+
+/// Runs one target's baseline in a home of its own, again with nothing recorded where it could not record, again where it did not pass, and with the given home where its tests failed, each run in a directory of its own.
+fn attempted(
+    (target, index): (&TestTarget, usize),
+    (scratch, recording): (&Path, Option<PathBuf>),
+    building: &Building<'_>,
+) -> Result<Attempted, EngineError> {
+    let confined = execute::Home::Confined;
+    let mut result = ran(
+        target,
+        (
+            &baseline_scratch(scratch, index, Attempt::First),
+            recording.as_deref(),
+        ),
+        confined,
+        building,
+    )?;
+    let mut retried = false;
+    let recording = if result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT {
+        building.trace.note(
+            crate::touch::UNRECORDED,
+            &format!(
+                "{}: the process could not write what its guards reached, so it is run \
+                 again with nothing to record and every test of it stays in every route",
+                target.id
+            ),
+        );
+        result = ran(
+            target,
+            (&baseline_scratch(scratch, index, Attempt::Unrecorded), None),
+            confined,
+            building,
+        )?;
+        None
+    } else {
+        recording
+    };
+    if let Some(again) = again(
+        &result,
+        target,
+        (
+            &baseline_scratch(scratch, index, Attempt::Again),
+            recording.as_deref(),
+        ),
+        building,
+    )? {
+        result = again;
+        retried = true;
+    }
+    let (result, home) = given_home(
+        result,
+        target,
+        (
+            &baseline_scratch(scratch, index, Attempt::Given),
+            recording.as_deref(),
+        ),
+        building,
+    )?;
+    Ok(Attempted {
+        result,
+        home,
+        retried,
+        recording,
+    })
 }
 
 /// Whether a process of `target`'s tree ran without the environment the run gave it, saying so in the recording where one did.
@@ -261,7 +328,7 @@ fn uncontrolled(watched: &Path, target: &str, trace: &crate::trace::Recorder) ->
 /// What one baseline process came to, keeping what it printed only where it did not pass.
 ///
 /// A pass whose decline notice cannot be believed is not one: a decline the run cannot hold to a test that ran is no account of which tests measured.
-fn baseline_of(result: &MutantResult) -> Result<Baseline, SessionError> {
+fn baseline_of(result: &MutantResult, home: execute::Home) -> Result<Baseline, SessionError> {
     let (outcome, declined, refused) = match &result.declines {
         crate::decline::Declines::Read { declined, .. } => {
             (result.outcome(), declined.clone(), None)
@@ -274,6 +341,7 @@ fn baseline_of(result: &MutantResult) -> Result<Baseline, SessionError> {
         crate::decline::Declines::Unbelieved { .. } => (result.outcome(), Vec::new(), None),
     };
     Ok(Baseline {
+        home,
         outcome,
         declined,
         duration: result.duration,
@@ -299,9 +367,34 @@ const BASELINE_REMEMBERED: &str = "baseline-remembered";
 /// The trace note saying a target was run a second time, and why.
 const BASELINE_RETRIED: &str = "baseline-retried";
 
-/// The temporary directory of the baseline of the target at `index`, its own as every execution's is, so a baseline and a control are measured under the same conditions (ADR 0025).
-fn baseline_scratch(scratch: &Path, index: usize) -> PathBuf {
-    scratch.join(format!("baseline-{index}"))
+/// Which run of one target's baseline a directory is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Attempt {
+    /// The first, in a home of its own.
+    First,
+    /// Once more with nothing recorded, where the first could not write what its guards reached.
+    Unrecorded,
+    /// Once more, where the first did not pass.
+    Again,
+    /// With the home the run was given, where neither passed in a home of its own (ADR 0044).
+    Given,
+}
+
+impl Attempt {
+    /// The word a directory of this run is named with.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::First => "first",
+            Self::Unrecorded => "unrecorded",
+            Self::Again => "again",
+            Self::Given => "given",
+        }
+    }
+}
+
+/// The directory of one run of the baseline of the target at `index`, its own as every execution's is, so a baseline and a control are measured under the same conditions (ADR 0025) and no run starts over what another left.
+fn baseline_scratch(scratch: &Path, index: usize, attempt: Attempt) -> PathBuf {
+    scratch.join(format!("baseline-{index}-{}", attempt.name()))
 }
 
 /// One more run of a target that did not pass, or nothing when the first answer stands.
@@ -310,9 +403,9 @@ fn again(
     target: &TestTarget,
     (scratch, recording): (&Path, Option<&Path>),
     building: &Building<'_>,
-) -> Option<MutantResult> {
+) -> Result<Option<MutantResult>, EngineError> {
     if passing(result.outcome()) || building.cancel.is_cancelled() {
-        return None;
+        return Ok(None);
     }
     building.trace.note(
         BASELINE_RETRIED,
@@ -323,7 +416,42 @@ fn again(
             target.id
         ),
     );
-    Some(ran(target, scratch, recording, building))
+    Ok(Some(ran(
+        target,
+        (scratch, recording),
+        execute::Home::Confined,
+        building,
+    )?))
+}
+
+/// The trace note saying a target passed only with the home the run was given, and so runs with it.
+const BASELINE_UNCONFINED: &str = "baseline-unconfined";
+
+/// A target whose tests failed in a home of its own, run once more with the home the run was given, and the home its answer is about.
+/// Only tests that ran and failed are asked again: a process that did not start or did not finish says nothing about a home.
+fn given_home(
+    result: MutantResult,
+    target: &TestTarget,
+    (scratch, recording): (&Path, Option<&Path>),
+    building: &Building<'_>,
+) -> Result<(MutantResult, execute::Home), EngineError> {
+    if result.outcome() != crate::outcome::Outcome::Killed || building.cancel.is_cancelled() {
+        return Ok((result, execute::Home::Confined));
+    }
+    let given = ran(target, (scratch, recording), execute::Home::Given, building)?;
+    if !passing(given.outcome()) {
+        return Ok((result, execute::Home::Confined));
+    }
+    building.trace.note(
+        BASELINE_UNCONFINED,
+        &format!(
+            "{}: the target does not pass in a home of its own and passes with the home the run \
+             was given, so every execution of it runs with that home, where a mutation of it can \
+             write (ADR 0044)",
+            target.id
+        ),
+    );
+    Ok((given, execute::Home::Given))
 }
 
 /// Why a passing baseline could not safely become an answer for another run.
@@ -331,7 +459,7 @@ const BASELINE_NOT_REMEMBERED: &str = "baseline-not-remembered";
 
 /// The recipe of a remembered baseline.
 /// The engine version is also in every key; this number makes a semantic invalidation explicit within one build.
-const BASELINE_ABI: u32 = 3;
+const BASELINE_ABI: u32 = 4;
 
 /// The on-disk shape of one passing baseline.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -354,6 +482,7 @@ struct RememberedBaseline {
     tests: u32,
     ignored: u32,
     tests_run: Option<u32>,
+    home: execute::Home,
     declined: Vec<crate::decline::Decline>,
 }
 
@@ -610,12 +739,7 @@ impl Remembering {
             baseline_count(BaselineQuantity::Targets, targets.len())?,
         )?;
         for (index, target) in targets.iter().enumerate() {
-            target_key(
-                &mut key,
-                target,
-                (scratch, &baseline_scratch(scratch, index)),
-                building,
-            )?;
+            target_key(&mut key, target, (scratch, index), building)?;
         }
         Ok(Some(Self {
             directory,
@@ -748,6 +872,7 @@ impl Remembering {
                     tests: baseline.tests,
                     ignored: baseline.ignored,
                     tests_run: *observed_tests_run,
+                    home: baseline.home,
                     declined: baseline.declined.clone(),
                 },
             );
@@ -800,6 +925,7 @@ fn recalled(remembered: Remembered, path: &Path) -> Result<Recalled, BaselineCac
             tests: baseline.tests,
             ignored: baseline.ignored,
             output: String::new(),
+            home: baseline.home,
             declined: baseline.declined,
         };
         if !value.passed() {
@@ -871,6 +997,11 @@ fn replay(
             target
                 .limitations
                 .push(crate::limitation::DOCTESTS_NONE.to_owned());
+        }
+        if baseline.home == execute::Home::Given {
+            target
+                .limitations
+                .push(crate::limitation::UNCONFINED_TARGET.to_owned());
         }
         if let Some(touched) = verified.touched.targets.get(&target.id) {
             trace_touch(&target.id, touched, trace)?;
@@ -1106,11 +1237,11 @@ impl Key {
     }
 }
 
-/// Everything the baseline process actually observes for one target.
+/// Everything the baseline process actually observes for one target, under either home its answer may have come from.
 fn target_key(
     key: &mut Key,
     target: &TestTarget,
-    (scratch, own): (&Path, &Path),
+    (scratch, index): (&Path, usize),
     building: &Building<'_>,
 ) -> Result<(), BaselineCacheError> {
     key.text("target-id", &target.id)?;
@@ -1143,7 +1274,6 @@ fn target_key(
     };
     let request = ExecRequest::new(target)
         .with_args(building.options.harness_args.clone())
-        .with_scratch(own)
         .in_scratch(building.options.scratch_working_directory);
     let argv = request.argv();
     key.u64(
@@ -1153,20 +1283,27 @@ fn target_key(
     for argument in argv {
         key.os("argv", &argument)?;
     }
-    let environment =
-        execute::environment(&context, target, (Some(own), Some(own))).map_err(|source| {
-            BaselineCacheError::EnvironmentUnavailable {
-                target: target.id.clone(),
-                source,
-            }
-        })?;
-    key.u64(
-        "environment-count",
-        baseline_count(BaselineQuantity::Environment, environment.len())?,
-    )?;
-    for (name, value) in environment {
-        key.os("environment-name", &name)?;
-        key.os("environment-value", &value)?;
+    for (attempt, home) in [
+        (Attempt::First, execute::Home::Confined),
+        (Attempt::Given, execute::Home::Given),
+    ] {
+        let own = baseline_scratch(scratch, index, attempt);
+        let environment =
+            execute::environment(&context, target, Some(&execute::Scratch::under(&own, home)))
+                .map_err(|source| BaselineCacheError::EnvironmentUnavailable {
+                    target: target.id.clone(),
+                    source,
+                })?;
+        let canonical = environment.canonical();
+        key.text("home", attempt.name())?;
+        key.u64(
+            "environment-count",
+            baseline_count(BaselineQuantity::Environment, canonical.len())?,
+        )?;
+        for (name, value) in canonical {
+            key.os("environment-name", &name)?;
+            key.os("environment-value", value)?;
+        }
     }
     Ok(())
 }
@@ -1228,25 +1365,17 @@ fn said(verified: &Verified, failed: &[&str]) -> String {
 /// One target run with nothing active in the temporary directory of its baseline, recording into `log` when it was asked to.
 fn ran(
     target: &TestTarget,
-    scratch: &Path,
-    log: Option<&Path>,
+    (own, log): (&Path, Option<&Path>),
+    home: execute::Home,
     building: &Building<'_>,
-) -> MutantResult {
+) -> Result<MutantResult, EngineError> {
     let Building {
         cancel,
         workspace,
         catalog,
         ..
     } = *building;
-    if let Err(error) = std::fs::DirBuilder::new().recursive(true).create(scratch) {
-        return MutantResult::apparatus_error(
-            &target.id,
-            format!(
-                "could not make the baseline's own temporary directory {}: {error}",
-                scratch.display()
-            ),
-        );
-    }
+    let scratch = execute::Scratch::made(own, home, &workspace.base_env)?;
     if let Some(path) = log {
         match std::fs::remove_file(path) {
             Ok(()) => {}
@@ -1254,7 +1383,7 @@ fn ran(
             Err(error) => {
                 let message = format!("could not clear touch log {}: {error}", path.display());
                 workspace.trace.note(crate::touch::UNRECORDED, &message);
-                return MutantResult::apparatus_error(&target.id, message);
+                return Ok(MutantResult::apparatus_error(&target.id, message));
             }
         }
     }
@@ -1278,7 +1407,7 @@ fn ran(
         .with_args(building.options.harness_args.clone())
         .with_scratch(scratch)
         .in_scratch(building.options.scratch_working_directory);
-    execute::exec(&request, &context, cancel, &workspace.trace)
+    Ok(execute::exec(&request, &context, cancel, &workspace.trace))
 }
 
 /// What one target's baseline came to on the run that verified it.
@@ -1295,6 +1424,8 @@ pub struct Baseline {
     pub ignored: u32,
     /// What it printed, kept only where it did not pass, because that is the only time anybody reads it.
     pub output: String,
+    /// The home it ran with, which every execution against it runs with too (ADR 0044).
+    pub home: execute::Home,
     /// Each test that declined to measure, in its words, which is the only decline a mutant execution of the target is excused (ADR 0043).
     pub declined: Vec<crate::decline::Decline>,
 }

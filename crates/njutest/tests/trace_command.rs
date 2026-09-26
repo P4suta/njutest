@@ -385,7 +385,7 @@ fn asked(root: &std::path::Path, args: &[&str]) -> (u8, String, String) {
         working_directory: root.to_path_buf(),
         temp_directory: scratch,
         program: std::path::PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
-        vars: Vec::new(),
+        vars: rust_mutants::vars::Variables::empty(),
         cancel: rust_mutants::runner::Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),
     };

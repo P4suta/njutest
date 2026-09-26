@@ -62,7 +62,7 @@ pub fn exit_codes() -> String {
 #[derive(Debug, Clone)]
 pub struct Environment {
     /// The whole environment, as names and values.
-    pub vars: Vec<(OsString, OsString)>,
+    pub vars: rust_mutants::vars::Variables,
     /// Where the process was started.
     pub working_directory: PathBuf,
     /// The operating system's temporary directory.
@@ -93,12 +93,12 @@ impl Environment {
     /// The value of `name`, if the environment has one.
     #[must_use]
     pub fn var(&self, name: &str) -> Option<&OsStr> {
-        rust_mutants::vars::var(&self.vars, name)
+        self.vars.var(name)
     }
 
     /// Where a user's caches belong, from `vars` alone: `XDG_CACHE_HOME`, then `HOME/.cache`, then `LOCALAPPDATA` on Windows.
     #[must_use]
-    pub fn cache_directory_of(vars: &[(OsString, OsString)]) -> PathBuf {
+    pub fn cache_directory_of(vars: &rust_mutants::vars::Variables) -> PathBuf {
         rust_mutants::userdirs::cache_directory(vars, ".njutest-cache")
     }
 }

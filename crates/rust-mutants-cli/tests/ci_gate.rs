@@ -238,7 +238,9 @@ impl Said {
 
 fn gate(host: CiHost, root: &Path, args: &[&OsString]) -> Said {
     let environment = Environment {
-        vars: njutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect(),
         temp_directory: std::env::temp_dir(),
         program: PathBuf::from("this test never runs it"),
         cache_directory: root.join("cache"),
@@ -489,7 +491,7 @@ fn a_plain_gate_writes_the_lines_and_exits_with_the_verdict() {
 
 #[test]
 fn a_runner_is_recognised_only_by_every_file_it_names() {
-    let vars = |pairs: &[(&str, &str)]| -> Vec<(OsString, OsString)> {
+    let vars = |pairs: &[(&str, &str)]| -> rust_mutants::vars::Variables {
         pairs
             .iter()
             .map(|(key, value)| (OsString::from(key), OsString::from(value)))
@@ -521,7 +523,10 @@ fn a_runner_is_recognised_only_by_every_file_it_names() {
         Environment::ci_host_of(&vars(&[("GITLAB_CI", "true")])),
         CiHost::GitLab
     );
-    assert_eq!(Environment::ci_host_of(&[]), CiHost::None);
+    assert_eq!(
+        Environment::ci_host_of(&rust_mutants::vars::Variables::empty()),
+        CiHost::None
+    );
 }
 
 #[test]

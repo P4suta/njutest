@@ -746,6 +746,79 @@ fn a_test_that_declines_to_measure_leaves_no_survivor_and_no_answer_to_keep() {
     nothing_resting_on_a_decline_is_read_back(&report, &stored(&fixture));
 }
 
+/// A claim of fixture-simple, in the configuration's own words.
+fn claim(item: &str, rule: &str, original: &str) -> String {
+    format!(
+        "[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"{item}\"\nrule = \"{rule}\"\n\
+         original = \"{original}\"\noutcome = \"survived\"\nreason = \"a claim for this test\"\n"
+    )
+}
+
+#[test]
+fn list_claims_refuses_every_claim_that_says_what_is_not_so() {
+    let fixture = Fixture::copy("fixture-simple");
+    let good = claim("max", "gt-to-ge", ">");
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        [
+            good.as_str(),
+            &claim("max", "eq-to-neq", "=="),
+            &format!("{}count = 2\n", claim("is_even", "eq-to-neq", "==")),
+            &format!("{}line = 99\n", claim("is_even", "rem-to-mul", "%")),
+            "[[mutation.expect]]\nid = \"0000000000000000000000000000000000000000000000000000000000000000\"\n\
+             outcome = \"survived\"\nreason = \"a claim for this test\"\n",
+        ]
+        .join("\n"),
+    )
+    .expect("a configuration");
+    let rotted = against(
+        &fixture,
+        &["list", "--offline", "--locked", "--tier", "all", "--claims"],
+    );
+    let said = stdout(&rotted);
+    assert_eq!(
+        rotted.status.code(),
+        Some(1),
+        "a claim that names nothing, more than it says, or a line its mutation left says \
+         something that is not so, and a push that carries one fails rather than waiting for a \
+         run to notice: {said}\n{}",
+        stderr(&rotted)
+    );
+    for (kind, rotten) in [
+        ("unmatched ", "src/lib.rs max eq-to-neq \"==\""),
+        ("unmatched ", "src/lib.rs is_even eq-to-neq \"==\""),
+        (
+            "unmatched ",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ),
+        ("moved ", "src/lib.rs is_even rem-to-mul \"%\" @99"),
+    ] {
+        assert!(
+            said.lines()
+                .any(|line| line.starts_with(kind) && line.contains(rotten)),
+            "{rotten} is named as {kind}: {said}"
+        );
+    }
+    assert!(
+        said.lines()
+            .any(|line| line.starts_with("names ") && line.contains("max gt-to-ge")),
+        "the claim that names its one mutation is not refused: {said}"
+    );
+
+    std::fs::write(fixture.root().join(".rust-mutants.toml"), good).expect("a configuration");
+    let sound = against(
+        &fixture,
+        &["list", "--offline", "--locked", "--tier", "all", "--claims"],
+    );
+    assert_eq!(
+        sound.status.code(),
+        Some(0),
+        "{}\n{}",
+        stdout(&sound),
+        stderr(&sound)
+    );
+}
+
 #[test]
 fn a_tree_that_changed_is_a_different_question_and_is_answered_again() {
     let fixture = Fixture::copy("fixture-simple");
@@ -1349,7 +1422,9 @@ fn a_proof_removing_a_mutation_and_nothing_reaching_it_are_two_answers() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: njutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect(),
         temp_directory: fixture.temp().to_path_buf(),
         program: std::env::current_exe().expect(
             "this test's own executable stands in for the engine a remembered outcome is keyed on",
@@ -1384,7 +1459,9 @@ fn asked(environment: &Environment, args: &[&str]) -> Output {
 /// The environment of a tree a test laid out itself rather than copied as a fixture.
 fn environment_at(root: &Path, temp: &Path, cache: &Path) -> Environment {
     Environment {
-        vars: njutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect(),
         temp_directory: temp.to_path_buf(),
         program: std::env::current_exe().expect(
             "this test's own executable stands in for the engine a remembered outcome is keyed on",
@@ -2317,6 +2394,138 @@ fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
         ran.is_empty(),
         "the edit was inside `total`, which no execution of a mutant of `over` entered, so \
          every such answer carries rather than running again: {ran:#?}"
+    );
+}
+
+/// A report's rows by where their mutation is.
+type Rows = std::collections::BTreeMap<(u64, String, String, String), serde_json::Value>;
+
+/// Runs fixture-two-bodies, rewrites `from` as `to` in its library, runs it again with carrying and traced, and runs it once more without the store, holding every carried answer to the one running it gives; answers with what the carrying run stored and its trace.
+fn edited_pair(fixture: &Fixture, (from, to): (&str, &str)) -> (Rows, String) {
+    let asked = ["run", "--offline", "--locked", "--tier", "all"];
+    let first = against(fixture, &asked);
+    assert!(
+        first.status.code() == Some(0) || first.status.code() == Some(1),
+        "{}",
+        stderr(&first)
+    );
+    let source = fixture.root().join("src/lib.rs");
+    let text = std::fs::read_to_string(&source).expect("the library");
+    assert!(text.contains(from), "{from:?} is in the library");
+    std::fs::write(&source, text.replace(from, to)).expect("the edit");
+    let carried = against(
+        fixture,
+        &["run", "--offline", "--locked", "--tier", "all", "--trace"],
+    );
+    assert!(
+        carried.status.code() == Some(0) || carried.status.code() == Some(1),
+        "{}",
+        stderr(&carried)
+    );
+    let with_carry = by_place(&stored(fixture));
+    let trace = std::fs::read_to_string(
+        njutest_devkit::fixture::newest_run(
+            &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+        )
+        .join("trace/trace.jsonl"),
+    )
+    .expect("the carrying run's trace");
+    let fresh = against(
+        fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-cache",
+        ],
+    );
+    assert!(
+        fresh.status.code() == Some(0) || fresh.status.code() == Some(1),
+        "{}",
+        stderr(&fresh)
+    );
+    let without = by_place(&stored(fixture));
+    let differ = disagreements(&with_carry, &without);
+    assert!(
+        differ.is_empty(),
+        "a carried answer must be the answer running it gives: {differ:?}"
+    );
+    (with_carry, trace)
+}
+
+/// Every word the trace refused a carried answer with.
+fn refusal_words(trace: &str) -> Vec<String> {
+    trace
+        .lines()
+        .map(|line| {
+            njutest_devkit::strictjson::decode_str::<serde_json::Value>(line)
+                .expect("a trace event")
+        })
+        .filter(|event| event["payload"]["type"] == "cache")
+        .filter_map(|event| {
+            event["payload"]["cache"]["refused"]
+                .as_str()
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
+#[test]
+fn a_line_added_below_every_body_an_execution_entered_leaves_its_answer_carried() {
+    let fixture = Fixture::copy("fixture-two-bodies");
+    let (with_carry, trace) = edited_pair(
+        &fixture,
+        (
+            "        assert!(super::over(10));",
+            "        // ten is over the limit, and nine is not\n        assert!(super::over(10));",
+        ),
+    );
+    let total: Vec<&serde_json::Value> = with_carry
+        .iter()
+        .filter(|(place, _)| place.0 == 8)
+        .map(|(_, row)| row)
+        .collect();
+    assert!(
+        !total.is_empty(),
+        "the fixture mutates `total`: {with_carry:#?}"
+    );
+    assert!(
+        total.iter().all(|row| !row["source_run_id"].is_null()),
+        "a line added inside the last test moves nothing an execution of a mutant of `total` \
+         entered, which is `total` and the test above the edit, so every such answer carries \
+         (refused: {:?}): {total:#?}",
+        refusal_words(&trace)
+    );
+}
+
+#[test]
+fn a_line_added_above_a_body_an_execution_entered_refuses_its_answer_as_moved() {
+    let fixture = Fixture::copy("fixture-two-bodies");
+    let (rows, trace) = edited_pair(
+        &fixture,
+        (
+            "    left + right\n",
+            "    // the two counts, added\n    left + right\n",
+        ),
+    );
+    let over: Vec<&serde_json::Value> = rows
+        .iter()
+        .filter(|(place, _)| place.0 >= 13)
+        .map(|(_, row)| row)
+        .collect();
+    assert!(
+        !over.is_empty() && over.iter().all(|row| row["source_run_id"].is_null()),
+        "every answer of `over` runs again: {over:#?}"
+    );
+    let words = refusal_words(&trace);
+    assert!(
+        !words.is_empty() && words.iter().all(|word| word == "item-moved"),
+        "a line added inside `total` moves `over` and the test below it, which every execution \
+         of a mutant of `over` entered, and a position there can be read by what runs, so each \
+         such answer is refused because what it entered moved, not because the tree's text \
+         outside the bodies changed: {words:?}"
     );
 }
 

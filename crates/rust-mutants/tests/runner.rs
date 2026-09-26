@@ -133,10 +133,8 @@ fn a_child_that_cannot_be_reaped_aborts_instead_of_becoming_detached() {
         "test executable: {executable:?}"
     );
     let Ok(executable) = executable else { return };
-    let mut environment: Vec<_> = std::env::vars_os()
-        .filter(|(name, _value)| name != INJECTION)
-        .collect();
-    environment.push((OsString::from(INJECTION), OsString::from("1")));
+    let mut environment: rust_mutants::vars::Variables = std::env::vars_os().collect();
+    environment.set(INJECTION, "1");
     let mut nested = Spec::new(
         [
             executable.into_os_string(),
@@ -213,13 +211,13 @@ fn the_environment_a_spec_names_is_the_whole_of_the_child_s_own() {
     assert_eq!(result_state(&temp), Returned, "tempdir: {temp:?}");
     let Ok(temp) = temp else { return };
     let mut spec = sh("echo \"$RM_TEST_VAR|$CARGO_PKG_NAME\"");
-    spec.env = Some(vec![
+    spec.env = Some(rust_mutants::vars::Variables::of([
         (OsString::from("RM_TEST_VAR"), OsString::from("value")),
         (
             OsString::from("PATH"),
             std::env::var_os("PATH").unwrap_or_default(),
         ),
-    ]);
+    ]));
     spec.dir = Some(temp.path().to_path_buf());
     let result = run(&spec, &Cancel::new());
     let output = std::str::from_utf8(&result.output);
@@ -662,7 +660,7 @@ fn a_child_s_output_is_never_painted_or_reshaped_whatever_the_environment_asks()
         ),
     ];
     let mut named = sh(script);
-    named.env = Some(asked.to_vec());
+    named.env = Some(rust_mutants::vars::Variables::of(asked));
     let result = run(&named, &Cancel::new());
     let output = std::str::from_utf8(&result.output);
     assert_eq!(

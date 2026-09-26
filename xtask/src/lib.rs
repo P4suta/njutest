@@ -7,7 +7,9 @@
 #![forbid(unsafe_code)]
 
 pub mod adrs;
+pub mod claims;
 pub mod concurrency;
+pub mod confirm;
 pub mod crashes;
 pub mod defaulted;
 pub mod deps;
@@ -97,6 +99,8 @@ enum Gate {
     Fixtures,
     /// Nothing a build writes is committed: no tracked path lies under a directory named `target`.
     Tracked,
+    /// Every claim of `.rust-mutants.toml` names as many mutations as it says, asked of the engine's own locator.
+    Claims,
     /// Clippy every independent fuzz target under the root workspace lint policy.
     FuzzClippy {
         /// Reserved for a future alternate manifest; keeps this execution gate out of `all`.
@@ -271,6 +275,7 @@ where
         Gate::Deps => gates::deps(&root),
         Gate::Fixtures => gates::fixtures(&root),
         Gate::Tracked => gates::tracked(&root),
+        Gate::Claims => claims::claims(&root),
         Gate::FuzzClippy { alternate: _ } => fuzzclippy::check(&root, process.cargo)
             .map_err(|error| gates::GateError(error.coded())),
         Gate::Docflows { actionlint } => docflows::check(&root, actionlint.as_os_str())
@@ -494,6 +499,9 @@ fn slot(
         .env(lanes::HELD, lanes.held_with(named))
         .stdin(std::process::Stdio::null());
     let ran = work::run(&mut running, None, &stops, |leader| held.working_on(leader));
+    if ran.is_err() {
+        held.left_work_running();
+    }
     drop(held);
     match ran {
         Ok(work::Ended::Exited(status)) => ExitCode::from(exit_status(status)),
@@ -562,7 +570,19 @@ fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> 
     for name in TEMPORARY_VARIABLES {
         running.env(name, scratch.path());
     }
-    let ran = work::run(&mut running, None, &stops, |_leader| Ok(()));
+    let inside = match lanes::Lanes::from_environment(process.environment) {
+        Ok(lanes) => lanes.inside(lanes::Lane::Heavy),
+        Err(_no_lanes) => None,
+    };
+    let ran = work::run(&mut running, None, &stops, |leader| match &inside {
+        Some(held) => held.working_on(leader),
+        None => Ok(()),
+    });
+    if ran.is_err()
+        && let Some(held) = &inside
+    {
+        held.left_work_running();
+    }
     let code = match ran {
         Ok(work::Ended::Exited(status)) => exit_status(status),
         Ok(work::Ended::Interrupted { signal }) => signalled_code(signal),

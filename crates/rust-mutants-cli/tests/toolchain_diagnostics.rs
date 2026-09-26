@@ -30,11 +30,10 @@ struct Said {
 }
 
 fn against(fixture: &Fixture, args: &[&str]) -> Said {
-    let mut vars = njutest_devkit::paths::environment_for_a_run();
-    vars.push((
-        OsString::from("RUST_MUTANTS_NOTHING"),
-        OsString::from(SECRET),
-    ));
+    let mut vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .collect();
+    vars.set("RUST_MUTANTS_NOTHING", SECRET);
     let environment = Environment {
         vars,
         temp_directory: fixture.temp().to_path_buf(),

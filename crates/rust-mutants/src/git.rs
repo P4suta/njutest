@@ -29,7 +29,7 @@ pub struct Asking<'a, W> {
     /// The directory the commands run in.
     pub root: &'a Path,
     /// The environment the commands run with.
-    pub env: &'a [(OsString, OsString)],
+    pub env: &'a crate::vars::Variables,
     /// Directories whose contents are written by a run rather than verified by one, as workspace-relative prefixes.
     pub excluded: &'a [&'a str],
     /// What stops the commands, and who hears that they ran.
@@ -403,15 +403,12 @@ const REDIRECTING: [&str; 10] = [
 /// A run names the repository it verified.
 /// `GIT_DIR` in the environment it happened to be started with — which is what a git hook sets, and what any wrapper may — makes git answer about that one instead, and the report then names another repository's commit as the thing it established something about.
 /// That is a conclusion drawn from how the run was invoked rather than from what it looked at, so the invocation is not allowed to reach the question.
-fn about_the_tree(env: &[(OsString, OsString)]) -> Vec<(OsString, OsString)> {
-    env.iter()
-        .filter(|(name, _value)| {
-            !REDIRECTING
-                .iter()
-                .any(|pointed| crate::vars::same_name(name, std::ffi::OsStr::new(pointed)))
-        })
-        .cloned()
-        .collect()
+fn about_the_tree(env: &crate::vars::Variables) -> crate::vars::Variables {
+    let mut env = env.clone();
+    for pointed in REDIRECTING {
+        env.remove(pointed);
+    }
+    env
 }
 
 fn ask<W: Watch>(

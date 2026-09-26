@@ -4,7 +4,6 @@
 //! Talking to a provider: one process, newline-delimited strict JSON.
 
 use std::collections::BTreeMap;
-use std::ffi::OsString;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -342,11 +341,11 @@ impl SupervisedChild {
         let waited = self.wait();
         match (killed, waited) {
             (Ok(()), Ok(())) => Ok(()),
-            (Err(kill), Ok(())) => Err(kill),
+            (Err(stopping), Ok(())) => Err(stopping),
             (Ok(()), Err(wait)) => Err(wait),
-            (Err(kill), Err(wait)) => Err(std::io::Error::new(
+            (Err(stopping), Err(wait)) => Err(std::io::Error::new(
                 wait.kind(),
-                format!("cannot kill the provider tree: {kill}; cannot reap it: {wait}"),
+                format!("cannot kill the provider tree: {stopping}; cannot reap it: {wait}"),
             )),
         }
     }
@@ -636,7 +635,7 @@ impl Process {
     pub fn start(
         command: &[String],
         dir: &Path,
-        env: &[(OsString, OsString)],
+        env: &rust_mutants::vars::Variables,
     ) -> Result<Self, ProviderError> {
         let Some((program, arguments)) = command.split_first() else {
             return Err(ProviderError::new(
@@ -649,7 +648,7 @@ impl Process {
             .args(arguments)
             .current_dir(dir)
             .env_clear()
-            .envs(env.iter().cloned())
+            .envs(env.for_process())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
@@ -855,7 +854,7 @@ pub struct Once<'a> {
     /// The directory it runs in.
     pub dir: &'a Path,
     /// The environment it runs with.
-    pub env: &'a [(OsString, OsString)],
+    pub env: &'a rust_mutants::vars::Variables,
     /// What it is asked, which goes to its standard input.
     pub question: &'a str,
     /// How long it may take to end.
@@ -889,7 +888,7 @@ pub fn once(asking: &Once<'_>) -> Result<String, ProviderError> {
         .args(arguments)
         .current_dir(dir)
         .env_clear()
-        .envs(env.iter().cloned())
+        .envs(env.for_process())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -952,16 +951,18 @@ fn grouped(command: &mut Command) {
 const fn grouped(_command: &mut Command) {}
 
 #[cfg(unix)]
+#[expect(
+    clippy::needless_pass_by_ref_mut,
+    reason = "the same signature as the platform without groups, whose child has to be killed through it"
+)]
 fn kill_tree(child: &mut Child) -> std::io::Result<()> {
-    let Ok(raw) = i32::try_from(child.id()) else {
-        return child.kill();
-    };
-    let Some(pid) = rustix::process::Pid::from_raw(raw) else {
-        return child.kill();
-    };
-    match rustix::process::kill_process_group(pid, rustix::process::Signal::KILL) {
-        Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
-        Err(source) => Err(std::io::Error::from(source)),
+    match rust_mutants::runner::stop_group(child.id(), rust_mutants::runner::GroupStop::Kill)? {
+        rust_mutants::runner::Stopped::Group => Ok(()),
+        rust_mutants::runner::Stopped::LeaderOnly => Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "the provider's process group refused the stop, and a process besides its leader is \
+             still running or could not be seen, so the provider is not stopped",
+        )),
     }
 }
 
@@ -973,6 +974,25 @@ fn kill_tree(child: &mut Child) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{InstanceId, ProviderErrorKind, Request, read};
+
+    #[cfg(unix)]
+    #[test]
+    fn stopping_a_provider_whose_leader_has_already_exited_is_no_failure() {
+        let mut command = std::process::Command::new("true");
+        super::grouped(&mut command);
+        let launched = super::SupervisedChild::launch(&mut command);
+        let Ok(mut provider) = launched else {
+            panic!("`true` starts: {launched:?}");
+        };
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let stopped = provider.terminate_and_wait();
+        assert!(
+            stopped.is_ok(),
+            "a provider that exited before its stop arrived, and is not reaped yet, is stopped: \
+             on macOS the group signal is refused with EPERM for such a group, and that is the \
+             group being gone rather than a cleanup that failed: {stopped:?}"
+        );
+    }
 
     fn protocol_error(document: &str, request: &Request) {
         let refusal = read(document, request).expect_err("protocol must be refused");

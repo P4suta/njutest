@@ -3,8 +3,6 @@
 
 //! What git is asked, and what it is never allowed to say by silence.
 
-use std::ffi::OsString;
-
 use njutest_devkit::repo::Repo;
 use njutest_devkit::result::{
     OptionState::Present,
@@ -27,19 +25,15 @@ fn recorder() -> &'static Recorder {
     RECORDER.get_or_init(Recorder::disabled)
 }
 
-fn environment() -> Vec<(OsString, OsString)> {
+fn environment() -> rust_mutants::vars::Variables {
     std::env::vars_os()
-        .filter(|(key, _)| {
-            ["PATH", "HOME", "USER", "TMPDIR"]
-                .iter()
-                .any(|name| rust_mutants::vars::same_name(key, std::ffi::OsStr::new(name)))
-        })
-        .collect()
+        .collect::<rust_mutants::vars::Variables>()
+        .only(&["PATH", "HOME", "USER", "TMPDIR"])
 }
 
 struct Asked {
     repo: Repo,
-    env: Vec<(OsString, OsString)>,
+    env: rust_mutants::vars::Variables,
     watch: Watched<'static>,
     excluded: Vec<&'static str>,
 }
@@ -302,14 +296,8 @@ fn a_run_asks_about_the_tree_it_was_given_and_not_the_one_its_caller_was_in() {
     here.commit();
 
     let mut env = environment();
-    env.push((
-        OsString::from("GIT_DIR"),
-        OsString::from(elsewhere.root().join(".git")),
-    ));
-    env.push((
-        OsString::from("GIT_WORK_TREE"),
-        OsString::from(elsewhere.root()),
-    ));
+    env.set("GIT_DIR", elsewhere.root().join(".git"));
+    env.set("GIT_WORK_TREE", elsewhere.root());
 
     let watch = Watched::new(cancel(), recorder());
     let asked = facts(&Asking {

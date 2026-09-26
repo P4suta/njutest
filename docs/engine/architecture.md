@@ -362,6 +362,20 @@ A test that binds one would otherwise pass on its own and fail under a run, whic
 So the directory is `rm-scratch-<n>/<execution>` beside the run's target directory rather than inside it, where `<n>` is the lowest number no other run holds.
 The long descriptive name stays on the target directory, which is a build cache somebody may find in a temporary root and has to be able to identify; a scratch directory is worth nothing once its run is over, so it is claimed like a run's own directory and the next sweep collects it.
 
+`execute::Scratch` lays one execution's directory out as `tmp`, `engine` and `home` beside each other, none inside another.
+`TMPDIR` names `tmp`, the engine keeps its own files about the process in `engine` (a touch or entered log, a crash's notice, a decline notice), and a confined home is `home`.
+So what a run reads in `tmp` as the process's own is only the process's, and a test that empties its `TMPDIR` empties nothing else.
+A crash's leftovers ([ADR 0035](../adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)) are what it wrote in `tmp` and under its home, less what making the home put there, which the scratch records; the run over them is given the same `tmp` and home again.
+
+The home is the execution's too: `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME`, `XDG_DATA_HOME` and `XDG_RUNTIME_DIR` (and on Windows `USERPROFILE`, `HOMEDRIVE` with `HOMEPATH`, `APPDATA` and `LOCALAPPDATA`) name directories under `home`, so a mutation of the code that chooses where a test writes cannot reach the user's home ([ADR 0044](../adr/0044-a-test-writes-only-where-its-execution-may.md)).
+Each is set in place of every spelling the platform reads as its name.
+`CARGO_HOME` and `RUSTUP_HOME` are pinned to where the given home keeps them, and git's identity is copied in from where git reads it: `GIT_CONFIG_GLOBAL` or `~/.gitconfig`, and `$XDG_CONFIG_HOME/git/config` or `~/.config/git/config`.
+`GIT_CONFIG_GLOBAL` itself is removed, so `git config --global` writes the copy; a source that is no regular file, as `/dev/null` is when git is told to read no global configuration, is nothing to copy.
+The home is made before the process starts, and a home that cannot be made, or an identity that cannot be read, refuses the run with `RM5012`.
+Just before the process starts, the engine checks that every confined variable names the execution's home and nothing else, and refuses to start it otherwise.
+A target whose tests fail in that home and pass with the given one keeps the given one for the run, as `unconfined-target`, and the reach it showed in a home of its own is not read.
+Each run of a target's baseline, the retry and the one with the given home included, has a directory of its own, so none starts over what another left.
+
 ### What cargo tells a test process
 
 A test process the engine starts is told what cargo would have told it:
@@ -379,7 +393,7 @@ A test process the engine starts is told what cargo would have told it:
 
 A test that runs `cargo` by its bare name finds whatever the search path holds first, and a shim that chooses a toolchain by the directory it runs in, as mise and direnv do, may refuse the copy a run measures: mise refuses a `mise.toml` nobody trusted in that place, and the copy's is one.
 Such a test would fail for a reason no code of it holds, under every mutation alike.
-So when the workspace opens, the engine asks a bare `cargo -vV` from the copy's root, with the environment the tests get.
+So when the workspace opens, the engine asks a bare `cargo -vV` from the copy's root twice: with the environment a test with the given home gets, and with the one a test in a home of its own gets, since a shim that keeps its trust or its installs under the home answers the two differently.
 Where it answers as the run's own toolchain does — a rustup proxy honouring `rust-toolchain.toml`, say — the search path is left as it is, and a test's `cargo +nightly` still reaches rustup.
 Where it fails, or names another toolchain, every test is given the run's toolchain directory, `<sysroot>/bin`, first on its search path, the trace notes `tests-toolchain` with what the bare `cargo` said, and the engine asks again to be sure.
 Where even that does not answer as the run's toolchain, the run refuses with `RM1023`, quoting both answers, rather than letting each test fail on its own.

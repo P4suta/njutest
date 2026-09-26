@@ -1579,7 +1579,7 @@ impl<'a> Walker<'a> {
                             start: pattern.end,
                             end: pattern.end,
                         },
-                        replacement: b"false".to_vec(),
+                        replacement: format!("{}false", super::ARM_GUARD_OPENING).into_bytes(),
                         site: Some(Site {
                             form: Form::M,
                             span: pattern,
