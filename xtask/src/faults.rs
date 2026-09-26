@@ -116,23 +116,21 @@ pub fn derived(pairs: &[&Pair]) -> Option<(String, &'static str)> {
 }
 
 /// Everything the recording says about the faults.
-///
-/// # Errors
-/// A corrupt non-empty line is rejected rather than disappearing from the evidence.
-pub fn read(recorded: &str) -> Result<Faulted, crate::route::ReadError> {
+#[must_use]
+pub fn read(recorded: &crate::route::Checked<crate::schemas::RunnerLines>) -> Faulted {
     let mut faulted = Faulted::default();
-    for event in crate::route::events(recorded, crate::schemas::Producer::Runner)? {
+    for event in recorded.events() {
         let Some(kind) = event.get("type").and_then(Value::as_str) else {
             faulted
                 .unread
                 .push("an event that names no type".to_owned());
             continue;
         };
-        if !held(&mut faulted, kind, &event) {
+        if !held(&mut faulted, kind, event) {
             faulted.unread.push(kind.to_owned());
         }
     }
-    Ok(faulted)
+    faulted
 }
 
 /// Holds `event`, of type `kind`, in `faulted` where it is a fault record; whether it was read, which it is not where a field its schema requires is missing.
@@ -270,7 +268,7 @@ impl Faulted {
 
 /// What the executions of a fault contradict about the decision the run gave it.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum Contradiction {
+pub enum FaultContradictionError {
     /// The run says a target noticed it and names none.
     #[error("the run says a target noticed it, and names no target")]
     NoticedByNoOne,
@@ -341,7 +339,7 @@ pub enum Contradiction {
     },
 }
 
-impl crate::error::Coded for Contradiction {
+impl crate::error::Coded for FaultContradictionError {
     fn code(&self) -> crate::error::XtCode {
         match self {
             Self::NoticedWithoutFailure { .. }
@@ -362,8 +360,8 @@ impl crate::error::Coded for Contradiction {
 /// Whether the executions of one fault support the decision the run gave it.
 ///
 /// # Errors
-/// The [`Contradiction`] the executions hold.
-pub fn supports(site: &Site, evidence: &Evidence<'_>) -> Result<(), Contradiction> {
+/// The [`FaultContradictionError`] the executions hold.
+pub fn supports(site: &Site, evidence: &Evidence<'_>) -> Result<(), FaultContradictionError> {
     let (execs, controls) = (evidence.execs.as_slice(), evidence.controls.as_slice());
     let ran = !execs.is_empty();
     let failed = execs.iter().find(|one| one.outcome != "survived");
@@ -373,7 +371,7 @@ pub fn supports(site: &Site, evidence: &Evidence<'_>) -> Result<(), Contradictio
     match site.decision.as_str() {
         "noticed" => {
             let Some(by) = site.by.clone() else {
-                return Err(Contradiction::NoticedByNoOne);
+                return Err(FaultContradictionError::NoticedByNoOne);
             };
             let failed_as = |role: &str| {
                 execs
@@ -381,14 +379,14 @@ pub fn supports(site: &Site, evidence: &Evidence<'_>) -> Result<(), Contradictio
                     .any(|one| one.target == by && one.outcome == "killed" && one.role == role)
             };
             if !failed_as("first") {
-                Err(Contradiction::NoticedWithoutFailure { by })
+                Err(FaultContradictionError::NoticedWithoutFailure { by })
             } else if !controls.iter().any(|one| one.target == by && one.passed) {
-                Err(Contradiction::NoticedUnconfirmed {
+                Err(FaultContradictionError::NoticedUnconfirmed {
                     by,
                     missing: "the original code passing on that target",
                 })
             } else if !failed_as("confirmation") {
-                Err(Contradiction::NoticedUnconfirmed {
+                Err(FaultContradictionError::NoticedUnconfirmed {
                     by,
                     missing: "the failure repeating when it was asked again",
                 })
@@ -396,19 +394,19 @@ pub fn supports(site: &Site, evidence: &Evidence<'_>) -> Result<(), Contradictio
                 Ok(())
             }
         }
-        "unnoticed" if !ran => Err(Contradiction::NothingRan {
+        "unnoticed" if !ran => Err(FaultContradictionError::NothingRan {
             decision: site.decision.clone(),
         }),
         "unnoticed" => match failed {
             None => Ok(()),
-            Some(one) => Err(Contradiction::NotAllPassed {
+            Some(one) => Err(FaultContradictionError::NotAllPassed {
                 outcome: one.outcome.clone(),
             }),
         },
         "undecided" if ran && failed.is_none() => {
-            Err(Contradiction::UndecidedThoughPassed { runs: execs.len() })
+            Err(FaultContradictionError::UndecidedThoughPassed { runs: execs.len() })
         }
-        "unreached" | "not-put" if ran => Err(Contradiction::RanThough {
+        "unreached" | "not-put" if ran => Err(FaultContradictionError::RanThough {
             decision: site.decision.clone(),
             runs: execs.len(),
         }),
@@ -417,12 +415,12 @@ pub fn supports(site: &Site, evidence: &Evidence<'_>) -> Result<(), Contradictio
                 .reaching
                 .is_none_or(|reaching| !reaching.is_empty()) =>
         {
-            Err(Contradiction::UnreachedWithoutRoute)
+            Err(FaultContradictionError::UnreachedWithoutRoute)
         }
-        "not-put" if !evidence.rejected => Err(Contradiction::NotPutWithoutRefusal),
-        "waited" if !bounded => Err(Contradiction::WaitedWithoutBound),
+        "not-put" if !evidence.rejected => Err(FaultContradictionError::NotPutWithoutRefusal),
+        "waited" if !bounded => Err(FaultContradictionError::WaitedWithoutBound),
         "unreached" | "not-put" | "waited" | "undecided" => Ok(()),
-        other => Err(Contradiction::Unknown {
+        other => Err(FaultContradictionError::Unknown {
             decision: other.to_owned(),
         }),
     }

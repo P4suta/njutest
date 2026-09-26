@@ -1331,6 +1331,44 @@ fn explored_as(document: &mut Value, explored: Value) {
     }
 }
 
+/// The defects planted for the reuse layer.
+fn reuse_planted(clean: Perturbation) -> Vec<Perturbation> {
+    vec![
+        Perturbation {
+            name: "a reused disposition that names this run as its source",
+            document: with(json!({
+                "mutants": [{ "reuse": { "reused": true, "source_run_id": RUN } }],
+                "accounting": { "mutants": { "reused_killed": 1 } }
+            })),
+            ..clean.clone()
+        },
+        carried_past_its_killer(clean),
+    ]
+}
+
+/// The defect planted for the reuse layer: a kill carried from an earlier tree by a target this run's route no longer reaches, which the engine refuses as `filter-differs`.
+fn carried_past_its_killer(clean: Perturbation) -> Perturbation {
+    let earlier = "20260905T090000Z-1a2b3c";
+    let mut events = numbered(vec![json!({
+        "type": "route",
+        "route": {
+            "mutant": KILLED, "granularity": "block", "fallback": null,
+            "reaching": ["t1"], "tests": [], "discharged": [], "considered": [],
+            "reused": earlier, "refused": null, "rule": "carried", "carry_refused": null
+        }
+    })]);
+    events.extend(routes_for(&[(SURVIVED, "survived")]));
+    Perturbation {
+        name: "a kill carried from an earlier tree by a target the route no longer reaches",
+        document: with(json!({
+            "mutants": [{ "reuse": { "reused": true, "source_run_id": earlier } }],
+            "accounting": { "mutants": { "reused_killed": 1 } }
+        })),
+        events: Some(numbered(events)),
+        ..clean
+    }
+}
+
 /// The engine recording of the clean specimen: its build, its single-threaded baseline, one control, and one knob's control that held.
 fn clean_engine() -> Vec<Value> {
     vec![
@@ -1674,14 +1712,7 @@ impl Layer {
                 })),
                 ..clean
             }],
-            Self::Reuse => vec![Perturbation {
-                name: "a reused disposition that names this run as its source",
-                document: with(json!({
-                    "mutants": [{ "reuse": { "reused": true, "source_run_id": RUN } }],
-                    "accounting": { "mutants": { "reused_killed": 1 } }
-                })),
-                ..clean
-            }],
+            Self::Reuse => reuse_planted(clean),
             Self::Proofs => vec![Perturbation {
                 name: "a kill by a target a proof discharged",
                 events: Some(discharged_then_killed()),

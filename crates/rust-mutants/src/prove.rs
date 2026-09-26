@@ -44,6 +44,43 @@ impl Questions {
         self.conditions.keys().chain(self.probes.keys()).collect()
     }
 
+    /// The questions left once `refused` is taken out: no refused claim or probe, and no marker in a body that would not take one.
+    fn without(&self, refused: &Refusal) -> Self {
+        let conditions = self
+            .conditions
+            .iter()
+            .map(|(path, file)| {
+                let kept: Vec<Claimed> = file
+                    .iter()
+                    .filter(|claimed| !refused.claims.contains(&claimed.index))
+                    .map(|claimed| {
+                        let mut kept = claimed.clone();
+                        if refused.markers.contains(&claimed.index) {
+                            kept.body = None;
+                        }
+                        kept
+                    })
+                    .collect();
+                (path.clone(), kept)
+            })
+            .filter(|(_, kept)| !kept.is_empty())
+            .collect();
+        let probes = self
+            .probes
+            .iter()
+            .map(|(path, file)| {
+                let kept: Vec<witness::Probing> = file
+                    .iter()
+                    .copied()
+                    .filter(|probe| !refused.probes.contains(&probe.index))
+                    .collect();
+                (path.clone(), kept)
+            })
+            .filter(|(_, kept)| !kept.is_empty())
+            .collect();
+        Self { conditions, probes }
+    }
+
     /// What one file is asked.
     fn of<'a>(&'a self, path: &str, empty: &'a Empty) -> witness::Asking<'a> {
         witness::Asking {
@@ -125,10 +162,7 @@ fn establish_for(
     trace: &Recorder,
 ) -> Result<Established, EngineError> {
     let Asking {
-        workspace,
-        discovery,
-        sources,
-        options,
+        discovery, sources, ..
     } = *asking;
     let questions = questions_of(discovery, selected);
     if questions.is_empty() {
@@ -136,42 +170,15 @@ fn establish_for(
     }
     let claims = &questions.conditions;
     let witness_phase = trace.phase("witness");
-    let root = workspace.snapshot_root().to_path_buf();
-    let wrote = write(&root, sources, &questions);
-    let checked = if wrote.is_ok() {
-        Some(compile(
-            &workspace.driver(cancel),
-            &checking(workspace, options)?,
-        ))
-    } else {
-        None
-    };
-    restore(&root, sources)?;
-    let written = wrote?;
-
-    let Some(Ok(checked)) = checked else {
+    let Some(Vouching {
+        written,
+        mut refused,
+        checks,
+    }) = checked_until_compiled(asking, &questions, cancel, trace)?
+    else {
         drop(witness_phase);
         return Ok(Established::default());
     };
-    let mut refused = if checked.success {
-        Refusal::default()
-    } else {
-        refusal(&written.files, &checked.messages)
-    };
-    if !checked.success && !refused.accounts_for_a_failure() {
-        trace.note(
-            "witness",
-            &format!(
-                "the witness tree did not compile and no rewrite of it accounts for that, so \
-                 nothing is vouched for: {}",
-                refused
-                    .unaccounted
-                    .first()
-                    .map_or("the compiler named no place at all", String::as_str)
-            ),
-        );
-        return Ok(Established::default());
-    }
     unasked(&questions, &written.unasked, &mut refused);
     let markers = markers_of(claims);
     let established = vouched(&questions, sources, &Checked { refused, markers }, trace)?;
@@ -179,7 +186,8 @@ fn establish_for(
         "witness",
         &format!(
             "{} claimed of which {} name a body, {} vouched for of which {} carry a marker; \
-             {} values probed of which {} vouched for",
+             {} values probed of which {} vouched for; check {checks} was the first to compile \
+             every target",
             count(claims),
             claims
                 .values()
@@ -198,6 +206,80 @@ fn establish_for(
     );
     drop(witness_phase);
     Ok(established)
+}
+
+/// What the checks of the witness tree came to: the tree the one that compiled held, everything refused on the way, and how many checks it took.
+struct Vouching {
+    written: Written,
+    refused: Refusal,
+    checks: u32,
+}
+
+/// Checks the witness tree, each time without what the check before refused, until one compiles every target, which is the only check that vouches for what it held.
+/// A crate that fails stops cargo before the crates that depend on it, so a failed check has said nothing about their witnesses; nothing is vouched for when a failure is not one this rule accounts for, or when the checks run out.
+fn checked_until_compiled(
+    asking: &Asking<'_>,
+    questions: &Questions,
+    cancel: &Cancel,
+    trace: &Recorder,
+) -> Result<Option<Vouching>, EngineError> {
+    let Asking {
+        workspace,
+        sources,
+        options,
+        ..
+    } = *asking;
+    let root = workspace.snapshot_root().to_path_buf();
+    let mut refused = Refusal::default();
+    let mut asked = questions.clone();
+    for checks in 1..=WITNESS_CHECKS {
+        let wrote = write(&root, sources, &asked);
+        let checked = if wrote.is_ok() {
+            Some(compile(
+                &workspace.driver(cancel),
+                &checking(workspace, options)?,
+            ))
+        } else {
+            None
+        };
+        restore(&root, sources)?;
+        let written = wrote?;
+        let Some(Ok(checked)) = checked else {
+            return Ok(None);
+        };
+        if checked.success {
+            return Ok(Some(Vouching {
+                written,
+                refused,
+                checks,
+            }));
+        }
+        let round = refusal(&written.files, &checked.messages);
+        if !round.accounts_for_a_failure() {
+            trace.note(
+                "witness",
+                &format!(
+                    "the witness tree did not compile and no rewrite of it accounts for that, so \
+                     nothing is vouched for: {}",
+                    round
+                        .unaccounted
+                        .first()
+                        .map_or("the compiler named no place at all", String::as_str)
+                ),
+            );
+            return Ok(None);
+        }
+        refused.absorb(round);
+        asked = questions.without(&refused);
+    }
+    trace.note(
+        "witness",
+        &format!(
+            "the witness tree still did not compile after {WITNESS_CHECKS} checks, each without \
+             what the one before refused, so nothing is vouched for"
+        ),
+    );
+    Ok(None)
 }
 
 /// What the one `cargo check` established: what it would not take, and the marker each body carries.
@@ -554,7 +636,19 @@ pub struct Refusal {
     pub unaccounted: Vec<String>,
 }
 
+/// How many checks of the witness tree may run, each without what the one before refused, before nothing is vouched for.
+/// A crate that fails stops cargo before the crates that depend on it, so a workspace needs one more check for every layer of its dependency graph whose witnesses the compiler refuses.
+const WITNESS_CHECKS: u32 = 8;
+
 impl Refusal {
+    /// Takes in what one more check refused.
+    fn absorb(&mut self, round: Self) {
+        self.claims.extend(round.claims);
+        self.markers.extend(round.markers);
+        self.probes.extend(round.probes);
+        self.unaccounted.extend(round.unaccounted);
+    }
+
     /// Whether a check that failed is one this rule accounted for, which is what makes what it did not refuse a thing the compiler took.
     #[must_use]
     pub fn accounts_for_a_failure(&self) -> bool {

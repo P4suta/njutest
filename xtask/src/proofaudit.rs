@@ -99,7 +99,7 @@ pub enum AuditError {
         path: String,
         /// Which field.
         #[source]
-        cause: crate::route::ReadCause,
+        cause: crate::route::ReadCauseError,
     },
     /// A report given with its shards is not the merge of any.
     #[error("{path}: not a report merged from shards, so there are no shards to hold it to")]
@@ -143,7 +143,7 @@ pub enum AuditError {
         path: String,
         /// Where and how.
         #[source]
-        source: crate::schemas::OffSchema,
+        source: crate::schemas::OffSchemaError,
     },
     /// The published report schema itself does not compile.
     #[error(transparent)]
@@ -154,7 +154,7 @@ pub enum AuditError {
         /// The document.
         path: String,
         /// What it holds instead.
-        shape: Unprojectable,
+        shape: UnprojectableError,
     },
 }
 
@@ -180,7 +180,7 @@ impl crate::error::Coded for AuditError {
 /// What a report holds instead of the one configured build measured whole this audit re-decides.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
-pub enum Unprojectable {
+pub enum UnprojectableError {
     /// The report measured more than one configured build, or none.
     #[error("a report of {count} configured builds")]
     Builds {
@@ -198,7 +198,7 @@ pub enum Unprojectable {
     Flat,
 }
 
-impl crate::error::Coded for Unprojectable {
+impl crate::error::Coded for UnprojectableError {
     fn code(&self) -> crate::error::XtCode {
         crate::error::XtCode::ProofUnprojected
     }
@@ -533,6 +533,15 @@ struct Equation<'a> {
     because: &'a str,
 }
 
+/// The report an audit re-decides: where it was read from, and what it says.
+#[derive(Debug, Clone, Copy)]
+pub struct Reported<'a> {
+    /// Where it was read from, as a reader is told it.
+    pub path: &'a str,
+    /// What it says.
+    pub text: &'a str,
+}
+
 /// What a run recorded beside its report: the runner's recording and every engine recording under it, each as its path and its text.
 #[derive(Debug, Clone, Copy)]
 pub struct Recorded<'a> {
@@ -544,15 +553,20 @@ pub struct Recorded<'a> {
     pub outputs: &'a [(String, soundness::Kept)],
 }
 
+/// The runner's recording, where the run kept one, with the path it was read from.
+type RunnerRecording<'a> = (&'a str, crate::route::Checked<crate::schemas::RunnerLines>);
+
 /// What `read` makes of the runner's recording, where the run kept one.
 fn read_runner<T>(
-    runner: Option<(&str, &str)>,
-    read: impl Fn(&str) -> Result<T, crate::route::ReadError>,
+    runner: Option<&RunnerRecording<'_>>,
+    read: impl Fn(
+        &crate::route::Checked<crate::schemas::RunnerLines>,
+    ) -> Result<T, crate::route::ReadError>,
 ) -> Result<Option<T>, AuditError> {
     runner
-        .map(|(recording_path, text)| {
-            read(text).map_err(|source| AuditError::MalformedRecording {
-                path: recording_path.to_owned(),
+        .map(|(recording_path, checked)| {
+            read(checked).map_err(|source| AuditError::MalformedRecording {
+                path: (*recording_path).to_owned(),
                 source,
             })
         })
@@ -565,26 +579,28 @@ fn read_runner<T>(
 /// [`AuditError::Unparsable`] for a document that is not JSON, [`AuditError::OffSchema`] for a complete report off its published schema,
 /// [`AuditError::Unprojected`] for a report this audit does not re-decide as one build, [`AuditError::MalformedRecording`] for a recording with a corrupt line, and the corresponding retained-artifact error when `run` cannot be re-read.
 pub fn audit_with(
-    path: &str,
-    text: &str,
+    checkers: &crate::schemas::Checkers,
+    Reported { path, text }: Reported<'_>,
     recorded: Recorded<'_>,
     run: Option<&Path>,
 ) -> Result<Audit, AuditError> {
-    let document = read_report(path, text)?;
-    let recorded_runner = recorded.runner;
+    let document = read_report(checkers, path, text)?;
     let mut recording = Recording::of(&document).map_err(|cause| AuditError::UnreadReport {
         path: path.to_owned(),
         cause,
     })?;
-    recording.verdict = match recorded.runner {
-        Some((recording_path, text)) => {
-            concluded(text).map_err(|source| AuditError::MalformedRecording {
-                path: recording_path.to_owned(),
-                source,
-            })?
-        }
-        None => None,
-    };
+    let runner = recorded
+        .runner
+        .map(|(recording_path, text)| {
+            crate::route::Checked::read(text, checkers)
+                .map(|checked| (recording_path, checked))
+                .map_err(|source| AuditError::MalformedRecording {
+                    path: recording_path.to_owned(),
+                    source,
+                })
+        })
+        .transpose()?;
+    recording.verdict = runner.as_ref().and_then(|(_, checked)| concluded(checked));
     let RunnerEvidence {
         routing,
         watched,
@@ -592,8 +608,8 @@ pub fn audit_with(
         crashed,
         repairs,
         recorded_executions,
-    } = runner_evidence(recorded_runner)?;
-    let engines = engine_evidence(recorded.engines)?;
+    } = runner_evidence(runner.as_ref())?;
+    let engines = engine_evidence(checkers, recorded.engines)?;
     let mut audit = Audit {
         run_id: recording.run_id.clone(),
         mutants: recording.mutants.len(),
@@ -607,7 +623,7 @@ pub fn audit_with(
             Layer::Killers => killers(&recording, &mut audit),
             Layer::Findings => findings(&recording, &mut audit),
             Layer::Acceptances => acceptances(&recording, &mut audit),
-            Layer::Reuse => reuse(&recording, &mut audit),
+            Layer::Reuse => reuse(&recording, routing.as_ref(), &mut audit),
             Layer::Proofs => proofs(&recording, routing.as_ref(), &repairs, &mut audit),
             Layer::Executions => executions(&recording, routing.as_ref(), &mut audit),
             Layer::Hollow => hollow(&recording, routing.as_ref(), &mut audit),
@@ -644,7 +660,10 @@ pub fn audit_with(
 }
 
 /// What each engine recording says of touch and perturbed controls, read from its stream alone.
-fn engine_evidence(recorded: &[(String, String)]) -> Result<Vec<Engine>, AuditError> {
+fn engine_evidence(
+    checkers: &crate::schemas::Checkers,
+    recorded: &[(String, String)],
+) -> Result<Vec<Engine>, AuditError> {
     recorded
         .iter()
         .map(|(recording_path, text)| {
@@ -652,25 +671,26 @@ fn engine_evidence(recorded: &[(String, String)]) -> Result<Vec<Engine>, AuditEr
                 path: recording_path.clone(),
                 source,
             };
+            let checked = crate::route::Checked::read(text, checkers).map_err(malformed)?;
             Ok(Engine {
-                touched: crate::drift::read(text).map_err(malformed)?,
-                perturbed: crate::knobs::read(text).map_err(malformed)?,
+                touched: crate::drift::read(&checked),
+                perturbed: crate::knobs::read(&checked),
             })
         })
         .collect()
 }
 
 /// What the runner's recording says of routing, seams, faults, crashes, repairs and executions, each read from the stream alone; nothing where the run kept none.
-fn runner_evidence(recorded_runner: Option<(&str, &str)>) -> Result<RunnerEvidence, AuditError> {
+fn runner_evidence(runner: Option<&RunnerRecording<'_>>) -> Result<RunnerEvidence, AuditError> {
     Ok(RunnerEvidence {
-        routing: read_runner(recorded_runner, |text| {
-            crate::route::read(text, crate::schemas::Producer::Runner)
-        })?,
-        watched: read_runner(recorded_runner, crate::wire::read)?,
-        faulted: read_runner(recorded_runner, crate::faults::read)?,
-        crashed: read_runner(recorded_runner, crate::crashes::read)?,
-        repairs: read_runner(recorded_runner, crate::repair::read)?.unwrap_or_default(),
-        recorded_executions: read_runner(recorded_runner, executions_of)?,
+        routing: read_runner(runner, crate::route::read)?,
+        watched: read_runner(runner, crate::wire::read)?,
+        faulted: runner.map(|(_, checked)| crate::faults::read(checked)),
+        crashed: runner.map(|(_, checked)| crate::crashes::read(checked)),
+        repairs: runner
+            .map(|(_, checked)| crate::repair::read(checked))
+            .unwrap_or_default(),
+        recorded_executions: runner.map(|(_, checked)| executions_of(checked)),
     })
 }
 
@@ -685,31 +705,34 @@ struct RunnerEvidence {
 }
 
 /// Every exec record a runner's recording holds, in the order it holds them.
-///
-/// # Errors
-/// The first line that does not read, as the recording's own reader says it.
-fn executions_of(text: &str) -> Result<Vec<serde_json::Value>, crate::route::ReadError> {
-    Ok(
-        crate::route::events(text, crate::schemas::Producer::Runner)?
-            .into_iter()
-            .filter(|event| event.get("type").and_then(serde_json::Value::as_str) == Some("exec"))
-            .filter_map(|mut event| event.get_mut("exec").map(serde_json::Value::take))
-            .collect(),
-    )
+fn executions_of(
+    recorded: &crate::route::Checked<crate::schemas::RunnerLines>,
+) -> Vec<serde_json::Value> {
+    recorded
+        .events()
+        .iter()
+        .filter(|event| event.get("type").and_then(serde_json::Value::as_str) == Some("exec"))
+        .filter_map(|event| event.get("exec").cloned())
+        .collect()
 }
 
 /// The flat view of the report at `path` holding `text`, once it is JSON, on its published schema, and one build measured whole.
 ///
 /// # Errors
 /// [`AuditError::Unparsable`], [`AuditError::OffSchema`], [`AuditError::Schema`] or [`AuditError::Unprojected`], in that order.
-fn read_report(path: &str, text: &str) -> Result<serde_json::Value, AuditError> {
+fn read_report(
+    checkers: &crate::schemas::Checkers,
+    path: &str,
+    text: &str,
+) -> Result<serde_json::Value, AuditError> {
     let read: serde_json::Value =
         crate::strictjson::from_str(text).map_err(|source| AuditError::Unparsable {
             path: path.to_owned(),
             source,
         })?;
     if read.get("document_type").is_some() {
-        crate::schemas::Checker::assurance_report()?
+        checkers
+            .assurance_report()
             .check(&read)
             .map_err(|source| AuditError::OffSchema {
                 path: path.to_owned(),
@@ -723,29 +746,25 @@ fn read_report(path: &str, text: &str) -> Result<serde_json::Value, AuditError> 
 }
 
 /// What the runner's recording says the run concluded, from its `run-end`; nothing where it holds none.
-///
-/// # Errors
-/// A line that is not JSON, or not on the runner's schema.
-fn concluded(text: &str) -> Result<Option<String>, crate::route::ReadError> {
-    Ok(
-        crate::route::events(text, crate::schemas::Producer::Runner)?
-            .iter()
-            .rev()
-            .find(|event| field(event, "type").as_deref() == Some("run-end"))
-            .and_then(|event| event.get("run"))
-            .and_then(|run| field(run, "verdict")),
-    )
+fn concluded(recorded: &crate::route::Checked<crate::schemas::RunnerLines>) -> Option<String> {
+    recorded
+        .events()
+        .iter()
+        .rev()
+        .find(|event| field(event, "type").as_deref() == Some("run-end"))
+        .and_then(|event| event.get("run"))
+        .and_then(|run| field(run, "verdict"))
 }
 
 /// The flat view of the one part of one configured build that every layer re-decides: a complete report's one build measured whole, or a shard's one build with the shard it is written into its scope.
-fn projected(document: &serde_json::Value) -> Result<serde_json::Value, Unprojectable> {
+fn projected(document: &serde_json::Value) -> Result<serde_json::Value, UnprojectableError> {
     let Some(kind) = document.get("document_type") else {
-        return Err(Unprojectable::Flat);
+        return Err(UnprojectableError::Flat);
     };
     let mut report = document.get("report").cloned().unwrap_or_default();
     let builds = rows(&report, "builds");
     let [build] = builds else {
-        return Err(Unprojectable::Builds {
+        return Err(UnprojectableError::Builds {
             count: builds.len(),
         });
     };
@@ -754,7 +773,7 @@ fn projected(document: &serde_json::Value) -> Result<serde_json::Value, Unprojec
     } else {
         let parts = rows(build, "parts");
         let [part] = parts else {
-            return Err(Unprojectable::Parts { count: parts.len() });
+            return Err(UnprojectableError::Parts { count: parts.len() });
         };
         part.clone()
     };
@@ -1454,7 +1473,7 @@ fn one_repair(
     else {
         notes.violated(
             subject,
-            crate::repair::Contradiction::NotRun {
+            crate::repair::RepairContradictionError::NotRun {
                 target: repair.target.clone(),
             }
             .to_string(),
@@ -3718,7 +3737,7 @@ struct Recording<'a> {
 
 impl<'a> Recording<'a> {
     /// The rows every layer reads, each field its schema requires demanded rather than supplied.
-    fn of(document: &'a serde_json::Value) -> Result<Self, crate::route::ReadCause> {
+    fn of(document: &'a serde_json::Value) -> Result<Self, crate::route::ReadCauseError> {
         use crate::route::required;
         let text = |value: &serde_json::Value| value.as_str().map(str::to_owned);
         let targets = rows(document, "targets")
@@ -3730,7 +3749,7 @@ impl<'a> Recording<'a> {
                     status: required(row, "status", text)?,
                 })
             })
-            .collect::<Result<Vec<_>, crate::route::ReadCause>>()?;
+            .collect::<Result<Vec<_>, crate::route::ReadCauseError>>()?;
         let mutants = rows(document, "mutants")
             .iter()
             .map(|row| {
@@ -3747,7 +3766,7 @@ impl<'a> Recording<'a> {
                         .and_then(|reuse| field(reuse, "source_run_id")),
                 })
             })
-            .collect::<Result<Vec<_>, crate::route::ReadCause>>()?;
+            .collect::<Result<Vec<_>, crate::route::ReadCauseError>>()?;
         let findings = rows(document, "findings")
             .iter()
             .map(|row| {
@@ -3756,7 +3775,7 @@ impl<'a> Recording<'a> {
                     subject: required(row, "subject", text)?,
                 })
             })
-            .collect::<Result<Vec<_>, crate::route::ReadCause>>()?;
+            .collect::<Result<Vec<_>, crate::route::ReadCauseError>>()?;
         let models = rows(document, "models")
             .iter()
             .map(|row| {
@@ -3770,7 +3789,7 @@ impl<'a> Recording<'a> {
                     raw: row.clone(),
                 })
             })
-            .collect::<Result<Vec<_>, crate::route::ReadCause>>()?;
+            .collect::<Result<Vec<_>, crate::route::ReadCauseError>>()?;
         Ok(Self {
             document,
             run_id: required(document, "run_id", text)?,
@@ -3992,6 +4011,47 @@ impl Relation {
     }
 }
 
+/// A verdict a runner's recording can conclude with, each of which this audit holds to its own rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum Concluded {
+    /// Every mutation of a full run was answered.
+    Assured,
+    /// Every mutation of a run over what changed was answered.
+    ChangeAssured,
+    /// Every mutation of a run over a named scope was answered.
+    ScopeAssured,
+    /// The code under test broke a contract.
+    Defect,
+    /// Execution completed and something remains unestablished.
+    Insufficient,
+    /// One part of a catalog divided between machines, which assures nothing on its own.
+    Partial,
+    /// The run established nothing.
+    Error,
+}
+
+impl Concluded {
+    /// The name the runner writes.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Assured => "ASSURED",
+            Self::ChangeAssured => "CHANGE_ASSURED",
+            Self::ScopeAssured => "SCOPE_ASSURED",
+            Self::Defect => "DEFECT",
+            Self::Insufficient => "INSUFFICIENT",
+            Self::Partial => "PARTIAL",
+            Self::Error => "ERROR",
+        }
+    }
+
+    /// The verdict the runner wrote as `name`, or nothing when it names none this audit knows.
+    #[must_use]
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|verdict| verdict.name() == name)
+    }
+}
+
 /// Whether the verdict is one the accounting and the findings support.
 fn verdict(recording: &Recording<'_>, audit: &mut Audit) {
     let Some(concluded) = recording.verdict.clone() else {
@@ -4003,15 +4063,125 @@ fn verdict(recording: &Recording<'_>, audit: &mut Audit) {
         );
         return;
     };
-    match concluded.as_str() {
-        "ASSURED" | "CHANGE_ASSURED" | "SCOPE_ASSURED" => assurance(recording, audit, &concluded),
-        "DEFECT" => defect(recording, audit),
-        _ => {}
+    let Some(held) = Concluded::named(&concluded) else {
+        Notes::on(audit, Layer::Accounting).violated(
+            "verdict",
+            format!("the recording concludes {concluded:?}, which is no verdict a runner says"),
+        );
+        return;
+    };
+    let shard = recording
+        .document
+        .get("scope")
+        .and_then(|scope| field(scope, "shard"));
+    match (held, shard) {
+        (Concluded::Assured | Concluded::ChangeAssured | Concluded::ScopeAssured, None) => {
+            scope(recording, audit, &concluded);
+            answered_throughout(recording, audit, &concluded);
+        }
+        (Concluded::Assured | Concluded::ChangeAssured | Concluded::ScopeAssured, Some(shard)) => {
+            Notes::on(audit, Layer::Accounting).violated(
+                "verdict",
+                format!(
+                    "the recording concludes {concluded} for part {shard} of a divided catalog, \
+                     and a part assures nothing on its own"
+                ),
+            );
+        }
+        (Concluded::Defect, _) => defect(recording, audit),
+        (Concluded::Insufficient, shard) => insufficient(recording, audit, shard.is_some()),
+        (Concluded::Partial, Some(_)) => {
+            short_of_a_defect(recording, audit, &concluded);
+            answered_throughout(recording, audit, &concluded);
+        }
+        (Concluded::Partial, None) => {
+            Notes::on(audit, Layer::Accounting).violated(
+                "verdict",
+                "the recording concludes PARTIAL and records no shard; PARTIAL is what one part \
+                 of a divided catalog concludes"
+                    .to_owned(),
+            );
+        }
+        (Concluded::Error, _) => {
+            Notes::on(audit, Layer::Accounting).violated(
+                "verdict",
+                "the recording concludes ERROR beside the report of the same run; a run says \
+                 ERROR when it came to no report"
+                    .to_owned(),
+            );
+        }
     }
 }
 
-fn assurance(recording: &Recording<'_>, audit: &mut Audit, concluded: &str) {
-    scope(recording, audit, concluded);
+/// An INSUFFICIENT names no defect, and rests on something the run did not establish.
+fn insufficient(recording: &Recording<'_>, audit: &mut Audit, part: bool) {
+    if short_of_a_defect(recording, audit, Concluded::Insufficient.name()) {
+        return;
+    }
+    let established = recording.findings.is_empty()
+        && column(recording.document, "targets", PASSED).is_some_and(|passed| passed > 0)
+        && column(recording.document, "mutants", "executed").is_some_and(|executed| executed > 0)
+        && recording.mutants.iter().all(answers)
+        && !(part && unsettled(recording.document));
+    if established {
+        Notes::on(audit, Layer::Accounting).violated(
+            "verdict",
+            "the recording concludes INSUFFICIENT, and it found nothing, observed and asked \
+             something, and answered every mutation, so the run established more than it says"
+                .to_owned(),
+        );
+    }
+}
+
+/// Whether a part's reach moved or a knob shook, which only the merge settles.
+fn unsettled(document: &serde_json::Value) -> bool {
+    rows(document, "drift")
+        .iter()
+        .any(|row| field(row, "state").as_deref() == Some("moved"))
+        || rows(document, "knobs").iter().any(|row| {
+            matches!(
+                row.get("standing")
+                    .and_then(|standing| field(standing, "state"))
+                    .as_deref(),
+                Some("broke" | "moved")
+            )
+        })
+}
+
+/// Whether a mutation row is an answer: decided by a test, a model or the compiler, or accepted as it stands.
+fn answers(mutant: &MutantRow) -> bool {
+    matches!(
+        (mutant.outcome.as_str(), mutant.acceptance),
+        (
+            REJECTED | KILLED | "model-noticed" | "model-proved" | EQUIVALENT,
+            AcceptanceFact::Rejected | AcceptanceFact::Accepted
+        ) | (SURVIVED | UNREACHED, AcceptanceFact::Accepted)
+    )
+}
+
+/// A run that found a defect says DEFECT, whole or in part; whether this one named one.
+fn short_of_a_defect(recording: &Recording<'_>, audit: &mut Audit, concluded: &str) -> bool {
+    let named: Vec<&str> = recording
+        .findings
+        .iter()
+        .map(|finding| finding.kind.as_str())
+        .filter(|kind| DEFECT_KINDS.contains(kind))
+        .collect();
+    if !named.is_empty() {
+        Notes::on(audit, Layer::Accounting).violated(
+            "verdict",
+            format!(
+                "the recording concludes {concluded} and names {}; a run that found a defect \
+                 says DEFECT, whole or in part",
+                named.join(", ")
+            ),
+        );
+    }
+    !named.is_empty()
+}
+
+/// What an assurance and a part both claim: nothing was found, something was observed and asked, and every mutation was answered.
+fn answered_throughout(recording: &Recording<'_>, audit: &mut Audit, concluded: &str) {
     let mut notes = Notes::on(audit, Layer::Accounting);
     let unsupported = |notes: &mut Notes<'_>, because: &str| {
         notes.violated(
@@ -4023,7 +4193,7 @@ fn assurance(recording: &Recording<'_>, audit: &mut Audit, concluded: &str) {
         unsupported(
             &mut notes,
             &format!(
-                "carries {} findings; an assurance is the claim that nothing was found",
+                "carries {} findings; it is the claim that nothing was found",
                 recording.findings.len()
             ),
         );
@@ -4061,14 +4231,7 @@ fn assurance(recording: &Recording<'_>, audit: &mut Audit, concluded: &str) {
         }
     }
     for mutant in &recording.mutants {
-        let answered = matches!(
-            (mutant.outcome.as_str(), mutant.acceptance),
-            (
-                REJECTED | KILLED | "model-noticed" | "model-proved" | EQUIVALENT,
-                AcceptanceFact::Rejected | AcceptanceFact::Accepted
-            ) | (SURVIVED | UNREACHED, AcceptanceFact::Accepted)
-        );
-        if !answered {
+        if !answers(mutant) {
             unsupported(
                 &mut notes,
                 &format!(
@@ -4294,10 +4457,17 @@ fn acceptances(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
     notes.looked()
 }
 
-/// Whether every disposition read back from an earlier run names one a reader could go and read.
-fn reuse(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
-    let mut read_back = 0_usize;
+/// Whether every disposition read back from an earlier run names one a reader could go and read, and is one the run's own recording says it read back.
+///
+/// Re-derived from the runner's route of each: it names the run the report does, nothing of the mutation ran, and a kill's target is one the route still reaches.
+/// Whether each target an answer rests on keeps the behaviour key it had, or a carried answer's premises hold, is not in the report, and is left unaudited.
+fn reuse(
+    recording: &Recording<'_>,
+    routing: Option<&crate::route::Routing>,
+    audit: &mut Audit,
+) -> Decided {
     let mut notes = Notes::on(audit, Layer::Reuse);
+    let mut read_back: Vec<&MutantRow> = Vec::new();
     for mutant in &recording.mutants {
         match mutant.read_back_from.as_deref() {
             Some(run) if run == recording.run_id => notes.violated(
@@ -4306,30 +4476,88 @@ fn reuse(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
                  cannot have read its own answer back"
                     .to_owned(),
             ),
-            Some(_) => match read_back.checked_add(1) {
-                Some(count) => read_back = count,
-                None => {
-                    notes.violated(
-                        "provenance",
-                        "the number of reused dispositions exceeds usize".to_owned(),
-                    );
-                    return notes.looked();
-                }
-            },
+            Some(_) => read_back.push(mutant),
             None => {}
         }
     }
-    if read_back > 0 {
-        notes.unaudited(
+    if read_back.is_empty() {
+        return notes.looked();
+    }
+    match routing {
+        Some(routing) => {
+            for mutant in &read_back {
+                routed_back(mutant, routing, &mut notes);
+            }
+        }
+        None => notes.unaudited(
             "provenance",
             format!(
-                "{read_back} dispositions were read back from an earlier run; whether the \
-                 recorded target is still routed to the mutation under the same behaviour key is \
-                 a fact this report does not carry"
+                "{} dispositions were read back from an earlier run, and the run kept no \
+                 recording of the routes it read them back under",
+                read_back.len()
+            ),
+        ),
+    }
+    notes.unaudited(
+        "provenance",
+        format!(
+            "{} dispositions were read back from an earlier run; whether each target they rest \
+             on keeps the behaviour key it had, or a carried answer's premises hold, is a fact \
+             this report does not carry",
+            read_back.len()
+        ),
+    );
+    notes.looked()
+}
+
+/// Whether the run's own route of `mutant`, a disposition read back, says it read it back from the run the report names, ran none of it, and still reaches the target a kill names.
+fn routed_back(mutant: &MutantRow, routing: &crate::route::Routing, notes: &mut Notes<'_>) {
+    let Some(route) = routing.route_of(&mutant.id, &mutant.display_id) else {
+        notes.violated(
+            mutant.label(),
+            "the disposition was read back from an earlier run, and the recording holds no \
+             route of it to say under what"
+                .to_owned(),
+        );
+        return;
+    };
+    if route.reused != mutant.read_back_from {
+        notes.violated(
+            mutant.label(),
+            format!(
+                "the report says it was read back from {:?}, and the run's own route of it says \
+                 {:?}",
+                mutant.read_back_from, route.reused
             ),
         );
     }
-    notes.looked()
+    if routing
+        .execs_for(&mutant.id, &mutant.display_id)
+        .next()
+        .is_some()
+    {
+        notes.violated(
+            mutant.label(),
+            "an answer read back is an execution that did not happen, and the recording holds \
+             an execution of it"
+                .to_owned(),
+        );
+    }
+    if let Some(killer) = &mutant.killed_by
+        && !route.reaching.iter().any(|target| target == killer)
+    {
+        let word = match route.rule.as_deref() {
+            Some("carried") => "filter-differs",
+            Some(_) | None => "not-routed",
+        };
+        notes.violated(
+            mutant.label(),
+            format!(
+                "the kill read back names {killer}, which this run's route no longer reaches \
+                 ({word})"
+            ),
+        );
+    }
 }
 
 /// The columns of the accounting, against the records they summarise and against the verdict they carry.

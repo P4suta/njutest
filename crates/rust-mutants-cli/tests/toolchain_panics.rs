@@ -57,10 +57,20 @@ fn a_should_panic_test_that_stops_panicking_is_a_kill() {
         "moving the bound past the value the should_panic test passes stops the panic, and a \
          test that asks for one and does not get it fails: {moved}"
     );
+    assert!(
+        moved["killed_by"]
+            .as_array()
+            .is_some_and(|tests| tests.iter().any(|test| test
+                .as_str()
+                .is_some_and(|name| name.ends_with("a_value_at_the_bound_panics")))),
+        "the test that asked for the panic is the one that failed: {moved}"
+    );
     assert_eq!(
         moved["exit_code"].as_i64(),
-        Some(101),
-        "a libtest binary reports a failing test by exiting 101: {moved}"
+        Some(-1),
+        "the run stops a mutant's test process at the first test libtest says failed, and whether \
+         the process exited or was stopped first is this machine's timing, so the row holds no \
+         code rather than whichever of the two won: {moved}"
     );
 }
 

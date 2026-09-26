@@ -101,23 +101,22 @@ impl crate::error::Coded for IdentityError {
 ///
 /// # Errors
 /// A corrupt non-empty line is rejected rather than disappearing from the evidence.
-pub fn read(recorded: &str) -> Result<Watched, crate::route::ReadError> {
+pub fn read(
+    recorded: &crate::route::Checked<crate::schemas::RunnerLines>,
+) -> Result<Watched, crate::route::ReadError> {
     let mut watched = Watched::default();
-    for (at, event) in crate::route::events(recorded, crate::schemas::Producer::Runner)?
-        .into_iter()
-        .enumerate()
-    {
+    for (at, event) in recorded.events().iter().enumerate() {
         let placed = |cause| crate::route::ReadError {
             line: at.saturating_add(1),
             cause,
         };
-        match text(&event, "type").as_deref() {
+        match text(event, "type").as_deref() {
             Some("wire-exchange") => {
-                let record = crate::route::required(&event, "exchange", Some).map_err(placed)?;
+                let record = crate::route::required(event, "exchange", Some).map_err(placed)?;
                 watched.exchanges.push(exchange(record).map_err(placed)?);
             }
             Some("wire-exec") => {
-                let record = crate::route::required(&event, "wire", Some).map_err(placed)?;
+                let record = crate::route::required(event, "wire", Some).map_err(placed)?;
                 watched.execs.push(exec(record).map_err(placed)?);
             }
             _ => {}
@@ -187,7 +186,7 @@ fn field_length(field: &'static str, bytes: usize) -> Result<u32, IdentityError>
 }
 
 /// One exchange, as the recording writes it.
-fn exchange(record: &Value) -> Result<Exchange, crate::route::ReadCause> {
+fn exchange(record: &Value) -> Result<Exchange, crate::route::ReadCauseError> {
     use crate::route::required;
     let read = required(record, "read", Some)?;
     Ok(Exchange {
@@ -204,7 +203,7 @@ fn exchange(record: &Value) -> Result<Exchange, crate::route::ReadCause> {
 }
 
 /// One execution of a fault, as the recording writes it.
-fn exec(record: &Value) -> Result<Exec, crate::route::ReadCause> {
+fn exec(record: &Value) -> Result<Exec, crate::route::ReadCauseError> {
     use crate::route::required;
     let answer = required(record, "answer", Some)?;
     Ok(Exec {

@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "witness-downstream"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "downstream"
+
+[dependencies]
+witness-upstream = { path = "../upstream" }

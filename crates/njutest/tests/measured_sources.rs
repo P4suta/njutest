@@ -40,7 +40,7 @@ fn reading(read: rust_mutants::id::HexDigest) -> Report {
 
 /// Why the builds `completed` was given did not make a report.
 #[derive(Debug, thiserror::Error)]
-enum Unmade {
+enum UnmadeError {
     #[error(transparent)]
     Measurements(#[from] njutest::report::across::BuildMeasurementsError),
     #[error(transparent)]
@@ -54,7 +54,7 @@ enum Unmade {
 }
 
 /// The whole report of the builds given, each named and measured.
-fn completed(builds: Vec<(&str, BuildReport)>) -> Result<Report, Unmade> {
+fn completed(builds: Vec<(&str, BuildReport)>) -> Result<Report, UnmadeError> {
     let names: Vec<String> = builds.iter().map(|(name, _)| (*name).to_owned()).collect();
     let measurements = njutest::report::across::BuildMeasurements::checked(
         builds
@@ -74,7 +74,7 @@ fn completed(builds: Vec<(&str, BuildReport)>) -> Result<Report, Unmade> {
         njutest::report::LatticedDocument::Complete(latticed) => {
             Ok(latticed.complete_without_models()?)
         }
-        njutest::report::LatticedDocument::Shard(_) => Err(Unmade::Part),
+        njutest::report::LatticedDocument::Shard(_) => Err(UnmadeError::Part),
     }
 }
 

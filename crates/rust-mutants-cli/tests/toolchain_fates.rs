@@ -569,6 +569,11 @@ fn fixture_wired() {
 }
 
 #[test]
+fn fixture_witness_downstream() {
+    holds("fixture-witness-downstream");
+}
+
+#[test]
 fn fixture_workspace() {
     holds("fixture-workspace");
 }

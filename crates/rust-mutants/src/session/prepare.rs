@@ -721,6 +721,7 @@ fn gated(
         },
         inputs: inputs_of(workspace, &checked)?,
         manifests: manifests_of(workspace)?,
+        compilation: crate::cargo::Compilation::of(&checked),
     };
     pristine_phase.end();
     let discover_phase = trace.phase("discover");
@@ -750,11 +751,12 @@ struct Gated {
     read: Digested,
 }
 
-/// What the build read, as digests a later run or a selection compares against, and what each unit read.
+/// What the build read, as digests a later run or a selection compares against, what each unit read, and what it compiled.
 struct Digested {
     closure: super::Closure,
     inputs: crate::select::Inputs,
     manifests: String,
+    compilation: crate::cargo::Compilation,
 }
 
 /// Every unit the pristine build compiled, named without a package id, with each file it read under the root or the target directory spelled by its class.
@@ -967,6 +969,7 @@ pub fn prepare(
         written_by_a_test,
         beside: instrumented.beside,
         closure: read.closure,
+        compilation: read.compilation,
         inputs: read.inputs,
         manifests: read.manifests,
         executions: std::sync::Mutex::new(0),

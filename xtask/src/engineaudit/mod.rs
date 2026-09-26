@@ -105,7 +105,7 @@ pub enum AuditError {
         path: String,
         /// Where and how.
         #[source]
-        source: crate::schemas::OffSchema,
+        source: crate::schemas::OffSchemaError,
     },
     /// The published run-report schema itself does not compile.
     #[error(transparent)]
@@ -425,23 +425,28 @@ struct CheckedEvidence<'a> {
     root: Option<&'a std::path::Path>,
 }
 
-/// One recording whose every non-empty line is JSON.
+/// One recording whose every non-empty line is on the engine's published schema.
 struct CheckedRecording {
     events: Vec<Value>,
     routing: crate::route::Routing,
 }
 
 impl<'a> Evidence<'a> {
-    fn check(&'a self) -> Result<CheckedEvidence<'a>, AuditError> {
+    fn check(
+        &'a self,
+        checkers: &crate::schemas::Checkers,
+    ) -> Result<CheckedEvidence<'a>, AuditError> {
         let recorded = self
             .recorded
             .map(|source| {
-                let events = crate::route::events(source.text, crate::schemas::Producer::Engine)
-                    .map_err(|error| AuditError::MalformedRecording {
-                        path: source.path.to_owned(),
-                        source: error,
+                let checked: crate::route::Checked<crate::schemas::EngineLines> =
+                    crate::route::Checked::read(source.text, checkers).map_err(|error| {
+                        AuditError::MalformedRecording {
+                            path: source.path.to_owned(),
+                            source: error,
+                        }
                     })?;
-                if let Some(schema) = events.iter().find_map(|event| {
+                if let Some(schema) = checked.events().iter().find_map(|event| {
                     (string(event, "type").as_deref() == Some("run-start"))
                         .then(|| string(event, "schema"))
                         .and_then(std::convert::identity)
@@ -452,13 +457,16 @@ impl<'a> Evidence<'a> {
                         schema,
                     });
                 }
-                let routing = crate::route::from_events(&events).map_err(|error| {
+                let routing = crate::route::read(&checked).map_err(|error| {
                     AuditError::MalformedRecording {
                         path: source.path.to_owned(),
                         source: error,
                     }
                 })?;
-                Ok(CheckedRecording { events, routing })
+                Ok(CheckedRecording {
+                    events: checked.into_events(),
+                    routing,
+                })
             })
             .transpose()?;
         let shards = self
@@ -601,7 +609,12 @@ impl<'a> Notes<'a> {
 ///
 /// # Errors
 /// [`AuditError::Unparsable`] for a document that is not JSON, [`AuditError::OffSchema`] for a run report off its published schema, and [`AuditError::Unrecognised`] for one that is not a run report.
-pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, AuditError> {
+pub fn audit(
+    checkers: &crate::schemas::Checkers,
+    path: &str,
+    text: &str,
+    evidence: &Evidence<'_>,
+) -> Result<Audit, AuditError> {
     let raw = crate::strictjson::from_str(text).map_err(|source| AuditError::Unparsable {
         path: path.to_owned(),
         source,
@@ -609,7 +622,8 @@ pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, A
     if raw.get("document_type").and_then(Value::as_str) == Some(DOCUMENT_TYPE)
         && raw.get("schema_version").and_then(Value::as_u64) == Some(SCHEMA_VERSION)
     {
-        crate::schemas::Checker::engine_report()?
+        checkers
+            .engine_report()
             .check(&raw)
             .map_err(|source| AuditError::OffSchema {
                 path: path.to_owned(),
@@ -635,7 +649,7 @@ pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, A
         });
     }
     let report = document.into_report();
-    let evidence = evidence.check()?;
+    let evidence = evidence.check(checkers)?;
     let mut audit = Audit {
         run_id: report.run_id.clone(),
         mutants: report.mutants.len(),

@@ -29,6 +29,7 @@ fn record(byte: char) -> Record {
             steps: 0,
             build: Vec::new(),
             engine: "e".to_owned(),
+            runner: None,
         },
     }
 }

@@ -5,12 +5,16 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # fixture-scheduled
 
-A test that passes only on schedules where a thread it spawns answers within 50 ms.
+A test that passes only on schedules where a thread it spawns does its work within 90 ms.
 
 | Function | Reached on | What a delayed schedule does |
 | --- | --- | --- |
-| `work` | a thread the test spawns | a pause of 200 ms at its guard makes the answer late, and the test fails |
+| `work` | a thread the test spawns | a pause at its guard (100 ms from njutest's explorer, 200 ms from the engine's own test) makes the work late, and the test fails |
 | `unreached` | nothing | a pause there is never taken, and the test passes |
+
+The spawned thread measures its own work and sends that duration with the answer, and the test waits 150 ms before it reads it.
+Lateness is measured where the pause is taken, never by how long the test thread waited: a waiter that a busy machine takes off the processor for longer than the pause begins waiting after a late answer has already arrived, and a deadline counted from the wait then calls it on time.
+That is how a loaded macOS runner reported a delayed schedule as passing, and the 150 ms wait makes every run of this fixture that machine.
 
 ## Fates
 

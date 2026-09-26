@@ -227,40 +227,32 @@ fn doctor_reads_the_configuration_a_run_would_read() {
 }
 
 /// A directory holding only what a run requires, so every optional tool is out of reach.
-fn only_what_is_required(dir: &Path, said: &str) -> std::path::PathBuf {
-    let bin = dir.join("bin");
-    std::fs::create_dir_all(&bin).expect("a directory");
-    for tool in ["cargo", "rustc"] {
+fn only_what_is_required(said: &str) -> std::path::PathBuf {
+    let [cargo, rustc] = ["cargo", "rustc"].map(|tool| {
         let found = said
             .lines()
             .find(|line| line.contains(&format!(" {tool} ")))
             .and_then(|line| line.split_whitespace().next_back())
             .unwrap_or_else(|| panic!("the doctor says where {tool} is: {said}"));
-        place_tool(found, &bin, tool);
-    }
-    bin
-}
-
-#[cfg(unix)]
-fn place_tool(found: &str, bin: &Path, tool: &str) {
-    std::os::unix::fs::symlink(found, bin.join(tool)).expect("a link");
-}
-
-#[cfg(not(unix))]
-fn place_tool(found: &str, bin: &Path, tool: &str) {
-    let name = format!("{tool}{}", std::env::consts::EXE_SUFFIX);
-    let copied = std::fs::copy(found, bin.join(name)).expect("a copy");
-    assert!(copied > 0, "the copied tool is not empty");
+        Path::new(found)
+            .parent()
+            .unwrap_or_else(|| panic!("{tool} is a file in a directory: {found}"))
+            .to_path_buf()
+    });
+    assert_eq!(
+        cargo, rustc,
+        "the doctor names the toolchain's own cargo and rustc, which live in its one directory; \
+         that directory, with the libraries beside them, is what a search path needs, since a \
+         toolchain's program copied out of it no longer finds them"
+    );
+    cargo
 }
 
 #[test]
 fn doctor_says_a_run_can_go_ahead_when_only_the_optional_tools_are_missing() {
     let dir = tempfile::tempdir().expect("a temporary directory");
     let found = asked(&environment(dir.path(), &[]), &["doctor"]);
-    let bin = only_what_is_required(
-        dir.path(),
-        &njutest_devkit::process::strict_utf8(&found.stdout),
-    );
+    let bin = only_what_is_required(&njutest_devkit::process::strict_utf8(&found.stdout));
 
     let output = asked(
         &environment(

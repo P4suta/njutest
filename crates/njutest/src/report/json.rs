@@ -64,13 +64,14 @@ pub fn document(report: &Report) -> Result<String, ReportError> {
 /// The durable tagged document for either a completed answer or one shard.
 ///
 /// # Errors
-/// A completed report is independently audited before serialization; a shard has already passed its checked constructor and can only be borrowed here.
+/// [`ReportError::Unsound`] when a completed report fails its own audit or a shard's verdict is not the one its evidence supports, and [`ReportError::Unserializable`] when the model itself cannot be written.
 pub fn document_any(document: &ReportDocument) -> Result<String, ReportError> {
-    if let ReportDocument::Complete(report) = document {
-        let violations = audit::validate_for_persistence(report);
-        if !violations.is_empty() {
-            return Err(ReportError::Unsound { violations });
-        }
+    let violations = match document {
+        ReportDocument::Complete(report) => audit::validate_for_persistence(report),
+        ReportDocument::Shard(report) => audit::validate_shard_for_persistence(report),
+    };
+    if !violations.is_empty() {
+        return Err(ReportError::Unsound { violations });
     }
     let mut text = serde_json::to_string_pretty(document)
         .map_err(|source| ReportError::Unserializable { source })?;

@@ -251,3 +251,20 @@ version = \"0.1.0\"
         "an unknown package field must not disappear from the dependency identity"
     );
 }
+
+#[test]
+fn the_devkit_refuses_a_fixture_holding_what_a_run_of_this_crate_writes() {
+    let written = [njutest::config::DEFAULT_REPORTS_DIRECTORY, ".njutest"];
+    assert!(
+        EXCLUDED_DIRECTORIES.contains(&".njutest"),
+        "the evidence walk leaves out the directory a run keeps its own state in"
+    );
+    for directory in written {
+        assert!(
+            njutest_devkit::fixture::RUN_OUTPUT.contains(&directory),
+            "a run writes {directory} into the tree it measures, so a fixture copy has to refuse a \
+             source fixture holding it: {:?}",
+            njutest_devkit::fixture::RUN_OUTPUT
+        );
+    }
+}

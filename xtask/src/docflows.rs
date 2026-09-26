@@ -154,12 +154,16 @@ fn workflow(fence: &str) -> String {
     format!("on: push\n{local}\n")
 }
 
-/// Lints every documented workflow with `actionlint` in a scratch repository holding this one's actions, so a `with:` key an action does not declare is refused.
+/// Lints every documented workflow with `actionlint` against this repository's actions, refusing one that names an action this commit does not ship.
 ///
 /// # Errors
 /// [`DocflowsError::Refused`] naming each page and fence actionlint refused, and the ways the check itself failed.
 pub fn check(root: &Path, actionlint: &OsStr) -> Result<String, DocflowsError> {
     let found = snippets(root)?;
+    let missing = unshipped(root, &found);
+    if !missing.is_empty() {
+        return Err(DocflowsError::Refused(missing.join("\n")));
+    }
     let scratch = tempfile::tempdir().map_err(|source| DocflowsError::Io {
         path: "a scratch repository".to_owned(),
         source,
@@ -232,6 +236,44 @@ pub fn check(root: &Path, actionlint: &OsStr) -> Result<String, DocflowsError> {
         .collect();
     said = named.join("\n");
     Err(DocflowsError::Refused(said))
+}
+
+/// Every documented use of this repository's own action that no `action.yml` of this commit answers, by page and fence, since actionlint passes a local action it cannot find.
+fn unshipped(root: &Path, found: &[Snippet]) -> Vec<String> {
+    let mut missing = Vec::new();
+    for snippet in found {
+        for line in snippet.workflow.lines() {
+            let Some((_, named)) = line.split_once("uses: ./.github/") else {
+                continue;
+            };
+            let directory = root.join(".github").join(named.trim());
+            let mut why = "which this commit does not ship".to_owned();
+            for file in ["action.yml", "action.yaml"] {
+                match std::fs::symlink_metadata(directory.join(file)) {
+                    Ok(metadata) if metadata.is_file() => {
+                        why.clear();
+                        break;
+                    }
+                    Ok(_not_a_file) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => why = format!("whose {file} cannot be read: {error}"),
+                }
+            }
+            if why.is_empty() {
+                continue;
+            }
+            let page = match snippet.page.strip_prefix(root) {
+                Ok(relative) => relative.display(),
+                Err(_outside_the_root) => snippet.page.display(),
+            };
+            missing.push(format!(
+                "{page} (the fence on line {}): uses .github/{}, {why}",
+                snippet.line,
+                named.trim()
+            ));
+        }
+    }
+    missing
 }
 
 /// Which snippet a line of actionlint's report is about, and what the report says after its path, however the path was spelled.

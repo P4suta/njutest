@@ -145,6 +145,7 @@ pub fn key(keyed: &Keyed, locus: &Locus) -> HexDigest {
         keyed.manifests.clone(),
         keyed.toolchain.clone(),
         keyed.engine.clone(),
+        keyed.runner_tag(),
         keyed.timeout.clone(),
         keyed.steps.to_string(),
         locus.item.package.clone(),
@@ -253,7 +254,7 @@ impl Refusal {
 /// Why a record is not the record it claims to be.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
-pub enum MalformedCarried {
+pub enum MalformedCarriedError {
     /// A kill whose last execution detected nothing, or a survival an execution detected.
     #[error("the record says {outcome:?} and its executions do not end the way that outcome ends")]
     Outcome {
@@ -274,8 +275,8 @@ impl Carried {
     /// Whether the record's executions end the way its outcome says.
     ///
     /// # Errors
-    /// [`MalformedCarried`] naming the first way it does not.
-    pub fn validate(&self) -> Result<(), MalformedCarried> {
+    /// [`MalformedCarriedError`] naming the first way it does not.
+    pub fn validate(&self) -> Result<(), MalformedCarriedError> {
         let detected: Vec<&Execution> = self.executions.iter().filter(|one| one.detected).collect();
         let last = self.executions.last();
         let ends = match self.outcome {
@@ -283,12 +284,12 @@ impl Carried {
             CacheOutcome::Survived => detected.is_empty() && last.is_some(),
         };
         if !ends {
-            return Err(MalformedCarried::Outcome {
+            return Err(MalformedCarriedError::Outcome {
                 outcome: self.outcome,
             });
         }
         if let Some(last) = last.filter(|last| last.target != self.target) {
-            return Err(MalformedCarried::Target {
+            return Err(MalformedCarriedError::Target {
                 target: self.target.clone(),
                 ran: last.target.clone(),
             });

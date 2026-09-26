@@ -212,6 +212,19 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     const DORMANT_POLL: u32 = 256;
     const LEASE_SHARE: usize = 16;
     const LEASE_MOST: usize = 4096;
+    // Where a copy spending a reservation says it is still moving, and how
+    // often. The state changes only when a reservation is taken, and one
+    // holds up to LEASE_MOST boundaries, so a process that moves slowly
+    // would otherwise go quiet for longer than the runner's window while
+    // it spends; the runner watches this file beside the state.
+    struct Beat {
+        path: __rm_std::string::String,
+        every: u64,
+        epoch: __rm_std::time::Instant,
+    }
+    static BEAT: __rm_std::sync::OnceLock<__rm_std::option::Option<Beat>> = __rm_std::sync::OnceLock::new();
+    static BEAT_AT: __rm_std::sync::atomic::AtomicU64 = __rm_std::sync::atomic::AtomicU64::new(0);
+    static BEATS: __rm_std::sync::atomic::AtomicU64 = __rm_std::sync::atomic::AtomicU64::new(0);
     static BUDGET: __rm_std::sync::OnceLock<Budget> = __rm_std::sync::OnceLock::new();
     static TOUCHING: __rm_std::sync::OnceLock<TouchMode> = __rm_std::sync::OnceLock::new();
     static TOUCH_SINK: __rm_std::sync::OnceLock<__rm_std::sync::Mutex<__rm_std::fs::File>> = __rm_std::sync::OnceLock::new();
@@ -363,6 +376,7 @@ Result < (StepPhase, StepAdvance), StepMachineError >
             |left| left.checked_sub(1),
         );
         if spent_in_memory.is_ok() {
+            beat();
             return;
         }
         if KNOWN.load(__rm_std::sync::atomic::Ordering::SeqCst) == KNOWN_DORMANT
@@ -371,6 +385,75 @@ Result < (StepPhase, StepAdvance), StepMachineError >
             return;
         }
         advance(StepAction::Checkpoint);
+    }
+
+    /// Says the process is still moving once it has spent from reservations for as long as the runner allows between changes.
+    #[inline(always)]
+    fn beat() {
+        let beat = match BEAT.get_or_init(configured_beat) {
+            __rm_std::option::Option::Some(beat) => beat,
+            __rm_std::option::Option::None => return,
+        };
+        let now = match <u64 as __rm_std::convert::TryFrom<u128>>::try_from(beat.epoch.elapsed().as_nanos()) {
+            __rm_std::result::Result::Ok(now) => now,
+            __rm_std::result::Result::Err(_) => u64::MAX,
+        };
+        let last = BEAT_AT.load(__rm_std::sync::atomic::Ordering::SeqCst);
+        if now.saturating_sub(last) < beat.every {
+            return;
+        }
+        if BEAT_AT
+            .compare_exchange(
+                last,
+                now,
+                __rm_std::sync::atomic::Ordering::SeqCst,
+                __rm_std::sync::atomic::Ordering::SeqCst,
+            )
+            .is_err()
+        {
+            return;
+        }
+        write_beat(beat);
+    }
+
+    // The record names the process, the copy and how many times this copy
+    // has said so, so no two beats of a moving process read the same.
+    #[cold]
+    fn write_beat(beat: &Beat) {
+        let count = BEATS.fetch_add(1, __rm_std::sync::atomic::Ordering::SeqCst);
+        let copy = __rm_std::ptr::addr_of!(BEATS) as usize;
+        let record = __rm_std::format!("{}\t{}\t{}\n", __rm_std::process::id(), copy, count);
+        if __rm_std::fs::write(&beat.path, record).is_err() {
+            protocol_failure();
+        }
+    }
+
+    // Unset, the runner is not watching for quiet and nothing is said.
+    // Set, it is a promise the runner is keeping, so anything but
+    // canonical milliseconds above zero and a path is a protocol failure.
+    #[cold]
+    fn configured_beat() -> __rm_std::option::Option<Beat> {
+        let raw = __rm_std::env::var_os("RUST_MUTANTS_STEP_BEAT")?;
+        let text = match raw.to_str() {
+            __rm_std::option::Option::Some(text) => text,
+            __rm_std::option::Option::None => protocol_failure(),
+        };
+        let (every, path) = match text.split_once('@') {
+            __rm_std::option::Option::Some(parts) => parts,
+            __rm_std::option::Option::None => protocol_failure(),
+        };
+        let millis = match every.parse::<u64>() {
+            __rm_std::result::Result::Ok(millis) if millis > 0 => millis,
+            __rm_std::result::Result::Ok(_) | __rm_std::result::Result::Err(_) => protocol_failure(),
+        };
+        if __rm_std::string::ToString::to_string(&millis) != every || path.is_empty() {
+            protocol_failure();
+        }
+        __rm_std::option::Option::Some(Beat {
+            path: __rm_std::string::ToString::to_string(path),
+            every: millis.saturating_mul(1_000_000),
+            epoch: __rm_std::time::Instant::now(),
+        })
     }
 
     /// How many more boundaries one reservation grants when `remaining` are left: a share of them, at least one and at most a bound.

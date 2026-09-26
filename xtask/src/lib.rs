@@ -266,14 +266,14 @@ where
         Gate::Fixtures => gates::fixtures(&root),
         Gate::Tracked => gates::tracked(&root),
         Gate::FuzzClippy { alternate: _ } => fuzzclippy::check(&root, process.cargo)
-            .map_err(|error| gates::GateFailure(error.coded())),
+            .map_err(|error| gates::GateError(error.coded())),
         Gate::Docflows { actionlint } => docflows::check(&root, actionlint.as_os_str())
-            .map_err(|error| gates::GateFailure(error.coded())),
+            .map_err(|error| gates::GateError(error.coded())),
         Gate::ReleaseCheck => gates::release_check(&root),
         Gate::KaniLaws { cache } => kanilaws::laws(&root, process.cargo, &cache),
         Gate::KaniLawsAudit { export } => kaniaudit::audit(&export, &root)
             .map(|()| "kani-laws: 15 production harnesses, every assertion reachable and every cover satisfiable".to_owned())
-            .map_err(|error| gates::GateFailure(error.coded())),
+            .map_err(|error| gates::GateError(error.coded())),
         Gate::Milestones => gates::milestones(&root),
         Gate::Adrs => gates::adrs(&root),
         Gate::Reached => gates::reached(&root),
@@ -316,7 +316,7 @@ where
         Gate::Sbom { output } => gates::sbom(&root, output.as_deref()),
         Gate::Waivers => gates::waivers(&root),
         Gate::RemoteCheck { machines, worktree } => remote::check(worktree.as_deref().unwrap_or(&root), &machines)
-            .map_err(|error| gates::GateFailure(error.coded())),
+            .map_err(|error| gates::GateError(error.coded())),
         Gate::All => gates::all(&root),
     };
     match outcome {
@@ -331,7 +331,16 @@ fn audit_engine(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> ExitCode {
-    let planted = match gates::engine_audit_sentinels() {
+    let checkers = match schemas::Checkers::compiled() {
+        Ok(checkers) => checkers,
+        Err(uncompiled) => {
+            return after_output(
+                writeln!(stderr, "{}", uncompiled.coded()),
+                ExitCode::from(engineaudit::EXIT_UNREADABLE),
+            );
+        }
+    };
+    let planted = match gates::engine_audit_sentinels(&checkers) {
         Ok(planted) => planted,
         Err(blind) => {
             return after_output(
@@ -340,7 +349,7 @@ fn audit_engine(
             );
         }
     };
-    match gates::engine_audit(asked) {
+    match gates::engine_audit(&checkers, asked) {
         Ok(audit) => {
             let intended = ExitCode::from(audit.exit_code());
             after_output(
@@ -365,7 +374,16 @@ fn audit_run(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> ExitCode {
-    let planted = match gates::proofaudit_sentinels() {
+    let checkers = match schemas::Checkers::compiled() {
+        Ok(checkers) => checkers,
+        Err(uncompiled) => {
+            return after_output(
+                writeln!(stderr, "{}", uncompiled.coded()),
+                ExitCode::from(proofaudit::EXIT_UNREADABLE),
+            );
+        }
+    };
+    let planted = match gates::proofaudit_sentinels(&checkers) {
         Ok(planted) => planted,
         Err(blind) => {
             return after_output(
@@ -375,9 +393,9 @@ fn audit_run(
         }
     };
     let audited = if shards.is_empty() {
-        gates::proofaudit(run, trace)
+        gates::proofaudit(&checkers, run, trace)
     } else {
-        gates::proofaudit_merged(run, shards, traces)
+        gates::proofaudit_merged(&checkers, run, shards, traces)
     };
     match audited {
         Ok(audit) => {

@@ -172,10 +172,20 @@ const LONE_TEMPORARY_VARIABLE_REMEDY: &str = "name the directory in every variab
     `std::env::temp_dir` reads `TMP` and `TEMP` on Windows and `TMPDIR` elsewhere, so a child \
     given one of them keeps writing into the parent's directory on the other platform, and what \
     it leaves there is left where nothing owns it";
+const ERROR_NAME_REMEDY: &str = "name a type that implements `std::error::Error` for what it is: \
+    `SomethingError`, never a bare `Error`. A reader meets an error by the name a `?` or a match \
+    arm gives it, and `ScheduleFailure`, `Contradiction` or `Error` says neither that it is one \
+    nor which one it is";
 const OPEN_AND_CLOSED_REMEDY: &str = "drop `#[non_exhaustive]`. A type that publishes its whole \
     list has promised to break callers when it grows, while the attribute promises not to. It \
     also disables `clippy::match_wildcard_for_single_variants`. Keep it only on an error whose \
     callers branch on no published exhaustive list";
+
+const RAW_READ_REMEDY: &str = "ask `crate::observe` what the path is. A reader of evidence that \
+    touches the filesystem itself decides at its own call site what an I/O failure means, which is \
+    how a lock file beside the profiles became a directory that could not be read and how running \
+    out of descriptors became an unread file; `observe` decides it once, as absent, unreadable, or \
+    an error that says nothing about the path";
 
 macro_rules! declare_kinds {
     ($( $variant:ident => $label:literal),+ $(,)?) => {
@@ -254,7 +264,9 @@ declare_kinds! {
     TriStateBool => "tri-state-bool",
     OpenAndClosed => "open-and-closed",
     ForeignRemainder => "foreign-remainder",
+    RawRead => "raw-read",
     LoneTemporaryVariable => "lone-temporary-variable",
+    ErrorName => "error-name",
 }
 
 impl Kind {
@@ -304,7 +316,9 @@ impl Kind {
             Self::TriStateBool => TRI_STATE_BOOL_REMEDY,
             Self::OpenAndClosed => OPEN_AND_CLOSED_REMEDY,
             Self::ForeignRemainder => FOREIGN_REMAINDER_REMEDY,
+            Self::RawRead => RAW_READ_REMEDY,
             Self::LoneTemporaryVariable => LONE_TEMPORARY_VARIABLE_REMEDY,
+            Self::ErrorName => ERROR_NAME_REMEDY,
         }
     }
 }
@@ -401,6 +415,48 @@ fn overflow_sensitive(file: &str) -> bool {
         || file == "xtask/src/proofaudit.rs"
 }
 
+/// The modules that read evidence from the filesystem, every one of which looks through the observer rather than at the filesystem.
+const EVIDENCE_READERS: [&str; 1] = ["crates/njutest/src/concurrency/"];
+
+/// The one module that looks at the filesystem for the readers of evidence.
+const OBSERVER: &str = "crates/njutest/src/observe.rs";
+
+/// Whether `file` reads evidence and so may not touch the filesystem except through [`OBSERVER`].
+fn evidence_reader(file: &str) -> bool {
+    file != OBSERVER && EVIDENCE_READERS.iter().any(|scope| file.starts_with(scope))
+}
+
+/// What a path, or a value standing for one, is asked about the filesystem by.
+const FILESYSTEM_QUESTIONS: [&str; 12] = [
+    "read_dir",
+    "read_to_string",
+    "metadata",
+    "symlink_metadata",
+    "exists",
+    "try_exists",
+    "is_dir",
+    "is_file",
+    "is_symlink",
+    "canonicalize",
+    "read_link",
+    "file_type",
+];
+
+/// Where `path` names the filesystem module, or its `File` alone or under that module, which a reader of evidence reaches only through the observer.
+fn filesystem_path_span(path: &syn::Path) -> Option<proc_macro2::Span> {
+    let segments: Vec<&syn::PathSegment> = path.segments.iter().collect();
+    segments.iter().enumerate().find_map(|(at, segment)| {
+        let module = segment.ident == "fs";
+        let file = segment.ident == "File"
+            && (segments.len() == 1
+                || at
+                    .checked_sub(1)
+                    .and_then(|before| segments.get(before))
+                    .is_some_and(|before| before.ident == "fs"));
+        (module || file).then(|| segment.ident.span())
+    })
+}
+
 fn strict_conversions(file: &str) -> bool {
     matches!(
         file,
@@ -486,6 +542,7 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
         ),
         (overflow_sensitive(file), SourcePolicy::OverflowSensitive),
         (strict_conversions(file), SourcePolicy::StrictConversions),
+        (evidence_reader(file), SourcePolicy::EvidenceReader),
     ]
     .into_iter()
     .filter(|(enabled, _policy)| *enabled)
@@ -2900,6 +2957,7 @@ struct Aliases {
     json_values: BTreeSet<String>,
     option_types: BTreeSet<String>,
     boolean_types: BTreeSet<String>,
+    error_names: BTreeSet<String>,
 }
 
 impl Aliases {
@@ -2943,6 +3001,9 @@ impl Aliases {
                 }
                 if rename.source == "Option" || aliases.option_types.contains(&rename.source) {
                     changed |= aliases.option_types.insert(rename.local.clone());
+                }
+                if rename.source == "Error" || aliases.error_names.contains(&rename.source) {
+                    changed |= aliases.error_names.insert(rename.local.clone());
                 }
             }
             for declaration in &declarations.types {
@@ -3121,6 +3182,12 @@ impl Aliases {
     fn default_derive(&self, path: &syn::Path) -> bool {
         path.segments.last().is_some_and(|segment| {
             segment.ident == "Default" || self.default_derives.contains(&segment.ident.to_string())
+        })
+    }
+
+    fn error_path(&self, path: &syn::Path) -> bool {
+        path.segments.last().is_some_and(|segment| {
+            segment.ident == "Error" || self.error_names.contains(&segment.ident.to_string())
         })
     }
 
@@ -3498,6 +3565,26 @@ fn enum_has_permissive_input(item: &syn::ItemEnum, aliases: &Aliases, file: &str
                         .iter()
                         .any(|field| permissive_input_attr(&field.attrs))
             }))
+}
+
+/// Whether `attrs` derive `Error`, under any name it was imported as.
+fn derives_error(attrs: &[syn::Attribute], aliases: &Aliases) -> bool {
+    attrs.iter().any(|attribute| {
+        let syn::Meta::List(list) = &attribute.meta else {
+            return false;
+        };
+        list.path.is_ident("derive")
+            && list
+                .parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated,
+                )
+                .is_ok_and(|paths| paths.iter().any(|path| aliases.error_path(path)))
+    })
+}
+
+/// Whether `name` says it is an error and which: it ends in `Error` and is not only that.
+fn named_error(name: &str) -> bool {
+    name.ends_with("Error") && name != "Error"
 }
 
 fn derives_deserialize_in(attrs: &[syn::Attribute], aliases: &Aliases) -> bool {
@@ -4636,6 +4723,7 @@ enum SourcePolicy {
     StrictJsonReader,
     OverflowSensitive,
     StrictConversions,
+    EvidenceReader,
 }
 
 struct Scan {
@@ -5148,6 +5236,9 @@ impl Visit<'_> for Scan {
         if struct_has_permissive_input(item, &self.aliases, &self.file) {
             self.note(Kind::OpenDeserialization, item.ident.span());
         }
+        if derives_error(&item.attrs, &self.aliases) && !named_error(&item.ident.to_string()) {
+            self.note(Kind::ErrorName, item.ident.span());
+        }
         let parameters = generic_parameters(&item.generics);
         if !parameters.is_empty()
             && item
@@ -5176,6 +5267,9 @@ impl Visit<'_> for Scan {
         }
         if enum_has_permissive_input(item, &self.aliases, &self.file) {
             self.note(Kind::OpenDeserialization, item.ident.span());
+        }
+        if derives_error(&item.attrs, &self.aliases) && !named_error(&item.ident.to_string()) {
+            self.note(Kind::ErrorName, item.ident.span());
         }
         let derived = item
             .attrs
@@ -5216,6 +5310,14 @@ impl Visit<'_> for Scan {
     }
 
     fn visit_item_impl(&mut self, item: &syn::ItemImpl) {
+        if let Some((path, _for)) = &item.trait_
+            && self.aliases.error_path(path)
+            && let Some(segment) = path.segments.last()
+            && let Some(name) = implemented_type_name(&item.self_ty)
+            && !named_error(&name)
+        {
+            self.note(Kind::ErrorName, segment.ident.span());
+        }
         if let Some((path, _for)) = &item.trait_
             && let Some(segment) = path.segments.last()
         {
@@ -5280,6 +5382,13 @@ impl Visit<'_> for Scan {
         self.scan_lossy_text_imports(&item.tree);
         self.scan_forget_imports(&item.tree);
         self.scan_json_imports(item);
+        if self.has_policy(SourcePolicy::EvidenceReader) {
+            for name in ["fs", "File"] {
+                if let Some(span) = use_tree_name_span(&item.tree, name) {
+                    self.note(Kind::RawRead, span);
+                }
+            }
+        }
         syn::visit::visit_item_use(self, item);
     }
 
@@ -5328,6 +5437,11 @@ impl Visit<'_> for Scan {
     }
 
     fn visit_expr_method_call(&mut self, call: &syn::ExprMethodCall) {
+        if self.has_policy(SourcePolicy::EvidenceReader)
+            && FILESYSTEM_QUESTIONS.contains(&call.method.to_string().as_str())
+        {
+            self.note(Kind::RawRead, call.method.span());
+        }
         if call.method == "spawn" && !self.raw_spawn_boundary(call.method.span()) {
             self.note(Kind::UnownedSpawn, call.method.span());
         }
@@ -5392,6 +5506,11 @@ impl Visit<'_> for Scan {
     }
 
     fn visit_expr_path(&mut self, path: &syn::ExprPath) {
+        if self.has_policy(SourcePolicy::EvidenceReader)
+            && let Some(span) = filesystem_path_span(&path.path)
+        {
+            self.note(Kind::RawRead, span);
+        }
         if let Some(segment) = path
             .path
             .segments
@@ -5423,6 +5542,14 @@ impl Visit<'_> for Scan {
     }
 
     fn visit_macro(&mut self, macro_: &syn::Macro) {
+        if self.has_policy(SourcePolicy::EvidenceReader) {
+            for name in std::iter::once("fs").chain(FILESYSTEM_QUESTIONS) {
+                self.note_each(
+                    Kind::RawRead,
+                    identifier_spans_in_tokens(&macro_.tokens, name),
+                );
+            }
+        }
         self.scan_macro_runtime(macro_);
         self.scan_macro_json(macro_);
         self.scan_macro_attributes(macro_);

@@ -3,7 +3,6 @@
 
 //! Driving a session: judging every mutant it holds, and what a run shares between the ones it is measuring at once.
 
-use std::collections::BTreeSet;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
@@ -2021,7 +2020,7 @@ fn reuse(
     let found = reusing
         .store
         .get(&key, &mutant_id)?
-        .filter(|(_, record)| believable(session, mutant, record.outcome));
+        .filter(|(_, record)| session.believable(mutant, record.outcome));
     if session.trace().is_enabled() {
         session.trace().cache(crate::trace::CacheRecord {
             mutant: mutant.display_id.to_string(),
@@ -2110,29 +2109,9 @@ fn carried(
     };
     let key = crate::carry::key(reusing.keyed, &locus);
     let record = reusing.carried.get(&key)?;
-    let plan = match &record {
-        None => Vec::new(),
-        Some(_) => session.plan(mutant, options.args, cancel)?,
-    };
     let decided = match &record {
         None => None,
-        Some(record) => {
-            let targets: BTreeSet<String> = record
-                .executions
-                .iter()
-                .map(|one| one.target.clone())
-                .chain(plan.iter().map(|one| one.target.clone()))
-                .collect();
-            let now = session.now(&targets, cancel)?;
-            let believed = crate::carry::believe(record, &now, &plan).and_then(|()| {
-                if believable(session, mutant, record.outcome) {
-                    Ok(())
-                } else {
-                    Err(crate::carry::Refusal::Uncontrolled)
-                }
-            });
-            Some(believed)
-        }
+        Some(record) => Some(session.believing(record, mutant, (options.args, cancel))?),
     };
     if session.trace().is_enabled() {
         session.trace().cache(crate::trace::CacheRecord {
@@ -2150,7 +2129,6 @@ fn carried(
     let (Some(record), Some(Ok(()))) = (record, decided) else {
         return Ok(None);
     };
-    session.believed(mutant.id.as_str(), record.clone(), plan)?;
     Ok(Some(remembered(
         mutant,
         record.outcome.into(),
@@ -2185,41 +2163,19 @@ fn carry(
     if cancel.is_cancelled() {
         return Ok(());
     }
-    let Some(locus) = session.locus(mutant) else {
-        return Ok(());
-    };
-    let plan = session.plan(mutant, options.args, cancel)?;
-    let Some(executions) = session.executions(asked, &plan) else {
-        return Ok(());
-    };
-    let record = crate::carry::Carried {
-        schema: crate::carry::SCHEMA.to_owned(),
-        locus,
+    let answered = crate::session::Answered {
         keyed: reusing.keyed.clone(),
         outcome,
         target: judged.target.clone(),
         tests_run: judged.tests_run,
         failed_tests: judged.failed_tests.clone(),
         run_id: reusing.run_id.to_owned(),
-        executions,
     };
-    if record.validate().is_err() {
+    let Some(record) = session.carrying(mutant, (options.args, cancel), (answered, asked))? else {
         return Ok(());
-    }
+    };
     reusing.carried.put(&record)?;
     Ok(())
-}
-
-/// Whether this run may believe a remembered `outcome`: a survival is a claim about every target that reaches the mutant, and one that reaches it through a process this run cannot see into is a claim this run could not make.
-fn believable(session: &Session, mutant: &Mutant, outcome: crate::outcomes::CacheOutcome) -> bool {
-    match outcome {
-        crate::outcomes::CacheOutcome::Killed => true,
-        crate::outcomes::CacheOutcome::Survived => !session
-            .route(mutant)
-            .reaching()
-            .into_iter()
-            .any(|target| session.uncontrolled(target)),
-    }
 }
 
 /// Records what this run established, for the next run of this exact tree.

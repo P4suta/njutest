@@ -177,10 +177,24 @@ pub fn every_failure() -> Vec<RunnerError> {
             path: nowhere.to_path_buf(),
             source: std::io::Error::other("no"),
         }),
+        RunnerError::Carry {
+            source: rust_mutants::outcomes::StoreError::Io {
+                path: nowhere.to_path_buf(),
+                source: std::io::Error::other("no"),
+            },
+        },
         RunnerError::Model {
             message: "model artifact could not be retained".to_owned(),
         },
-        RunnerError::Schedule(crate::assure::schedule::ScheduleError::WorkerPanicked),
+        RunnerError::Schedule(crate::assure::schedule::ScheduleError::WorkerPanicked {
+            worker: "njutest-measure-0".to_owned(),
+            item: "mutation abcdef".to_owned(),
+            message: "no".to_owned(),
+        }),
+        RunnerError::Sources(crate::observe::SourceReadError::Exhausted {
+            path: nowhere.to_path_buf(),
+            source: std::io::Error::other("no"),
+        }),
         RunnerError::Equivalence {
             source: crate::assure::equivalence::EquivalenceError::DuplicateDecision {
                 display_id: "abcdef".to_owned(),
@@ -225,6 +239,7 @@ pub fn every_failure() -> Vec<RunnerError> {
             | RunnerError::Cache(_)
             | RunnerError::Checkpoint(_)
             | RunnerError::MutationEvidence(_)
+            | RunnerError::Carry { .. }
             | RunnerError::Coverage(_)
             | RunnerError::Provider(_)
             | RunnerError::IdentityEnvironment { .. }
@@ -233,6 +248,7 @@ pub fn every_failure() -> Vec<RunnerError> {
             | RunnerError::PhaseOutput { .. }
             | RunnerError::Model { .. }
             | RunnerError::Schedule(_)
+            | RunnerError::Sources(_)
             | RunnerError::Equivalence { .. }
             | RunnerError::Resource(_)
             | RunnerError::Report(_)
@@ -309,6 +325,8 @@ fn complete_route() -> crate::trace::RouteRecord {
         considered: vec!["demo/test/other".to_owned()],
         reused: Some("earlier-run".to_owned()),
         refused: Some("key-changed".to_owned()),
+        rule: Some(crate::trace::ReuseRule::Carried),
+        carry_refused: Some("item-changed".to_owned()),
     }
 }
 
@@ -1104,7 +1122,7 @@ pub mod reports {
     /// Why the rows a fixture gave did not make one complete report.
     #[derive(Debug, thiserror::Error)]
     #[non_exhaustive]
-    pub enum UnmadeReport {
+    pub enum UnmadeReportError {
         /// The rows do not fit the report's counters.
         #[error("the rows do not fit the report's counters: {source}")]
         Counted {
@@ -1218,7 +1236,7 @@ pub mod reports {
         kind: RunKind,
         rows: Vec<MutantRecord>,
         builds: &[String],
-    ) -> Result<BuildReport, UnmadeReport> {
+    ) -> Result<BuildReport, UnmadeReportError> {
         let mut report = BuildReport::new(run, kind, crate::config::Contract::StandardV1);
         "2026-09-24T00:00:00Z".clone_into(&mut report.timing.started);
         "2026-09-24T00:00:00Z".clone_into(&mut report.timing.finished);
@@ -1257,12 +1275,12 @@ pub mod reports {
     /// The complete report of run `run`, of `kind`, that measured one build per entry of `builds`, each holding its rows.
     ///
     /// # Errors
-    /// [`UnmadeReport`] when the rows do not make a report the model accepts, or name a rule the engine does not have, which is the fixture's mistake to fix.
+    /// [`UnmadeReportError`] when the rows do not make a report the model accepts, or name a rule the engine does not have, which is the fixture's mistake to fix.
     pub fn completed(
         run: &str,
         kind: RunKind,
         builds: Vec<(&str, Vec<MutantRecord>)>,
-    ) -> Result<Report, UnmadeReport> {
+    ) -> Result<Report, UnmadeReportError> {
         completed_with_drift(
             run,
             kind,
@@ -1276,19 +1294,19 @@ pub mod reports {
     /// The report [`completed`] makes, with each build also recording what its controls established about each target's baseline reach.
     ///
     /// # Errors
-    /// [`UnmadeReport`] as [`completed`] refuses.
+    /// [`UnmadeReportError`] as [`completed`] refuses.
     pub fn completed_with_drift(
         run: &str,
         kind: RunKind,
         builds: Vec<(&str, Vec<MutantRecord>, Vec<crate::report::drift::Drift>)>,
-    ) -> Result<Report, UnmadeReport> {
+    ) -> Result<Report, UnmadeReportError> {
         let rules = rust_mutants::rule::Registry::canonical();
         if let Some(unknown) = builds
             .iter()
             .flat_map(|(_, rows, _)| rows)
             .find(|row| rules.lookup(&row.rule).is_none())
         {
-            return Err(UnmadeReport::Rule {
+            return Err(UnmadeReportError::Rule {
                 name: unknown.rule.clone(),
             });
         }
@@ -1314,7 +1332,7 @@ pub mod reports {
             crate::report::LatticedDocument::Complete(whole) => {
                 Ok(whole.complete_without_models()?)
             }
-            crate::report::LatticedDocument::Shard(_) => Err(UnmadeReport::Part),
+            crate::report::LatticedDocument::Shard(_) => Err(UnmadeReportError::Part),
         }
     }
 }

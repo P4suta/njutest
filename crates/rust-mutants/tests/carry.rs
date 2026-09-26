@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rust_mutants::carry::{
-    Body, Carried, Entered, Execution, Locus, MalformedCarried, Now, Planned, Refusal, SCHEMA,
+    Body, Carried, Entered, Execution, Locus, MalformedCarriedError, Now, Planned, Refusal, SCHEMA,
     Sealing, believe, key,
 };
 use rust_mutants::outcomes::{CacheOutcome, Keyed};
@@ -52,6 +52,7 @@ fn keyed(closure: &str) -> Keyed {
         timeout: "auto".to_owned(),
         steps: 0,
         build: Vec::new(),
+        runner: None,
     }
 }
 
@@ -332,7 +333,9 @@ fn the_key_holds_the_locus_and_not_the_closure() {
     let mut ruled = locus();
     ruled.rule = "arith@2".to_owned();
     assert_ne!(base, key(&keyed("closure-0"), &ruled));
-    let keys: [fn(&mut Keyed); 7] = [
+    let keys: [fn(&mut Keyed); 9] = [
+        |one| one.runner = Some("a runner's contract".to_owned()),
+        |one| one.runner = Some("none".to_owned()),
         |one| one.manifests = "m".to_owned(),
         |one| one.toolchain = "t".to_owned(),
         |one| one.engine = "e".to_owned(),
@@ -356,19 +359,19 @@ fn a_record_whose_executions_do_not_end_as_its_outcome_says_is_malformed() {
     unkilled.outcome = CacheOutcome::Survived;
     assert!(matches!(
         unkilled.validate(),
-        Err(MalformedCarried::Outcome { .. })
+        Err(MalformedCarriedError::Outcome { .. })
     ));
     let mut empty = kill();
     empty.executions.clear();
     assert!(matches!(
         empty.validate(),
-        Err(MalformedCarried::Outcome { .. })
+        Err(MalformedCarriedError::Outcome { .. })
     ));
     let mut elsewhere = kill();
     elsewhere.target = OTHER.to_owned();
     assert!(matches!(
         elsewhere.validate(),
-        Err(MalformedCarried::Target { .. })
+        Err(MalformedCarriedError::Target { .. })
     ));
 }
 

@@ -199,6 +199,36 @@ pub struct Compiled {
     pub units: Vec<Unit>,
 }
 
+/// What one build compiled: every unit with the files the compiler read for it, and every build script with what it told the linker, as cargo reported them rather than as a directory holds them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Compilation {
+    /// Every unit that produced an artifact.
+    pub units: Vec<Unit>,
+    /// Every build script that ran.
+    pub build_scripts: Vec<super::messages::BuildScript>,
+}
+
+impl Compilation {
+    /// What `compiled` reported.
+    #[must_use]
+    pub fn of(compiled: &Compiled) -> Self {
+        Self {
+            units: compiled.units.clone(),
+            build_scripts: compiled
+                .messages
+                .iter()
+                .filter_map(|message| match message {
+                    Message::BuildScriptExecuted(script) => Some(script.clone()),
+                    Message::CompilerArtifact(_)
+                    | Message::CompilerMessage(_)
+                    | Message::BuildFinished { .. }
+                    | Message::Other { .. } => None,
+                })
+                .collect(),
+        }
+    }
+}
+
 /// Compiles the tree in the driver's directory and reads what it said.
 ///
 /// # Errors

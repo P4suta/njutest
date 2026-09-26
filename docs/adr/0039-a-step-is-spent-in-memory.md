@@ -28,5 +28,8 @@ Opening the file once per copy took the round trip from 4 ms to 44 µs; the coun
 ## Consequences
 
 - A dormant boundary costs 30 ns and an active one 90 ns on a loaded Mac, against 3.2 µs and 35 µs for a round trip each; the Windows figures are in the pull request.
-- The state file changes at every reservation, so the stall watcher still sees progress while a copy spends.
+- The state file changes only at a reservation, and a reservation can hold 4 096 boundaries, which a slow test spends over far longer than one quiet window ([ADR 0026](0026-a-bound-measures-quiet-not-duration.md)).
+  The first form of this decision said the watcher still saw progress while a copy spent; that held only while a reservation was spent inside a window, which nothing stated, and a test moving every fifty milliseconds under a large allowance was stopped as `stalled`.
+  So the contract is now one the runner states: it tells the process it watches a beat, a quarter of its window, and a copy spending a reservation rewrites a beat file once that long has passed since the last, which the runner watches beside the state.
+  The beat costs one clock read per boundary spent in memory and a file write per beat, and it leaves the proven transition and the count untouched.
 - A child made by fork without exec inherits the parent's unspent reservation; it spends at most that many before asking.

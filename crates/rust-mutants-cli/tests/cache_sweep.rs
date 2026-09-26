@@ -370,6 +370,7 @@ fn emptying_what_earlier_runs_established_says_how_much_was_in_it() {
                 steps: 0,
                 build: Vec::new(),
                 engine: "e".to_owned(),
+                runner: None,
             },
         })
         .expect("the cache record is stored");

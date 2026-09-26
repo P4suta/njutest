@@ -154,8 +154,12 @@ pub struct AuditedShard {
 ///
 /// # Errors
 /// A document that is not JSON, off its schema, or not a shard.
-pub fn shard_run(path: &str, text: &str) -> Result<String, AuditError> {
-    match read(path, text)? {
+pub fn shard_run(
+    checkers: &crate::schemas::Checkers,
+    path: &str,
+    text: &str,
+) -> Result<String, AuditError> {
+    match read(checkers, path, text)? {
         Document::Shard(report) => Ok(report.run_id),
         Document::Complete(_) => Err(AuditError::NotAShard {
             path: path.to_owned(),
@@ -168,17 +172,18 @@ pub fn shard_run(path: &str, text: &str) -> Result<String, AuditError> {
 /// # Errors
 /// A document that is not a shard, and anything [`super::audit_with`] refuses.
 pub fn audited(
-    path: &str,
-    text: &str,
+    checkers: &crate::schemas::Checkers,
+    reported: super::Reported<'_>,
     recorded: Recorded<'_>,
     run: Option<&std::path::Path>,
 ) -> Result<AuditedShard, AuditError> {
-    let Document::Shard(report) = read(path, text)? else {
+    let super::Reported { path, text } = reported;
+    let Document::Shard(report) = read(checkers, path, text)? else {
         return Err(AuditError::NotAShard {
             path: path.to_owned(),
         });
     };
-    let audit = super::audit_with(path, text, recorded, run)?;
+    let audit = super::audit_with(checkers, reported, recorded, run)?;
     Ok(AuditedShard {
         report: *report,
         audit,
@@ -189,8 +194,13 @@ pub fn audited(
 ///
 /// # Errors
 /// A document that is not JSON or is off its schema, a report that is not a merge, a shard given twice, and a shard the report was not merged from.
-pub fn merged_with(path: &str, text: &str, shards: &[AuditedShard]) -> Result<Audit, AuditError> {
-    let Document::Complete(merged) = read(path, text)? else {
+pub fn merged_with(
+    checkers: &crate::schemas::Checkers,
+    path: &str,
+    text: &str,
+    shards: &[AuditedShard],
+) -> Result<Audit, AuditError> {
+    let Document::Complete(merged) = read(checkers, path, text)? else {
         return Err(AuditError::NotMerged {
             path: path.to_owned(),
         });
@@ -482,13 +492,18 @@ fn held(
 }
 
 /// The document at `path` holding `text`, once it is JSON, on its published schema, and one of the two documents the schema describes.
-fn read(path: &str, text: &str) -> Result<Document, AuditError> {
+fn read(
+    checkers: &crate::schemas::Checkers,
+    path: &str,
+    text: &str,
+) -> Result<Document, AuditError> {
     let value: Value =
         crate::strictjson::from_str(text).map_err(|source| AuditError::Unparsable {
             path: path.to_owned(),
             source,
         })?;
-    crate::schemas::Checker::assurance_report()?
+    checkers
+        .assurance_report()
         .check(&value)
         .map_err(|source| AuditError::OffSchema {
             path: path.to_owned(),

@@ -485,6 +485,17 @@ pub struct Evidence {
     /// What a person calls each of those targets, by identity.
     /// A record names identities, because a name is what a reader reads and an identity is what a route decides.
     pub names: BTreeMap<String, String>,
+    /// Where answers are carried across an edit no execution of them entered, and what they are keyed on beside the mutation's locus (ADR 0041); nothing where this run cannot key one.
+    pub carry: Option<Carry>,
+}
+
+/// The store of carried answers, and everything a record is filed under but the locus.
+#[derive(Debug, Clone)]
+pub struct Carry {
+    /// The records.
+    pub store: rust_mutants::carry::Store,
+    /// What the engine and this runner decide an answer under.
+    pub keyed: rust_mutants::outcomes::Keyed,
 }
 
 impl Evidence {
@@ -598,11 +609,13 @@ pub fn run_resuming(
 
     let available = schedule::available()?;
     let worker_count = schedule::workers(options.jobs, available, options.exclusive);
-    let measured = schedule::measure(&mutants, worker_count, |_at, mutant| {
-        establish(mutant, &judging, resume.state, &rejected)
-    })?;
+    let measured = schedule::measure(
+        &mutants,
+        &schedule::Crew::threads(worker_count, "njutest-measure"),
+        |_at, mutant| establish(mutant, &judging, resume.state, &rejected),
+    )?;
 
-    for (index, answer) in measured.into_iter().enumerate() {
+    for (index, (_mutant, answer)) in measured.into_iter().enumerate() {
         let judged = answer?;
         let done = u64::try_from(index)
             .map_err(|error| crate::targets::TargetError::invalid("mutation progress", error))?
@@ -756,7 +769,12 @@ fn establish(
         }
     } else {
         let route = session.route(mutant);
-        let consulted = reuse(options, &route, mutant.id.as_str());
+        let consulted = match reuse(options, &route, mutant.id.as_str()) {
+            Consulted::Refused(exact) => carried(judging, mutant, &route, exact)?,
+            consulted @ (Consulted::NotKept
+            | Consulted::Believed { .. }
+            | Consulted::CarryRefused { .. }) => consulted,
+        };
         match judging.subject.perturbing {
             Perturbing::Mutants => record_route(watch, mutant, &route, &consulted),
             Perturbing::Faults => record_fault_route(watch, mutant, &route),
@@ -765,17 +783,19 @@ fn establish(
             disposition,
             answered,
             run_id,
+            rule: _,
         } = consulted
         {
             source = Some(run_id);
             routing = Some(crate::report::Routing::of(&route, answered));
             disposition
         } else {
-            let (established, asked) = judge(judging, mutant, route.clone())?;
+            let (established, asked, ran) = judge(judging, mutant, route.clone())?;
             match keep(options, mutant.id.as_str(), (&route, &asked), &established)? {
                 Kept::Written => {}
                 Kept::NotKept(_costs_the_next_run_its_time_and_this_one_no_verdict) => {}
             }
+            carry_answer(judging, mutant, &established, &ran)?;
             routing = Some(crate::report::Routing::of(&route, asked));
             established
         }
@@ -896,11 +916,21 @@ fn record_route(watch: Watch<'_>, mutant: &Mutant, route: &Route, consulted: &Co
         considered: route.considered().to_vec(),
         reused: match consulted {
             Consulted::Believed { run_id, .. } => Some(run_id.clone()),
-            Consulted::NotKept | Consulted::Refused(_) => None,
+            Consulted::NotKept | Consulted::Refused(_) | Consulted::CarryRefused { .. } => None,
         },
         refused: match consulted {
-            Consulted::Refused(refusal) => Some(refusal.name().to_owned()),
+            Consulted::Refused(refusal) | Consulted::CarryRefused { exact: refusal, .. } => {
+                Some(refusal.name().to_owned())
+            }
             Consulted::NotKept | Consulted::Believed { .. } => None,
+        },
+        rule: match consulted {
+            Consulted::Believed { rule, .. } => Some(*rule),
+            Consulted::NotKept | Consulted::Refused(_) | Consulted::CarryRefused { .. } => None,
+        },
+        carry_refused: match consulted {
+            Consulted::CarryRefused { carried, .. } => Some(carried.name().to_owned()),
+            Consulted::NotKept | Consulted::Refused(_) | Consulted::Believed { .. } => None,
         },
     });
 }
@@ -918,9 +948,18 @@ pub enum Consulted {
         answered: Vec<crate::report::Answered>,
         /// The run that established it.
         run_id: String,
+        /// The store it came out of.
+        rule: crate::trace::ReuseRule,
     },
     /// A store was asked and this run may not believe what it holds.
     Refused(store::Refusal),
+    /// This tree's store had no answer this run may believe, and the answer an earlier tree left under the mutation's locus fails a premise of ADR 0041.
+    CarryRefused {
+        /// Why this tree's store did not answer.
+        exact: store::Refusal,
+        /// The premise the carried answer fails.
+        carried: rust_mutants::carry::Refusal,
+    },
 }
 
 /// What an earlier run established about this mutant, or why this run may not believe it.
@@ -946,7 +985,8 @@ pub fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Consulte
             });
         }
     };
-    let asking = match asking(route, evidence) {
+    let first = killer_of(evidence, &record);
+    let asking = match asking(route, evidence, first.as_deref()) {
         Ok(named) => named,
         Err(refusal) => return Consulted::Refused(refusal),
     };
@@ -988,7 +1028,131 @@ pub fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Consulte
         disposition,
         answered,
         run_id: record.run_id,
+        rule: crate::trace::ReuseRule::Exact,
     }
+}
+
+/// What an earlier tree established about this mutation, where every premise of ADR 0041 carries it across the edit between them, or why it does not; `exact` is why this tree's own store did not answer.
+///
+/// # Errors
+/// Planning the route or reading the tree the premises are checked against.
+fn carried(
+    judging: &Judging<'_>,
+    mutant: &Mutant,
+    route: &Route,
+    exact: store::Refusal,
+) -> Result<Consulted, crate::error::RunnerError> {
+    let (session, options, watch) = (judging.subject.session, judging.options, judging.watch);
+    let carry = match options
+        .evidence
+        .as_ref()
+        .and_then(|evidence| evidence.carry.as_ref())
+    {
+        Some(carry) if judging.subject.perturbing == Perturbing::Mutants => carry,
+        Some(_) | None => return Ok(Consulted::Refused(exact)),
+    };
+    let Some(locus) = session.locus(mutant) else {
+        return Ok(Consulted::Refused(exact));
+    };
+    let record = match carry
+        .store
+        .get(&rust_mutants::carry::key(&carry.keyed, &locus))
+    {
+        Ok(Some(record)) => record,
+        Ok(None) => return Ok(Consulted::Refused(exact)),
+        Err(unreadable) => {
+            return Ok(Consulted::Refused(store::Refusal::Unreadable {
+                message: unreadable.to_string(),
+            }));
+        }
+    };
+    if let Err(refusal) = session.believing(&record, mutant, (&options.test_args, watch.cancel))? {
+        return Ok(Consulted::CarryRefused {
+            exact,
+            carried: refusal,
+        });
+    }
+    let answered: Vec<crate::report::Answered> = record
+        .executions
+        .iter()
+        .map(|execution| crate::report::Answered {
+            target: execution.target.clone(),
+            outcome: if execution.detected {
+                Recorded::Killed
+            } else {
+                Recorded::Survived
+            },
+        })
+        .collect();
+    let disposition = match record.outcome {
+        rust_mutants::outcomes::CacheOutcome::Killed => Disposition::Killed {
+            by: record.target.clone(),
+        },
+        rust_mutants::outcomes::CacheOutcome::Survived => Disposition::Survived {
+            route: route.clone(),
+        },
+    };
+    Ok(Consulted::Believed {
+        disposition,
+        answered,
+        run_id: record.run_id,
+        rule: crate::trace::ReuseRule::Carried,
+    })
+}
+
+/// Files what this run established about `mutant` under its locus, with every execution in `ran` it rests on, so a later tree that differs only where none of them went can carry it (ADR 0041).
+/// Only a kill or a survival of a mutation, established in full by a run that carries answers and was not cancelled, is filed.
+///
+/// # Errors
+/// Planning the route, or writing the record.
+fn carry_answer(
+    judging: &Judging<'_>,
+    mutant: &Mutant,
+    disposition: &Disposition,
+    ran: &[MutantResult],
+) -> Result<(), crate::error::RunnerError> {
+    let (session, options, watch) = (judging.subject.session, judging.options, judging.watch);
+    let Some((evidence, carry)) = options
+        .evidence
+        .as_ref()
+        .and_then(|evidence| Some((evidence, evidence.carry.as_ref()?)))
+    else {
+        return Ok(());
+    };
+    if judging.subject.perturbing != Perturbing::Mutants || watch.cancel.is_cancelled() {
+        return Ok(());
+    }
+    let outcome = match disposition {
+        Disposition::Killed { .. } => rust_mutants::outcomes::CacheOutcome::Killed,
+        Disposition::Survived { .. } => rust_mutants::outcomes::CacheOutcome::Survived,
+        Disposition::StepLimitReached { .. }
+        | Disposition::Waited { .. }
+        | Disposition::Rejected { .. }
+        | Disposition::Unreached
+        | Disposition::Equivalent { .. }
+        | Disposition::Unconfirmed { .. }
+        | Disposition::Errored { .. } => return Ok(()),
+    };
+    let Some(answering) = ran.last() else {
+        return Ok(());
+    };
+    let answered = rust_mutants::session::Answered {
+        keyed: carry.keyed.clone(),
+        outcome,
+        target: answering.target.clone(),
+        tests_run: answering.tests_run(),
+        failed_tests: answering.failed_tests.clone(),
+        run_id: evidence.run_id.clone(),
+    };
+    if let Some(record) =
+        session.carrying(mutant, (&options.test_args, watch.cancel), (answered, ran))?
+    {
+        carry
+            .store
+            .put(&record)
+            .map_err(|source| crate::error::RunnerError::Carry { source })?;
+    }
+    Ok(())
 }
 
 /// The answers a run gave up to and including the kill by `by`, from the ones it gave `before`.
@@ -1004,13 +1168,48 @@ fn through(
         .collect()
 }
 
-/// The identities of the targets a route names, in the order a run asks them.
+/// The identities of the targets a route names, in the order a run asks them: `first` before the rest where the route names it.
 ///
 /// # Errors
 /// Names the first target this run's baseline has no identity for.
-fn asking(route: &Route, evidence: &Evidence) -> Result<Vec<String>, store::Refusal> {
+fn asking(
+    route: &Route,
+    evidence: &Evidence,
+    first: Option<&str>,
+) -> Result<Vec<String>, store::Refusal> {
+    evidence.identities(&ordered(route, first))
+}
+
+/// The targets a route names, in the order a run asks them: the one that killed the mutation last time first, where the route still names it, and the rest in name order.
+/// A kill is the first failure any target gives, so asking the likeliest first ends the most executions soonest, and which target that is changes no answer.
+fn ordered<'a>(route: &'a Route, first: Option<&str>) -> Vec<&'a str> {
     let names: BTreeSet<&str> = route.reaching().into_iter().collect();
-    evidence.identities(&names.into_iter().collect::<Vec<_>>())
+    let first = first.and_then(|first| names.iter().copied().find(|name| *name == first));
+    first
+        .into_iter()
+        .chain(names.iter().copied().filter(|name| Some(*name) != first))
+        .collect()
+}
+
+/// The name of the target an earlier run's record says killed the mutation, whatever else of it this run may not believe.
+fn killer_of(evidence: &Evidence, record: &store::Record) -> Option<String> {
+    match &record.outcome {
+        store::Outcome::Killed { target, .. } => evidence.names.get(target).cloned(),
+        store::Outcome::Survived { .. } => None,
+    }
+}
+
+/// The target an earlier run's record says killed `mutant`, where this run keeps a store that holds one, to be asked first.
+fn remembered_killer(options: &MutationOptions, mutant: &str) -> Option<String> {
+    let evidence = options.evidence.as_ref()?;
+    let Ok(mutant) = rust_mutants::id::HexDigest::try_from(mutant) else {
+        return None;
+    };
+    match store::read(&evidence.root, &mutant) {
+        Ok(Some(record)) => killer_of(evidence, &record),
+        Ok(None) => None,
+        Err(_unreadable_so_nothing_is_asked_first) => None,
+    }
 }
 
 /// What became of one run's attempt to record what it established for the next one.
@@ -1433,17 +1632,18 @@ fn judge(
     judging: &Judging<'_>,
     mutant: &Mutant,
     route: Route,
-) -> Result<(Disposition, Vec<crate::report::Answered>), crate::error::RunnerError> {
+) -> Result<Judgement, crate::error::RunnerError> {
     let baseline = judging.subject.baseline;
     if let Route::Discharged { .. } = route {
-        return Ok((Disposition::Survived { route }, Vec::new()));
+        return Ok((Disposition::Survived { route }, Vec::new(), Vec::new()));
     }
     if route.reaching().is_empty() {
-        return Ok((Disposition::Unreached, Vec::new()));
+        return Ok((Disposition::Unreached, Vec::new(), Vec::new()));
     }
+    let mut ran = Vec::new();
     let mut aggregation = Aggregation::new();
-    let targets: BTreeSet<&str> = route.reaching().into_iter().collect();
-    for target in targets {
+    let first = remembered_killer(judging.options, mutant.id.as_str());
+    for target in ordered(&route, first.as_deref()) {
         let Some(measured) = baseline
             .iter()
             .find(|measured| measured.target.name() == target)
@@ -1451,15 +1651,35 @@ fn judge(
             aggregation.missing(target);
             continue;
         };
-        let established = against(judging, mutant, Some(measured))?;
+        let (established, result) = against(judging, mutant, Some(measured))?;
+        ran.push(result);
         if judging.watch.cancel.is_cancelled() {
             return Err(crate::error::RunnerError::Interrupted);
         }
         if let Some(disposition) = aggregation.observe(judging, (mutant, target), established)? {
-            return Ok((disposition, aggregation.answered));
+            return Ok((disposition, aggregation.answered, ran));
         }
     }
-    aggregation.finish(judging, mutant, route)
+    let (disposition, answered) = aggregation.finish(judging, mutant, route)?;
+    Ok((disposition, answered, ran))
+}
+
+/// What one mutation came to, the answers each target gave in the order they were asked, and every execution behind them.
+type Judgement = (Disposition, Vec<crate::report::Answered>, Vec<MutantResult>);
+
+/// What each execution records of the items its process entered: the union a carried answer rests on where this run carries answers about mutations, and nothing otherwise.
+fn recording(judging: &Judging<'_>) -> rust_mutants::session::Recording {
+    let carries = judging.subject.perturbing == Perturbing::Mutants
+        && judging
+            .options
+            .evidence
+            .as_ref()
+            .is_some_and(|evidence| evidence.carry.is_some());
+    if carries {
+        rust_mutants::session::Recording::Items
+    } else {
+        rust_mutants::session::Recording::Off
+    }
 }
 
 /// What one mutation comes to against one test before the route aggregates every target.
@@ -1467,9 +1687,13 @@ fn against(
     judging: &Judging<'_>,
     mutant: &Mutant,
     measured: Option<&Measured>,
-) -> Result<TargetFact, crate::error::RunnerError> {
+) -> Result<(TargetFact, MutantResult), crate::error::RunnerError> {
     let (session, options, watch) = (judging.subject.session, judging.options, judging.watch);
-    let request = request_for(mutant.id.as_str(), measured, &options.test_args);
+    let request = request_for(
+        mutant.id.as_str(),
+        measured,
+        (&options.test_args, recording(judging)),
+    );
     let mut result = judging
         .quiet
         .shared(|| session.exec(&request, watch.cancel))??;
@@ -1500,7 +1724,7 @@ fn against(
             },
         )?;
     }
-    Ok(fact_of(request, measured, &result))
+    Ok((fact_of(request, measured, &result), result))
 }
 
 /// Runs `judged` again against the moved `target`, records what it came to, and replaces its disposition where the run decided one; whether it did.
@@ -1548,7 +1772,11 @@ fn against_reaching(
     measured: &Measured,
 ) -> Result<(TargetFact, rust_mutants::session::SiteReach), crate::error::RunnerError> {
     let (session, options, watch) = (judging.subject.session, judging.options, judging.watch);
-    let request = request_for(mutant.id.as_str(), Some(measured), &options.test_args);
+    let request = request_for(
+        mutant.id.as_str(),
+        Some(measured),
+        (&options.test_args, rust_mutants::session::Recording::Off),
+    );
     let mut alone = false;
     let (mut result, mut reach) = judging
         .quiet
@@ -1902,10 +2130,16 @@ pub const SUITE: &str = "package-suite";
 
 /// The request that runs one mutant against one test, or against every test the session prepared when no proof says which could notice it.
 #[must_use]
-pub fn request_for(mutant: &str, measured: Option<&Measured>, args: &[String]) -> Request {
-    let request = Request::new(mutant).with_args(args.to_vec());
+pub fn request_for(
+    mutant: &str,
+    measured: Option<&Measured>,
+    (args, entered): (&[String], rust_mutants::session::Recording),
+) -> Request {
+    let request = Request::new(mutant)
+        .with_args(args.to_vec())
+        .recording(entered);
     match measured {
-        Some(one) => request.with_target(one.target.name()),
+        Some(one) => request.with_target(one.target.name()).narrowed(),
         None => request,
     }
 }

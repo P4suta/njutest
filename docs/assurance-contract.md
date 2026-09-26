@@ -340,12 +340,14 @@ A believed record is an execution that did not happen, so this is a layer and [A
 `target-unknown`, `not-routed`, `key-changed`, `not-passing`,
 `target-entered`, `nothing-routed` — and never both.
 A run that kept no store of earlier answers records neither, which is what parts it from a run whose store refuses everything: told only how long the two took, nobody can tell them apart.
+A reused answer's route also names the store it came out of, `exact` or `carried`, and a carried answer found and not believed names the premise it failed.
 
 #### A kill
 
 Reused when: the mutant has the same content-addressed identity; the recorded killer is a target this run's own coverage still routes to the mutant, after every discharge; that target has the same behaviour key; and this run's own baseline ran that target on the original tree and saw it pass.
 Every behaviour key, and the identity of the run itself, carries the digest of the njutest executable that decided, so an answer one build kept is never believed by another that may mean something else by it; a njutest that cannot read its own executable runs as `--no-cache`.
 The record also carries every target asked before the killer, with its key and what it answered, and is reused only when those are exactly the targets this run would ask before the killer, each with the same key and seen to pass.
+A run asks first the target a record says killed the mutation last time, where its route still reaches it, and the rest in name order: a kill ends at the first failure any target gives, so asking the likeliest first ends the most executions soonest and changes no answer.
 A reused row then carries the answers the recording run was given, so what the whole catalog decides from answers — `hollow-target` among them — is the same whether a run asked again or read back ([ADR 0038](adr/0038-a-read-back-row-carries-its-answers.md)).
 
 #### A survival
@@ -353,6 +355,12 @@ A reused row then carries the answers the recording run was given, so what the w
 Reused when the mutant has the same identity and **every** target this run's coverage routes to it, after every discharge, is one of the recorded targets with the same key, seen to pass by this run's baseline.
 A reaching set smaller than the recorded one is still covered; a target that entered it is a test nothing was ever run against.
 Fuzz targets disqualify a survival in both directions.
+
+#### An answer carried across an edit
+
+Where this tree's own store has no answer to believe, the run asks the store of answers carried across edits ([ADR 0041](adr/0041-an-answer-carries-across-an-edit-it-never-entered.md)), under the mutation's locus: the item its edit is inside, that body's digest, the edit, and everything the engine keys an answer on but the pristine closure, with a digest of what this runner decides an answer under beside it — the platform, the environment, the contract, the versions and the corpora — so an answer one contract or machine established never answers another.
+It is believed only where every premise of that ADR holds, which the engine decides, and is otherwise refused with the word of the premise it failed: `skeleton-changed`, `item-changed`, `unsealed`, `entry-incomplete`, `route-grew`, `filter-differs`, `reach-moved`, or `uncontrolled`.
+Every execution of a mutation runs only the tests the route puts it to, and in a run that keeps a store it also records the items its process entered: that is the execution a carried record says it rests on.
 
 #### A mutant the evidence cannot say nothing reaches
 
@@ -524,6 +532,14 @@ It reads the latest run's report once, and again only when the store points at a
 `DEFECT` means user code violated a baseline, soundness, build, or test contract.
 `INSUFFICIENT` means execution completed but a survivor, flaky or inconclusive outcome, unpersisted fuzz kill, excluded boundary, unsupported Miri operation, or other evidence gap remains.
 `ERROR` covers incomplete accounting and toolchain, provider, filesystem, protocol, or workspace failures.
+
+Whatever a run holds, exactly one verdict is the one it supports:
+`DEFECT` exactly when a finding is a defect, whole or in part;
+otherwise `INSUFFICIENT` when anything was found, or a build observed nothing, asked nothing, or left a row unanswered, or a part's reach moved or a knob shook before the merge settled it;
+otherwise `PARTIAL` for one part of a divided catalog, and the assurance its scope names for the whole.
+A written report is never `ERROR`, which is what a run that came to no report says.
+The runner holds every verdict it writes to this before writing it, for each part, for a shard, and for the whole, and refuses to write one it does not support;
+`cargo xtask proofaudit` holds a recording's verdict to it again without asking the runner.
 
 A limitation is always structured with a stable code.
 Excludes, estimates,

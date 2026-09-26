@@ -403,6 +403,7 @@ fn validate_for_persistence_with_seed(
     conclusion: &super::Conclusion,
     mut violations: Vec<Violation>,
 ) -> Vec<Violation> {
+    violations.extend(held(&Grounds::of_whole(report, conclusion)));
     check_models(
         &ModelAudit {
             contract: report.contract,
@@ -413,6 +414,12 @@ fn validate_for_persistence_with_seed(
         &mut violations,
     );
     violations
+}
+
+/// Everything wrong with one shard's document that is about to be written.
+#[must_use]
+pub fn validate_shard_for_persistence(report: &super::ShardReport) -> Vec<Violation> {
+    held(&Grounds::of_shard(report))
 }
 
 /// Everything wrong with a pre-model whole-catalog lattice.
@@ -1208,24 +1215,8 @@ fn fmt_mutant_finding(f: &mut fmt::Formatter<'_>, id: &str, because: &str) -> fm
     )
 }
 
-/// A verdict and the findings say the same thing, or the report says two things at once.
+/// Every mutation row is tied to exactly the finding its outcome requires.
 fn check_findings(report: &BuildReport, violations: &mut Vec<Violation>) {
-    let findings = report.findings.len();
-    if report.verdict.is_assurance() && findings > 0 {
-        violations.push(Violation::FindingsDisagree {
-            verdict: report.verdict,
-            findings,
-            because: "an assurance is the claim that nothing was found".to_owned(),
-        });
-    }
-    if report.verdict == Verdict::Defect && findings == 0 {
-        violations.push(Violation::FindingsDisagree {
-            verdict: report.verdict,
-            findings,
-            because: "a defect a reader cannot see named is not a defect they can act on"
-                .to_owned(),
-        });
-    }
     for row in &report.mutants {
         let expected = row.outcome.outcome().required_finding(row.accepted);
         let tied: Vec<_> = report
@@ -1376,22 +1367,9 @@ fn check_targets(report: &BuildReport, violations: &mut Vec<Violation>) {
 
 /// Whether the verdict is the one what ran supports.
 fn check_verdict(report: &BuildReport, violations: &mut Vec<Violation>) {
+    violations.extend(held(&Grounds::of_part(report)));
     if !report.verdict.is_assurance() {
         return;
-    }
-    let scoped = match report.run_kind {
-        RunKind::Full => Verdict::Assured,
-        RunKind::Changed => Verdict::ChangeAssured,
-        RunKind::Scoped => Verdict::ScopeAssured,
-    };
-    if report.verdict != scoped {
-        violations.push(Violation::VerdictUnsupported {
-            verdict: report.verdict,
-            because: format!(
-                "a {:?} run assures only what it looked at, which is {scoped:?}",
-                report.run_kind
-            ),
-        });
     }
     let targets = report.accounting.targets;
     if targets.selected == 0 {
@@ -1426,26 +1404,261 @@ fn check_verdict(report: &BuildReport, violations: &mut Vec<Violation>) {
     {
         unsupported("a target record says it failed or was missing while the accounting does not");
     }
-    if report.accounting.mutants.executed == 0 {
-        unsupported(
-            "not one mutation was put to a test; an assurance is the claim that every \
-             mutation was noticed, and a run that made none says nothing about the suite",
-        );
+}
+
+/// The facts a verdict rests on, as one view of a run holds them: one part, a shard's parts together, or the whole catalog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Grounds {
+    /// The verdict the view concludes.
+    pub verdict: Verdict,
+    /// How much of the workspace the run looked at.
+    pub run_kind: RunKind,
+    /// Which part of a divided catalog the view is, when it is one.
+    pub shard: Option<String>,
+    /// How many of its findings are defects in the code under test.
+    pub defects: usize,
+    /// How many findings it carries, defects included.
+    pub findings: usize,
+    /// Whether every build saw a target pass on the original tree.
+    pub observed: bool,
+    /// Whether every build put a mutation to a test.
+    pub asked: bool,
+    /// Why each mutation row that is not an answer is not one.
+    pub unanswered: Vec<String>,
+    /// Whether a reach moved or a knob shook where the findings about it are raised only once the parts are merged.
+    pub unsettled: bool,
+}
+
+impl Grounds {
+    /// What one part of one configured build holds.
+    #[must_use]
+    pub fn of_part(report: &BuildReport) -> Self {
+        Self {
+            verdict: report.verdict,
+            run_kind: report.run_kind,
+            shard: report.scope.shard.clone(),
+            defects: report
+                .findings
+                .iter()
+                .filter(|finding| finding.kind.is_defect())
+                .count(),
+            findings: report.findings.len(),
+            observed: report.accounting.targets.passed > 0,
+            asked: report.accounting.mutants.executed > 0,
+            unanswered: report
+                .mutants
+                .iter()
+                .filter_map(|row| unanswered(&row.id, row.outcome.outcome(), row.accepted))
+                .collect(),
+            unsettled: super::moved(&report.drift) || super::knobs::shaken(&report.knobs),
+        }
     }
-    for row in &report.mutants {
-        let outcome = row.outcome.outcome();
-        if !outcome.answered(row.accepted) {
-            unsupported(&format!(
-                "mutation {} ended as {}{}; that row is not an answer",
-                row.id,
-                outcome.name(),
-                if outcome.review_answerable() {
-                    " without its own review acceptance"
-                } else {
-                    ""
-                }
+}
+
+impl Grounds {
+    /// Whether something the verdict rests on was not established.
+    #[must_use]
+    pub const fn short(&self) -> bool {
+        !self.observed || !self.asked || !self.unanswered.is_empty() || self.unsettled
+    }
+}
+
+impl Grounds {
+    /// What the whole catalog holds, once every part's findings are raised over it.
+    #[must_use]
+    pub fn of_whole(report: &Report, conclusion: &super::Conclusion) -> Self {
+        Self {
+            verdict: conclusion.verdict,
+            run_kind: report.run_kind,
+            shard: report.scope.shard.clone(),
+            defects: conclusion
+                .findings
+                .iter()
+                .filter(|finding| finding.kind.is_defect())
+                .count(),
+            findings: conclusion.findings.len(),
+            observed: report
+                .builds
+                .iter()
+                .all(|build| build.baseline().accounting.targets.passed > 0),
+            asked: report.builds.iter().all(|build| {
+                build
+                    .parts
+                    .iter()
+                    .any(|part| part.accounting.mutants.executed > 0)
+            }),
+            unanswered: conclusion
+                .mutants
+                .iter()
+                .filter(|mutant| {
+                    !matches!(
+                        mutant.decision,
+                        Decision::ModelNoticed | Decision::ModelProved
+                    )
+                })
+                .flat_map(|mutant| {
+                    mutant.by_build.iter().filter_map(|fact| {
+                        unanswered(&mutant.id, fact.decision.outcome(), fact.accepted)
+                    })
+                })
+                .collect(),
+            unsettled: false,
+        }
+    }
+
+    /// What one shard holds across its configured builds, whose drift and knobs are settled only by the merge.
+    #[must_use]
+    pub fn of_shard(report: &super::ShardReport) -> Self {
+        let findings: Vec<&Finding> = report
+            .global_findings
+            .iter()
+            .chain(
+                report
+                    .builds
+                    .iter()
+                    .flat_map(|build| build.source.findings.iter()),
+            )
+            .collect();
+        Self {
+            verdict: report.verdict(),
+            run_kind: report.run_kind,
+            shard: Some(format!("{}/{}", report.shard.index(), report.shard.of())),
+            defects: findings
+                .iter()
+                .filter(|finding| finding.kind.is_defect())
+                .count(),
+            findings: findings.len(),
+            observed: report
+                .builds
+                .iter()
+                .all(|build| build.source.accounting.targets.passed > 0),
+            asked: report
+                .builds
+                .iter()
+                .all(|build| build.source.accounting.mutants.executed > 0),
+            unanswered: report
+                .builds
+                .iter()
+                .flat_map(|build| build.source.mutants.iter())
+                .filter_map(|row| unanswered(&row.id, row.outcome.outcome(), row.accepted))
+                .collect(),
+            unsettled: report.builds.iter().any(|build| {
+                super::moved(&build.source.drift) || super::knobs::shaken(&build.source.knobs)
+            }),
+        }
+    }
+}
+
+/// Why a row that ended as `outcome` is not an answer, or nothing when it is one.
+fn unanswered(id: &str, outcome: Outcome, accepted: bool) -> Option<String> {
+    (!outcome.answered(accepted)).then(|| {
+        format!(
+            "mutation {id} ended as {}{}; that row is not an answer",
+            outcome.name(),
+            if outcome.review_answerable() {
+                " without its own review acceptance"
+            } else {
+                ""
+            }
+        )
+    })
+}
+
+/// Everything `grounds.verdict` claims that the rest of `grounds` does not support; whatever the rest holds, exactly one verdict draws nothing.
+#[must_use]
+pub fn held(grounds: &Grounds) -> Vec<Violation> {
+    let mut violations = Vec::new();
+    let verdict = grounds.verdict;
+    let unsupported = |because: String| Violation::VerdictUnsupported { verdict, because };
+    match (verdict, grounds.shard.as_deref()) {
+        (Verdict::Assured | Verdict::ChangeAssured | Verdict::ScopeAssured, None) => {
+            let scoped = match grounds.run_kind {
+                RunKind::Full => Verdict::Assured,
+                RunKind::Changed => Verdict::ChangeAssured,
+                RunKind::Scoped => Verdict::ScopeAssured,
+            };
+            if verdict != scoped {
+                violations.push(unsupported(format!(
+                    "a {:?} run assures only what it looked at, which is {scoped:?}",
+                    grounds.run_kind
+                )));
+            }
+            established(grounds, &mut violations);
+        }
+        (Verdict::Assured | Verdict::ChangeAssured | Verdict::ScopeAssured, Some(shard)) => {
+            violations.push(unsupported(format!(
+                "part {shard} of a divided catalog assures nothing on its own"
+            )));
+        }
+        (Verdict::Partial, Some(_)) => established(grounds, &mut violations),
+        (Verdict::Partial, None) => violations.push(unsupported(
+            "PARTIAL is what one part of a divided catalog concludes, and this records no shard"
+                .to_owned(),
+        )),
+        (Verdict::Defect, _) if grounds.defects == 0 => {
+            violations.push(Violation::FindingsDisagree {
+                verdict,
+                findings: grounds.findings,
+                because: "a defect a reader cannot see named is not a defect they can act on"
+                    .to_owned(),
+            });
+        }
+        (Verdict::Insufficient, _) if grounds.defects > 0 => {
+            violations.push(Violation::FindingsDisagree {
+                verdict,
+                findings: grounds.findings,
+                because: "a run that found a defect says DEFECT, whole or in part".to_owned(),
+            });
+        }
+        (Verdict::Insufficient, _) if grounds.findings == 0 && !grounds.short() => {
+            violations.push(unsupported(
+                "nothing was found, and every build observed, asked and answered everything \
+                 it catalogued, so the run established more than it says"
+                    .to_owned(),
             ));
         }
+        (Verdict::Defect | Verdict::Insufficient, _) => {}
+        (Verdict::Error, _) => violations.push(unsupported(
+            "a report is what a run that came to a verdict writes, and ERROR is what one that \
+             came to none says"
+                .to_owned(),
+        )),
+    }
+    violations
+}
+
+/// What an assurance and a part both claim: nothing was found, and every build observed, asked and answered everything it catalogued.
+fn established(grounds: &Grounds, violations: &mut Vec<Violation>) {
+    let verdict = grounds.verdict;
+    let unsupported = |because: String| Violation::VerdictUnsupported { verdict, because };
+    if grounds.findings > 0 {
+        violations.push(Violation::FindingsDisagree {
+            verdict,
+            findings: grounds.findings,
+            because: "an assurance is the claim that nothing was found, and a finding in a part \
+                      is a finding"
+                .to_owned(),
+        });
+    }
+    if !grounds.observed {
+        violations.push(unsupported(
+            "a build saw no target pass on the original tree, so nothing was observed".to_owned(),
+        ));
+    }
+    if !grounds.asked {
+        violations.push(unsupported(
+            "not one mutation was put to a test; an assurance is the claim that every mutation \
+             was noticed, and a run that made none says nothing about the suite"
+                .to_owned(),
+        ));
+    }
+    violations.extend(grounds.unanswered.iter().cloned().map(unsupported));
+    if grounds.unsettled {
+        violations.push(unsupported(
+            "a reach moved or a knob shook, and what that unsettles is decided only when the \
+             parts are merged"
+                .to_owned(),
+        ));
     }
 }
 

@@ -35,6 +35,8 @@ Reach alone cannot prove a binary single-threaded.
    A call or method whose name starts with `spawn` on any receiver, a path call to `scope`, rayon, crossbeam, a thread pool or a parallel iterator, a runtime's `main` or `test` attribute and `new_multi_thread` each make it `concurrent`.
    An `extern` block, a `links` key, and `pthread_create` make it `not-proven` as `native-code`, because code no Rust source here shows can start threads without a token saying so.
    A file that is not Rust's tokens, or not UTF-8, is `unread`, and never read as a file that starts nothing.
+   What the closure compiled is what cargo reported of the session's own pristine build, and nothing inferred from a directory: every unit's inputs from the dep-info of exactly the units its `compiler-artifact` messages name, read by the engine's one dep-info reader, and every build script's linking from its `build-script-executed` message, whose `linked_libs` already hold every spelling of a library; a `rustc-link-arg` reaches no message, so the output beside the directory cargo gave that script is read for it, and an output that is not there is taken to link.
+   A file the compiler read that is not `.rs` is code where a source of its package holds the tokens `include` `!`, however spaced or delimited, and data otherwise.
    A raw identifier is read as the name it spells, so `r#spawn` is `spawn`.
    A file is held to being Rust's tokens and parsed no further: no rule reads more than tokens, and a parser recurses through a chain of unary operators or nested generics that no limit on the source could bound.
    A file whose brackets nest deeper than 128 outside its comments and literals is `unread` before it is lexed, because its token tree is built and dropped recursively and would end the run on a small enough stack.
@@ -61,7 +63,8 @@ Reach alone cannot prove a binary single-threaded.
 
 Most real projects state `schedule-not-explored` for their doctest binaries, and for every binary whose closure holds an async runtime or a parallel iterator.
 That is the dimension saying where it cannot speak, which is what `whole-v1` will read as a hole.
-Reading a large closure costs time once per package per run; the packages are immutable by id, so a cache keyed by id and version is the next change.
+Reading a large closure costs time once per package per run, so the packages are read as many at a time as the configuration's `jobs` allows on this machine, even where a resource makes the run measure its mutations one at a time, since reading a file starts nothing a resource guards; that holds this repository's 282 packages to about a third of the time one reader takes.
+A cache across runs is not taken: a stale entry would be a proof of nothing, and its key would have to name the scanner's own rules as well as the package, which no key here can be checked to do.
 
 ## Alternatives
 

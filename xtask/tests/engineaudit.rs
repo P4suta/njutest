@@ -43,13 +43,14 @@ const fn asked<'a>(
 
 fn audited(document: &serde_json::Value) -> Audit {
     let directory = run_directory(document);
-    gates::engine_audit(&asked(directory.path(), None, None)).expect("a report this audit can read")
+    gates::engine_audit(&checkers(), &asked(directory.path(), None, None))
+        .expect("a report this audit can read")
 }
 
 fn audited_with(document: &serde_json::Value, events: &[serde_json::Value]) -> Audit {
     let run = run_directory(document);
     let trace = recorded(events);
-    gates::engine_audit(&asked(run.path(), Some(trace.path()), None))
+    gates::engine_audit(&checkers(), &asked(run.path(), Some(trace.path()), None))
         .expect("a report this audit can read")
 }
 
@@ -109,7 +110,7 @@ fn a_row_without_byte_offsets_is_not_a_report() {
         "the fixture has an offset"
     );
     let run = run_directory(&document);
-    let error = gates::engine_audit(&asked(run.path(), None, None))
+    let error = gates::engine_audit(&checkers(), &asked(run.path(), None, None))
         .expect_err("a report missing an identity input must fail at the boundary");
     assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 }
@@ -325,14 +326,17 @@ fn the_parts_of_one_catalog_recount_to_the_whole() {
     let part = tempfile::tempdir().expect("a temporary directory");
     let path = part.path().join("run-report-v1.json");
     std::fs::write(&path, other.to_string()).expect("the part");
-    let audit = gates::engine_audit(&gates::EngineRun {
-        run: run.path(),
-        trace: None,
-        shards: &[path],
-        ledger: None,
-        sites: false,
-        root: None,
-    })
+    let audit = gates::engine_audit(
+        &checkers(),
+        &gates::EngineRun {
+            run: run.path(),
+            trace: None,
+            shards: &[path],
+            ledger: None,
+            sites: false,
+            root: None,
+        },
+    )
     .expect("a report this audit can read");
     let found = violations(&audit, Layer::Merge);
     assert!(
@@ -568,7 +572,7 @@ fn a_survivor_the_ledger_does_not_explain_fails_the_dogfood_gate() {
         "findings": [{ "kind": "surviving-mutant", "mutant": short(SURVIVED), "detail": "no test noticed it" }]
     }));
     let run = run_directory(&document);
-    let audit = gates::engine_audit(&asked(run.path(), None, Some(&path)))
+    let audit = gates::engine_audit(&checkers(), &asked(run.path(), None, Some(&path)))
         .expect("a report this audit can read");
     let found = violations(&audit, Layer::Ledger);
     assert_eq!(found.len(), 1, "{audit}");
@@ -590,7 +594,7 @@ fn a_ledger_that_accepts_what_the_run_does_not_hold_is_a_violation() {
     )
     .expect("the ledger");
     let run = run_directory(&base());
-    let audit = gates::engine_audit(&asked(run.path(), None, Some(&path)))
+    let audit = gates::engine_audit(&checkers(), &asked(run.path(), None, Some(&path)))
         .expect("a report this audit can read");
     let found = violations(&audit, Layer::Ledger);
     assert_eq!(found.len(), 1, "{audit}");
@@ -610,7 +614,7 @@ fn a_ledger_that_explains_every_survivor_is_silent() {
     )
     .expect("the ledger");
     let run = run_directory(&base());
-    let audit = gates::engine_audit(&asked(run.path(), None, Some(&path)))
+    let audit = gates::engine_audit(&checkers(), &asked(run.path(), None, Some(&path)))
         .expect("a report this audit can read");
     assert_eq!(
         violations(&audit, Layer::Ledger),
@@ -632,7 +636,7 @@ fn the_exit_code_follows_the_violations() {
 #[test]
 fn a_directory_without_a_report_is_neither_clean_nor_broken() {
     let directory = tempfile::tempdir().expect("a temporary directory");
-    let error = gates::engine_audit(&asked(directory.path(), None, None))
+    let error = gates::engine_audit(&checkers(), &asked(directory.path(), None, None))
         .expect_err("a directory with no report");
     assert!(matches!(error, AuditError::Unreadable { .. }), "{error}");
     assert_eq!(EXIT_UNREADABLE, 2);
@@ -643,23 +647,26 @@ fn every_explicit_evidence_path_must_be_readable() {
     let run = run_directory(&base());
     let missing = run.path().join("missing");
 
-    let error = gates::engine_audit(&asked(run.path(), Some(&missing), None))
+    let error = gates::engine_audit(&checkers(), &asked(run.path(), Some(&missing), None))
         .expect_err("an explicitly requested recording must exist");
     assert!(matches!(error, AuditError::Unreadable { .. }), "{error}");
 
     let shards = [missing.clone()];
-    let error = gates::engine_audit(&gates::EngineRun {
-        run: run.path(),
-        trace: None,
-        shards: &shards,
-        ledger: None,
-        sites: false,
-        root: None,
-    })
+    let error = gates::engine_audit(
+        &checkers(),
+        &gates::EngineRun {
+            run: run.path(),
+            trace: None,
+            shards: &shards,
+            ledger: None,
+            sites: false,
+            root: None,
+        },
+    )
     .expect_err("an explicitly requested shard must exist");
     assert!(matches!(error, AuditError::Unreadable { .. }), "{error}");
 
-    let error = gates::engine_audit(&asked(run.path(), None, Some(&missing)))
+    let error = gates::engine_audit(&checkers(), &asked(run.path(), None, Some(&missing)))
         .expect_err("an explicitly requested ledger must exist");
     assert!(matches!(error, AuditError::Unreadable { .. }), "{error}");
 }
@@ -669,7 +676,7 @@ fn malformed_explicit_evidence_is_neither_absent_nor_unaudited() {
     let run = run_directory(&base());
     let trace = tempfile::tempdir().expect("a temporary directory");
     std::fs::write(trace.path().join("trace.jsonl"), "not json\n").expect("the corrupt recording");
-    let error = gates::engine_audit(&asked(run.path(), Some(trace.path()), None))
+    let error = gates::engine_audit(&checkers(), &asked(run.path(), Some(trace.path()), None))
         .expect_err("corrupt recording evidence must fail closed");
     assert!(
         matches!(error, AuditError::MalformedRecording { .. }),
@@ -679,14 +686,17 @@ fn malformed_explicit_evidence_is_neither_absent_nor_unaudited() {
     let shard = run.path().join("shard.json");
     std::fs::write(&shard, "not json").expect("the corrupt shard");
     let shards = [shard];
-    let error = gates::engine_audit(&gates::EngineRun {
-        run: run.path(),
-        trace: None,
-        shards: &shards,
-        ledger: None,
-        sites: false,
-        root: None,
-    })
+    let error = gates::engine_audit(
+        &checkers(),
+        &gates::EngineRun {
+            run: run.path(),
+            trace: None,
+            shards: &shards,
+            ledger: None,
+            sites: false,
+            root: None,
+        },
+    )
     .expect_err("a corrupt shard must fail closed");
     assert!(
         matches!(error, AuditError::MalformedEvidence { .. }),
@@ -695,7 +705,7 @@ fn malformed_explicit_evidence_is_neither_absent_nor_unaudited() {
 
     let ledger = run.path().join("ledger.toml");
     std::fs::write(&ledger, "[[").expect("the corrupt ledger");
-    let error = gates::engine_audit(&asked(run.path(), None, Some(&ledger)))
+    let error = gates::engine_audit(&checkers(), &asked(run.path(), None, Some(&ledger)))
         .expect_err("a corrupt ledger must fail closed");
     assert!(
         matches!(error, AuditError::MalformedLedger { .. }),
@@ -708,7 +718,7 @@ fn optional_run_evidence_is_optional_only_when_not_found() {
     let run = run_directory(&base());
     std::fs::write(run.path().join("reached-v1.json"), "not json")
         .expect("the corrupt optional evidence");
-    let error = gates::engine_audit(&asked(run.path(), None, None))
+    let error = gates::engine_audit(&checkers(), &asked(run.path(), None, None))
         .expect_err("present but corrupt optional evidence must fail closed");
     assert!(
         matches!(error, AuditError::MalformedEvidence { .. }),
@@ -718,7 +728,7 @@ fn optional_run_evidence_is_optional_only_when_not_found() {
     std::fs::write(run.path().join("reached-v1.json"), "{}").expect("replace the corrupt evidence");
     std::fs::write(run.path().join("probe"), "not a directory")
         .expect("the unreadable probe directory");
-    let error = gates::engine_audit(&asked(run.path(), None, None))
+    let error = gates::engine_audit(&checkers(), &asked(run.path(), None, None))
         .expect_err("a present probe path that cannot be traversed must fail closed");
     assert!(matches!(error, AuditError::Unreadable { .. }), "{error}");
 }
@@ -734,7 +744,7 @@ fn a_document_that_is_not_a_run_report_is_refused_by_name() {
         document.to_string(),
     )
     .expect("the document");
-    let error = gates::engine_audit(&asked(directory.path(), None, None))
+    let error = gates::engine_audit(&checkers(), &asked(directory.path(), None, None))
         .expect_err("a document that is not a run report");
     assert!(
         error.to_string().contains("rust-mutants/catalog"),
@@ -746,7 +756,7 @@ fn a_document_that_is_not_a_run_report_is_refused_by_name() {
 fn a_historical_report_is_not_silently_read_as_the_current_contract() {
     let document = with(serde_json::json!({ "schema_version": 1 }));
     let run = run_directory(&document);
-    let error = gates::engine_audit(&asked(run.path(), None, None))
+    let error = gates::engine_audit(&checkers(), &asked(run.path(), None, None))
         .expect_err("v1 and v1 assign different meanings to outcome columns");
     assert!(
         matches!(error, AuditError::UnsupportedVersion { .. }),
@@ -760,14 +770,14 @@ fn the_report_boundary_rejects_unknown_fields_and_closed_state_values() {
     let mut unknown = base();
     unknown["mutants"][0]["outocme"] = serde_json::json!("killed");
     let run = run_directory(&unknown);
-    let error = gates::engine_audit(&asked(run.path(), None, None))
+    let error = gates::engine_audit(&checkers(), &asked(run.path(), None, None))
         .expect_err("an unknown field must not look like ignored evidence");
     assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 
     let mut open_state = base();
     open_state["mutants"][0]["outcome"] = serde_json::json!("probably-killed");
     let run = run_directory(&open_state);
-    let error = gates::engine_audit(&asked(run.path(), None, None))
+    let error = gates::engine_audit(&checkers(), &asked(run.path(), None, None))
         .expect_err("an outcome outside the closed contract must not enter the audit");
     assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 }
@@ -781,8 +791,13 @@ fn the_report_boundary_rejects_duplicate_keys() {
         duplicated, encoded,
         "the duplicate was planted, so the refusal below is about it"
     );
-    let error = xtask::engineaudit::audit("duplicate.json", &duplicated, &Evidence::default())
-        .expect_err("a duplicate key must not silently choose a winner");
+    let error = xtask::engineaudit::audit(
+        &xtask::schemas::Checkers::compiled().expect("the published schemas compile"),
+        "duplicate.json",
+        &duplicated,
+        &Evidence::default(),
+    )
+    .expect_err("a duplicate key must not silently choose a winner");
     assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
 }
 
@@ -798,6 +813,7 @@ fn nullable_report_fields_are_required_even_when_their_value_is_null() {
         "the fixture has a nullable score"
     );
     let error = xtask::engineaudit::audit(
+        &xtask::schemas::Checkers::compiled().expect("the published schemas compile"),
         "missing-score.json",
         &missing_score.to_string(),
         &Evidence::default(),
@@ -815,6 +831,7 @@ fn nullable_report_fields_are_required_even_when_their_value_is_null() {
         "the fixture has a nullable route"
     );
     let error = xtask::engineaudit::audit(
+        &xtask::schemas::Checkers::compiled().expect("the published schemas compile"),
         "missing-route.json",
         &missing_route.to_string(),
         &Evidence::default(),
@@ -856,8 +873,13 @@ fn owned_evidence_is_exact_after_the_duplicate_key_boundary() {
             carried: None,
             root: None,
         };
-        let error = xtask::engineaudit::audit("report.json", &report, &evidence)
-            .expect_err("an owned evidence document must match its exact schema");
+        let error = xtask::engineaudit::audit(
+            &xtask::schemas::Checkers::compiled().expect("the published schemas compile"),
+            "report.json",
+            &report,
+            &evidence,
+        )
+        .expect_err("an owned evidence document must match its exact schema");
         assert!(
             matches!(error, AuditError::MalformedEvidence { .. }),
             "{error}"
@@ -896,14 +918,17 @@ fn every_layer_is_silent_on_the_clean_run_and_loud_on_the_perturbations_that_are
     for planted_for in Layer::ALL {
         for perturbation in planted_for.planted() {
             let laid = perturbation.lay().expect("the perturbation on disk");
-            let audit = gates::engine_audit(&gates::EngineRun {
-                run: laid.run(),
-                trace: Some(laid.trace()),
-                shards: laid.shards(),
-                ledger: laid.ledger(),
-                sites: true,
-                root: laid.root(),
-            })
+            let audit = gates::engine_audit(
+                &checkers(),
+                &gates::EngineRun {
+                    run: laid.run(),
+                    trace: Some(laid.trace()),
+                    shards: laid.shards(),
+                    ledger: laid.ledger(),
+                    sites: true,
+                    root: laid.root(),
+                },
+            )
             .expect("a report this audit can read");
             let spoke: Vec<Layer> = Layer::ALL
                 .into_iter()
@@ -944,7 +969,7 @@ fn every_committed_run_re_decides_with_nothing_the_audit_disagrees_with() {
     for (name, mutants, rejections) in SAMPLES {
         let run = sample(name);
         let trace = run.join("trace");
-        let audited = gates::engine_audit(&asked(&run, Some(&trace), None));
+        let audited = gates::engine_audit(&checkers(), &asked(&run, Some(&trace), None));
         assert_eq!(
             result_state(&audited),
             ResultState::Returned,
@@ -964,8 +989,8 @@ fn every_committed_run_re_decides_with_nothing_the_audit_disagrees_with() {
 #[test]
 fn a_committed_run_read_without_its_recording_leaves_the_trace_layer_unaudited() {
     let run = sample("engine-run-simple");
-    let audit =
-        gates::engine_audit(&asked(&run, None, None)).expect("a report this audit can read");
+    let audit = gates::engine_audit(&checkers(), &asked(&run, None, None))
+        .expect("a report this audit can read");
     assert_eq!(audit.violations(), 0, "{audit}");
     let remarks = audit.of(Layer::Trace);
     assert_eq!(remarks.len(), 1, "{audit}");
@@ -982,7 +1007,7 @@ fn a_committed_run_whose_recording_lost_a_line_is_a_violation() {
     let trace = tempfile::tempdir().expect("a temporary directory");
     std::fs::write(trace.path().join("trace.jsonl"), lines.join("\n"))
         .expect("the shortened recording");
-    let audit = gates::engine_audit(&asked(&run, Some(trace.path()), None))
+    let audit = gates::engine_audit(&checkers(), &asked(&run, Some(trace.path()), None))
         .expect("a report this audit can read");
     assert!(
         violations(&audit, Layer::Trace)
@@ -1087,7 +1112,8 @@ fn audited_with_evidence(
         catalog.to_string(),
     )
     .expect("the catalog");
-    gates::engine_audit(&asked(directory.path(), None, None)).expect("a report this audit can read")
+    gates::engine_audit(&checkers(), &asked(directory.path(), None, None))
+        .expect("a report this audit can read")
 }
 
 #[test]
@@ -1372,7 +1398,8 @@ fn with_record(document: &serde_json::Value, record: &serde_json::Value) -> Audi
     let directory = run_directory(document);
     std::fs::write(directory.path().join("touched-v1.json"), record.to_string())
         .expect("the record");
-    gates::engine_audit(&asked(directory.path(), None, None)).expect("a report this audit can read")
+    gates::engine_audit(&checkers(), &asked(directory.path(), None, None))
+        .expect("a report this audit can read")
 }
 
 #[test]
@@ -1837,8 +1864,11 @@ fn simple_with_touched(edit: impl FnOnce(&mut serde_json::Value)) -> Audit {
     .expect("a touched document");
     edit(&mut touched);
     std::fs::write(&path, touched.to_string()).expect("the edited record");
-    gates::engine_audit(&asked(run.path(), Some(&committed.join("trace")), None))
-        .expect("a report this audit can read")
+    gates::engine_audit(
+        &checkers(),
+        &asked(run.path(), Some(&committed.join("trace")), None),
+    )
+    .expect("a report this audit can read")
 }
 
 #[test]
@@ -2030,4 +2060,9 @@ fn a_claim_is_held_to_where_it_says_it_holds_on_the_target_the_run_recorded() {
              refused from the recorded target alone: {audit}"
         );
     }
+}
+
+/// Every published schema, compiled.
+fn checkers() -> xtask::schemas::Checkers {
+    xtask::schemas::Checkers::compiled().expect("the published schemas compile")
 }

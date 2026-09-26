@@ -21,12 +21,10 @@ pub struct Repair {
 }
 
 /// Every repair record of a runner recording, in the order it was written.
-///
-/// # Errors
-/// A corrupt non-empty line is rejected rather than disappearing from the evidence.
-pub fn read(recorded: &str) -> Result<Vec<Repair>, crate::route::ReadError> {
+#[must_use]
+pub fn read(recorded: &crate::route::Checked<crate::schemas::RunnerLines>) -> Vec<Repair> {
     let mut repairs = Vec::new();
-    for event in crate::route::events(recorded, crate::schemas::Producer::Runner)? {
+    for event in recorded.events() {
         if event.get("type").and_then(Value::as_str) != Some("repair") {
             continue;
         }
@@ -48,7 +46,7 @@ pub fn read(recorded: &str) -> Result<Vec<Repair>, crate::route::ReadError> {
             reached: text("reached"),
         });
     }
-    Ok(repairs)
+    repairs
 }
 
 /// What one repair's own evidence decides: whether its run reached the site, and the dispositions it may now carry.
@@ -62,7 +60,7 @@ pub struct Derived {
 
 /// Where a repair's evidence cannot be read into a decision.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum Contradiction {
+pub enum RepairContradictionError {
     /// No execution of the mutant against the target was recorded.
     #[error("no execution of it against {target} was recorded")]
     NotRun {
@@ -77,7 +75,7 @@ pub enum Contradiction {
     },
 }
 
-impl crate::error::Coded for Contradiction {
+impl crate::error::Coded for RepairContradictionError {
     fn code(&self) -> crate::error::XtCode {
         match self {
             Self::NotRun { .. } | Self::Outcome { .. } => crate::error::XtCode::RepairContradicted,
@@ -88,12 +86,12 @@ impl crate::error::Coded for Contradiction {
 /// What a repair of a mutation at `index` whose last execution came to `outcome`, with the repair touch record `touch`, decides, `was` being what it had.
 ///
 /// # Errors
-/// [`Contradiction::Outcome`] for an outcome no run comes to.
+/// [`RepairContradictionError::Outcome`] for an outcome no run comes to.
 pub fn derived(
     was: &str,
     outcome: &str,
     (index, touch): (u64, Option<&crate::drift::Touch>),
-) -> Result<Derived, Contradiction> {
+) -> Result<Derived, RepairContradictionError> {
     let reached = match touch {
         None => "unrecorded",
         Some(touch) if touch.reached.contains(&index) => "reached",
@@ -107,7 +105,7 @@ pub fn derived(
         "step_limit_reached" => vec!["step-limit-reached".to_owned()],
         "errored" | "inconclusive" | "not_run" => vec!["errored".to_owned()],
         other => {
-            return Err(Contradiction::Outcome {
+            return Err(RepairContradictionError::Outcome {
                 outcome: other.to_owned(),
             });
         }
