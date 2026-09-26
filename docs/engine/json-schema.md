@@ -108,6 +108,9 @@ Every other outcome is about a compiler-accepted guard present in that run's bui
 `exit_code` is the one the process returned: `0` every mutant was noticed,
 `1` something was not, `2` the run itself failed, `130` it was interrupted, `143` it was terminated.
 
+A row's `exit_code` is the code its test process returned, or `-1` where no code the process chose decides anything: the run stopped it, at a bound or at the first test its harness said failed.
+A process stopped at its first failing test holds `-1` whether it exited before the stop reached it or not, since which of the two came first is the machine's timing, and a row has to read the same from two runs of one catalogue.
+
 A `finding` is one of `surviving-mutant`, `step-limit-reached-mutant`, `inconclusive-mutant`,
 `waited-mutant`, `errored-mutant`, `not-run-mutant`, `unreached-mutant`,
 `discharged-mutant`, `stale-expectation`, `unmatched-expectation`, or `unmatched-skip`.
