@@ -65,10 +65,6 @@ impl Machine {
         std::fs::write(self.turns.path().join("go"), "").expect("the holder's release");
     }
 
-    fn waiting(&self) -> bool {
-        self.waiters() > 0
-    }
-
     fn waiters(&self) -> usize {
         std::fs::read_dir(self.slots.path())
             .expect("a readable lane directory")
@@ -122,21 +118,27 @@ fn a_second_run_waits_until_the_first_has_ended() {
         until(Duration::from_secs(60), || machine.marker("inside")),
         "the first run never started"
     );
-    let second = machine.run("test ! -e \"$TURNS/inside\"");
+    let progress = machine.turns.path().join("waiting.log");
+    let told = std::fs::File::create(&progress).expect("the waiting run's progress");
+    let mut second = machine.command("test ! -e \"$TURNS/inside\"");
+    second.stderr(Stdio::from(told));
+    let second = SupervisedChild::launch(&mut second).expect("the second run in the lane");
     assert!(
-        until(Duration::from_secs(60), || machine.waiting()),
-        "the second run did not queue behind the first"
+        until(Duration::from_secs(60), || {
+            std::fs::read_to_string(&progress)
+                .is_ok_and(|said| said.contains("waiting for the heavy lane"))
+        }),
+        "the second run did not say it was waiting behind the first"
     );
     machine.release();
     let first = first.wait_with_output().expect("the first run's answer");
     let second = second.wait_with_output().expect("the second run's answer");
+    let waited = std::fs::read_to_string(&progress).expect("the waiting run's progress");
     assert!(first.status.success(), "{}", text(&first.stderr));
     assert!(
         second.status.success(),
-        "the second run started while the first was still inside the lane: {}",
-        text(&second.stderr)
+        "the second run started while the first was still inside the lane: {waited}"
     );
-    let waited = text(&second.stderr);
     assert!(
         waited.contains("waiting for the heavy lane") && waited.contains("$TURNS/go"),
         "a run that waits says what it waits for: {waited}"
