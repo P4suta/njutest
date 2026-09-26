@@ -37,6 +37,8 @@ mod fuzz_ledger;
 mod fuzzclippy;
 #[path = "gates.rs"]
 mod gates;
+#[path = "group_stop.rs"]
+mod group_stop;
 #[path = "invariants.rs"]
 mod invariants;
 #[path = "kani.rs"]

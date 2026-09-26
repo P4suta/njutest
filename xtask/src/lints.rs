@@ -607,7 +607,7 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
         scan.found.extend(foreign_remainders(&parsed, file));
     }
     scan.found.extend(broad_expectations(&parsed, file));
-    if shipped_source(file) && file != GROUP_SIGNALLER {
+    if signals_are_held(file) {
         scan.found.extend(raw_group_signals(&parsed, file));
     }
     scan.found.extend(implied_cfgs(&parsed, file));
@@ -6436,87 +6436,195 @@ fn cfg_constant(meta: &syn::Meta) -> CfgTruth {
     }
 }
 
-/// The one shipped file that signals a process group itself.
-const GROUP_SIGNALLER: &str = "crates/rust-mutants/src/runner/unix.rs";
-
-/// The functions that send a signal to a process or a group by id.
-const RAW_SIGNALS: [&str; 5] = [
-    "kill_process_group",
-    "kill_process",
-    "kill_current_process_group",
-    "killpg",
-    "kill",
+/// The one file for each platform that may signal a process by id: the engine's runner on Unix and on Windows, and xtask's work, which cannot depend on the engine.
+const SIGNALLERS: [&str; 3] = [
+    "crates/rust-mutants/src/runner/unix.rs",
+    "crates/rust-mutants/src/runner/windows.rs",
+    "xtask/src/work.rs",
 ];
 
-/// Every place a shipped file names a function that signals a process or group by id, but the one that does it for everybody.
+/// Every name that sends a signal to a process or a group by id, from any crate that offers one.
+const SIGNALLING_NAMES: [&str; 16] = [
+    "kill",
+    "killpg",
+    "kill_process",
+    "kill_process_group",
+    "kill_current_process_group",
+    "tgkill",
+    "tkill",
+    "sigqueue",
+    "pidfd_send_signal",
+    "SYS_kill",
+    "SYS_tgkill",
+    "SYS_tkill",
+    "SYS_pidfd_send_signal",
+    "TerminateProcess",
+    "TerminateJobObject",
+    "GenerateConsoleCtrlEvent",
+];
+
+/// Programs that signal the processes they are given.
+const SIGNALLING_PROGRAMS: [&str; 8] = [
+    "kill",
+    "pkill",
+    "killall",
+    "taskkill",
+    "kill.exe",
+    "taskkill.exe",
+    "/bin/kill",
+    "/usr/bin/kill",
+];
+
+/// The file that defines this rule, which names every way to signal in order to refuse it.
+const SIGNAL_RULE: &str = "xtask/src/lints.rs";
+
+/// Whether `file` is code that runs for somebody, crate or xtask, where signalling by id is held to one place.
+fn signals_are_held(file: &str) -> bool {
+    (file.starts_with("crates/") || file.starts_with("xtask/"))
+        && file.contains("/src/")
+        && ships(file)
+        && !SIGNALLERS.contains(&file)
+        && file != SIGNAL_RULE
+}
+
+/// Every place a file names a way to signal a process by id, but for the one place that does it and code compiled only for tests.
 fn raw_group_signals(parsed: &syn::File, file: &str) -> Vec<Finding> {
     let mut visitor = RawSignal {
         file,
+        tests: 0,
         found: Vec::new(),
     };
     visitor.visit_file(parsed);
     visitor.found
 }
 
-/// Every signalling function a file names, by path, import, or macro token.
+/// How many enclosing items are compiled only for tests, and every signalling name outside them, by path, import, macro token or program.
 struct RawSignal<'a> {
     file: &'a str,
+    tests: usize,
     found: Vec<Finding>,
 }
 
+/// Whether `attributes` compile what they sit on only for tests.
+fn compiled_only_for_tests(attributes: &[syn::Attribute]) -> bool {
+    attributes.iter().any(|attribute| match &attribute.meta {
+        syn::Meta::List(list) if list.path.is_ident("cfg") => {
+            list.tokens.to_string() == "test"
+                || all_of(&list.tokens)
+                    .is_some_and(|parts| parts.iter().any(|part| part.to_string() == "test"))
+        }
+        syn::Meta::List(_) | syn::Meta::Path(_) | syn::Meta::NameValue(_) => false,
+    })
+}
+
+/// Whether `name` is one of the ways to signal by id.
+fn signalling(name: &proc_macro2::Ident) -> bool {
+    SIGNALLING_NAMES.contains(&name.to_string().as_str())
+}
+
 impl RawSignal<'_> {
-    fn note(&mut self, span: proc_macro2::Span) {
-        self.found.push(Finding {
-            kind: Kind::RawGroupSignal,
-            file: self.file.to_owned(),
-            line: span.start().line,
-        });
+    fn within(&mut self, attributes: &[syn::Attribute], walk: impl FnOnce(&mut Self)) {
+        let tests = compiled_only_for_tests(attributes);
+        if tests {
+            self.tests = self.tests.saturating_add(1);
+        }
+        walk(self);
+        if tests {
+            self.tests = self.tests.saturating_sub(1);
+        }
     }
 
+    fn note(&mut self, span: proc_macro2::Span) {
+        if self.tests == 0 {
+            self.found.push(Finding {
+                kind: Kind::RawGroupSignal,
+                file: self.file.to_owned(),
+                line: span.start().line,
+            });
+        }
+    }
+
+    /// Every signalling name among `tokens` that is not a method, and every signalling program spelled there.
     fn scan_tokens(&mut self, tokens: &proc_macro2::TokenStream) {
-        for tree in tokens.clone() {
+        let trees: Vec<proc_macro2::TokenTree> = tokens.clone().into_iter().collect();
+        for (at, tree) in trees.iter().enumerate() {
             match tree {
-                proc_macro2::TokenTree::Ident(name) if signals(&name, false) => {
-                    self.note(name.span());
+                proc_macro2::TokenTree::Ident(name) if signalling(name) => {
+                    let method = at > 0
+                        && matches!(
+                            trees.get(at.saturating_sub(1)),
+                            Some(proc_macro2::TokenTree::Punct(dot)) if dot.as_char() == '.'
+                        );
+                    if !method {
+                        self.note(name.span());
+                    }
+                }
+                proc_macro2::TokenTree::Literal(literal) => {
+                    let program = match syn::parse2::<syn::LitStr>(proc_macro2::TokenStream::from(
+                        tree.clone(),
+                    )) {
+                        Ok(text) => SIGNALLING_PROGRAMS.contains(&text.value().as_str()),
+                        Err(_not_a_string) => false,
+                    };
+                    if program {
+                        self.note(literal.span());
+                    }
                 }
                 proc_macro2::TokenTree::Group(group) => self.scan_tokens(&group.stream()),
-                proc_macro2::TokenTree::Ident(_)
-                | proc_macro2::TokenTree::Punct(_)
-                | proc_macro2::TokenTree::Literal(_) => {}
+                proc_macro2::TokenTree::Ident(_) | proc_macro2::TokenTree::Punct(_) => {}
             }
         }
     }
 }
 
-/// Whether `name` is a function that signals by id; a bare `kill` counts only where a path or import says it is the C library's, since a child's own `kill` is a method.
-fn signals(name: &proc_macro2::Ident, qualified: bool) -> bool {
-    let name = name.to_string();
-    RAW_SIGNALS.contains(&name.as_str()) && (qualified || name != "kill")
-}
-
 impl Visit<'_> for RawSignal<'_> {
+    fn visit_item(&mut self, item: &syn::Item) {
+        self.within(item_attributes(item), |walk| {
+            syn::visit::visit_item(walk, item);
+        });
+    }
+
+    fn visit_impl_item(&mut self, item: &syn::ImplItem) {
+        let attributes: &[syn::Attribute] = match item {
+            syn::ImplItem::Const(one) => &one.attrs,
+            syn::ImplItem::Fn(one) => &one.attrs,
+            syn::ImplItem::Type(one) => &one.attrs,
+            syn::ImplItem::Macro(one) => &one.attrs,
+            _ => &[],
+        };
+        self.within(attributes, |walk| syn::visit::visit_impl_item(walk, item));
+    }
+
     fn visit_path(&mut self, path: &syn::Path) {
-        if let Some(last) = path.segments.last() {
-            let qualified = path.segments.len() > 1;
-            if signals(&last.ident, qualified)
-                && (last.ident != "kill"
-                    || path.segments.iter().any(|segment| segment.ident == "libc"))
-            {
-                self.note(last.ident.span());
+        let names: Vec<&syn::PathSegment> = path.segments.iter().collect();
+        for (at, segment) in names.iter().enumerate() {
+            let child_kill = segment.ident == "kill"
+                && at > 0
+                && names
+                    .get(at.saturating_sub(1))
+                    .is_some_and(|before| before.ident == "Child");
+            if signalling(&segment.ident) && !child_kill {
+                self.note(segment.ident.span());
             }
         }
         syn::visit::visit_path(self, path);
     }
 
     fn visit_use_name(&mut self, name: &syn::UseName) {
-        if signals(&name.ident, false) {
+        if signalling(&name.ident) {
             self.note(name.ident.span());
         }
     }
 
     fn visit_use_rename(&mut self, rename: &syn::UseRename) {
-        if signals(&rename.ident, false) {
+        if signalling(&rename.ident) {
             self.note(rename.ident.span());
+        }
+    }
+
+    fn visit_lit_str(&mut self, literal: &syn::LitStr) {
+        if SIGNALLING_PROGRAMS.contains(&literal.value().as_str()) {
+            self.note(literal.span());
         }
     }
 

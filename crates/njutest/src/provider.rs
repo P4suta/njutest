@@ -342,11 +342,11 @@ impl SupervisedChild {
         let waited = self.wait();
         match (killed, waited) {
             (Ok(()), Ok(())) => Ok(()),
-            (Err(kill), Ok(())) => Err(kill),
+            (Err(stopping), Ok(())) => Err(stopping),
             (Ok(()), Err(wait)) => Err(wait),
-            (Err(kill), Err(wait)) => Err(std::io::Error::new(
+            (Err(stopping), Err(wait)) => Err(std::io::Error::new(
                 wait.kind(),
-                format!("cannot kill the provider tree: {kill}; cannot reap it: {wait}"),
+                format!("cannot kill the provider tree: {stopping}; cannot reap it: {wait}"),
             )),
         }
     }
@@ -957,7 +957,14 @@ const fn grouped(_command: &mut Command) {}
     reason = "the same signature as the platform without groups, whose child has to be killed through it"
 )]
 fn kill_tree(child: &mut Child) -> std::io::Result<()> {
-    rust_mutants::runner::stop_group(child.id(), rust_mutants::runner::GroupStop::Kill)
+    match rust_mutants::runner::stop_group(child.id(), rust_mutants::runner::GroupStop::Kill)? {
+        rust_mutants::runner::Stopped::Group => Ok(()),
+        rust_mutants::runner::Stopped::LeaderOnly => Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "the provider's process group refused the stop, and a process besides its leader is \
+             still running or could not be seen, so the provider is not stopped",
+        )),
+    }
 }
 
 #[cfg(not(unix))]

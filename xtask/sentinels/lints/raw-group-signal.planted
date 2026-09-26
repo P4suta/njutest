@@ -10,3 +10,22 @@ fn stop(pid: i32) { unsafe { libc::kill(-pid, 9); } }
 fn stop(pid: i32) { unsafe { libc::killpg(pid, 9); } }
 === in-a-macro source crates/app/src/lib.rs
 macro_rules! stop { ($pid:expr) => { rustix::process::kill_process_group($pid, rustix::process::Signal::TERM) } }
+=== imported-kill source crates/njutest/src/provider.rs
+use libc::kill;
+fn stop(pid: i32) { unsafe { kill(-pid, 9); } }
+=== renamed-kill source crates/njutest/src/provider.rs
+use libc::kill as k;
+=== kill-in-a-macro source crates/njutest/src/provider.rs
+macro_rules! stop { ($pid:expr) => { unsafe { libc::kill($pid, 9) } } }
+=== nix-kill source crates/njutest/src/provider.rs
+fn stop(pid: nix::unistd::Pid) { let _ = nix::sys::signal::kill(pid, nix::sys::signal::SIGKILL); }
+=== aliased-crate source crates/njutest/src/provider.rs
+fn stop(pid: i32) { unsafe { c::kill(pid, 9); } }
+=== kill-program source crates/njutest/src/provider.rs
+fn stop() { let _ = std::process::Command::new("kill"); }
+=== kill-syscall source crates/njutest/src/provider.rs
+fn stop(pid: i64) { unsafe { libc::syscall(libc::SYS_kill, pid, 9); } }
+=== job-object source crates/njutest/src/provider.rs
+fn stop(job: isize) { unsafe { TerminateJobObject(job, 1); } }
+=== xtask-beside-its-one-place source xtask/src/lanes.rs
+fn stop(pid: rustix::process::Pid) { let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL); }
