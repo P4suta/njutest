@@ -9,8 +9,11 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 A critical decision is one whose mistake changes a verdict, a score, or what a reader is told was measured.
 Each has one row here, and the row says what holds it at every layer: a cell names the items of the tree that do, or says `none`.
-A `none` is a hole somebody owns: `xtask/invariant_gaps.txt` lists it as `<decision> <layer> <owner>`, the two agree both ways, and the ledger may shrink and never grow, which `xtask/invariant_gap_ceiling.txt` holds.
-`cargo xtask invariants`, part of `cargo xtask all`, refuses a cell naming an item the tree does not define, a `none` the ledger gives nobody, and a hole the table does not have.
+A `none` is a hole somebody owns: `xtask/invariant_gaps.txt` lists it as `<decision> <layer> <owner>`, and the two agree both ways.
+`cargo xtask invariants`, part of `cargo xtask all`, refuses a cell naming an item the tree does not define, a `none` the ledger gives nobody, a hole the table does not have, and an oracle named with nothing said in Blind about what it cannot see.
+`cargo xtask ratchets`, also part of `all`, reads this page where the change meets `origin/main` and refuses a layer held there and `none` here, and a decision there that is gone here.
+A decision new to that base enters with whatever it owes, owned in the ledger; a renamed one writes its cell as `new-name (was old-name)`, which carries the base row over to it, and the marker can go once the rename is on `main`.
+A bound kept in the same tree as what it bounds is one the same change can raise, so the comparison is with the base, and every line the gate writes names the commit it compared with.
 
 The layers, and what each one is for:
 

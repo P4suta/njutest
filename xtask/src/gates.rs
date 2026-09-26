@@ -2096,7 +2096,6 @@ pub fn invariants(root: &Path) -> Result<String, GateError> {
     };
     let rows = crate::invariants::rows(&read("docs/invariants.md")?).map_err(coded)?;
     let gaps = crate::invariants::gaps(&read("xtask/invariant_gaps.txt")?).map_err(coded)?;
-    let most = ceiling(root, "xtask/invariant_gap_ceiling.txt")?;
     let mut defined = BTreeSet::new();
     for path in all_sources(root)? {
         let text = std::fs::read_to_string(&path)
@@ -2104,7 +2103,7 @@ pub fn invariants(root: &Path) -> Result<String, GateError> {
         defined.extend(crate::invariants::defined(&text));
     }
     let (decisions, held) =
-        crate::invariants::check(&rows, &gaps, &defined, most).map_err(|refused| {
+        crate::invariants::check(&rows, &gaps, &defined).map_err(|refused| {
             GateError(format!(
                 "invariants: the registry and the tree disagree:\n  {}",
                 refused
@@ -2116,9 +2115,153 @@ pub fn invariants(root: &Path) -> Result<String, GateError> {
         })?;
     Ok(format!(
         "invariants: {decisions} critical decisions, {held} layer cells each naming what the tree \
-         defines, and {} open, each owned in xtask/invariant_gaps.txt (at most {most})",
+         defines, and {} open, each owned in xtask/invariant_gaps.txt; `ratchets` holds them to \
+         the base",
         gaps.len()
     ))
+}
+
+/// The ledgers whose header says they may shrink and never grow, each one number.
+const NEVER_GROW: [&str; 2] = ["xtask/waiver_ceiling.txt", "xtask/seam_ceiling.txt"];
+
+/// Where this change meets `origin/main`, which is what everything that may never grow is held to.
+struct Base {
+    commit: String,
+    said: String,
+}
+
+/// What `git` answers in `root`, or a refusal that names what was asked and how to give it what it needs.
+///
+/// # Errors
+/// Git could not be started, or answered with a failure.
+fn git_answer(root: &Path, args: &[&str]) -> Result<String, GateError> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .map_err(|error| GateError(format!("ratchets: git could not run: {error}")))?;
+    if !output.status.success() {
+        return Err(GateError(format!(
+            "ratchets: `git {}` failed, so what this change is compared with is unknown; fetch \
+             origin/main (CI fetches it whole): {}",
+            args.join(" "),
+            match std::str::from_utf8(&output.stderr) {
+                Ok(said) => said.trim(),
+                Err(_not_text) => "it said something that is not text",
+            }
+        )));
+    }
+    String::from_utf8(output.stdout)
+        .map(|text| text.trim().to_owned())
+        .map_err(|_not_text| {
+            GateError(format!(
+                "ratchets: `git {}` answered in no text",
+                args.join(" ")
+            ))
+        })
+}
+
+impl Base {
+    /// The merge base of `HEAD` with `origin/main`, named the way a person checks it against CI's.
+    ///
+    /// # Errors
+    /// There is no Git, no `origin/main`, or no commit both reach.
+    fn of(root: &Path) -> Result<Self, GateError> {
+        let commit = git_answer(root, &["merge-base", "HEAD", "origin/main"])?;
+        let said = git_answer(root, &["log", "-1", "--format=%h of %cs", &commit])?;
+        Ok(Self { commit, said })
+    }
+
+    /// What `relative` held at the base, or nothing where it did not exist there.
+    ///
+    /// # Errors
+    /// Git could not say.
+    fn read(&self, root: &Path, relative: &str) -> Result<Option<String>, GateError> {
+        let named = format!("{}:{relative}", self.commit);
+        let present = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["cat-file", "-e", &named])
+            .output()
+            .map_err(|error| GateError(format!("ratchets: git could not run: {error}")))?;
+        if !present.status.success() {
+            return Ok(None);
+        }
+        git_answer(root, &["show", &named]).map(Some)
+    }
+}
+
+/// Everything this repository says may shrink and never grow, held to what it was where this change meets `origin/main` rather than to a bound the same change can raise.
+///
+/// # Errors
+/// The base cannot be found, a ledger or the registry cannot be read at either end, or something grew or fell back.
+pub fn ratchets(root: &Path) -> Result<String, GateError> {
+    let base = Base::of(root)?;
+    let mut refused = Vec::new();
+    for ledger in NEVER_GROW {
+        let now = ceiling(root, ledger)?;
+        let Some(then) = base.read(root, ledger)? else {
+            continue;
+        };
+        let then = held_number(ledger, &then)?;
+        if now > then {
+            refused.push(format!(
+                "{ledger} holds {now}, and held {then} at the base: it may shrink and never grow, \
+                 and a bound the same change raises bounds nothing"
+            ));
+        }
+    }
+    let registry = "docs/invariants.md";
+    if let Some(before) = base.read(root, registry)? {
+        let coded = |error: crate::invariants::InvariantError| {
+            GateError(format!("ratchets: {}", error.coded()))
+        };
+        let head = std::fs::read_to_string(root.join(registry))
+            .map_err(|error| GateError(format!("ratchets: {registry}: {error}")))?;
+        let now = crate::invariants::rows(&head).map_err(coded)?;
+        let then = crate::invariants::rows(&before).map_err(coded)?;
+        refused.extend(
+            crate::invariants::regressions(&then, &now)
+                .iter()
+                .map(crate::error::Coded::coded),
+        );
+    }
+    if !refused.is_empty() {
+        return Err(GateError(format!(
+            "ratchets: compared with {} where this change meets origin/main:\n  {}",
+            base.said,
+            refused.join("\n  ")
+        )));
+    }
+    Ok(format!(
+        "ratchets: {} and the registry's held layers, none grown or fallen back since {} where \
+         this change meets origin/main (fetch origin/main to compare with CI's base)",
+        NEVER_GROW.join(" and "),
+        base.said
+    ))
+}
+
+/// The one number a ledger's text at the base holds.
+///
+/// # Errors
+/// The text holds anything but one number.
+fn held_number(relative: &str, text: &str) -> Result<usize, GateError> {
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    let [written] = lines.as_slice() else {
+        return Err(GateError(format!(
+            "ratchets: {relative} at the base holds something other than one number"
+        )));
+    };
+    written.parse::<usize>().map_err(|_not_a_number| {
+        GateError(format!(
+            "ratchets: {relative} at the base holds {written}, which is not a number"
+        ))
+    })
 }
 
 /// Every gate, in order, stopping at the first failure.
@@ -2136,6 +2279,7 @@ pub fn all(root: &Path) -> Result<String, GateError> {
         milestones,
         adrs,
         invariants,
+        ratchets,
         surfaces,
         reached,
         defaulted,
