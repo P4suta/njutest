@@ -258,29 +258,41 @@ impl Group {
         let Some(child) = self.child.as_mut() else {
             return Ok(());
         };
-        signal(child, Sent::Ask)?;
+        let asked_to_stop = signal(child, Sent::Ask);
         let asked = Instant::now();
-        while asked.elapsed() < GRACE && !exited(child)? {
-            std::thread::sleep(POLL);
+        let mut watched = Ok(());
+        while asked.elapsed() < GRACE {
+            match exited(child) {
+                Ok(true) => break,
+                Ok(false) => std::thread::sleep(POLL),
+                Err(unwatched) => {
+                    watched = Err(unwatched);
+                    break;
+                }
+            }
         }
-        signal(child, Sent::Kill)?;
+        let killed = signal(child, Sent::Kill);
         child.wait().map_err(|source| WorkError::Watch { source })?;
         self.child = None;
-        Ok(())
+        killed.and(asked_to_stop).and(watched)
     }
 }
 
 impl Drop for Group {
     fn drop(&mut self) {
-        if self.stop().is_err() {
-            std::process::abort();
+        if let Err(unstopped) = self.stop() {
+            let said = std::io::Write::write_all(&mut std::io::stderr(),
+                format!("xtask: the work's group could not be stopped, so this process ends here: {unstopped}\n").as_bytes());
+            match said {
+                Ok(()) | Err(_) => std::process::abort(),
+            }
         }
     }
 }
 
-/// How hard work is asked to stop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Sent {
+/// How hard work is asked to stop, in the order the asking escalates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub(crate) enum Sent {
     /// `SIGTERM`, the chance to stop cleanly.
     Ask,
     /// `SIGKILL`, after the grace a hung member ignores.
@@ -335,15 +347,21 @@ fn leader_pid(child: &Child) -> Option<rustix::process::Pid> {
 /// Signals the leader's whole group; a group the kernel will not let this process signal whole gets its leader signalled by name, and a group already gone is success.
 #[cfg(unix)]
 fn signal(child: &mut Child, sent: Sent) -> Result<(), WorkError> {
-    use rustix::io::Errno;
-    use rustix::process::{Signal, kill_process, kill_process_group};
-
     let Some(leader) = leader_pid(child) else {
         return match sent {
             Sent::Ask => Ok(()),
             Sent::Kill => child.kill().map_err(|source| WorkError::Watch { source }),
         };
     };
+    signal_group(leader, sent)
+}
+
+/// Signals the group `leader` leads, as [`decide_stop`] decides: a group the kernel will not let this process signal whole gets its leader signalled by name, and is stopped only if a look at it finds nobody else.
+#[cfg(unix)]
+pub(crate) fn signal_group(leader: rustix::process::Pid, sent: Sent) -> Result<(), WorkError> {
+    use rustix::io::Errno;
+    use rustix::process::{Signal, kill_process, kill_process_group};
+
     let signal = match sent {
         Sent::Ask => Signal::TERM,
         Sent::Kill => Signal::KILL,
@@ -381,35 +399,68 @@ const fn delivered(answer: rustix::io::Result<()>) -> Delivered {
     }
 }
 
-/// Who besides `leader` its group holds, as `ps` lists every process with its group and state; a zombie has ended.
+/// Who besides `leader` its group holds, as the machine's processes are listed.
 #[cfg(unix)]
 fn others_than(leader: i32) -> Others {
-    let listed = Command::new("ps")
+    let Ok(leader) = u32::try_from(leader) else {
+        return Others::Unseen;
+    };
+    match listed() {
+        None => Others::Unseen,
+        Some(processes)
+            if processes
+                .iter()
+                .any(|one| one.pid != leader && one.group == leader && !one.ended) =>
+        {
+            Others::Somebody
+        }
+        Some(_) => Others::Nobody,
+    }
+}
+
+/// One process as the machine lists it: its id, the group it belongs to, and whether it has ended and waits only to be reaped.
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Listed {
+    /// Its id.
+    pub pid: u32,
+    /// Its group's id.
+    pub group: u32,
+    /// Whether it is a zombie.
+    pub ended: bool,
+}
+
+/// Every process of the machine with its group and whether it has ended, as `ps` lists them, or nothing when they could not be listed.
+#[cfg(unix)]
+#[must_use]
+pub fn listed() -> Option<Vec<Listed>> {
+    let output = match Command::new("ps")
         .args(["-A", "-o", "pid=,pgid=,stat="])
         .env("LC_ALL", "C")
-        .output();
-    let text = match listed {
-        Ok(output) if output.status.success() => match String::from_utf8(output.stdout) {
-            Ok(text) => text,
-            Err(_not_text) => return Others::Unseen,
-        },
-        Ok(_) | Err(_) => return Others::Unseen,
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        Ok(_) | Err(_) => return None,
     };
-    let member = text.lines().any(|line| {
+    let Ok(text) = String::from_utf8(output.stdout) else {
+        return None;
+    };
+    let mut processes = Vec::new();
+    for line in text.lines() {
         let fields: Vec<&str> = line.split_whitespace().collect();
-        matches!(
-            fields.as_slice(),
-            [pid, group, state, ..]
-                if pid.parse::<i32>().is_ok_and(|pid| pid != leader)
-                    && group.parse::<i32>().is_ok_and(|group| group == leader)
-                    && !state.starts_with('Z')
-        )
-    });
-    if member {
-        Others::Somebody
-    } else {
-        Others::Nobody
+        let [pid, group, state, ..] = fields.as_slice() else {
+            return None;
+        };
+        let (Ok(pid), Ok(group)) = (pid.parse::<u32>(), group.parse::<u32>()) else {
+            return None;
+        };
+        processes.push(Listed {
+            pid,
+            group,
+            ended: state.starts_with('Z'),
+        });
     }
+    Some(processes)
 }
 
 /// What stopping a group reached.

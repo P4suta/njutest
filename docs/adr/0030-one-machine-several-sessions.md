@@ -34,6 +34,8 @@ The gate was a Bash script, and the rule that decides what may run on the machin
    The tree is checked out in place, so what is compiled again is what the diff from the last push feeds.
 3. **One whole-workspace run at a time, by lane.** `cargo xtask slot heavy -- <command>` holds this machine's `heavy` lane for the command's life; the gate holds it from before it touches its tree until it has put the tree back.
    The lane is an operating-system file lock held by the xtask process, opened close-on-exec, so no child — and no daemon a child starts — inherits it, and a holder that dies, however it dies, releases it.
+   The work a dead holder started, which the record names by its leader's process id and start time, answers to nobody: the next holder asks its group to stop, kills it after a grace, and goes in only once it has ended, refusing the lane rather than sharing it when it will not end.
+   Waiting for it to end on its own was the first form of this decision, and a loop that never ended held the lane for every session on the machine (2026-09-26).
    A waiting run says whom it is waiting for and repeats it; `NJUTEST_SLOT_HELD` lets a run already inside the lane through.
    A narrowed run does not take the lane.
 4. **A pass is remembered for an hour**, keyed by the commit, the base the commit-message check reads, and the bytes of the gate binary.
@@ -45,8 +47,13 @@ The gate was a Bash script, and the rule that decides what may run on the machin
 - Pushing the same commit twice runs the gate once.
 - The lane is not first-come-first-served: waiting runs poll, and whichever looks first after the holder ends goes next.
   With a handful of sessions that has not mattered; a queue that orders them is the change to make if it does.
-- The next run waits for the work's leader, not for every process in its group: the compilation cache's server and Git's file monitor stay in the group that started them, so waiting for the whole group could wait forever.
-  A leader that dies before its own children, killed outright or out of memory, therefore lets the next run in while those children still run; that gap is known and left open.
+- A holder that lets the lane go itself writes `released` into the record, and the next run leaves what its work left in its groups: the compilation cache's server and Git's file monitor stay in the group that started them, and are somebody's to keep.
+  A holder that dies never writes it, and then the next run ends every group the record names — the holder's own and each one a run nested inside it started — asking, then killing, and goes in only once a look at each finds nobody that has not ended.
+  A group is the leader's id with the start time recorded for it; a record written in another boot names nothing.
+  Without a handle on a process that outlives its id, one gap stays open: after the work ended, its id can be reused by a new group whose leader then exits while its members run, and a record read in that window names it.
+  A process of the work that starts a session of its own leaves the work's group and session both, so nothing the record names reaches it, and it is left running.
+  A lock taken over a removed lock file is not taken as the holder's death: while the recorded holder still runs since the recorded time, the next run waits for it.
+  A holder whose work could not be stopped lets the lane go without writing `released`, so the next run ends what it left.
 - On Windows nothing reads a process's start time without an unsafe call, so the leader is not recorded, waiting markers are never swept, and a holder killed outright lets the next run in at once; there the lane is only the lock.
 - The work a lane admits has no terminal input: it runs apart from the terminal's foreground group, and a program that stopped to read one would hold the lane for ever.
 - The gate starts the compilation cache's server itself before the check, with an idle timeout longer than the check's budgets, so stopping the check's group never stops the server every session shares.
