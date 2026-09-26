@@ -128,6 +128,8 @@ enum Gate {
     Adrs,
     /// Every critical decision has a row saying what holds it at every layer, each naming what the tree defines, and every hole is one somebody owns.
     Invariants,
+    /// Everything that may shrink and never grow, held to where this change meets `origin/main`.
+    Ratchets,
     /// Every public function of an incidental surface is reached by something that ships.
     Reached,
     /// No audit reader supplies more values its input never gave than its ceiling allows.
@@ -281,6 +283,7 @@ where
         Gate::Milestones => gates::milestones(&root),
         Gate::Adrs => gates::adrs(&root),
         Gate::Invariants => gates::invariants(&root),
+        Gate::Ratchets => gates::ratchets(&root),
         Gate::Reached => gates::reached(&root),
         Gate::Defaulted => gates::defaulted(&root),
         Gate::Surfaces => gates::surfaces(&root),
