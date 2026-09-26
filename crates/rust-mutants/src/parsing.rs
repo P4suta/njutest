@@ -15,32 +15,15 @@ const CHARGE: usize = 3;
 /// The stack a reading thread runs on, which a long chain of operators needs through the walk, the clone and the drop: reserved rather than committed, so only what a deep file uses is paid for.
 pub const STACK: usize = 64 << 20;
 
-thread_local! {
-    /// What this thread has spent of its location space and may spend, or nothing where it is not a reading thread.
-    static BUDGET: Cell<Option<Budget>> = const { Cell::new(None) };
-}
-
-/// What a reading thread has spent of its location space, and what it may.
-#[derive(Debug, Clone, Copy)]
-struct Budget {
-    spent: usize,
-    ceiling: usize,
-}
-
 /// The right to read Rust text into tokens, which only [`apart`] hands out, on the thread whose locations end with it.
 #[derive(Debug)]
 pub struct Parsing {
+    /// What the reading thread has spent of its location space.
+    spent: Cell<usize>,
+    /// What it may spend.
+    ceiling: usize,
     on_this_thread: PhantomData<*const ()>,
-    #[expect(
-        dead_code,
-        reason = "held for what it prevents: a right that cannot be copied is lent by reference, and every lending is visible"
-    )]
-    lent: Lent,
 }
-
-/// What makes the right one that is lent rather than copied.
-#[derive(Debug)]
-struct Lent;
 
 /// Why Rust text could not be read.
 #[derive(Debug, thiserror::Error)]
@@ -80,9 +63,6 @@ pub enum ReadingError {
     /// The reading thread panicked.
     #[error("the thread that reads Rust source panicked")]
     ThreadPanicked,
-    /// Text was read on a thread no budget was set for, which only a defect in this module can cause.
-    #[error("Rust source was read on a thread that is not a reading thread")]
-    Unbudgeted,
 }
 
 /// Where text is not Rust, and what the parser said there.
@@ -114,8 +94,7 @@ impl ReadingError {
             }),
             unreadable @ (Self::Exhausted { .. }
             | Self::ThreadUnavailable { .. }
-            | Self::ThreadPanicked
-            | Self::Unbudgeted) => Err(unreadable),
+            | Self::ThreadPanicked) => Err(unreadable),
         }
     }
 
@@ -125,9 +104,7 @@ impl ReadingError {
         match self {
             Self::Syntax { .. } => crate::error::READING_SYNTAX,
             Self::Exhausted { .. } => crate::error::READING_EXHAUSTED,
-            Self::ThreadUnavailable { .. } | Self::ThreadPanicked | Self::Unbudgeted => {
-                crate::error::READING_THREAD
-            }
+            Self::ThreadUnavailable { .. } | Self::ThreadPanicked => crate::error::READING_THREAD,
         }
     }
 
@@ -198,38 +175,27 @@ impl Parsing {
     }
 
     /// Charges `text` to this thread's locations before a byte of it is read.
-    #[expect(
-        clippy::unused_self,
-        reason = "the capability is the proof that this thread is a reading thread; charging without one would charge a thread nothing bounds"
-    )]
     fn charge(&self, text: &str) -> Result<(), ReadingError> {
-        BUDGET.with(|budget| {
-            let Some(Budget { spent, ceiling }) = budget.get() else {
-                return Err(ReadingError::Unbudgeted);
-            };
-            let charged = text
-                .len()
-                .checked_mul(CHARGE)
-                .and_then(|cost| cost.checked_add(1));
-            match charged.and_then(|cost| spent.checked_add(cost)) {
-                Some(after) if after <= ceiling => {
-                    budget.set(Some(Budget {
-                        spent: after,
-                        ceiling,
-                    }));
-                    Ok(())
-                }
-                Some(_) | None => Err(ReadingError::Exhausted {
-                    spent,
-                    asked: text.len(),
-                    charged: match charged {
-                        Some(cost) => cost,
-                        None => text.len(),
-                    },
-                    ceiling,
-                }),
+        let spent = self.spent.get();
+        let charged = text
+            .len()
+            .checked_mul(CHARGE)
+            .and_then(|cost| cost.checked_add(1));
+        match charged.and_then(|cost| spent.checked_add(cost)) {
+            Some(after) if after <= self.ceiling => {
+                self.spent.set(after);
+                Ok(())
             }
-        })
+            Some(_) | None => Err(ReadingError::Exhausted {
+                spent,
+                asked: text.len(),
+                charged: match charged {
+                    Some(cost) => cost,
+                    None => text.len(),
+                },
+                ceiling: self.ceiling,
+            }),
+        }
     }
 }
 
@@ -255,7 +221,7 @@ impl<'scope, T: Send + 'scope> ReadingThread<'scope, T> {
     }
 }
 
-/// Runs `work` with the right to read Rust text, on a thread of its own whose locations end with it, or on the reading thread it is already on.
+/// Runs `work` with the right to read Rust text, on a thread of its own whose locations end with it.
 ///
 /// # Errors
 /// The thread could not be started or panicked.
@@ -263,23 +229,17 @@ pub fn apart<T: Send>(work: impl FnOnce(&Parsing) -> T + Send) -> Result<T, Read
     apart_within(CEILING, work)
 }
 
-/// [`apart`], with `ceiling` bytes of location space for a new thread to spend.
+/// [`apart`], with `ceiling` bytes of location space for the thread to spend.
 pub(crate) fn apart_within<T: Send>(
     ceiling: usize,
     work: impl FnOnce(&Parsing) -> T + Send,
 ) -> Result<T, ReadingError> {
-    if BUDGET.with(Cell::get).is_some() {
-        return Ok(work(&Parsing {
-            on_this_thread: PhantomData,
-            lent: Lent,
-        }));
-    }
     std::thread::scope(|scope| {
         ReadingThread::launch(scope, move || {
-            BUDGET.with(|budget| budget.set(Some(Budget { spent: 0, ceiling })));
             work(&Parsing {
+                spent: Cell::new(0),
+                ceiling,
                 on_this_thread: PhantomData,
-                lent: Lent,
             })
         })?
         .join()

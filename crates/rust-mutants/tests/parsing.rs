@@ -107,7 +107,7 @@ fn a_chain_of_operators_deeper_than_a_default_stack_holds_is_read() {
 }
 
 #[test]
-fn a_reading_asked_for_on_a_reading_thread_runs_there() {
+fn a_reading_runs_on_a_thread_of_its_own_and_a_reading_inside_it_on_another() {
     let caller = std::thread::current().id();
     let threads = rust_mutants::parsing::apart(|_| {
         let outer = std::thread::current().id();
@@ -118,9 +118,9 @@ fn a_reading_asked_for_on_a_reading_thread_runs_there() {
         panic!("both readings ran: {threads:?}")
     };
     assert_ne!(outer, caller, "a reading runs on a thread of its own");
-    assert_eq!(
+    assert_ne!(
         inner, outer,
-        "a reading inside a reading runs on the thread already reading, so a file's pieces do not \
-         each start a thread of their own"
+        "a reading holds its own budget, so one inside another is a thread and a budget of its own \
+         rather than a share of the outer one's"
     );
 }

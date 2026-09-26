@@ -127,8 +127,7 @@ fn lex(parsing: &Parsing, src: &str) -> Result<TokenStream, FlattenError> {
         ReadingError::Syntax { message, .. } => FlattenError::Untokenizable { message },
         other @ (ReadingError::Exhausted { .. }
         | ReadingError::ThreadUnavailable { .. }
-        | ReadingError::ThreadPanicked
-        | ReadingError::Unbudgeted) => FlattenError::unread(&other),
+        | ReadingError::ThreadPanicked) => FlattenError::unread(&other),
     })
 }
 
@@ -224,8 +223,7 @@ fn respell(parsing: &Parsing, literal: &Literal) -> Result<String, FlattenError>
         Err(
             unread @ (ReadingError::Exhausted { .. }
             | ReadingError::ThreadUnavailable { .. }
-            | ReadingError::ThreadPanicked
-            | ReadingError::Unbudgeted),
+            | ReadingError::ThreadPanicked),
         ) => return Err(FlattenError::unread(&unread)),
     };
     match parsed {

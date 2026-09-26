@@ -366,8 +366,7 @@ impl InstrumentError {
             crate::parsing::ReadingError::Syntax { .. } => syntax,
             crate::parsing::ReadingError::Exhausted { .. } => InstrumentErrorKind::ReadingExhausted,
             crate::parsing::ReadingError::ThreadUnavailable { .. }
-            | crate::parsing::ReadingError::ThreadPanicked
-            | crate::parsing::ReadingError::Unbudgeted => InstrumentErrorKind::ReadingThread,
+            | crate::parsing::ReadingError::ThreadPanicked => InstrumentErrorKind::ReadingThread,
         };
         Self::new(kind, path, unread.to_string())
     }
@@ -898,8 +897,7 @@ impl File<'_> {
             ),
             crate::parsing::ReadingError::Exhausted { .. }
             | crate::parsing::ReadingError::ThreadUnavailable { .. }
-            | crate::parsing::ReadingError::ThreadPanicked
-            | crate::parsing::ReadingError::Unbudgeted => {
+            | crate::parsing::ReadingError::ThreadPanicked => {
                 InstrumentError::unread(InstrumentErrorKind::Unparsable, self.path, error)
             }
         }
