@@ -414,6 +414,72 @@ fn a_mutation_only_one_of_the_builds_notices_is_a_survivor_that_names_the_other(
 
 #[cfg(unix)]
 #[test]
+fn a_mutation_every_test_declined_to_measure_is_a_gap_the_report_names_as_declined() {
+    let fixture = fixture("fixture-declines");
+    let output = verify(&fixture, &[]);
+    let stdout = njutest_devkit::process::strict_utf8(&output.stdout);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stdout: {stdout}\nstderr: {}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let document = document(&fixture);
+    let mutants = document["builds"][0]["parts"][0]["mutants"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the report lists mutations: {document}"));
+    let of = |item: &str| -> Vec<&serde_json::Value> {
+        mutants.iter().filter(|one| one["item"] == item).collect()
+    };
+    let unmeasured: Vec<&serde_json::Value> = of("shared")
+        .into_iter()
+        .filter(|one| one["decision"]["outcome"] != "killed")
+        .collect();
+    assert_eq!(unmeasured.len(), 2, "{document}");
+    assert!(
+        mutants
+            .iter()
+            .all(|one| one["decision"]["outcome"] != "errored"),
+        "nothing in this fixture fails to run, so nothing in it is errored: {document}"
+    );
+    for row in &unmeasured {
+        assert_eq!(
+            row["decision"]["outcome"], "declined",
+            "every test that reached it declined to measure on this machine, which is a gap \
+             in what the run could see and not a harness that failed: {row}"
+        );
+    }
+    let counted = of("counted");
+    assert!(
+        !counted.is_empty()
+            && counted
+                .iter()
+                .all(|one| one["decision"]["outcome"] == "survived"),
+        "a test that measured and noticed nothing is a survivor however many others declined \
+         beside it: {document}"
+    );
+    let halved = of("halved");
+    assert!(
+        !halved.is_empty()
+            && halved
+                .iter()
+                .all(|one| one["decision"]["outcome"] == "survived"),
+        "the unit tests declined to measure `halved` and the integration test measured it and \
+         noticed nothing: that is a survivor, and the declines of one target do not outweigh \
+         what another measured: {document}"
+    );
+    let findings = findings_of(&fixture, "not-measured");
+    assert!(
+        findings.iter().any(|finding| finding["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("tests::doubles_what_it_shares")
+                && detail.contains("this machine cannot share blocks"))),
+        "the gap names the test that declined and its words: {findings:#?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn a_suite_with_a_gap_it_cannot_see_is_insufficient() {
     let fixture = fixture("fixture-baseline");
     let output = verify(&fixture, &[]);

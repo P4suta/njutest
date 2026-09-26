@@ -363,6 +363,14 @@ fn a_baseline_inherits_none_of_the_variables_a_run_composes_for_itself() {
             OsString::from("RUST_MUTANTS_TOUCH"),
             OsString::from("/somebody/elses/log"),
         ),
+        (
+            OsString::from(if cfg!(windows) {
+                "rust_mutants_steps"
+            } else {
+                "RUST_MUTANTS_STEPS"
+            }),
+            OsString::from("9"),
+        ),
         (OsString::from("TMPDIR"), OsString::from("/tmp")),
     ];
     let baseline = environment(
@@ -391,6 +399,15 @@ fn a_baseline_inherits_none_of_the_variables_a_run_composes_for_itself() {
         .iter()
         .map(|(name, _)| exact_os_text(name))
         .collect();
+    assert!(
+        !baseline.iter().any(|(name, _)| {
+            rust_mutants::execute::COMPOSED_ENV
+                .iter()
+                .any(|composed| rust_mutants::vars::same_name(name, OsStr::new(composed)))
+        }),
+        "a composed variable spelled the way the platform takes for the same name is the same \
+         variable, and no test process inherits it either: {names:?}"
+    );
     assert!(
         !names.iter().any(|name| name.starts_with("RUST_MUTANTS_")),
         "a touch log an outer run owns is one this run would append its own answers to: {names:?}"

@@ -3,10 +3,10 @@
   "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260926t050822788z",
-    "started_at": "2026-09-26T05:08:22.788302939Z",
-    "finished_at": "2026-09-26T05:08:25.241697418Z",
-    "duration_ms": 219,
+    "id": "20260926t054312965z",
+    "started_at": "2026-09-26T05:43:12.965165626Z",
+    "finished_at": "2026-09-26T05:43:15.647018977Z",
+    "duration_ms": 210,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -18,7 +18,7 @@
   "workspace": {
     "root_name": "fixture-rejectable",
     "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "11b0e4a02da5eb7c35ac722499417deb75a7e8083525feda60e4b71f08f06e2b",
+    "workspace_digest": "74be636cb965cd861a5a11e5ae3b6569a1355ae21aadd505644a43f44ba8f7b2",
     "catalog_digest": "05ce4412ca26140ff556abf263fc400e9b1fa58b1d5908a3e491bfb14ae71d4d",
     "platform": {
       "os": "gnu",

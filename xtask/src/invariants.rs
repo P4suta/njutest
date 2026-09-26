@@ -55,8 +55,12 @@ pub enum Cell {
 pub struct Row {
     /// The decision's name.
     pub decision: String,
+    /// The name the decision had at the base, where this change renames it: its cell reads `new (was old)`.
+    pub was: Option<String>,
     /// What holds it, layer by layer.
     pub cells: BTreeMap<Layer, Cell>,
+    /// What the oracle cannot see.
+    pub blind: String,
 }
 
 /// One hole in the registry, and who owns closing it.
@@ -119,17 +123,35 @@ pub enum InvariantError {
         /// Who the ledger says owns it.
         owner: String,
     },
-    /// The gaps ledger holds more holes than its ceiling allows.
+    /// A row names an oracle and does not say what that oracle cannot see.
     #[error(
-        "xtask/invariant_gaps.txt lists {count} hole(s) and xtask/invariant_gap_ceiling.txt \
-         allows {most}; the ledger may shrink and never grow, so a new critical decision arrives \
-         with what holds it"
+        "docs/invariants.md: {decision} names an oracle and leaves Blind empty; say what the \
+         oracle cannot see, so its silence there is not read as coverage"
     )]
-    Grown {
-        /// How many it lists.
-        count: usize,
-        /// How many the ceiling allows.
-        most: usize,
+    Unblind {
+        /// The decision.
+        decision: String,
+    },
+    /// A layer held at the base is open here.
+    #[error(
+        "docs/invariants.md: {decision} was held at {layer} at the base and is `none` here; a \
+         layer that held may not open again"
+    )]
+    Reopened {
+        /// The decision.
+        decision: String,
+        /// The layer's column.
+        layer: &'static str,
+    },
+    /// A decision the base has is gone.
+    #[error(
+        "docs/invariants.md: {decision} is at the base and not here; keep its row, or rename it \
+         by writing the new row's decision as `new-name (was {decision})`, which carries the \
+         base row over to it"
+    )]
+    Vanished {
+        /// The decision.
+        decision: String,
     },
 }
 
@@ -140,7 +162,9 @@ impl crate::error::Coded for InvariantError {
             | Self::Unheld { .. }
             | Self::Unowned { .. }
             | Self::Stale { .. }
-            | Self::Grown { .. } => crate::error::XtCode::InvariantRegistry,
+            | Self::Unblind { .. }
+            | Self::Reopened { .. }
+            | Self::Vanished { .. } => crate::error::XtCode::InvariantRegistry,
         }
     }
 }
@@ -222,7 +246,7 @@ pub fn rows(page: &str) -> Result<Vec<Row>, InvariantError> {
             plant,
             mutation,
             states,
-            _,
+            blind,
         ] = line.as_slice()
         else {
             return Err(shape(format!(
@@ -231,7 +255,14 @@ pub fn rows(page: &str) -> Result<Vec<Row>, InvariantError> {
                 HEADER.len()
             )));
         };
-        if rows.iter().any(|row| row.decision == *decision) {
+        let (decision, was) = match decision
+            .strip_suffix(')')
+            .and_then(|head| head.split_once(" (was "))
+        {
+            Some((name, old)) => (name, Some(old.to_owned())),
+            None => (*decision, None),
+        };
+        if rows.iter().any(|row| row.decision == decision) {
             return Err(shape(format!("{decision} is listed twice")));
         }
         let texts = [types, check, oracle, plant, mutation, states];
@@ -240,8 +271,10 @@ pub fn rows(page: &str) -> Result<Vec<Row>, InvariantError> {
             held.insert(layer, cell(text, decision)?);
         }
         rows.push(Row {
-            decision: (*decision).to_owned(),
+            decision: decision.to_owned(),
+            was,
             cells: held,
+            blind: (*blind).to_owned(),
         });
     }
     Ok(rows)
@@ -320,16 +353,20 @@ pub fn defined(source: &str) -> BTreeSet<String> {
 /// Every way the registry, the gaps ledger and the tree disagree, or how many decisions and cells hold.
 ///
 /// # Errors
-/// Each cell naming what the tree does not define, each open cell nobody owns, each listed hole the registry does not have, and a ledger grown past its ceiling.
+/// Each cell naming what the tree does not define, each open cell nobody owns, each listed hole the registry does not have, and each row whose oracle is named with nothing said about what it cannot see.
 pub fn check(
     rows: &[Row],
     gaps: &[Gap],
     defined: &BTreeSet<String>,
-    ceiling: usize,
 ) -> Result<(usize, usize), Vec<InvariantError>> {
     let mut refused = Vec::new();
     let mut held = 0_usize;
     for row in rows {
+        if matches!(row.cells.get(&Layer::Oracle), Some(Cell::Held(_))) && row.blind.is_empty() {
+            refused.push(InvariantError::Unblind {
+                decision: row.decision.clone(),
+            });
+        }
         for (layer, cell) in &row.cells {
             match cell {
                 Cell::Held(names) => {
@@ -368,15 +405,39 @@ pub fn check(
             });
         }
     }
-    if gaps.len() > ceiling {
-        refused.push(InvariantError::Grown {
-            count: gaps.len(),
-            most: ceiling,
-        });
-    }
     if refused.is_empty() {
         Ok((rows.len(), held))
     } else {
         Err(refused)
     }
+}
+
+/// Every way the registry has fallen back since `base`: a layer held there and open here, and a decision there that is gone, where a row renamed with `new (was old)` carries `old` over.
+///
+/// A decision the base does not have enters with whatever it owes, since a new decision with owned holes is the registry doing its work.
+#[must_use]
+pub fn regressions(base: &[Row], head: &[Row]) -> Vec<InvariantError> {
+    let mut refused = Vec::new();
+    for before in base {
+        let now = head.iter().find(|row| {
+            row.decision == before.decision || row.was.as_deref() == Some(before.decision.as_str())
+        });
+        let Some(now) = now else {
+            refused.push(InvariantError::Vanished {
+                decision: before.decision.clone(),
+            });
+            continue;
+        };
+        for (layer, cell) in &before.cells {
+            let reopened =
+                matches!(cell, Cell::Held(_)) && now.cells.get(layer) == Some(&Cell::Open);
+            if reopened {
+                refused.push(InvariantError::Reopened {
+                    decision: now.decision.clone(),
+                    layer: layer.column(),
+                });
+            }
+        }
+    }
+    refused
 }

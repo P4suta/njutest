@@ -22,3 +22,25 @@ pub fn lf(source: &str) -> String {
 pub fn read_through(text: &str, module: &str) -> Result<(), syn::Error> {
     crate::instrument::read_through(text, module)
 }
+
+/// How many bytes of source discovery read back to hold the operator swaps of `source`, or nothing once that stopped fitting.
+///
+/// # Errors
+/// The source is not a file discovery reads.
+pub fn read_back(source: &str) -> Result<Option<usize>, crate::syntax::SyntaxError> {
+    let registry = crate::rule::Registry::canonical();
+    crate::syntax::discover_counting(
+        "src/lib.rs",
+        source.as_bytes(),
+        &crate::syntax::Selection::tier(&registry, crate::rule::Tier::All),
+    )
+    .map(|(_, read)| read)
+}
+
+/// How many items of `source` read alone as its file reads them, and the bytes of each that does not, past any byte order mark or shebang.
+///
+/// # Errors
+/// The source does not parse.
+pub fn items_read_alone(source: &str) -> Result<(usize, Vec<std::ops::Range<usize>>), syn::Error> {
+    crate::syntax::items_read_alone(source)
+}

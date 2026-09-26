@@ -1054,7 +1054,8 @@ impl Journal {
             | mutation::Disposition::Unreached
             | mutation::Disposition::Equivalent { .. }
             | mutation::Disposition::Unconfirmed { .. }
-            | mutation::Disposition::Errored { .. } => return Ok(()),
+            | mutation::Disposition::Errored { .. }
+            | mutation::Disposition::Declined { .. } => return Ok(()),
         };
         self.state.record_mutant(crate::checkpoint::SavedMutant {
             id: judged.id.clone(),

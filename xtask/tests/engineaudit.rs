@@ -956,7 +956,7 @@ const SAMPLES: [(&str, usize, usize); 4] = [
     ("engine-run-simple", 13, 0),
     ("engine-run-rejected", 16, 4),
     ("engine-run-unreached", 8, 0),
-    ("engine-run-declined", 25, 0),
+    ("engine-run-declined", 29, 0),
 ];
 
 #[test]

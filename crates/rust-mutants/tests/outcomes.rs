@@ -258,3 +258,22 @@ fn a_record_that_does_not_say_which_runner_asked_is_refused_rather_than_read_as_
         "`null` says the engine asked"
     );
 }
+
+#[test]
+fn a_declared_name_is_read_as_the_platform_spells_names() {
+    let names = std::collections::BTreeSet::from(["REQUIRE_SHARING".to_owned()]);
+    let exact =
+        rust_mutants::outcomes::Declared::of(&names, &[("REQUIRE_SHARING".into(), "1".into())]);
+    let otherwise =
+        rust_mutants::outcomes::Declared::of(&names, &[("Require_Sharing".into(), "1".into())]);
+    assert_eq!(
+        exact == otherwise,
+        rust_mutants::vars::same_name(
+            std::ffi::OsStr::new("REQUIRE_SHARING"),
+            std::ffi::OsStr::new("Require_Sharing")
+        ),
+        "a variable the tests read under a name the platform takes as the declared one is the \
+         declared one, so the key and the process read it alike: on Windows `Require_Sharing` \
+         is `REQUIRE_SHARING`, and a key that hashed it as unset would answer a run that sets it"
+    );
+}

@@ -686,6 +686,22 @@ fn declined_only_under_the_mutation_is_a_kill(report: &serde_json::Value) {
             "a survivor stands on the test that measured, with the decline beside it: {row}"
         );
     }
+    let elsewhere: Vec<&serde_json::Value> = rows_of(report, "halved")
+        .into_iter()
+        .filter(|one| one["outcome"] == "survived")
+        .collect();
+    assert!(!elsewhere.is_empty(), "{report}");
+    for row in &elsewhere {
+        assert_eq!(
+            declined(row),
+            [(
+                "tests::halves_what_it_shares".to_owned(),
+                CANNOT_SHARE.to_owned()
+            )],
+            "the integration target measured and noticed nothing, and the unit target's decline \
+             is recorded beside the survivor it did not outweigh: {row}"
+        );
+    }
 }
 
 /// What `second` read back from the run `first` reported: nothing that rested on a decline, and everything else.

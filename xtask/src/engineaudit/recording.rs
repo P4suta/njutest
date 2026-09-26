@@ -397,9 +397,9 @@ fn baseline_declines(
     excused
 }
 
-/// A row's declines and what they made of it, re-derived from the execution it rests on and the declines its target's baseline made (ADR 0043).
+/// A row's declines and what they made of it, re-derived from its executions and the declines each target's baseline made (ADR 0043).
 ///
-/// A decline the baseline did not make, in the same words, is a detection; declines of every test the execution ran leave it measuring nothing; and a row says which tests declined exactly as its execution recorded them.
+/// A decline the baseline did not make, in the same words, is a detection, so only the execution the row rests on may hold one and the row is that test's kill; declines of every test each execution ran leave the mutation measuring nothing; and a row names exactly the declines its executions recorded.
 fn declined(
     row: &Row,
     execs: &[&crate::route::Exec],
@@ -409,7 +409,8 @@ fn declined(
     let Some(answer) = execs.iter().rev().find(|exec| exec.target == row.target) else {
         return;
     };
-    let recorded: BTreeSet<&(String, String)> = answer.declined.iter().collect();
+    let recorded: BTreeSet<&(String, String)> =
+        execs.iter().flat_map(|exec| exec.declined.iter()).collect();
     let claimed: BTreeSet<(String, String)> = row
         .declined
         .iter()
@@ -419,47 +420,56 @@ fn declined(
         notes.violated(
             row.label(),
             format!(
-                "the row says {} declined and its execution against {} recorded {}; a report \
-                 that disagrees with its own recording is not evidence",
+                "the row says {} declined and its executions recorded {}; a report that \
+                 disagrees with its own recording is not evidence",
                 claimed.len(),
-                row.target,
                 recorded.len()
             ),
         );
     }
-    let changed = recorded.iter().find(|one| match excused.get(&row.target) {
-        Some(baseline) => !baseline.contains(**one),
-        None => true,
-    });
-    let every = !recorded.is_empty() && answer.tests_run == Some(count(recorded.len()));
-    match (changed, every) {
-        (Some((test, why)), _) if row.outcome != KILLED || row.killed_by != [test.clone()] => {
-            notes.violated(
+    for exec in execs {
+        let changed = exec
+            .declined
+            .iter()
+            .find(|one| match excused.get(&exec.target) {
+                Some(baseline) => !baseline.contains(*one),
+                None => true,
+            });
+        let answering = std::ptr::eq(*exec, *answer);
+        let every = !exec.declined.is_empty() && exec.tests_run == Some(count(exec.declined.len()));
+        match changed {
+            Some((test, why))
+                if !answering || row.outcome != KILLED || row.killed_by != [test.clone()] =>
+            {
+                notes.violated(
+                    row.label(),
+                    format!(
+                        "{test} declined against {} saying {why:?}, which its baseline did not \
+                         say, so the mutation changed what it did; the row says {} by {:?}",
+                        exec.target, row.outcome, row.killed_by
+                    ),
+                );
+            }
+            None if every && answering && !row.not_run(DECLINED) => {
+                notes.violated(
+                    row.label(),
+                    format!(
+                        "every test that ran against {} declined as its baseline did, so the \
+                         execution measured nothing; the row says {}",
+                        exec.target, row.outcome
+                    ),
+                );
+            }
+            None if !every && row.not_run(DECLINED) => notes.violated(
                 row.label(),
                 format!(
-                    "{test} declined against {} saying {why:?}, which its baseline did not \
-                     say, so the mutation changed what it did; the row says {} by {:?}",
-                    row.target, row.outcome, row.killed_by
+                    "the row says every test declined and its execution against {} holds a test \
+                     that measured",
+                    exec.target
                 ),
-            );
+            ),
+            Some(_) | None => {}
         }
-        (None, true) if !row.not_run(DECLINED) => notes.violated(
-            row.label(),
-            format!(
-                "every test that ran against {} declined as its baseline did, so the execution \
-                 measured nothing; the row says {}",
-                row.target, row.outcome
-            ),
-        ),
-        (None, false) if row.not_run(DECLINED) => notes.violated(
-            row.label(),
-            format!(
-                "the row says every test declined and its execution against {} holds a test \
-                 that measured",
-                row.target
-            ),
-        ),
-        _ => {}
     }
 }
 

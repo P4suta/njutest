@@ -796,7 +796,7 @@ pub enum Decision {
     StepLimitReached,
     /// A bound expired before anything finished, which establishes nothing about the mutation.
     Waited,
-    /// Nothing could be measured: a harness that would not start, or a pair that did not agree.
+    /// Nothing could be measured: a harness that would not start, a pair that did not agree, or tests that declined to measure on this machine.
     Errored,
 }
 
@@ -915,6 +915,8 @@ pub enum Outcome {
     Unconfirmed,
     /// Nothing could be measured.
     Errored,
+    /// Every test that reached it declined to measure on this machine, so nothing here says whether one would notice it (ADR 0043).
+    Declined,
 }
 
 impl Outcome {
@@ -933,6 +935,7 @@ impl Outcome {
             Self::Equivalent => "equivalent",
             Self::Unconfirmed => "unconfirmed",
             Self::Errored => "errored",
+            Self::Declined => "declined",
         }
     }
 
@@ -958,7 +961,26 @@ impl Outcome {
             Self::Survived => Decision::Unnoticed,
             Self::Unreached => Decision::Unreached,
             Self::Equivalent => Decision::Proved,
-            Self::Unconfirmed | Self::Errored => Decision::Errored,
+            Self::Unconfirmed | Self::Errored | Self::Declined => Decision::Errored,
+        }
+    }
+
+    /// Whether a mutation recorded under this outcome was executed: every outcome but a refusal by the compiler and the two that no test ran, a proof and nothing reaching it.
+    ///
+    /// Matched without a catch-all, so an outcome added later is one the compiler makes somebody count on one side.
+    #[must_use]
+    pub const fn executed(self) -> bool {
+        match self {
+            Self::Killed
+            | Self::Survived
+            | Self::StepLimitReached
+            | Self::Waited
+            | Self::ModelNoticed
+            | Self::ModelProved
+            | Self::Unconfirmed
+            | Self::Errored
+            | Self::Declined => true,
+            Self::CompileRejected | Self::Unreached | Self::Equivalent => false,
         }
     }
 
@@ -984,7 +1006,11 @@ impl Outcome {
             | Self::ModelProved
             | Self::Equivalent => true,
             Self::Survived | Self::Unreached => accepted,
-            Self::StepLimitReached | Self::Waited | Self::Unconfirmed | Self::Errored => false,
+            Self::StepLimitReached
+            | Self::Waited
+            | Self::Unconfirmed
+            | Self::Errored
+            | Self::Declined => false,
         }
     }
 
@@ -997,6 +1023,7 @@ impl Outcome {
             Self::Waited => Some(FindingKind::WaitedMutant),
             Self::Unconfirmed => Some(FindingKind::FailingTest),
             Self::Errored => Some(FindingKind::TargetMissing),
+            Self::Declined => Some(FindingKind::NotMeasured),
             Self::CompileRejected
             | Self::Killed
             | Self::ModelNoticed
@@ -1120,6 +1147,11 @@ pub enum Decided {
         /// The target it was running against.
         on: String,
     },
+    /// Every test that reached it declined to measure on this machine, on this target among them.
+    Declined {
+        /// The target it was running against.
+        on: String,
+    },
 }
 
 impl Decided {
@@ -1138,6 +1170,7 @@ impl Decided {
             Self::Equivalent => Outcome::Equivalent,
             Self::Unconfirmed { .. } => Outcome::Unconfirmed,
             Self::Errored { .. } => Outcome::Errored,
+            Self::Declined { .. } => Outcome::Declined,
         }
     }
 
@@ -1161,7 +1194,8 @@ impl Decided {
             Self::StepLimitReached { on, .. }
             | Self::Waited { on }
             | Self::Unconfirmed { on }
-            | Self::Errored { on } => Some(on),
+            | Self::Errored { on }
+            | Self::Declined { on } => Some(on),
             Self::CompileRejected
             | Self::Survived
             | Self::Unreached
@@ -1177,7 +1211,7 @@ impl Decided {
     /// A copy-paste between two arms that both carry an `on` produces English either way; it produces the wrong string only here.
     #[must_use]
     #[cfg(feature = "testkit")]
-    pub fn every() -> [Self; 11] {
+    pub fn every() -> [Self; 12] {
         Outcome::ALL.map(|outcome| Self::specimen(outcome, outcome.name()))
     }
 
@@ -1187,7 +1221,7 @@ impl Decided {
     /// Two arms can describe the same fact and still read apart when each is handed its own name, which is how a collapsed sentence survives a distinctness test built on [`Self::every`].
     #[must_use]
     #[cfg(feature = "testkit")]
-    pub fn every_against(target: &str) -> [Self; 11] {
+    pub fn every_against(target: &str) -> [Self; 12] {
         Outcome::ALL.map(|outcome| Self::specimen(outcome, target))
     }
 
@@ -1216,6 +1250,9 @@ impl Decided {
             Outcome::Errored => Self::Errored {
                 on: target.to_owned(),
             },
+            Outcome::Declined => Self::Declined {
+                on: target.to_owned(),
+            },
         }
     }
 
@@ -1237,6 +1274,7 @@ impl Decided {
             (Outcome::Waited, Some(on), None) => Some(Self::Waited { on }),
             (Outcome::Unconfirmed, Some(on), None) => Some(Self::Unconfirmed { on }),
             (Outcome::Errored, Some(on), None) => Some(Self::Errored { on }),
+            (Outcome::Declined, Some(on), None) => Some(Self::Declined { on }),
             (Outcome::CompileRejected, None, None) => Some(Self::CompileRejected),
             (Outcome::ModelNoticed, None, None) => Some(Self::ModelNoticed),
             (Outcome::ModelProved, None, None) => Some(Self::ModelProved),
@@ -1249,6 +1287,7 @@ impl Decided {
                 | Outcome::Waited
                 | Outcome::Unconfirmed
                 | Outcome::Errored
+                | Outcome::Declined
                 | Outcome::CompileRejected
                 | Outcome::ModelNoticed
                 | Outcome::ModelProved
@@ -1346,7 +1385,8 @@ impl Serialize for Decided {
                 | Self::Unreached
                 | Self::Equivalent
                 | Self::Unconfirmed { .. }
-                | Self::Errored { .. } => None,
+                | Self::Errored { .. }
+                | Self::Declined { .. } => None,
             },
         }
         .serialize(serializer)
@@ -2495,19 +2535,7 @@ fn count_decision(
 fn executed_mutants(part: &BuildPartEvidence) -> usize {
     part.mutants
         .iter()
-        .filter(|mutant| {
-            matches!(
-                mutant.outcome.outcome(),
-                Outcome::Killed
-                    | Outcome::Survived
-                    | Outcome::StepLimitReached
-                    | Outcome::Waited
-                    | Outcome::ModelNoticed
-                    | Outcome::ModelProved
-                    | Outcome::Unconfirmed
-                    | Outcome::Errored
-            )
-        })
+        .filter(|mutant| mutant.outcome.outcome().executed())
         .count()
 }
 
@@ -4418,7 +4446,7 @@ pub(crate) fn count_mutants(mutants: &[MutantRecord]) -> Result<MutantAccounting
                 increment("executed mutations", &mut counts.executed)?;
                 increment("model-proved mutations", &mut counts.model_proved)?;
             }
-            Outcome::Unconfirmed | Outcome::Errored => {
+            Outcome::Unconfirmed | Outcome::Errored | Outcome::Declined => {
                 increment("executed mutations", &mut counts.executed)?;
             }
         }
