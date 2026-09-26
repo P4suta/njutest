@@ -37,6 +37,10 @@ fn came_to(decided: &Decided) -> String {
         Decided::Waited { on } => format!("this machine stopped waiting for {on}"),
         Decided::Unconfirmed { on } => format!("{on} did not answer the same way twice"),
         Decided::Errored { on } => format!("{on} could not be measured"),
+        Decided::Declined { on } => format!(
+            "every test that reached it declined to measure on this machine, those of {on} among \
+             them"
+        ),
     }
 }
 

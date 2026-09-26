@@ -1191,13 +1191,9 @@ impl Session {
             });
         }
         for (name, wanted) in &under.env {
-            let given = self
-                .workspace
-                .base_env
-                .iter()
-                .find(|(held, _)| held == std::ffi::OsStr::new(name));
+            let given = crate::vars::var(&self.workspace.base_env, name);
             match given {
-                Some((_, value)) if value == std::ffi::OsStr::new(wanted) => {}
+                Some(value) if value == std::ffi::OsStr::new(wanted) => {}
                 Some(_) | None => {
                     return Err(crate::run::Unheld::Env {
                         name: name.clone(),

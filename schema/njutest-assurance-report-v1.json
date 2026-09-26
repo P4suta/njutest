@@ -1454,7 +1454,8 @@
                 "killed",
                 "waited",
                 "unconfirmed",
-                "errored"
+                "errored",
+                "declined"
               ]
             },
             "killed_by": {
@@ -1668,7 +1669,8 @@
             "unreached",
             "equivalent",
             "unconfirmed",
-            "errored"
+            "errored",
+            "declined"
           ]
         }
       }

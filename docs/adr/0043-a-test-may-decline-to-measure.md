@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 ## Status
 
 Accepted, 2026-09-26.
-Implemented in the engine by `decline::{Declines, held, storable}`, `MutantConclusion::{Declined, DeclinedUnderTheMutant}`, `NotRunReason::Declined`, the run report's `declined` rows and count, the `declined` lists of the `verify` and `mutant-exec` trace records, and engine-audit's recording layer; njutest reads a declined mutation as a gap.
+Implemented in the engine by `decline::{Declines, held, storable}`, `MutantConclusion::{Declined, DeclinedUnderTheMutant}`, `NotRunReason::Declined`, the run report's `declined` rows and count, the `declined` lists of the `verify` and `mutant-exec` trace records, and engine-audit's recording layer; njutest records such a mutation as `declined`, a hole a `not-measured` finding names with each test and its words, which a target that measured and noticed nothing outweighs, and proofaudit holds each to executions that measured nothing.
 
 ## Context
 

@@ -847,6 +847,51 @@ fn answered_as_a_survivor(row: &mut MutantRecord) {
     }
 }
 
+/// The accounting of one row decided `outcome`, for an outcome the model phase may be asked about.
+fn model_accounting(outcome: &njutest::report::Decided) -> Option<MutantAccounting> {
+    Some(match outcome {
+        njutest::report::Decided::Survived => MutantAccounting {
+            cataloged: 1,
+            executed: 1,
+            survived: 1,
+            observers: ObserverAccounting {
+                unnoticed: 1,
+                ..ObserverAccounting::default()
+            },
+            ..MutantAccounting::default()
+        },
+        njutest::report::Decided::ModelNoticed => MutantAccounting {
+            cataloged: 1,
+            executed: 1,
+            model_noticed: 1,
+            observers: ObserverAccounting {
+                model_noticed: 1,
+                ..ObserverAccounting::default()
+            },
+            ..MutantAccounting::default()
+        },
+        njutest::report::Decided::ModelProved => MutantAccounting {
+            cataloged: 1,
+            executed: 1,
+            model_proved: 1,
+            observers: ObserverAccounting {
+                model_proved: 1,
+                ..ObserverAccounting::default()
+            },
+            ..MutantAccounting::default()
+        },
+        njutest::report::Decided::CompileRejected
+        | njutest::report::Decided::Killed { .. }
+        | njutest::report::Decided::StepLimitReached { .. }
+        | njutest::report::Decided::Waited { .. }
+        | njutest::report::Decided::Unreached
+        | njutest::report::Decided::Equivalent
+        | njutest::report::Decided::Unconfirmed { .. }
+        | njutest::report::Decided::Errored { .. }
+        | njutest::report::Decided::Declined { .. } => return None,
+    })
+}
+
 #[test]
 fn every_survivor_and_affirmative_model_outcome_has_exactly_one_model_record() {
     for outcome in [
@@ -859,48 +904,8 @@ fn every_survivor_and_affirmative_model_outcome_has_exactly_one_model_record() {
             source.mutants[0].outcome = outcome.clone();
             source.mutants[0].reuse = njutest::report::Reuse(njutest::report::Established::Here);
             answered_as_a_survivor(&mut source.mutants[0]);
-            source.accounting.mutants = match &outcome {
-                njutest::report::Decided::Survived => MutantAccounting {
-                    cataloged: 1,
-                    executed: 1,
-                    survived: 1,
-                    observers: ObserverAccounting {
-                        unnoticed: 1,
-                        ..ObserverAccounting::default()
-                    },
-                    ..MutantAccounting::default()
-                },
-                njutest::report::Decided::ModelNoticed => MutantAccounting {
-                    cataloged: 1,
-                    executed: 1,
-                    model_noticed: 1,
-                    observers: ObserverAccounting {
-                        model_noticed: 1,
-                        ..ObserverAccounting::default()
-                    },
-                    ..MutantAccounting::default()
-                },
-                njutest::report::Decided::ModelProved => MutantAccounting {
-                    cataloged: 1,
-                    executed: 1,
-                    model_proved: 1,
-                    observers: ObserverAccounting {
-                        model_proved: 1,
-                        ..ObserverAccounting::default()
-                    },
-                    ..MutantAccounting::default()
-                },
-                njutest::report::Decided::CompileRejected
-                | njutest::report::Decided::Killed { .. }
-                | njutest::report::Decided::StepLimitReached { .. }
-                | njutest::report::Decided::Waited { .. }
-                | njutest::report::Decided::Unreached
-                | njutest::report::Decided::Equivalent
-                | njutest::report::Decided::Unconfirmed { .. }
-                | njutest::report::Decided::Errored { .. } => {
-                    panic!("the model phase refuses a {outcome:?} row")
-                }
-            };
+            source.accounting.mutants =
+                model_accounting(&outcome).expect("the model phase refuses any other row");
             if outcome == njutest::report::Decided::Survived {
                 source.findings = vec![Finding::new(
                     FindingKind::SurvivingMutant,
