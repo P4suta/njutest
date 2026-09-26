@@ -3,17 +3,20 @@
 name: ci
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  # A merge is a squash of a pull request that was up to date with `main`, so the tree `main` receives is the tree that pull request passed with, byte for byte.
+  # `main.yml` proves that on every push instead of asking every question again of the same bytes.
+  # The whole matrix still runs weekly, where a runner image can move under unchanged code, and on request.
+  schedule:
+    - cron: "23 4 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 # A pull request is asked again with every push to it, and the answer to the question before is not one anybody wanted.
-# `main` is different: its run is the only thing that says the branch everything merges into is green, and one merge arriving while the last is still measuring would leave that unsaid.
+# A scheduled or requested run of `main` is not cancelled by the next one: it is the only run that says what an unchanged tree does on today's runners.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -30,7 +33,7 @@ defaults:
 
 jobs:
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.os }}, ${{ matrix.part }})
     runs-on: ${{ matrix.os }}
     # The backstop for a runner that stops answering; a test that stalls is nextest's slow-timeout to name, well inside this.
     # On a hosted macOS runner the toolchain suite alone took 36.5 of the 45 minutes, and the job was cancelled in clippy with every test passed.
@@ -46,9 +49,22 @@ jobs:
       # So the newest row is the closest CI can stand to where the code is written, and the gap is a reason to keep reading a macOS failure rather than a reason to assume the local gate saw it.
       # `macos-15` is the oldest still supported, and it is not ballast: it is where `proc_listpgrppids` reports an empty process group after a timeout, which the supervisor read as a failure and turned into `abort()`.
       # The newer kernel still listed the waitable leader, so the machine that wrote the code could never have seen it.
+      # What that row answers for is the kernel, so on a pull request it runs the part of the suite that meets the kernel (`kernel` below), and the whole suite weekly.
+      #
+      # `part` is how much of the suite a row runs.
+      # `macos-26` is the slowest runner and the one every pull request waited for, so it runs the suite in two halves nextest chooses by hash, each on its own runner.
+      # Linux runs the whole suite in `coverage`, which has to run all of it to measure it, so a second uninstrumented Linux run would ask the same questions again.
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-26, macos-15, windows-2025]
+        include:
+          - os: macos-26
+            part: hash:1/2
+          - os: macos-26
+            part: hash:2/2
+          - os: macos-15
+            part: kernel
+          - os: windows-2025
+            part: whole
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -74,13 +90,35 @@ jobs:
       # A failing test took the job's forty-five minute timeout to be reported, and would have been reported as a pass had the second half succeeded.
       - name: Test every target
         shell: bash
+        env:
+          PART: ${{ matrix.part }}
+          EVENT: ${{ github.event_name }}
         run: |
-          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'not binary(/^toolchain_/)'
+          in_process='not binary(/^toolchain_/)'
+          toolchain='binary(/^toolchain_/)'
+          partition=()
+          case "$PART" in
+            whole) ;;
+            hash:*) partition=(--partition "$PART") ;;
+            kernel)
+              # The in-process suite runs whole everywhere: it is two minutes, and it holds the supervisor's, the runner's and the temporary directories' own laws.
+              # Of the suites that drive a real cargo, these are the ones whose answer is a process group, a signal, a crash, a durable write or a schedule.
+              if [ "$EVENT" = pull_request ]; then
+                toolchain='binary(/^toolchain_(hang|interrupt|panics|crashes|durable|wire_fixture|concurrency|pool|work|knobs)$/)'
+              fi
+              ;;
+            *)
+              echo "::error::a test row names the part '$PART', which is none of whole, hash:K/N and kernel"
+              exit 1
+              ;;
+          esac
+          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail "${partition[@]}" -E "$in_process"
           # Each test in these binaries drives its own Cargo. Two outer tests
           # keep hosted runners busy without multiplying their build jobs into
           # resource exhaustion; the ordinary suite above remains fully parallel.
-          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
+          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 "${partition[@]}" -E "$toolchain"
       - name: Doctests
+        if: matrix.part != 'hash:2/2'
         shell: bash
         run: cargo test --locked --workspace --all-features --doc
       # The lint job stands on Linux, so code only another platform compiles is linted here or nowhere.
@@ -280,6 +318,10 @@ jobs:
             lcov.info
             target/llvm-cov/html
           if-no-files-found: error
+      # Linux runs its suite here and nowhere else, so its doctests are asked here too.
+      # They come last: an uninstrumented build lands in the `target/` the report above read its objects from.
+      - name: Doctests
+        run: cargo test --locked --workspace --all-features --doc
 
   package-install:
     name: package-install
