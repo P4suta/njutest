@@ -181,3 +181,57 @@ fn a_record_this_release_did_not_write_is_refused_rather_than_trusted() {
         assert_eq!(error.code().code, "RM1022", "{record}: {error}");
     }
 }
+
+fn modified(path: &Path) -> std::time::SystemTime {
+    std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .expect("a file's time")
+}
+
+#[test]
+fn a_member_file_carries_the_time_its_member_last_moved_whoever_wrote_it_since() {
+    let temp = tempfile::tempdir().expect("a directory");
+    let tree = temp.path().join("tree");
+    let target = temp.path().join("target");
+    let a = tree.join("a/src/lib.rs");
+    let b = tree.join("b/src/lib.rs");
+    write(&a, "pub fn a() {}\n");
+    write(&b, "pub fn b() {}\n");
+    let mut readonly = std::fs::metadata(&b).expect("b").permissions();
+    readonly.set_readonly(true);
+    std::fs::set_permissions(&b, readonly).expect("b is made read-only");
+    let dir = BuildDir::new(
+        target,
+        vec![
+            member(&tree, "a", &["a/src/lib.rs"]),
+            member(&tree, "b", &["b/src/lib.rs"]),
+        ],
+    );
+    dir.settle().expect("the first settling");
+    let (first_a, first_b) = (modified(&a), modified(&b));
+    assert_eq!(
+        first_a, first_b,
+        "both moved together, so both carry that moment"
+    );
+
+    write(&a, "pub fn a() {}\n");
+    assert_ne!(modified(&a), first_a, "a write moves the time of a file");
+    dir.settle().expect("the same bytes written again");
+    assert_eq!(
+        modified(&a),
+        first_a,
+        "the same bytes as the last build are older than it, however recently they were written"
+    );
+
+    write(&a, "pub fn a() { }\n");
+    dir.settle().expect("other bytes");
+    assert!(
+        modified(&a) > first_a,
+        "other bytes are newer than every unit built from the old ones"
+    );
+    assert_eq!(
+        modified(&b),
+        first_b,
+        "a member whose bytes stayed keeps its time, read-only or not"
+    );
+}

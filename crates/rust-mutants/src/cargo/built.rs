@@ -52,12 +52,20 @@ pub struct BuildDir {
     members: Vec<Member>,
 }
 
-/// The record a target directory keeps: the digest of every member's files as the last build that could write its fingerprints found them.
+/// The record a target directory keeps: every member's files as the last build that could write its fingerprints found them.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Ledger {
     schema: String,
-    members: BTreeMap<String, String>,
+    members: BTreeMap<String, Settled>,
+}
+
+/// What one member's files held when its fingerprints were last removed, and when that was.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Settled {
+    digest: String,
+    since: jiff::Timestamp,
 }
 
 impl BuildDir {
@@ -82,26 +90,54 @@ impl BuildDir {
         }
     }
 
-    /// Makes cargo compile again every unit of a member whose files differ from what this directory last built it from, by removing the member's fingerprints before recording the new digest.
+    /// Makes cargo compile again every unit of a member whose files differ from what this directory last built it from, and dates every member's files to when their bytes last moved.
     ///
     /// # Errors
-    /// [`CargoErrorKind::BuildLedger`] when the record cannot be read, is not one this release writes, or cannot be written, when a member's file cannot be read, or when a fingerprint cannot be removed.
+    /// [`CargoErrorKind::BuildLedger`] when the record cannot be read, is not one this release writes, or cannot be written, when a member's file cannot be read or dated, or when a fingerprint cannot be removed.
     pub fn settle(&self) -> Result<(), CargoError> {
         let ledger_path = self.path.join(LEDGER_NAME);
         let mut ledger = read_ledger(&ledger_path)?;
         let mut moved = Vec::new();
         for member in &self.members {
             let digest = member_digest(member)?;
-            if ledger.members.get(&member.name) != Some(&digest) {
-                moved.push(member.name.as_str());
-                ledger.members.insert(member.name.clone(), digest);
+            let unchanged = ledger
+                .members
+                .get(&member.name)
+                .is_some_and(|settled| settled.digest == digest);
+            if !unchanged {
+                moved.push((member.name.as_str(), digest));
             }
         }
-        if moved.is_empty() {
-            return Ok(());
+        if !moved.is_empty() {
+            let names: Vec<&str> = moved.iter().map(|(name, _)| *name).collect();
+            invalidate(&self.path, &names)?;
+            let since =
+                jiff::Timestamp::try_from(std::time::SystemTime::now()).map_err(|error| {
+                    CargoError::new(
+                        CargoErrorKind::BuildLedger,
+                        format!(
+                            "the clock cannot date the record for {}: {error}",
+                            self.path.display()
+                        ),
+                    )
+                })?;
+            for (name, digest) in moved {
+                ledger
+                    .members
+                    .insert(name.to_owned(), Settled { digest, since });
+            }
+            write_ledger(&self.path, &ledger_path, &ledger)?;
         }
-        invalidate(&self.path, &moved)?;
-        write_ledger(&self.path, &ledger_path, &ledger)
+        for member in &self.members {
+            let Some(settled) = ledger.members.get(&member.name) else {
+                continue;
+            };
+            let since = std::time::SystemTime::from(settled.since);
+            for file in &member.files {
+                dated(&file.path, since)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -186,6 +222,34 @@ fn member_digest(member: &Member) -> Result<String, CargoError> {
         hasher.update(b"\n");
     }
     Ok(hex::encode(hasher.finalize()))
+}
+
+/// Gives a file of a member the time its member's bytes last moved, which is older than every unit built from them and newer than every unit built from anything else.
+fn dated(path: &Path, since: std::time::SystemTime) -> Result<(), CargoError> {
+    match for_dating(path).and_then(|file| file.set_modified(since)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(ledger_error(
+            format!("{} could not be dated", path.display()),
+            error,
+        )),
+    }
+}
+
+/// Opens a file only as far as setting its times needs, which a file its owner made read-only still allows.
+#[cfg(not(windows))]
+fn for_dating(path: &Path) -> io::Result<std::fs::File> {
+    std::fs::File::open(path)
+}
+
+/// Opens a file only as far as setting its times needs, which a file its owner made read-only still allows.
+#[cfg(windows)]
+fn for_dating(path: &Path) -> io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+    std::fs::OpenOptions::new()
+        .access_mode(FILE_WRITE_ATTRIBUTES)
+        .open(path)
 }
 
 fn file_digest(path: &Path) -> io::Result<[u8; 32]> {

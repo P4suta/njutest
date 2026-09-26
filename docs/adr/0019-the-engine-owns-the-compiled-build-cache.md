@@ -51,17 +51,23 @@ The fixture reproduction is two runs of `fixture-witness-downstream` sharing a t
 
 ### Decision
 
-1. Every target directory a build writes into keeps `rust-mutants-built-v1.json`: for each workspace member, the digest of every file of the copy under its directory as the last build that could write its units found them.
-2. Before cargo runs, `compile` settles the directory: a member whose digest differs from the record, or that the record does not name, loses every fingerprint cargo keeps for it, under every profile and target triple, and only then is the record rewritten.
+1. Every target directory a build writes into keeps `rust-mutants-built-v1.json`: for each workspace member, the digest of every file of the copy under its directory as the last build that could write its units found them, and the moment that digest was recorded.
+2. Before cargo runs, `compile` settles the directory: a member whose digest differs from the record, or that the record does not name, loses every fingerprint cargo keeps for it, under every profile and target triple, and only then is the record rewritten with the new digest and the present moment.
    A unit without a fingerprint is one cargo compiles again, and a unit that depends on it follows.
-3. `CompileOptions` names its target directory as a `BuildDir`, which carries the members, so no build into a shared directory can skip the settling.
-4. A directory inside another that keeps its own record, such as `witness` or `coverage`, is another target directory; settling the outer one passes over it.
-5. A record that cannot be read, or that is not one this release writes, is `RM1022`, rather than a record the run trusts or silently replaces.
+3. Settling then gives every file of every member the moment its member's digest was recorded.
+   That moment is older than every unit built from those bytes, since the member's older units were removed at it, and newer than every unit built from any others.
+   So a file's time says what cargo needs to know whoever wrote it, and bytes the engine writes again the same, as instrumenting an unchanged tree does, compile nothing.
+4. `CompileOptions` names its target directory as a `BuildDir`, which carries the members, so no build into a shared directory can skip the settling.
+5. A directory inside another that keeps its own record, such as `witness`, `coverage` or `pristine`, is another target directory; settling the outer one passes over it.
+   The copy as it was written is checked in `pristine`, apart from the instrumented builds, because one directory given the two trees in turn would compile each of them every run.
+6. A record that cannot be read, or that is not one this release writes, is `RM1022`, rather than a record the run trusts or silently replaces.
 
 ### Consequences
 
 - A unit cargo judges fresh was compiled from the bytes the copy holds now, whatever an earlier run, an earlier release, or another catalog wrote there.
 - A directory an earlier release filled has no record, so the first run after an upgrade compiles every member again, once; dependencies are not members and keep their units.
-- A member whose bytes are the same as last time keeps every unit, so the reuse this ADR is for is unchanged.
+- A member whose bytes are the same as last time keeps every unit, even where the engine wrote them again, so a repeat run of an unchanged tree compiles nothing: on `fixture-simple` the third run rewrote no fingerprint, where it used to rewrite every member unit's.
 - The record is per member and not per file, so an edit to one file compiles its whole member again, which cargo would have done for the unit that file belongs to.
+- A file no member's directory holds keeps the time it was written, which only a person changes, and cargo reads that time as it always has.
+- The pristine check moved into `pristine`, so a path under the target directory that a unit's dep-info names now begins `$target/pristine/`, and outcome keys that name one change once.
 - Documentation examples run through `cargo test --doc` against the tree the last settled build compiled; nothing writes the tree between that build and them.
