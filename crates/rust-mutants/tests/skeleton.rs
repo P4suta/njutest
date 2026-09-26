@@ -91,6 +91,24 @@ fn a_body_whose_only_contribution_is_its_own_execution_is_sealed() {
 }
 
 #[test]
+fn a_body_whose_unit_file_cannot_be_read_is_never_sealed() {
+    let cataloged = [("src/lib.rs", "fn f() { 1 }")];
+    let missing = evidence_of(&unit(&[]), &cataloged);
+    assert_eq!(
+        item(&missing, "f").unsealed,
+        Some(Unsealing::Unread),
+        "a unit with no readable bytes for the cataloged file says that the body was unread"
+    );
+    let unparsable = [("src/lib.rs", "fn f() { @ }")];
+    let malformed = evidence_of(&unit(&unparsable), &cataloged);
+    assert_eq!(
+        item(&malformed, "f").unsealed,
+        Some(Unsealing::Unlocated),
+        "bytes that cannot be read as the cataloged Rust file locate no body, so the body cannot be sealed"
+    );
+}
+
+#[test]
 fn a_body_that_contributes_anything_else_is_not_sealed_and_says_why() {
     for (unsealed, why) in [
         (
