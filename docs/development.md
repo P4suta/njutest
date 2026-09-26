@@ -40,7 +40,7 @@ It then checks the object out into the repository's one gate tree and checks tha
 Adjacent edits, ignored local files, and a mistaken non-fast-forward command therefore cannot become inputs to an answer attributed to the commit going out.
 How that tree is shared between worktrees and sessions is [One machine, several sessions](#one-machine-several-sessions).
 A push that goes out has already answered everything CI asks but four things this machine cannot answer: the suite on Linux and Windows, the coverage ratchets, the suite under Miri, and the composite action driven the way another repository drives it.
-`xtask/tests/tasks.rs` holds the correspondence — a job added to `ci-success` has to name the local task that answers it first, or say why none can.
+`xtask/tests/tasks.rs` holds the correspondence — a job added to `required` has to name the local task that answers it first, or say why none can.
 
 The `manual-variant-list` rule refuses a list naming every variant of a set this repository closes, wherever it is written.
 A closed fieldless enum derives `njutest_macros::AllVariants`, and its compiler-generated `ALL` changes length and contents with the variants, so adding one cannot leave a ledger silently partial.
@@ -443,7 +443,7 @@ See [fixtures/README.md](../fixtures/README.md).
 
 `fuzz/` is a standalone cargo-fuzz crate (nightly, sanitizer) with one target per fail-closed parser or byte transformation of the engine; each target states one property in its doc comment and `fuzz/README.md` lists them.
 `mise run fuzz:smoke` runs every target briefly, which is what somebody changing a parser does before pushing; the `fuzz` workflow spends twenty-five minutes a target, weekly and on request, and never on a pull request.
-Five thousand executions searches nothing a parser is afraid of, and the workflow does not gate `ci-success`, so a crash found there could not have stopped a merge in any case.
+Five thousand executions searches nothing a parser is afraid of, and the workflow does not gate `required`, so a crash found there could not have stopped a merge in any case.
 A crash reproducer worth keeping becomes a regular test.
 `xtask/tests/fuzz_ledger.rs` keeps the four places that name the targets in step: the source files, the manifest stanzas (each with `bench = false`, so `cargo bench` never builds a sanitizer target), the README rows, and the weekly workflow's matrix.
 
