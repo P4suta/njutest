@@ -32,7 +32,9 @@ jobs:
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    # The backstop for a runner that stops answering; a test that stalls is nextest's slow-timeout to name, well inside this.
+    # On a hosted macOS runner the toolchain suite alone took 36.5 of the 45 minutes, and the job was cancelled in clippy with every test passed.
+    timeout-minutes: 75
     strategy:
       # Each platform answers for itself.
       # `fail-fast: true` read "this commit is red" as "stop asking", and the platforms it stopped asking were the ones nothing else can answer for: a Windows failure cancelled both macOS jobs on four consecutive pushes, so a macOS fix went four rounds without ever being run.
