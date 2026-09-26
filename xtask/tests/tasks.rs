@@ -330,8 +330,7 @@ fn the_gates_a_person_runs_are_the_gates_the_pipeline_runs() {
     assert!(
         local.contains("cargo xtask all"),
         "`mise run gates` lists gates of its own rather than running the one command CI \
-         runs, which is a second enumeration of a set `gates::all` already holds and \
-         `every_gate_that_needs_no_argument_is_one_all_runs` already closes: {local}"
+         runs, which is a second enumeration of the typed repository gate set: {local}"
     );
     let hooks = repository("lefthook.yml");
     assert!(

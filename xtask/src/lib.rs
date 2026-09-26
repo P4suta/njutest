@@ -58,6 +58,7 @@ use std::path::Path;
 use std::process::{Command, ExitCode, ExitStatus};
 
 use clap::{Parser, Subcommand};
+use gates::RepositoryGate;
 
 #[derive(Debug, Parser)]
 #[command(name = "cargo xtask", about = "Repository gates", term_width = 100, color = clap::ColorChoice::Never)]
@@ -66,11 +67,15 @@ struct Cli {
     task: Task,
 }
 
-/// What `cargo xtask` can be asked to do: a repository gate, or one of the tools the gates' own machinery is.
+/// What `cargo xtask` can be asked to do.
 #[derive(Debug, Subcommand)]
 enum Task {
     #[command(flatten)]
-    Gate(Gate),
+    Repository(RepositoryGate),
+    #[command(flatten)]
+    Execution(ExecutionGate),
+    /// Every repository-tree gate, in order.
+    All,
     /// Runs a command once this machine's lane for it is free, and holds the lane until the command ends.
     Slot {
         /// The lane: `heavy`, for a run that compiles or tests the whole workspace.
@@ -90,33 +95,15 @@ enum Task {
 }
 
 #[derive(Debug, Subcommand)]
-enum Gate {
-    /// The seam ratchet (ADR 0001): production code against `xtask/seam_allowlist.txt`.
-    Devgates,
-    /// Lossy Rust shapes this repository does not write.
-    Lints,
-    /// Dependency direction between the workspace crates.
-    Deps,
-    /// Conventions of the independent fixture projects under fixtures/.
-    Fixtures,
-    /// Nothing a build writes is committed: no tracked path lies under a directory named `target`.
-    Tracked,
-    /// Every claim of `.rust-mutants.toml` names as many mutations as it says, asked of the engine's own locator.
-    Claims,
+enum ExecutionGate {
     /// Clippy every independent fuzz target under the root workspace lint policy.
-    FuzzClippy {
-        /// Reserved for a future alternate manifest; keeps this execution gate out of `all`.
-        #[arg(long, default_value_t = false, hide = true)]
-        alternate: bool,
-    },
+    FuzzClippy,
     /// Every workflow the documentation shows passes actionlint against this repository's own actions.
     Docflows {
         /// The actionlint to run; the lint lane is where it is installed, which keeps this gate out of `all`.
         #[arg(long, value_name = "PROGRAM", default_value = "actionlint")]
         actionlint: std::path::PathBuf,
     },
-    /// Version consistency between the workspace and the release manifest.
-    ReleaseCheck,
     /// Prove every production law with Kani, or read back the proof of exactly these inputs, and audit it either way.
     KaniLaws {
         /// Where proofs are kept, one per digest of what they rest on.
@@ -128,20 +115,6 @@ enum Gate {
         /// The fresh JSON document written by pinned Kani 0.68.
         export: std::path::PathBuf,
     },
-    /// Every milestone named in the documentation resolves to one roadmap row.
-    Milestones,
-    /// Every decision record has one number, carries it in its heading, is listed once in the book under it, and is named only as it is.
-    Adrs,
-    /// Every critical decision has a row saying what holds it at every layer, each naming what the tree defines, and every hole is one somebody owns.
-    Invariants,
-    /// Everything that may shrink and never grow, held to where this change meets `origin/main`.
-    Ratchets,
-    /// Every public function of an incidental surface is reached by something that ships.
-    Reached,
-    /// No audit reader supplies more values its input never gave than its ceiling allows.
-    Defaulted,
-    /// Every crate declares what its visibility means; incidental APIs are compiled privately.
-    Surfaces,
     /// Whether a completed run's verdicts are the ones its own recording supports (ADR 0004).
     Proofaudit {
         /// The directory the run left its report in, or a merged report.
@@ -191,9 +164,6 @@ enum Gate {
         #[arg(long, value_name = "FILE")]
         output: Option<std::path::PathBuf>,
     },
-    /// A second opinion, by body shape alone, on every catch-all the ledger waives.
-    /// Refuses nothing.
-    Waivers,
     /// Enforce the region-coverage floors recorded in this tree.
     CoverageRatchet,
     /// The whole suite of this commit on the other machines, before it is pushed.
@@ -205,8 +175,6 @@ enum Gate {
         #[arg(long, value_name = "DIR")]
         worktree: Option<std::path::PathBuf>,
     },
-    /// Every gate, in order.
-    All,
 }
 
 /// What the composition root read from the process, handed to the commands that need it.
@@ -266,37 +234,35 @@ where
         Ok(cli) => cli,
         Err(answered) => return answered,
     };
-    let gate = match cli.task {
-        Task::Gate(gate) => gate,
+    let root = gates::workspace_root();
+    let outcome = match cli.task {
+        Task::Repository(gate) => gate.run(&root),
+        Task::All => gates::all(&root),
         Task::Slot { lane, command } => return slot(&lane, &command, process, stderr),
         Task::PrePush => return pre_push(process, &mut *streams.input, stderr),
         Task::Tidy { command } => return tidy(&command, process, stderr),
+        Task::Execution(gate) => return run_execution(gate, &root, process, (stdout, stderr)),
     };
-    let root = gates::workspace_root();
+    report(outcome, stdout, stderr)
+}
+
+fn run_execution(
+    gate: ExecutionGate,
+    root: &Path,
+    process: &Process<'_>,
+    streams: (&mut dyn Write, &mut dyn Write),
+) -> ExitCode {
+    let (stdout, stderr) = streams;
     let outcome = match gate {
-        Gate::Devgates => gates::devgates(&root),
-        Gate::Lints => gates::lints(&root),
-        Gate::Deps => gates::deps(&root),
-        Gate::Fixtures => gates::fixtures(&root),
-        Gate::Tracked => gates::tracked(&root),
-        Gate::Claims => claims::claims(&root),
-        Gate::FuzzClippy { alternate: _ } => fuzzclippy::check(&root, process.cargo)
+        ExecutionGate::FuzzClippy => fuzzclippy::check(root, process.cargo)
             .map_err(|error| gates::GateError(error.coded())),
-        Gate::Docflows { actionlint } => docflows::check(&root, actionlint.as_os_str())
+        ExecutionGate::Docflows { actionlint } => docflows::check(root, actionlint.as_os_str())
             .map_err(|error| gates::GateError(error.coded())),
-        Gate::ReleaseCheck => gates::release_check(&root),
-        Gate::KaniLaws { cache } => kanilaws::laws(&root, process.cargo, &cache),
-        Gate::KaniLawsAudit { export } => kaniaudit::audit(&export, &root)
+        ExecutionGate::KaniLaws { cache } => kanilaws::laws(root, process.cargo, &cache),
+        ExecutionGate::KaniLawsAudit { export } => kaniaudit::audit(&export, root)
             .map(|()| format!("kani-laws: {} production harnesses, every assertion reachable, every cover satisfiable, and each within its ceiling", kanilaws::harnesses().len()))
             .map_err(|error| gates::GateError(error.coded())),
-        Gate::Milestones => gates::milestones(&root),
-        Gate::Adrs => gates::adrs(&root),
-        Gate::Invariants => gates::invariants(&root),
-        Gate::Ratchets => gates::ratchets(&root),
-        Gate::Reached => gates::reached(&root),
-        Gate::Defaulted => gates::defaulted(&root),
-        Gate::Surfaces => gates::surfaces(&root),
-        Gate::Proofaudit {
+        ExecutionGate::Proofaudit {
             run,
             trace,
             shards,
@@ -308,7 +274,7 @@ where
                 stderr,
             );
         }
-        Gate::EngineAudit {
+        ExecutionGate::EngineAudit {
             run,
             trace,
             shards,
@@ -329,13 +295,11 @@ where
                 stderr,
             );
         }
-        Gate::ReportDiff { before, after } => gates::report_diff(&before, &after),
-        Gate::Sbom { output } => gates::sbom(&root, output.as_deref()),
-        Gate::Waivers => gates::waivers(&root),
-        Gate::CoverageRatchet => coverage::ratchet(&root, process.cargo),
-        Gate::RemoteCheck { machines, worktree } => remote::check(worktree.as_deref().unwrap_or(&root), &machines)
+        ExecutionGate::ReportDiff { before, after } => gates::report_diff(&before, &after),
+        ExecutionGate::Sbom { output } => gates::sbom(root, output.as_deref()),
+        ExecutionGate::CoverageRatchet => coverage::ratchet(root, process.cargo),
+        ExecutionGate::RemoteCheck { machines, worktree } => remote::check(worktree.as_deref().unwrap_or(root), &machines)
             .map_err(|error| gates::GateError(error.coded())),
-        Gate::All => gates::all(&root),
     };
     report(outcome, stdout, stderr)
 }

@@ -34,6 +34,66 @@ impl crate::error::Coded for GateError {
     }
 }
 
+/// Gates that read the repository tree and belong to `all`.
+#[derive(Debug, Clone, Copy, clap::Subcommand, njutest_macros::AllVariants)]
+pub(crate) enum RepositoryGate {
+    /// The seam ratchet (ADR 0001): production code against `xtask/seam_allowlist.txt`.
+    Devgates,
+    /// Lossy Rust shapes this repository does not write.
+    Lints,
+    /// Dependency direction between the workspace crates.
+    Deps,
+    /// Conventions of the independent fixture projects under fixtures/.
+    Fixtures,
+    /// Version consistency between the workspace and the release manifest.
+    ReleaseCheck,
+    /// Every milestone named in the documentation resolves to one roadmap row.
+    Milestones,
+    /// Every decision record has one number, carries it in its heading, is listed once in the book under it, and is named only as it is.
+    Adrs,
+    /// Every critical decision has a row saying what holds it at every layer, each naming what the tree defines, and every hole is one somebody owns.
+    Invariants,
+    /// Everything that may shrink and never grow, held to where this change meets `origin/main`.
+    Ratchets,
+    /// Every crate declares what its visibility means; incidental APIs are compiled privately.
+    Surfaces,
+    /// Every public function of an incidental surface is reached by something that ships.
+    Reached,
+    /// No audit reader supplies more values its input never gave than its ceiling allows.
+    Defaulted,
+    /// A second opinion, by body shape alone, on every catch-all the ledger waives.
+    Waivers,
+    /// Nothing a build writes is committed: no tracked path lies under a directory named `target`.
+    Tracked,
+    /// Every skipped target in the mutation configuration is a target Cargo declares.
+    Skipped,
+    /// Every claim of `.rust-mutants.toml` names as many mutations as it says, asked of the engine's own locator.
+    Claims,
+}
+
+impl RepositoryGate {
+    pub(crate) fn run(self, root: &Path) -> Result<String, GateError> {
+        match self {
+            Self::Devgates => devgates(root),
+            Self::Lints => lints(root),
+            Self::Deps => deps(root),
+            Self::Fixtures => fixtures(root),
+            Self::ReleaseCheck => release_check(root),
+            Self::Milestones => milestones(root),
+            Self::Adrs => adrs(root),
+            Self::Invariants => invariants(root),
+            Self::Ratchets => ratchets(root),
+            Self::Surfaces => surfaces(root),
+            Self::Reached => reached(root),
+            Self::Defaulted => defaulted(root),
+            Self::Waivers => waivers(root),
+            Self::Tracked => tracked(root),
+            Self::Skipped => skipped(root),
+            Self::Claims => crate::claims::claims(root),
+        }
+    }
+}
+
 fn append(output: &mut String, arguments: Arguments<'_>) {
     output.push_str(&arguments.to_string());
 }
@@ -2439,25 +2499,8 @@ fn held_number(relative: &str, text: &str) -> Result<usize, GateError> {
 /// Returns the first gate's failure.
 pub fn all(root: &Path) -> Result<String, GateError> {
     let mut report = String::new();
-    for gate in [
-        devgates,
-        lints,
-        deps,
-        fixtures,
-        release_check,
-        milestones,
-        adrs,
-        invariants,
-        ratchets,
-        surfaces,
-        reached,
-        defaulted,
-        waivers,
-        tracked,
-        skipped,
-        crate::claims::claims,
-    ] {
-        line(&mut report, format_args!("{}", gate(root)?));
+    for gate in RepositoryGate::ALL {
+        line(&mut report, format_args!("{}", gate.run(root)?));
     }
     Ok(report.trim_end().to_owned())
 }
