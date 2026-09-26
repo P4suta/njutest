@@ -79,7 +79,10 @@ impl Compile for CargoScripted {
             &CompileOptions {
                 kind: CompileKind::Tests,
                 packages: Vec::new(),
-                target_dir: Some(self.target.clone()),
+                target_dir: Some(rust_mutants::cargo::BuildDir::new(
+                    self.target.clone(),
+                    Vec::new(),
+                )),
                 locked: true,
                 offline: true,
                 timeout: None,
@@ -153,7 +156,10 @@ fn prepare_fixture_with(name: &str, arrange: impl FnOnce(&std::path::Path)) -> C
         &CompileOptions {
             kind: CompileKind::Check,
             packages: Vec::new(),
-            target_dir: Some(target.path().to_path_buf()),
+            target_dir: Some(rust_mutants::cargo::BuildDir::new(
+                target.path().to_path_buf(),
+                Vec::new(),
+            )),
             locked: true,
             offline: true,
             timeout: None,
@@ -324,7 +330,10 @@ pub fn name(flag: bool) -> &'static str {
         &CompileOptions {
             kind: CompileKind::Tests,
             packages: Vec::new(),
-            target_dir: Some(fixture.target.clone()),
+            target_dir: Some(rust_mutants::cargo::BuildDir::new(
+                fixture.target.clone(),
+                Vec::new(),
+            )),
             locked: true,
             offline: true,
             timeout: None,

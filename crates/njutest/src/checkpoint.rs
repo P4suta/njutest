@@ -165,14 +165,14 @@ pub enum CheckpointError {
         /// The file.
         path: PathBuf,
         /// What is wrong with it.
-        violation: CheckpointViolation,
+        violation: CheckpointViolationError,
     },
 }
 
 /// A contradiction inside an untrusted checkpoint document.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
-pub enum CheckpointViolation {
+pub enum CheckpointViolationError {
     /// The bytes are not the closed JSON shape for [`State`].
     #[error("the document is not a checkpoint: {detail}")]
     Malformed {
@@ -287,10 +287,10 @@ impl CheckpointError {
 /// Where one identity's checkpoint lives under `root`.
 ///
 /// # Errors
-/// Returns [`CheckpointViolation::InvalidIdentity`] before joining a value that is not a canonical full digest into the filesystem path.
-pub fn path_of(root: &Path, identity: &str) -> Result<PathBuf, CheckpointViolation> {
+/// Returns [`CheckpointViolationError::InvalidIdentity`] before joining a value that is not a canonical full digest into the filesystem path.
+pub fn path_of(root: &Path, identity: &str) -> Result<PathBuf, CheckpointViolationError> {
     if !rust_mutants::id::is_digest(identity) {
-        return Err(CheckpointViolation::InvalidIdentity {
+        return Err(CheckpointViolationError::InvalidIdentity {
             value: identity.to_owned(),
         });
     }
@@ -312,7 +312,7 @@ pub fn read(root: &Path, identity: &str) -> Result<Option<State>, CheckpointErro
     let state: State =
         crate::strictjson::decode_str(&text).map_err(|error| CheckpointError::Corrupt {
             path: path.clone(),
-            violation: CheckpointViolation::Malformed {
+            violation: CheckpointViolationError::Malformed {
                 detail: error.to_string(),
             },
         })?;
@@ -379,45 +379,45 @@ fn remove_or_absent(
     }
 }
 
-fn validate(state: &State, identity: &str) -> Result<(), CheckpointViolation> {
+fn validate(state: &State, identity: &str) -> Result<(), CheckpointViolationError> {
     if !rust_mutants::id::is_digest(identity) {
-        return Err(CheckpointViolation::InvalidIdentity {
+        return Err(CheckpointViolationError::InvalidIdentity {
             value: identity.to_owned(),
         });
     }
     if state.schema != SCHEMA {
-        return Err(CheckpointViolation::WrongSchema {
+        return Err(CheckpointViolationError::WrongSchema {
             found: state.schema.clone(),
         });
     }
     if state.identity != identity {
-        return Err(CheckpointViolation::WrongIdentity {
+        return Err(CheckpointViolationError::WrongIdentity {
             found: state.identity.clone(),
             expected: identity.to_owned(),
         });
     }
     if state.attempts == 0 {
-        return Err(CheckpointViolation::NoAttempts);
+        return Err(CheckpointViolationError::NoAttempts);
     }
     validate_targets(&state.targets)?;
     validate_mutants(&state.mutants)
 }
 
-fn validate_targets(targets: &[SavedTarget]) -> Result<(), CheckpointViolation> {
+fn validate_targets(targets: &[SavedTarget]) -> Result<(), CheckpointViolationError> {
     for target in targets {
         if target.id.is_empty() {
-            return Err(CheckpointViolation::EmptyTarget);
+            return Err(CheckpointViolationError::EmptyTarget);
         }
         for file in &target.files {
             let normalized = rust_mutants::id::normalize_path(file).map_err(|error| {
-                CheckpointViolation::InvalidFile {
+                CheckpointViolationError::InvalidFile {
                     target: target.id.clone(),
                     path: file.clone(),
                     detail: error.to_string(),
                 }
             })?;
             if normalized != *file {
-                return Err(CheckpointViolation::InvalidFile {
+                return Err(CheckpointViolationError::InvalidFile {
                     target: target.id.clone(),
                     path: file.clone(),
                     detail: format!("canonical spelling is {normalized:?}"),
@@ -429,7 +429,7 @@ fn validate_targets(targets: &[SavedTarget]) -> Result<(), CheckpointViolation> 
                 continue;
             };
             if previous >= current {
-                return Err(CheckpointViolation::FileOrder {
+                return Err(CheckpointViolationError::FileOrder {
                     target: target.id.clone(),
                     previous: previous.clone(),
                     current: current.clone(),
@@ -442,7 +442,7 @@ fn validate_targets(targets: &[SavedTarget]) -> Result<(), CheckpointViolation> 
             continue;
         };
         if previous.id >= current.id {
-            return Err(CheckpointViolation::TargetOrder {
+            return Err(CheckpointViolationError::TargetOrder {
                 previous: previous.id.clone(),
                 current: current.id.clone(),
             });
@@ -451,13 +451,13 @@ fn validate_targets(targets: &[SavedTarget]) -> Result<(), CheckpointViolation> 
     Ok(())
 }
 
-fn validate_mutants(mutants: &[SavedMutant]) -> Result<(), CheckpointViolation> {
+fn validate_mutants(mutants: &[SavedMutant]) -> Result<(), CheckpointViolationError> {
     for pair in mutants.windows(2) {
         let [previous, current] = pair else {
             continue;
         };
         if previous.id >= current.id {
-            return Err(CheckpointViolation::MutantOrder {
+            return Err(CheckpointViolationError::MutantOrder {
                 previous: previous.id.clone(),
                 current: current.id.clone(),
             });
@@ -465,20 +465,20 @@ fn validate_mutants(mutants: &[SavedMutant]) -> Result<(), CheckpointViolation> 
     }
     for mutant in mutants {
         if !rust_mutants::id::is_id(&mutant.id) {
-            return Err(CheckpointViolation::InvalidMutant {
+            return Err(CheckpointViolationError::InvalidMutant {
                 value: mutant.id.clone(),
             });
         }
         match &mutant.disposition {
             SavedDisposition::Killed { by, .. } if by.is_empty() => {
-                return Err(CheckpointViolation::EmptyObserver {
+                return Err(CheckpointViolationError::EmptyObserver {
                     mutant: mutant.id.clone(),
                 });
             }
             SavedDisposition::Killed { by, before }
                 if before.iter().any(|answer| answer.target == *by) =>
             {
-                return Err(CheckpointViolation::ObserverAskedBefore {
+                return Err(CheckpointViolationError::ObserverAskedBefore {
                     mutant: mutant.id.clone(),
                     target: by.clone(),
                 });
@@ -488,7 +488,7 @@ fn validate_mutants(mutants: &[SavedMutant]) -> Result<(), CheckpointViolation> 
                     .iter()
                     .find(|answer| answer.outcome == crate::report::Outcome::Killed)
                 {
-                    return Err(CheckpointViolation::NoticedBefore {
+                    return Err(CheckpointViolationError::NoticedBefore {
                         mutant: mutant.id.clone(),
                         target: noticed.target.clone(),
                     });

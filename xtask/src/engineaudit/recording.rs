@@ -8,9 +8,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::Value;
 
 use super::{
-    Audit, CheckedRecording, Decided, INCONCLUSIVE, KILLED, Layer, NOT_RUN, Notes, Report, Row,
-    STOPPED_EARLY, StepNotice, UNREACHED, UNSELECTED, WAITED, array, number, numbers, string,
-    strings,
+    Audit, CheckedRecording, DECLINED, Decided, INCONCLUSIVE, KILLED, Layer, NOT_RUN, Notes,
+    Report, Row, STOPPED_EARLY, StepNotice, UNREACHED, UNSELECTED, WAITED, array, count, number,
+    numbers, string, strings,
 };
 
 /// The recording, against the report it is supposed to be the exhaust of.
@@ -304,6 +304,7 @@ fn condemned(report: &Report, events: &[Value], notes: &mut Notes<'_>) {
 fn routed(report: &Report, recorded: &CheckedRecording, notes: &mut Notes<'_>) {
     let routing = &recorded.routing;
     let tests = baseline_tests(&recorded.events);
+    let excused = baseline_declines(&recorded.events, notes);
     if routing.routes.is_empty() && routing.execs.is_empty() {
         notes.unaudited(
             "route",
@@ -363,8 +364,102 @@ fn routed(report: &Report, recorded: &CheckedRecording, notes: &mut Notes<'_>) {
         ran_in_order(row, route, &execs, notes);
         named_its_tests(row, &execs, &tests, notes);
         answered(row, &execs, notes);
+        declined(row, &execs, &excused, notes);
         reached(row, route, &execs, notes);
         discharged(row, route, &execs, notes);
+    }
+}
+
+/// Each decline each target's baseline made, by target, from the verify records: the only declines a mutant execution of the target is excused (ADR 0043).
+fn baseline_declines(
+    events: &[Value],
+    notes: &mut Notes<'_>,
+) -> BTreeMap<String, BTreeSet<(String, String)>> {
+    let mut excused: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
+    for event in events {
+        if string(event, "type").as_deref() != Some("verify") {
+            continue;
+        }
+        let Some(record) = event.get("verify") else {
+            continue;
+        };
+        let Some(target) = string(record, "target") else {
+            continue;
+        };
+        match crate::route::declines(record) {
+            Ok(declines) => excused.entry(target).or_default().extend(declines),
+            Err(error) => notes.violated(
+                &target,
+                format!("the baseline's declines cannot be read: {error}"),
+            ),
+        }
+    }
+    excused
+}
+
+/// A row's declines and what they made of it, re-derived from the execution it rests on and the declines its target's baseline made (ADR 0043).
+///
+/// A decline the baseline did not make, in the same words, is a detection; declines of every test the execution ran leave it measuring nothing; and a row says which tests declined exactly as its execution recorded them.
+fn declined(
+    row: &Row,
+    execs: &[&crate::route::Exec],
+    excused: &BTreeMap<String, BTreeSet<(String, String)>>,
+    notes: &mut Notes<'_>,
+) {
+    let Some(answer) = execs.iter().rev().find(|exec| exec.target == row.target) else {
+        return;
+    };
+    let recorded: BTreeSet<&(String, String)> = answer.declined.iter().collect();
+    let claimed: BTreeSet<(String, String)> = row
+        .declined
+        .iter()
+        .map(|one| (one.test.clone(), one.why.clone()))
+        .collect();
+    if claimed.iter().collect::<BTreeSet<_>>() != recorded {
+        notes.violated(
+            row.label(),
+            format!(
+                "the row says {} declined and its execution against {} recorded {}; a report \
+                 that disagrees with its own recording is not evidence",
+                claimed.len(),
+                row.target,
+                recorded.len()
+            ),
+        );
+    }
+    let changed = recorded.iter().find(|one| match excused.get(&row.target) {
+        Some(baseline) => !baseline.contains(**one),
+        None => true,
+    });
+    let every = !recorded.is_empty() && answer.tests_run == Some(count(recorded.len()));
+    match (changed, every) {
+        (Some((test, why)), _) if row.outcome != KILLED || row.killed_by != [test.clone()] => {
+            notes.violated(
+                row.label(),
+                format!(
+                    "{test} declined against {} saying {why:?}, which its baseline did not \
+                     say, so the mutation changed what it did; the row says {} by {:?}",
+                    row.target, row.outcome, row.killed_by
+                ),
+            );
+        }
+        (None, true) if !row.not_run(DECLINED) => notes.violated(
+            row.label(),
+            format!(
+                "every test that ran against {} declined as its baseline did, so the execution \
+                 measured nothing; the row says {}",
+                row.target, row.outcome
+            ),
+        ),
+        (None, false) if row.not_run(DECLINED) => notes.violated(
+            row.label(),
+            format!(
+                "the row says every test declined and its execution against {} holds a test \
+                 that measured",
+                row.target
+            ),
+        ),
+        _ => {}
     }
 }
 

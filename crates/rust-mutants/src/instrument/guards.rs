@@ -65,8 +65,11 @@ pub(super) fn compose(
 ) -> Result<Composed, OffsetOverflow> {
     match form {
         Form::C => Ok(selector(paths, alternatives, original)),
+        Form::E if opens_a_block(original) => {
+            Ok(chain(paths, alternatives, original, Holds::Values))
+        }
         Form::E => {
-            let mut composed = chain(paths, alternatives, original, Probing::Written);
+            let mut composed = chain(paths, alternatives, original, Holds::Values);
             let open = format!("{}!(", paths.of("value"));
             composed.text.insert_str(0, &open);
             composed.text.push(')');
@@ -80,9 +83,26 @@ pub(super) fn compose(
                 .ok_or(OffsetOverflow)?;
             Ok(composed)
         }
-        Form::S => Ok(chain(paths, alternatives, original, Probing::Refused)),
+        Form::S => Ok(chain(paths, alternatives, original, Holds::Statements)),
         Form::M => arm(paths, alternatives, original),
     }
+}
+
+/// Whether `text` begins the way an expression ending at its own closing brace does, which ends a statement or an arm there.
+/// A guard over such an expression has to end the same way, and what a guard places at the start of a block has to be held so it cannot: the identity macro holds it, and the guard is a chain rather than a macro call.
+/// Reading only the first token errs toward holding: an expression that merely starts with a block, like `{ a } + b`, is held too, which is harmless wherever it stood.
+pub(super) fn opens_a_block(text: &str) -> bool {
+    const OPENERS: [&str; 8] = [
+        "if", "match", "loop", "while", "for", "unsafe", "const", "async",
+    ];
+    if text.starts_with(['{', '#', '\'']) {
+        return true;
+    }
+    let word: String = text
+        .chars()
+        .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+        .collect();
+    OPENERS.contains(&word.as_str())
 }
 
 /// Form M: the guard an arm did not have, written after the pattern that did not need one.
@@ -184,26 +204,29 @@ fn selector(paths: &Paths<'_>, alternatives: &[Alternative], original: &str) -> 
     }
 }
 
-/// Whether a form can hold the call that asks what the value it replaces already held.
+/// What the branches of a chain hold, which decides what may be written around them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Probing {
-    /// The form holds the call, so every vouched probe is written.
-    Written,
-    /// The form cannot hold it, so none is.
-    Refused,
+enum Holds {
+    /// Values: every vouched probe is written around the original, and a branch that opens a block is held in the identity macro, since it starts the block it is written into.
+    Values,
+    /// Statements, which neither a probe nor the identity macro can hold.
+    Statements,
 }
 
 /// Forms E and S: a branch chain.
-/// Both have the same branches; Form E is grouped by the generated identity macro because it stands where a value does.
+/// Both have the same branches; Form E is grouped by the generated identity macro because it stands where a value does, unless what it replaces opens a block, when the chain itself has to end where that did.
 fn chain(
     paths: &Paths<'_>,
     alternatives: &[Alternative],
     original: &str,
-    probing: Probing,
+    holds: Holds,
 ) -> Composed {
     let path = paths.active();
     let path = path.as_str();
-    let probed: Vec<&Alternative> = if probing == Probing::Written {
+    let value = paths.of("value");
+    let holding =
+        |text: &str| (holds == Holds::Values && opens_a_block(text)).then_some(value.as_str());
+    let probed: Vec<&Alternative> = if holds == Holds::Values {
         alternatives
             .iter()
             .filter(|one| one.probe.is_some())
@@ -218,9 +241,7 @@ fn chain(
         text.push_str(if text.is_empty() { "if " } else { " else if " });
         let written = write!(text, "{path}({index}) {{ ");
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
-        let start = text.len();
-        text.push_str(alternative);
-        spans.push((index, start..text.len()));
+        spans.push((index, held(&mut text, alternative, holding(alternative))));
         text.push_str(if alternative.is_empty() { "}" } else { " }" });
     }
     if text.is_empty() {
@@ -239,8 +260,12 @@ fn chain(
         let written = write!(text, "{}({}, ", paths.of(question.runtime()), one.index);
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
-    let original_at = text.len();
-    text.push_str(original);
+    let macro_ = if probed.is_empty() {
+        holding(original)
+    } else {
+        None
+    };
+    let original_at = held(&mut text, original, macro_).start;
     for _ in &probed {
         text.push(')');
     }
@@ -251,6 +276,21 @@ fn chain(
         original_at,
         compared: probed.iter().map(|one| one.index).collect(),
     }
+}
+
+/// Writes `branch` onto `text`, inside the identity macro `macro_` names where it names one, and returns where the branch itself landed.
+fn held(text: &mut String, branch: &str, macro_: Option<&str>) -> std::ops::Range<usize> {
+    if let Some(value) = macro_ {
+        let written = write!(text, "{value}!(");
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    let start = text.len();
+    text.push_str(branch);
+    let end = text.len();
+    if macro_.is_some() {
+        text.push(')');
+    }
+    start..end
 }
 
 #[cfg(test)]
@@ -275,6 +315,87 @@ mod tests {
             text: "false".to_owned(),
             comparable,
             probe: None,
+        }
+    }
+
+    #[test]
+    fn every_way_an_expression_can_open_a_block_is_read_as_one_and_nothing_else_is() {
+        for opening in [
+            "{ a }",
+            "#[cfg(x)] { a }",
+            "'label: { break 'label a; }",
+            "if a { b } else { c }",
+            "match a { _ => b }",
+            "loop { break a; }",
+            "while a { b(); }",
+            "for x in a { b(x); }",
+            "unsafe { a }",
+            "const { 1 }",
+            "async { a }",
+        ] {
+            assert!(
+                super::opens_a_block(opening),
+                "{opening} ends at its own closing brace, so its guard has to as well"
+            );
+        }
+        for plain in [
+            "a",
+            "iffy()",
+            "matches!(a, b)",
+            "looping()",
+            "whilst",
+            "fortune()",
+            "unsafely()",
+            "constant",
+            "asyncio()",
+            "f({ a })",
+            "(match a { _ => b })",
+        ] {
+            assert!(
+                !super::opens_a_block(plain),
+                "{plain} begins with no block, so the identity macro can hold its guard"
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_that_opens_a_block_is_guarded_by_a_chain_holding_every_branch_in_the_macro() {
+        let paths = Paths {
+            module: "rt",
+            depth: 0,
+        };
+        for original in [
+            "{ a }",
+            "match a { _ => b }",
+            "if a { b } else { c }",
+            "{ a } + b",
+            "unsafe { a }",
+        ] {
+            let opener = Alternative {
+                index: 7,
+                text: "{ a } - b".to_owned(),
+                comparable: false,
+                probe: None,
+            };
+            let Ok(composed) = compose(Form::E, &paths, &[opener], original) else {
+                panic!("{original} composes");
+            };
+            assert_eq!(
+                composed.text,
+                format!(
+                    "if rt::active(7) {{ rt::value!({{ a }} - b) }} else {{ rt::value!({original}) }}"
+                ),
+                "a guard over a value that opens a block has to end where that did, so it is the \
+                 chain; and a branch that opens a block starts the block it is written into, so \
+                 the macro holds it"
+            );
+            assert_eq!(
+                composed
+                    .text
+                    .get(composed.original_at..)
+                    .map(|rest| rest.starts_with(original)),
+                Some(true)
+            );
         }
     }
 

@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# How many holes xtask/invariant_gaps.txt may list.
+#
+# **This file may shrink and never grow.** A critical decision that arrives
+# without what holds it is a number going up here, which is the review the
+# registry exists to ask for; lower it in the same change that closes a hole.
+
+33

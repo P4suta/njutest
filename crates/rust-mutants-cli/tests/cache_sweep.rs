@@ -41,6 +41,7 @@ fn environment(fixture: &Fixture) -> Environment {
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        cargo: None,
         ci: rust_mutants_cli::CiHost::None,
     }
 }
@@ -371,6 +372,10 @@ fn emptying_what_earlier_runs_established_says_how_much_was_in_it() {
                 build: Vec::new(),
                 engine: "e".to_owned(),
                 runner: None,
+                declared: rust_mutants::outcomes::Declared::of(
+                    &std::collections::BTreeSet::new(),
+                    &[],
+                ),
             },
         })
         .expect("the cache record is stored");

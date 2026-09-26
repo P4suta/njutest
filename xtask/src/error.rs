@@ -24,6 +24,8 @@ pub enum XtCode {
     DocflowsUnchecked,
     /// actionlint refused a documented workflow.
     DocflowsRefused,
+    /// The registry of critical decisions names what the tree does not define, leaves a hole nobody owns, or its ledger of holes grew.
+    InvariantRegistry,
     /// The pre-push gate cannot check what the push names.
     PushUnverifiable,
     /// The pre-push tree moved or was changed during its check.
@@ -44,6 +46,14 @@ pub enum XtCode {
     RemoteUnrun,
     /// Another machine refused the commit.
     RemoteRefused,
+    /// git could not list the repository.
+    RepositoryUnlisted,
+    /// git listed a repository path that is not UTF-8.
+    RepositoryPath,
+    /// The repository holds a symbolic link.
+    RepositorySymlink,
+    /// A path git listed could not be read.
+    RepositoryUnreadable,
     /// A fixture tree could not be walked or read.
     FixtureUnreadable,
     /// A fixture tree holds a symbolic link.
@@ -214,6 +224,11 @@ impl XtCode {
                 "actionlint refused a workflow the documentation shows.",
                 "fix the snippet the message names, so a reader who copies it has a workflow that runs",
             ),
+            Self::InvariantRegistry => (
+                "XT0010",
+                "The registry of critical decisions names an item the tree does not define, leaves a layer open that the gaps ledger does not give an owner, lists a hole it does not have, or the ledger grew past its ceiling.",
+                "fix the cell, the ledger line, or the item the message names; a new critical decision arrives with what holds it",
+            ),
             Self::PushUnverifiable => (
                 "XT0101",
                 "The push names something the pre-push gate cannot check: an update Git did not give whole, an object other than the checked-out commit, a remote commit that is not here, a move that is not a fast-forward, or only deletions.",
@@ -263,6 +278,26 @@ impl XtCode {
                 "XT0402",
                 "At least one other machine refused the commit.",
                 "read each machine's answer and fix what it names",
+            ),
+            Self::RepositoryUnlisted => (
+                "XT0501",
+                "git could not list what the repository holds, so no gate can say what it read.",
+                "run the gate inside the repository's checkout, with git on the path",
+            ),
+            Self::RepositoryPath => (
+                "XT0502",
+                "git listed a path of the repository that is not UTF-8, which no path this repository holds is.",
+                "rename the path",
+            ),
+            Self::RepositorySymlink => (
+                "XT0503",
+                "The repository holds a symbolic link, which a gate never follows.",
+                "replace the link with the file it points at",
+            ),
+            Self::RepositoryUnreadable => (
+                "XT0504",
+                "A path git listed could not be read.",
+                "check the path the message names exists and is readable",
             ),
             Self::FixtureUnreadable => (
                 "XT1001",

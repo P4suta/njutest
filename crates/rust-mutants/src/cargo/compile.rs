@@ -4,7 +4,6 @@
 //! Compiling the tree and reading what the compiler said: the pristine gate, the source of every unit's file set, and the build validation and execution both stand on.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
 use std::time::Duration;
 
 use super::depinfo::{Unit, units_of};
@@ -125,9 +124,9 @@ impl BuildConfig {
 pub struct CompileOptions {
     /// Which command to run.
     pub kind: CompileKind,
-    /// `--target-dir`.
+    /// `--target-dir`, with the members a build into it may compile, which [`compile`] settles before cargo reads a file.
     /// `None` lets cargo choose, which inside a snapshot is the snapshot's own `target`.
-    pub target_dir: Option<PathBuf>,
+    pub target_dir: Option<super::BuildDir>,
     /// Pass `--locked`.
     pub locked: bool,
     /// Pass `--offline`.
@@ -174,7 +173,7 @@ pub fn compile_arguments(options: &CompileOptions) -> Vec<OsString> {
     }
     if let Some(target_dir) = &options.target_dir {
         args.push(OsString::from("--target-dir"));
-        args.push(target_dir.as_os_str().to_owned());
+        args.push(target_dir.path().as_os_str().to_owned());
     }
     args.extend(options.build.arguments().into_iter().map(OsString::from));
     args.extend(
@@ -232,8 +231,11 @@ impl Compilation {
 /// Compiles the tree in the driver's directory and reads what it said.
 ///
 /// # Errors
-/// [`CargoErrorKind::CommandFailed`] when cargo itself could not run or timed out, [`CargoErrorKind::MessageUnparsable`] for a stream that is not messages, and the dep-info errors of [`units_of`].
+/// [`CargoErrorKind::BuildLedger`] when the target directory cannot be settled, [`CargoErrorKind::CommandFailed`] when cargo itself could not run or timed out, [`CargoErrorKind::MessageUnparsable`] for a stream that is not messages, and the dep-info errors of [`units_of`].
 pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled, CargoError> {
+    if let Some(target_dir) = &options.target_dir {
+        target_dir.settle()?;
+    }
     let mut spec = driver
         .toolchain
         .command(driver.dir, compile_arguments(options));

@@ -3,7 +3,7 @@
 
 //! What the executions a recording holds of one fault say its decision can be.
 
-use xtask::faults::{Contradiction, Control, Evidence, Exec, Site, supports};
+use xtask::faults::{Control, Evidence, Exec, FaultContradictionError, Site, supports};
 
 fn site(decision: &str, by: Option<&str>) -> Site {
     Site {
@@ -25,7 +25,11 @@ fn ran(outcomes: &[(&str, &str)]) -> Vec<Exec> {
         .collect()
 }
 
-fn asked(decision: &str, by: Option<&str>, outcomes: &[(&str, &str)]) -> Result<(), Contradiction> {
+fn asked(
+    decision: &str,
+    by: Option<&str>,
+    outcomes: &[(&str, &str)],
+) -> Result<(), FaultContradictionError> {
     let execs = ran(outcomes);
     supports(
         &site(decision, by),
@@ -37,7 +41,7 @@ fn asked(decision: &str, by: Option<&str>, outcomes: &[(&str, &str)]) -> Result<
 }
 
 /// What a site with nothing run says against a route reaching `reaching`, or a refusal where `reaching` is nothing.
-fn routed(decision: &str, reaching: Option<&[String]>) -> Result<(), Contradiction> {
+fn routed(decision: &str, reaching: Option<&[String]>) -> Result<(), FaultContradictionError> {
     supports(
         &site(decision, None),
         &Evidence {
@@ -49,7 +53,7 @@ fn routed(decision: &str, reaching: Option<&[String]>) -> Result<(), Contradicti
 }
 
 /// A failure on `t`, the control on `t` answering `passed`, and a confirmation coming to `again`.
-fn confirmed(passed: bool, again: &str) -> Result<(), Contradiction> {
+fn confirmed(passed: bool, again: &str) -> Result<(), FaultContradictionError> {
     let mut execs = ran(&[("t", "killed")]);
     execs.push(Exec {
         fault: "cccc".to_owned(),
@@ -73,7 +77,7 @@ fn confirmed(passed: bool, again: &str) -> Result<(), Contradiction> {
 }
 
 /// Every decision a fault can be given, against recordings that do and do not support it.
-fn cases() -> Vec<(&'static str, Result<(), Contradiction>)> {
+fn cases() -> Vec<(&'static str, Result<(), FaultContradictionError>)> {
     vec![
         (
             "noticed where it failed once and nothing confirmed it",

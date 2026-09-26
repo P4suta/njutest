@@ -574,6 +574,162 @@ fn a_warm_cache_reaches_the_same_answer_without_executing_a_mutant() {
     );
 }
 
+/// The rows of `report` about the item `item`.
+fn rows_of<'a>(report: &'a serde_json::Value, item: &str) -> Vec<&'a serde_json::Value> {
+    report["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .filter(|one| one["item"] == item)
+        .collect()
+}
+
+/// The tests a row says declined, each with its words.
+fn declined(row: &serde_json::Value) -> Vec<(String, String)> {
+    row["declined"]
+        .as_array()
+        .expect("every row says which tests declined")
+        .iter()
+        .map(|one| {
+            (
+                one["test"].as_str().expect("a test").to_owned(),
+                one["why"].as_str().expect("words").to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// The words the fixture's sharing tests decline in.
+const CANNOT_SHARE: &str = "this machine cannot share blocks";
+
+/// A mutation only a test that then declines reaches is `declined`, counted apart, and no finding.
+fn measured_nothing_where_every_test_declined(report: &serde_json::Value) {
+    let unmeasured: Vec<&serde_json::Value> = rows_of(report, "shared")
+        .into_iter()
+        .filter(|one| one["outcome"] == "not_run")
+        .collect();
+    assert_eq!(
+        unmeasured.len(),
+        4,
+        "a mutation only a test that then declines reaches is measured by nothing here, and the \
+         one that panics before the test declines is a kill: {report}"
+    );
+    for row in &unmeasured {
+        assert_eq!(row["not_run_reason"], "declined", "{row}");
+        assert_eq!(
+            declined(row),
+            [(
+                "tests::doubles_what_it_shares".to_owned(),
+                CANNOT_SHARE.to_owned()
+            )],
+            "{row}"
+        );
+    }
+    let declined_ids: Vec<&serde_json::Value> = report["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .filter(|one| one["not_run_reason"] == "declined")
+        .map(|one| &one["id"])
+        .collect();
+    assert_eq!(
+        report["accounting"]["declined"],
+        serde_json::json!(declined_ids.len()),
+        "the accounting counts the declined apart from every other reason: {report}"
+    );
+    assert!(
+        report["findings"]
+            .as_array()
+            .expect("findings")
+            .iter()
+            .all(|finding| !declined_ids.contains(&&finding["mutant"])),
+        "a declined mutation is not a finding: nothing this machine could measure is wrong: \
+         {report}"
+    );
+}
+
+/// A test that declines only under the mutation was changed by it, and a survivor stands on the test that measured.
+fn declined_only_under_the_mutation_is_a_kill(report: &serde_json::Value) {
+    let changed: Vec<&serde_json::Value> = rows_of(report, "can_measure")
+        .into_iter()
+        .filter(|one| one["outcome"] == "killed")
+        .collect();
+    assert_eq!(changed.len(), 2, "{report}");
+    for row in changed {
+        assert_eq!(
+            row["killed_by"],
+            serde_json::json!(["tests::adds_ten"]),
+            "a test that declines only under the mutation was changed by it, which is a detection: \
+             {row}"
+        );
+        assert_eq!(
+            declined(row),
+            [(
+                "tests::adds_ten".to_owned(),
+                "this machine cannot add".to_owned()
+            )],
+            "{row}"
+        );
+    }
+    let survivors: Vec<&serde_json::Value> = rows_of(report, "counted")
+        .into_iter()
+        .filter(|one| one["outcome"] == "survived")
+        .collect();
+    assert!(!survivors.is_empty(), "{report}");
+    for row in &survivors {
+        assert_eq!(
+            declined(row),
+            [(
+                "tests::counts_what_it_shares".to_owned(),
+                CANNOT_SHARE.to_owned()
+            )],
+            "a survivor stands on the test that measured, with the decline beside it: {row}"
+        );
+    }
+}
+
+/// What `second` read back from the run `first` reported: nothing that rested on a decline, and everything else.
+fn nothing_resting_on_a_decline_is_read_back(
+    first: &serde_json::Value,
+    second: &serde_json::Value,
+) {
+    let first_rows = first["mutants"].as_array().expect("mutants");
+    for row in second["mutants"].as_array().expect("mutants") {
+        let before = first_rows
+            .iter()
+            .find(|one| one["id"] == row["id"])
+            .expect("the same catalog");
+        if !declined(before).is_empty() {
+            assert_eq!(
+                row["source_run_id"],
+                serde_json::Value::Null,
+                "an answer established where a test could not measure is this machine's, and \
+                 read back it would pass the machine off as the tree: {row}"
+            );
+        } else if before["outcome"] == "killed" || before["outcome"] == "survived" {
+            assert_eq!(
+                row["source_run_id"], first["run"]["id"],
+                "an answer no decline touched is read back as ever: {row}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_test_that_declines_to_measure_leaves_no_survivor_and_no_answer_to_keep() {
+    let fixture = Fixture::copy("fixture-declines");
+    let first = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    assert_eq!(first.status.code(), Some(1), "{}", stderr(&first));
+    let report = stored(&fixture);
+    let errors = against_schema("rust-mutants-run-report-v1.json", &report);
+    assert!(errors.is_empty(), "{errors:#?}");
+    measured_nothing_where_every_test_declined(&report);
+    declined_only_under_the_mutation_is_a_kill(&report);
+    let again = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    assert_eq!(again.status.code(), Some(1), "{}", stderr(&again));
+    nothing_resting_on_a_decline_is_read_back(&report, &stored(&fixture));
+}
+
 #[test]
 fn a_tree_that_changed_is_a_different_question_and_is_answered_again() {
     let fixture = Fixture::copy("fixture-simple");
@@ -1187,6 +1343,7 @@ fn environment(fixture: &Fixture) -> Environment {
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        cargo: None,
         ci: rust_mutants_cli::CiHost::None,
     }
 }
@@ -1221,6 +1378,7 @@ fn environment_at(root: &Path, temp: &Path, cache: &Path) -> Environment {
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        cargo: None,
         ci: rust_mutants_cli::CiHost::None,
     }
 }

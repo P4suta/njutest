@@ -52,16 +52,16 @@ pub enum ChildError {
         /// The failure to wait for the child, when waiting failed.
         wait: Option<std::io::Error>,
         /// The failure to read or join the stdout collector, when it failed.
-        stdout: Option<OutputFailure>,
+        stdout: Option<ProcessOutputError>,
         /// The failure to read or join the stderr collector, when it failed.
-        stderr: Option<OutputFailure>,
+        stderr: Option<ProcessOutputError>,
     },
 }
 
 /// Why one owned output-pipe collector could not return all of its bytes.
 #[derive(Debug, thiserror::Error)]
 #[error("{kind}: {source}")]
-pub struct OutputFailure {
+pub struct ProcessOutputError {
     /// Which closed collector transition failed.
     kind: OutputFailureKind,
     /// The underlying read or typed-join failure.
@@ -69,7 +69,7 @@ pub struct OutputFailure {
     source: std::io::Error,
 }
 
-impl OutputFailure {
+impl ProcessOutputError {
     const fn read(source: std::io::Error) -> Self {
         Self {
             kind: OutputFailureKind::Read,
@@ -309,11 +309,11 @@ fn read_pipe<R: std::io::Read>(pipe: Option<R>) -> std::io::Result<Vec<u8>> {
 
 fn collected_pipe(
     reader: ScopedThread<'_, std::io::Result<Vec<u8>>>,
-) -> Result<Vec<u8>, OutputFailure> {
+) -> Result<Vec<u8>, ProcessOutputError> {
     match reader.join() {
         Ok(Ok(bytes)) => Ok(bytes),
-        Ok(Err(source)) => Err(OutputFailure::read(source)),
-        Err(source) => Err(OutputFailure::join(source)),
+        Ok(Err(source)) => Err(ProcessOutputError::read(source)),
+        Err(source) => Err(ProcessOutputError::join(source)),
     }
 }
 

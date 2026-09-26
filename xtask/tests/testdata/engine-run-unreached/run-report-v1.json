@@ -3,10 +3,10 @@
   "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260925t173201548z",
-    "started_at": "2026-09-25T17:32:01.548431Z",
-    "finished_at": "2026-09-25T17:32:04.047533Z",
-    "duration_ms": 175,
+    "id": "20260926t050825274z",
+    "started_at": "2026-09-26T05:08:25.274845047Z",
+    "finished_at": "2026-09-26T05:08:27.453369252Z",
+    "duration_ms": 168,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -18,12 +18,12 @@
   "workspace": {
     "root_name": "fixture-unreached",
     "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "68b3fa4ccf0987ac8646dd49d5f36d39888c7ca6ba785d97f5af2338ea9bb8da",
+    "workspace_digest": "1c521dfca1d7b9036cdf38e92d6d381d6e029677097caea5801a632e091b6931",
     "catalog_digest": "03c20af27c9024062341116ff85836fcf3a0955215778abecd0001f5c374dd22",
     "platform": {
-      "os": "darwin",
-      "arch": "aarch64",
-      "target": "aarch64-apple-darwin"
+      "os": "gnu",
+      "arch": "x86_64",
+      "target": "x86_64-unknown-linux-gnu"
     }
   },
   "selection": {
@@ -49,6 +49,7 @@
     "not_run": 4,
     "unreached": 4,
     "discharged": 0,
+    "declined": 0,
     "expected": 0
   },
   "score": {
@@ -97,8 +98,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
-      "exit_code": 101,
-      "duration_ms": 30,
+      "exit_code": -1,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -107,6 +108,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,
@@ -144,8 +146,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
-      "exit_code": 101,
-      "duration_ms": 29,
+      "exit_code": -1,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -154,6 +156,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,
@@ -191,8 +194,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
-      "exit_code": 101,
-      "duration_ms": 30,
+      "exit_code": -1,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -201,6 +204,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,
@@ -238,8 +242,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
-      "exit_code": 101,
-      "duration_ms": 29,
+      "exit_code": -1,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -248,6 +252,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,
@@ -293,6 +298,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -334,6 +340,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -375,6 +382,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -416,6 +424,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -461,5 +470,27 @@
       "mutant": "be2e35f687f8d3ec20385c73f5297133b006b4d4729e93dc5f6dd35f15463c98",
       "detail": "no measured test reaches be2e35f687f8d3ec2038: the mutation lives in code the tests never execute"
     }
+  ],
+  "facts": [
+    "panic=\"unwind\"",
+    "target_abi=\"\"",
+    "target_arch=\"x86_64\"",
+    "target_endian=\"little\"",
+    "target_env=\"gnu\"",
+    "target_family=\"unix\"",
+    "target_has_atomic=\"16\"",
+    "target_has_atomic=\"32\"",
+    "target_has_atomic=\"64\"",
+    "target_has_atomic=\"8\"",
+    "target_has_atomic=\"ptr\"",
+    "target_has_atomic_primitive_alignment=\"16\"",
+    "target_has_atomic_primitive_alignment=\"32\"",
+    "target_has_atomic_primitive_alignment=\"64\"",
+    "target_has_atomic_primitive_alignment=\"8\"",
+    "target_has_atomic_primitive_alignment=\"ptr\"",
+    "target_os=\"linux\"",
+    "target_pointer_width=\"64\"",
+    "target_vendor=\"unknown\"",
+    "unix"
   ]
 }

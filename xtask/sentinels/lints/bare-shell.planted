@@ -1,0 +1,12 @@
+=== spec-argument source crates/app/tests/runner.rs
+fn sh(script: &str) -> Spec { Spec::new(["sh", "-c", script], Bound::Unbounded) }
+=== command source crates/app/src/lib.rs
+fn start() { let _ = std::process::Command::new("sh"); }
+=== windows-name source crates/app/src/lib.rs
+fn start() -> &'static str { "sh.exe" }
+=== in-a-macro source crates/app/src/lib.rs
+fn argv() -> Vec<&'static str> { vec!["sh", "-c", "true"] }
+=== a-runtime-check-is-not-a-cfg source crates/app/src/lib.rs
+fn argv() -> Option<&'static str> { cfg!(unix).then_some("sh") }
+=== gated-on-something-else source crates/app/src/lib.rs
+#[cfg(not(windows))] fn argv() -> &'static str { "sh" }

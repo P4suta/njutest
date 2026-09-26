@@ -178,11 +178,24 @@ const LONE_TEMPORARY_VARIABLE_REMEDY: &str = "name the directory in every variab
     `std::env::temp_dir` reads `TMP` and `TEMP` on Windows and `TMPDIR` elsewhere, so a child \
     given one of them keeps writing into the parent's directory on the other platform, and what \
     it leaves there is left where nothing owns it";
+const ERROR_NAME_REMEDY: &str = "name a type that implements `std::error::Error` for what it is: \
+    `SomethingError`, never a bare `Error`. A reader meets an error by the name a `?` or a match \
+    arm gives it, and `ScheduleFailure`, `Contradiction` or `Error` says neither that it is one \
+    nor which one it is";
 const OPEN_AND_CLOSED_REMEDY: &str = "drop `#[non_exhaustive]`. A type that publishes its whole \
     list has promised to break callers when it grows, while the attribute promises not to. It \
     also disables `clippy::match_wildcard_for_single_variants`. Keep it only on an error whose \
     callers branch on no published exhaustive list";
 
+const RAW_TREE_WALK_REMEDY: &str = "read the repository through \
+    `crate::repository::files`, which is what git lists, and any other directory through \
+    `crate::repository::entries`; a gate that walks the filesystem reads what a build, a \
+    run or a report left beside the tree, and one that a concurrent build rewrites fails the gate \
+    for a reason that is no finding";
+const BARE_SHELL_REMEDY: &str = "a POSIX `sh` is on every Unix and on no Windows search path \
+    this repository can count on, so a program named `sh` outside `#[cfg(unix)]` is a precondition \
+    nobody states: a test takes its shell from `njutest_devkit::paths::posix_sh()`, which says what \
+    to install when there is none, and code that names `sh` for itself is compiled only for Unix";
 const RAW_READ_REMEDY: &str = "ask `crate::observe` what the path is. A reader of evidence that \
     touches the filesystem itself decides at its own call site what an I/O failure means, which is \
     how a lock file beside the profiles became a directory that could not be read and how running \
@@ -268,7 +281,10 @@ declare_kinds! {
     OpenAndClosed => "open-and-closed",
     ForeignRemainder => "foreign-remainder",
     RawRead => "raw-read",
+    RawTreeWalk => "raw-tree-walk",
     LoneTemporaryVariable => "lone-temporary-variable",
+    ErrorName => "error-name",
+    BareShell => "bare-shell",
 }
 
 impl Kind {
@@ -320,7 +336,10 @@ impl Kind {
             Self::OpenAndClosed => OPEN_AND_CLOSED_REMEDY,
             Self::ForeignRemainder => FOREIGN_REMAINDER_REMEDY,
             Self::RawRead => RAW_READ_REMEDY,
+            Self::RawTreeWalk => RAW_TREE_WALK_REMEDY,
+            Self::BareShell => BARE_SHELL_REMEDY,
             Self::LoneTemporaryVariable => LONE_TEMPORARY_VARIABLE_REMEDY,
+            Self::ErrorName => ERROR_NAME_REMEDY,
         }
     }
 }
@@ -420,6 +439,14 @@ fn overflow_sensitive(file: &str) -> bool {
 /// The modules that read evidence from the filesystem, every one of which looks through the observer rather than at the filesystem.
 const EVIDENCE_READERS: [&str; 1] = ["crates/njutest/src/concurrency/"];
 
+/// The one module of the gates that lists a directory: what git lists for the repository, and what a directory outside one holds.
+const REPOSITORY_WALKER: &str = "xtask/src/repository.rs";
+
+/// Whether `file` is a gate, which lists a directory only through [`REPOSITORY_WALKER`].
+fn gate_source(file: &str) -> bool {
+    file != REPOSITORY_WALKER && file.starts_with("xtask/src/")
+}
+
 /// The one module that looks at the filesystem for the readers of evidence.
 const OBSERVER: &str = "crates/njutest/src/observe.rs";
 
@@ -443,6 +470,17 @@ const FILESYSTEM_QUESTIONS: [&str; 12] = [
     "read_link",
     "file_type",
 ];
+
+/// What lists a directory: the standard library's listing, and the crate that walks a tree.
+const TREE_WALKS: [&str; 3] = ["read_dir", "WalkDir", "walkdir"];
+
+/// Where `path` names a way of listing a directory, which a gate reaches only through the repository walker.
+fn tree_walk_span(path: &syn::Path) -> Option<proc_macro2::Span> {
+    path.segments
+        .iter()
+        .find(|segment| TREE_WALKS.iter().any(|name| segment.ident == name))
+        .map(|segment| segment.ident.span())
+}
 
 /// Where `path` names the filesystem module, or its `File` alone or under that module, which a reader of evidence reaches only through the observer.
 fn filesystem_path_span(path: &syn::Path) -> Option<proc_macro2::Span> {
@@ -545,6 +583,7 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
         (overflow_sensitive(file), SourcePolicy::OverflowSensitive),
         (strict_conversions(file), SourcePolicy::StrictConversions),
         (evidence_reader(file), SourcePolicy::EvidenceReader),
+        (gate_source(file), SourcePolicy::GateSource),
     ]
     .into_iter()
     .filter(|(enabled, _policy)| *enabled)
@@ -572,6 +611,9 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
         scan.found.extend(raw_group_signals(&parsed, file));
     }
     scan.found.extend(implied_cfgs(&parsed, file));
+    if file != SHELL_FINDER {
+        scan.found.extend(bare_shells(&parsed, file));
+    }
     scan.found.sort();
     scan.found.dedup();
     Ok(scan.found)
@@ -2962,6 +3004,7 @@ struct Aliases {
     json_values: BTreeSet<String>,
     option_types: BTreeSet<String>,
     boolean_types: BTreeSet<String>,
+    error_names: BTreeSet<String>,
 }
 
 impl Aliases {
@@ -3005,6 +3048,9 @@ impl Aliases {
                 }
                 if rename.source == "Option" || aliases.option_types.contains(&rename.source) {
                     changed |= aliases.option_types.insert(rename.local.clone());
+                }
+                if rename.source == "Error" || aliases.error_names.contains(&rename.source) {
+                    changed |= aliases.error_names.insert(rename.local.clone());
                 }
             }
             for declaration in &declarations.types {
@@ -3183,6 +3229,12 @@ impl Aliases {
     fn default_derive(&self, path: &syn::Path) -> bool {
         path.segments.last().is_some_and(|segment| {
             segment.ident == "Default" || self.default_derives.contains(&segment.ident.to_string())
+        })
+    }
+
+    fn error_path(&self, path: &syn::Path) -> bool {
+        path.segments.last().is_some_and(|segment| {
+            segment.ident == "Error" || self.error_names.contains(&segment.ident.to_string())
         })
     }
 
@@ -3560,6 +3612,26 @@ fn enum_has_permissive_input(item: &syn::ItemEnum, aliases: &Aliases, file: &str
                         .iter()
                         .any(|field| permissive_input_attr(&field.attrs))
             }))
+}
+
+/// Whether `attrs` derive `Error`, under any name it was imported as.
+fn derives_error(attrs: &[syn::Attribute], aliases: &Aliases) -> bool {
+    attrs.iter().any(|attribute| {
+        let syn::Meta::List(list) = &attribute.meta else {
+            return false;
+        };
+        list.path.is_ident("derive")
+            && list
+                .parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated,
+                )
+                .is_ok_and(|paths| paths.iter().any(|path| aliases.error_path(path)))
+    })
+}
+
+/// Whether `name` says it is an error and which: it ends in `Error` and is not only that.
+fn named_error(name: &str) -> bool {
+    name.ends_with("Error") && name != "Error"
 }
 
 fn derives_deserialize_in(attrs: &[syn::Attribute], aliases: &Aliases) -> bool {
@@ -4699,6 +4771,7 @@ enum SourcePolicy {
     OverflowSensitive,
     StrictConversions,
     EvidenceReader,
+    GateSource,
 }
 
 struct Scan {
@@ -5211,6 +5284,9 @@ impl Visit<'_> for Scan {
         if struct_has_permissive_input(item, &self.aliases, &self.file) {
             self.note(Kind::OpenDeserialization, item.ident.span());
         }
+        if derives_error(&item.attrs, &self.aliases) && !named_error(&item.ident.to_string()) {
+            self.note(Kind::ErrorName, item.ident.span());
+        }
         let parameters = generic_parameters(&item.generics);
         if !parameters.is_empty()
             && item
@@ -5239,6 +5315,9 @@ impl Visit<'_> for Scan {
         }
         if enum_has_permissive_input(item, &self.aliases, &self.file) {
             self.note(Kind::OpenDeserialization, item.ident.span());
+        }
+        if derives_error(&item.attrs, &self.aliases) && !named_error(&item.ident.to_string()) {
+            self.note(Kind::ErrorName, item.ident.span());
         }
         let derived = item
             .attrs
@@ -5279,6 +5358,14 @@ impl Visit<'_> for Scan {
     }
 
     fn visit_item_impl(&mut self, item: &syn::ItemImpl) {
+        if let Some((path, _for)) = &item.trait_
+            && self.aliases.error_path(path)
+            && let Some(segment) = path.segments.last()
+            && let Some(name) = implemented_type_name(&item.self_ty)
+            && !named_error(&name)
+        {
+            self.note(Kind::ErrorName, segment.ident.span());
+        }
         if let Some((path, _for)) = &item.trait_
             && let Some(segment) = path.segments.last()
         {
@@ -5350,6 +5437,13 @@ impl Visit<'_> for Scan {
                 }
             }
         }
+        if self.has_policy(SourcePolicy::GateSource) {
+            for name in TREE_WALKS {
+                if let Some(span) = use_tree_name_span(&item.tree, name) {
+                    self.note(Kind::RawTreeWalk, span);
+                }
+            }
+        }
         syn::visit::visit_item_use(self, item);
     }
 
@@ -5402,6 +5496,9 @@ impl Visit<'_> for Scan {
             && FILESYSTEM_QUESTIONS.contains(&call.method.to_string().as_str())
         {
             self.note(Kind::RawRead, call.method.span());
+        }
+        if self.has_policy(SourcePolicy::GateSource) && call.method == "read_dir" {
+            self.note(Kind::RawTreeWalk, call.method.span());
         }
         if call.method == "spawn" && !self.raw_spawn_boundary(call.method.span()) {
             self.note(Kind::UnownedSpawn, call.method.span());
@@ -5472,6 +5569,11 @@ impl Visit<'_> for Scan {
         {
             self.note(Kind::RawRead, span);
         }
+        if self.has_policy(SourcePolicy::GateSource)
+            && let Some(span) = tree_walk_span(&path.path)
+        {
+            self.note(Kind::RawTreeWalk, span);
+        }
         if let Some(segment) = path
             .path
             .segments
@@ -5503,6 +5605,14 @@ impl Visit<'_> for Scan {
     }
 
     fn visit_macro(&mut self, macro_: &syn::Macro) {
+        if self.has_policy(SourcePolicy::GateSource) {
+            for name in TREE_WALKS {
+                self.note_each(
+                    Kind::RawTreeWalk,
+                    identifier_spans_in_tokens(&macro_.tokens, name),
+                );
+            }
+        }
         if self.has_policy(SourcePolicy::EvidenceReader) {
             for name in std::iter::once("fs").chain(FILESYSTEM_QUESTIONS) {
                 self.note_each(
@@ -5540,6 +5650,11 @@ impl Visit<'_> for Scan {
     }
 
     fn visit_type_path(&mut self, path: &syn::TypePath) {
+        if self.has_policy(SourcePolicy::GateSource)
+            && let Some(span) = tree_walk_span(&path.path)
+        {
+            self.note(Kind::RawTreeWalk, span);
+        }
         if let Some(segment) = path
             .path
             .segments
@@ -6321,7 +6436,6 @@ fn cfg_constant(meta: &syn::Meta) -> CfgTruth {
     }
 }
 
-/// Every `#[cfg]` whose condition an enclosing item's `#[cfg]` already guarantees, which a reader takes for a second condition the item is under.
 /// The one shipped file that signals a process group itself.
 const GROUP_SIGNALLER: &str = "crates/rust-mutants/src/runner/unix.rs";
 
@@ -6411,6 +6525,143 @@ impl Visit<'_> for RawSignal<'_> {
     }
 }
 
+/// The one place a POSIX shell is looked for rather than assumed.
+const SHELL_FINDER: &str = "crates/njutest-devkit/src/paths.rs";
+
+/// Every program named `sh` outside code compiled only for Unix.
+fn bare_shells(parsed: &syn::File, file: &str) -> Vec<Finding> {
+    let mut visitor = BareShell {
+        file,
+        unix: 0,
+        found: Vec::new(),
+    };
+    visitor.visit_file(parsed);
+    visitor.found
+}
+
+/// How many enclosing items are compiled only for Unix, and every shell named outside all of them.
+struct BareShell<'a> {
+    file: &'a str,
+    unix: usize,
+    found: Vec<Finding>,
+}
+
+/// Whether `text` is the name of the POSIX shell a program would be started by.
+fn names_a_shell(text: &str) -> bool {
+    text == "sh" || text == "sh.exe"
+}
+
+impl BareShell<'_> {
+    fn within(&mut self, attributes: &[syn::Attribute], walk: impl FnOnce(&mut Self)) {
+        let unix = attributes.iter().any(|attribute| match &attribute.meta {
+            syn::Meta::List(list) if list.path.is_ident("cfg") => {
+                let condition = list.tokens.to_string();
+                condition == "unix"
+                    || all_of(&list.tokens)
+                        .is_some_and(|parts| parts.iter().any(|part| part.to_string() == "unix"))
+            }
+            syn::Meta::List(_) | syn::Meta::Path(_) | syn::Meta::NameValue(_) => false,
+        });
+        if unix {
+            self.unix = self.unix.saturating_add(1);
+        }
+        walk(self);
+        if unix {
+            self.unix = self.unix.saturating_sub(1);
+        }
+    }
+
+    fn note(&mut self, span: proc_macro2::Span) {
+        if self.unix == 0 {
+            self.found.push(Finding {
+                kind: Kind::BareShell,
+                file: self.file.to_owned(),
+                line: span.start().line,
+            });
+        }
+    }
+
+    /// Every string literal among `tokens` that names a shell, but for one compared against with `==` or `!=`.
+    fn scan_tokens(&mut self, tokens: &proc_macro2::TokenStream) {
+        let trees: Vec<proc_macro2::TokenTree> = tokens.clone().into_iter().collect();
+        for (at, tree) in trees.iter().enumerate() {
+            match tree {
+                proc_macro2::TokenTree::Literal(literal) => {
+                    let compared = at >= 2
+                        && matches!(
+                            (trees.get(at.saturating_sub(2)), trees.get(at.saturating_sub(1))),
+                            (
+                                Some(proc_macro2::TokenTree::Punct(first)),
+                                Some(proc_macro2::TokenTree::Punct(second))
+                            ) if matches!(first.as_char(), '=' | '!') && second.as_char() == '='
+                        );
+                    let named = match syn::parse2::<syn::LitStr>(proc_macro2::TokenStream::from(
+                        tree.clone(),
+                    )) {
+                        Ok(text) => names_a_shell(&text.value()),
+                        Err(_not_a_string) => false,
+                    };
+                    if named && !compared {
+                        self.note(literal.span());
+                    }
+                }
+                proc_macro2::TokenTree::Group(group) => self.scan_tokens(&group.stream()),
+                proc_macro2::TokenTree::Ident(_) | proc_macro2::TokenTree::Punct(_) => {}
+            }
+        }
+    }
+}
+
+impl Visit<'_> for BareShell<'_> {
+    fn visit_file(&mut self, file: &syn::File) {
+        self.within(&file.attrs, |walk| syn::visit::visit_file(walk, file));
+    }
+
+    fn visit_item(&mut self, item: &syn::Item) {
+        self.within(item_attributes(item), |walk| {
+            syn::visit::visit_item(walk, item);
+        });
+    }
+
+    fn visit_impl_item(&mut self, item: &syn::ImplItem) {
+        let attributes: &[syn::Attribute] = match item {
+            syn::ImplItem::Const(one) => &one.attrs,
+            syn::ImplItem::Fn(one) => &one.attrs,
+            syn::ImplItem::Type(one) => &one.attrs,
+            syn::ImplItem::Macro(one) => &one.attrs,
+            _ => &[],
+        };
+        self.within(attributes, |walk| syn::visit::visit_impl_item(walk, item));
+    }
+
+    fn visit_expr_binary(&mut self, binary: &syn::ExprBinary) {
+        let compared = matches!(binary.op, syn::BinOp::Eq(_) | syn::BinOp::Ne(_));
+        for side in [&*binary.left, &*binary.right] {
+            let literal = matches!(
+                side,
+                syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(_),
+                    ..
+                })
+            );
+            if !(compared && literal) {
+                self.visit_expr(side);
+            }
+        }
+    }
+
+    fn visit_lit_str(&mut self, literal: &syn::LitStr) {
+        if names_a_shell(&literal.value()) {
+            self.note(literal.span());
+        }
+    }
+
+    fn visit_macro(&mut self, invocation: &syn::Macro) {
+        self.scan_tokens(&invocation.tokens);
+    }
+}
+
+/// Every `#[cfg]` whose condition an enclosing item's `#[cfg]` already guarantees, which a reader takes for a second condition the item is under.
 fn implied_cfgs(parsed: &syn::File, file: &str) -> Vec<Finding> {
     let mut visitor = ImpliedCfg {
         file,
