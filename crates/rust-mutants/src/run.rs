@@ -640,10 +640,7 @@ impl Run {
             findings.push(Finding {
                 kind: FindingKind::UnmatchedSkip,
                 mutant: None,
-                detail: format!(
-                    "the marker at {}:{} hides nothing: {:?}",
-                    claim.path, claim.line, claim.reason
-                ),
+                detail: unmatched_skip(claim),
             });
         }
         findings
@@ -672,6 +669,35 @@ pub(crate) fn stale_detail(id: &str, claimed: Outcome, actual: Outcome, reason: 
 /// What an unmatched-expectation finding says about the claim it restates.
 pub(crate) fn unmatched_detail(id: &str, why: &str) -> String {
     format!("the expectation for {id:?} verifies nothing: {why}")
+}
+
+/// What a skip that hid nothing says: where it is and why its author wrote it, and for one anchored to its text, where that text is now.
+fn unmatched_skip(claim: &SkipClaim) -> String {
+    let Some(text) = &claim.text else {
+        return format!(
+            "the marker at {}:{} hides nothing: {:?}",
+            claim.path, claim.line, claim.reason
+        );
+    };
+    let now: Vec<String> = claim
+        .text_at
+        .iter()
+        .map(|(path, line)| format!("{path}:{line}"))
+        .collect();
+    if now.is_empty() {
+        return format!(
+            "the marker at {}:{} hides nothing: its text {text:?} is in none of the files it \
+             names: {:?}",
+            claim.path, claim.line, claim.reason
+        );
+    }
+    format!(
+        "the marker at {}:{} hides nothing: its text {text:?} is now at {}: {:?}",
+        claim.path,
+        claim.line,
+        now.join(", "),
+        claim.reason
+    )
 }
 
 fn detail(kind: FindingKind, one: &Judged) -> String {
