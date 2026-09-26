@@ -120,7 +120,7 @@ LEFT      2 of 14 survivors are accounted for by no claim
 - **waited** — a bound expired before anything finished.
   Not counted as noticed, and not counted against the tests either: nothing was established.
 - **inconclusive** — the run could not decide, and says so rather than guessing.
-- **not run** — nothing executed it, and each one says why: `unreached` (no measured test reaches it), `discharged` (a proof says no target could have noticed), `unselected`, `stopped-early`, `interrupted`.
+- **not run** — nothing executed it, and each one says why: `unreached` (no measured test reaches it), `discharged` (a proof says no target could have noticed), `unselected`, `stopped-early`, `interrupted`, `declined` (every test that reached it declined to measure on this machine, as it did with nothing active).
 - **refused** — the compiler would not accept the mutation.
   Not a finding.
 - **skipped** — discovery passed over the place, and every skip states a reason.

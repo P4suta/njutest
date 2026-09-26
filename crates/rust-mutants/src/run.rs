@@ -204,6 +204,8 @@ pub struct Judged {
     pub measured: bool,
     /// What comparison of the compiler artifacts established.
     pub identical: CodegenIdentity,
+    /// Each test that declined to measure in the execution the outcome rests on, in its words (ADR 0043).
+    pub declined: Vec<crate::decline::Decline>,
 }
 
 /// Whether a reviewer's claim about one mutant held.
@@ -465,6 +467,8 @@ pub struct Tally {
     pub unreached: u32,
     /// How many of those never ran because a proof removed every target that could have noticed them.
     pub discharged: u32,
+    /// How many of those measured nothing because every test that reached them declined to measure on this machine (ADR 0043).
+    pub declined: u32,
     /// How many survivors a reviewer had declared, and the run confirmed.
     pub expected: u32,
 }
@@ -548,6 +552,12 @@ impl Run {
                     .checked_add(1)
                     .ok_or(SessionError::RunCountOverflow)?;
             }
+            if one.not_run_reason == Some(NotRunReason::Declined) {
+                tally.declined = tally
+                    .declined
+                    .checked_add(1)
+                    .ok_or(SessionError::RunCountOverflow)?;
+            }
             if one.expected {
                 tally.expected = tally
                     .expected
@@ -585,30 +595,15 @@ impl Run {
     pub fn findings(&self) -> Vec<Finding> {
         let mut findings = Vec::new();
         for one in &self.judged {
-            let kind = match one.outcome {
-                Outcome::Survived if one.expected => continue,
-                Outcome::Survived => FindingKind::SurvivingMutant,
-                Outcome::Inconclusive => FindingKind::InconclusiveMutant,
-                Outcome::NotRun if one.not_run_reason == Some(NotRunReason::Unreached) => {
-                    FindingKind::UnreachedMutant
-                }
-                Outcome::NotRun if one.not_run_reason == Some(NotRunReason::Discharged) => {
-                    FindingKind::DischargedMutant
-                }
-                Outcome::NotRun
-                    if matches!(
-                        one.not_run_reason,
-                        Some(NotRunReason::Unselected | NotRunReason::StoppedEarly)
-                    ) =>
-                {
-                    continue;
-                }
-                Outcome::NotRun if self.interrupted => continue,
-                Outcome::NotRun => FindingKind::NotRunMutant,
-                Outcome::Killed => continue,
-                Outcome::StepLimitReached => FindingKind::StepLimitReachedMutant,
-                Outcome::Waited => FindingKind::WaitedMutant,
-                Outcome::Errored => FindingKind::ErroredMutant,
+            let Some(kind) = verdict_finding(
+                RowVerdict {
+                    outcome: one.outcome,
+                    not_run_reason: one.not_run_reason,
+                    expected: one.expected,
+                },
+                self.interrupted,
+            ) else {
+                continue;
             };
             findings.push(Finding {
                 kind,
@@ -1489,7 +1484,7 @@ fn one_mutant(
         return Ok(one);
     }
     let (established, asked) = execute(session, mutant, options, cancel)?;
-    keep(mutant, options, &established)?;
+    keep(mutant, options, (&established, &asked))?;
     carry(session, mutant, (options, cancel), (&established, &asked))?;
     Ok(established)
 }
@@ -1848,6 +1843,8 @@ pub enum NotRunReason {
     Unselected,
     /// The run stopped at the first finding, as it was asked to.
     StoppedEarly,
+    /// Every test that reached it declined to measure on this machine, as the baseline's did (ADR 0043).
+    Declined,
 }
 
 impl NotRunReason {
@@ -1866,6 +1863,7 @@ impl NotRunReason {
             Self::Interrupted => "interrupted",
             Self::Unselected => "unselected",
             Self::StoppedEarly => "stopped-early",
+            Self::Declined => "declined",
         }
     }
 
@@ -1914,6 +1912,23 @@ fn execute(
     let result = attempts.into_result();
     let outcome = result.outcome();
     let tests_run = result.tests_run();
+    let not_run_reason = not_run_because(&result.conclusion, &route);
+    let declined = match &result.declines {
+        crate::decline::Declines::Read { declined, .. } => declined.clone(),
+        crate::decline::Declines::Unbelieved { .. } => Vec::new(),
+    };
+    let failed_tests = match &result.conclusion {
+        crate::execute::MutantConclusion::DeclinedUnderTheMutant { by } => vec![by.test.clone()],
+        crate::execute::MutantConclusion::NotRun
+        | crate::execute::MutantConclusion::Killed
+        | crate::execute::MutantConclusion::Survived
+        | crate::execute::MutantConclusion::StepLimitReached { .. }
+        | crate::execute::MutantConclusion::Waited
+        | crate::execute::MutantConclusion::Inconclusive
+        | crate::execute::MutantConclusion::Unobserved
+        | crate::execute::MutantConclusion::Errored
+        | crate::execute::MutantConclusion::Declined { .. } => result.failed_tests.clone(),
+    };
     let judged = Judged {
         index: mutant.index,
         id: mutant.id.to_string(),
@@ -1925,23 +1940,72 @@ fn execute(
         start_failure: result.stopped.start_failure().cloned(),
         duration,
         tests_run,
-        failed_tests: result.failed_tests,
+        failed_tests,
         signal: result.signal,
         retried,
         lingered: result.lingered,
         expected: false,
-        not_run_reason: not_run_because(outcome, &route),
+        not_run_reason,
         route: Some(crate::report::run::route_document(&route, executed)),
         measured: true,
         identical: CodegenIdentity::NotMeasured,
         source_run_id: None,
+        declined,
     };
     Ok((judged, asked))
 }
 
-/// Why a mutant that was never executed was not, when it was not.
-fn not_run_because(outcome: Outcome, route: &crate::session::Route) -> Option<NotRunReason> {
-    if outcome != Outcome::NotRun {
+/// What a mutant's finding is decided from, whether the row is the run's or its report's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RowVerdict {
+    /// What the execution says.
+    pub outcome: Outcome,
+    /// Why it was never executed, or measured nothing where it was, when it was not.
+    pub not_run_reason: Option<NotRunReason>,
+    /// Whether a reviewer declared this outcome in advance and the run confirmed the claim.
+    pub expected: bool,
+}
+
+/// The finding `row` raises in a run that was or was not `interrupted`, when it raises one: the one place that says which verdicts keep a run from being clean, for the run and for every reader of its report.
+#[must_use]
+pub const fn verdict_finding(row: RowVerdict, interrupted: bool) -> Option<FindingKind> {
+    let RowVerdict {
+        outcome,
+        not_run_reason: reason,
+        expected,
+    } = row;
+    match outcome {
+        Outcome::Killed => None,
+        Outcome::Survived if expected => None,
+        Outcome::Survived => Some(FindingKind::SurvivingMutant),
+        Outcome::StepLimitReached => Some(FindingKind::StepLimitReachedMutant),
+        Outcome::Waited => Some(FindingKind::WaitedMutant),
+        Outcome::Inconclusive => Some(FindingKind::InconclusiveMutant),
+        Outcome::Errored => Some(FindingKind::ErroredMutant),
+        Outcome::NotRun => match reason {
+            Some(NotRunReason::Unreached) => Some(FindingKind::UnreachedMutant),
+            Some(NotRunReason::Discharged) => Some(FindingKind::DischargedMutant),
+            Some(
+                NotRunReason::Interrupted
+                | NotRunReason::Unselected
+                | NotRunReason::StoppedEarly
+                | NotRunReason::Declined,
+            ) => None,
+            None if interrupted => None,
+            None => Some(FindingKind::NotRunMutant),
+        },
+    }
+}
+
+/// Why a mutant that was never executed, or measured nothing where it was, was not, when it was not.
+fn not_run_because(
+    conclusion: &crate::execute::MutantConclusion,
+    route: &crate::session::Route,
+) -> Option<NotRunReason> {
+    if let crate::execute::MutantConclusion::Declined { .. } = conclusion {
+        return Some(NotRunReason::Declined);
+    }
+    if conclusion.outcome() != Outcome::NotRun {
         return None;
     }
     match route {
@@ -2094,6 +2158,7 @@ fn remembered(mutant: &Mutant, outcome: Outcome, record: Remembered) -> Judged {
         measured: false,
         identical: CodegenIdentity::NotMeasured,
         source_run_id: Some(record.run_id),
+        declined: Vec::new(),
     }
 }
 
@@ -2179,8 +2244,12 @@ fn carry(
 }
 
 /// Records what this run established, for the next run of this exact tree.
-/// Only an outcome about the mutant is kept: a run that could not decide, or that never ran, says nothing the next run could inherit.
-fn keep(mutant: &Mutant, options: &Options<'_>, judged: &Judged) -> Result<(), EngineError> {
+/// Only an outcome about the mutant is kept: a run that could not decide, or that never ran, says nothing the next run could inherit, and neither does one resting on an execution in which a test declined to measure.
+fn keep(
+    mutant: &Mutant,
+    options: &Options<'_>,
+    (judged, asked): (&Judged, &[crate::execute::MutantResult]),
+) -> Result<(), EngineError> {
     if let Some(reusing) = options.outcomes.as_ref()
         && judged.outcome == Outcome::Killed
     {
@@ -2200,7 +2269,7 @@ fn keep(mutant: &Mutant, options: &Options<'_>, judged: &Judged) -> Result<(), E
         | Outcome::Inconclusive
         | Outcome::Errored => return Ok(()),
     };
-    if !reusing.keyed.usable() {
+    if !reusing.keyed.usable() || !crate::decline::storable(asked) {
         return Ok(());
     }
     let mutant_id = crate::id::HexDigest::try_from(mutant.id.as_str())?;
@@ -2239,6 +2308,7 @@ fn unexecuted(mutant: &Mutant, reason: NotRunReason) -> Judged {
         measured: false,
         identical: CodegenIdentity::NotMeasured,
         source_run_id: None,
+        declined: Vec::new(),
     }
 }
 

@@ -945,6 +945,7 @@ fn one_of_each_measurement(recorder: &Recorder) {
         args: vec![],
         remembered: false,
         retried: false,
+        declined: Vec::new(),
     });
     recorder.touch(rust_mutants::trace::TouchRecord {
         target: "demo/lib/demo".to_owned(),
@@ -1033,6 +1034,7 @@ fn one_of_each_execution(recorder: &Recorder) {
         alone: true,
         lingered: false,
         step_notice: None,
+        declined: Vec::new(),
     });
     recorder.cache(rust_mutants::trace::CacheRecord {
         mutant: "b".repeat(20),
@@ -1165,7 +1167,8 @@ fn the_trace_schema_ties_step_evidence_to_exactly_the_step_outcome() {
                 "timeout_source": "configured",
                 "alone": true,
                 "entered_records": null,
-                "lingered": false
+                "lingered": false,
+                "declined": []
             }
         }
     });

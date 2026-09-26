@@ -13,6 +13,7 @@ pub mod carry;
 pub mod catalog;
 pub mod count;
 pub mod coverage;
+pub mod decline;
 pub mod discover;
 pub mod duration;
 pub mod equivalence;

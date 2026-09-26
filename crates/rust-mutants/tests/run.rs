@@ -35,6 +35,7 @@ fn judged(index: u32, outcome: Outcome) -> Judged {
         measured: true,
         identical: CodegenIdentity::NotMeasured,
         source_run_id: None,
+        declined: Vec::new(),
         step_notice: None,
     }
 }

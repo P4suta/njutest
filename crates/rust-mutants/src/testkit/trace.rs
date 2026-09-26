@@ -222,6 +222,10 @@ pub fn every_payload() -> Vec<Payload> {
                 args: vec!["--test-threads=1".to_owned()],
                 remembered: true,
                 retried: true,
+                declined: vec![crate::decline::Decline {
+                    test: "tests::shares".to_owned(),
+                    why: "this machine cannot share blocks".to_owned(),
+                }],
             },
         },
         Payload::PerturbedControl {
@@ -363,6 +367,10 @@ pub fn every_payload() -> Vec<Payload> {
                 timeout_source: "configured".to_owned(),
                 alone: true,
                 lingered: true,
+                declined: vec![crate::decline::Decline {
+                    test: "tests::shares".to_owned(),
+                    why: "this machine cannot share blocks".to_owned(),
+                }],
             },
         },
         Payload::Note {

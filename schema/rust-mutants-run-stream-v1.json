@@ -291,6 +291,7 @@
                 "interrupted",
                 "unselected",
                 "stopped-early",
+                "declined",
                 null
               ]
             },
@@ -417,6 +418,7 @@
           "additionalProperties": false,
           "required": [
             "cataloged",
+            "declined",
             "discharged",
             "errored",
             "executed",
@@ -445,6 +447,7 @@
             "not_run": { "type": "integer", "minimum": 0 },
             "unreached": { "type": "integer", "minimum": 0 },
             "discharged": { "type": "integer", "minimum": 0 },
+            "declined": { "type": "integer", "minimum": 0 },
             "expected": { "type": "integer", "minimum": 0 }
           }
         },
