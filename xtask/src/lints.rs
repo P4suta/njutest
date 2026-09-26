@@ -186,6 +186,10 @@ const RAW_TREE_WALK_REMEDY: &str = "read the repository through \
     `crate::repository::entries`; a gate that walks the filesystem reads what a build, a \
     run or a report left beside the tree, and one that a concurrent build rewrites fails the gate \
     for a reason that is no finding";
+const BARE_SHELL_REMEDY: &str = "a POSIX `sh` is on every Unix and on no Windows search path \
+    this repository can count on, so a program named `sh` outside `#[cfg(unix)]` is a precondition \
+    nobody states: a test takes its shell from `njutest_devkit::paths::posix_sh()`, which says what \
+    to install when there is none, and code that names `sh` for itself is compiled only for Unix";
 const RAW_READ_REMEDY: &str = "ask `crate::observe` what the path is. A reader of evidence that \
     touches the filesystem itself decides at its own call site what an I/O failure means, which is \
     how a lock file beside the profiles became a directory that could not be read and how running \
@@ -273,6 +277,7 @@ declare_kinds! {
     RawTreeWalk => "raw-tree-walk",
     LoneTemporaryVariable => "lone-temporary-variable",
     ErrorName => "error-name",
+    BareShell => "bare-shell",
 }
 
 impl Kind {
@@ -324,6 +329,7 @@ impl Kind {
             Self::ForeignRemainder => FOREIGN_REMAINDER_REMEDY,
             Self::RawRead => RAW_READ_REMEDY,
             Self::RawTreeWalk => RAW_TREE_WALK_REMEDY,
+            Self::BareShell => BARE_SHELL_REMEDY,
             Self::LoneTemporaryVariable => LONE_TEMPORARY_VARIABLE_REMEDY,
             Self::ErrorName => ERROR_NAME_REMEDY,
         }
@@ -594,6 +600,9 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     }
     scan.found.extend(broad_expectations(&parsed, file));
     scan.found.extend(implied_cfgs(&parsed, file));
+    if file != SHELL_FINDER {
+        scan.found.extend(bare_shells(&parsed, file));
+    }
     scan.found.sort();
     scan.found.dedup();
     Ok(scan.found)
@@ -6417,6 +6426,142 @@ fn cfg_constant(meta: &syn::Meta) -> CfgTruth {
 }
 
 /// Every `#[cfg]` whose condition an enclosing item's `#[cfg]` already guarantees, which a reader takes for a second condition the item is under.
+/// The one place a POSIX shell is looked for rather than assumed.
+const SHELL_FINDER: &str = "crates/njutest-devkit/src/paths.rs";
+
+/// Every program named `sh` outside code compiled only for Unix.
+fn bare_shells(parsed: &syn::File, file: &str) -> Vec<Finding> {
+    let mut visitor = BareShell {
+        file,
+        unix: 0,
+        found: Vec::new(),
+    };
+    visitor.visit_file(parsed);
+    visitor.found
+}
+
+/// How many enclosing items are compiled only for Unix, and every shell named outside all of them.
+struct BareShell<'a> {
+    file: &'a str,
+    unix: usize,
+    found: Vec<Finding>,
+}
+
+/// Whether `text` is the name of the POSIX shell a program would be started by.
+fn names_a_shell(text: &str) -> bool {
+    text == "sh" || text == "sh.exe"
+}
+
+impl BareShell<'_> {
+    fn within(&mut self, attributes: &[syn::Attribute], walk: impl FnOnce(&mut Self)) {
+        let unix = attributes.iter().any(|attribute| match &attribute.meta {
+            syn::Meta::List(list) if list.path.is_ident("cfg") => {
+                let condition = list.tokens.to_string();
+                condition == "unix"
+                    || all_of(&list.tokens)
+                        .is_some_and(|parts| parts.iter().any(|part| part.to_string() == "unix"))
+            }
+            syn::Meta::List(_) | syn::Meta::Path(_) | syn::Meta::NameValue(_) => false,
+        });
+        if unix {
+            self.unix = self.unix.saturating_add(1);
+        }
+        walk(self);
+        if unix {
+            self.unix = self.unix.saturating_sub(1);
+        }
+    }
+
+    fn note(&mut self, span: proc_macro2::Span) {
+        if self.unix == 0 {
+            self.found.push(Finding {
+                kind: Kind::BareShell,
+                file: self.file.to_owned(),
+                line: span.start().line,
+            });
+        }
+    }
+
+    /// Every string literal among `tokens` that names a shell, but for one compared against with `==` or `!=`.
+    fn scan_tokens(&mut self, tokens: &proc_macro2::TokenStream) {
+        let trees: Vec<proc_macro2::TokenTree> = tokens.clone().into_iter().collect();
+        for (at, tree) in trees.iter().enumerate() {
+            match tree {
+                proc_macro2::TokenTree::Literal(literal) => {
+                    let compared = at >= 2
+                        && matches!(
+                            (trees.get(at.saturating_sub(2)), trees.get(at.saturating_sub(1))),
+                            (
+                                Some(proc_macro2::TokenTree::Punct(first)),
+                                Some(proc_macro2::TokenTree::Punct(second))
+                            ) if matches!(first.as_char(), '=' | '!') && second.as_char() == '='
+                        );
+                    let named = match syn::parse2::<syn::LitStr>(proc_macro2::TokenStream::from(
+                        tree.clone(),
+                    )) {
+                        Ok(text) => names_a_shell(&text.value()),
+                        Err(_not_a_string) => false,
+                    };
+                    if named && !compared {
+                        self.note(literal.span());
+                    }
+                }
+                proc_macro2::TokenTree::Group(group) => self.scan_tokens(&group.stream()),
+                proc_macro2::TokenTree::Ident(_) | proc_macro2::TokenTree::Punct(_) => {}
+            }
+        }
+    }
+}
+
+impl Visit<'_> for BareShell<'_> {
+    fn visit_file(&mut self, file: &syn::File) {
+        self.within(&file.attrs, |walk| syn::visit::visit_file(walk, file));
+    }
+
+    fn visit_item(&mut self, item: &syn::Item) {
+        self.within(item_attributes(item), |walk| {
+            syn::visit::visit_item(walk, item);
+        });
+    }
+
+    fn visit_impl_item(&mut self, item: &syn::ImplItem) {
+        let attributes: &[syn::Attribute] = match item {
+            syn::ImplItem::Const(one) => &one.attrs,
+            syn::ImplItem::Fn(one) => &one.attrs,
+            syn::ImplItem::Type(one) => &one.attrs,
+            syn::ImplItem::Macro(one) => &one.attrs,
+            _ => &[],
+        };
+        self.within(attributes, |walk| syn::visit::visit_impl_item(walk, item));
+    }
+
+    fn visit_expr_binary(&mut self, binary: &syn::ExprBinary) {
+        let compared = matches!(binary.op, syn::BinOp::Eq(_) | syn::BinOp::Ne(_));
+        for side in [&*binary.left, &*binary.right] {
+            let literal = matches!(
+                side,
+                syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(_),
+                    ..
+                })
+            );
+            if !(compared && literal) {
+                self.visit_expr(side);
+            }
+        }
+    }
+
+    fn visit_lit_str(&mut self, literal: &syn::LitStr) {
+        if names_a_shell(&literal.value()) {
+            self.note(literal.span());
+        }
+    }
+
+    fn visit_macro(&mut self, invocation: &syn::Macro) {
+        self.scan_tokens(&invocation.tokens);
+    }
+}
+
 fn implied_cfgs(parsed: &syn::File, file: &str) -> Vec<Finding> {
     let mut visitor = ImpliedCfg {
         file,
