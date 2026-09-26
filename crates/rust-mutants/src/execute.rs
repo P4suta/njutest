@@ -267,7 +267,7 @@ pub struct TestTarget {
     /// Whether the target is built with the libtest harness.
     pub harness: bool,
     /// What a run could not establish about this target, each named.
-    pub limitations: Vec<String>,
+    pub limitations: Vec<crate::limitation::Limitation>,
     /// The arguments before the harness's own, for a target cargo runs rather than one the engine starts itself.
     /// Empty for a binary, and then `executable` is the binary.
     pub through: Vec<OsString>,
@@ -317,7 +317,7 @@ impl TestTarget {
 
     /// What a run could not establish about this target.
     #[must_use]
-    pub fn with_limitations(mut self, limitations: Vec<String>) -> Self {
+    pub fn with_limitations(mut self, limitations: Vec<crate::limitation::Limitation>) -> Self {
         self.limitations = limitations;
         self
     }
@@ -2915,7 +2915,7 @@ pub fn targets_of(
             .with_limitations(if harness {
                 Vec::new()
             } else {
-                vec![crate::limitation::CUSTOM_HARNESS.to_owned()]
+                vec![crate::limitation::Limitation::CustomHarness]
             })
             .with_cargo_env(env),
         );
@@ -2976,7 +2976,7 @@ pub fn documentation_targets(
                     package.manifest_dir().to_path_buf(),
                 )
                 .with_through(through)
-                .with_limitations(vec![crate::limitation::DOCTESTS_ROUTED_BY_FILE.to_owned()]),
+                .with_limitations(vec![crate::limitation::Limitation::DoctestsRoutedByFile]),
             );
         }
     }

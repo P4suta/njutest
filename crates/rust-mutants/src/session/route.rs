@@ -315,8 +315,12 @@ impl Route {
             .copied()
             .filter(|target| {
                 !reached.targets.contains_key(*target)
-                    || reached.limitations.iter().any(|limitation| {
-                        limitation == &format!("{}:{target}", crate::reach::UNMEASURED)
+                    || reached.limitations.iter().any(|limited| {
+                        limited.limitation == crate::limitation::Limitation::CoverageNotMeasured
+                            && limited
+                                .target
+                                .as_ref()
+                                .is_some_and(|id| id.as_str() == *target)
                     })
             })
             .collect();

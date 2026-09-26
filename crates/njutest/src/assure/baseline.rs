@@ -183,21 +183,28 @@ pub fn refused(error: &crate::error::RunnerError) -> Option<Baseline> {
 pub fn unmeasurable(target: &TestTarget) -> bool {
     target
         .limitations
-        .iter()
-        .any(|name| name == rust_mutants::limitation::DOCTESTS_NONE)
+        .contains(&rust_mutants::limitation::Limitation::DoctestsNone)
 }
 
 /// Every limitation `targets` and the run's own `touched` record state, each named once.
 #[must_use]
-pub fn limitations(targets: &[TestTarget], touched: &[String]) -> Vec<String> {
+pub fn limitations(
+    targets: &[TestTarget],
+    touched: &[rust_mutants::limitation::Limited],
+) -> Vec<String> {
     let mut named = BTreeSet::new();
     for target in targets {
         if unmeasurable(target) {
             continue;
         }
-        named.extend(target.limitations.iter().cloned());
+        named.extend(
+            target
+                .limitations
+                .iter()
+                .map(|limitation| limitation.name().to_owned()),
+        );
     }
-    named.extend(touched.iter().cloned());
+    named.extend(touched.iter().map(ToString::to_string));
     if targets
         .iter()
         .any(|target| target.kind == rust_mutants::execute::TargetKind::ProcMacro)

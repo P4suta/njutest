@@ -1046,7 +1046,11 @@ fn target_documents(session: &Session) -> Vec<TargetDocument> {
             kind: target.kind.name().to_owned(),
             harness: target.harness,
             tests: session.tests_of(&target.id),
-            limitations: target.limitations.clone(),
+            limitations: target
+                .limitations
+                .iter()
+                .map(|limitation| limitation.name().to_owned())
+                .collect(),
         })
         .collect()
 }

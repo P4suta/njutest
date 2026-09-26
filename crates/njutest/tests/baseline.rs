@@ -9,9 +9,9 @@ use njutest::assure::baseline::{failure, limitations, named, refused, target_of,
 use njutest::limitation::PROC_MACRO_EXPANSION_NOT_MEASURED;
 use njutest::targets::UnitKind;
 use rust_mutants::execute::{TargetKind, TestTarget};
-use rust_mutants::limitation::{CUSTOM_HARNESS, DOCTESTS_NONE, DOCTESTS_ROUTED_BY_FILE};
+use rust_mutants::limitation::{CUSTOM_HARNESS, Limitation, Limited};
 
-fn target(id: &str, kind: TargetKind, states: &[&str]) -> TestTarget {
+fn target(id: &str, kind: TargetKind, states: &[Limitation]) -> TestTarget {
     let mut target = TestTarget::new(
         id.split('/').next().unwrap_or_default(),
         kind,
@@ -19,7 +19,7 @@ fn target(id: &str, kind: TargetKind, states: &[&str]) -> TestTarget {
         PathBuf::from("/tmp/one"),
         PathBuf::from("/tmp"),
     );
-    target.limitations = states.iter().map(|one| (*one).to_owned()).collect();
+    target.limitations = states.to_vec();
     target
 }
 
@@ -28,7 +28,7 @@ fn a_library_that_documents_nothing_is_not_a_library_whose_examples_were_routed_
     let nothing = target(
         "pkg/doc/pkg",
         TargetKind::Doc,
-        &[DOCTESTS_NONE, DOCTESTS_ROUTED_BY_FILE],
+        &[Limitation::DoctestsNone, Limitation::DoctestsRoutedByFile],
     );
 
     assert!(
@@ -37,7 +37,11 @@ fn a_library_that_documents_nothing_is_not_a_library_whose_examples_were_routed_
          raise a finding about documentation nobody wrote"
     );
     assert!(
-        !unmeasurable(&target("pkg/test/one", TargetKind::Test, &[CUSTOM_HARNESS])),
+        !unmeasurable(&target(
+            "pkg/test/one",
+            TargetKind::Test,
+            &[Limitation::CustomHarness]
+        )),
         "and every other target does state what it could not do"
     );
 }
@@ -48,18 +52,26 @@ fn what_a_run_could_not_do_is_said_once_by_whoever_could_not_do_it() {
         target(
             "pkg/doc/pkg",
             TargetKind::Doc,
-            &[DOCTESTS_NONE, "documentation-was-not-measured"],
+            &[Limitation::DoctestsNone, Limitation::DoctestsRoutedByFile],
         ),
-        target("pkg/test/one", TargetKind::Test, &[CUSTOM_HARNESS]),
-        target("pkg/test/two", TargetKind::Test, &[CUSTOM_HARNESS]),
+        target(
+            "pkg/test/one",
+            TargetKind::Test,
+            &[Limitation::CustomHarness],
+        ),
+        target(
+            "pkg/test/two",
+            TargetKind::Test,
+            &[Limitation::CustomHarness],
+        ),
     ];
 
-    let stated = limitations(&targets, &["coverage-was-not-taken".to_owned()]);
+    let stated = limitations(&targets, &[Limited::whole(Limitation::CoverageNotMeasured)]);
 
     assert_eq!(
         stated,
         vec![
-            "coverage-was-not-taken".to_owned(),
+            rust_mutants::limitation::COVERAGE_NOT_MEASURED.to_owned(),
             CUSTOM_HARNESS.to_owned()
         ],
         "the two targets that brought their own harness state one limitation between \
@@ -91,7 +103,11 @@ fn a_proc_macro_in_the_workspace_is_a_limitation_of_the_run_and_not_of_a_target(
 
 #[test]
 fn a_target_the_engine_built_is_named_by_what_cargo_said_about_it() {
-    let built = target("pkg/test/one", TargetKind::Test, &[CUSTOM_HARNESS]);
+    let built = target(
+        "pkg/test/one",
+        TargetKind::Test,
+        &[Limitation::CustomHarness],
+    );
 
     let row = target_of(&built).expect("valid engine target identity");
 

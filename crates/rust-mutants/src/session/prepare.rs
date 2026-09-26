@@ -513,7 +513,11 @@ fn built_untraced(building: &Building<'_>) -> Result<Built, EngineError> {
             id: target.id.clone(),
             kind: target.kind.name().to_owned(),
             harness: target.harness,
-            limitations: target.limitations.clone(),
+            limitations: target
+                .limitations
+                .iter()
+                .map(|limitation| limitation.name().to_owned())
+                .collect(),
         })
         .collect();
     let skipped = left_out(workspace, &targets, &options.skip_targets)?;

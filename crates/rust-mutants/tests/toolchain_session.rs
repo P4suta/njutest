@@ -1351,8 +1351,7 @@ fn a_mutation_reaches_the_documentation_of_its_own_library_and_no_other() {
             target.kind == rust_mutants::execute::TargetKind::Doc
                 && target
                     .limitations
-                    .iter()
-                    .any(|one| one == rust_mutants::limitation::DOCTESTS_NONE)
+                    .contains(&rust_mutants::limitation::Limitation::DoctestsNone)
         })
         .map(|target| target.id.as_str())
         .collect();

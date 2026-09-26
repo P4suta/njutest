@@ -178,21 +178,27 @@ fn verify_target(
     if target.kind == TargetKind::Doc && result.tests_run() == Some(0) {
         target
             .limitations
-            .push(crate::limitation::DOCTESTS_NONE.to_owned());
+            .push(crate::limitation::Limitation::DoctestsNone);
     }
     if baseline.passed() && retried && home == execute::Home::Confined {
-        touched.limited(crate::limitation::BASELINE_PASSED_ON_RETRY, &target.id);
+        touched.limited(
+            crate::limitation::Limitation::BaselinePassedOnRetry,
+            &target.id,
+        );
     }
     if baseline.passed() && home == execute::Home::Given {
         target
             .limitations
-            .push(crate::limitation::UNCONFINED_TARGET.to_owned());
+            .push(crate::limitation::Limitation::UnconfinedTarget);
     }
     if baseline.passed() && result.reading() == Reading::Short {
-        touched.limited(crate::limitation::BASELINE_PASSED_UNPARSED, &target.id);
+        touched.limited(
+            crate::limitation::Limitation::BaselinePassedUnparsed,
+            &target.id,
+        );
     }
     if baseline.passed() && uncontrolled(watched, &target.id, building.trace) {
-        touched.limited(crate::limitation::UNCONTROLLED_CHILD, &target.id);
+        touched.limited(crate::limitation::Limitation::UncontrolledChild, &target.id);
     } else if baseline.passed() {
         gather(
             touched,
@@ -207,7 +213,10 @@ fn verify_target(
             building.trace,
         )?;
     } else {
-        touched.limited(crate::limitation::BASELINE_NOT_PASSING, &target.id);
+        touched.limited(
+            crate::limitation::Limitation::BaselineNotPassing,
+            &target.id,
+        );
     }
     Ok((baseline, result.tests_run()))
 }
@@ -996,12 +1005,12 @@ fn replay(
         {
             target
                 .limitations
-                .push(crate::limitation::DOCTESTS_NONE.to_owned());
+                .push(crate::limitation::Limitation::DoctestsNone);
         }
         if baseline.home == execute::Home::Given {
             target
                 .limitations
-                .push(crate::limitation::UNCONFINED_TARGET.to_owned());
+                .push(crate::limitation::Limitation::UnconfinedTarget);
         }
         if let Some(touched) = verified.touched.targets.get(&target.id) {
             trace_touch(&target.id, touched, trace)?;
@@ -1129,16 +1138,22 @@ fn valid_touches(
     let limited: BTreeSet<&str> = touched
         .limitations
         .iter()
-        .filter_map(|limitation| limitation.split_once(':').map(|(_, target)| target))
+        .filter_map(|limited| {
+            limited
+                .target
+                .as_ref()
+                .map(crate::limitation::TargetId::as_str)
+        })
         .collect();
     if touched
         .targets
         .keys()
         .any(|target| !targets.contains(target.as_str()))
-        || touched.limitations.iter().any(|limitation| {
-            limitation
-                .split_once(':')
-                .is_none_or(|(_, target)| !targets.contains(target))
+        || touched.limitations.iter().any(|limited| {
+            limited
+                .target
+                .as_ref()
+                .is_none_or(|target| !targets.contains(target.as_str()))
         })
     {
         return false;
@@ -1225,13 +1240,13 @@ impl Key {
         self.bytes(name, &[u8::from(value)])
     }
 
-    fn texts(&mut self, name: &str, values: &[String]) -> Result<(), BaselineCacheError> {
+    fn texts(&mut self, name: &str, values: &[impl AsRef<str>]) -> Result<(), BaselineCacheError> {
         self.u64(
             &format!("{name}-count"),
             baseline_count(BaselineQuantity::KeyValues, values.len())?,
         )?;
         for value in values {
-            self.text(name, value)?;
+            self.text(name, value.as_ref())?;
         }
         Ok(())
     }
@@ -1249,7 +1264,12 @@ fn target_key(
     key.text("target-kind", target.kind.name())?;
     key.text("target-name", &target.name)?;
     key.boolean("target-harness", target.harness)?;
-    key.texts("target-limitations", &target.limitations)?;
+    let limitations: Vec<&str> = target
+        .limitations
+        .iter()
+        .map(|limitation| limitation.name())
+        .collect();
+    key.texts("target-limitations", &limitations)?;
     key.os("target-cwd", target.cwd.as_os_str())?;
     let recording = (building.asked && recordable(target)).then(|| {
         scratch
@@ -1562,7 +1582,10 @@ fn gather(
     trace: &crate::trace::Recorder,
 ) -> Result<(), SessionError> {
     let Some(log) = recording.log else {
-        touched.limited(crate::touch::UNRECORDED, recording.target);
+        touched.limited(
+            crate::limitation::Limitation::TouchNotRecorded,
+            recording.target,
+        );
         return Ok(());
     };
     let unreadable = |touched: &mut crate::touch::Touched, why: &dyn std::fmt::Display| {
@@ -1570,7 +1593,10 @@ fn gather(
             crate::touch::UNREADABLE,
             &format!("{}: {why}", recording.target),
         );
-        touched.limited(crate::touch::UNREADABLE, recording.target);
+        touched.limited(
+            crate::limitation::Limitation::TouchLogUnreadable,
+            recording.target,
+        );
     };
     let text = match crate::limitation::appended(std::fs::read_to_string(log)) {
         Ok(text) => text,

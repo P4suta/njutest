@@ -228,9 +228,14 @@ fn every_limitation_either_product_can_state_is_one_a_test_puts_to_something() {
         .filter(|name| {
             let held = shouted(name);
             let others = named.get(&held).map(Vec::as_slice).unwrap_or_default();
+            let variant = rust_mutants::limitation::Limitation::ALL
+                .into_iter()
+                .find(|limitation| limitation.name() == **name)
+                .map(|limitation| format!("Limitation::{limitation:?}"));
             !suites.contains(**name)
                 && !suites.contains(&held)
                 && !others.iter().any(|alias| suites.contains(alias))
+                && !variant.as_ref().is_some_and(|name| suites.contains(name))
         })
         .collect();
     assert!(
@@ -326,19 +331,27 @@ fn register_text(module: &str) -> String {
 
 /// Every limitation a register file declares, and every one its `ALL` names.
 fn declared_and_registered(module: &str) -> (Vec<String>, Vec<String>) {
-    registered(&register_text(module))
+    registered(module, &register_text(module))
 }
 
 /// Every limitation the register `text` declares, and every one its `ALL` names.
-fn registered(text: &str) -> (Vec<String>, Vec<String>) {
+fn registered(module: &str, text: &str) -> (Vec<String>, Vec<String>) {
+    let held = if module == "crates/rust-mutants/src/limitation.rs" {
+        rust_mutants::limitation::Limitation::ALL
+            .into_iter()
+            .map(|limitation| shouted(limitation.name()))
+            .collect()
+    } else {
+        njutest_devkit::rust_source::names_listed(text, "ALL")
+            .expect("the register names each limitation it holds in ALL")
+    };
     (
         njutest_devkit::rust_source::public_text_constants(text)
             .expect("the register is Rust")
             .into_iter()
             .filter(|name| name != "ALL")
             .collect(),
-        njutest_devkit::rust_source::names_listed(text, "ALL")
-            .expect("the register names each limitation it holds in ALL"),
+        held,
     )
 }
 
@@ -361,8 +374,8 @@ fn a_register_reads_the_same_in_the_tree_the_engine_instruments() {
         })
         .expect("the engine renders the runtime it appends to an instrumented file");
         assert_eq!(
-            registered(&format!("{text}{runtime}")),
-            registered(&text),
+            registered(module, &format!("{text}{runtime}")),
+            registered(module, &text),
             "{module}: when njutest measures itself this suite runs in the tree the engine \
              instrumented, where the file ends with the engine's runtime, and the register must \
              read the same there as here"

@@ -1152,11 +1152,10 @@ impl Session {
     /// Whether a process of `target`'s tree ran without the environment the run gave it, so a survival it reports is not one.
     #[must_use]
     pub fn uncontrolled(&self, target: &str) -> bool {
-        self.verified
-            .touched
-            .limitations
-            .iter()
-            .any(|one| one.split_once(':') == Some((crate::limitation::UNCONTROLLED_CHILD, target)))
+        self.verified.touched.limitations.iter().any(|one| {
+            one.limitation == crate::limitation::Limitation::UncontrolledChild
+                && one.target.as_ref().is_some_and(|id| id.as_str() == target)
+        })
     }
 
     /// The digest of the pristine sources every unit of this build compiled.
@@ -1365,7 +1364,11 @@ impl Session {
                     kind: target.kind.name().to_owned(),
                     name: target.name.clone(),
                     harness: target.harness,
-                    limitations: target.limitations.clone(),
+                    limitations: target
+                        .limitations
+                        .iter()
+                        .map(|limitation| limitation.name().to_owned())
+                        .collect(),
                 })
                 .collect(),
             workspace_digest: self.workspace_digest().to_owned(),
@@ -1470,8 +1473,7 @@ impl Session {
             .filter(|target| {
                 !target
                     .limitations
-                    .iter()
-                    .any(|one| one == crate::limitation::DOCTESTS_NONE)
+                    .contains(&crate::limitation::Limitation::DoctestsNone)
             })
             .map(|target| target.id.as_str())
             .collect()
@@ -2760,18 +2762,16 @@ impl Session {
         result: &MutantResult,
     ) -> crate::touch::Steadiness {
         use crate::touch::{Steadiness, Unmeasured};
-        let retried = format!(
-            "{}:{}",
-            crate::limitation::BASELINE_PASSED_ON_RETRY,
-            target.id
+        let retried = crate::limitation::Limited::for_target(
+            crate::limitation::Limitation::BaselinePassedOnRetry,
+            crate::limitation::TargetId::generated(&target.id),
         );
         if self.verified.touched.limitations.contains(&retried) {
             return Steadiness::NotMeasured(Unmeasured::BaselineRetried);
         }
-        let unparsed = format!(
-            "{}:{}",
-            crate::limitation::BASELINE_PASSED_UNPARSED,
-            target.id
+        let unparsed = crate::limitation::Limited::for_target(
+            crate::limitation::Limitation::BaselinePassedUnparsed,
+            crate::limitation::TargetId::generated(&target.id),
         );
         if result.reading() == Reading::Short
             || self.verified.touched.limitations.contains(&unparsed)
@@ -2884,8 +2884,7 @@ impl Session {
                 .filter(|target| {
                     !target
                         .limitations
-                        .iter()
-                        .any(|one| one == crate::limitation::DOCTESTS_NONE)
+                        .contains(&crate::limitation::Limitation::DoctestsNone)
                 })
                 .collect();
             if answering.is_empty() {

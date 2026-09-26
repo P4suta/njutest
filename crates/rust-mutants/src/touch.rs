@@ -302,8 +302,8 @@ pub use crate::limitation::TOUCH_LOG_UNREADABLE as UNREADABLE;
 pub struct Touched {
     /// What each target's guards recorded, by target identity.
     pub targets: BTreeMap<String, TargetTouches>,
-    /// Why a target the run built is not in `targets`, as `<limitation>:<target>`.
-    pub limitations: Vec<String>,
+    /// Why a target the run built is not in `targets`.
+    pub limitations: Vec<crate::limitation::Limited>,
     /// Which of the records above are facts about which mutant, without which the rest is only silence.
     #[serde(default)]
     pub narrowing: Narrowing,
@@ -628,7 +628,11 @@ impl Touched {
     }
 
     /// Records that `target` said nothing this run can route by, and why.
-    pub fn limited(&mut self, limitation: &str, target: &str) {
-        self.limitations.push(format!("{limitation}:{target}"));
+    pub fn limited(&mut self, limitation: crate::limitation::Limitation, target: &str) {
+        self.limitations
+            .push(crate::limitation::Limited::for_target(
+                limitation,
+                crate::limitation::TargetId::generated(target),
+            ));
     }
 }

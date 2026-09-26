@@ -275,9 +275,13 @@ fn a_target_that_runs_with_the_given_home_is_routed_as_one_nothing_measured() {
     );
     assert!(
         !reached.targets.contains_key(reads)
-            && reached
-                .limitations
-                .contains(&format!("{}:{reads}", rust_mutants::reach::UNMEASURED)),
+            && reached.limitations.iter().any(|limited| {
+                limited.limitation == rust_mutants::limitation::Limitation::CoverageNotMeasured
+                    && limited
+                        .target
+                        .as_ref()
+                        .is_some_and(|target| target.as_str() == reads)
+            }),
         "what a target reached in a home of its own is not what it reaches with the given one, \
          so every mutant routes to it as to a target nothing measured: {reached:?}"
     );
