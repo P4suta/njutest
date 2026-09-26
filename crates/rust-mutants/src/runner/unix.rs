@@ -374,6 +374,21 @@ fn member_besides_leader(pgid: Pid) -> io::Result<bool> {
     }
 }
 
+/// Ends the one process `pid`, as [`super::stop_process`] describes.
+pub(super) fn stop_process(pid: u32) -> io::Result<()> {
+    let raw = match i32::try_from(pid) {
+        Ok(raw) => raw,
+        Err(_out_of_range) => return Ok(()),
+    };
+    let Some(pid) = Pid::from_raw(raw) else {
+        return Ok(());
+    };
+    match kill_process(pid, Signal::KILL) {
+        Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
+        Err(errno) => Err(io::Error::from_raw_os_error(errno.raw_os_error())),
+    }
+}
+
 /// Stops the group a process started in a group of its own leads, as [`super::stop_group`] describes.
 pub(super) fn stop_group(leader: u32, how: super::GroupStop) -> io::Result<super::Stopped> {
     let unled = || {
