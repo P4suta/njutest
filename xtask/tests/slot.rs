@@ -14,6 +14,13 @@ use std::time::{Duration, Instant};
 
 use njutest_devkit::process::SupervisedChild;
 
+include!("support/turns.rs");
+
+/// A run that says which process its work is, marks itself inside the lane, and waits there until it is let go.
+fn working_until_go() -> String {
+    format!("echo $$ > \"$TURNS/work\"; mkdir \"$TURNS/inside\"; {UNTIL_GO}")
+}
+
 /// The lanes and the marker files the scripted runs of one test share.
 struct Machine {
     slots: tempfile::TempDir,
@@ -69,9 +76,10 @@ impl Machine {
     }
 }
 
-const HOLDS_UNTIL_GO: &str = "mkdir \"$TURNS/inside\"; \
-     i=0; while [ ! -e \"$TURNS/go\" ] && [ $i -lt 2400 ]; do sleep 0.05; i=$((i+1)); done; \
-     rmdir \"$TURNS/inside\"";
+/// A run that marks itself inside the lane, waits there until it is let go, and marks itself out.
+fn holds_until_go() -> String {
+    format!("mkdir \"$TURNS/inside\"; {UNTIL_GO}; rmdir \"$TURNS/inside\"")
+}
 
 /// Waits until `ready` says so, or `limit` passes, and says which.
 fn until(limit: Duration, mut ready: impl FnMut() -> bool) -> bool {
@@ -103,7 +111,7 @@ fn text(bytes: &[u8]) -> String {
 #[test]
 fn a_second_run_waits_until_the_first_has_ended() {
     let machine = Machine::new();
-    let first = machine.run(HOLDS_UNTIL_GO);
+    let first = machine.run(&holds_until_go());
     assert!(
         until(Duration::from_secs(60), || machine.marker("inside")),
         "the first run never started"
@@ -132,7 +140,7 @@ fn a_second_run_waits_until_the_first_has_ended() {
 #[test]
 fn a_run_inside_a_held_lane_does_not_wait_for_itself() {
     let machine = Machine::new();
-    let holder = machine.run(HOLDS_UNTIL_GO);
+    let holder = machine.run(&holds_until_go());
     assert!(
         until(Duration::from_secs(60), || machine.marker("inside")),
         "the holder never started"
@@ -185,10 +193,7 @@ fn after_it(machine: &Machine, work: &str) -> SupervisedChild {
 #[test]
 fn a_killed_holder_s_work_is_ended_before_the_next_run_goes_in() {
     let machine = Machine::new();
-    let mut holder = machine.run(
-        "echo $$ > \"$TURNS/work\"; mkdir \"$TURNS/inside\"; \
-         i=0; while [ ! -e \"$TURNS/go\" ] && [ $i -lt 2400 ]; do sleep 0.05; i=$((i+1)); done",
-    );
+    let mut holder = machine.run(&working_until_go());
     let work = orphan_the_work(&machine, &mut holder);
     let mut next = after_it(&machine, &work);
     let ended = finished_within(Duration::from_secs(60), &mut next);
@@ -204,10 +209,7 @@ fn a_killed_holder_s_work_is_ended_before_the_next_run_goes_in() {
 #[test]
 fn work_that_will_not_stop_when_asked_is_killed_before_the_next_run_goes_in() {
     let machine = Machine::new();
-    let mut holder = machine.run(
-        "trap '' TERM; echo $$ > \"$TURNS/work\"; mkdir \"$TURNS/inside\"; \
-         i=0; while [ ! -e \"$TURNS/go\" ] && [ $i -lt 2400 ]; do sleep 0.05; i=$((i+1)); done",
-    );
+    let mut holder = machine.run(&format!("trap '' TERM; {}", working_until_go()));
     let work = orphan_the_work(&machine, &mut holder);
     let mut next = after_it(&machine, &work);
     let ended = finished_within(Duration::from_secs(60), &mut next);
@@ -223,10 +225,7 @@ fn work_that_will_not_stop_when_asked_is_killed_before_the_next_run_goes_in() {
 fn a_run_asked_to_stop_stops_its_work_first() {
     for signal in ["-TERM", "-INT"] {
         let machine = Machine::new();
-        let mut command = machine.command(
-            "echo $$ > \"$TURNS/work\"; mkdir \"$TURNS/inside\"; \
-             i=0; while [ ! -e \"$TURNS/go\" ] && [ $i -lt 2400 ]; do sleep 0.05; i=$((i+1)); done",
-        );
+        let mut command = machine.command(&working_until_go());
         let mut run = SupervisedChild::launch(&mut command).expect("a run in the lane");
         assert!(
             until(Duration::from_secs(60), || machine.marker("inside")),
@@ -285,5 +284,40 @@ fn a_command_is_told_which_lane_it_is_inside() {
         answer.status.success(),
         "a command inside the lane that asks for it again would wait for itself: {}",
         text(&answer.stderr)
+    );
+}
+
+#[test]
+fn a_test_that_ends_while_its_run_waits_leaves_no_worker_behind() {
+    let machine = Machine::new();
+    let mut holder = machine.run(&working_until_go());
+    assert!(
+        until(Duration::from_secs(60), || machine.marker("inside")),
+        "the holder never started"
+    );
+    let work = std::fs::read_to_string(machine.turns.path().join("work"))
+        .expect("the work said who it is")
+        .trim()
+        .to_owned();
+    let pid = holder.id().expect("a live holder").to_string();
+    let killed = Command::new("kill")
+        .args(["-KILL", &pid])
+        .status()
+        .expect("kill");
+    assert!(killed.success(), "the holder could not be killed");
+    holder.wait().expect("the killed holder is reaped");
+    drop(machine);
+    let gone = until(Duration::from_secs(10), || {
+        !Command::new("kill")
+            .args(["-0", &work])
+            .status()
+            .expect("kill -0")
+            .success()
+    });
+    assert!(
+        gone,
+        "a test that ended as a panicking one does, its run killed and its directories removed, \
+         left the work its run started waiting for a release nobody will write; under measurement \
+         that worker kept the machine's lane for every session"
     );
 }
