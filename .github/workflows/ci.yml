@@ -537,8 +537,8 @@ jobs:
             done
           done
 
-  ci-success:
-    name: ci-success
+  required:
+    name: required
     if: always()
     needs:
       [

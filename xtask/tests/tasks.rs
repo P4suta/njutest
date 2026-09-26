@@ -33,7 +33,7 @@ fn task(name: &str) -> String {
 }
 
 /// Every gate `cargo xtask all` runs, which is what CI runs.
-/// Every job `ci-success` waits for, and the local task that answers it first.
+/// Every job `required` waits for, and the local task that answers it first.
 ///
 /// `None` is a job this machine cannot answer, with the reason it cannot.
 /// The list is the whole of what a push has to wait for CI to find out, so adding to it is a decision rather than an omission.
@@ -298,14 +298,14 @@ fn benchmarks_are_one_explicit_optional_feature_per_benchmarking_crate() {
 fn every_gate_the_pipeline_waits_for_is_one_this_machine_answered_first() {
     let workflow = repository(".github/workflows/ci.yml");
     let needs = workflow
-        .split_once("  ci-success:")
+        .split_once("  required:")
         .and_then(|(_before, rest)| rest.split_once("needs:"))
         .and_then(|(_before, rest)| rest.split_once(']'))
         .map(|(list, _rest)| list.to_owned());
     assert_eq!(
         option_state(needs.as_ref()),
         OptionState::Present,
-        "ci-success names the jobs it waits for"
+        "required names the jobs it waits for"
     );
     let Some(needs) = needs else {
         return;
@@ -323,7 +323,7 @@ fn every_gate_the_pipeline_waits_for_is_one_this_machine_answered_first() {
     named.sort();
     assert_eq!(
         waited, named,
-        "a job was added to or taken from `ci-success` without saying whether a push can \
+        "a job was added to or taken from `required` without saying whether a push can \
          find out about it first, which is how a twenty-minute answer becomes the only \
          answer"
     );
