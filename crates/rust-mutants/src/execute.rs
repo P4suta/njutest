@@ -1532,8 +1532,7 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
         };
     }
     match notice {
-        Ok(Some(notice)) => Stopped::StepLimitReached { notice },
-        Ok(None)
+        Ok(_)
             if matches!(
                 result.termination,
                 Termination::Exited(ProcessExit::Code(STEP_PROTOCOL_EXIT))
@@ -1543,6 +1542,7 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
                 reason: stated(&result.output),
             }
         }
+        Ok(Some(notice)) => Stopped::StepLimitReached { notice },
         Ok(None) if matches!(result.termination, Termination::StoppedByMonitor) => {
             Stopped::StepProtocolFailed {
                 reason: StepProtocolFailure::NoticeMissing {},
@@ -1561,17 +1561,12 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
     }
 }
 
-/// What the generated runtime said on its way out of a failed step protocol: the last line it wrote in the shape it writes, or that it said nothing this release reads.
+/// What the generated runtime said on its way out of a failed step protocol: its final complete line with a check this release recognizes, or that it said nothing this release reads.
 fn stated(output: &[u8]) -> StepProtocolFailure {
-    let said = output.split(|byte| *byte == b'\n').rev().find_map(|line| {
-        let line = match std::str::from_utf8(line) {
-            Ok(line) => line,
-            Err(_not_a_line_the_runtime_wrote) => return None,
-        };
-        let line = match line.strip_suffix('\r') {
-            Some(line) => line,
-            None => line,
-        };
+    let said = output.strip_suffix(b"\n").and_then(|complete| {
+        let line = complete.rsplit(|byte| *byte == b'\n').next()?;
+        let line = std::str::from_utf8(line).ok()?;
+        let line = line.strip_suffix('\r').unwrap_or(line);
         let mut fields = line
             .strip_prefix(STOP_SCHEMA)?
             .strip_prefix('\t')?
@@ -1582,19 +1577,63 @@ fn stated(output: &[u8]) -> StepProtocolFailure {
             fields.next()?,
             fields.next(),
         );
-        let protocol = STEP_PROTOCOL_EXIT.to_string();
-        match (status == protocol, os.parse::<i32>(), rest) {
-            (true, Ok(os), None) => Some(StepProtocolFailure::Stated {
-                check: check.to_owned(),
-                os,
-            }),
-            (false, _, _) | (true, Err(_), _) | (true, Ok(_), Some(_)) => None,
+        if status != STEP_PROTOCOL_EXIT.to_string() || rest.is_some() || !step_stop_check(check) {
+            return None;
         }
+        let code = os.parse::<i32>().ok()?;
+        if code.to_string() != os {
+            return None;
+        }
+        Some(StepProtocolFailure::Stated {
+            check: check.to_owned(),
+            os: code,
+        })
     });
     match said {
         Some(stated) => stated,
         None => StepProtocolFailure::Publication {},
     }
+}
+
+fn step_stop_check(check: &str) -> bool {
+    matches!(
+        check,
+        "allowance: not Unicode"
+            | "allowance: not a number"
+            | "allowance: not canonical"
+            | "allowance: no room past it"
+            | "no state path"
+            | "no nonce"
+            | "no active mutant"
+            | "poisoned"
+            | "metadata"
+            | "not a regular file"
+            | "open"
+            | "lock"
+            | "count"
+            | "unlock"
+            | "seek"
+            | "read"
+            | "too large"
+            | "not UTF-8"
+            | "not canonical"
+            | "a field too many"
+            | "another schema"
+            | "another execution's nonce"
+            | "another mutant"
+            | "phase"
+            | "truncate"
+            | "write"
+            | "sync"
+            | "notice: no path"
+            | "notice: no nonce"
+            | "notice: no active mutant"
+            | "notice: create"
+            | "notice: write"
+            | "notice: sync"
+            | "notice: publish"
+            | "unstated"
+    )
 }
 
 /// What one run of a test binary establishes about its mutant, given what its harness said before it stopped: a failed test or a signal the process raised itself is a kill, a clean summary a survivor, and a signal sent from outside inconclusive, as `docs/engine/verdicts.md` decides.
@@ -3191,6 +3230,7 @@ mod tests {
 
     use std::ffi::OsString;
     use std::path::Path;
+    use std::process::Command;
     use std::time::Duration;
 
     use njutest_devkit::result::{
@@ -3255,6 +3295,110 @@ mod tests {
             stdout_truncated: false,
             leader: None,
         }
+    }
+
+    #[expect(
+        clippy::expect_used,
+        reason = "a test reports a setup failure by panicking"
+    )]
+    fn generated_protocol_stop(
+        directory: &Path,
+        name: &str,
+        corrupt: impl FnOnce(String) -> String,
+    ) -> RunResult {
+        let module = crate::instrument::render(&crate::instrument::Rendering {
+            module: "__rm",
+            catalog_digest: CATALOG_A,
+            placements: &[],
+            markers: &[],
+            first_item: 0,
+            item_count: 0,
+            newline: "\n",
+            watched: "/unwatched-step-stop",
+        })
+        .expect("render generated runtime");
+        let source = directory.join(format!("{name}.rs"));
+        std::fs::write(
+            &source,
+            format!("{}\nfn main() {{ __rm::checkpoint(); }}\n", corrupt(module)),
+        )
+        .expect("write generated source");
+        let built = Command::new("rustc")
+            .args(["--edition", "2024", "--crate-type", "bin"])
+            .arg("--out-dir")
+            .arg(directory)
+            .arg(&source)
+            .output()
+            .expect("rustc runs");
+        assert!(
+            built.status.success(),
+            "{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let ran = Command::new(directory.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)))
+            .env(crate::instrument::STEPS_ENV, "1")
+            .env(crate::instrument::WATCHED_ENV, "/unwatched-step-stop")
+            .env_remove(STEP_STATE_ENV)
+            .output()
+            .expect("run generated runtime");
+        assert_eq!(ran.status.code(), Some(STEP_PROTOCOL_EXIT));
+        assert!(ran.stdout.is_empty());
+        let mut result = result(Termination::Exited(ProcessExit::Code(STEP_PROTOCOL_EXIT)));
+        result.output = ran.stderr;
+        result
+    }
+
+    #[test]
+    fn a_planted_missing_or_misrecorded_runtime_stop_is_refused() {
+        let directory = returned!(tempfile::tempdir(), "tempdir");
+        let expected_line = format!("{STOP_SCHEMA}\t{STEP_PROTOCOL_EXIT}\tno state path\t0\n");
+        let normal = generated_protocol_stop(directory.path(), "normal", |module| module);
+        assert_eq!(normal.output, expected_line.as_bytes());
+        assert_eq!(
+            observed_stop(&normal, Some(&expected(directory.path()))),
+            Stopped::StepProtocolFailed {
+                reason: StepProtocolFailure::Stated {
+                    check: "no state path".to_owned(),
+                    os: 0,
+                },
+            }
+        );
+        let competing = expected(directory.path());
+        publish(
+            &competing,
+            &notice_record(
+                ("rust-mutants-step-notice-v1", competing.nonce.as_str()),
+                (CATALOG_A, MUTANT_A),
+                (10, 11),
+            ),
+        );
+        assert_eq!(
+            observed_stop(&normal, Some(&competing)),
+            Stopped::StepProtocolFailed {
+                reason: StepProtocolFailure::Stated {
+                    check: "no state path".to_owned(),
+                    os: 0,
+                },
+            }
+        );
+        let missing = generated_protocol_stop(directory.path(), "missing", |module| {
+            module.replace(STOP_SCHEMA, "rust-mutants-stoX-v1")
+        });
+        assert_eq!(
+            observed_stop(&missing, Some(&expected(directory.path()))),
+            Stopped::StepProtocolFailed {
+                reason: StepProtocolFailure::Publication {},
+            }
+        );
+        let misrecorded = generated_protocol_stop(directory.path(), "misrecorded", |module| {
+            module.replace("status, error.check, error.os", "status, \"\", error.os")
+        });
+        assert_eq!(
+            observed_stop(&misrecorded, Some(&expected(directory.path()))),
+            Stopped::StepProtocolFailed {
+                reason: StepProtocolFailure::Publication {},
+            }
+        );
     }
 
     #[test]
@@ -3726,9 +3870,17 @@ mod tests {
             String::new(),
             "running 1 test\n".to_owned(),
             line("96", "touch: open", "5"),
+            line(&protocol, "", "0"),
+            line(&protocol, "invented check", "0"),
             line(&protocol, "lock", "not a code"),
+            line(&protocol, "lock", "+33"),
             format!("{STOP_SCHEMA}\t{protocol}\tlock\t33\tmore\n"),
             format!("said: {}", line(&protocol, "lock", "33")),
+            format!(
+                "{}{}",
+                line(&protocol, "open", "2"),
+                line(&protocol, "", "0")
+            ),
         ] {
             assert_eq!(
                 super::stated(unread.as_bytes()),
