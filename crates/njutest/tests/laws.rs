@@ -55,6 +55,13 @@ fn disposition() -> impl Strategy<Value = Disposition> {
             on: "pkg/lib/pkg".to_owned(),
             detail: "no binary".to_owned(),
         },
+        Disposition::Declined {
+            on: "pkg/lib/pkg".to_owned(),
+            tests: vec![rust_mutants::decline::Decline {
+                test: "tests::shares".to_owned(),
+                why: "this machine cannot share blocks".to_owned(),
+            }],
+        },
     ];
     for one in &every {
         match one {
@@ -66,7 +73,8 @@ fn disposition() -> impl Strategy<Value = Disposition> {
             | Disposition::Unreached
             | Disposition::Equivalent { .. }
             | Disposition::Unconfirmed { .. }
-            | Disposition::Errored { .. } => {}
+            | Disposition::Errored { .. }
+            | Disposition::Declined { .. } => {}
         }
     }
     proptest::sample::select(every.to_vec())

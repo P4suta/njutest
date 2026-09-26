@@ -106,6 +106,11 @@ pub enum Violation {
         /// The mutation identity.
         id: String,
     },
+    /// A mutation this run says every test declined to measure was not asked, once each, of exactly the targets its own route kept, or one of them answered otherwise (ADR 0043).
+    DeclineNotAskedOfItsRoute {
+        /// The mutation identity.
+        id: String,
+    },
     /// A finding the part's own records decide is stored where they do not raise it, or missing where they do.
     DerivedFindingIncoherent {
         /// The kind.
@@ -230,6 +235,7 @@ impl fmt::Display for Violation {
             Self::SourcesDisagree { path } => fmt_sources_disagree(f, path),
             Self::KillNotItsLastAnswer { id, by } => fmt_kill_not_last(f, id, by),
             Self::SurvivorNotAskedOfItsRoute { id } => fmt_survivor_not_asked(f, id),
+            Self::DeclineNotAskedOfItsRoute { id } => fmt_decline_not_asked(f, id),
             Self::DerivedFindingIncoherent { kind, because } => fmt_derived(f, kind, because),
             Self::MutantFindingIncoherent { id, because } => fmt_mutant_finding(f, id, because),
             Self::VerdictUnsupported { verdict, because } => {
@@ -300,6 +306,15 @@ fn fmt_survivor_not_asked(f: &mut fmt::Formatter<'_>, id: &str) -> fmt::Result {
          from each target the route kept: a survivor is a mutation every target that could \
          notice ran it and did not, so a kept target never asked, one asked twice, or one that \
          noticed says something else happened"
+    )
+}
+
+fn fmt_decline_not_asked(f: &mut fmt::Formatter<'_>, id: &str) -> fmt::Result {
+    write!(
+        f,
+        "mutation {id} is declined in this run, and its own route's answers are not one decline \
+         from each target the route kept: a mutation is declined only where every target that \
+         could notice ran it and every test of each declined to measure"
     )
 }
 
@@ -647,7 +662,8 @@ const fn carried_on_past(outcome: Outcome) -> bool {
         | Outcome::Unconfirmed
         | Outcome::Waited
         | Outcome::StepLimitReached
-        | Outcome::Errored => true,
+        | Outcome::Errored
+        | Outcome::Declined => true,
         Outcome::Killed
         | Outcome::CompileRejected
         | Outcome::Equivalent
@@ -655,6 +671,19 @@ const fn carried_on_past(outcome: Outcome) -> bool {
         | Outcome::ModelProved
         | Outcome::Unreached => false,
     }
+}
+
+/// Whether `routing` asked every target its route kept exactly once, and each answered `outcome`.
+fn asked_once_each(routing: &super::Routing, outcome: Outcome) -> bool {
+    let asked: BTreeSet<&str> = routing
+        .answered
+        .iter()
+        .map(|one| one.target.as_str())
+        .collect();
+    let kept: BTreeSet<&str> = routing.reaching.iter().map(String::as_str).collect();
+    asked == kept
+        && asked.len() == routing.answered.len()
+        && routing.answered.iter().all(|one| one.outcome == outcome)
 }
 
 /// Whether each row this run decided by a route it asked agrees with that route's answers: a kill is the last of them and the only kill, and a survivor was asked once of every target the route kept and each survived.
@@ -683,19 +712,13 @@ fn check_answers(report: &BuildReport, violations: &mut Vec<Violation>) {
                 }
             }
             super::Decided::Survived => {
-                let asked: BTreeSet<&str> = routing
-                    .answered
-                    .iter()
-                    .map(|one| one.target.as_str())
-                    .collect();
-                let kept: BTreeSet<&str> = routing.reaching.iter().map(String::as_str).collect();
-                let once_each = asked.len() == routing.answered.len();
-                let every_one_survived = routing
-                    .answered
-                    .iter()
-                    .all(|one| one.outcome == Outcome::Survived);
-                if asked != kept || !once_each || !every_one_survived {
+                if !asked_once_each(routing, Outcome::Survived) {
                     violations.push(Violation::SurvivorNotAskedOfItsRoute { id: row.id.clone() });
+                }
+            }
+            super::Decided::Declined { .. } => {
+                if !asked_once_each(routing, Outcome::Declined) {
+                    violations.push(Violation::DeclineNotAskedOfItsRoute { id: row.id.clone() });
                 }
             }
             super::Decided::CompileRejected
@@ -1215,6 +1238,17 @@ fn fmt_mutant_finding(f: &mut fmt::Formatter<'_>, id: &str, because: &str) -> fm
     )
 }
 
+/// Whether `kind` is one some outcome of a mutation row requires, read from the outcomes rather than listed beside them, so an outcome added later brings its finding here.
+fn a_mutation_finding(kind: FindingKind) -> bool {
+    Outcome::ALL.into_iter().any(|outcome| {
+        [
+            outcome.required_finding(false),
+            outcome.required_finding(true),
+        ]
+        .contains(&Some(kind))
+    })
+}
+
 /// Every mutation row is tied to exactly the finding its outcome requires.
 fn check_findings(report: &BuildReport, violations: &mut Vec<Violation>) {
     for row in &report.mutants {
@@ -1223,16 +1257,7 @@ fn check_findings(report: &BuildReport, violations: &mut Vec<Violation>) {
             .findings
             .iter()
             .filter(|finding| finding.subject == row.id || finding.subject == row.display_id)
-            .filter(|finding| {
-                matches!(
-                    finding.kind,
-                    FindingKind::SurvivingMutant
-                        | FindingKind::FailingTest
-                        | FindingKind::TargetMissing
-                        | FindingKind::WaitedMutant
-                        | FindingKind::StepLimitReachedMutant
-                )
-            })
+            .filter(|finding| a_mutation_finding(finding.kind))
             .collect();
         match expected {
             Some(kind) if matches!(tied.as_slice(), [one] if one.kind == kind) => {}
