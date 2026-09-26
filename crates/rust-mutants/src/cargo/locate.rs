@@ -30,6 +30,7 @@ pub struct LocateOptions {
 #[derive(Debug, Clone)]
 pub struct Toolchain {
     cargo: PathBuf,
+    chosen: PathBuf,
     rustc: PathBuf,
     sysroot: Option<PathBuf>,
     cargo_version: VersionInfo,
@@ -96,6 +97,7 @@ impl Toolchain {
             unpinned => unpinned,
         };
         Ok(Self {
+            chosen: cargo,
             cargo: pinned_cargo,
             rustc: pinned_rustc,
             sysroot,
@@ -109,6 +111,12 @@ impl Toolchain {
     #[must_use]
     pub fn cargo(&self) -> &Path {
         &self.cargo
+    }
+
+    /// The cargo the search path chose, before it was pinned, which is the one a command naming another toolchain than this run's (`+nightly`) runs.
+    #[must_use]
+    pub fn selecting(&self) -> Selecting<'_> {
+        Selecting(&self.chosen)
     }
 
     /// The rustc executable.
@@ -160,6 +168,24 @@ impl Toolchain {
         spec.dir = Some(dir.to_path_buf());
         spec.env.clone_from(&self.env);
         spec
+    }
+}
+
+/// A cargo that may select a toolchain by `+name`: the one the search path chose, which is rustup's proxy where rustup is installed, and never the toolchain's own cargo, which knows no `+name`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Selecting<'a>(&'a Path);
+
+impl<'a> Selecting<'a> {
+    /// A cargo somebody named by its path, which is run as named.
+    #[must_use]
+    pub const fn named(path: &'a Path) -> Self {
+        Self(path)
+    }
+
+    /// The program to run.
+    #[must_use]
+    pub const fn path(self) -> &'a Path {
+        self.0
     }
 }
 

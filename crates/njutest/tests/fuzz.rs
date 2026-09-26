@@ -105,7 +105,7 @@ mod driving {
         fuzz(
             &Fuzzing {
                 root,
-                cargo: &cargo,
+                cargo: rust_mutants::cargo::Selecting::named(&cargo),
                 env,
                 targets,
                 max_total_time: Duration::from_secs(1),
@@ -148,7 +148,7 @@ mod driving {
         let done = fuzz(
             &Fuzzing {
                 root: dir.path(),
-                cargo: &cargo,
+                cargo: rust_mutants::cargo::Selecting::named(&cargo),
                 env,
                 targets: &[],
                 max_total_time: Duration::from_secs(1),
@@ -278,7 +278,7 @@ mod driving {
         let done = fuzz(
             &Fuzzing {
                 root: dir.path(),
-                cargo: &missing,
+                cargo: rust_mutants::cargo::Selecting::named(&missing),
                 env: Vec::new(),
                 targets: &[],
                 max_total_time: Duration::from_secs(1),
@@ -310,7 +310,7 @@ mod driving {
         let done = fuzz(
             &Fuzzing {
                 root: dir.path(),
-                cargo: &cargo,
+                cargo: rust_mutants::cargo::Selecting::named(&cargo),
                 env,
                 targets: &[],
                 max_total_time: Duration::from_secs(7),

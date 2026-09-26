@@ -53,7 +53,7 @@ fn sanitized(
     sanitize(
         &Sanitizing {
             root: dir,
-            cargo: &cargo,
+            cargo: rust_mutants::cargo::Selecting::named(&cargo),
             host: "x86_64-unknown-linux-gnu",
             env: saying(said, code),
             packages: &[],
@@ -190,7 +190,7 @@ fn what_a_run_asks_of_the_sanitizer_is_the_whole_of_what_it_asks() {
     let done = sanitize(
         &Sanitizing {
             root: dir.path(),
-            cargo: &cargo,
+            cargo: rust_mutants::cargo::Selecting::named(&cargo),
             host: "x86_64-unknown-linux-gnu",
             env: saying("", 0),
             packages: &packages,
@@ -251,7 +251,7 @@ fn as_started(dir: &Path, base: Vec<(std::ffi::OsString, std::ffi::OsString)>) -
     let done = sanitize(
         &Sanitizing {
             root: dir,
-            cargo: &cargo,
+            cargo: rust_mutants::cargo::Selecting::named(&cargo),
             host: "x86_64-unknown-linux-gnu",
             env,
             packages: &[],
@@ -321,7 +321,7 @@ fn a_run_that_named_no_package_asks_the_sanitizer_for_the_whole_workspace() {
     let done = sanitize(
         &Sanitizing {
             root: dir.path(),
-            cargo: &cargo,
+            cargo: rust_mutants::cargo::Selecting::named(&cargo),
             host: "x86_64-unknown-linux-gnu",
             env: saying("test result: ok", 0),
             packages: &[],
@@ -429,7 +429,7 @@ fn a_sanitizer_that_runs_out_of_time_has_not_checked_anything() {
     let done = sanitize(
         &Sanitizing {
             root: dir.path(),
-            cargo: &cargo,
+            cargo: rust_mutants::cargo::Selecting::named(&cargo),
             host: "x86_64-unknown-linux-gnu",
             env,
             packages: &[],
