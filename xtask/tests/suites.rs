@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Every integration test file compiles: into its crate's one suite, or as a toolchain binary of its own.
+//! Every integration test file compiles: into its crate's one suite, as a toolchain binary of its own, or as the one binary whose subject is this repository.
 
 #![expect(
     clippy::expect_used,
@@ -10,6 +10,9 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+
+/// The one test file of a crate whose subject is the committed tree rather than code, a binary apart from the suite so a measurement that rewrites the tree can leave it out.
+const THIS_REPOSITORY: &str = "this_repository.rs";
 
 /// The crates whose integration tests are one suite plus a binary per toolchain test.
 const SUITED: [&str; 5] = [
@@ -88,11 +91,12 @@ fn every_test_file_is_compiled_by_the_suite_or_as_a_toolchain_binary() {
             let binary = declared.contains(file);
             let module = moduled.contains(file);
             let slow = file.starts_with("toolchain_");
-            match (slow, binary, module) {
+            let apart = file == THIS_REPOSITORY;
+            match (slow || apart, binary, module) {
                 (true, true, false) | (false, false, true) => {}
                 (true, _, _) => refused.push(format!(
-                    "{crate_dir}/tests/{file} needs a toolchain, so it is a [[test]] of its own and \
-                     not a module of the suite"
+                    "{crate_dir}/tests/{file} needs a toolchain or is about this repository, so it \
+                     is a [[test]] of its own and not a module of the suite"
                 )),
                 (false, _, _) => refused.push(format!(
                     "{crate_dir}/tests/{file} is compiled by nothing: add `#[path = \"{file}\"] mod \
