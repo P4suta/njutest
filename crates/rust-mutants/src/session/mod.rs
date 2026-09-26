@@ -3967,6 +3967,54 @@ mod tests {
     }
 
     #[test]
+    fn a_ledger_reads_a_mutant_result_as_its_execution_whatever_payload_it_carries() {
+        use super::Attempt as _;
+        let decline = crate::decline::Decline {
+            test: "tests::shares".to_owned(),
+            why: "this machine cannot share blocks".to_owned(),
+        };
+        for conclusion in [
+            MutantConclusion::Declined {
+                tests: vec![decline.clone(), decline.clone()],
+            },
+            MutantConclusion::DeclinedUnderTheMutant {
+                by: decline.clone(),
+            },
+            MutantConclusion::Waited,
+            MutantConclusion::Killed,
+        ] {
+            let mut carried = result(conclusion, Duration::from_millis(1_234));
+            carried.declines = crate::decline::Declines::Read {
+                declined: vec![decline.clone(); 3],
+                quoted: vec!["words no test was named with".to_owned(); 2],
+            };
+            carried.output = b"what the tests printed".to_vec();
+            assert_eq!(
+                super::Attempt::duration(&carried),
+                Duration::from_millis(1_234),
+                "the duration a ledger sums is the execution's own: {:?}",
+                carried.conclusion
+            );
+            assert_eq!(
+                super::Attempt::outcome(&carried),
+                carried.outcome(),
+                "the outcome a ledger reads is the execution's own: {:?}",
+                carried.conclusion
+            );
+            for outcome in Outcome::ALL {
+                let (mut through, mut direct) = (carried.clone(), carried.clone());
+                through.reconcile(outcome);
+                direct.reconcile_outcome(outcome);
+                assert_eq!(
+                    (&through.conclusion, through.duration, &through.declines),
+                    (&direct.conclusion, direct.duration, &direct.declines),
+                    "a ledger reconciles a retry exactly as the execution does: {outcome:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn attempt_ledger_fails_closed_when_its_exact_duration_overflows() {
         let ledger = AttemptLedger::with_retry(
             WaitedAttempt(result(MutantConclusion::Waited, Duration::MAX)),
