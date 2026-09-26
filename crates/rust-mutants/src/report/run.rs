@@ -165,7 +165,7 @@ pub struct Beside(u32);
 /// A report accounting value exceeded its durable `u32` representation or contradicted a subset relation required by that representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("run accounting exceeds or contradicts its durable counters")]
-pub struct CountOverflow;
+pub struct CountOverflowError;
 
 /// Declares the three kinds with the same shape, and no `Display`.
 ///
@@ -190,13 +190,13 @@ macro_rules! counted {
             ///
             /// # Errors
             /// Refuses when the durable counter is exhausted.
-            pub const fn raise(&mut self) -> Result<(), CountOverflow> {
+            pub const fn raise(&mut self) -> Result<(), CountOverflowError> {
                 match self.0.checked_add(1) {
                     Some(raised) => {
                         self.0 = raised;
                         Ok(())
                     }
-                    None => Err(CountOverflow),
+                    None => Err(CountOverflowError),
                 }
             }
         }
@@ -412,7 +412,7 @@ pub enum DocumentError {
     CatalogTooLarge,
     /// Exact accounting exceeded a durable counter or contradicted a subset relation.
     #[error(transparent)]
-    Count(#[from] CountOverflow),
+    Count(#[from] CountOverflowError),
     /// The shard header is not a valid `K/N` selection.
     #[error("the run report has an invalid shard {shard:?}")]
     Shard {
@@ -920,7 +920,7 @@ fn accounting_from_document(document: &RunDocument) -> Result<Accounting, Docume
         accounting
             .cataloged
             .checked_sub(accounting.not_run.count())
-            .ok_or(CountOverflow)?,
+            .ok_or(CountOverflowError)?,
     );
     Ok(accounting)
 }
@@ -1311,7 +1311,7 @@ pub enum MergeError {
     CatalogTooLarge,
     /// Exact merged accounting exceeded a durable counter or contradicted a subset relation.
     #[error(transparent)]
-    Count(#[from] CountOverflow),
+    Count(#[from] CountOverflowError),
 }
 
 /// Every claim the parts state, one each, answered as the whole run answers it.
@@ -1467,16 +1467,16 @@ fn accounting_of(
         counted
             .cataloged
             .checked_sub(counted.not_run.count())
-            .ok_or(CountOverflow)?,
+            .ok_or(CountOverflowError)?,
     );
     Ok(counted)
 }
 
-fn score_of(accounting: &Accounting) -> Result<Option<ScoreDocument>, CountOverflow> {
+fn score_of(accounting: &Accounting) -> Result<Option<ScoreDocument>, CountOverflowError> {
     let detected = accounting.killed.count();
     let decided = detected
         .checked_add(accounting.survived.count())
-        .ok_or(CountOverflow)?;
+        .ok_or(CountOverflowError)?;
     Ok((decided > 0).then(|| ScoreDocument {
         detected,
         decided,

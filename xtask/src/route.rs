@@ -14,13 +14,13 @@ pub struct ReadError {
     pub line: usize,
     /// Why.
     #[source]
-    pub cause: ReadCause,
+    pub cause: ReadCauseError,
 }
 
 /// Why a line of a recording is not read.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum ReadCause {
+pub enum ReadCauseError {
     /// It is not JSON, or not the current envelope.
     #[error("not JSON this audit reads: {source}")]
     Json {
@@ -33,7 +33,7 @@ pub enum ReadCause {
     OffSchema {
         /// Where and how.
         #[source]
-        source: crate::schemas::OffSchema,
+        source: crate::schemas::OffSchemaError,
     },
     /// A field a reader needs is not there, or is not the type it reads, although the line passed its schema.
     #[error("the record has no {field} a reader can read")]
@@ -46,21 +46,21 @@ pub enum ReadCause {
 /// The field `key` of `record`, which every line on its schema carries.
 ///
 /// # Errors
-/// [`ReadCause::Absent`] where it is not there or is not what `read` takes.
+/// [`ReadCauseError::Absent`] where it is not there or is not what `read` takes.
 pub(crate) fn required<'a, T>(
     record: &'a Value,
     key: &str,
     read: impl FnOnce(&'a Value) -> Option<T>,
-) -> Result<T, ReadCause> {
+) -> Result<T, ReadCauseError> {
     record
         .get(key)
         .and_then(read)
-        .ok_or_else(|| ReadCause::Absent {
+        .ok_or_else(|| ReadCauseError::Absent {
             field: key.to_owned(),
         })
 }
 
-impl crate::error::Coded for ReadCause {
+impl crate::error::Coded for ReadCauseError {
     fn code(&self) -> crate::error::XtCode {
         match self {
             Self::Json { .. } => crate::error::XtCode::RecordingLine,
@@ -326,12 +326,12 @@ impl<L: crate::schemas::Lines> Checked<L> {
                 let line_number = index.saturating_add(1);
                 let json = |source| ReadError {
                     line: line_number,
-                    cause: ReadCause::Json { source },
+                    cause: ReadCauseError::Json { source },
                 };
                 let parsed = crate::strictjson::from_str(line).map_err(json)?;
                 checker.check(&parsed).map_err(|source| ReadError {
                     line: line_number,
-                    cause: ReadCause::OffSchema { source },
+                    cause: ReadCauseError::OffSchema { source },
                 })?;
                 nested_event(parsed).map_err(json)
             })
@@ -383,7 +383,7 @@ fn nested_event(event: Value) -> Result<Value, serde_json::Error> {
 }
 
 /// One route record, from whichever producer wrote it.
-fn route(record: &Value) -> Result<Route, ReadCause> {
+fn route(record: &Value) -> Result<Route, ReadCauseError> {
     Ok(Route {
         mutant: named(record)?,
         index: number(record, "index"),
@@ -400,7 +400,7 @@ fn route(record: &Value) -> Result<Route, ReadCause> {
 }
 
 /// One execution record, from whichever producer wrote it.
-fn exec(record: &Value) -> Result<Exec, ReadCause> {
+fn exec(record: &Value) -> Result<Exec, ReadCauseError> {
     Ok(Exec {
         mutant: named(record)?,
         index: number(record, "index"),
@@ -420,16 +420,16 @@ fn exec(record: &Value) -> Result<Exec, ReadCause> {
 }
 
 /// The mutant a record is about: the runner writes `mutant`, the engine writes `id`.
-fn named(record: &Value) -> Result<String, ReadCause> {
+fn named(record: &Value) -> Result<String, ReadCauseError> {
     text(record, "mutant")
         .or_else(|| text(record, "id"))
-        .ok_or_else(|| ReadCause::Absent {
+        .ok_or_else(|| ReadCauseError::Absent {
             field: "mutant or id".to_owned(),
         })
 }
 
 /// Every target a proof removed, with the proof; none where the producer writes no such list.
-fn discharges(record: &Value) -> Result<Vec<Discharge>, ReadCause> {
+fn discharges(record: &Value) -> Result<Vec<Discharge>, ReadCauseError> {
     record
         .get("discharged")
         .and_then(Value::as_array)
@@ -442,7 +442,7 @@ fn discharges(record: &Value) -> Result<Vec<Discharge>, ReadCause> {
                         proof: required(entry, "proof", owned)?,
                     })
                 })
-                .collect::<Result<Vec<Discharge>, ReadCause>>()
+                .collect::<Result<Vec<Discharge>, ReadCauseError>>()
         })
         .transpose()
         .map(Option::unwrap_or_default)
