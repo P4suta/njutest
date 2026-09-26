@@ -515,3 +515,41 @@ fn a_reader_is_held_to_exactly_its_ceiling() {
         "{gone:?}"
     );
 }
+
+/// A one-package workspace whose `.rust-mutants.toml` skips `skipped`, with a library and one integration test.
+fn skipping(skipped: &str) -> Result<tempfile::TempDir, TestFailure> {
+    let root = tempfile::tempdir()?;
+    std::fs::write(
+        root.path().join("Cargo.toml"),
+        "[package]\nname = \"planted\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n",
+    )?;
+    std::fs::create_dir_all(root.path().join("src"))?;
+    std::fs::create_dir_all(root.path().join("tests"))?;
+    std::fs::write(root.path().join("src/lib.rs"), "pub fn one() {}\n")?;
+    std::fs::write(root.path().join("tests/one.rs"), "#[test]\nfn one() {}\n")?;
+    std::fs::write(
+        root.path().join(".rust-mutants.toml"),
+        format!("version = 1\n[execution]\nskip_targets = [\"{skipped}\"]\n"),
+    )?;
+    Ok(root)
+}
+
+#[test]
+fn a_skipped_target_no_member_declares_is_refused_with_what_its_package_declares()
+-> Result<(), TestFailure> {
+    let renamed = skipping("planted/test/two")?;
+    let failure = refused(
+        gates::skipped(renamed.path()),
+        "a skip naming a target that was renamed passed the gate",
+    )?;
+    require(
+        failure.0.contains("planted/test/two") && failure.0.contains("planted/test/one"),
+        format!(
+            "the refusal names what was skipped and what the package declares now: {}",
+            failure.0
+        ),
+    )?;
+    let named = skipping("planted/test/one")?;
+    let passed = gates::skipped(named.path())?;
+    require(passed.starts_with("skipped: 1 skipped target"), passed)
+}

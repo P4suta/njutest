@@ -2171,6 +2171,130 @@ fn written_into(path: &str) -> &str {
     path.get(..end).unwrap_or(path)
 }
 
+/// A name no target of any workspace has, which the target check must refuse before its silence about the configuration counts.
+const PLANTED_UNKNOWN_TARGET: &str = "xtask/test/no-such-target-anywhere";
+
+/// Every target `.rust-mutants.toml` skips is one a member declares, as cargo's metadata names it.
+///
+/// # Errors
+/// The configuration cannot be read, cargo's metadata cannot be read, the check misses a planted name, or a name is no target.
+pub fn skipped(root: &Path) -> Result<String, GateFailure> {
+    let path = root.join(".rust-mutants.toml");
+    let text = std::fs::read_to_string(&path)
+        .map_err(|error| GateFailure(format!("skipped: {}: {error}", path.display())))?;
+    let config = text
+        .parse::<toml::Table>()
+        .map_err(|error| GateFailure(format!("skipped: {}: {error}", path.display())))?;
+    let named = skip_targets_of(&config, &path)?;
+    let metadata = cargo_metadata::MetadataCommand::new()
+        .manifest_path(root.join("Cargo.toml"))
+        .no_deps()
+        .exec()
+        .map_err(|error| GateFailure(format!("skipped: cargo metadata: {error}")))?;
+    let declared = declared_targets(&metadata);
+    let every_package_named = metadata.workspace_packages().iter().all(|package| {
+        let prefix = format!("{}/", package.name);
+        declared.iter().any(|one| one.starts_with(&prefix))
+    });
+    if declared.contains(PLANTED_UNKNOWN_TARGET) || !every_package_named {
+        return Err(GateFailure(format!(
+            "skipped: the targets derived from cargo's metadata do not refuse \
+             {PLANTED_UNKNOWN_TARGET} and name a target of every member, so their silence about \
+             the configuration would not be evidence"
+        )));
+    }
+    let unknown: Vec<&String> = named
+        .iter()
+        .filter(|name| !declared.contains(name.as_str()))
+        .collect();
+    if let Some(first) = unknown.first() {
+        let package = match first.split_once('/') {
+            Some((package, _rest)) => package,
+            None => first.as_str(),
+        };
+        let nearby: Vec<&str> = declared
+            .iter()
+            .filter(|one| one.starts_with(&format!("{package}/")))
+            .map(String::as_str)
+            .collect();
+        return Err(GateFailure(format!(
+            "skipped: {} names {}, which no member of this workspace declares; a run refuses it \
+             with RM5004 before it measures anything. {package} declares: {}",
+            path.display(),
+            unknown
+                .iter()
+                .map(|one| one.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+            nearby.join(", ")
+        )));
+    }
+    Ok(format!(
+        "skipped: {} skipped target(s), each one this workspace declares among its {}, and a planted unknown name refused first",
+        named.len(),
+        declared.len()
+    ))
+}
+
+/// The strings `[execution] skip_targets` holds, or none where the table or the key is absent.
+fn skip_targets_of(config: &toml::Table, path: &Path) -> Result<Vec<String>, GateFailure> {
+    let refused = |what: String| GateFailure(format!("skipped: {}: {what}", path.display()));
+    let Some(execution) = config.get("execution") else {
+        return Ok(Vec::new());
+    };
+    let Some(table) = execution.as_table() else {
+        return Err(refused("`execution` is not a table".to_owned()));
+    };
+    let Some(listed) = table.get("skip_targets") else {
+        return Ok(Vec::new());
+    };
+    let Some(listed) = listed.as_array() else {
+        return Err(refused(
+            "`execution.skip_targets` is not an array".to_owned(),
+        ));
+    };
+    listed
+        .iter()
+        .map(|one| match one.as_str() {
+            Some(name) => Ok(name.to_owned()),
+            None => Err(refused(format!(
+                "`execution.skip_targets` holds {one}, which is not a string"
+            ))),
+        })
+        .collect()
+}
+
+/// Every target the engine could start in this workspace, named as it names them: `package/kind/name`, and `package/doc/name` for a library whose documentation cargo tests.
+fn declared_targets(metadata: &cargo_metadata::Metadata) -> BTreeSet<String> {
+    let mut declared = BTreeSet::new();
+    for package in metadata.workspace_packages() {
+        for target in &package.targets {
+            let kind = if target.is_custom_build() || target.is_bench() {
+                None
+            } else if target.is_proc_macro() {
+                Some("proc-macro")
+            } else if target.is_lib() {
+                Some("lib")
+            } else if target.is_bin() {
+                Some("bin")
+            } else if target.is_test() {
+                Some("test")
+            } else if target.is_example() {
+                Some("example")
+            } else {
+                None
+            };
+            if let Some(kind) = kind {
+                declared.insert(format!("{}/{kind}/{}", package.name, target.name));
+            }
+            if target.is_lib() && !target.is_proc_macro() && target.doctest {
+                declared.insert(format!("{}/doc/{}", package.name, target.name));
+            }
+        }
+    }
+    declared
+}
+
 /// Every gate, in order, stopping at the first failure.
 ///
 /// # Errors
@@ -2190,6 +2314,7 @@ pub fn all(root: &Path) -> Result<String, GateFailure> {
         defaulted,
         waivers,
         tracked,
+        skipped,
     ] {
         line(&mut report, format_args!("{}", gate(root)?));
     }
