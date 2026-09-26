@@ -8,9 +8,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use sha2::{Digest as _, Sha256};
 
 use super::{
-    Audit, DISCHARGED, DISCHARGED_MUTANT, DISPLAY_ID_LENGTH, Decided, ERRORED, ERRORED_MUTANT,
-    ID_DOMAIN, INAPPLICABLE, INCONCLUSIVE, INCONCLUSIVE_MUTANT, KILLED, Layer, MET, NOT_RUN,
-    NOT_RUN_MUTANT, Notes, Report, Row, STALE, STALE_EXPECTATION, STEP_LIMIT_REACHED,
+    Audit, DECLINED, DISCHARGED, DISCHARGED_MUTANT, DISPLAY_ID_LENGTH, Decided, ERRORED,
+    ERRORED_MUTANT, ID_DOMAIN, INAPPLICABLE, INCONCLUSIVE, INCONCLUSIVE_MUTANT, KILLED, Layer, MET,
+    NOT_RUN, NOT_RUN_MUTANT, Notes, Report, Row, STALE, STALE_EXPECTATION, STEP_LIMIT_REACHED,
     STEP_LIMIT_REACHED_MUTANT, STOPPED_EARLY, SURVIVED, SURVIVING_MUTANT, UNJUDGED, UNMATCHED,
     UNMATCHED_EXPECTATION, UNREACHED, UNREACHED_MUTANT, UNSELECTED, WAITED, WAITED_MUTANT, count,
 };
@@ -157,6 +157,16 @@ pub(super) fn accounting(report: &Report, audit: &mut Audit) -> Decided {
                     .mutants
                     .iter()
                     .filter(|row| row.not_run(DISCHARGED))
+                    .count(),
+            ),
+        ),
+        (
+            DECLINED,
+            count(
+                report
+                    .mutants
+                    .iter()
+                    .filter(|row| row.not_run(DECLINED))
                     .count(),
             ),
         ),
@@ -451,6 +461,7 @@ pub(super) fn findings(report: &Report, audit: &mut Audit) -> Decided {
                 && !row.not_run(DISCHARGED)
                 && !row.not_run(UNSELECTED)
                 && !row.not_run(STOPPED_EARLY)
+                && !row.not_run(DECLINED)
                 && !interrupted
         }
         _ => false,

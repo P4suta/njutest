@@ -3,10 +3,10 @@
   "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260926t001023631z",
-    "started_at": "2026-09-26T00:10:23.631557955Z",
-    "finished_at": "2026-09-26T00:10:38.921518568Z",
-    "duration_ms": 4311,
+    "id": "20260926t021342688z",
+    "started_at": "2026-09-26T02:13:42.688971217Z",
+    "finished_at": "2026-09-26T02:13:54.344730526Z",
+    "duration_ms": 445,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -16,9 +16,9 @@
     }
   },
   "workspace": {
-    "root_name": "tmp.hKN19NW0xT",
+    "root_name": "tmp.0XqeSyC8vV",
     "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "d4eb838e91acaee848b6dd4a952ec2305e014bdacc9e5efcf049fcd80cefc001",
+    "workspace_digest": "13c01d2607b3c3acd87fb35585dab68af6c67051b5bd69dfdd01abca6560533c",
     "catalog_digest": "03c20af27c9024062341116ff85836fcf3a0955215778abecd0001f5c374dd22",
     "platform": {
       "os": "gnu",
@@ -49,6 +49,7 @@
     "not_run": 4,
     "unreached": 4,
     "discharged": 0,
+    "declined": 0,
     "expected": 0
   },
   "score": {
@@ -97,8 +98,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
-      "exit_code": 101,
-      "duration_ms": 27,
+      "exit_code": -1,
+      "duration_ms": 26,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -107,6 +108,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,
@@ -144,8 +146,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
-      "exit_code": 101,
-      "duration_ms": 37,
+      "exit_code": -1,
+      "duration_ms": 26,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -154,6 +156,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,
@@ -191,8 +194,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
-      "exit_code": 101,
-      "duration_ms": 25,
+      "exit_code": -1,
+      "duration_ms": 38,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -201,6 +204,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,
@@ -239,7 +243,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": -1,
-      "duration_ms": 88,
+      "duration_ms": 36,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -248,6 +252,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,
@@ -293,6 +298,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -334,6 +340,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -375,6 +382,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,
@@ -416,6 +424,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "unreached",
+      "declined": [],
       "route": {
         "granularity": "unreached",
         "fallback": null,

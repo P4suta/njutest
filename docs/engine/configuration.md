@@ -320,6 +320,7 @@ fn decline(name: &str, why: &str) -> std::io::Result<()> {
 ```
 
 One write matters: libtest runs tests on several threads, and a line appended in pieces can have another test's land inside it, which the run refuses rather than reads.
+The words are compared with the baseline's, so they are the same on every run of the same machine: a temporary path, a process id or a time in them makes every decline under a mutation one the baseline did not make, which is a kill; that detail belongs on standard error.
 A line whose name is empty is the one test's when the process ran exactly one, and is only quoted otherwise.
 
 What the run makes of it:

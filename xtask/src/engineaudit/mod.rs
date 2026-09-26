@@ -56,6 +56,7 @@ const UNREACHED: &str = "unreached";
 const DISCHARGED: &str = "discharged";
 const UNSELECTED: &str = "unselected";
 const STOPPED_EARLY: &str = "stopped-early";
+const DECLINED: &str = "declined";
 const BRANCH_NEVER_TAKEN: &str = "branch-never-taken";
 const NEVER_INFECTED: &str = "never-infected";
 const SURVIVING_MUTANT: &str = "surviving-mutant";
@@ -712,6 +713,15 @@ struct Row {
     unreached: bool,
     not_run_reason: Option<NotRunReason>,
     source_run_id: Option<String>,
+    declined: Vec<Decline>,
+}
+
+/// One test a row or a recorded execution says declined to measure, and its words (ADR 0043).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Decline {
+    test: String,
+    why: String,
 }
 
 /// The independently read fields of a verified runtime step notice.
@@ -773,6 +783,7 @@ enum NotRunReason {
     Interrupted,
     Unselected,
     StoppedEarly,
+    Declined,
 }
 
 impl NotRunReason {
@@ -783,6 +794,7 @@ impl NotRunReason {
             Self::Interrupted => "interrupted",
             Self::Unselected => UNSELECTED,
             Self::StoppedEarly => STOPPED_EARLY,
+            Self::Declined => DECLINED,
         }
     }
 }

@@ -31,6 +31,7 @@ A line whose name is empty is the one test's when the process ran exactly one; w
 
 **A decline is believed only where the baseline declined the same way.** A mutation can reach whatever a test reads to decide it cannot measure here, and a decline that appears only under a mutant means the mutation changed what the test did: that is a detection, and the mutation is killed.
 Only a test that declined in this run's baseline, for the same reason, is set aside under a mutant.
+So the words are the reason and nothing that changes between runs: a temporary path or a process id in them would make every decline under a mutant a new one.
 
 **A survivor rests only on tests that measured.** After a mutant's executions, a test that declined is set aside.
 Where every test the run asked about the mutation declined, the mutation was not measured here: it is `not_run` with the reason `declined`, and the report names each test and its words.

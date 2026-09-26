@@ -2474,7 +2474,7 @@ fn a_baseline_that_passed_only_on_retry_is_owed_not_measured_rather_than_a_compa
         "type": "verify",
         "verify": {
             "target": TARGET, "outcome": "survived", "tests_run": 1, "duration_ms": 1,
-            "remembered": false, "retried": true
+            "remembered": false, "retried": true, "declined": []
         }
     });
     let engine = vec![
@@ -2998,7 +2998,8 @@ fn a_binary_the_run_did_not_measure_owes_no_thread_record() {
         "type": "verify",
         "verify": {
             "target": "pkg/test/failing", "outcome": "killed", "tests_run": 1, "duration_ms": 1,
-            "args": ["--test-threads=1"], "remembered": false, "retried": false
+            "args": ["--test-threads=1"], "remembered": false, "retried": false,
+            "declined": []
         }
     }));
     let laid = sentinel::Perturbation {
