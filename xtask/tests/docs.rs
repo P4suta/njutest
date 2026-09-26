@@ -103,11 +103,11 @@ fn jobs_of(workflow: &str) -> BTreeSet<String> {
     jobs
 }
 
-/// What the `ci-success` job of `ci.yml` waits for, in either shape a workflow writes a list.
+/// What the `required` job of `ci.yml` waits for, in either shape a workflow writes a list.
 fn required() -> BTreeSet<String> {
     let text = read(".github/workflows/ci.yml");
     let block = text
-        .split_once("\n  ci-success:")
+        .split_once("\n  required:")
         .map_or_else(String::new, |(_before, after)| after.to_owned());
     let after = block
         .split_once("needs:")
@@ -136,7 +136,7 @@ fn every_job_of_the_pipeline_is_one_that_can_fail_it() {
     let waited_for = required();
     let unguarded: Vec<&String> = declared
         .iter()
-        .filter(|job| job.as_str() != "ci-success" && !waited_for.contains(*job))
+        .filter(|job| job.as_str() != "required" && !waited_for.contains(*job))
         .collect();
     assert!(
         unguarded.is_empty(),
@@ -162,8 +162,8 @@ fn every_job_ci_md_names_exists_in_the_workflow_that_would_hold_it() {
     for name in workflows() {
         jobs.extend(jobs_of(&name));
     }
-    assert!(jobs.contains("ci-success"), "{jobs:?}");
-    for named in ["ci-success", "whole", "audit", "cargo-mutants"] {
+    assert!(jobs.contains("required"), "{jobs:?}");
+    for named in ["required", "whole", "audit", "cargo-mutants"] {
         assert!(
             page.contains(named),
             "docs/ci.md does not name the {named} job"

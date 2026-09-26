@@ -1193,7 +1193,7 @@ fn the_required_check_is_asked_of_every_pull_request() {
         .unwrap_or_else(|| panic!("ci.yml runs on pull requests"));
     assert!(
         !filters_paths(block),
-        "ci-success is the check a pull request cannot merge without, and a pull request its paths \
+        "required is the check a pull request cannot merge without, and a pull request its paths \
          filter skips never gets one: with strict up-to-date and no bypass it waits forever. {block}"
     );
 }
