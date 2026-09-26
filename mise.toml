@@ -235,7 +235,7 @@ db="${CARGO_TARGET_DIR:-target}/advisory-db"
 fetched=false
 for attempt in 1 2 3 4 5; do
   if [ -d "${db}/.git" ]; then
-    git -C "${db}" fetch --quiet --depth 1 origin main && git -C "${db}" reset --quiet --hard FETCH_HEAD && fetched=true
+    git -C "${db}" fetch --quiet --depth 1 origin main && git -C "${db}" switch --detach --quiet FETCH_HEAD && fetched=true
   else
     rm -rf "${db}"
     git clone --quiet --depth 1 https://github.com/RustSec/advisory-db.git "${db}" && fetched=true
