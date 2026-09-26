@@ -330,10 +330,11 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
         None,
         "a stale record variable is removed, never inherited"
     );
+    let expected_tmp = exact_os_text(scratch.join("tmp").as_os_str());
     for key in ["TMPDIR", "TMP", "TEMP"] {
         assert_eq!(
             lookup(key).as_deref(),
-            Some("/scratch/worker-3/tmp"),
+            Some(expected_tmp.as_str()),
             "{key} points at the worker's own scratch"
         );
     }
