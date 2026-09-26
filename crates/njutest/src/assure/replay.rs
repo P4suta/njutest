@@ -197,9 +197,16 @@ const fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) ->
                 Outcome::Inconclusive
             }
         },
+        FindingKind::TargetMissing => match outcome {
+            Measured::Killed | Measured::Survived => Outcome::Resolved,
+            Measured::NotRun
+            | Measured::StepLimitReached
+            | Measured::Waited
+            | Measured::Inconclusive
+            | Measured::Errored => Outcome::Inconclusive,
+        },
         FindingKind::BuildFailure
         | FindingKind::FailingTest
-        | FindingKind::TargetMissing
         | FindingKind::SurvivingMutant
         | FindingKind::NotMeasured
         | FindingKind::UnmatchedAcceptance
@@ -231,6 +238,17 @@ mod tests {
     /// The outcomes that answer no question a finding can ask: nothing ran, the run could not decide, or the harness failed.
     const ESTABLISH_NOTHING: [Measured; 3] =
         [Measured::NotRun, Measured::Inconclusive, Measured::Errored];
+
+    #[test]
+    fn a_missing_target_that_was_measured_is_resolved() {
+        for measured in [Measured::Killed, Measured::Survived] {
+            assert_eq!(
+                observed(FindingKind::TargetMissing, measured),
+                Outcome::Resolved,
+                "a measured mutation no longer has a missing target: {measured:?}"
+            );
+        }
+    }
 
     #[test]
     fn a_replay_that_established_nothing_says_so_rather_than_picking_a_side() {
