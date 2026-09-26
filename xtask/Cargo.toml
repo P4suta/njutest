@@ -54,3 +54,7 @@ path = "tests/suite.rs"
 [[test]]
 name = "toolchain_gates"
 path = "tests/toolchain_gates.rs"
+
+[[test]]
+name = "this_repository"
+path = "tests/this_repository.rs"

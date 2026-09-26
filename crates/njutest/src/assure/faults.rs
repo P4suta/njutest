@@ -481,6 +481,17 @@ pub fn decided(disposition: &Disposition) -> FaultDecision {
             on: on.clone(),
             why: detail.clone(),
         },
+        Disposition::Declined { on, tests } => FaultDecision::Undecided {
+            on: on.clone(),
+            why: format!(
+                "every test that reached it declined to measure on this machine: {}",
+                tests
+                    .iter()
+                    .map(|one| format!("{} ({})", one.test, one.why))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        },
         Disposition::Rejected { diagnostic } => FaultDecision::NotPut {
             diagnostic: crate::assure::run::first_line(diagnostic),
         },

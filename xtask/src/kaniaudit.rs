@@ -70,6 +70,28 @@ pub(crate) enum Harness {
 }
 
 impl Harness {
+    /// The most program steps CBMC may unfold this harness into on either target: a count no load moves, so a law that starts paying for a payload fails here and not on a runner that runs out of memory.
+    const fn ceiling(self) -> u64 {
+        match self {
+            Self::CountingCounts => 1_800,
+            Self::CountingNeverStops | Self::DormantCheckpoint => 1_300,
+            Self::CountingUnreachable => 5_800,
+            Self::Activation => 1_700,
+            Self::ActiveCheckpoint | Self::AttemptDuration => 3_900,
+            Self::Stopping => 2_100,
+            Self::AttemptLedger => 220_000,
+            Self::CancellationBeforeRetry => 68_000,
+            Self::CancelledRetry => 46_000,
+            Self::EqualOutcomes => 90_000,
+            Self::Killed => 840,
+            Self::RetryReconciliation => 990,
+            Self::Survived => 4_200,
+            Self::Associative => 1_600,
+            Self::Commutative => 1_100,
+            Self::Idempotent => 760,
+        }
+    }
+
     pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::CountingCounts => "instrument::runtime::kani_laws::a_counting_checkpoint_counts",
@@ -293,6 +315,18 @@ pub(crate) enum AuditError {
     CheckId(Harness),
     #[error("Kani result arithmetic exceeded its evidence type for {0}")]
     Arithmetic(Harness),
+    #[error(
+        "Kani unfolded {harness} into {steps} program steps, past its ceiling of {ceiling}: \
+         the law now pays for state it does not reason about"
+    )]
+    Grown {
+        /// The harness.
+        harness: Harness,
+        /// The program steps CBMC unfolded it into.
+        steps: u64,
+        /// The most its entry in the harness table allows.
+        ceiling: u64,
+    },
 }
 
 impl crate::error::Coded for AuditError {
@@ -312,6 +346,7 @@ impl crate::error::Coded for AuditError {
             | Self::Cover { .. }
             | Self::CheckId { .. } => crate::error::XtCode::KaniUnproven,
             Self::Arithmetic { .. } => crate::error::XtCode::KaniArithmetic,
+            Self::Grown { .. } => crate::error::XtCode::KaniGrown,
         }
     }
 }
@@ -818,6 +853,13 @@ fn validate_backend(backend: &Cbmc, harness: Harness) -> Result<(), AuditError> 
     {
         return Err(AuditError::Backend(harness));
     }
+    if backend.stats.size_program_expression > harness.ceiling() {
+        return Err(AuditError::Grown {
+            harness,
+            steps: backend.stats.size_program_expression,
+            ceiling: harness.ceiling(),
+        });
+    }
     Ok(())
 }
 
@@ -1155,6 +1197,52 @@ mod tests {
             ResultState::Refused,
             "hostile Kani export was accepted"
         );
+    }
+
+    #[test]
+    fn a_harness_unfolded_as_far_as_the_one_that_exhausted_the_runner_is_refused() {
+        let at = Harness::ALL
+            .iter()
+            .position(|harness| *harness == Harness::AttemptDuration);
+        assert!(at.is_some(), "the duration law is a production harness");
+        let Some(at) = at else { return };
+        let mut grown = fixture();
+        replace(
+            &mut grown,
+            &format!("/cbmc/{at}/cbmc_stats/size_program_expression"),
+            json!(2_135_073),
+        );
+        let audited = outcome(&grown);
+        assert!(
+            matches!(audited, Err(AuditError::Grown { .. })),
+            "batch 10's proof of this harness unfolded to 2,135,073 steps and ran a 16 GB runner \
+             out of memory; an export that says so is refused by name: {audited:?}"
+        );
+    }
+
+    #[test]
+    fn every_harness_is_held_to_its_ceiling_and_no_further() {
+        for (at, harness) in Harness::ALL.into_iter().enumerate() {
+            let pointer = format!("/cbmc/{at}/cbmc_stats/size_program_expression");
+            let mut level = fixture();
+            replace(&mut level, &pointer, json!(harness.ceiling()));
+            let audited = outcome(&level);
+            assert!(audited.is_ok(), "{harness} at its ceiling: {audited:?}");
+            let Some(past) = harness.ceiling().checked_add(1) else {
+                continue;
+            };
+            let mut grown = fixture();
+            replace(&mut grown, &pointer, json!(past));
+            let audited = outcome(&grown);
+            assert!(
+                matches!(
+                    audited,
+                    Err(AuditError::Grown { harness: named, steps, ceiling })
+                        if named == harness && steps == past && ceiling == harness.ceiling()
+                ),
+                "{harness} one step past its ceiling is refused by name: {audited:?}"
+            );
+        }
     }
 
     #[test]

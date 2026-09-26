@@ -155,6 +155,29 @@ fn within(root: &Path, path: &Path) -> Result<Option<String>, crate::id::Slashed
     Ok((!named.is_empty()).then_some(named))
 }
 
+/// The trace note saying the tests were given the run's toolchain first on their search path, and why.
+const TESTS_TOOLCHAIN: &str = "tests-toolchain";
+
+/// The environment the tests get: `env`, with the run's toolchain first on its search path where a bare `cargo` from the copy is not that toolchain, which the trace notes with what it said.
+fn tested(
+    env: Vec<(OsString, OsString)>,
+    toolchain: &Toolchain,
+    (copy, trace): (&Snapshot, &Recorder),
+    cancel: &Cancel,
+) -> Result<Vec<(OsString, OsString)>, crate::cargo::CargoError> {
+    let given = toolchain.for_tests(env, copy.root(), cancel)?;
+    if let Some(said) = &given.pinned {
+        trace.note(
+            TESTS_TOOLCHAIN,
+            &format!(
+                "a bare `cargo` from the copy is not the run's toolchain ({said}), so every test \
+                 is given the run's toolchain directory first on its search path"
+            ),
+        );
+    }
+    Ok(given.env)
+}
+
 /// Whether a file of the copy lies under a member's directory, where a member whose directory cannot be named holds every file.
 fn member_holds(under: Option<&str>, rel_path: &str) -> bool {
     match under {
@@ -164,6 +187,9 @@ fn member_holds(under: Option<&str>, rel_path: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('/')),
     }
 }
+
+/// The trace note saying which processes a test left running outside its execution were ended when the run closed.
+const ESCAPED_PROCESSES: &str = "escaped-processes";
 
 /// Claims the build cache for the life of this workspace, so a sweep elsewhere leaves it alone while cargo is writing into it.
 /// A cache that cannot be claimed is one another run is already using, which is not this run's business and not a reason to fail: cargo takes its own lock.
@@ -886,6 +912,7 @@ impl Workspace {
         let rules = Self::rules_for(&root, build_dir, parent.path(), &options)?;
         let snapshot = Self::copy(&root, &rules, &options, now)?;
         let (watched, base_env) = Self::watching(&snapshot, &options.env)?;
+        let base_env = tested(base_env, &toolchain, (&snapshot, &options.trace), cancel)?;
         options.trace.open(OpenRecord {
             root: root.display().to_string(),
             snapshot_dir: snapshot.dir().display().to_string(),
@@ -1157,6 +1184,43 @@ impl Workspace {
         crate::cargo::BuildDir::new(self.target_dir.clone(), members)
     }
 
+    /// Ends every process this run started that is still running, having left every execution's process group, and says so in the trace.
+    fn stop_escaped(&self) {
+        let found = match crate::escaped::working_under(&[self.snapshot.dir(), &self.scratch_dir]) {
+            Ok(found) => found,
+            Err(error) => {
+                self.trace.note(
+                    ESCAPED_PROCESSES,
+                    &format!("the processes this run started could not be listed: {error}"),
+                );
+                return;
+            }
+        };
+        if found.is_empty() {
+            return;
+        }
+        let failed: Vec<String> = found
+            .iter()
+            .filter_map(|pid| match crate::escaped::stop(*pid) {
+                Ok(()) => None,
+                Err(error) => Some(format!("{pid}: {error}")),
+            })
+            .collect();
+        self.trace.note(
+            ESCAPED_PROCESSES,
+            &format!(
+                "{} process(es) a test started outside its execution's process group were still \
+                 running when the run closed, and were ended: {found:?}{}",
+                found.len(),
+                if failed.is_empty() {
+                    String::new()
+                } else {
+                    format!("; these could not be: {}", failed.join(", "))
+                }
+            ),
+        );
+    }
+
     /// The directory this run's test processes work in: beside the target directory, and removed when the run closes.
     #[must_use]
     pub fn scratch_dir(&self) -> &Path {
@@ -1180,6 +1244,7 @@ impl Workspace {
     /// # Errors
     /// A snapshot directory that could not be removed.
     pub fn close(mut self) -> Result<Vec<PathBuf>, crate::EngineError> {
+        self.stop_escaped();
         let mut failure = None;
         if let Some(mut owner) = self.target_owner.take() {
             match owner.release() {

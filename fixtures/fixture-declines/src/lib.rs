@@ -28,6 +28,11 @@ pub fn measured(value: u32) -> u32 {
     value + 10
 }
 
+/// Half of `value`, which a unit test that then declines reaches, and an integration test that never looks at the answer measures.
+pub fn halved(value: u32) -> u32 {
+    value / 2
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Write;
@@ -71,6 +76,16 @@ mod tests {
     #[test]
     fn counts_without_looking() {
         std::hint::black_box(super::counted(1));
+    }
+
+    #[test]
+    fn halves_what_it_shares() {
+        let halved = super::halved(8);
+        if !super::can_share() {
+            decline("this machine cannot share blocks");
+            return;
+        }
+        assert_eq!(halved, 4);
     }
 
     #[test]

@@ -349,6 +349,14 @@ fn of(display_id: &str, disposition: Disposition, reused: bool) -> Judged {
 }
 
 /// One of every disposition, some read back from an earlier run.
+/// The one test of the fixture that declines, and why.
+fn sharing_declined() -> Vec<rust_mutants::decline::Decline> {
+    vec![rust_mutants::decline::Decline {
+        test: "tests::shares".to_owned(),
+        why: "this machine cannot share blocks".to_owned(),
+    }]
+}
+
 fn all_of_them() -> Mutation {
     let route = || Route::Discharged {
         discharged: vec![discharge("pkg/lib/pkg", NEVER_INFECTED)],
@@ -411,6 +419,14 @@ fn all_of_them() -> Mutation {
                 "mmmm",
                 Disposition::Waited {
                     on: "one".to_owned(),
+                },
+                false,
+            ),
+            of(
+                "nnnn",
+                Disposition::Declined {
+                    on: "one".to_owned(),
+                    tests: sharing_declined(),
                 },
                 false,
             ),
@@ -540,14 +556,15 @@ fn every_disposition_is_counted_once_in_the_columns_it_belongs_to() {
         .accounting(&accepted)
         .expect("the small fixture fits the durable counters");
 
-    assert_eq!(counts.cataloged, 13, "one row for every mutation judged");
+    assert_eq!(counts.cataloged, 14, "one row for every mutation judged");
     assert_eq!(counts.rejected, 1);
     assert_eq!(
-        counts.executed, 9,
+        counts.executed, 10,
         "a mutation is executed when something ran it: the kills, the one that never \
          finished, the one this machine stopped waiting for, the survivals, the pair that \
-         did not agree and the harness that failed. What is not executed is what was \
-         refused, what nothing reached, and what the compiler rendered identically"
+         did not agree, the harness that failed, and the one every test declined to \
+         measure. What is not executed is what was refused, what nothing reached, and what \
+         the compiler rendered identically"
     );
     assert_eq!(counts.killed, 2);
     assert_eq!(counts.step_limit_reached, 1);

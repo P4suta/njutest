@@ -481,7 +481,7 @@ pub enum Unsettled {
         /// The target.
         on: String,
     },
-    /// Nothing could be measured on the target.
+    /// Nothing could be measured on the target: its harness failed, or every test of it declined to measure on this machine.
     Errored {
         /// The target.
         on: String,
@@ -670,7 +670,9 @@ impl Held {
             Decided::Unconfirmed { on } => {
                 Self::Unsettled(Unsettled::Unconfirmed { on: on.clone() })
             }
-            Decided::Errored { on } => Self::Unsettled(Unsettled::Errored { on: on.clone() }),
+            Decided::Errored { on } | Decided::Declined { on } => {
+                Self::Unsettled(Unsettled::Errored { on: on.clone() })
+            }
         }
     }
 }
