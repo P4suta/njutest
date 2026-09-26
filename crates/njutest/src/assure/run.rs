@@ -2034,6 +2034,11 @@ pub fn limitation_detail(name: &str) -> String {
              and nothing records what it entered, so every test of the target stays in every \
              route and a survival it reports is inconclusive"
         }
+        rust_mutants::limitation::UNCONFINED_TARGET => {
+            "the target's tests pass only with the home the run was given, so every execution \
+             of it runs with that home rather than one of its own, and a mutation of it can \
+             write there"
+        }
         rust_mutants::limitation::TARGET_SKIPPED_BY_CONFIGURATION => {
             "the configuration named this target as one never to start, so no mutation was \
              measured against it"

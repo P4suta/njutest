@@ -359,6 +359,10 @@ A test that binds one would otherwise pass on its own and fail under a run, whic
 So the directory is `rm-scratch-<n>/<execution>` beside the run's target directory rather than inside it, where `<n>` is the lowest number no other run holds.
 The long descriptive name stays on the target directory, which is a build cache somebody may find in a temporary root and has to be able to identify; a scratch directory is worth nothing once its run is over, so it is claimed like a run's own directory and the next sweep collects it.
 
+The home is the execution's too: `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME` and `XDG_DATA_HOME` (and on Windows `USERPROFILE`, `HOMEDRIVE` with `HOMEPATH`, `APPDATA` and `LOCALAPPDATA`) name directories under `home/` in the scratch, so a mutation of the code that chooses where a test writes cannot reach the user's home ([ADR 0044](../adr/0044-a-test-writes-only-where-its-execution-may.md)).
+`CARGO_HOME` and `RUSTUP_HOME` are pinned to where the given home keeps them, and git's identity is copied in.
+A target whose baseline fails in that home and passes with the given one keeps the given one for the run, as `unconfined-target`.
+
 ### What cargo tells a test process
 
 A test process the engine starts is told what cargo would have told it:

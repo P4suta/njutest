@@ -1269,6 +1269,14 @@ impl Session {
         }
     }
 
+    /// The home `target`'s executions run with: the one its baseline passed under, and one of their own where nothing was verified (ADR 0044).
+    fn home_of(&self, target: &str) -> execute::Home {
+        match self.verified.targets.get(target) {
+            Some(measured) => measured.baseline().home,
+            None => execute::Home::Confined,
+        }
+    }
+
     /// How long one target's own baseline took, when it was verified.
     #[must_use]
     pub fn baseline(&self, target: &str) -> Option<Duration> {
@@ -1411,6 +1419,7 @@ impl Session {
             steps: None,
             profile: None,
             crash: None,
+            home: self.home_of(&target.id),
         };
         let timeout = self.mutant_timeout.of(self.baseline(&target.id))?.0;
         let request = ExecRequest::new(target)
@@ -1769,6 +1778,7 @@ impl Session {
                 notice: &notice,
                 nonce: &nonce,
             }),
+            home: self.home_of(&target.id),
         };
         let mut exec = ExecRequest::new(target)
             .with_args(self.arguments(request))
@@ -1893,6 +1903,7 @@ impl Session {
             profile: None,
             leaders: Some(&self.leaders),
             crash: None,
+            home: self.home_of(&target.id),
         };
         let mut exec = ExecRequest::new(target)
             .with_args(self.arguments(request))
@@ -2036,7 +2047,7 @@ impl Session {
                 Recording::Off => None,
                 Recording::Items => Some(scratch.join(ENTERED_LOG)),
             };
-            let context = self.mutant_context((mutant, beside), log.as_deref());
+            let context = self.mutant_context((mutant, beside), log.as_deref(), &target.id);
             let mut exec = ExecRequest::new(target)
                 .with_args(self.arguments(request))
                 .with_timeout(Some(timeout))
@@ -2077,6 +2088,7 @@ impl Session {
         &'a self,
         (mutant, beside): (&'a Mutant, Option<&'a Mutant>),
         log: Option<&'a std::path::Path>,
+        target: &str,
     ) -> Context<'a> {
         Context {
             leaders: Some(&self.leaders),
@@ -2093,6 +2105,7 @@ impl Session {
             steps: self.mutant_steps,
             profile: None,
             crash: None,
+            home: self.home_of(target),
         }
     }
 
@@ -2439,6 +2452,7 @@ impl Session {
             steps: None,
             profile: None,
             crash: None,
+            home: self.home_of(&once.target.id),
         };
         if perturbation.schedule != execute::Schedule::AsConfigured && !once.target.harness {
             return MutantResult::apparatus_error(
@@ -2583,6 +2597,7 @@ impl Session {
             steps: None,
             profile: None,
             crash: None,
+            home: execute::Home::Confined,
         };
         let mut asked = Vec::new();
         for target in targets {
@@ -2595,6 +2610,10 @@ impl Session {
             if let Some(test) = &request.test {
                 exec = exec.with_test(test.clone());
             }
+            let context = Context {
+                home: self.home_of(&target.id),
+                ..context
+            };
             let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
             self.record_control_exec(target, &result, (timeout, source))?;
             if cancel.is_cancelled() {

@@ -1632,8 +1632,58 @@ pub fn environment(
         for name in ["TMPDIR", "TMP", "TEMP"] {
             env.insert(OsString::from(name), scratch.as_os_str().to_owned());
         }
+        match context.home {
+            Home::Confined => confine(&mut env, &scratch.join("home"))?,
+            Home::Given => {}
+        }
     }
     Ok(env.into_iter().collect())
+}
+
+/// Gives `env` a home at `home`, with the homes a build needs pinned where the given home keeps them and git's identity copied in.
+fn confine(env: &mut BTreeMap<OsString, OsString>, home: &Path) -> std::io::Result<()> {
+    let given = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    let given = env.get(OsStr::new(given)).map(PathBuf::from);
+    for (name, beside) in PINNED_HOMES {
+        if env.contains_key(OsStr::new(name)) {
+            continue;
+        }
+        if let Some(given) = &given {
+            env.insert(OsString::from(name), given.join(beside).into_os_string());
+        }
+    }
+    for (_, under) in CONFINED_HOME {
+        std::fs::create_dir_all(home.join(under))?;
+    }
+    if let Some(given) = &given {
+        for file in COPIED_INTO_HOME {
+            match std::fs::copy(given.join(file), home.join(file)) {
+                Ok(_bytes) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    for (name, under) in CONFINED_HOME {
+        env.insert(OsString::from(name), home.join(under).into_os_string());
+    }
+    if let Some((drive, rest)) = drive_and_rest(home) {
+        env.insert(OsString::from("HOMEDRIVE"), drive);
+        env.insert(OsString::from("HOMEPATH"), rest);
+    }
+    Ok(())
+}
+
+/// `home` as Windows spells a home in two variables, `HOMEDRIVE` and a `HOMEPATH` under it, where it has a drive.
+fn drive_and_rest(home: &Path) -> Option<(OsString, OsString)> {
+    let mut parts = home.components();
+    let std::path::Component::Prefix(prefix) = parts.next()? else {
+        return None;
+    };
+    let rest: PathBuf = parts.collect();
+    let mut under = OsString::from(std::path::MAIN_SEPARATOR_STR);
+    under.push(rest.as_os_str());
+    Some((prefix.as_os_str().to_owned(), under))
 }
 
 /// The variable a dynamically linked test binary is found through, and what it should hold.
@@ -1881,7 +1931,37 @@ pub struct Context<'a> {
     /// Where the runtime publishes that a crash stopped the process, and the nonce that ties the notice to this execution.
     /// `None` runs a process whose crash, if it has one, says nothing it can be told by.
     pub crash: Option<Crashing<'a>>,
+    /// Which home the process writes under: one inside its execution's scratch, or the one the run was given.
+    pub home: Home,
 }
+
+/// Which home a test process is given (ADR 0044).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Home {
+    /// A home inside the execution's scratch, which the scratch's emptying takes with it.
+    Confined,
+    /// The home the run was given, for a target whose tests pass only with it.
+    Given,
+}
+
+/// The variables a confined home replaces, each as a path under the execution's home, in the order they are set.
+const CONFINED_HOME: [(&str, &str); 8] = [
+    ("HOME", ""),
+    ("XDG_CONFIG_HOME", ".config"),
+    ("XDG_CACHE_HOME", ".cache"),
+    ("XDG_STATE_HOME", ".local/state"),
+    ("XDG_DATA_HOME", ".local/share"),
+    ("USERPROFILE", ""),
+    ("APPDATA", "AppData/Roaming"),
+    ("LOCALAPPDATA", "AppData/Local"),
+];
+
+/// The homes a build needs where they are, each with the directory it defaults to under the home the run was given.
+const PINNED_HOMES: [(&str, &str); 2] = [("CARGO_HOME", ".cargo"), ("RUSTUP_HOME", ".rustup")];
+
+/// The files a test reads from the home the run was given, copied into a confined home so a commit keeps its author.
+const COPIED_INTO_HOME: [&str; 2] = [".gitconfig", ".config/git/config"];
 
 /// A fresh 128-bit nonce in lowercase hexadecimal, which ties a notice the runtime publishes to exactly one execution.
 ///
@@ -2804,6 +2884,7 @@ mod tests {
             touch: None,
             profile: None,
             crash: None,
+            home: super::Home::Confined,
         };
 
         assert!(matches!(
@@ -2826,6 +2907,7 @@ mod tests {
             touch: None,
             profile: None,
             crash: None,
+            home: super::Home::Confined,
         };
         let step = returned!(ExpectedStep::new(&context, Some(scratch.path())), "setup");
         let step = present!(step, "bounded execution");

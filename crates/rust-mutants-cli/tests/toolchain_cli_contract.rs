@@ -561,3 +561,97 @@ fn a_test_that_runs_a_bare_cargo_gets_the_runs_toolchain_rather_than_a_shim_that
          its code holds; the run gives every test its own toolchain first instead: {output:?}"
     );
 }
+
+/// A test that reads a setting only the home the run was given holds, which a confined execution cannot see.
+const READS_THE_GIVEN_HOME: &str = "// SPDX-FileCopyrightText: 2026 njutest contributors\n// SPDX-License-Identifier: MIT OR Apache-2.0\n\n//! Reads a setting only the given home holds.\n\n#[test]\nfn the_setting_the_home_already_holds_is_the_one_recalled() {\n    assert_eq!(fixture_home::recall().expect(\"the home holds a setting\"), \"already there\");\n}\n";
+
+/// The environment every run gets, with `home` as the home directory and the toolchain's own homes still where they are.
+fn given_home(fixture: &Fixture, home: &std::path::Path) -> Environment {
+    let mut given = environment(fixture);
+    let real = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .map(std::path::PathBuf::from);
+    for (name, beside) in [("CARGO_HOME", ".cargo"), ("RUSTUP_HOME", ".rustup")] {
+        let pinned = std::env::var_os(name)
+            .or_else(|| real.as_ref().map(|home| home.join(beside).into_os_string()));
+        given.vars.retain(|(held, _)| held != name);
+        if let Some(pinned) = pinned {
+            given.vars.push((name.into(), pinned));
+        }
+    }
+    for name in ["HOME", "USERPROFILE"] {
+        given.vars.retain(|(held, _)| held != name);
+        given.vars.push((name.into(), home.as_os_str().to_owned()));
+    }
+    given
+}
+
+#[test]
+fn a_write_a_test_makes_under_its_home_lands_in_its_execution() {
+    let fixture = Fixture::copy("fixture-home");
+    std::fs::write(fixture.root().join("tests/reads.rs"), READS_THE_GIVEN_HOME)
+        .expect("a test that reads the given home");
+    let home = fixture.temp().join("given-home");
+    let setting = home.join(".fixture-home").join("setting");
+    std::fs::create_dir_all(setting.parent().expect("the setting's directory"))
+        .expect("the given home");
+    std::fs::write(&setting, "already there").expect("a setting the given home holds");
+    let given = given_home(&fixture, &home);
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        [
+            "rust-mutants",
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-coverage",
+            "--ui",
+            "quiet",
+            "--root",
+            root.as_str(),
+        ]
+        .map(OsString::from),
+        &given,
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    let output = njutest_devkit::process::answered(code, out, err);
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "the run reaches a verdict: {output:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&setting).expect("the given home's setting"),
+        "already there",
+        "a test that writes under its home writes the home of its own execution, so the home the \
+         run was given keeps what it held, whatever a mutation did to the path: {output:?}"
+    );
+    let document: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&njutest_devkit::fixture::stored_report(
+            &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+        ))
+        .expect("the report is a document");
+    let limited: Vec<String> = document["targets"]
+        .as_array()
+        .expect("the targets")
+        .iter()
+        .filter(|target| {
+            target["limitations"]
+                .as_array()
+                .is_some_and(|said| said.iter().any(|one| one == "unconfined-target"))
+        })
+        .map(|target| target["id"].to_string())
+        .collect();
+    assert_eq!(
+        limited,
+        vec!["\"fixture-home/test/reads\"".to_owned()],
+        "a target that passes only with the given home is measured with it, and the run says \
+         which, every time: {}",
+        document["targets"]
+    );
+}

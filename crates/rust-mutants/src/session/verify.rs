@@ -159,7 +159,8 @@ fn verify_target(
         path: watched.display().to_string(),
         source,
     })?;
-    let mut result = ran(target, &own, recording.as_deref(), building);
+    let confined = execute::Home::Confined;
+    let mut result = ran(target, (&own, recording.as_deref()), confined, building);
     let mut retried = false;
     let recording = if result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT {
         building.trace.note(
@@ -170,7 +171,7 @@ fn verify_target(
                 target.id
             ),
         );
-        result = ran(target, &own, None, building);
+        result = ran(target, (&own, None), confined, building);
         None
     } else {
         recording
@@ -179,6 +180,7 @@ fn verify_target(
         result = again;
         retried = true;
     }
+    let (result, home) = given_home(result, target, (&own, recording.as_deref()), building);
     building.trace.verify(crate::trace::VerifyRecord {
         target: target.id.clone(),
         outcome: result.outcome().name().to_owned(),
@@ -188,7 +190,7 @@ fn verify_target(
         remembered: false,
         retried,
     });
-    let baseline = baseline_of(&result)?;
+    let baseline = baseline_of(&result, home)?;
     if target.kind == TargetKind::Doc && result.tests_run() == Some(0) {
         target
             .limitations
@@ -196,6 +198,12 @@ fn verify_target(
     }
     if baseline.passed() && retried {
         touched.limited(crate::limitation::BASELINE_PASSED_ON_RETRY, &target.id);
+    }
+    if baseline.passed() && home == execute::Home::Given {
+        target
+            .limitations
+            .push(crate::limitation::UNCONFINED_TARGET.to_owned());
+        touched.limited(crate::limitation::UNCONFINED_TARGET, &target.id);
     }
     if baseline.passed() && result.reading() == Reading::Short {
         touched.limited(crate::limitation::BASELINE_PASSED_UNPARSED, &target.id);
@@ -258,8 +266,9 @@ fn uncontrolled(watched: &Path, target: &str, trace: &crate::trace::Recorder) ->
 }
 
 /// What one baseline process came to, keeping what it printed only where it did not pass.
-fn baseline_of(result: &MutantResult) -> Result<Baseline, SessionError> {
+fn baseline_of(result: &MutantResult, home: execute::Home) -> Result<Baseline, SessionError> {
     Ok(Baseline {
+        home,
         outcome: result.outcome(),
         duration: result.duration,
         tests: match result.tests_run() {
@@ -311,7 +320,41 @@ fn again(
             target.id
         ),
     );
-    Some(ran(target, scratch, recording, building))
+    Some(ran(
+        target,
+        (scratch, recording),
+        execute::Home::Confined,
+        building,
+    ))
+}
+
+/// The trace note saying a target passed only with the home the run was given, and so runs with it.
+const BASELINE_UNCONFINED: &str = "baseline-unconfined";
+
+/// A target that does not pass in a home of its own, run once more with the home the run was given, and the home its answer is about.
+fn given_home(
+    result: MutantResult,
+    target: &TestTarget,
+    (scratch, recording): (&Path, Option<&Path>),
+    building: &Building<'_>,
+) -> (MutantResult, execute::Home) {
+    if passing(result.outcome()) || building.cancel.is_cancelled() {
+        return (result, execute::Home::Confined);
+    }
+    let given = ran(target, (scratch, recording), execute::Home::Given, building);
+    if !passing(given.outcome()) {
+        return (result, execute::Home::Confined);
+    }
+    building.trace.note(
+        BASELINE_UNCONFINED,
+        &format!(
+            "{}: the target does not pass in a home of its own and passes with the home the run \
+             was given, so every execution of it runs with that home, where a mutation of it can \
+             write (ADR 0044)",
+            target.id
+        ),
+    );
+    (given, execute::Home::Given)
 }
 
 /// Why a passing baseline could not safely become an answer for another run.
@@ -319,7 +362,7 @@ const BASELINE_NOT_REMEMBERED: &str = "baseline-not-remembered";
 
 /// The recipe of a remembered baseline.
 /// The engine version is also in every key; this number makes a semantic invalidation explicit within one build.
-const BASELINE_ABI: u32 = 2;
+const BASELINE_ABI: u32 = 3;
 
 /// The on-disk shape of one passing baseline.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -342,6 +385,7 @@ struct RememberedBaseline {
     tests: u32,
     ignored: u32,
     tests_run: Option<u32>,
+    home: execute::Home,
 }
 
 /// Where the passing answer to this exact baseline may be found.
@@ -735,6 +779,7 @@ impl Remembering {
                     tests: baseline.tests,
                     ignored: baseline.ignored,
                     tests_run: *observed_tests_run,
+                    home: baseline.home,
                 },
             );
             if previous.is_some() {
@@ -786,6 +831,7 @@ fn recalled(remembered: Remembered, path: &Path) -> Result<Recalled, BaselineCac
             tests: baseline.tests,
             ignored: baseline.ignored,
             output: String::new(),
+            home: baseline.home,
         };
         if !value.passed() {
             return Err(BaselineCacheError::Contradiction {
@@ -1124,6 +1170,7 @@ fn target_key(
         steps: None,
         profile: None,
         crash: None,
+        home: execute::Home::Confined,
     };
     let request = ExecRequest::new(target)
         .with_args(building.options.harness_args.clone())
@@ -1212,8 +1259,8 @@ fn said(verified: &Verified, failed: &[&str]) -> String {
 /// One target run with nothing active in the temporary directory of its baseline, recording into `log` when it was asked to.
 fn ran(
     target: &TestTarget,
-    scratch: &Path,
-    log: Option<&Path>,
+    (scratch, log): (&Path, Option<&Path>),
+    home: execute::Home,
     building: &Building<'_>,
 ) -> MutantResult {
     let Building {
@@ -1257,6 +1304,7 @@ fn ran(
         steps: None,
         profile: None,
         crash: None,
+        home,
     };
     let request = ExecRequest::new(target)
         .with_args(building.options.harness_args.clone())
@@ -1279,6 +1327,8 @@ pub struct Baseline {
     pub ignored: u32,
     /// What it printed, kept only where it did not pass, because that is the only time anybody reads it.
     pub output: String,
+    /// The home it ran with, which every execution against it runs with too (ADR 0044).
+    pub home: execute::Home,
 }
 
 /// Whether an outcome with nothing active is one a mutation can be put to.

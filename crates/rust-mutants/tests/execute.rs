@@ -308,6 +308,7 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
             steps: None,
             profile: None,
             crash: None,
+            home: rust_mutants::execute::Home::Given,
         },
         &target(),
         (Some(scratch), Some(scratch)),
@@ -377,6 +378,7 @@ fn a_baseline_inherits_none_of_the_variables_a_run_composes_for_itself() {
             steps: None,
             profile: None,
             crash: None,
+            home: rust_mutants::execute::Home::Confined,
         },
         &target(),
         (None, None),
@@ -417,6 +419,7 @@ fn the_guards_are_told_where_to_record_exactly_when_the_run_asks_them_to() {
             steps: None,
             profile: None,
             crash: None,
+            home: rust_mutants::execute::Home::Confined,
         },
         &target(),
         (None, None),
@@ -511,6 +514,7 @@ fn a_test_process_learns_which_cargo_built_it() {
             steps: None,
             profile: None,
             crash: None,
+            home: rust_mutants::execute::Home::Confined,
         },
         &target,
         (None, None),
@@ -544,6 +548,7 @@ fn a_test_process_learns_which_cargo_built_it() {
             steps: None,
             profile: None,
             crash: None,
+            home: rust_mutants::execute::Home::Confined,
         },
         &target,
         (None, None),
@@ -638,6 +643,7 @@ fn an_inherited_coverage_profile_path_never_reaches_a_test_process() {
             steps: None,
             profile: None,
             crash: None,
+            home: rust_mutants::execute::Home::Given,
         },
         &target(),
         (Some(scratch), Some(scratch)),
@@ -687,6 +693,7 @@ fn the_profile_path_a_coverage_pass_composes_is_the_one_it_gets() {
             steps: None,
             profile: Some(mine),
             crash: None,
+            home: rust_mutants::execute::Home::Confined,
         },
         &target(),
         (None, None),
@@ -1143,6 +1150,7 @@ fn a_harness_that_never_started_says_why() {
             steps: None,
             crash: None,
             profile: None,
+            home: rust_mutants::execute::Home::Confined,
         },
         &rust_mutants::runner::Cancel::new(),
         &rust_mutants::trace::Recorder::disabled(),
@@ -1471,5 +1479,73 @@ fn the_signals_a_process_raises_by_itself_are_the_page_s() {
     assert_eq!(
         raised, expected,
         "the engine's self-raised signals are the page's: {listed:?}"
+    );
+}
+
+#[test]
+fn a_confined_home_is_the_executions_with_the_build_homes_pinned_and_gits_identity_copied() {
+    let temp = tempfile::tempdir().expect("a directory");
+    let given = temp.path().join("given");
+    std::fs::create_dir_all(&given).expect("the given home");
+    std::fs::write(given.join(".gitconfig"), "[user]\n\tname = Somebody\n").expect("an identity");
+    let scratch = temp.path().join("scratch");
+    std::fs::create_dir_all(&scratch).expect("the execution's scratch");
+    let home_name = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    let base = vec![(OsString::from(home_name), given.clone().into_os_string())];
+    let env = environment(
+        &Context {
+            leaders: None,
+            base_env: &base,
+            cargo: None,
+            sysroot: None,
+            active: None,
+            beside: None,
+            touch: None,
+            steps: None,
+            profile: None,
+            crash: None,
+            home: rust_mutants::execute::Home::Confined,
+        },
+        &target(),
+        (Some(&scratch), None),
+    )
+    .expect("the environment is composed");
+    let lookup = |key: &str| {
+        env.iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| PathBuf::from(value))
+    };
+    let home = scratch.join("home");
+    for (name, under) in [
+        ("HOME", ""),
+        ("USERPROFILE", ""),
+        ("XDG_CONFIG_HOME", ".config"),
+        ("XDG_CACHE_HOME", ".cache"),
+        ("XDG_STATE_HOME", ".local/state"),
+        ("XDG_DATA_HOME", ".local/share"),
+    ] {
+        assert_eq!(
+            lookup(name),
+            Some(home.join(under)),
+            "{name} names a directory the execution's scratch holds, so a write through it is \
+             emptied with the scratch"
+        );
+        assert!(
+            std::fs::symlink_metadata(home.join(under))
+                .is_ok_and(|metadata| metadata.file_type().is_dir()),
+            "{name}'s directory exists"
+        );
+    }
+    assert_eq!(
+        lookup("CARGO_HOME"),
+        Some(given.join(".cargo")),
+        "cargo keeps its registry where the given home does, spelled out, since the home a test \
+         sees is no longer that one"
+    );
+    assert_eq!(lookup("RUSTUP_HOME"), Some(given.join(".rustup")));
+    assert_eq!(
+        std::fs::read_to_string(home.join(".gitconfig")).expect("the copied identity"),
+        "[user]\n\tname = Somebody\n",
+        "a commit a test makes keeps the author it had, from a copy a test may write"
     );
 }
