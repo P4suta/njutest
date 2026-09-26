@@ -88,7 +88,7 @@ enum Case {
     Unmatched,
 }
 
-fn listing(repository: &Path, workspace: &Path, flags: &[&str]) -> (i32, String) {
+fn listing(repository: &Path, workspace: &Path, temporary: &Path, flags: &[&str]) -> (i32, String) {
     let output = Command::new(njutest_devkit::paths::cargo_binary())
         .args([
             "run",
@@ -109,6 +109,7 @@ fn listing(repository: &Path, workspace: &Path, flags: &[&str]) -> (i32, String)
         .args(flags)
         .current_dir(repository)
         .envs(njutest_devkit::paths::environment_for_a_run())
+        .envs(njutest_devkit::paths::temporary_directory(temporary))
         .output()
         .expect("the real command starts");
     let code = output.status.code().expect("the real command exits");
@@ -154,8 +155,13 @@ fn claims(workspace: &Path) -> Vec<Claim> {
         .collect()
 }
 
-fn candidates(repository: &Path, workspace: &Path, flags: &[&str]) -> Vec<Candidate> {
-    let (code, text) = listing(repository, workspace, flags);
+fn candidates(
+    repository: &Path,
+    workspace: &Path,
+    temporary: &Path,
+    flags: &[&str],
+) -> Vec<Candidate> {
+    let (code, text) = listing(repository, workspace, temporary, flags);
     assert_eq!(code, 0, "candidate listing completes: {text}");
     let document: CandidatesDocument =
         xtask::strictjson::decode_str(&text).expect("candidate JSON parses");
@@ -345,10 +351,11 @@ fn claim_text(case: Case) -> String {
 #[test]
 fn repository_claims_are_rederived_from_source_and_candidate_json() {
     let repository = xtask::gates::workspace_root();
+    let temporary = tempfile::tempdir().expect("an owned temporary directory for the oracle");
     let claims = claims(&repository);
     assert!(!claims.is_empty(), "the repository has claims to check");
-    let current = candidates(&repository, &repository, &["--json"]);
-    let (code, report) = listing(&repository, &repository, &["--claims"]);
+    let current = candidates(&repository, &repository, temporary.path(), &["--json"]);
+    let (code, report) = listing(&repository, &repository, temporary.path(), &["--claims"]);
     assert_eq!(code, 0, "repository claims are accepted: {report}");
     let predicted = check_rows(&repository, &claims, (&current, &[]), &report);
     assert!(
@@ -384,9 +391,10 @@ fn every_claim_resolution_is_observed_across_real_build_inputs() {
     let enabled = candidates(
         &repository,
         fixture.root(),
+        fixture.temp(),
         &["--json", "--features", "dormant"],
     );
-    let disabled = candidates(&repository, fixture.root(), &["--json"]);
+    let disabled = candidates(&repository, fixture.root(), fixture.temp(), &["--json"]);
     for case in Case::ALL {
         std::fs::write(fixture.root().join(".rust-mutants.toml"), claim_text(case))
             .expect("fixture claim writes");
@@ -404,7 +412,7 @@ fn every_claim_resolution_is_observed_across_real_build_inputs() {
         if case != Case::Uncompiled {
             flags.extend(["--features", "dormant"]);
         }
-        let (code, report) = listing(&repository, fixture.root(), &flags);
+        let (code, report) = listing(&repository, fixture.root(), fixture.temp(), &flags);
         let expected_code = match case {
             Case::Names | Case::Uncompiled => 0,
             Case::Moved | Case::Unmatched => 1,
