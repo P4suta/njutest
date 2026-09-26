@@ -92,24 +92,7 @@ impl Repository {
         .expect("a scripted check");
         executable(&mise);
         let cargo = bin.join("cargo");
-        std::fs::write(
-            &cargo,
-            "#!/usr/bin/env bash\nset -euo pipefail\n\
-             printf '%s\\n' \"$*\" >> \"$COLD_CALLS\"\n\
-             test \"$*\" = 'check --locked --workspace' || exit 99\n\
-             test \"$(git rev-parse HEAD)\" = \"$NJUTEST_COMMITTED_HEAD\" || exit 98\n\
-             test -f .git || exit 97\n\
-             test -d \"$CARGO_TARGET_DIR\" || exit 96\n\
-             test -z \"$(ls -A \"$CARGO_TARGET_DIR\")\" || exit 95\n\
-             test -z \"${RUSTC_WRAPPER:-}\" || exit 93\n\
-             test \"${CARGO_INCREMENTAL:-}\" = 0 || exit 92\n\
-             printf '%s\\n' \"$CARGO_TARGET_DIR\" >> \"$COLD_TARGETS\"\n\
-             printf used > \"$CARGO_TARGET_DIR/used\"\n\
-             if [ \"${COLD_EDIT:-0}\" = 1 ]; then printf 'after\\n' >> tracked; fi\n\
-             if [ \"${COLD_SLEEP:-0}\" = 1 ]; then sleep 30; fi\n\
-             test \"${COLD_FAIL:-0}\" != 1 || exit 94\n",
-        )
-        .expect("a scripted cold check");
+        scripted_cargo(&cargo);
         executable(&cargo);
         let mut paths = vec![bin];
         paths.extend(std::env::split_paths(
@@ -279,6 +262,27 @@ impl Repository {
             .expect("a ref update");
         child
     }
+}
+
+fn scripted_cargo(cargo: &Path) {
+    std::fs::write(
+        cargo,
+        "#!/usr/bin/env bash\nset -eo pipefail\n\
+         printf '%s\\n' \"$*\" >> \"$COLD_CALLS\"\n\
+         test \"$*\" = 'check --locked --workspace' || exit 99\n\
+         test \"$(git rev-parse HEAD)\" = \"$NJUTEST_COMMITTED_HEAD\" || exit 98\n\
+         test -f .git || exit 97\n\
+         test -d \"$CARGO_TARGET_DIR\" || exit 96\n\
+         test -z \"$(ls -A \"$CARGO_TARGET_DIR\")\" || exit 95\n\
+         test -z \"$RUSTC_WRAPPER\" || exit 93\n\
+         test \"$CARGO_INCREMENTAL\" = 0 || exit 92\n\
+         printf '%s\\n' \"$CARGO_TARGET_DIR\" >> \"$COLD_TARGETS\"\n\
+         printf used > \"$CARGO_TARGET_DIR/used\"\n\
+         if [ \"$COLD_EDIT\" = 1 ]; then printf 'after\\n' >> tracked; fi\n\
+         if [ \"$COLD_SLEEP\" = 1 ]; then sleep 30; fi\n\
+         test \"$COLD_FAIL\" != 1 || exit 94\n",
+    )
+    .expect("a scripted cold check");
 }
 
 /// Every directory under `root` that holds a checkout the gate made for itself.
@@ -672,7 +676,11 @@ fn a_remembered_warm_pass_still_requires_a_new_cold_check() {
         2,
         "the remembered pass skipped its cold check"
     );
-    assert_ne!(targets[0], targets[1], "the cold target was reused");
+    assert_ne!(
+        targets.first().expect("the first cold target"),
+        targets.get(1).expect("the second cold target"),
+        "the cold target was reused"
+    );
     for target in targets {
         assert!(
             !present(Path::new(&target)),
@@ -699,7 +707,10 @@ fn caller_build_cache_settings_cannot_seed_the_cold_check() {
     assert!(output.status.success(), "{}", stderr(&output));
     let targets = repository.cold_targets();
     assert_eq!(targets.len(), 1);
-    assert_ne!(targets[0], stale.display().to_string());
+    assert_ne!(
+        targets.first().expect("the cold target"),
+        &stale.display().to_string()
+    );
 }
 
 #[test]
@@ -765,7 +776,9 @@ fn a_cold_check_that_goes_quiet_is_stopped() {
     assert!(stderr(&failed).contains("said nothing"));
     let targets = repository.cold_targets();
     assert_eq!(targets.len(), 1);
-    assert!(!present(Path::new(&targets[0])));
+    assert!(!present(Path::new(
+        targets.first().expect("the cold target")
+    )));
 }
 
 #[test]

@@ -473,15 +473,21 @@ struct Run<'a> {
     held: [&'a Held; 2],
 }
 
+struct Stage<'a> {
+    command: &'a mut Command,
+    log: PathBuf,
+    ceiling: Duration,
+}
+
 impl Run<'_> {
     /// Runs one stage, passing its output on as it arrives and stopping it at the remaining ceiling or quiet limit.
-    fn pass(
-        &self,
-        command: &mut Command,
-        log: &Path,
-        ceiling: Duration,
-        progress: &mut dyn Write,
-    ) -> Result<Ended, PrePushError> {
+    fn pass(&self, stage: Stage<'_>, progress: &mut dyn Write) -> Result<Ended, PrePushError> {
+        let Stage {
+            command,
+            log,
+            ceiling,
+        } = stage;
+        let log = log.as_path();
         let written = std::fs::File::create(log).map_err(|source| io_error(log, source))?;
         let also = written
             .try_clone()
@@ -510,6 +516,23 @@ impl Run<'_> {
         }
         ran.map_err(|source| PrePushError::Work { source })
     }
+
+    fn cold_command(&self, target: &Path) -> Command {
+        let mut command = self.tools.command("cargo");
+        command
+            .args(["check", "--locked", "--workspace"])
+            .current_dir(&self.place.tree)
+            .env("CARGO_TARGET_DIR", target)
+            .env("CARGO_BUILD_TARGET_DIR", target)
+            .env("CARGO_INCREMENTAL", "0")
+            .env("RUSTC_WRAPPER", "")
+            .env("RUSTC_WORKSPACE_WRAPPER", "")
+            .env("CARGO_BUILD_RUSTC_WRAPPER", "")
+            .env("CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", "")
+            .env("NJUTEST_COMMITTED_HEAD", self.head)
+            .env(lanes::HELD, self.lanes.held_with(Lane::Heavy));
+        command
+    }
 }
 
 fn check(
@@ -522,9 +545,11 @@ fn check(
     if !warm_remembered {
         let mut command = run.place.check_command(&run.tools, run.head, run.lanes);
         let ended = run.pass(
-            &mut command,
-            &run.place.home.join("check.log"),
-            run.settings.budget,
+            Stage {
+                command: &mut command,
+                log: run.place.home.join("check.log"),
+                ceiling: run.settings.budget,
+            },
             progress,
         )?;
         check_ended(ended, run, started)?;
@@ -534,9 +559,7 @@ fn check(
         .prefix("cold-")
         .tempdir_in(&run.place.home)
         .map_err(|source| io_error(&run.place.home, source))?;
-    let mut command = run
-        .place
-        .cold_command(&run.tools, run.head, run.lanes, cold.path());
+    let mut command = run.cold_command(cold.path());
     say(
         progress,
         "pre-push: checking the workspace in a fresh target directory",
@@ -553,9 +576,11 @@ fn check(
         });
     }
     let ended = run.pass(
-        &mut command,
-        &run.place.home.join("cold.log"),
-        remaining,
+        Stage {
+            command: &mut command,
+            log: run.place.home.join("cold.log"),
+            ceiling: remaining,
+        },
         progress,
     );
     let cold_path = cold.path().to_path_buf();
@@ -958,23 +983,6 @@ impl Place {
         if cfg!(not(unix)) {
             command.env("CARGO_TARGET_DIR", &self.target);
         }
-        command
-    }
-
-    fn cold_command(&self, tools: &Tools<'_>, head: &str, lanes: &Lanes, target: &Path) -> Command {
-        let mut command = tools.command("cargo");
-        command
-            .args(["check", "--locked", "--workspace"])
-            .current_dir(&self.tree)
-            .env("CARGO_TARGET_DIR", target)
-            .env("CARGO_BUILD_TARGET_DIR", target)
-            .env("CARGO_INCREMENTAL", "0")
-            .env("RUSTC_WRAPPER", "")
-            .env("RUSTC_WORKSPACE_WRAPPER", "")
-            .env("CARGO_BUILD_RUSTC_WRAPPER", "")
-            .env("CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", "")
-            .env("NJUTEST_COMMITTED_HEAD", head)
-            .env(lanes::HELD, lanes.held_with(Lane::Heavy));
         command
     }
 
