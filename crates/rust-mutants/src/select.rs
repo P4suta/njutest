@@ -561,12 +561,19 @@ fn lexed(text: &str) -> Option<Vec<Leaf>> {
     let Ok((base, parsed)) = crate::syntax::strip_prefix(text) else {
         return None;
     };
-    let Ok(stream) = <TokenStream as std::str::FromStr>::from_str(parsed) else {
-        return None;
-    };
-    let mut leaves = Vec::new();
-    flattened(stream, base, &mut leaves)?;
-    Some(leaves)
+    let read = crate::parsing::apart(|parsing| {
+        let stream = match parsing.tokens(parsed) {
+            Ok(stream) => stream,
+            Err(_not_read) => return None,
+        };
+        let mut leaves = Vec::new();
+        flattened(stream, base, &mut leaves)?;
+        Some(leaves)
+    });
+    match read {
+        Ok(leaves) => leaves,
+        Err(_no_thread) => None,
+    }
 }
 
 /// Whether `path` is a file whose change can change what every target compiles to or how it is run, whatever items it holds.

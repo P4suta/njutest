@@ -3,8 +3,20 @@
 
 //! A crate that forbids what the guards allow is one no mutant of it can compile in.
 
+#![expect(
+    clippy::panic,
+    reason = "a test reports a reading that could not happen by panicking"
+)]
+
 use rust_mutants::cargo::manifest::read_forbidden;
-use rust_mutants::discover::forbids_guard_noise;
+
+/// Whether the crate root `source` forbids what the guards allow, once it has been read.
+fn forbids_guard_noise(source: &str, forbidden: &[String]) -> bool {
+    match rust_mutants::discover::forbids_guard_noise(source, forbidden) {
+        Ok(forbids) => forbids,
+        Err(unread) => panic!("the crate root is read: {unread}"),
+    }
+}
 
 #[test]
 fn only_the_two_generated_module_lints_and_their_groups_conflict() {

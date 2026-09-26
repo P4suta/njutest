@@ -86,6 +86,14 @@ impl Inventory {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SoundnessError {
+    /// A file could not be read at all, which says nothing about whether it is Rust.
+    #[error("{path}: {source}")]
+    Unread {
+        /// The file.
+        path: String,
+        /// Why it could not be read.
+        source: rust_mutants::parsing::ReadingError,
+    },
     /// A file could not be read as Rust.
     #[error("{path}:{line}:{column}: {message}")]
     Unparsable {
@@ -137,12 +145,6 @@ pub enum SoundnessError {
         #[source]
         source: std::num::TryFromIntError,
     },
-    /// Turning a zero-based parser coordinate into a one-based coordinate overflowed.
-    #[error("{path}: the parser column cannot be converted to a one-based coordinate")]
-    CoordinateArithmeticOverflow {
-        /// The source whose coordinate failed.
-        path: String,
-    },
 }
 
 /// Every place in one file, in source order.
@@ -150,34 +152,53 @@ pub enum SoundnessError {
 /// # Errors
 /// Returns [`SoundnessError::Unparsable`] for a file this release cannot read as Rust, which is not the same as a file with nothing in it.
 pub fn of_source(path: &str, source: &str) -> Result<Vec<Item>, SoundnessError> {
-    let file = match syn::parse_file(source) {
+    rust_mutants::parsing::apart(|parsing| of_source_with(parsing, path, source)).map_err(
+        |unread| SoundnessError::Unread {
+            path: path.to_owned(),
+            source: unread,
+        },
+    )?
+}
+
+/// [`of_source`], reading with `parsing` on the thread already reading.
+fn of_source_with(
+    parsing: &rust_mutants::parsing::Parsing,
+    path: &str,
+    source: &str,
+) -> Result<Vec<Item>, SoundnessError> {
+    let file = match parsing
+        .file(source)
+        .map_err(rust_mutants::parsing::ReadingError::syntax)
+    {
         Ok(file) => file,
-        Err(error) => {
-            let span = error.span().start();
-            let line = u32::try_from(span.line).map_err(|source| {
-                SoundnessError::CoordinateOutsideWire {
+        Err(Ok(rust_mutants::parsing::NotRust {
+            line,
+            column,
+            message,
+        })) => {
+            let line =
+                u32::try_from(line).map_err(|source| SoundnessError::CoordinateOutsideWire {
                     path: path.to_owned(),
                     coordinate: "parser line",
                     source,
-                }
-            })?;
-            let one_based_column = span.column.checked_add(1).ok_or_else(|| {
-                SoundnessError::CoordinateArithmeticOverflow {
-                    path: path.to_owned(),
-                }
-            })?;
-            let column = u32::try_from(one_based_column).map_err(|source| {
-                SoundnessError::CoordinateOutsideWire {
+                })?;
+            let column =
+                u32::try_from(column).map_err(|source| SoundnessError::CoordinateOutsideWire {
                     path: path.to_owned(),
                     coordinate: "parser column",
                     source,
-                }
-            })?;
+                })?;
             return Err(SoundnessError::Unparsable {
                 path: path.to_owned(),
                 line,
                 column,
-                message: error.to_string(),
+                message,
+            });
+        }
+        Err(Err(unread)) => {
+            return Err(SoundnessError::Unread {
+                path: path.to_owned(),
+                source: unread,
             });
         }
     };

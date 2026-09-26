@@ -18,9 +18,9 @@ pub fn lf(source: &str) -> String {
 /// Whether an instrumented `text` reads as Rust down to what every identity macro of the runtime module `module` holds, which a plain parse of the file never looks inside.
 ///
 /// # Errors
-/// The first place the text stops reading, with what the parser said there.
-pub fn read_through(text: &str, module: &str) -> Result<(), syn::Error> {
-    crate::instrument::read_through(text, module)
+/// The first place the text stops reading, with what the parser said there, or why it could not be read at all.
+pub fn read_through(text: &str, module: &str) -> Result<(), crate::parsing::ReadingError> {
+    crate::parsing::apart(|parsing| crate::instrument::read_through(parsing, text, module))?
 }
 
 /// How many bytes of source discovery read back to hold the operator swaps of `source`, or nothing once that stopped fitting.

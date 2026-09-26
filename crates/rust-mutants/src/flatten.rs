@@ -31,6 +31,20 @@ pub enum FlattenError {
         /// What differed.
         detail: String,
     },
+    /// The fragment could not be read at all, which says nothing about how it lexes.
+    #[error("fragment could not be read: {detail}")]
+    Unread {
+        /// Why, with the code it carries.
+        detail: String,
+    },
+}
+
+impl FlattenError {
+    fn unread(unread: &ReadingError) -> Self {
+        Self::Unread {
+            detail: format!("{}: {unread}", unread.code().code),
+        }
+    }
 }
 
 /// How a fragment changed when the flattened spelling was tokenized again.
@@ -46,11 +60,13 @@ enum TokenDifferenceError {
         expected: String,
         actual: String,
     },
+    #[error("a literal could not be read: {0}")]
+    Unread(ReadingError),
 }
 
-use std::str::FromStr as _;
-
 use proc_macro2::{Delimiter, Literal, TokenStream, TokenTree};
+
+use crate::parsing::{Parsing, ReadingError};
 
 /// Renders `src` on one line.
 ///
@@ -58,9 +74,15 @@ use proc_macro2::{Delimiter, Literal, TokenStream, TokenTree};
 /// Returns a fragment that does not lex, a literal that cannot be re-spelled,
 /// or a postcondition violation.
 pub fn flatten(src: &str) -> Result<String, FlattenError> {
-    let stream = lex(src)?;
+    crate::parsing::apart(|parsing| flatten_with(parsing, src))
+        .map_err(|unread| FlattenError::unread(&unread))?
+}
+
+/// [`flatten`], reading with `parsing` on the thread already reading.
+pub(crate) fn flatten_with(parsing: &Parsing, src: &str) -> Result<String, FlattenError> {
+    let stream = lex(parsing, src)?;
     let mut leaves = Vec::new();
-    collect_leaves(src, &stream, &mut leaves)?;
+    collect_leaves(parsing, src, &stream, &mut leaves)?;
 
     let mut out = String::new();
     let mut previous_end: Option<usize> = None;
@@ -82,18 +104,31 @@ pub fn flatten(src: &str) -> Result<String, FlattenError> {
     if let Some(byte) = out.find(['\n', '\r']) {
         return Err(FlattenError::NotFlat { byte });
     }
-    let relexed = lex(&out).map_err(|error| FlattenError::NotIdentical {
-        detail: error.to_string(),
+    let relexed = lex(parsing, &out).map_err(|error| match error {
+        FlattenError::Untokenizable { message } => FlattenError::NotIdentical { detail: message },
+        other @ (FlattenError::Literal { .. }
+        | FlattenError::NotFlat { .. }
+        | FlattenError::NotIdentical { .. }
+        | FlattenError::Unread { .. }) => other,
     })?;
-    same_tokens(&stream, &relexed).map_err(|error| FlattenError::NotIdentical {
-        detail: error.to_string(),
+    same_tokens(parsing, &stream, &relexed).map_err(|error| match error {
+        TokenDifferenceError::Unread(unread) => FlattenError::unread(&unread),
+        different @ (TokenDifferenceError::Count { .. }
+        | TokenDifferenceError::Delimiter { .. }
+        | TokenDifferenceError::Token { .. }) => FlattenError::NotIdentical {
+            detail: different.to_string(),
+        },
     })?;
     Ok(out)
 }
 
-fn lex(src: &str) -> Result<TokenStream, FlattenError> {
-    TokenStream::from_str(src).map_err(|error| FlattenError::Untokenizable {
-        message: error.to_string(),
+fn lex(parsing: &Parsing, src: &str) -> Result<TokenStream, FlattenError> {
+    parsing.tokens(src).map_err(|unread| match unread {
+        ReadingError::Syntax { message, .. } => FlattenError::Untokenizable { message },
+        other @ (ReadingError::Exhausted { .. }
+        | ReadingError::ThreadUnavailable { .. }
+        | ReadingError::ThreadPanicked
+        | ReadingError::Unbudgeted) => FlattenError::unread(&other),
     })
 }
 
@@ -113,6 +148,7 @@ impl Leaf {
 }
 
 fn collect_leaves(
+    parsing: &Parsing,
     src: &str,
     stream: &TokenStream,
     leaves: &mut Vec<Leaf>,
@@ -129,7 +165,7 @@ fn collect_leaves(
                 if !open.is_empty() {
                     leaves.push(leaf_from(src, group.span_open().byte_range(), open));
                 }
-                collect_leaves(src, &group.stream(), leaves)?;
+                collect_leaves(parsing, src, &group.stream(), leaves)?;
                 if !close.is_empty() {
                     leaves.push(leaf_from(src, group.span_close().byte_range(), close));
                 }
@@ -152,7 +188,7 @@ fn collect_leaves(
                 let range = literal.span().byte_range();
                 let spelled = literal.to_string();
                 let text = if spelled.contains(['\n', '\r']) {
-                    respell(&literal)?
+                    respell(parsing, &literal)?
                 } else {
                     spelled
                 };
@@ -177,12 +213,21 @@ fn leaf_from(src: &str, range: std::ops::Range<usize>, canonical: &str) -> Leaf 
 }
 
 /// Re-spells a literal that carries a line break as the escaped literal of the same value: the value is what the compiler sees, CRLF normalized to LF and a backslash continuation folded away.
-fn respell(literal: &Literal) -> Result<String, FlattenError> {
+fn respell(parsing: &Parsing, literal: &Literal) -> Result<String, FlattenError> {
     let spelled = literal.to_string();
     let refuse = || FlattenError::Literal {
         literal: spelled.clone(),
     };
-    let parsed: syn::Lit = syn::parse_str(&spelled).map_err(|_error| refuse())?;
+    let parsed: syn::Lit = match parsing.read(&spelled) {
+        Ok(parsed) => parsed,
+        Err(ReadingError::Syntax { .. }) => return Err(refuse()),
+        Err(
+            unread @ (ReadingError::Exhausted { .. }
+            | ReadingError::ThreadUnavailable { .. }
+            | ReadingError::ThreadPanicked
+            | ReadingError::Unbudgeted),
+        ) => return Err(FlattenError::unread(&unread)),
+    };
     match parsed {
         syn::Lit::Str(text) => Ok(Literal::string(&text.value().replace("\r\n", "\n")).to_string()),
         syn::Lit::ByteStr(bytes) => {
@@ -213,7 +258,11 @@ fn normalize_crlf(bytes: &[u8]) -> Vec<u8> {
 }
 
 /// Whether two streams are the same tokens: same shape, same identifiers and punctuation, and literals of the same value.
-fn same_tokens(want: &TokenStream, got: &TokenStream) -> Result<(), TokenDifferenceError> {
+fn same_tokens(
+    parsing: &Parsing,
+    want: &TokenStream,
+    got: &TokenStream,
+) -> Result<(), TokenDifferenceError> {
     let want: Vec<TokenTree> = want.clone().into_iter().collect();
     let got: Vec<TokenTree> = got.clone().into_iter().collect();
     if want.len() != got.len() {
@@ -228,11 +277,12 @@ fn same_tokens(want: &TokenStream, got: &TokenStream) -> Result<(), TokenDiffere
                 if x.delimiter() != y.delimiter() {
                     return Err(TokenDifferenceError::Delimiter { index });
                 }
-                same_tokens(&x.stream(), &y.stream())?;
+                same_tokens(parsing, &x.stream(), &y.stream())?;
             }
             (TokenTree::Ident(x), TokenTree::Ident(y)) if x == y => {}
             (TokenTree::Punct(x), TokenTree::Punct(y)) if x.as_char() == y.as_char() => {}
-            (TokenTree::Literal(x), TokenTree::Literal(y)) if same_literal(x, y) => {}
+            (TokenTree::Literal(x), TokenTree::Literal(y))
+                if same_literal(parsing, x, y).map_err(TokenDifferenceError::Unread)? => {}
             (a, b) => {
                 return Err(TokenDifferenceError::Token {
                     index,
@@ -245,24 +295,26 @@ fn same_tokens(want: &TokenStream, got: &TokenStream) -> Result<(), TokenDiffere
     Ok(())
 }
 
-fn same_literal(a: &Literal, b: &Literal) -> bool {
+fn same_literal(parsing: &Parsing, a: &Literal, b: &Literal) -> Result<bool, ReadingError> {
     let (x, y) = (a.to_string(), b.to_string());
     if x == y {
-        return true;
+        return Ok(true);
     }
-    match (
-        syn::parse_str::<syn::Lit>(&x),
-        syn::parse_str::<syn::Lit>(&y),
-    ) {
-        (Ok(syn::Lit::Str(x)), Ok(syn::Lit::Str(y))) => {
+    let read = |text: &str| match parsing.read::<syn::Lit>(text) {
+        Ok(literal) => Ok(Some(literal)),
+        Err(ReadingError::Syntax { .. }) => Ok(None),
+        Err(unread) => Err(unread),
+    };
+    Ok(match (read(&x)?, read(&y)?) {
+        (Some(syn::Lit::Str(x)), Some(syn::Lit::Str(y))) => {
             x.value().replace("\r\n", "\n") == y.value()
         }
-        (Ok(syn::Lit::ByteStr(x)), Ok(syn::Lit::ByteStr(y))) => {
+        (Some(syn::Lit::ByteStr(x)), Some(syn::Lit::ByteStr(y))) => {
             normalize_crlf(&x.value()) == y.value()
         }
-        (Ok(syn::Lit::CStr(x)), Ok(syn::Lit::CStr(y))) => {
+        (Some(syn::Lit::CStr(x)), Some(syn::Lit::CStr(y))) => {
             normalize_crlf(x.value().to_bytes()) == y.value().to_bytes()
         }
         _ => false,
-    }
+    })
 }

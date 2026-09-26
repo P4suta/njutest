@@ -97,11 +97,9 @@ fn golden_path(name: &str) -> PathBuf {
 /// Asserts that an instrumented `text`, its runtime module named `__rm`, reads as Rust down to what every identity macro holds, which a plain parse never looks inside.
 fn reads_through(text: &str) {
     if let Err(error) = rust_mutants::testkit::source::read_through(text, MODULE_STEM) {
-        let at = error.span().start();
         panic!(
-            "the instrumented file reads as Rust, down to what every identity macro holds, and at \
-             line {} it does not: {error}\n{text}",
-            at.line
+            "the instrumented file reads as Rust, down to what every identity macro holds, and it \
+             does not: {error}\n{text}"
         );
     }
 }
@@ -1424,8 +1422,10 @@ fn a_guard_that_breaks_inside_an_identity_macro_is_seen_where_a_plain_parse_is_b
         );
         let read = rust_mutants::testkit::source::read_through(text, MODULE_STEM);
         assert!(
-            read.as_ref()
-                .is_err_and(|error| error.span().start().line == 1),
+            matches!(
+                read,
+                Err(rust_mutants::parsing::ReadingError::Syntax { line: 1, .. })
+            ),
             "reading through every identity macro finds the guard the compiler would refuse, and \
              names where: {read:?} for {text}"
         );

@@ -462,6 +462,46 @@ struct FunctionBytes {
     name: Span,
 }
 
+/// Why a harness was not generated: the mutant is not one the fragment admits, or its source could not be read at all.
+#[derive(Debug)]
+enum Generation {
+    Ineligible(Ineligible),
+    Unread(rust_mutants::parsing::ReadingError),
+}
+
+impl From<Ineligible> for Generation {
+    fn from(why: Ineligible) -> Self {
+        Self::Ineligible(why)
+    }
+}
+
+impl Generation {
+    /// A reading failure: text that is not Rust as `syntax`, and a reading that could not happen as itself.
+    fn read(unread: rust_mutants::parsing::ReadingError, syntax: Ineligible) -> Self {
+        match unread.syntax() {
+            Ok(_not_rust) => Self::Ineligible(syntax),
+            Err(unreadable) => Self::Unread(unreadable),
+        }
+    }
+}
+
+/// The harness for `mutant`, or why the fragment does not admit it, read on a thread of its own.
+///
+/// # Errors
+/// The source could not be read at all, which is a failure of the run rather than an answer about the mutant.
+pub(crate) fn generate(
+    source: &[u8],
+    mutant: &Mutant,
+    verified: Verified,
+) -> Result<Result<Harness, Ineligible>, rust_mutants::parsing::ReadingError> {
+    match rust_mutants::parsing::apart(|parsing| generate_with(parsing, source, mutant, verified))?
+    {
+        Ok(harness) => Ok(Ok(harness)),
+        Err(Generation::Ineligible(why)) => Ok(Err(why)),
+        Err(Generation::Unread(unread)) => Err(unread),
+    }
+}
+
 /// Decides eligibility and emits a Kani harness for both renderings.
 ///
 /// # Errors
@@ -470,22 +510,23 @@ struct FunctionBytes {
     clippy::too_many_lines,
     reason = "the one admission transaction rederives identity, audits both renderings, and binds every generated proof name before returning"
 )]
-pub(crate) fn generate(
+fn generate_with(
+    parsing: &rust_mutants::parsing::Parsing,
     source: &[u8],
     mutant: &Mutant,
     verified: Verified,
-) -> Result<Harness, Ineligible> {
+) -> Result<Harness, Generation> {
     let source_text = std::str::from_utf8(source).map_err(|_error| Ineligible::SourceEncoding)?;
     let candidate = &mutant.candidate;
     if rust_mutants::id::digest(source) != candidate.source_digest {
-        return Err(Ineligible::SourceDigest);
+        return Err(Ineligible::SourceDigest.into());
     }
     candidate
         .validate()
         .map_err(|_error| Ineligible::Candidate)?;
     let derived_id = candidate.id().map_err(|_error| Ineligible::Candidate)?;
     if derived_id != mutant.id {
-        return Err(Ineligible::Identity);
+        return Err(Ineligible::Identity.into());
     }
     if candidate
         .span
@@ -493,10 +534,12 @@ pub(crate) fn generate(
         .map_err(|_error| Ineligible::Candidate)?
         != candidate.original
     {
-        return Err(Ineligible::Candidate);
+        return Err(Ineligible::Candidate.into());
     }
 
-    let file = syn::parse_file(source_text).map_err(|_error| Ineligible::SourceSyntax)?;
+    let file = parsing
+        .file(source_text)
+        .map_err(|unread| Generation::read(unread, Ineligible::SourceSyntax))?;
     let (item, bytes) = enclosing_function(source_text, &file, candidate.span)?;
     check_function_shape(&item.sig)?;
     check_source_context(&file, &item.sig)?;
@@ -522,11 +565,12 @@ pub(crate) fn generate(
         || edit_map.src_len() != source_len
         || edit_map.out_len() != mutated_len
     {
-        return Err(Ineligible::MutantSyntax);
+        return Err(Ineligible::MutantSyntax.into());
     }
     let mutated_text = std::str::from_utf8(&mutated).map_err(|_error| Ineligible::MutantSyntax)?;
-    let mutated_item: syn::ItemFn =
-        syn::parse_str(mutated_text).map_err(|_error| Ineligible::MutantSyntax)?;
+    let mutated_item: syn::ItemFn = parsing
+        .read(mutated_text)
+        .map_err(|unread| Generation::read(unread, Ineligible::MutantSyntax))?;
     check_function_shape(&mutated_item.sig)?;
     check_attributes(&mutated_item, Rendering::Mutant)?;
     check_body(&mutated_item.block, &argument_names, Rendering::Mutant)?;
@@ -553,7 +597,7 @@ pub(crate) fn generate(
         &same_name,
     ] {
         if source_text.contains(generated) {
-            return Err(Ineligible::NameCollision);
+            return Err(Ineligible::NameCollision.into());
         }
     }
 
@@ -1470,10 +1514,20 @@ mod tests {
     use rust_mutants::rule::Registry;
     use rust_mutants::span::Span;
 
-    use super::{
-        Effect, Harness, IneligibilityKind, Ineligible, KANI_VERSION, Rendering, generate,
-    };
+    use super::{Effect, Harness, IneligibilityKind, Ineligible, KANI_VERSION, Rendering};
     use crate::config::{Verification, Verified};
+
+    /// The harness for `mutant`, or why the fragment does not admit it, once its source has been read.
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "a source these laws wrote that cannot be read at all is a failed setup, not an answer a law is about"
+    )]
+    fn generate(source: &[u8], mutant: &Mutant, verified: Verified) -> Result<Harness, Ineligible> {
+        match super::generate(source, mutant, verified) {
+            Ok(answer) => answer,
+            Err(unread) => panic!("the source is read: {unread}"),
+        }
+    }
 
     fn exact_output<'a>(bytes: &'a [u8], what: &str) -> &'a str {
         match std::str::from_utf8(bytes) {

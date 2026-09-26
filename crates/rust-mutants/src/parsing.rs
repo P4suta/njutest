@@ -85,7 +85,40 @@ pub enum ReadingError {
     Unbudgeted,
 }
 
+/// Where text is not Rust, and what the parser said there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotRust {
+    /// The 1-based line of the first error, counted in the text given.
+    pub line: usize,
+    /// The 1-based character column.
+    pub column: usize,
+    /// What the parser said.
+    pub message: String,
+}
+
 impl ReadingError {
+    /// Where and why the text is not Rust, or this failure back when the text could not be read at all.
+    ///
+    /// # Errors
+    /// The text could not be read at all, which says nothing about whether it is Rust.
+    pub fn syntax(self) -> Result<NotRust, Self> {
+        match self {
+            Self::Syntax {
+                line,
+                column,
+                message,
+            } => Ok(NotRust {
+                line,
+                column,
+                message,
+            }),
+            unreadable @ (Self::Exhausted { .. }
+            | Self::ThreadUnavailable { .. }
+            | Self::ThreadPanicked
+            | Self::Unbudgeted) => Err(unreadable),
+        }
+    }
+
     /// The stable code of this failure.
     #[must_use]
     pub const fn code(&self) -> crate::error::ErrorCode {
@@ -102,14 +135,20 @@ impl ReadingError {
         Self::at(error.span().start(), error.to_string())
     }
 
-    const fn at(start: proc_macro2::LineColumn, message: String) -> Self {
-        Self::Syntax {
-            line: start.line,
-            column: match start.column.checked_add(1) {
-                Some(column) => column,
-                None => start.column,
+    /// A syntax error at `start`, or the refusal to read past what a location addresses where its column cannot be counted from one.
+    fn at(start: proc_macro2::LineColumn, message: String) -> Self {
+        match start.column.checked_add(1) {
+            Some(column) => Self::Syntax {
+                line: start.line,
+                column,
+                message,
             },
-            message,
+            None => Self::Exhausted {
+                spent: start.column,
+                asked: 0,
+                charged: 0,
+                ceiling: CEILING,
+            },
         }
     }
 }
