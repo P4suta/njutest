@@ -134,6 +134,8 @@ pub struct Judged {
     pub exit_code: i32,
     /// Why the last execution's process never started, where it did not.
     pub start_failure: Option<crate::execute::StartFailure>,
+    /// How the step protocol failed in the last execution, where that is what stopped it.
+    pub protocol_failure: Option<crate::execute::StepProtocolFailure>,
     /// How long every execution of this mutant took together.
     pub duration: Duration,
     /// How many tests ran, when the harness said.
@@ -665,13 +667,20 @@ fn detail(kind: FindingKind, one: &Judged) -> String {
                 &one.target
             }
         ),
-        FindingKind::ErroredMutant => match &one.start_failure {
-            Some(cause) => format!(
+        FindingKind::ErroredMutant => match (&one.start_failure, &one.protocol_failure) {
+            (Some(cause), _) => format!(
                 "the harness never started on {}: {}, so nothing about the tests was established",
                 one.display_id,
                 cause.sentence()
             ),
-            None => format!(
+            (None, Some(failure)) => format!(
+                "{} ended its test process with exit {}: {}, so nothing about the tests was \
+                 established",
+                one.display_id,
+                one.exit_code,
+                failure.sentence()
+            ),
+            (None, None) => format!(
                 "the harness itself failed on {} with exit {}, so nothing about the tests was \
                  established",
                 one.display_id, one.exit_code
@@ -1802,6 +1811,7 @@ fn execute(
         target: result.target,
         exit_code: result.exit_code,
         start_failure: result.stopped.start_failure().cloned(),
+        protocol_failure: result.stopped.protocol_failure().cloned(),
         duration,
         tests_run,
         failed_tests: result.failed_tests,
@@ -1961,6 +1971,7 @@ fn remembered(mutant: &Mutant, outcome: Outcome, record: Remembered) -> Judged {
         target: record.target,
         exit_code: 0,
         start_failure: None,
+        protocol_failure: None,
         duration: Duration::ZERO,
         tests_run: record.tests_run,
         failed_tests: record.failed_tests,
@@ -2106,6 +2117,7 @@ fn unexecuted(mutant: &Mutant, reason: NotRunReason) -> Judged {
         target: String::new(),
         exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
         start_failure: None,
+        protocol_failure: None,
         duration: Duration::ZERO,
         tests_run: None,
         failed_tests: Vec::new(),

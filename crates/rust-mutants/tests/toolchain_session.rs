@@ -1087,6 +1087,7 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
             target: String::new(),
             exit_code: 0,
             start_failure: None,
+            protocol_failure: None,
             duration: std::time::Duration::ZERO,
             tests_run: None,
             failed_tests: Vec::new(),
