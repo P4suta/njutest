@@ -501,11 +501,23 @@ impl Place<'_> {
             Ok(text) => text,
             Err(_no_record) => return Ok(()),
         };
+        let Some((pid, born)) = text
+            .lines()
+            .find_map(|line| line.strip_prefix("pid="))
+            .and_then(number)
+            .zip(
+                text.lines()
+                    .find_map(|line| line.strip_prefix("holder_born="))
+                    .filter(|born| !born.is_empty()),
+            )
+        else {
+            return Ok(());
+        };
         let groups = groups_of(&text, boot().as_deref());
         if groups.is_empty() {
             return Ok(());
         }
-        Self::outwait_holder(request, progress, &text)?;
+        Self::outwait_holder(request, progress, pid, born)?;
         for group in groups {
             self.end_group(request, progress, &group)?;
         }
@@ -532,20 +544,10 @@ impl Place<'_> {
     fn outwait_holder(
         request: &Request<'_>,
         progress: &mut dyn Write,
-        record: &str,
+        pid: u32,
+        born: &str,
     ) -> Result<(), LaneError> {
         let lane = request.lane.name();
-        let (Some(pid), Some(born)) = (
-            record
-                .lines()
-                .find_map(|line| line.strip_prefix("pid="))
-                .and_then(number),
-            record
-                .lines()
-                .find_map(|line| line.strip_prefix("holder_born=")),
-        ) else {
-            return Ok(());
-        };
         let mut reported: Option<Instant> = None;
         loop {
             match holder_state(&start_of(pid), born) {
