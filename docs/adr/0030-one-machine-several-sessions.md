@@ -45,8 +45,11 @@ The gate was a Bash script, and the rule that decides what may run on the machin
 - A push from a new worktree, the merge queue's included, is incremental against the last push rather than cold.
 - Two gates never share the machine; the second waits in the open and says for whom, rather than both running at half speed with their bounds failing.
 - Pushing the same commit twice runs the gate once.
-- The lane is not first-come-first-served: waiting runs poll, and whichever looks first after the holder ends goes next.
-  With a handful of sessions that has not mattered; a queue that orders them is the change to make if it does.
+- The lane was not first-come-first-served at first: waiting runs polled, and whichever looked first after the holder ended went next.
+  With a handful of sessions that did not matter; on 2026-09-26, with five sessions pushing, one push waited over half an hour while every push that came after it went in first.
+  So each run now takes a ticket as it starts to wait, under a lock of its own, and tries the lane only while no live run holds an earlier one.
+  A run is live while its pid still names a process with the start time its marker recorded, so a waiter that died holds no place in the line.
+  Windows cannot tell a live run from a dead one here, so there the lock alone still decides.
 - The next run waits for the work's leader, not for every process in its group: the compilation cache's server and Git's file monitor stay in the group that started them, so waiting for the whole group could wait forever.
   A leader that dies before its own children, killed outright or out of memory, therefore lets the next run in while those children still run; that gap is known and left open.
 - On Windows nothing reads a process's start time without an unsafe call, so the leader is not recorded, waiting markers are never swept, and a holder killed outright lets the next run in at once; there the lane is only the lock.

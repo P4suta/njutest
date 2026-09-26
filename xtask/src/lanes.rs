@@ -269,32 +269,29 @@ impl Place<'_> {
             request.lane.name(),
             std::process::id()
         ));
+        let ticket = self.queue(request, &marker)?;
         let mut announced = false;
         let started = Instant::now();
         let mut reported = started;
         loop {
-            let lock = self.open()?;
-            match lock.try_lock() {
-                Ok(()) if self.still_named(&lock)? => {
-                    if announced {
+            if self.first_in_line(request.lane, ticket)? {
+                let lock = self.open()?;
+                match lock.try_lock() {
+                    Ok(()) if self.still_named(&lock)? => {
                         std::fs::remove_file(&marker).map_err(|source| io(&marker, source))?;
+                        return Ok(lock);
                     }
-                    return Ok(lock);
-                }
-                Ok(()) | Err(TryLockError::WouldBlock) => {}
-                Err(TryLockError::Error(source)) => {
-                    return Err(LaneError::Lock {
-                        path: self.lock.display().to_string(),
-                        source,
-                    });
+                    Ok(()) | Err(TryLockError::WouldBlock) => {}
+                    Err(TryLockError::Error(source)) => {
+                        return Err(LaneError::Lock {
+                            path: self.lock.display().to_string(),
+                            source,
+                        });
+                    }
                 }
             }
-            drop(lock);
             if !announced {
                 announced = true;
-                self.forget_the_dead(request.lane)?;
-                std::fs::write(&marker, &request.holder.command)
-                    .map_err(|source| io(&marker, source))?;
                 say(
                     progress,
                     &format!(
@@ -352,14 +349,61 @@ impl Place<'_> {
         Ok(true)
     }
 
-    /// Removes the waiting markers of runs that are no longer alive to wait.
-    fn forget_the_dead(&self, lane: Lane) -> Result<(), LaneError> {
+    /// Takes this run's place in the lane's line: a marker naming it, with a ticket after every one a live run already holds.
+    fn queue(&self, request: &Request<'_>, marker: &Path) -> Result<u64, LaneError> {
+        let line = self.directory.join(format!("{}.line", request.lane.name()));
+        let turn = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&line)
+            .map_err(|source| io(&line, source))?;
+        turn.lock().map_err(|source| LaneError::Lock {
+            path: line.display().to_string(),
+            source,
+        })?;
+        let ticket = match self
+            .waiting(request.lane)?
+            .iter()
+            .map(|waiter| waiter.ticket)
+            .max()
+        {
+            Some(last) => last.saturating_add(1),
+            None => 0,
+        };
+        let born = started_at(std::process::id()).unwrap_or_default();
+        std::fs::write(
+            marker,
+            format!(
+                "ticket={ticket}\nborn={born}\ncommand={}\n",
+                request.holder.command
+            ),
+        )
+        .map_err(|source| io(marker, source))?;
+        drop(turn);
+        Ok(ticket)
+    }
+
+    /// Whether no live run holds an earlier ticket than `ticket`, which only a machine that can tell a live run from a dead one can answer; elsewhere every run is first and the lock alone decides.
+    fn first_in_line(&self, lane: Lane, ticket: u64) -> Result<bool, LaneError> {
         if cfg!(not(unix)) {
-            return Ok(());
+            return Ok(true);
         }
+        let me = std::process::id();
+        Ok(!self
+            .waiting(lane)?
+            .iter()
+            .any(|waiter| waiter.pid != me && (waiter.ticket, waiter.pid) < (ticket, me)))
+    }
+
+    /// Every run still alive to wait for `lane`, with its ticket, after removing the markers of runs that are not.
+    /// A marker from before tickets holds only its command, and its run is taken to have waited longest.
+    fn waiting(&self, lane: Lane) -> Result<Vec<Waiter>, LaneError> {
         let prefix = format!("{}.waiting.", lane.name());
         let entries = crate::repository::entries(self.directory)
             .map_err(|source| io(self.directory, source))?;
+        let mut alive = Vec::new();
         for entry in entries {
             let Some(pid) = entry
                 .file_name()
@@ -369,15 +413,36 @@ impl Place<'_> {
             else {
                 continue;
             };
-            if started_at(pid).is_none() {
+            let text = match std::fs::read_to_string(&entry) {
+                Ok(text) => text,
+                Err(gone) if gone.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(source) => return Err(io(&entry, source)),
+            };
+            let field = |name: &str| {
+                text.lines()
+                    .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
+            };
+            let started = started_at(pid);
+            let living = match (started.as_deref(), field("born")) {
+                (None, _) => cfg!(not(unix)),
+                (Some(_), None | Some("")) => true,
+                (Some(now), Some(born)) => now == born,
+            };
+            if !living {
                 match std::fs::remove_file(&entry) {
                     Ok(()) => {}
                     Err(gone) if gone.kind() == std::io::ErrorKind::NotFound => {}
                     Err(source) => return Err(io(&entry, source)),
                 }
+                continue;
             }
+            let ticket = match field("ticket").map(str::parse::<u64>) {
+                Some(Ok(ticket)) => ticket,
+                Some(Err(_)) | None => 0,
+            };
+            alive.push(Waiter { pid, ticket });
         }
-        Ok(())
+        Ok(alive)
     }
 
     /// Ends the work the last holder started, when that holder is gone and its work is not.
@@ -452,6 +517,13 @@ fn stop_orphan(pid: u32, sent: crate::work::Sent) -> std::io::Result<()> {
 )]
 const fn stop_orphan(_pid: u32, _sent: crate::work::Sent) -> std::io::Result<()> {
     Ok(())
+}
+
+/// A run waiting for a lane, and its place in the line.
+#[derive(Debug, Clone, Copy)]
+struct Waiter {
+    pid: u32,
+    ticket: u64,
 }
 
 /// A lane this process holds; dropping it lets the next run in, which overwrites the record when it starts.

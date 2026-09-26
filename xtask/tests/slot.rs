@@ -65,14 +65,19 @@ impl Machine {
     }
 
     fn waiting(&self) -> bool {
+        self.waiters() > 0
+    }
+
+    fn waiters(&self) -> usize {
         std::fs::read_dir(self.slots.path())
             .expect("a readable lane directory")
             .map(|entry| entry.expect("a readable lane entry").file_name())
-            .any(|name| {
+            .filter(|name| {
                 name.to_str()
                     .expect("a UTF-8 lane entry")
                     .starts_with("heavy.waiting.")
             })
+            .count()
     }
 }
 
@@ -320,4 +325,80 @@ fn a_test_that_ends_while_its_run_waits_leaves_no_worker_behind() {
          left the work its run started waiting for a release nobody will write; under measurement \
          that worker kept the machine's lane for every session"
     );
+}
+
+#[test]
+fn runs_that_wait_go_in_in_the_order_they_began_to_wait() {
+    let machine = Machine::new();
+    let mut holder = machine.run(&holds_until_go());
+    assert!(
+        until(Duration::from_secs(60), || machine.marker("inside")),
+        "the holder never started"
+    );
+    let names = ["first", "second", "third", "fourth"];
+    let mut waiting = Vec::new();
+    for (ahead, name) in names.iter().enumerate() {
+        waiting.push(machine.run(&format!("echo {name} >> \"$TURNS/order\"")));
+        assert!(
+            until(Duration::from_secs(60), || machine.waiters() == ahead + 1),
+            "{name} never began to wait"
+        );
+    }
+    machine.release();
+    for run in waiting.iter_mut().chain(std::iter::once(&mut holder)) {
+        assert!(
+            finished_within(Duration::from_secs(60), run).is_some_and(|status| status.success()),
+            "every run went in and finished"
+        );
+    }
+    let order = std::fs::read_to_string(machine.turns.path().join("order"))
+        .expect("every waiting run wrote its name");
+    assert_eq!(
+        order.lines().collect::<Vec<&str>>(),
+        names,
+        "the lane admits runs in the order they began to wait: a run that polls at the right \
+         moment going in ahead of one that has waited half an hour is how a push starved behind \
+         every push that came after it"
+    );
+}
+
+#[test]
+fn a_run_that_died_while_it_waited_holds_no_place_in_the_line() {
+    let machine = Machine::new();
+    let mut holder = machine.run(&holds_until_go());
+    assert!(
+        until(Duration::from_secs(60), || machine.marker("inside")),
+        "the holder never started"
+    );
+    let mut dead = machine.run("echo dead >> \"$TURNS/order\"");
+    assert!(
+        until(Duration::from_secs(60), || machine.waiters() == 1),
+        "the first waiter never began to wait"
+    );
+    let mut next = machine.run("echo next >> \"$TURNS/order\"");
+    assert!(
+        until(Duration::from_secs(60), || machine.waiters() == 2),
+        "the second waiter never began to wait"
+    );
+    let pid = dead.id().expect("a live waiter").to_string();
+    let killed = Command::new("kill")
+        .args(["-KILL", &pid])
+        .status()
+        .expect("kill");
+    assert!(killed.success(), "the first waiter could not be killed");
+    dead.wait().expect("the killed waiter is reaped");
+    machine.release();
+    let went_in = finished_within(Duration::from_secs(20), &mut next);
+    assert!(
+        went_in.is_some_and(|status| status.success()),
+        "a waiter killed in the line left a ticket nobody will use, and the run behind it never \
+         went in: {went_in:?}"
+    );
+    assert!(
+        finished_within(Duration::from_secs(60), &mut holder).is_some(),
+        "the holder finished"
+    );
+    let order = std::fs::read_to_string(machine.turns.path().join("order"))
+        .expect("the run behind wrote its name");
+    assert_eq!(order.lines().collect::<Vec<&str>>(), ["next"]);
 }
