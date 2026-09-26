@@ -605,6 +605,27 @@ pub(crate) fn discover_counting(
     source: &[u8],
     selection: &Selection<'_>,
 ) -> Result<(FileDiscovery, Option<usize>), SyntaxError> {
+    discover_counting_with(parsing, (path, source), selection, regroup::Grouping::of)
+}
+
+#[cfg(any(test, feature = "testkit"))]
+pub(crate) fn discover_counting_planted(
+    parsing: &crate::parsing::Parsing,
+    path: &str,
+    source: &[u8],
+    selection: &Selection<'_>,
+) -> Result<(FileDiscovery, Option<usize>), SyntaxError> {
+    discover_counting_with(parsing, (path, source), selection, |file, parsing| {
+        regroup::Grouping::of(file, parsing).planted()
+    })
+}
+
+fn discover_counting_with<'p>(
+    parsing: &'p crate::parsing::Parsing,
+    (path, source): (&str, &[u8]),
+    selection: &Selection<'_>,
+    grouping_of: impl FnOnce(&syn::File, &'p crate::parsing::Parsing) -> regroup::Grouping<'p>,
+) -> Result<(FileDiscovery, Option<usize>), SyntaxError> {
     let text = std::str::from_utf8(source).map_err(|_invalid| SyntaxError::NotUtf8 {
         path: path.to_owned(),
     })?;
@@ -640,7 +661,7 @@ pub(crate) fn discover_counting(
             directive,
         },
     })?;
-    let grouping = regroup::Grouping::of(&file, parsing);
+    let grouping = grouping_of(&file, parsing);
     let input = walk::Input {
         text,
         base,

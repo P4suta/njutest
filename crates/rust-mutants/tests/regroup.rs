@@ -415,6 +415,59 @@ fn swapping_the_outer_or_of_a_chain_keeps_its_left_operand_whole() {
 }
 
 #[test]
+fn a_planted_wrong_grouping_is_caught_by_the_tree_oracle() {
+    let source = "fn f() { let probe = v0 || v1 || v2; }\n";
+    let registry = Registry::canonical();
+    let selection = Selection::tier(&registry, Tier::All);
+    let expected = node(
+        Op::And,
+        node(Op::Or, Tree::Leaf(0), Tree::Leaf(1), false),
+        Tree::Leaf(2),
+        false,
+    );
+    let outer = source.rfind("||").expect("the outer operator");
+    let read_candidate = |discovered: rust_mutants::syntax::FileDiscovery| {
+        let candidate = discovered
+            .candidates
+            .iter()
+            .find(|one| {
+                one.candidate.rule.name == "or-to-and"
+                    && usize::try_from(one.candidate.span.start).is_ok_and(|start| start <= outer)
+                    && usize::try_from(one.candidate.span.end).is_ok_and(|end| outer < end)
+            })
+            .expect("the outer operator has a candidate");
+        let start = usize::try_from(candidate.candidate.span.start).expect("an offset");
+        let end = usize::try_from(candidate.candidate.span.end).expect("an offset");
+        let written = format!(
+            "{}{}{}",
+            &source[..start],
+            String::from_utf8(candidate.candidate.replacement.clone()).expect("UTF-8"),
+            &source[end..]
+        );
+        let file: syn::File = syn::parse_str(&written).expect("the swap writes Rust");
+        read(&probe(&file))
+    };
+    let held = read_candidate(
+        discover_file("src/lib.rs", source.as_bytes(), &selection).expect("the file parses"),
+    );
+    assert_eq!(held, expected);
+    let planted = read_candidate(
+        rust_mutants::testkit::source::discover_with_planted_grouping(source)
+            .expect("the file parses"),
+    );
+    assert_eq!(
+        planted,
+        node(
+            Op::Or,
+            Tree::Leaf(0),
+            node(Op::And, Tree::Leaf(1), Tree::Leaf(2), false),
+            false,
+        )
+    );
+    assert_ne!(planted, expected);
+}
+
+#[test]
 fn a_swap_is_read_back_at_the_size_of_its_own_item_not_of_its_file() {
     let functions = |count: usize| -> String {
         (0..count)

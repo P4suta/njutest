@@ -251,6 +251,8 @@ pub(super) struct Grouping<'p> {
     leaves: Vec<Leaf>,
     read: std::cell::Cell<Option<usize>>,
     parsing: &'p Parsing,
+    #[cfg(any(test, feature = "testkit"))]
+    planted_accept_wrong: bool,
 }
 
 impl<'p> Grouping<'p> {
@@ -262,7 +264,15 @@ impl<'p> Grouping<'p> {
             leaves: found,
             read: std::cell::Cell::new(Some(0)),
             parsing,
+            #[cfg(any(test, feature = "testkit"))]
+            planted_accept_wrong: false,
         }
+    }
+
+    #[cfg(any(test, feature = "testkit"))]
+    pub(super) const fn planted(mut self) -> Self {
+        self.planted_accept_wrong = true;
+        self
     }
 
     /// How many bytes of source holding every swap has read back, or nothing once that stopped fitting.
@@ -334,6 +344,11 @@ impl<'p> Grouping<'p> {
         ) else {
             return Ok(false);
         };
-        Ok(expected == read.ungrouped())
+        let kept = expected == read.ungrouped();
+        #[cfg(any(test, feature = "testkit"))]
+        if self.planted_accept_wrong {
+            return Ok(true);
+        }
+        Ok(kept)
     }
 }

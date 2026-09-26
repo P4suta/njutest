@@ -16,7 +16,6 @@ step-transition mutation njutest-14
 step-stop-said self-check njutest-14
 step-stop-said plant njutest-14
 step-stop-said mutation njutest-14
-operator-swap plant njutest-14
 operator-swap mutation njutest-14
 instrument-shape mutation njutest-14
 instrument-shape states njutest-14
