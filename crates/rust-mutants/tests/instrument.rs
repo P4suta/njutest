@@ -943,7 +943,7 @@ fn a_match_arm_whose_body_is_a_block_still_parses_after_the_guard_goes_in() {
 #[test]
 fn every_source_of_this_repository_still_parses_once_it_is_instrumented() {
     let root = njutest_devkit::paths::workspace_root();
-    let mut checked = 0_u32;
+    let mut sources = Vec::new();
     let mut stack = vec![root.join("crates"), root.join("xtask")];
     while let Some(directory) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&directory) else {
@@ -964,23 +964,46 @@ fn every_source_of_this_repository_still_parses_once_it_is_instrumented() {
             let Ok(source) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            if syn::parse_file(&source).is_err() {
-                continue;
-            }
             let relative = path
                 .strip_prefix(&root)
                 .expect("every walked source stays below the repository root")
                 .to_str()
                 .expect("repository source paths are exact UTF-8")
                 .replace('\\', "/");
-            if instrumented(&relative, &source).is_none() {
-                continue;
-            }
-            checked = checked
-                .checked_add(1)
-                .expect("the repository has fewer than u32::MAX files");
+            sources.push((relative, source));
         }
     }
+    let workers = match std::thread::available_parallelism() {
+        Ok(cores) => cores.get(),
+        Err(_unknown) => 1,
+    };
+    let share = sources.len().div_ceil(workers).max(1);
+    let checked: usize = std::thread::scope(|scope| {
+        #[expect(
+            clippy::needless_collect,
+            reason = "every worker starts before the first is joined; joining as they are made would run them one after another"
+        )]
+        let running: Vec<_> = sources
+            .chunks(share)
+            .map(|files| {
+                njutest_devkit::thread::ScopedThread::launch(scope, move || {
+                    files
+                        .iter()
+                        .filter(|(_, source)| syn::parse_file(source).is_ok())
+                        .filter(|(relative, source)| instrumented(relative, source).is_some())
+                        .count()
+                })
+            })
+            .collect();
+        running
+            .into_iter()
+            .map(|worker| {
+                worker
+                    .join()
+                    .expect("a worker instrumenting its share of the repository finished")
+            })
+            .sum()
+    });
     assert!(
         checked > 100,
         "this is the widest set of real shapes the suite has, and it read {checked} files"
