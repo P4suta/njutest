@@ -913,7 +913,52 @@ impl Session {
                 entered.completeness = crate::touch::Completeness::Cut;
             }
         }
-        Ok(result)
+        Ok(self.declined(&exec.target().id, result))
+    }
+
+    /// `result`, a mutant execution against `target`, with its survival held to the tests that declined in it (ADR 0043).
+    ///
+    /// A survival whose every passing test declined as the baseline's did measured nothing; a decline the baseline did not make is a detection; and a notice that cannot be believed leaves no survival to believe.
+    fn declined(&self, target: &str, mut result: MutantResult) -> MutantResult {
+        if result.conclusion != MutantConclusion::Survived {
+            return result;
+        }
+        result.conclusion = match &result.declines {
+            crate::decline::Declines::Unbelieved { because } => {
+                self.workspace.trace.note(
+                    crate::decline::DECLINE_NOTICE_FILE,
+                    &format!("{target}: {}", because.said()),
+                );
+                MutantConclusion::Errored
+            }
+            crate::decline::Declines::Read { declined, .. } => {
+                match crate::decline::held(declined, self.declined_in_baseline(target)) {
+                    crate::decline::Held::Detected { by } => {
+                        MutantConclusion::DeclinedUnderTheMutant { by }
+                    }
+                    crate::decline::Held::SetAside(tests)
+                        if !tests.is_empty() && tests.len() == result.passed_tests.len() =>
+                    {
+                        MutantConclusion::Declined { tests }
+                    }
+                    crate::decline::Held::SetAside(_) => MutantConclusion::Survived,
+                }
+            }
+        };
+        result
+    }
+
+    /// The declines `target`'s baseline made, or none where the target has no baseline a mutation may be judged against.
+    fn declined_in_baseline(&self, target: &str) -> &[crate::decline::Decline] {
+        match self
+            .verified
+            .targets
+            .get(target)
+            .and_then(Measured::judgeable)
+        {
+            Some(passing) => &passing.baseline().declined,
+            None => &[],
+        }
     }
 
     /// The short name a person reads for the mutant whose full identity is `id`, or the identity itself where the catalog holds no such mutant.
@@ -1881,7 +1926,10 @@ impl Session {
         if let Some(test) = &request.test {
             exec = exec.with_test(test.clone());
         }
-        let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
+        let result = self.declined(
+            &target.id,
+            execute::exec(&exec, &context, cancel, &self.workspace.trace),
+        );
         let evidence = Notice {
             mutant: mutant.id.to_string(),
             catalog: self.catalog.digest().to_owned(),
@@ -2278,6 +2326,7 @@ impl Session {
             alone,
             entered_records: result.entered.as_ref().map(|entered| entered.records),
             lingered: result.lingered,
+            declined: result.declines.believed().to_vec(),
         });
         Ok(())
     }
@@ -2305,6 +2354,7 @@ impl Session {
             timeout_source: source.name().to_owned(),
             alone: false,
             lingered: result.lingered,
+            declined: result.declines.believed().to_vec(),
         });
         Ok(())
     }
@@ -3210,16 +3260,19 @@ fn duration_ms(duration: Duration) -> Result<u64, SessionError> {
         .map_err(|_overflow| SessionError::DurationMillisOverflow { duration })
 }
 
-/// Whether a target said anything at all.
+/// Whether a target said anything at all: one whose every passing test declined to measure measured nothing, so it cannot outweigh a target that did (ADR 0043).
 const fn spoke(result: &MutantResult) -> bool {
     match result.conclusion {
-        MutantConclusion::Inconclusive | MutantConclusion::StepLimitReached { .. } => false,
+        MutantConclusion::Inconclusive
+        | MutantConclusion::StepLimitReached { .. }
+        | MutantConclusion::Declined { .. } => false,
         MutantConclusion::NotRun
         | MutantConclusion::Killed
         | MutantConclusion::Survived
         | MutantConclusion::Waited
         | MutantConclusion::Unobserved
-        | MutantConclusion::Errored => true,
+        | MutantConclusion::Errored
+        | MutantConclusion::DeclinedUnderTheMutant { .. } => true,
     }
 }
 
@@ -3300,7 +3353,9 @@ const fn completeness_of(
     use execute::Stopped;
     match stopped {
         Stopped::Exited { .. } => match conclusion {
-            MutantConclusion::Survived => Completeness::Whole,
+            MutantConclusion::Survived
+            | MutantConclusion::Declined { .. }
+            | MutantConclusion::DeclinedUnderTheMutant { .. } => Completeness::Whole,
             MutantConclusion::Killed => Completeness::UpToFirstFailure,
             MutantConclusion::NotRun
             | MutantConclusion::StepLimitReached { .. }
@@ -3317,7 +3372,9 @@ const fn completeness_of(
             | MutantConclusion::Waited
             | MutantConclusion::Inconclusive
             | MutantConclusion::Unobserved
-            | MutantConclusion::Errored => Completeness::Cut,
+            | MutantConclusion::Errored
+            | MutantConclusion::Declined { .. }
+            | MutantConclusion::DeclinedUnderTheMutant { .. } => Completeness::Cut,
         },
         Stopped::NotStarted { .. }
         | Stopped::TimedOut { .. }
@@ -3733,6 +3790,7 @@ const fn unreached() -> MutantResult {
             cause: execute::StartFailure::NotAsked,
         },
         lingered: false,
+        declines: crate::decline::Declines::none(),
     }
 }
 

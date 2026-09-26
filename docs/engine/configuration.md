@@ -303,3 +303,31 @@ Cargo compiles every instrumented tree with an internal RUST_MUTANTS_COMPILED_CA
 A nonempty inherited catalog is accepted only when it equals that embedded digest and exactly one of `ACTIVE` or `TOUCH` is also nonempty.
 A normal binary, a partial pair, a stale catalog, or both modes still earns `RM0006`.
 The internal value is a build input, not a variable a user sets or a test process inherits.
+
+## Declining to measure
+
+A run also names, to every test process it starts, a file a test that cannot measure on this machine says so in, and a test suite adopts it with nothing but the file API it already uses ([ADR 0043](../adr/0043-a-test-may-decline-to-measure.md)).
+The variable is `RUST_MUTANTS_DECLINE_NOTICE`; it is composed for each process and never inherited, and unlike the reserved ones it does not stop a run that finds it set, since a run started from inside a test process composes its own.
+A test that cannot measure here appends one line, its libtest name, a tab, why, and a newline, in one write, and returns:
+
+```rust
+fn decline(name: &str, why: &str) -> std::io::Result<()> {
+    if let Some(path) = std::env::var_os("RUST_MUTANTS_DECLINE_NOTICE") {
+        let mut notice = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+        std::io::Write::write_all(&mut notice, format!("{name}\t{why}\n").as_bytes())?;
+    }
+    Ok(())
+}
+```
+
+One write matters: libtest runs tests on several threads, and a line appended in pieces can have another test's land inside it, which the run refuses rather than reads.
+The words are compared with the baseline's, so they are the same on every run of the same machine: a temporary path, a process id or a time in them makes every decline under a mutation one the baseline did not make, which is a kill; that detail belongs on standard error.
+A line whose name is empty is the one test's when the process ran exactly one, and is only quoted otherwise.
+
+What the run makes of it:
+
+- A decline is read only where libtest's own count of the tests that passed is whole, and names a test that passed; anything else is not believed, and a pass it came with is not one.
+- A decline the baseline made in the same words is set aside, and where every test that passed was set aside, the mutation is `not_run` with the reason `declined`: nothing on this machine measured it, and that is neither a finding nor a survivor.
+- A decline the baseline did not make, or made in other words, means the mutation changed what the test did, which is a kill.
+- A survivor that stood on other tests stands, with the declines recorded beside it.
+- No answer resting on an execution in which a test declined is kept in the outcome store or carried to another tree.

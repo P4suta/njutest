@@ -141,6 +141,8 @@ pub struct Accounting {
     pub unreached: Within,
     /// How many of those never ran because a proof removed every target that could have noticed them.
     pub discharged: Within,
+    /// How many of those measured nothing because every test that reached them declined to measure on this machine, as the baseline's did (ADR 0043).
+    pub declined: Within,
     /// How many survivors a reviewer had declared, and the run confirmed.
     pub expected: Within,
 }
@@ -288,9 +290,11 @@ pub struct RunMutantDocument {
     pub retried: bool,
     /// Whether the harness had already answered when the clock ended the process: a verdict the harness gave, from a process that would not end.
     pub lingered: bool,
-    /// Why it was never executed, when it was not: `unreached`, `discharged`, or `interrupted`.
+    /// Why it was never executed, or measured nothing where it was, when it was not.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub not_run_reason: Option<NotRunReason>,
+    /// Each test that declined to measure in the execution the outcome rests on, and its words (ADR 0043).
+    pub declined: Vec<crate::decline::Decline>,
     /// Which targets could have noticed it, and which of them ran.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub route: Option<RouteDocument>,
@@ -495,6 +499,12 @@ pub enum DocumentError {
         /// The contradictory mutant.
         mutant: String,
     },
+    /// The tests a mutant says declined contradict its outcome: a declined reason with no decline, a kill by a decline that is not among them, or a decline beside an outcome no decline can stand beside.
+    #[error("mutant {mutant} gives two different answers about which of its tests declined")]
+    Declined {
+        /// The contradictory mutant.
+        mutant: String,
+    },
     /// An interrupted reason appeared in a report that says the run was not interrupted.
     #[error(
         "mutant {mutant} says interruption stopped it, but the run says it was not interrupted"
@@ -616,12 +626,24 @@ impl RunDocument {
                 mutant: one.id.clone(),
             });
         }
+        if !declines_agree(one) {
+            return Err(DocumentError::Declined {
+                mutant: one.id.clone(),
+            });
+        }
         if one.not_run_reason == Some(NotRunReason::Interrupted) && !self.run.interrupted {
             return Err(DocumentError::Interruption {
                 mutant: one.id.clone(),
             });
         }
-        let expected = verdict_finding(one, self.run.interrupted);
+        let expected = crate::run::verdict_finding(
+            crate::run::RowVerdict {
+                outcome: one.outcome,
+                not_run_reason: one.not_run_reason,
+                expected: one.expected,
+            },
+            self.run.interrupted,
+        );
         let actual: Vec<FindingKind> = self
             .findings
             .iter()
@@ -880,24 +902,20 @@ impl FindingKind {
     }
 }
 
-const fn verdict_finding(one: &RunMutantDocument, interrupted: bool) -> Option<FindingKind> {
-    match one.outcome {
-        Outcome::Killed => None,
-        Outcome::Survived if one.expected => None,
-        Outcome::Survived => Some(FindingKind::SurvivingMutant),
-        Outcome::StepLimitReached => Some(FindingKind::StepLimitReachedMutant),
-        Outcome::Waited => Some(FindingKind::WaitedMutant),
-        Outcome::Inconclusive => Some(FindingKind::InconclusiveMutant),
-        Outcome::Errored => Some(FindingKind::ErroredMutant),
-        Outcome::NotRun => match one.not_run_reason {
-            Some(NotRunReason::Unreached) => Some(FindingKind::UnreachedMutant),
-            Some(NotRunReason::Discharged) => Some(FindingKind::DischargedMutant),
-            Some(
-                NotRunReason::Interrupted | NotRunReason::Unselected | NotRunReason::StoppedEarly,
-            ) => None,
-            None if interrupted => None,
-            None => Some(FindingKind::NotRunMutant),
+/// Whether the tests `one` says declined agree with its outcome (ADR 0043).
+fn declines_agree(one: &RunMutantDocument) -> bool {
+    match (one.outcome, one.declined.is_empty()) {
+        (_, true) => one.not_run_reason != Some(NotRunReason::Declined),
+        (Outcome::NotRun, false) => one.not_run_reason == Some(NotRunReason::Declined),
+        (Outcome::Survived, false) => true,
+        (Outcome::Killed, false) => match one.killed_by.as_slice() {
+            [killer] => one.declined.iter().any(|decline| &decline.test == killer),
+            _ => false,
         },
+        (
+            Outcome::StepLimitReached | Outcome::Waited | Outcome::Inconclusive | Outcome::Errored,
+            false,
+        ) => false,
     }
 }
 
@@ -932,6 +950,9 @@ fn accounting_from_document(document: &RunDocument) -> Result<Accounting, Docume
         }
         if one.not_run_reason == Some(NotRunReason::Discharged) {
             accounting.discharged.raise()?;
+        }
+        if one.not_run_reason == Some(NotRunReason::Declined) {
+            accounting.declined.raise()?;
         }
         if one.expected {
             accounting.expected.raise()?;
@@ -988,6 +1009,11 @@ fn accounting_difference(actual: &Accounting, expected: &Accounting) -> Option<&
             "discharged",
             actual.discharged.count(),
             expected.discharged.count(),
+        ),
+        (
+            "declined",
+            actual.declined.count(),
+            expected.declined.count(),
         ),
         (
             "expected",
@@ -1073,6 +1099,7 @@ pub fn document(
             expected: tally.expected.into(),
             unreached: tally.unreached.into(),
             discharged: tally.discharged.into(),
+            declined: tally.declined.into(),
         },
         score: run.score()?.map(|score| ScoreDocument {
             detected: score.detected,
@@ -1209,6 +1236,7 @@ fn mutant(
         retried: one.retried,
         lingered: one.lingered,
         not_run_reason: one.not_run_reason,
+        declined: one.declined.clone(),
         route: one.route.clone(),
         identical: one.identical,
         expected: one.expected,
@@ -1504,6 +1532,9 @@ fn accounting_of(
         }
         if one.not_run_reason == Some(NotRunReason::Discharged) {
             counted.discharged.raise()?;
+        }
+        if one.not_run_reason == Some(NotRunReason::Declined) {
+            counted.declined.raise()?;
         }
         if one.expected {
             counted.expected.raise()?;

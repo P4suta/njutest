@@ -1100,6 +1100,7 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
             measured: true,
             identical: rust_mutants::run::CodegenIdentity::NotMeasured,
             source_run_id: None,
+            declined: Vec::new(),
             step_notice: None,
         }
     };

@@ -119,9 +119,11 @@ A mutant no measured target reaches is an `unreached-mutant` finding rather than
 A `discharged-mutant` says the same thing about a mutation the tests do run and cannot observe: every target that could have noticed it was removed by a proof.
 An `unmatched-skip` is a `rust-mutants: skip` marker that hid nothing, which is a claim about code that has moved or gone.
 
-A mutant's `not_run_reason` says which of five things left it unexecuted:
+A mutant's `not_run_reason` says which of six things left it unexecuted, or left its execution measuring nothing:
 `unreached` and `discharged` are proofs and are findings, `interrupted` is a run that was killed, and `unselected` and `stopped-early` are the run doing what it was asked to — a filter took the mutant out, or `--fail-fast` stopped before reaching it.
-Neither of the last two is a finding, and both keep their row, so a report of a narrowed run still accounts for the whole catalog it was cut from.
+Neither of those two is a finding, and both keep their row, so a report of a narrowed run still accounts for the whole catalog it was cut from.
+`declined` is a mutation every test that reached it declined to measure on this machine, as it did with nothing active ([ADR 0043](../adr/0043-a-test-may-decline-to-measure.md)).
+It is not a finding either: the run says nothing this machine could measure is wrong, and the row's `declined` names each test and its words, which `accounting.declined` counts apart.
 An `unselected` row makes no compiler-acceptance claim; this is what lets the expensive preparation work scale with a filtered selection without changing catalog identity.
 
 ## The run as it happens

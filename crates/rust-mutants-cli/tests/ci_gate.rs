@@ -68,6 +68,7 @@ fn mutant(index: u32, outcome: Outcome) -> RunMutantDocument {
         killed_by: Vec::new(),
         signal: None,
         not_run_reason: None,
+        declined: Vec::new(),
         route: None,
         identical: rust_mutants::run::CodegenIdentity::NotMeasured,
         retried: false,
@@ -170,6 +171,7 @@ fn accounting(survivors: u32) -> Accounting {
         errored: 0_u32.into(),
         unreached: 0_u32.into(),
         discharged: 0_u32.into(),
+        declined: 0_u32.into(),
         not_run: 0_u32.into(),
         expected: 0_u32.into(),
     }

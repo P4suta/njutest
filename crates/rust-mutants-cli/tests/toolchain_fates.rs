@@ -314,6 +314,11 @@ fn fixture_custom_harness() {
 }
 
 #[test]
+fn fixture_declines() {
+    holds("fixture-declines");
+}
+
+#[test]
 fn fixture_doctest() {
     holds("fixture-doctest");
 }

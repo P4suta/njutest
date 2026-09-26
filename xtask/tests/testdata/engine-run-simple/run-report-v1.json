@@ -3,10 +3,10 @@
   "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260926t024233347z",
-    "started_at": "2026-09-26T02:42:33.34739372Z",
-    "finished_at": "2026-09-26T02:42:41.812727221Z",
-    "duration_ms": 1597,
+    "id": "20260926t021313139z",
+    "started_at": "2026-09-26T02:13:13.139734097Z",
+    "finished_at": "2026-09-26T02:13:29.81241063Z",
+    "duration_ms": 1345,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -16,9 +16,9 @@
     }
   },
   "workspace": {
-    "root_name": "fixture-simple",
+    "root_name": "tmp.FYvbdUn4iQ",
     "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "821086a3af3a4fc4c8b5bc16eb8ee047b0761cae9289901e2e0a9d3a530727af",
+    "workspace_digest": "0ae745a994b4b3d8dc15339c3da16ab745ae7aa4b4364b745aecef6afc71c4d3",
     "catalog_digest": "82946360d0657b5f03d7a76baf4c58b9b82b9853b602678b838583310f27d624",
     "platform": {
       "os": "gnu",
@@ -49,6 +49,7 @@
     "not_run": 1,
     "unreached": 0,
     "discharged": 1,
+    "declined": 0,
     "expected": 0
   },
   "score": {
@@ -105,7 +106,7 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": -1,
-      "duration_ms": 25,
+      "duration_ms": 31,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -114,6 +115,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,
@@ -152,7 +154,7 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": -1,
-      "duration_ms": 25,
+      "duration_ms": 34,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -161,6 +163,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,
@@ -199,7 +202,7 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": -1,
-      "duration_ms": 25,
+      "duration_ms": 32,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -208,6 +211,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,
@@ -246,7 +250,7 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": -1,
-      "duration_ms": 27,
+      "duration_ms": 34,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -255,6 +259,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,
@@ -300,6 +305,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": "discharged",
+      "declined": [],
       "route": {
         "granularity": "discharged",
         "fallback": null,
@@ -339,7 +345,7 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": -1,
-      "duration_ms": 25,
+      "duration_ms": 26,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -348,6 +354,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,
@@ -386,7 +393,7 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": -1,
-      "duration_ms": 11,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -395,6 +402,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,
@@ -433,7 +441,7 @@
       "step_notice": null,
       "target": "fixture-simple/test/parity",
       "exit_code": -1,
-      "duration_ms": 25,
+      "duration_ms": 26,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -442,6 +450,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,
@@ -480,7 +489,7 @@
       "step_notice": null,
       "target": "fixture-simple/test/parity",
       "exit_code": -1,
-      "duration_ms": 26,
+      "duration_ms": 28,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -489,6 +498,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,
@@ -527,7 +537,7 @@
       "step_notice": null,
       "target": "fixture-simple/test/parity",
       "exit_code": -1,
-      "duration_ms": 28,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -536,6 +546,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,
@@ -574,7 +585,7 @@
       "step_notice": null,
       "target": "fixture-simple/test/parity",
       "exit_code": -1,
-      "duration_ms": 27,
+      "duration_ms": 31,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -583,6 +594,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,
@@ -621,7 +633,7 @@
       "step_notice": null,
       "target": "fixture-simple/test/parity",
       "exit_code": -1,
-      "duration_ms": 25,
+      "duration_ms": 38,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -630,6 +642,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,
@@ -668,7 +681,7 @@
       "step_notice": null,
       "target": "fixture-simple/test/parity",
       "exit_code": -1,
-      "duration_ms": 27,
+      "duration_ms": 26,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -677,6 +690,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
+      "declined": [],
       "route": {
         "granularity": "block",
         "fallback": null,

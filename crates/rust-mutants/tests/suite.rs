@@ -29,6 +29,8 @@ mod census;
 mod count;
 #[path = "coverage.rs"]
 mod coverage;
+#[path = "decline.rs"]
+mod decline;
 #[path = "devkit_environment.rs"]
 mod devkit_environment;
 #[path = "docs_ledger.rs"]
