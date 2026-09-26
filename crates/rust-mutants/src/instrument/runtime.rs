@@ -1870,11 +1870,7 @@ mod tests {
             .arg(&source)
             .output()
             .expect("rustc runs");
-        assert!(
-            built.status.success(),
-            "{}",
-            String::from_utf8_lossy(&built.stderr)
-        );
+        assert!(built.status.success(), "{:?}", built.stderr);
         let executable = directory.join(format!("step{}", std::env::consts::EXE_SUFFIX));
         let mut spec = Spec::new(
             [executable.into_os_string()],
