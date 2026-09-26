@@ -3,10 +3,10 @@
   "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260926t025246486z",
-    "started_at": "2026-09-26T02:52:46.486460038Z",
-    "finished_at": "2026-09-26T02:52:51.861479412Z",
-    "duration_ms": 810,
+    "id": "20260926t050827483z",
+    "started_at": "2026-09-26T05:08:27.483827026Z",
+    "finished_at": "2026-09-26T05:08:30.46242047Z",
+    "duration_ms": 771,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -18,7 +18,7 @@
   "workspace": {
     "root_name": "fixture-declines",
     "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "08923c1f940aed1d59833aaf4ce37788e8c65ac46027bd9e224cd845951e4e2a",
+    "workspace_digest": "5fcc93a824b83663d03c0537998e93513329d801c40929d984bf138ef22cf60b",
     "catalog_digest": "3a028ceb48cfdf47e3a7a78dcc74e99c699365f7e0ca0cd644dc7a40a41036d8",
     "platform": {
       "os": "gnu",
@@ -99,7 +99,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 34,
+      "duration_ms": 25,
       "tests_run": 2,
       "killed_by": [],
       "signal": null,
@@ -219,7 +219,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 32,
+      "duration_ms": 25,
       "tests_run": 2,
       "killed_by": [],
       "signal": null,
@@ -270,7 +270,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 39,
+      "duration_ms": 25,
       "tests_run": 2,
       "killed_by": [],
       "signal": null,
@@ -330,7 +330,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 27,
+      "duration_ms": 25,
       "tests_run": 2,
       "killed_by": [],
       "signal": null,
@@ -390,7 +390,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 27,
+      "duration_ms": 25,
       "tests_run": 2,
       "killed_by": [],
       "signal": null,
@@ -500,7 +500,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 25,
+      "duration_ms": 26,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -654,7 +654,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 27,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -711,7 +711,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 31,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -761,7 +761,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 35,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -816,7 +816,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": -1,
-      "duration_ms": 26,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "tests::doubles_what_it_shares"
@@ -923,7 +923,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 26,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -978,7 +978,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 26,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -1145,7 +1145,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 26,
+      "duration_ms": 25,
       "tests_run": 2,
       "killed_by": [],
       "signal": null,
@@ -1257,7 +1257,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": -1,
-      "duration_ms": 26,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -1309,7 +1309,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": -1,
-      "duration_ms": 32,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -1413,7 +1413,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": -1,
-      "duration_ms": 27,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
