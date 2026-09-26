@@ -1084,3 +1084,52 @@ fn code_only_one_platform_compiles_is_linted_on_that_platform() {
          lints on every platform the lint job does not stand on"
     );
 }
+
+/// The block of `on:` a workflow's `trigger` opens, up to the next trigger or the end of `on:`.
+fn trigger_block<'s>(source: &'s str, trigger: &str) -> Option<&'s str> {
+    let on = source.split_once("\non:\n")?.1;
+    let on = on.split("\n\n").next().unwrap_or(on);
+    let start = on.find(&format!("  {trigger}:"))?;
+    let rest = on.get(start..)?;
+    let body_start = rest
+        .find('\n')
+        .map_or(rest.len(), |at| at.saturating_add(1));
+    let body = rest.get(body_start..)?;
+    let end = body
+        .lines()
+        .take_while(|line| line.starts_with("    ") || line.trim().is_empty())
+        .map(|line| line.len().saturating_add(1))
+        .sum::<usize>()
+        .min(body.len());
+    body.get(..end)
+}
+
+/// Whether a trigger block filters by the paths a change touches.
+fn filters_paths(block: &str) -> bool {
+    block.lines().any(|line| {
+        let key = line.trim_start();
+        key.starts_with("paths:") || key.starts_with("paths-ignore:")
+    })
+}
+
+#[test]
+fn the_required_check_is_asked_of_every_pull_request() {
+    let planted = "name: ci\n\non:\n  pull_request:\n    branches: [main]\n    paths-ignore: [\"docs/**\"]\n  workflow_dispatch:\n\njobs:\n";
+    assert!(
+        trigger_block(planted, "pull_request").is_some_and(filters_paths),
+        "the law must see a path filter on the trigger it reads, or its silence about ci.yml says nothing"
+    );
+    let path = workflows()
+        .into_iter()
+        .find(|path| path.ends_with("ci.yml"))
+        .unwrap_or_else(|| panic!("ci.yml is one of the workflows"));
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let block = trigger_block(&source, "pull_request")
+        .unwrap_or_else(|| panic!("ci.yml runs on pull requests"));
+    assert!(
+        !filters_paths(block),
+        "ci-success is the check a pull request cannot merge without, and a pull request its paths \
+         filter skips never gets one: with strict up-to-date and no bypass it waits forever. {block}"
+    );
+}
