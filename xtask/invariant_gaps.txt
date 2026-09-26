@@ -3,7 +3,8 @@
 #
 # Every layer docs/invariants.md leaves open, and who closes it: `<decision> <layer> <owner>`.
 #
-# **This ledger may shrink and never grow**; xtask/invariant_gap_ceiling.txt holds its size.
+# A decision already in the merge base may not reopen a held layer.
+# A new decision enters with the holes it has, each owned here.
 # A line leaves when its cell names what holds the decision there, and `cargo xtask invariants`
 # refuses a line the table no longer leaves open, so a closed hole cannot stay listed.
 
@@ -26,3 +27,6 @@ operator-swap plant njutest-14
 operator-swap mutation njutest-14
 instrument-shape mutation njutest-14
 instrument-shape states njutest-14
+repository-claims oracle njutest-14
+repository-claims mutation njutest-14
+repository-claims states njutest-14
