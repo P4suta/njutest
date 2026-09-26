@@ -42,6 +42,7 @@ impl Machine {
             .env("NJUTEST_SLOT_DIR", self.slots.path())
             .env_remove("NJUTEST_SLOT_HELD")
             .env("TURNS", self.turns.path())
+            .env("XTASK", env!("CARGO_BIN_EXE_xtask"))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -168,7 +169,7 @@ fn orphan_the_work(machine: &Machine, holder: &mut SupervisedChild) -> String {
     let record = machine.slots.path().join("heavy.holder");
     assert!(
         until(Duration::from_secs(60), || {
-            std::fs::read_to_string(&record).is_ok_and(|text| text.contains("leader="))
+            std::fs::read_to_string(&record).is_ok_and(|text| text.contains("group="))
         }),
         "the holder never recorded the work it started"
     );
@@ -320,4 +321,136 @@ fn a_test_that_ends_while_its_run_waits_leaves_no_worker_behind() {
          left the work its run started waiting for a release nobody will write; under measurement \
          that worker kept the machine's lane for every session"
     );
+}
+
+/// The id `name` wrote into the turns directory.
+fn written(machine: &Machine, name: &str) -> String {
+    std::fs::read_to_string(machine.turns.path().join(name))
+        .expect("the run wrote its id")
+        .trim()
+        .to_owned()
+}
+
+/// Kills `pid`, or the group it leads when given as `-pid`, outright.
+fn kill_outright(target: &str) {
+    let killed = Command::new("kill")
+        .args(["-KILL", "--", target])
+        .status()
+        .expect("kill");
+    assert!(killed.success(), "{target} could not be killed");
+}
+
+#[test]
+fn a_member_that_outlives_its_leader_is_ended_before_the_next_run_goes_in() {
+    let machine = Machine::new();
+    let mut holder = machine.run(&format!(
+        "sh -c 'trap \"\" TERM; echo $$ > \"$TURNS/member\"; {}' & \
+         echo $$ > \"$TURNS/work\"; mkdir \"$TURNS/inside\"; wait",
+        UNTIL_GO.replace('\'', "'\\''")
+    ));
+    assert!(
+        until(Duration::from_secs(60), || machine.marker("inside")
+            && machine.marker("member")),
+        "the holder and its member never started"
+    );
+    let member = written(&machine, "member");
+    kill_outright(&holder.id().expect("a live holder").to_string());
+    holder.wait().expect("the killed holder is reaped");
+    let mut next = after_it(&machine, &member);
+    let ended = finished_within(Duration::from_secs(60), &mut next);
+    machine.release();
+    assert!(
+        ended.is_some_and(|status| status.success()),
+        "the group, not its leader, is what has to be gone: a member that ignores the request to \
+         stop outlives a leader that obeys it, and the next run went in beside it: {ended:?}"
+    );
+}
+
+#[test]
+fn a_group_started_inside_the_held_lane_is_ended_with_the_holder_s_own() {
+    let machine = Machine::new();
+    let mut holder = machine.run(&format!(
+        "echo $$ > \"$TURNS/outer\"; \"$XTASK\" slot heavy -- sh -c 'trap \"\" TERM; \
+         echo $$ > \"$TURNS/nested\"; mkdir \"$TURNS/inside\"; {}'",
+        UNTIL_GO.replace('\'', "'\\''")
+    ));
+    assert!(
+        until(Duration::from_secs(60), || machine.marker("inside")
+            && machine.marker("nested")),
+        "the nested work never started"
+    );
+    let nested = written(&machine, "nested");
+    let outer = written(&machine, "outer");
+    kill_outright(&holder.id().expect("a live holder").to_string());
+    holder.wait().expect("the killed holder is reaped");
+    kill_outright(&format!("-{outer}"));
+    let mut next = after_it(&machine, &nested);
+    let ended = finished_within(Duration::from_secs(60), &mut next);
+    machine.release();
+    assert!(
+        ended.is_some_and(|status| status.success()),
+        "work that started a group of its own inside the held lane, as the gate's check does, \
+         registered it, so the next run ends it too rather than going in beside it: {ended:?}"
+    );
+}
+
+#[test]
+fn a_group_is_alive_while_it_holds_a_process_that_has_not_ended_and_unseen_when_none_could_be_listed()
+ {
+    use xtask::lanes::{Liveness, group_liveness};
+    use xtask::work::Listed;
+
+    let listed = |processes: &[(u32, u32, bool)]| -> Vec<Listed> {
+        processes
+            .iter()
+            .map(|&(pid, group, ended)| Listed { pid, group, ended })
+            .collect()
+    };
+    let born = "Sat Sep 26 12:00:00 2026";
+    for (case, started_now, processes, expected) in [
+        (
+            "the leader runs",
+            Some(born),
+            Some(listed(&[(40, 40, false)])),
+            Liveness::Alive,
+        ),
+        (
+            "only a member runs",
+            None,
+            Some(listed(&[(41, 40, false)])),
+            Liveness::Alive,
+        ),
+        (
+            "the leader waits to be reaped",
+            Some(born),
+            Some(listed(&[(40, 40, true)])),
+            Liveness::Gone,
+        ),
+        (
+            "nobody is left",
+            None,
+            Some(listed(&[(7, 7, false)])),
+            Liveness::Gone,
+        ),
+        (
+            "the id names somebody else now",
+            Some("Sat Sep 26 13:00:00 2026"),
+            Some(listed(&[(40, 40, false)])),
+            Liveness::Gone,
+        ),
+        ("nothing could be listed", None, None, Liveness::Unseen),
+        (
+            "the leader runs but nothing could be listed",
+            Some(born),
+            None,
+            Liveness::Unseen,
+        ),
+    ] {
+        assert_eq!(
+            group_liveness(40, born, started_now, processes.as_deref()),
+            expected,
+            "{case}: a group is gone only when a look at it finds nobody that has not ended, and a \
+             look that could not be taken answers neither way"
+        );
+    }
 }

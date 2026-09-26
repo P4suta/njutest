@@ -113,13 +113,26 @@ pub enum LaneError {
     },
     /// The work a dead holder left running in the lane would not end when this run stopped it.
     #[error(
-        "the {lane} lane's last holder is gone and the work it started (pid {pid}) outlived both \
-         the request to stop and the kill; nothing else will take the lane while it runs"
+        "the {lane} lane's last holder is gone and a process of the group its work ran in (led by \
+         pid {pid}) outlived both the request to stop and the kill; nothing else will take the \
+         lane while it runs"
     )]
     Unended {
         /// The lane.
         lane: &'static str,
-        /// The work's leader.
+        /// The group's leader, whose id the group carries.
+        pid: u32,
+    },
+    /// Whether the group a dead holder's work ran in is still there could not be seen.
+    #[error(
+        "the {lane} lane's last holder is gone and the processes of the group its work ran in (led \
+         by pid {pid}) could not be listed, so whether that work has ended is unknown and the lane \
+         is not taken over it"
+    )]
+    Unseen {
+        /// The lane.
+        lane: &'static str,
+        /// The group's leader.
         pid: u32,
     },
     /// This process was asked to stop while it waited.
@@ -140,7 +153,8 @@ impl crate::error::Coded for LaneError {
             | Self::Io { .. }
             | Self::Lock { .. }
             | Self::Progress { .. }
-            | Self::Unended { .. } => crate::error::XtCode::LaneUnavailable,
+            | Self::Unended { .. }
+            | Self::Unseen { .. } => crate::error::XtCode::LaneUnavailable,
             Self::Interrupted { .. } => crate::error::XtCode::LaneInterrupted,
         }
     }
@@ -157,7 +171,8 @@ impl LaneError {
             | Self::Io { .. }
             | Self::Lock { .. }
             | Self::Progress { .. }
-            | Self::Unended { .. } => None,
+            | Self::Unended { .. }
+            | Self::Unseen { .. } => None,
         }
     }
 }
@@ -221,9 +236,11 @@ impl Lanes {
     pub fn hold(&self, request: &Request<'_>, progress: &mut dyn Write) -> Result<Held, LaneError> {
         let lane = request.lane;
         if self.held.iter().any(|name| name == lane.name()) {
+            std::fs::create_dir_all(&self.directory)
+                .map_err(|source| io(&self.directory, source))?;
             return Ok(Held {
                 lock: None,
-                record: None,
+                record: Some(self.directory.join(format!("{}.holder", lane.name()))),
             });
         }
         std::fs::create_dir_all(&self.directory).map_err(|source| io(&self.directory, source))?;
@@ -380,56 +397,117 @@ impl Place<'_> {
         Ok(())
     }
 
-    /// Ends the work the last holder started, when that holder is gone and its work is not.
-    ///
-    /// This run holds the lock, so the last holder has let go of it, and a holder lets go only by ending or by dying.
-    /// Work still running is then work nobody will read the answer of: it is asked to stop, then killed, and this run goes in only once it has ended, so two runs never share the lane.
-    /// Waiting for it instead was waiting for as long as it chose to run, which for a loop that never ends was every run on the machine, for good.
+    /// Ends every group the last holder's work ran in, when that holder died before its work did: each is asked to stop, then killed, and the lane is taken only once every one is seen gone.
     fn outlast(&self, request: &Request<'_>, progress: &mut dyn Write) -> Result<(), LaneError> {
-        let Some((pid, born)) = leader_of(self.record) else {
-            return Ok(());
-        };
-        let running = || started_at(pid).as_deref() == Some(born.as_str());
+        for (pid, born) in groups_of(self.record) {
+            self.end_group(request, progress, (pid, &born))?;
+        }
+        Ok(())
+    }
+
+    /// Asks the group `pid` led to stop, then kills it, until a look at it finds nobody that has not ended.
+    fn end_group(
+        &self,
+        request: &Request<'_>,
+        progress: &mut dyn Write,
+        (pid, born): (u32, &str),
+    ) -> Result<(), LaneError> {
+        let lane = request.lane.name();
         for sent in crate::work::Sent::ALL {
-            if !running() {
-                return Ok(());
+            match liveness(pid, born) {
+                Liveness::Gone => return Ok(()),
+                Liveness::Unseen => return Err(LaneError::Unseen { lane, pid }),
+                Liveness::Alive => {}
             }
             say(
                 progress,
                 &format!(
-                    "slot: the {} lane is free, but the work its last holder started (pid {pid}) is still running with nobody to answer to; {} it",
-                    request.lane.name(),
+                    "slot: the {lane} lane is free, but the group its last holder's work ran in (led by pid {pid}) still holds a process with nobody to answer to; {} it",
                     match sent {
                         crate::work::Sent::Ask => "asking it to stop",
                         crate::work::Sent::Kill => "it did not stop when asked, so killing",
                     }
                 ),
             )?;
-            stop_orphan(pid, sent).map_err(|source| io(self.record, source))?;
+            stop_group(pid, sent).map_err(|source| io(self.record, source))?;
             let asked = Instant::now();
-            while running() && asked.elapsed() < ORPHAN_GRACE {
+            while liveness(pid, born) == Liveness::Alive && asked.elapsed() < ORPHAN_GRACE {
                 if let Some(signal) = request.stops.raised() {
-                    return Err(LaneError::Interrupted {
-                        lane: request.lane.name(),
-                        signal,
-                    });
+                    return Err(LaneError::Interrupted { lane, signal });
                 }
                 std::thread::sleep(POLL);
             }
         }
-        if running() {
-            return Err(LaneError::Unended {
-                lane: request.lane.name(),
-                pid,
-            });
+        match liveness(pid, born) {
+            Liveness::Gone => Ok(()),
+            Liveness::Alive => Err(LaneError::Unended { lane, pid }),
+            Liveness::Unseen => Err(LaneError::Unseen { lane, pid }),
         }
-        Ok(())
     }
 }
 
-/// Stops the group the work's leader `pid` leads.
+/// Whether a group a lane's work ran in still holds a process that has not ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Liveness {
+    /// It does.
+    Alive,
+    /// It does not.
+    Gone,
+    /// The processes could not be listed, which answers neither.
+    Unseen,
+}
+
+/// Whether the group led by `pid`, recorded as started at `born`, still holds a process that has not ended, from when `pid` started now and the machine's processes as listed: a group's id is not reused while the group exists, so a `pid` started at another time means it is gone, and a zombie has ended.
+#[must_use]
+pub fn group_liveness(
+    pid: u32,
+    born: &str,
+    started_now: Option<&str>,
+    listed: Option<&[crate::work::Listed]>,
+) -> Liveness {
+    if started_now.is_some_and(|now| now != born) {
+        return Liveness::Gone;
+    }
+    match listed {
+        None => Liveness::Unseen,
+        Some(processes) if processes.iter().any(|one| one.group == pid && !one.ended) => {
+            Liveness::Alive
+        }
+        Some(_) => Liveness::Gone,
+    }
+}
+
+/// Whether the group led by `pid`, recorded as started at `born`, still holds a process that has not ended, as the machine answers now.
+fn liveness(pid: u32, born: &str) -> Liveness {
+    group_liveness(
+        pid,
+        born,
+        started_at(pid).as_deref(),
+        crate::work::listed().as_deref(),
+    )
+}
+
+/// Every group the lane's record says its work ran in, with when each group's leader started.
+fn groups_of(record: &Path) -> Vec<(u32, String)> {
+    let text = match std::fs::read_to_string(record) {
+        Ok(text) => text,
+        Err(_no_record) => return Vec::new(),
+    };
+    text.lines()
+        .filter_map(|line| {
+            line.strip_prefix("group=")
+                .or_else(|| line.strip_prefix("leader="))
+        })
+        .filter_map(|group| {
+            let (pid, born) = group.split_once(' ')?;
+            Some((number(pid)?, born.to_owned()))
+        })
+        .collect()
+}
+
+/// Stops the group led by `pid`, whether or not its leader is still alive.
 #[cfg(unix)]
-fn stop_orphan(pid: u32, sent: crate::work::Sent) -> std::io::Result<()> {
+fn stop_group(pid: u32, sent: crate::work::Sent) -> std::io::Result<()> {
     let unled = || {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -441,16 +519,19 @@ fn stop_orphan(pid: u32, sent: crate::work::Sent) -> std::io::Result<()> {
         Err(_wider_than_a_pid) => return Err(unled()),
     };
     let leader = rustix::process::Pid::from_raw(raw).ok_or_else(unled)?;
-    crate::work::signal_group(leader, sent)
+    match crate::work::signal_group(leader, sent) {
+        Ok(()) | Err(crate::work::WorkError::Outlived) => Ok(()),
+        Err(error) => Err(std::io::Error::other(error.to_string())),
+    }
 }
 
-/// Nothing to stop where a recorded leader cannot be found alive in the first place.
+/// Nothing to stop where a recorded group cannot be found alive in the first place.
 #[cfg(not(unix))]
 #[expect(
     clippy::unnecessary_wraps,
-    reason = "the same signature as the platform that records leaders it can signal"
+    reason = "the same signature as the platform that records groups it can signal"
 )]
-const fn stop_orphan(_pid: u32, _sent: crate::work::Sent) -> std::io::Result<()> {
+const fn stop_group(_pid: u32, _sent: crate::work::Sent) -> std::io::Result<()> {
     Ok(())
 }
 
@@ -485,15 +566,8 @@ impl Held {
                 Ok(())
             };
         };
-        let text = std::fs::read_to_string(record)?;
-        let mut kept: Vec<&str> = text
-            .lines()
-            .filter(|line| !line.starts_with("leader="))
-            .collect();
-        let leading = format!("leader={leader} {born}");
-        kept.push(&leading);
-        kept.push("");
-        replace(record, &kept.join("\n"))
+        let mut appending = OpenOptions::new().create(true).append(true).open(record)?;
+        appending.write_all(format!("group={leader} {born}\n").as_bytes())
     }
 }
 
@@ -550,17 +624,6 @@ fn started_at(pid: u32) -> Option<String> {
 #[cfg(not(unix))]
 const fn started_at(_pid: u32) -> Option<String> {
     None
-}
-
-/// The leader the record names and when it started.
-fn leader_of(record: &Path) -> Option<(u32, String)> {
-    let text = match std::fs::read_to_string(record) {
-        Ok(text) => text,
-        Err(_no_record) => return None,
-    };
-    let line = text.lines().find_map(|line| line.strip_prefix("leader="))?;
-    let (pid, born) = line.split_once(' ')?;
-    Some((number(pid)?, born.to_owned()))
 }
 
 fn number(text: &str) -> Option<u32> {

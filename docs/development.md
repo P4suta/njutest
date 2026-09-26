@@ -97,6 +97,8 @@ A raw thread or child may only be constructed inside the exact owner that joins 
 queues have a finite capacity and an explicit full/disconnect policy; and a panic-interrupted lock remains a typed sticky failure rather than being reclassified with `PoisonError::into_inner` or `clear_poison`.
 Renamed imports,
 qualified calls, macro bodies, and code excluded by the host's `cfg` are subject to the same rules.
+`raw-group-signal` keeps the end of a process group in one place: shipped code stops a group through `rust_mutants::runner::stop_group`, and only `runner/unix.rs` names `kill_process_group`, `kill_process`, `killpg` or the C library's `kill`.
+What the kernel answers a group signal is one question wherever it is asked — on macOS a group whose members have all ended while its leader waits to be reaped refuses it with `EPERM`, which is the group being gone — and the runner learned that while the provider, which sent its own signal, went on reporting a cleanup that failed.
 
 The `tri-state-bool` lint rejects `Option<bool>` and the aliases or macro constructors that can hide it.
 Three semantic states are a closed enum with three named variants, so every match is exhaustive and no caller has to guess whether `None` means unknown, unrecorded, inherited, or not applicable.
