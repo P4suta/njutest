@@ -269,21 +269,21 @@ impl ServingThread {
         }
     }
 
-    fn stop(&mut self) -> Result<(), ServingFailure> {
+    fn stop(&mut self) -> Result<(), ServingError> {
         self.stopping.store(true, Ordering::Release);
         self.join()
     }
 
-    fn join(&mut self) -> Result<(), ServingFailure> {
+    fn join(&mut self) -> Result<(), ServingError> {
         let Some(handle) = self.handle.take() else {
-            return Err(ServingFailure::AlreadyStopped);
+            return Err(ServingError::AlreadyStopped);
         };
         match handle.join() {
             Ok(Ok(())) => Ok(()),
-            Ok(Err(source)) => Err(ServingFailure::Accept { source }),
+            Ok(Err(source)) => Err(ServingError::Accept { source }),
             Err(panic) => {
                 drop(panic);
-                Err(ServingFailure::Panicked)
+                Err(ServingError::Panicked)
             }
         }
     }
@@ -300,7 +300,7 @@ impl Drop for ServingThread {
 
 /// Why the listening thread could not finish as one complete recording.
 #[derive(Debug, thiserror::Error)]
-enum ServingFailure {
+enum ServingError {
     /// A terminal operation had already consumed the handle.
     #[error("the interposer serving thread had already stopped")]
     AlreadyStopped,

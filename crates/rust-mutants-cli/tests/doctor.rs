@@ -273,3 +273,41 @@ fn every_check_that_passed_names_what_it_looked_at() {
          {silent:?}"
     );
 }
+
+#[test]
+fn a_cargo_named_on_the_command_line_is_used_where_the_path_has_none() {
+    let fixture = Fixture::copy("fixture-simple");
+    let empty = fixture.temp().join("nothing");
+    std::fs::create_dir_all(&empty).expect("an empty directory");
+    let installed = install(
+        &Script::new()
+            .answering(Invocation::new("cargo", &["-vV"]).printing(CARGO_BANNER))
+            .answering(Invocation::new("rustc", &["-vV"]).printing(RUSTC_BANNER))
+            .answering(
+                Invocation::new("rustc", &["--print", "target-libdir"])
+                    .printing("/nonexistent/sysroot/lib/rustlib/x86_64-unknown-linux-gnu/lib\n"),
+            ),
+    );
+    let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
+    command
+        .env_clear()
+        .env("NO_COLOR", "1")
+        .envs(installed.env())
+        .env("PATH", &empty)
+        .envs(njutest_devkit::paths::temporary_directory(fixture.temp()))
+        .env("XDG_CACHE_HOME", fixture.cache())
+        .args([
+            "doctor",
+            "--root",
+            njutest_devkit::paths::utf8(fixture.root()),
+            "--cargo",
+        ])
+        .arg(installed.cargo());
+    let output = command.output().expect("rust-mutants runs");
+    let text = njutest_devkit::process::strict_utf8(&output.stdout).into_owned();
+    assert!(
+        !text.contains("FAIL toolchain") && text.contains("cargo 1.98.0"),
+        "RM1012 tells a reader whose PATH has no cargo to name one with --cargo, so the cargo it \
+         names is the one every lookup uses: {text}"
+    );
+}

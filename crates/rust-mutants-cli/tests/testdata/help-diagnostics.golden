@@ -20,6 +20,10 @@ Options:
       --root <DIR>
           The workspace root. Defaults to the working directory
 
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
+
       --output <DIR>
           Write the bundle here rather than beside the run
 

@@ -74,7 +74,7 @@
       ],
       "properties": {
         "schema": {
-          "const": "rust-mutants-outcome-v2"
+          "const": "rust-mutants-outcome-v3"
         },
         "mutant": {
           "$ref": "#/$defs/digest"
@@ -122,7 +122,8 @@
             "steps",
             "build",
             "engine",
-            "runner"
+            "runner",
+            "declared"
           ],
           "properties": {
             "closure": {
@@ -160,6 +161,26 @@
             "runner": {
               "description": "The digest of what the runner that asked decides the answer under beyond the engine, or null where the engine itself asked.",
               "type": ["string", "null"]
+            },
+            "declared": {
+              "description": "The variables a claim's where.env names, which the configuration declared an answer depends on, and the digest of what the tests were given of each.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["names", "digest"],
+              "properties": {
+                "names": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
             }
           }
         }

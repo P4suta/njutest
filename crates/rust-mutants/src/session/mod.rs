@@ -682,9 +682,24 @@ impl Request {
         self.clone().with_target(target)
     }
 }
+/// What a build made of the file a claim's locator names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unread {
+    /// A unit of the build read it, so the catalog answers for it.
+    Compiled,
+    /// No unit read it, and the locator names what walking it finds.
+    Named,
+    /// No unit read it, and the locator names nothing in it, or it is not there.
+    Nothing,
+}
+
 /// A prepared workspace.
 #[derive(Debug)]
 pub struct Session {
+    /// The rules discovery applied, which a claim on a file no unit read is walked with.
+    selection: crate::syntax::Selection<'static>,
+    /// What the toolchain says the build's target is, which a claim's `where` is judged against.
+    facts: crate::facts::Facts,
     workspace: Workspace,
     /// The test executables the run starts, as the build left them, which every execution is checked against.
     apparatus: crate::apparatus::Apparatus,
@@ -898,7 +913,52 @@ impl Session {
                 entered.completeness = crate::touch::Completeness::Cut;
             }
         }
-        Ok(result)
+        Ok(self.declined(&exec.target().id, result))
+    }
+
+    /// `result`, a mutant execution against `target`, with its survival held to the tests that declined in it (ADR 0043).
+    ///
+    /// A survival whose every passing test declined as the baseline's did measured nothing; a decline the baseline did not make is a detection; and a notice that cannot be believed leaves no survival to believe.
+    fn declined(&self, target: &str, mut result: MutantResult) -> MutantResult {
+        if result.conclusion != MutantConclusion::Survived {
+            return result;
+        }
+        result.conclusion = match &result.declines {
+            crate::decline::Declines::Unbelieved { because } => {
+                self.workspace.trace.note(
+                    crate::decline::DECLINE_NOTICE_FILE,
+                    &format!("{target}: {}", because.said()),
+                );
+                MutantConclusion::Errored
+            }
+            crate::decline::Declines::Read { declined, .. } => {
+                match crate::decline::held(declined, self.declined_in_baseline(target)) {
+                    crate::decline::Held::Detected { by } => {
+                        MutantConclusion::DeclinedUnderTheMutant { by }
+                    }
+                    crate::decline::Held::SetAside(tests)
+                        if !tests.is_empty() && tests.len() == result.passed_tests.len() =>
+                    {
+                        MutantConclusion::Declined { tests }
+                    }
+                    crate::decline::Held::SetAside(_) => MutantConclusion::Survived,
+                }
+            }
+        };
+        result
+    }
+
+    /// The declines `target`'s baseline made, or none where the target has no baseline a mutation may be judged against.
+    fn declined_in_baseline(&self, target: &str) -> &[crate::decline::Decline] {
+        match self
+            .verified
+            .targets
+            .get(target)
+            .and_then(Measured::judgeable)
+        {
+            Some(passing) => &passing.baseline().declined,
+            None => &[],
+        }
     }
 
     /// The short name a person reads for the mutant whose full identity is `id`, or the identity itself where the catalog holds no such mutant.
@@ -1109,6 +1169,93 @@ impl Session {
             (several, None) => Err(LocateError::Several {
                 display_ids: named(several),
             }),
+        }
+    }
+
+    /// What the toolchain says the build's target is, kept to the names a target alone decides.
+    #[must_use]
+    pub const fn facts(&self) -> &crate::facts::Facts {
+        &self.facts
+    }
+
+    /// Nothing where every fact `under` names holds of this run's target and of the environment its tests are given, and otherwise the first that does not.
+    ///
+    /// # Errors
+    /// The fact that does not hold.
+    pub fn holds(&self, under: &crate::run::Where) -> Result<(), crate::run::Unheld> {
+        if let Some(predicate) = &under.cfg
+            && !predicate.holds(&self.facts)
+        {
+            return Err(crate::run::Unheld::Cfg {
+                predicate: predicate.to_string(),
+            });
+        }
+        for (name, wanted) in &under.env {
+            let given = self
+                .workspace
+                .base_env
+                .iter()
+                .find(|(held, _)| held == std::ffi::OsStr::new(name));
+            match given {
+                Some((_, value)) if value == std::ffi::OsStr::new(wanted) => {}
+                Some(_) | None => {
+                    return Err(crate::run::Unheld::Env {
+                        name: name.clone(),
+                        given: given.is_some(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// What the tests are given of each of `names`, which the configuration declared an answer may depend on.
+    #[must_use]
+    pub fn declared(&self, names: &BTreeSet<String>) -> crate::outcomes::Declared {
+        crate::outcomes::Declared::of(names, &self.workspace.base_env)
+    }
+
+    /// What this build made of the file `locator` names: one a unit read, or one none did, walked with the rules discovery applied to say whether the locator names something in it.
+    #[must_use]
+    pub fn unread(&self, locator: &Locator) -> Unread {
+        if self.files.iter().any(|file| file.path == locator.path) {
+            return Unread::Compiled;
+        }
+        let inside = std::path::Path::new(&locator.path)
+            .components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)));
+        if !inside {
+            return Unread::Nothing;
+        }
+        let Ok(walked) = discover::walk(self.snapshot_root(), &locator.path, &self.selection)
+        else {
+            return Unread::Nothing;
+        };
+        let matching: Vec<&crate::syntax::Found> = walked
+            .candidates
+            .iter()
+            .filter(|found| {
+                found.candidate.rule.name == locator.rule
+                    && (locator.original.is_empty()
+                        || found.candidate.original == locator.original.as_bytes())
+                    && names(&found.item, &locator.item)
+            })
+            .collect();
+        let narrowed: Vec<&crate::syntax::Found> = match locator.line {
+            Some(line) if matching.len() > 1 => matching
+                .into_iter()
+                .filter(|found| found.position.line == line)
+                .collect(),
+            _ => matching,
+        };
+        let named = match locator.count {
+            Some(wanted) => usize::try_from(wanted).is_ok_and(|wanted| narrowed.len() == wanted),
+            None => narrowed.len() == 1,
+        };
+        if named {
+            Unread::Named
+        } else {
+            Unread::Nothing
         }
     }
 
@@ -1779,7 +1926,10 @@ impl Session {
         if let Some(test) = &request.test {
             exec = exec.with_test(test.clone());
         }
-        let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
+        let result = self.declined(
+            &target.id,
+            execute::exec(&exec, &context, cancel, &self.workspace.trace),
+        );
         let evidence = Notice {
             mutant: mutant.id.to_string(),
             catalog: self.catalog.digest().to_owned(),
@@ -2176,6 +2326,7 @@ impl Session {
             alone,
             entered_records: result.entered.as_ref().map(|entered| entered.records),
             lingered: result.lingered,
+            declined: result.declines.believed().to_vec(),
         });
         Ok(())
     }
@@ -2203,6 +2354,7 @@ impl Session {
             timeout_source: source.name().to_owned(),
             alone: false,
             lingered: result.lingered,
+            declined: result.declines.believed().to_vec(),
         });
         Ok(())
     }
@@ -3108,16 +3260,19 @@ fn duration_ms(duration: Duration) -> Result<u64, SessionError> {
         .map_err(|_overflow| SessionError::DurationMillisOverflow { duration })
 }
 
-/// Whether a target said anything at all.
+/// Whether a target said anything at all: one whose every passing test declined to measure measured nothing, so it cannot outweigh a target that did (ADR 0043).
 const fn spoke(result: &MutantResult) -> bool {
     match result.conclusion {
-        MutantConclusion::Inconclusive | MutantConclusion::StepLimitReached { .. } => false,
+        MutantConclusion::Inconclusive
+        | MutantConclusion::StepLimitReached { .. }
+        | MutantConclusion::Declined { .. } => false,
         MutantConclusion::NotRun
         | MutantConclusion::Killed
         | MutantConclusion::Survived
         | MutantConclusion::Waited
         | MutantConclusion::Unobserved
-        | MutantConclusion::Errored => true,
+        | MutantConclusion::Errored
+        | MutantConclusion::DeclinedUnderTheMutant { .. } => true,
     }
 }
 
@@ -3198,7 +3353,9 @@ const fn completeness_of(
     use execute::Stopped;
     match stopped {
         Stopped::Exited { .. } => match conclusion {
-            MutantConclusion::Survived => Completeness::Whole,
+            MutantConclusion::Survived
+            | MutantConclusion::Declined { .. }
+            | MutantConclusion::DeclinedUnderTheMutant { .. } => Completeness::Whole,
             MutantConclusion::Killed => Completeness::UpToFirstFailure,
             MutantConclusion::NotRun
             | MutantConclusion::StepLimitReached { .. }
@@ -3215,7 +3372,9 @@ const fn completeness_of(
             | MutantConclusion::Waited
             | MutantConclusion::Inconclusive
             | MutantConclusion::Unobserved
-            | MutantConclusion::Errored => Completeness::Cut,
+            | MutantConclusion::Errored
+            | MutantConclusion::Declined { .. }
+            | MutantConclusion::DeclinedUnderTheMutant { .. } => Completeness::Cut,
         },
         Stopped::NotStarted { .. }
         | Stopped::TimedOut { .. }
@@ -3631,6 +3790,7 @@ const fn unreached() -> MutantResult {
             cause: execute::StartFailure::NotAsked,
         },
         lingered: false,
+        declines: crate::decline::Declines::none(),
     }
 }
 

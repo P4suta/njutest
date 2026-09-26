@@ -2856,7 +2856,7 @@ pub struct ModelDigest(String);
 /// A closed construction failure for the compiler-checked model evidence graph.
 /// These are programmer/protocol invariants, never user prose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub(crate) enum ModelInvariant {
+pub(crate) enum ModelInvariantError {
     #[error("the pristine source digest is not canonical")]
     SourceDigest,
     #[error("the rendered source digest is not canonical")]
@@ -3054,16 +3054,16 @@ struct ModelCrateIdentity {
 }
 
 impl ModelCrateIdentity {
-    fn checked(sha256: String) -> Result<Self, ModelInvariant> {
+    fn checked(sha256: String) -> Result<Self, ModelInvariantError> {
         Ok(Self {
             package: crate::assure::model::MODEL_PACKAGE.to_owned(),
             edition: crate::assure::model::MODEL_EDITION.to_owned(),
             source: ModelRelativePath::parse(crate::assure::model::MODEL_SOURCE_PATH)
-                .ok_or(ModelInvariant::CrateInput)?,
+                .ok_or(ModelInvariantError::CrateInput)?,
             offline: true,
             dependency_resolution: crate::assure::model::MODEL_DEPENDENCY_POLICY.to_owned(),
             environment: crate::assure::model::MODEL_ENVIRONMENT_POLICY.to_owned(),
-            sha256: ModelDigest::parse(sha256).ok_or(ModelInvariant::CrateDigest)?,
+            sha256: ModelDigest::parse(sha256).ok_or(ModelInvariantError::CrateDigest)?,
         })
     }
 
@@ -3097,7 +3097,7 @@ impl<'de> Deserialize<'de> for ModelCrateIdentity {
             || wire.dependency_resolution != crate::assure::model::MODEL_DEPENDENCY_POLICY
             || wire.environment != crate::assure::model::MODEL_ENVIRONMENT_POLICY
         {
-            return Err(serde::de::Error::custom(ModelInvariant::CrateInput));
+            return Err(serde::de::Error::custom(ModelInvariantError::CrateInput));
         }
         Self::checked(wire.sha256).map_err(serde::de::Error::custom)
     }
@@ -3158,36 +3158,36 @@ pub(crate) struct ModelIdentityInput {
 }
 
 impl ModelIdentity {
-    pub(crate) fn checked(input: ModelIdentityInput) -> Result<Self, ModelInvariant> {
+    pub(crate) fn checked(input: ModelIdentityInput) -> Result<Self, ModelInvariantError> {
         let source_sha256 =
-            ModelDigest::parse(input.source_sha256).ok_or(ModelInvariant::SourceDigest)?;
+            ModelDigest::parse(input.source_sha256).ok_or(ModelInvariantError::SourceDigest)?;
         let rendered_sha256 =
-            ModelDigest::parse(input.rendered_sha256).ok_or(ModelInvariant::RenderedDigest)?;
+            ModelDigest::parse(input.rendered_sha256).ok_or(ModelInvariantError::RenderedDigest)?;
         let crate_input = ModelCrateIdentity::checked(input.crate_sha256)?;
         if crate_input.digest().as_str()
             != crate::assure::model::model_crate_digest_from_rendered_digest(
                 rendered_sha256.as_str(),
             )
         {
-            return Err(ModelInvariant::CrateInput);
+            return Err(ModelInvariantError::CrateInput);
         }
-        let mutant = ModelDigest::parse(input.mutant).ok_or(ModelInvariant::MutantDigest)?;
-        let path = ModelRelativePath::parse(&input.path).ok_or(ModelInvariant::Path)?;
-        let rule_version =
-            std::num::NonZeroU32::new(input.rule_version).ok_or(ModelInvariant::RuleVersion)?;
+        let mutant = ModelDigest::parse(input.mutant).ok_or(ModelInvariantError::MutantDigest)?;
+        let path = ModelRelativePath::parse(&input.path).ok_or(ModelInvariantError::Path)?;
+        let rule_version = std::num::NonZeroU32::new(input.rule_version)
+            .ok_or(ModelInvariantError::RuleVersion)?;
         let original_hex =
-            ModelHex::parse(input.original_hex).ok_or(ModelInvariant::OriginalHex)?;
+            ModelHex::parse(input.original_hex).ok_or(ModelInvariantError::OriginalHex)?;
         let replacement_hex =
-            ModelHex::parse(input.replacement_hex).ok_or(ModelInvariant::ReplacementHex)?;
+            ModelHex::parse(input.replacement_hex).ok_or(ModelInvariantError::ReplacementHex)?;
         let span = input
             .end_byte
             .checked_sub(input.start_byte)
-            .ok_or(ModelInvariant::Span)?;
-        let span = usize::try_from(span).map_err(|_error| ModelInvariant::Span)?;
+            .ok_or(ModelInvariantError::Span)?;
+        let span = usize::try_from(span).map_err(|_error| ModelInvariantError::Span)?;
         let original =
-            hex::decode(&original_hex.0).map_err(|_error| ModelInvariant::OriginalHex)?;
-        let replacement =
-            hex::decode(&replacement_hex.0).map_err(|_error| ModelInvariant::ReplacementHex)?;
+            hex::decode(&original_hex.0).map_err(|_error| ModelInvariantError::OriginalHex)?;
+        let replacement = hex::decode(&replacement_hex.0)
+            .map_err(|_error| ModelInvariantError::ReplacementHex)?;
         if input.harness != format!("__njutest_model_{}", mutant.as_str())
             || input.assertion != format!("njutest-model-v1:{}", mutant.as_str())
             || input.rule.is_empty()
@@ -3195,25 +3195,25 @@ impl ModelIdentity {
             || original_hex.bytes() != span
             || original == replacement
         {
-            return Err(ModelInvariant::Identity);
+            return Err(ModelInvariantError::Identity);
         }
         let stable = rust_mutants::id::Identity {
             path: path.as_str().to_owned(),
             rule_name: input.rule.clone(),
             rule_version: rule_version.get(),
             span: rust_mutants::span::Span::new(input.start_byte, input.end_byte)
-                .map_err(|_error| ModelInvariant::Span)?,
+                .map_err(|_error| ModelInvariantError::Span)?,
             source_digest: source_sha256.as_str().to_owned(),
             original_digest: rust_mutants::id::digest(&original),
             replacement_digest: rust_mutants::id::digest(&replacement),
         };
         if stable
             .id()
-            .map_err(|_error| ModelInvariant::Identity)?
+            .map_err(|_error| ModelInvariantError::Identity)?
             .as_str()
             != mutant.as_str()
         {
-            return Err(ModelInvariant::MutantBinding);
+            return Err(ModelInvariantError::MutantBinding);
         }
         Ok(Self {
             harness: input.harness,
@@ -3303,11 +3303,15 @@ pub struct ModelArtifact {
 }
 
 impl ModelArtifact {
-    pub(crate) fn checked(path: &str, bytes: u64, sha256: String) -> Result<Self, ModelInvariant> {
+    pub(crate) fn checked(
+        path: &str,
+        bytes: u64,
+        sha256: String,
+    ) -> Result<Self, ModelInvariantError> {
         Ok(Self {
-            path: ModelArtifactPath::parse(path).ok_or(ModelInvariant::ArtifactPath)?,
-            bytes: std::num::NonZeroU64::new(bytes).ok_or(ModelInvariant::ArtifactBytes)?,
-            sha256: ModelDigest::parse(sha256).ok_or(ModelInvariant::ArtifactDigest)?,
+            path: ModelArtifactPath::parse(path).ok_or(ModelInvariantError::ArtifactPath)?,
+            bytes: std::num::NonZeroU64::new(bytes).ok_or(ModelInvariantError::ArtifactBytes)?,
+            sha256: ModelDigest::parse(sha256).ok_or(ModelInvariantError::ArtifactDigest)?,
         })
     }
 
@@ -3379,7 +3383,7 @@ pub(crate) struct ModelVerifierInput {
 }
 
 impl ModelVerifier {
-    pub(crate) fn checked(input: ModelVerifierInput) -> Result<Self, ModelInvariant> {
+    pub(crate) fn checked(input: ModelVerifierInput) -> Result<Self, ModelInvariantError> {
         if input.tool != crate::assure::model::KANI_VERSION
             || input.export_version != crate::assure::model::KANI_EXPORT_VERSION
             || input.build_mode != crate::assure::model::KANI_BUILD_MODE
@@ -3394,7 +3398,7 @@ impl ModelVerifier {
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
         {
-            return Err(ModelInvariant::Verifier);
+            return Err(ModelInvariantError::Verifier);
         }
         Ok(Self {
             tool: input.tool,
@@ -3573,14 +3577,14 @@ pub(crate) struct ModelEvidenceInput<P> {
 }
 
 impl<P> ModelEvidence<P> {
-    pub(crate) fn checked(input: ModelEvidenceInput<P>) -> Result<Self, ModelInvariant> {
+    pub(crate) fn checked(input: ModelEvidenceInput<P>) -> Result<Self, ModelInvariantError> {
         if input.source.digest() != input.identity.rendered_digest() {
-            return Err(ModelInvariant::SourceBinding);
+            return Err(ModelInvariantError::SourceBinding);
         }
         if !input.artifact.belongs_to(input.identity.mutant(), "json")
             || !input.source.belongs_to(input.identity.mutant(), "rs")
         {
-            return Err(ModelInvariant::ArtifactBinding);
+            return Err(ModelInvariantError::ArtifactBinding);
         }
         Ok(Self {
             verifier: input.verifier,
@@ -3655,10 +3659,11 @@ impl ModelAttemptEvidence {
     const EMPTY_SHA256: &'static str =
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
-    pub(crate) fn checked(input: ModelAttemptEvidenceInput) -> Result<Self, ModelInvariant> {
-        let raw_sha256 = ModelDigest::parse(input.raw_sha256).ok_or(ModelInvariant::RawDigest)?;
+    pub(crate) fn checked(input: ModelAttemptEvidenceInput) -> Result<Self, ModelInvariantError> {
+        let raw_sha256 =
+            ModelDigest::parse(input.raw_sha256).ok_or(ModelInvariantError::RawDigest)?;
         if input.source.digest() != input.identity.rendered_digest() {
-            return Err(ModelInvariant::SourceBinding);
+            return Err(ModelInvariantError::SourceBinding);
         }
         if !input.source.belongs_to(input.identity.mutant(), "rs")
             || input
@@ -3666,19 +3671,19 @@ impl ModelAttemptEvidence {
                 .as_ref()
                 .is_some_and(|artifact| !artifact.belongs_to(input.identity.mutant(), "json"))
         {
-            return Err(ModelInvariant::ArtifactBinding);
+            return Err(ModelInvariantError::ArtifactBinding);
         }
         match input.artifact.as_ref() {
             Some(artifact) if artifact.digest() != &raw_sha256 => {
-                return Err(ModelInvariant::ArtifactRawBinding);
+                return Err(ModelInvariantError::ArtifactRawBinding);
             }
             None if raw_sha256.as_str() != Self::EMPTY_SHA256 => {
-                return Err(ModelInvariant::AbsentRawBinding);
+                return Err(ModelInvariantError::AbsentRawBinding);
             }
             Some(_) | None => {}
         }
         if input.verifier.is_some() && input.artifact.is_none() {
-            return Err(ModelInvariant::VerifierArtifact);
+            return Err(ModelInvariantError::VerifierArtifact);
         }
         Ok(Self {
             verifier: input.verifier,
@@ -3956,9 +3961,9 @@ impl ModelAttempt {
     pub(crate) fn checked(
         reason: ModelUncertainty,
         evidence: ModelAttemptEvidence,
-    ) -> Result<Self, ModelInvariant> {
+    ) -> Result<Self, ModelInvariantError> {
         if matches!(&reason, ModelUncertainty::OtherFailure(category) if category.is_empty()) {
-            return Err(ModelInvariant::OtherFailure);
+            return Err(ModelInvariantError::OtherFailure);
         }
         let process = evidence.process;
         let supported = match &reason {
@@ -3998,7 +4003,7 @@ impl ModelAttempt {
             }
         };
         if !supported {
-            return Err(ModelInvariant::ReasonProcess);
+            return Err(ModelInvariantError::ReasonProcess);
         }
         Ok(Self { reason, evidence })
     }
@@ -4094,10 +4099,13 @@ impl CatalogIndex {
 }
 
 impl ModelRecord {
-    pub(crate) fn checked(mutant: String, answer: ModelDecision) -> Result<Self, ModelInvariant> {
-        let mutant = ModelDigest::parse(mutant).ok_or(ModelInvariant::RecordMutant)?;
+    pub(crate) fn checked(
+        mutant: String,
+        answer: ModelDecision,
+    ) -> Result<Self, ModelInvariantError> {
+        let mutant = ModelDigest::parse(mutant).ok_or(ModelInvariantError::RecordMutant)?;
         if answer.mutant().is_some_and(|identity| identity != &mutant) {
-            return Err(ModelInvariant::RecordBinding);
+            return Err(ModelInvariantError::RecordBinding);
         }
         Ok(Self { mutant, answer })
     }

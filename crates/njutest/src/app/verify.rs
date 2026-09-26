@@ -117,7 +117,7 @@ enum TraceSetupError {
 
 /// Why a verification could not establish its immutable pre-run inputs.
 #[derive(Debug, thiserror::Error)]
-enum InitializationFailure {
+enum InitializationError {
     /// The requested configuration could not be loaded.
     #[error(transparent)]
     Load(#[from] LoadError),
@@ -144,7 +144,7 @@ struct Initialized {
 
 /// Why configured-build evidence could not take its one legal terminal transition into a durable report document.
 #[derive(Debug, thiserror::Error)]
-enum CompletionFailure {
+enum VerifyCompletionError {
     /// Progress output failed while the terminal model phase was running.
     #[error("writing model-phase progress: {source}")]
     Output {
@@ -174,15 +174,15 @@ enum CompletionFailure {
 
 /// A completion failure, distinguished by whether abandoning its private publication namespace failed too.
 #[derive(Debug, thiserror::Error)]
-enum ReconciliationFailure {
+enum ReconciliationError {
     /// The private staging tree was removed after completion failed.
     #[error(transparent)]
-    Completion(CompletionFailure),
+    Completion(VerifyCompletionError),
     /// Neither completion nor removal of its unpublished evidence succeeded.
     #[error("{completion}; abandoning the unpublished run also failed: {abort}")]
     CompletionAndAbort {
         /// Why no complete document could be constructed.
-        completion: CompletionFailure,
+        completion: VerifyCompletionError,
         /// Why the staging tree could not be removed.
         abort: reports::StoreError,
     },
@@ -375,7 +375,7 @@ fn reported_cache_identity(
 fn initialize(
     arguments: &Verify,
     environment: &Environment,
-) -> Result<Initialized, InitializationFailure> {
+) -> Result<Initialized, InitializationError> {
     let root = environment.rooted(arguments.directory.as_deref());
     let workspace = reports::WorkspaceRoot::open(&root)?;
     let loaded = load(arguments, &workspace)?;
@@ -614,7 +614,7 @@ fn reconcile_measured(
     establishing: &Establishing<'_>,
     measured: Vec<(String, rust_mutants::cargo::BuildSelection, run::Outcome)>,
     stderr: &mut dyn Write,
-) -> ControlFlow<ReconciliationFailure, Reconciled> {
+) -> ControlFlow<ReconciliationError, Reconciled> {
     let mut kept = Vec::new();
     let mut parts = Vec::with_capacity(measured.len());
     let mut prepared = Vec::with_capacity(measured.len());
@@ -626,17 +626,17 @@ fn reconcile_measured(
     let measurements = match crate::report::across::BuildMeasurements::checked(parts) {
         Ok(measurements) => measurements,
         Err(error) => {
-            return ControlFlow::Break(ReconciliationFailure::Completion(CompletionFailure::from(
-                crate::report::across::ConfiguredError::from(error),
-            )));
+            return ControlFlow::Break(ReconciliationError::Completion(
+                VerifyCompletionError::from(crate::report::across::ConfiguredError::from(error)),
+            ));
         }
     };
     let latticed = match crate::report::across::configured(establishing.identity, &measurements) {
         Ok(latticed) => latticed,
         Err(error) => {
-            return ControlFlow::Break(ReconciliationFailure::Completion(CompletionFailure::from(
-                error,
-            )));
+            return ControlFlow::Break(ReconciliationError::Completion(
+                VerifyCompletionError::from(error),
+            ));
         }
     };
     let directory = match establishing
@@ -645,9 +645,9 @@ fn reconcile_measured(
     {
         Ok(directory) => directory,
         Err(error) => {
-            return ControlFlow::Break(ReconciliationFailure::Completion(CompletionFailure::from(
-                error,
-            )));
+            return ControlFlow::Break(ReconciliationError::Completion(
+                VerifyCompletionError::from(error),
+            ));
         }
     };
     let completed = complete_lattice(
@@ -665,8 +665,8 @@ fn reconcile_measured(
         Ok(report) => report,
         Err(completion) => {
             return ControlFlow::Break(match directory.abort() {
-                Ok(()) => ReconciliationFailure::Completion(completion),
-                Err(abort) => ReconciliationFailure::CompletionAndAbort { completion, abort },
+                Ok(()) => ReconciliationError::Completion(completion),
+                Err(abort) => ReconciliationError::CompletionAndAbort { completion, abort },
             });
         }
     };
@@ -707,7 +707,7 @@ struct Modeling<'request, 'establishing, 'context, 'out> {
 fn complete_lattice(
     latticed: crate::report::LatticedDocument,
     completing: Completing<'_, '_, '_, '_>,
-) -> Result<crate::report::ReportDocument, CompletionFailure> {
+) -> Result<crate::report::ReportDocument, VerifyCompletionError> {
     let Completing {
         request,
         establishing,
@@ -763,7 +763,7 @@ fn complete_lattice(
 fn model_records(
     plan: crate::assure::model::Plan,
     modeling: Modeling<'_, '_, '_, '_>,
-) -> Result<Vec<crate::report::ModelRecord>, CompletionFailure> {
+) -> Result<Vec<crate::report::ModelRecord>, VerifyCompletionError> {
     let Modeling {
         request,
         establishing,
@@ -790,7 +790,7 @@ fn model_records(
     let mut notes = ui::Notes::of(establishing.arguments.ui, stderr);
     notes
         .phase("model")
-        .map_err(|source| CompletionFailure::Output { source })?;
+        .map_err(|source| VerifyCompletionError::Output { source })?;
     establishing.trace.stage("model");
     let phase = establishing.trace.phase("model-prove");
     let decided = crate::assure::model::prove(
@@ -814,11 +814,11 @@ fn model_records(
     for path in &preserved {
         notes
             .note("kept", &path.display().to_string())
-            .map_err(|source| CompletionFailure::Output { source })?;
+            .map_err(|source| VerifyCompletionError::Output { source })?;
     }
     notes
         .finish()
-        .map_err(|source| CompletionFailure::Output { source })?;
+        .map_err(|source| VerifyCompletionError::Output { source })?;
     kept.extend(preserved);
     Ok(decided
         .into_iter()

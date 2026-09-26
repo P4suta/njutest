@@ -54,7 +54,7 @@ pub struct Known {
 /// The record of execution leaders was left poisoned by a thread that panicked while holding it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("the record of which process led each execution was left poisoned")]
-pub struct LeadersPoisoned;
+pub struct LeadersPoisonedError;
 
 impl Leaders {
     /// Records that `pid` leads an execution that has just started, and where its container names the processes it takes in.
@@ -85,9 +85,9 @@ impl Leaders {
     /// Every leader recorded so far, and every member each running execution's container has named by now.
     ///
     /// # Errors
-    /// [`LeadersPoisoned`] when a thread panicked while holding the record.
-    pub fn every(&self) -> Result<Known, LeadersPoisoned> {
-        let mut held = self.0.lock().map_err(|_poisoned| LeadersPoisoned)?;
+    /// [`LeadersPoisonedError`] when a thread panicked while holding the record.
+    pub fn every(&self) -> Result<Known, LeadersPoisonedError> {
+        let mut held = self.0.lock().map_err(|_poisoned| LeadersPoisonedError)?;
         let running: Vec<u32> = held.watched.keys().copied().collect();
         for leader in running {
             held.drained(leader);

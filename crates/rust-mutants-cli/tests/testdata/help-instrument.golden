@@ -16,6 +16,10 @@ Options:
       --root <DIR>
           The workspace root. Defaults to the working directory
 
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
+
       --config <FILE>
           Read this configuration file instead of the one in the workspace root
 

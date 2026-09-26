@@ -53,6 +53,7 @@ fn environment(fixture: &Fixture) -> Environment {
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        cargo: None,
         ci: rust_mutants_cli::CiHost::None,
     }
 }
@@ -632,4 +633,224 @@ fn decided_rows(fixture: &Fixture) -> usize {
         .iter()
         .filter(|row| row["outcome"] == "killed" || row["outcome"] == "survived")
         .count()
+}
+
+/// A run of `fixture` whose tests are given `name` set to `value` on top of what every run is given.
+fn under(fixture: &Fixture, args: &[&str], (name, value): (&str, &str)) -> Output {
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let mut given = environment(fixture);
+    given.vars.retain(|(held, _)| held != name);
+    given
+        .vars
+        .push((OsString::from(name), OsString::from(value)));
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(args.iter().copied())
+            .chain(["--root", root.as_str()])
+            .map(OsString::from),
+        &given,
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    njutest_devkit::process::answered(code, out, err)
+}
+
+/// How many of the newest run's rows an earlier run's answer decided.
+fn reused_rows(fixture: &Fixture) -> usize {
+    let directory = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    );
+    let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
+    let document: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&text).expect("the report is JSON");
+    document["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .filter(|row| !row["source_run_id"].is_null())
+        .count()
+}
+
+#[test]
+fn an_answer_is_never_read_back_under_another_value_of_a_variable_a_claim_declared() {
+    let fixture = Fixture::copy("fixture-simple");
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        "version = 1\n[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"max\"\n\
+         rule = \"gt-to-ge\"\noriginal = \">\"\noutcome = \"survived\"\n\
+         where = { env = { FIXTURE_SIMPLE_MODE = \"declared\" } }\n\
+         reason = \"a claim that holds only where the tests are told a mode\"\n",
+    )
+    .expect("the configuration is written");
+    let quietly = [
+        "run",
+        "--offline",
+        "--locked",
+        "--tier",
+        "all",
+        "--no-coverage",
+        "--ui",
+        "quiet",
+    ];
+    let first = under(&fixture, &quietly, ("FIXTURE_SIMPLE_MODE", "one"));
+    assert!(
+        first.status.code().is_some_and(|code| code < 2),
+        "the arranging run: {first:?}"
+    );
+    let other = under(&fixture, &quietly, ("FIXTURE_SIMPLE_MODE", "two"));
+    assert!(
+        other.status.code().is_some_and(|code| code < 2),
+        "{other:?}"
+    );
+    assert_eq!(
+        reused_rows(&fixture),
+        0,
+        "the configuration declares that an answer may depend on FIXTURE_SIMPLE_MODE, so an \
+         answer measured with it `one` says nothing about a run that gives the tests `two`: {}",
+        said(&other)
+    );
+    let same = under(&fixture, &quietly, ("FIXTURE_SIMPLE_MODE", "one"));
+    assert!(same.status.code().is_some_and(|code| code < 2), "{same:?}");
+    assert!(
+        reused_rows(&fixture) > 0,
+        "the value the answers were measured under answers again: {}",
+        said(&same)
+    );
+}
+
+#[test]
+fn a_crate_an_earlier_run_instrumented_is_built_again_when_this_run_leaves_it_as_written() {
+    let fixture = Fixture::copy("fixture-witness-downstream");
+    let quietly = [
+        "run",
+        "--offline",
+        "--locked",
+        "--tier",
+        "all",
+        "--no-coverage",
+        "--ui",
+        "quiet",
+    ];
+    let whole = against(&fixture, &quietly);
+    assert!(
+        whole.status.code().is_some_and(|code| code < 2),
+        "the arranging run instruments both crates and reaches a verdict: {whole:?}"
+    );
+    let narrowed = against(
+        &fixture,
+        &[
+            &quietly[..],
+            &["--no-cache", "--include", "crates/downstream/src/lib.rs"],
+        ]
+        .concat(),
+    );
+    let document: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&njutest_devkit::fixture::stored_report(
+            &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+        ))
+        .expect("the report is a document");
+    let undecided: Vec<String> = document["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .filter(|row| row["outcome"] != "killed")
+        .map(|row| format!("{} {} {}", row["path"], row["rule"], row["outcome"]))
+        .collect();
+    assert!(
+        narrowed.status.code() == Some(0) && undecided.is_empty(),
+        "a run that catalogs only downstream leaves upstream as written, and cargo decides by a \
+         file's time whether to compile it again; the copy keeps the time the file was written, \
+         which is older than the instrumented upstream the first run built, so a build that \
+         trusts the time links that upstream, whose runtime belongs to another catalog: \
+         {undecided:?}\n{narrowed:?}"
+    );
+}
+
+/// Every fingerprint cargo keeps under `temp`, beside the time it was last written.
+fn fingerprints_under(
+    temp: &std::path::Path,
+) -> std::collections::BTreeMap<String, std::time::SystemTime> {
+    let mut found = std::collections::BTreeMap::new();
+    let mut pending = vec![temp.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries {
+            let entry = entry.expect("an entry of a directory being listed");
+            let path = entry.path();
+            let kind = entry.file_type().expect("an entry's type");
+            if !kind.is_dir() {
+                continue;
+            }
+            let fingerprint = path
+                .parent()
+                .and_then(std::path::Path::file_name)
+                .is_some_and(|name| name == ".fingerprint");
+            if fingerprint {
+                for unit in std::fs::read_dir(&path).expect("a unit's fingerprint") {
+                    let unit = unit.expect("a fingerprint file");
+                    let written = unit
+                        .metadata()
+                        .and_then(|metadata| metadata.modified())
+                        .expect("a fingerprint file's time");
+                    found.insert(
+                        unit.path()
+                            .strip_prefix(temp)
+                            .expect("under the temporary root")
+                            .display()
+                            .to_string(),
+                        written,
+                    );
+                }
+            } else {
+                pending.push(path);
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn a_repeat_run_of_an_unchanged_tree_compiles_nothing_again() {
+    let fixture = Fixture::copy("fixture-simple");
+    let quietly = [
+        "run",
+        "--offline",
+        "--locked",
+        "--tier",
+        "all",
+        "--no-coverage",
+        "--ui",
+        "quiet",
+    ];
+    for arranging in 0..2 {
+        let output = against(&fixture, &quietly);
+        assert!(
+            output.status.code().is_some_and(|code| code < 2),
+            "arranging run {arranging}: {output:?}"
+        );
+    }
+    let before = fingerprints_under(fixture.temp());
+    assert!(!before.is_empty(), "the runs built something");
+    let repeated = against(&fixture, &quietly);
+    assert!(
+        repeated.status.code().is_some_and(|code| code < 2),
+        "{repeated:?}"
+    );
+    let after = fingerprints_under(fixture.temp());
+    let compiled: Vec<&String> = after
+        .iter()
+        .filter(|(unit, written)| before.get(*unit) != Some(*written))
+        .map(|(unit, _)| unit)
+        .collect();
+    assert!(
+        compiled.is_empty(),
+        "a run of a tree whose bytes are the ones the last run built compiles nothing: every \
+         unit it wrote a fingerprint for is work the last run had already done: {compiled:#?}"
+    );
 }

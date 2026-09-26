@@ -16,6 +16,10 @@ Options:
       --tier <TIER>
           Only the rules this tier selects. Every tier when none is named
 
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
+
       --json
           Print the rules as a document rather than the lines a person reads
 

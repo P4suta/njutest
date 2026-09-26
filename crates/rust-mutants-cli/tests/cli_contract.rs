@@ -52,6 +52,7 @@ fn environment() -> Environment {
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        cargo: None,
         ci: rust_mutants_cli::CiHost::None,
     }
 }
@@ -416,6 +417,7 @@ fn with(switch: Option<&str>, root: &Path) -> (rust_mutants_cli::config::Config,
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        cargo: None,
         ci: rust_mutants_cli::CiHost::None,
     };
     let settings = Settings::resolve(&scope, &environment).expect("a scope with nothing wrong");

@@ -10,6 +10,9 @@ A change that needs nothing is not listed.
 
 ## Unreleased
 
+**A variable a claim's `where.env` names keys every stored answer.** The configuration declares with it that an answer may depend on the variable, so an answer measured under one value is never read back where the tests are given another ([ADR 0042](../adr/0042-a-claim-holds-where-its-facts-do.md)).
+Records move to `rust-mutants-outcome-v3` under `rust-mutants/outcomes-v3`, each carrying the declared names beside one digest of their values; the old store is not read, so the first run after upgrading starts cold, and `cache --clear-outcomes` of the release before removes what it left.
+
 **Stored outcomes are keyed on the engine that decided them.** The key now carries the digest of the running executable, because two builds of the engine may mean two different things by the same verdict, and a survival one build remembered was replayed by another that would have called it inconclusive.
 Every rebuild or upgrade starts from a cold cache; nothing is to be done about it, and an engine that cannot read its own executable remembers nothing.
 

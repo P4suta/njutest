@@ -179,16 +179,17 @@ fn verify_target(
         result = again;
         retried = true;
     }
+    let baseline = baseline_of(&result)?;
     building.trace.verify(crate::trace::VerifyRecord {
         target: target.id.clone(),
-        outcome: result.outcome().name().to_owned(),
+        outcome: baseline.outcome.name().to_owned(),
         tests_run: result.tests_run(),
         duration_ms: duration_millis(result.duration)?,
         args: building.options.harness_args.clone(),
         remembered: false,
         retried,
+        declined: baseline.declined.clone(),
     });
-    let baseline = baseline_of(&result)?;
     if target.kind == TargetKind::Doc && result.tests_run() == Some(0) {
         target
             .limitations
@@ -258,25 +259,36 @@ fn uncontrolled(watched: &Path, target: &str, trace: &crate::trace::Recorder) ->
 }
 
 /// What one baseline process came to, keeping what it printed only where it did not pass.
+///
+/// A pass whose decline notice cannot be believed is not one: a decline the run cannot hold to a test that ran is no account of which tests measured.
 fn baseline_of(result: &MutantResult) -> Result<Baseline, SessionError> {
+    let (outcome, declined, refused) = match &result.declines {
+        crate::decline::Declines::Read { declined, .. } => {
+            (result.outcome(), declined.clone(), None)
+        }
+        crate::decline::Declines::Unbelieved { because } if passing(result.outcome()) => (
+            crate::outcome::Outcome::Errored,
+            Vec::new(),
+            Some(because.said()),
+        ),
+        crate::decline::Declines::Unbelieved { .. } => (result.outcome(), Vec::new(), None),
+    };
     Ok(Baseline {
-        outcome: result.outcome(),
+        outcome,
+        declined,
         duration: result.duration,
         tests: match result.tests_run() {
             Some(tests) => tests,
             None => trace_count("passed baseline tests", result.passed_tests.len())?,
         },
         ignored: trace_count("ignored baseline tests", result.ignored_tests.len())?,
-        output: if matches!(
-            result.outcome(),
-            crate::outcome::Outcome::Survived | crate::outcome::Outcome::Inconclusive
-        ) {
-            String::new()
-        } else {
-            match std::str::from_utf8(&result.output) {
+        output: match refused {
+            Some(refused) => refused,
+            None if passing(outcome) => String::new(),
+            None => match std::str::from_utf8(&result.output) {
                 Ok(output) => output.to_owned(),
                 Err(_not_utf8) => crate::telling::LosslessBytes::new(&result.output).to_string(),
-            }
+            },
         },
     })
 }
@@ -319,7 +331,7 @@ const BASELINE_NOT_REMEMBERED: &str = "baseline-not-remembered";
 
 /// The recipe of a remembered baseline.
 /// The engine version is also in every key; this number makes a semantic invalidation explicit within one build.
-const BASELINE_ABI: u32 = 2;
+const BASELINE_ABI: u32 = 3;
 
 /// The on-disk shape of one passing baseline.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -342,6 +354,7 @@ struct RememberedBaseline {
     tests: u32,
     ignored: u32,
     tests_run: Option<u32>,
+    declined: Vec<crate::decline::Decline>,
 }
 
 /// Where the passing answer to this exact baseline may be found.
@@ -735,6 +748,7 @@ impl Remembering {
                     tests: baseline.tests,
                     ignored: baseline.ignored,
                     tests_run: *observed_tests_run,
+                    declined: baseline.declined.clone(),
                 },
             );
             if previous.is_some() {
@@ -786,6 +800,7 @@ fn recalled(remembered: Remembered, path: &Path) -> Result<Recalled, BaselineCac
             tests: baseline.tests,
             ignored: baseline.ignored,
             output: String::new(),
+            declined: baseline.declined,
         };
         if !value.passed() {
             return Err(BaselineCacheError::Contradiction {
@@ -844,6 +859,7 @@ fn replay(
             args: harness_args.to_vec(),
             remembered: true,
             retried: false,
+            declined: baseline.declined.clone(),
         });
         if target.kind == TargetKind::Doc
             && tests_run
@@ -1279,6 +1295,8 @@ pub struct Baseline {
     pub ignored: u32,
     /// What it printed, kept only where it did not pass, because that is the only time anybody reads it.
     pub output: String,
+    /// Each test that declined to measure, in its words, which is the only decline a mutant execution of the target is excused (ADR 0043).
+    pub declined: Vec<crate::decline::Decline>,
 }
 
 /// Whether an outcome with nothing active is one a mutation can be put to.

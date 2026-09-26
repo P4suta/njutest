@@ -42,7 +42,7 @@ fn killed() -> Value {
         "outcome": "killed", "target": TARGET, "exit_code": 101,
         "duration_ms": 7, "tests_run": 2, "killed_by": ["larger_works"],
         "signal": null, "step_notice": null, "retried": false, "lingered": false,
-        "not_run_reason": null,
+        "not_run_reason": null, "declined": [],
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
         "identical": "not-measured", "expected": false, "unreached": false,
@@ -63,6 +63,7 @@ fn survived() -> Value {
         "outcome": "survived", "target": TARGET, "exit_code": 0,
         "duration_ms": 5, "tests_run": 2, "killed_by": [], "signal": null,
         "step_notice": null, "retried": false, "lingered": false, "not_run_reason": null,
+        "declined": [],
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
         "identical": "not-measured", "expected": true, "unreached": false,
@@ -106,7 +107,7 @@ pub fn base() -> Value {
             "cataloged": 2, "refused": 1, "skipped": 0, "executed": 2,
             "killed": 1, "survived": 1, "step_limit_reached": 0, "waited": 0,
             "inconclusive": 0, "errored": 0, "not_run": 0, "unreached": 0,
-            "discharged": 0, "expected": 1
+            "discharged": 0, "declined": 0, "expected": 1
         },
         "score": { "detected": 1, "decided": 2, "value": 0.5 },
         "mutants": [killed(), survived()],
@@ -124,10 +125,11 @@ pub fn base() -> Value {
                 "id": SURVIVED, "reason": "the bound is equivalent under the invariant",
                 "outcome": "survived", "mutant": SURVIVED,
                 "locator": null, "covered": null,
-                "standing": "met", "actual": "survived", "why": null
+                "standing": "met", "actual": "survived", "why": null, "where": null
             }
         ],
-        "findings": []
+        "findings": [],
+        "facts": ["panic=\"unwind\"", "target_os=\"linux\"", "unix"]
     })
 }
 
@@ -153,7 +155,7 @@ pub fn recording() -> Vec<Value> {
             "details":[{"id":TARGET,"kind":"lib","harness":true,"limitations":[]}]}}),
         json!({"seq":6,"timestamp":"2026-09-06T10:15:01Z","elapsed_ms":40,
             "type":"verify","verify":{"target":TARGET,"outcome":"survived","tests_run":2,
-            "duration_ms":5,"remembered":false,"retried":false}}),
+            "duration_ms":5,"remembered":false,"retried":false,"declined":[]}}),
         json!({"seq":7,"timestamp":"2026-09-06T10:15:01Z","elapsed_ms":50,
             "type":"phase-end","phase":{"name":"prepare","duration_ms":50}}),
     ];
@@ -176,7 +178,7 @@ fn judged(seq: (u64, u64), index: u64, id: &str, outcome: &str) -> [Value; 2] {
         json!({"seq":seq.1,"timestamp":"2026-09-06T10:15:02Z",
             "elapsed_ms":61,"type":"mutant-exec","mutant":{"id":short(id),
             "index":index,"target":TARGET,"outcome":outcome,
-            "exit_code":exit,"duration_ms":5,"tests_run":2,"lingered":false}}),
+            "exit_code":exit,"duration_ms":5,"tests_run":2,"lingered":false,"declined":[]}}),
     ]
 }
 
