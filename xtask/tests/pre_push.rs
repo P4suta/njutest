@@ -31,6 +31,7 @@ const LOOKS_AT_ITS_OWNER: &str = "printf '%s\\n' \"$*\" >> \"$CALLS\"; case \"$*
 struct Repository {
     directory: tempfile::TempDir,
     _commands: tempfile::TempDir,
+    binary: PathBuf,
     scratch: tempfile::TempDir,
     head: String,
     path: OsString,
@@ -41,6 +42,10 @@ struct Repository {
 
 impl Repository {
     fn new(check: &str) -> Self {
+        Self::new_from(check, Path::new(env!("CARGO_BIN_EXE_xtask")))
+    }
+
+    fn new_from(check: &str, binary: &Path) -> Self {
         let directory = tempfile::tempdir().expect("a temporary repository");
         command(directory.path(), "git", &["init", "--quiet"]);
         command(
@@ -84,6 +89,9 @@ impl Repository {
 
         let commands = tempfile::tempdir().expect("a private bin directory");
         let bin = commands.path().to_path_buf();
+        let private_binary = bin.join("xtask");
+        std::fs::copy(binary, &private_binary).expect("a private gate binary");
+        executable(&private_binary);
         let mise = bin.join("mise");
         std::fs::write(
             &mise,
@@ -108,6 +116,7 @@ impl Repository {
         Self {
             directory,
             _commands: commands,
+            binary: private_binary,
             scratch,
             head,
             path,
@@ -221,7 +230,7 @@ impl Repository {
         handed: &[(&str, &std::ffi::OsStr)],
         told: Stdio,
     ) -> Command {
-        let mut command = isolated(env!("CARGO_BIN_EXE_xtask"));
+        let mut command = isolated(&self.binary);
         for (name, _value) in std::env::vars_os() {
             if xtask::prepush::shapes_the_build(&name) {
                 command.env_remove(name);
@@ -376,7 +385,7 @@ fn object_id(directory: &Path, revision: &str) -> String {
 }
 
 /// A command with none of the `GIT_*` variables a hook hands down, so it touches only the repository it runs in.
-fn isolated(program: &str) -> Command {
+fn isolated(program: impl AsRef<std::ffi::OsStr>) -> Command {
     let mut command = Command::new(program);
     for (name, _) in std::env::vars_os() {
         if name.as_encoded_bytes().starts_with(b"GIT_") {
@@ -658,6 +667,23 @@ fn a_commit_that_passed_is_not_checked_again() {
         "a gate that did not run says so rather than looking like one that did: {}",
         stderr(&again)
     );
+}
+
+#[test]
+fn replacing_the_source_binary_does_not_erase_a_remembered_pass() {
+    let source = tempfile::tempdir().expect("a private source for the gate binary");
+    let binary = source.path().join("xtask");
+    std::fs::copy(env!("CARGO_BIN_EXE_xtask"), &binary).expect("the source gate binary");
+    executable(&binary);
+    let repository = Repository::new_from(ACCEPTS_THE_CHECK, &binary);
+    let first = repository.push(&repository.head);
+    assert!(first.status.success(), "{}", stderr(&first));
+    std::fs::write(&binary, "a later build replaced the source binary")
+        .expect("a replacement gate binary");
+    let again = repository.push(&repository.head);
+    assert!(again.status.success(), "{}", stderr(&again));
+    assert_eq!(repository.calls(), 1, "the warm pass was not remembered");
+    assert_eq!(repository.cold_targets().len(), 2);
 }
 
 #[test]
