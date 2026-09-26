@@ -276,3 +276,12 @@ fn the_gate_and_the_suite_find_the_same_fixtures() {
          or the other way round"
     );
 }
+
+#[test]
+fn a_group_cannot_hide_a_file_where_only_fixtures_belong() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    xtask::repository::init(dir.path()).expect("a repository to read the tree as git lists it");
+    write(dir.path(), "group/README.md", "not a fixture\n");
+    let error = xtask::fixtures::discover(dir.path()).expect_err("a group holds only fixtures");
+    assert!(error.to_string().contains("not a fixture"), "{error}");
+}

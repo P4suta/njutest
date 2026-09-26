@@ -103,6 +103,15 @@ pub fn discover(dir: &Path) -> Result<Vec<String>, CheckError> {
             found.push(name);
             continue;
         }
+        if let Some(file) = listing(&path)?
+            .into_iter()
+            .find(|relative| !relative.contains('/'))
+        {
+            return Err(CheckError::NotAFixture {
+                path: path.join(file),
+                group: path,
+            });
+        }
         for (inner, nested) in children(&path)? {
             if !is_file(&nested.join("Cargo.toml")) {
                 return Err(CheckError::NotAFixture {
