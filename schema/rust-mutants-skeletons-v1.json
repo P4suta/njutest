@@ -16,7 +16,7 @@
       "const": "rust-mutants/skeletons"
     },
     "schema_version": {
-      "const": 1
+      "const": 2
     },
     "items": {
       "description": "Every cataloged item, by the item index touched-v1.json names it by.",
@@ -47,7 +47,8 @@
         "name",
         "body_digest",
         "sealed",
-        "unsealed"
+        "unsealed",
+        "start"
       ],
       "properties": {
         "index": {
@@ -99,6 +100,17 @@
             },
             {
               "$ref": "#/$defs/unsealing"
+            }
+          ]
+        },
+        "start": {
+          "description": "Where its body's opening brace stands as the compiler reports a position, null where no unit read its file or its file is not text.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/position"
             }
           ]
         }
@@ -215,12 +227,31 @@
           "description": "Every entry the skeleton folds, by name: a file under the root or the target directory, a variable, or a build script's output, with its digest or value.",
           "type": "object",
           "propertyNames": {
-            "pattern": "^[$](root|target|env|emitted)/"
+            "pattern": "^[$](root|target|env|emitted|positions)/"
           },
           "additionalProperties": {
             "type": "string",
             "minLength": 1
           }
+        }
+      }
+    },
+    "position": {
+      "description": "A position as the compiler reports one: a line counted from 1 that only a line feed ends, and a column counted from 1 in characters, a leading byte-order mark not among them.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "line",
+        "column"
+      ],
+      "properties": {
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
         }
       }
     }

@@ -2397,6 +2397,138 @@ fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
     );
 }
 
+/// A report's rows by where their mutation is.
+type Rows = std::collections::BTreeMap<(u64, String, String, String), serde_json::Value>;
+
+/// Runs fixture-two-bodies, rewrites `from` as `to` in its library, runs it again with carrying and traced, and runs it once more without the store, holding every carried answer to the one running it gives; answers with what the carrying run stored and its trace.
+fn edited_pair(fixture: &Fixture, (from, to): (&str, &str)) -> (Rows, String) {
+    let asked = ["run", "--offline", "--locked", "--tier", "all"];
+    let first = against(fixture, &asked);
+    assert!(
+        first.status.code() == Some(0) || first.status.code() == Some(1),
+        "{}",
+        stderr(&first)
+    );
+    let source = fixture.root().join("src/lib.rs");
+    let text = std::fs::read_to_string(&source).expect("the library");
+    assert!(text.contains(from), "{from:?} is in the library");
+    std::fs::write(&source, text.replace(from, to)).expect("the edit");
+    let carried = against(
+        fixture,
+        &["run", "--offline", "--locked", "--tier", "all", "--trace"],
+    );
+    assert!(
+        carried.status.code() == Some(0) || carried.status.code() == Some(1),
+        "{}",
+        stderr(&carried)
+    );
+    let with_carry = by_place(&stored(fixture));
+    let trace = std::fs::read_to_string(
+        njutest_devkit::fixture::newest_run(
+            &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+        )
+        .join("trace/trace.jsonl"),
+    )
+    .expect("the carrying run's trace");
+    let fresh = against(
+        fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-cache",
+        ],
+    );
+    assert!(
+        fresh.status.code() == Some(0) || fresh.status.code() == Some(1),
+        "{}",
+        stderr(&fresh)
+    );
+    let without = by_place(&stored(fixture));
+    let differ = disagreements(&with_carry, &without);
+    assert!(
+        differ.is_empty(),
+        "a carried answer must be the answer running it gives: {differ:?}"
+    );
+    (with_carry, trace)
+}
+
+/// Every word the trace refused a carried answer with.
+fn refusal_words(trace: &str) -> Vec<String> {
+    trace
+        .lines()
+        .map(|line| {
+            njutest_devkit::strictjson::decode_str::<serde_json::Value>(line)
+                .expect("a trace event")
+        })
+        .filter(|event| event["payload"]["type"] == "cache")
+        .filter_map(|event| {
+            event["payload"]["cache"]["refused"]
+                .as_str()
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
+#[test]
+fn a_line_added_below_every_body_an_execution_entered_leaves_its_answer_carried() {
+    let fixture = Fixture::copy("fixture-two-bodies");
+    let (with_carry, trace) = edited_pair(
+        &fixture,
+        (
+            "        assert!(super::over(10));",
+            "        // ten is over the limit, and nine is not\n        assert!(super::over(10));",
+        ),
+    );
+    let total: Vec<&serde_json::Value> = with_carry
+        .iter()
+        .filter(|(place, _)| place.0 == 8)
+        .map(|(_, row)| row)
+        .collect();
+    assert!(
+        !total.is_empty(),
+        "the fixture mutates `total`: {with_carry:#?}"
+    );
+    assert!(
+        total.iter().all(|row| !row["source_run_id"].is_null()),
+        "a line added inside the last test moves nothing an execution of a mutant of `total` \
+         entered, which is `total` and the test above the edit, so every such answer carries \
+         (refused: {:?}): {total:#?}",
+        refusal_words(&trace)
+    );
+}
+
+#[test]
+fn a_line_added_above_a_body_an_execution_entered_refuses_its_answer_as_moved() {
+    let fixture = Fixture::copy("fixture-two-bodies");
+    let (rows, trace) = edited_pair(
+        &fixture,
+        (
+            "    left + right\n",
+            "    // the two counts, added\n    left + right\n",
+        ),
+    );
+    let over: Vec<&serde_json::Value> = rows
+        .iter()
+        .filter(|(place, _)| place.0 >= 13)
+        .map(|(_, row)| row)
+        .collect();
+    assert!(
+        !over.is_empty() && over.iter().all(|row| row["source_run_id"].is_null()),
+        "every answer of `over` runs again: {over:#?}"
+    );
+    let words = refusal_words(&trace);
+    assert!(
+        !words.is_empty() && words.iter().all(|word| word == "item-moved"),
+        "a line added inside `total` moves `over` and the test below it, which every execution \
+         of a mutant of `over` entered, and a position there can be read by what runs, so each \
+         such answer is refused because what it entered moved, not because the tree's text \
+         outside the bodies changed: {words:?}"
+    );
+}
+
 #[test]
 fn an_execution_a_silent_process_ran_inside_records_what_it_entered_as_cut() {
     let fixture = Fixture::copy("fixture-silent-kill");
