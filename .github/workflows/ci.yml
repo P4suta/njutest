@@ -163,12 +163,12 @@ jobs:
         run: actionlint
       - name: every workflow the documentation shows passes actionlint against this repository's actions
         run: cargo xtask docflows
-      # Dependabot writes the body of a commit as the changelog it copied, and neither it nor anybody here wraps that at a hundred columns.
+      # Renovate writes the body of a commit from upstream release notes, and neither it nor anybody here wraps that at a hundred columns.
       # The rule is about a message somebody wrote, and what lands on `main` from one of those pull requests is the squash subject, which is its own `chore:` line and conventional already.
       - name: committed (pull request commits)
         if: >-
           github.event_name == 'pull_request'
-          && github.event.pull_request.user.login != 'dependabot[bot]'
+          && github.event.pull_request.user.login != 'renovate[bot]'
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
