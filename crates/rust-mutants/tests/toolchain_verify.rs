@@ -60,10 +60,17 @@ fn reuse_checks(
         &std::collections::BTreeMap<String, rust_mutants::session::Measured>,
         &rust_mutants::touch::Touched,
         usize,
+        &Ran,
     ),
 ) -> Recorder {
     let second_trace = memory_trace();
     let second = traced_prepare(fixture, &second_trace, options);
+    assert_eq!(
+        ran(&second).digests(),
+        first.3.digests(),
+        "a second prepare of an unchanged tree compiles nothing again, so it runs the bytes \
+         the first one ran, whether or not this machine would build them again the same"
+    );
     assert_eq!(second.verified().targets, *first.0);
     assert_eq!(second.verified().touched, *first.1);
     let second_events = second_trace.events();
@@ -100,6 +107,71 @@ fn damage_the_remembered_baseline(fixture: &Fixture) {
         serde_json::to_vec(&damaged).expect("damaged document"),
     )
     .expect("damage the cache");
+}
+
+/// Every executable a prepare is about to run, by target, where it is and what its bytes digest to.
+struct Ran(std::collections::BTreeMap<String, (std::path::PathBuf, String)>);
+
+impl Ran {
+    fn digests(&self) -> std::collections::BTreeMap<&str, &str> {
+        self.0
+            .iter()
+            .map(|(target, (_, digest))| (target.as_str(), digest.as_str()))
+            .collect()
+    }
+}
+
+fn ran(session: &Session) -> Ran {
+    Ran(session
+        .targets()
+        .iter()
+        .map(|target| {
+            (
+                target.id.clone(),
+                (
+                    target.executable.clone(),
+                    njutest_devkit::reproducible::digest(&target.executable),
+                ),
+            )
+        })
+        .collect())
+}
+
+fn alter_one_executable(ran: &Ran) -> String {
+    let (target, (executable, _)) = ran.0.iter().next().expect("a prepared target");
+    let mut bytes = std::fs::read(executable).expect("read the built executable");
+    bytes.extend_from_slice(b"bytes no build wrote");
+    std::fs::write(executable, bytes).expect("alter the built executable");
+    target.clone()
+}
+
+fn other_bytes_are_measured_again(
+    fixture: &Fixture,
+    options: &PrepareOptions,
+    first_ran: &Ran,
+    remembered_trace: &Recorder,
+) {
+    let altered = alter_one_executable(first_ran);
+    let altered_trace = memory_trace();
+    let measured = traced_prepare(fixture, &altered_trace, options);
+    let measured_ran = ran(&measured);
+    assert_ne!(
+        measured_ran.digests().get(altered.as_str()),
+        first_ran.digests().get(altered.as_str()),
+        "the prepare runs {altered} as it was altered, which is what a machine that builds one \
+         tree to two programs would hand it"
+    );
+    assert!(
+        !remembered(&altered_trace),
+        "a remembered baseline is an answer about a program, and {altered} is no longer the \
+         bytes it answered about"
+    );
+    assert!(
+        executions(&altered_trace) > executions(remembered_trace),
+        "an answer that is not remembered is measured again, its targets started as the \
+         remembered run did not start them"
+    );
+    measured.close().expect("close");
 }
 
 fn traced_prepare(fixture: &Fixture, recorder: &Recorder, options: &PrepareOptions) -> Session {
@@ -295,31 +367,24 @@ fn an_exact_passing_baseline_is_reused_without_starting_its_targets_again() {
     let first = traced_prepare(&fixture, &first_trace, &options);
     let first_targets = first.verified().targets.clone();
     let first_touched = first.verified().touched.clone();
+    let first_ran = ran(&first);
     first.close().expect("close");
     assert!(
         !remembered(&first_trace),
         "the first run measured the baseline"
     );
 
-    if !njutest_devkit::reproducible::builds_the_same_twice() {
-        let again = memory_trace();
-        let measured = traced_prepare(&fixture, &again, &options);
-        assert!(
-            !remembered(&again),
-            "a remembered baseline is an answer about a program, and this machine builds \
-             one tree to two of them: the bytes it would be answering about are not the \
-             bytes anything ran"
-        );
-        measured.close().expect("close");
-        return;
-    }
-
     let second_trace = reuse_checks(
         &fixture,
         &options,
-        (&first_targets, &first_touched, executions(&first_trace)),
+        (
+            &first_targets,
+            &first_touched,
+            executions(&first_trace),
+            &first_ran,
+        ),
     );
-    drop(second_trace);
+    other_bytes_are_measured_again(&fixture, &options, &first_ran, &second_trace);
 
     damage_the_remembered_baseline(&fixture);
     let damaged_trace = memory_trace();

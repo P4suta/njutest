@@ -368,7 +368,7 @@ fn the_equivalence_layer_asks_only_about_survivors_and_writes_identical_never_eq
         .iter()
         .filter(|one| one.outcome == Outcome::Survived)
         .collect();
-    let twice = njutest_devkit::reproducible::builds_the_same_twice();
+    let twice = njutest_devkit::reproducible::builds_a_reverted_change_to_the_same_bytes();
     let answered: Vec<rust_mutants::run::CodegenIdentity> =
         survivors.iter().map(|one| one.identical).collect();
     assert!(
