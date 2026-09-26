@@ -162,10 +162,6 @@ fn plan(floors: &[Floor], dirs: &BTreeMap<String, String>) -> Result<Vec<Report>
     Ok(reports)
 }
 
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "the parent uses this helper, while unreachable_pub forbids making it public"
-)]
 pub(super) fn ratchet(root: &Path, cargo: &OsStr) -> Result<String, GateError> {
     let floors = floors(include_str!("../coverage_floors.txt"))?;
     let metadata = cargo_metadata::MetadataCommand::new()

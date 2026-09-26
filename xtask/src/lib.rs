@@ -10,7 +10,8 @@ pub mod adrs;
 pub mod claims;
 pub mod concurrency;
 pub mod confirm;
-mod coverage;
+/// The one coverage-floor command shared by local tasks and CI.
+pub mod coverage;
 pub mod crashes;
 pub mod defaulted;
 pub mod deps;
