@@ -77,11 +77,14 @@ fn audited(document: &serde_json::Value) -> Audit {
 
 /// Valid confirmation evidence for every new kill, wait and unconfirmed disposition in a flat test document, so a test of another layer changes only that layer.
 fn confirmations(document: &serde_json::Value) -> Vec<serde_json::Value> {
-    let relevant: Vec<(&str, &str, &str)> = document
+    let Some(rows) = document
         .get("mutants")
         .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
+    else {
+        return Vec::new();
+    };
+    let relevant: Vec<(&str, &str, &str)> = rows
+        .iter()
         .filter(|row| {
             row.pointer("/reuse/reused")
                 .and_then(serde_json::Value::as_bool)

@@ -3432,14 +3432,20 @@ fn confirmations(
         notes.violated(subject, format!("{}: {why}", rule.label()));
     };
     for (target, test) in confirmed.asked_twice() {
+        let target = match target.as_deref() {
+            Some(target) => target,
+            None => "the whole suite",
+        };
+        let test = match test.as_deref() {
+            Some(test) => test,
+            None => "with every test",
+        };
         broke(
             &mut notes,
             "control",
             ConfirmRule::Twice,
             &format!(
-                "the original code was asked about {} {} more than once, which one control per question rules out",
-                target.as_deref().unwrap_or("the whole suite"),
-                test.as_deref().unwrap_or("with every test")
+                "the original code was asked about {target} {test} more than once, which one control per question rules out"
             ),
         );
     }
@@ -3488,13 +3494,16 @@ fn confirmation_of(
             broke(*rule, why);
         }
     }
+    let target = match mutant.killed_by.as_deref() {
+        Some(target) => target,
+        None => "no target",
+    };
     match (owed, on.last()) {
         (_, None) => broke(
             ConfirmRule::Missing,
             &format!(
                 "the report says {} against {}, and the recording holds no confirmation of it there, so nothing a reader can check says the original code passed that test and the result came back",
-                mutant.outcome,
-                mutant.killed_by.as_deref().unwrap_or("no target")
+                mutant.outcome, target
             ),
         ),
         (Some(_), Some(Decided::Unconfirmed)) => broke(

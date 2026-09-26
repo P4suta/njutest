@@ -751,18 +751,11 @@ fn placement_plants() -> Vec<Perturbation> {
         Perturbation {
             name: "where the compiler reads a position kept as a digest its file does not hash to",
             beside: {
+                let digest = "0".repeat(64);
                 let entries = json!({
-                    "$positions/$root/src/other.rs": "0".repeat(64)
+                    "$positions/$root/src/other.rs": digest
                 });
-                let mut folded = String::new();
-                if let Some(entries) = entries.as_object() {
-                    for (entry, digest) in entries {
-                        folded.push_str(entry);
-                        folded.push('\0');
-                        folded.push_str(digest.as_str().unwrap_or_default());
-                        folded.push('\n');
-                    }
-                }
+                let folded = format!("$positions/$root/src/other.rs\0{digest}\n");
                 carry_beside(
                     "src/other.rs",
                     &sealed,
