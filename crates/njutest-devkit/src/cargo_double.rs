@@ -76,15 +76,18 @@ impl Target {
     /// This target as cargo reports one.
     #[must_use]
     fn value(&self) -> serde_json::Value {
+        let crate_type = match self.kind.as_str() {
+            "bin" | "test" | "example" | "bench" | "custom-build" => "bin",
+            other => other,
+        };
         serde_json::json!({
             "kind": [self.kind],
-            "crate_types": [self.kind],
+            "crate_types": [crate_type],
             "name": self.name,
             "src_path": crate::paths::utf8(&self.source),
             "edition": "2024",
             "test": true,
             "doctest": true,
-            "harness": true,
         })
     }
 }
@@ -209,6 +212,8 @@ pub struct Document {
     pub target_directory: PathBuf,
     /// Every package the document reports.
     pub packages: Vec<Package>,
+    /// The packages cargo selects by default.
+    pub workspace_default_members: Vec<String>,
 }
 
 impl Document {
@@ -219,12 +224,14 @@ impl Document {
             root: root.to_path_buf(),
             target_directory: root.join("target"),
             packages: Vec::new(),
+            workspace_default_members: Vec::new(),
         }
     }
 
     /// The same document with `package` in it, as a workspace member.
     #[must_use]
     pub fn holding(mut self, package: Package) -> Self {
+        self.workspace_default_members.push(package.id());
         self.packages.push(package);
         self
     }
@@ -244,13 +251,8 @@ impl Document {
                 .iter()
                 .map(Package::id)
                 .collect::<Vec<_>>(),
-            "workspace_default_members": self
-                .packages
-                .iter()
-                .map(Package::id)
-                .collect::<Vec<_>>(),
+            "workspace_default_members": self.workspace_default_members,
             "packages": self.packages.iter().map(Package::value).collect::<Vec<_>>(),
-            "resolve": serde_json::Value::Null,
         });
         match serde_json::to_string(&value) {
             Ok(text) => text,
