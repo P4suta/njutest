@@ -6411,19 +6411,50 @@ enum CfgTruth {
 }
 
 fn cfg_constant(meta: &syn::Meta) -> CfgTruth {
+    cfg_truth(meta, &BTreeMap::new())
+}
+
+fn cfg_atom(meta: &syn::Meta) -> String {
+    let path = meta
+        .path()
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::");
+    match meta {
+        syn::Meta::Path(_) => format!("path:{path}"),
+        syn::Meta::NameValue(value) => {
+            let value = match &value.value {
+                syn::Expr::Lit(literal) => match &literal.lit {
+                    syn::Lit::Str(value) => value.value(),
+                    _ => format!("{:?}", literal.lit),
+                },
+                other => format!("{other:?}"),
+            };
+            format!("value:{path}={value:?}")
+        }
+        syn::Meta::List(list) => format!("list:{path}({})", list.tokens),
+    }
+}
+
+fn cfg_truth(meta: &syn::Meta, values: &BTreeMap<String, bool>) -> CfgTruth {
     let syn::Meta::List(list) = meta else {
-        return CfgTruth::Variable;
+        return cfg_atomic_truth(meta, values);
     };
+    if !list.path.is_ident("all") && !list.path.is_ident("any") && !list.path.is_ident("not") {
+        return cfg_atomic_truth(meta, values);
+    }
     let arguments = match list
         .parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
     {
         Ok(arguments) => arguments,
-        Err(_opaque_condition) => return CfgTruth::Variable,
+        Err(_opaque_condition) => return cfg_atomic_truth(meta, values),
     };
     if list.path.is_ident("all") {
         let mut variable = false;
         for argument in &arguments {
-            match cfg_constant(argument) {
+            match cfg_truth(argument, values) {
                 CfgTruth::Never => return CfgTruth::Never,
                 CfgTruth::Variable => variable = true,
                 CfgTruth::Always => {}
@@ -6438,7 +6469,7 @@ fn cfg_constant(meta: &syn::Meta) -> CfgTruth {
     if list.path.is_ident("any") {
         let mut variable = false;
         for argument in &arguments {
-            match cfg_constant(argument) {
+            match cfg_truth(argument, values) {
                 CfgTruth::Always => return CfgTruth::Always,
                 CfgTruth::Variable => variable = true,
                 CfgTruth::Never => {}
@@ -6451,13 +6482,80 @@ fn cfg_constant(meta: &syn::Meta) -> CfgTruth {
         };
     }
     if !list.path.is_ident("not") || arguments.len() != 1 {
-        return CfgTruth::Variable;
+        return cfg_atomic_truth(meta, values);
     }
-    match arguments.first().map(cfg_constant) {
+    match arguments.first().map(|one| cfg_truth(one, values)) {
         Some(CfgTruth::Always) => CfgTruth::Never,
         Some(CfgTruth::Never) => CfgTruth::Always,
         Some(CfgTruth::Variable) | None => CfgTruth::Variable,
     }
+}
+
+fn cfg_atomic_truth(meta: &syn::Meta, values: &BTreeMap<String, bool>) -> CfgTruth {
+    match values.get(&cfg_atom(meta)) {
+        Some(true) => CfgTruth::Always,
+        Some(false) => CfgTruth::Never,
+        None => CfgTruth::Variable,
+    }
+}
+
+fn cfg_atoms(meta: &syn::Meta, found: &mut BTreeSet<String>) {
+    if let syn::Meta::List(list) = meta
+        && (list.path.is_ident("all") || list.path.is_ident("any") || list.path.is_ident("not"))
+    {
+        match list.parse_args_with(
+            syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+        ) {
+            Ok(arguments) if !list.path.is_ident("not") || arguments.len() == 1 => {
+                for argument in &arguments {
+                    cfg_atoms(argument, found);
+                }
+                return;
+            }
+            Ok(_) | Err(_) => {}
+        }
+    }
+    found.insert(cfg_atom(meta));
+}
+
+fn cfg_conjunction_possible(conditions: &[syn::Meta]) -> bool {
+    let mut atoms = BTreeSet::new();
+    for condition in conditions {
+        cfg_atoms(condition, &mut atoms);
+    }
+    let atoms: Vec<String> = atoms.into_iter().collect();
+    cfg_assignment_possible(conditions, &atoms, 0, &mut BTreeMap::new())
+}
+
+fn cfg_assignment_possible(
+    conditions: &[syn::Meta],
+    atoms: &[String],
+    next: usize,
+    values: &mut BTreeMap<String, bool>,
+) -> bool {
+    let mut unresolved = false;
+    for condition in conditions {
+        match cfg_truth(condition, values) {
+            CfgTruth::Never => return false,
+            CfgTruth::Variable => unresolved = true,
+            CfgTruth::Always => {}
+        }
+    }
+    if !unresolved {
+        return true;
+    }
+    let Some(atom) = atoms.get(next) else {
+        return false;
+    };
+    values.insert(atom.clone(), true);
+    if cfg_assignment_possible(conditions, atoms, next.saturating_add(1), values) {
+        values.remove(atom);
+        return true;
+    }
+    values.insert(atom.clone(), false);
+    let possible = cfg_assignment_possible(conditions, atoms, next.saturating_add(1), values);
+    values.remove(atom);
+    possible
 }
 
 /// Where an environment is read as pairs: the one type that holds it, and the tooling the engine cannot be a dependency of.
@@ -6848,6 +6946,7 @@ fn implied_cfgs(parsed: &syn::File, file: &str) -> Vec<Finding> {
     let mut visitor = ImpliedCfg {
         file,
         held: Vec::new(),
+        conditions: Vec::new(),
         found: Vec::new(),
     };
     visitor.visit_file(parsed);
@@ -6858,6 +6957,7 @@ fn implied_cfgs(parsed: &syn::File, file: &str) -> Vec<Finding> {
 struct ImpliedCfg<'a> {
     file: &'a str,
     held: Vec<String>,
+    conditions: Vec<syn::Meta>,
     found: Vec<Finding>,
 }
 
@@ -6873,6 +6973,9 @@ impl ImpliedCfg<'_> {
                 syn::Meta::List(_) | syn::Meta::Path(_) | syn::Meta::NameValue(_) => None,
             })
             .collect();
+        let depth = self.held.len();
+        let condition_depth = self.conditions.len();
+        let mut possible = cfg_conjunction_possible(&self.conditions);
         for (condition, span) in &conditions {
             if implied(condition, &self.held) {
                 self.found.push(Finding {
@@ -6881,13 +6984,26 @@ impl ImpliedCfg<'_> {
                     line: span.start().line,
                 });
             }
-        }
-        let depth = self.held.len();
-        for (condition, _span) in &conditions {
+            match syn::parse2::<syn::Meta>(condition.clone()) {
+                Ok(parsed) => {
+                    self.conditions.push(parsed);
+                    let now = cfg_conjunction_possible(&self.conditions);
+                    if possible && !now {
+                        self.found.push(Finding {
+                            kind: Kind::VacuousCfg,
+                            file: self.file.to_owned(),
+                            line: span.start().line,
+                        });
+                    }
+                    possible = now;
+                }
+                Err(_opaque_condition) => {}
+            }
             self.held.extend(conjuncts(condition));
         }
         walk(self);
         self.held.truncate(depth);
+        self.conditions.truncate(condition_depth);
     }
 }
 

@@ -692,6 +692,11 @@ fn vacuous_cfg_cannot_hide_code_or_pretend_to_condition_it() {
         "#[cfg(not(all()))] fn dormant() {}\n",
         "#[cfg(all())] fn unconditional() {}\n",
         "#[cfg(not(any()))] fn unconditional() {}\n",
+        "#[cfg(unix)] #[cfg(not(unix))] fn impossible() {}\n",
+        "#[cfg(feature = \"extra\")] #[cfg(not(feature = \"extra\"))] fn impossible() {}\n",
+        "#[cfg(all(unix, not(unix)))] fn impossible() {}\n",
+        "#[cfg(any(unix, windows))] #[cfg(not(any(unix, windows)))] fn impossible() {}\n",
+        "#[cfg(unix)] mod platform { #[cfg(not(unix))] fn impossible() {} }\n",
         "#[cfg_attr(test, cfg(any()))] fn nested() {}\n",
         "macro_rules! hidden { () => { #[cfg(any())] fn dormant() {} } }\n",
         "fn active() -> bool { cfg!(all()) }\n",
@@ -707,6 +712,8 @@ fn vacuous_cfg_cannot_hide_code_or_pretend_to_condition_it() {
     }
     for source in [
         "#[cfg(unix)] fn platform() {}\n",
+        "#[cfg(unix)] #[cfg(feature = \"extra\")] fn platform() {}\n",
+        "#[cfg(any(unix, windows))] #[cfg(not(unix))] fn windows_only() {}\n",
         "#[cfg_attr(test, derive(Debug))] struct Conditional;\n",
         "fn platform() -> bool { cfg!(windows) }\n",
     ] {
@@ -715,6 +722,18 @@ fn vacuous_cfg_cannot_hide_code_or_pretend_to_condition_it() {
             "a real cfg boundary was mistaken for a constant: {source}"
         );
     }
+}
+
+#[test]
+fn contradictory_child_cfg_is_reported_at_the_child_attribute() {
+    let source = "#[cfg(unix)]\nmod platform {\n    #[cfg(not(unix))]\n    fn impossible() {}\n}\n";
+    let lines: Vec<_> = scan_source("a.rs", source)
+        .expect("the source parses")
+        .into_iter()
+        .filter(|finding| finding.kind == Kind::VacuousCfg)
+        .map(|finding| finding.line)
+        .collect();
+    assert_eq!(lines, [3]);
 }
 
 #[test]
