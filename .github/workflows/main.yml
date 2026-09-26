@@ -1,0 +1,56 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# What a push to `main` has already been asked.
+# `main` takes changes only through a squashed pull request that was up to date with it, so the tree a push brings is the tree that pull request's head was tested as.
+# This proves that of every push, from the commits themselves, rather than running `ci.yml` again on the same bytes:
+# a push whose tree is not one a head passed `ci-success` with fails here, and `ci.yml` can then be run on `main` by hand.
+name: main
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: main-${{ github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  tested-tree:
+    name: tested-tree
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: The tree main holds is one ci-success passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          pr=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '[.[] | select(.merged_at != null)][0].number // empty')
+          if [ -z "$pr" ]; then
+            echo "::error::$SHA reached main through no merged pull request, so no run of ci.yml has seen its tree"
+            exit 1
+          fi
+          head=$(gh api "repos/$REPO/pulls/$pr" --jq .head.sha)
+          main_tree=$(gh api "repos/$REPO/git/commits/$SHA" --jq .tree.sha)
+          head_tree=$(gh api "repos/$REPO/git/commits/$head" --jq .tree.sha)
+          if [ "$main_tree" != "$head_tree" ]; then
+            echo "::error::main's tree $main_tree is not the tree $head_tree that #$pr's head $head was tested as; run ci.yml on main"
+            exit 1
+          fi
+          passed=$(gh api "repos/$REPO/commits/$head/check-runs?check_name=ci-success&per_page=100" --jq '[.check_runs[] | select(.conclusion == "success")] | length')
+          if [ "$passed" -lt 1 ]; then
+            echo "::error::#$pr's head $head holds main's tree, and no ci-success of it succeeded; run ci.yml on main"
+            exit 1
+          fi
+          echo "main $SHA holds tree $main_tree, which #$pr's head $head passed ci-success with"
