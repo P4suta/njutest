@@ -633,3 +633,90 @@ fn decided_rows(fixture: &Fixture) -> usize {
         .filter(|row| row["outcome"] == "killed" || row["outcome"] == "survived")
         .count()
 }
+
+/// A run of `fixture` whose tests are given `name` set to `value` on top of what every run is given.
+fn under(fixture: &Fixture, args: &[&str], (name, value): (&str, &str)) -> Output {
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let mut given = environment(fixture);
+    given.vars.retain(|(held, _)| held != name);
+    given
+        .vars
+        .push((OsString::from(name), OsString::from(value)));
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(args.iter().copied())
+            .chain(["--root", root.as_str()])
+            .map(OsString::from),
+        &given,
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    njutest_devkit::process::answered(code, out, err)
+}
+
+/// How many of the newest run's rows an earlier run's answer decided.
+fn reused_rows(fixture: &Fixture) -> usize {
+    let directory = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    );
+    let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
+    let document: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&text).expect("the report is JSON");
+    document["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .filter(|row| !row["source_run_id"].is_null())
+        .count()
+}
+
+#[test]
+fn an_answer_is_never_read_back_under_another_value_of_a_variable_a_claim_declared() {
+    let fixture = Fixture::copy("fixture-simple");
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        "version = 1\n[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"max\"\n\
+         rule = \"gt-to-ge\"\noriginal = \">\"\noutcome = \"survived\"\n\
+         where = { env = { FIXTURE_SIMPLE_MODE = \"declared\" } }\n\
+         reason = \"a claim that holds only where the tests are told a mode\"\n",
+    )
+    .expect("the configuration is written");
+    let quietly = [
+        "run",
+        "--offline",
+        "--locked",
+        "--tier",
+        "all",
+        "--no-coverage",
+        "--ui",
+        "quiet",
+    ];
+    let first = under(&fixture, &quietly, ("FIXTURE_SIMPLE_MODE", "one"));
+    assert!(
+        first.status.code().is_some_and(|code| code < 2),
+        "the arranging run: {first:?}"
+    );
+    let other = under(&fixture, &quietly, ("FIXTURE_SIMPLE_MODE", "two"));
+    assert!(
+        other.status.code().is_some_and(|code| code < 2),
+        "{other:?}"
+    );
+    assert_eq!(
+        reused_rows(&fixture),
+        0,
+        "the configuration declares that an answer may depend on FIXTURE_SIMPLE_MODE, so an \
+         answer measured with it `one` says nothing about a run that gives the tests `two`: {}",
+        said(&other)
+    );
+    let same = under(&fixture, &quietly, ("FIXTURE_SIMPLE_MODE", "one"));
+    assert!(same.status.code().is_some_and(|code| code < 2), "{same:?}");
+    assert!(
+        reused_rows(&fixture) > 0,
+        "the value the answers were measured under answers again: {}",
+        said(&same)
+    );
+}

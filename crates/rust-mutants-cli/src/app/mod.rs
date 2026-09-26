@@ -1269,6 +1269,7 @@ fn keyed(session: &Session, whole: &Whole<'_>) -> crate::outcomes::Keyed {
         build: settings.config.build.config().arguments(),
         engine,
         runner: None,
+        declared: session.declared(&settings.config.declared_env()),
     }
 }
 

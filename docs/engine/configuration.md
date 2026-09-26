@@ -228,6 +228,7 @@ reason = "inotify never watches a subtree, so recursive() is false on every Linu
 `cfg` is a Cargo `cfg` predicate over the names a target alone decides — `target_*`, `unix`, `windows`, `panic` — as `rustc --print cfg` prints them for the build's target;
 any other name, such as `debug_assertions`, `test` or `feature`, is refused when the file is read, since no probe of the target can say whether it holds.
 `env` names exact values in the environment the tests are given.
+Every name it asks about is part of the outcome store's key and of carry's premises, because the claim declares that an answer depends on it: an answer measured under one value is never read back in a run whose tests are given another.
 Where a fact does not hold the claim is `inapplicable`, and two claims may name one mutation as long as no run makes both apply.
 
 A locator names one mutation.
