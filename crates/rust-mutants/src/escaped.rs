@@ -103,35 +103,10 @@ const fn working_directories() -> std::io::Result<Vec<(u32, PathBuf)>> {
 #[cfg(all(unix, not(target_os = "linux")))]
 const LISTING_LIMIT: usize = 16 * 1024 * 1024;
 
-/// Ends `pid` at once, where it is still there.
+/// Ends `pid` at once, where it is still there, through the runner, the one place that signals a process by id.
 ///
 /// # Errors
 /// The process could not be signalled for a reason other than having ended.
-#[cfg(unix)]
 pub fn stop(pid: u32) -> std::io::Result<()> {
-    let raw = match i32::try_from(pid) {
-        Ok(raw) => raw,
-        Err(_out_of_range) => return Ok(()),
-    };
-    let Some(pid) = rustix::process::Pid::from_raw(raw) else {
-        return Ok(());
-    };
-    match rustix::process::kill_process(pid, rustix::process::Signal::KILL) {
-        Ok(()) => Ok(()),
-        Err(errno) if errno == rustix::io::Errno::SRCH => Ok(()),
-        Err(errno) => Err(errno.into()),
-    }
-}
-
-/// Nothing to end on Windows, where the Job Object ended it.
-///
-/// # Errors
-/// None.
-#[cfg(windows)]
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "the same signature as the unix stop, which can fail"
-)]
-pub const fn stop(_pid: u32) -> std::io::Result<()> {
-    Ok(())
+    crate::runner::stop_process(pid)
 }

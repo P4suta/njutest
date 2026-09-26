@@ -1889,6 +1889,14 @@ pub fn stop_group(leader: u32, how: GroupStop) -> io::Result<Stopped> {
     unix::stop_group(leader, how)
 }
 
+/// Ends the one process `pid` at once, where it is still there: a process a run started that left every group it supervised.
+///
+/// # Errors
+/// The process could not be signalled for a reason other than having ended.
+pub fn stop_process(pid: u32) -> io::Result<()> {
+    sys::stop_process(pid)
+}
+
 /// How long a forceful end waits to see the child reaped before aborting the supervising process.
 pub const REAPING_GRACE: Duration = Duration::from_secs(10);
 
