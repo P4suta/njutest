@@ -159,13 +159,13 @@ fn package_install_deny_and_typos_are_exact_local_ci_pairs() {
 }
 
 #[test]
-fn pre_push_type_checks_windows_cfg_with_the_pinned_target() {
+fn the_windows_cfg_is_linted_with_the_pinned_target() {
     let setup = task("\"setup:windows-target\"");
     assert!(
         setup.contains("rustup target add --toolchain 1.98.0 x86_64-pc-windows-msvc"),
         "the cross-target standard library is not tied to the pinned compiler: {setup}"
     );
-    let windows = task("\"check:windows\"");
+    let windows = task("\"lint:windows\"");
     assert!(
         windows.contains("depends = [\"setup:windows-target\"]")
             && windows.contains("--target x86_64-pc-windows-msvc")
@@ -173,6 +173,12 @@ fn pre_push_type_checks_windows_cfg_with_the_pinned_target() {
             && !windows.contains("--all-features"),
         "the Windows cfg check can run without its exact target, omit a non-benchmark target or \
          feature, or pull in the host-only benchmark toolchain: {windows}"
+    );
+    assert!(
+        windows.contains("cargo clippy") && windows.contains("-- -D warnings"),
+        "a type check reads code behind `cfg(windows)` and passes a lint CI's Windows job fails \
+         on, as `missing_const_for_fn` on a function the other platform's branch made const did; \
+         the Windows reading is clippy with every warning an error: {windows}"
     );
     let selected_features = windows
         .split_once("--features ")
@@ -214,7 +220,7 @@ fn pre_push_type_checks_windows_cfg_with_the_pinned_target() {
 
     let cross = task("\"check:cross\"");
     assert!(
-        cross.contains("mise run check:windows") && cross.contains("mise run lint:linux"),
+        cross.contains("mise run lint:windows") && cross.contains("mise run lint:linux"),
         "the cross-target reads are no longer one task a person can ask for: {cross}"
     );
     let full = task("\"check:full\"");
