@@ -124,3 +124,31 @@ fn a_reading_runs_on_a_thread_of_its_own_and_a_reading_inside_it_on_another() {
          rather than a share of the outer one's"
     );
 }
+
+#[test]
+fn every_way_into_the_engine_that_reads_rust_leaves_the_callers_locations_as_they_were() {
+    let before = texts_on_this_thread();
+    let items = rust_mutants::instrument::items("src/lib.rs", SOURCE.as_bytes(), 0);
+    assert!(items.is_ok(), "the items are numbered: {items:?}");
+    let named = rust_mutants::instrument::module_name("src/lib.rs", SOURCE);
+    assert!(named.is_ok(), "the runtime module is named: {named:?}");
+    let other = rust_mutants::instrument::module_named_for(SOURCE, "__rm_witness");
+    assert!(
+        other.is_ok(),
+        "a module of another stem is named: {other:?}"
+    );
+    let flat = rust_mutants::flatten::flatten("a\n    + b");
+    assert!(flat.is_ok(), "a fragment folds onto one line: {flat:?}");
+    let forbids = rust_mutants::discover::forbids_guard_noise(SOURCE, &[]);
+    assert!(forbids.is_ok(), "the crate root is read: {forbids:?}");
+    let alone = rust_mutants::discover::freestanding(SOURCE, "2024");
+    assert!(alone.is_ok(), "the crate root is read: {alone:?}");
+    let through = rust_mutants::testkit::source::read_through(SOURCE, "__rm");
+    assert!(through.is_ok(), "the file reads through: {through:?}");
+    assert_eq!(
+        texts_on_this_thread(),
+        before + 1,
+        "every entry that reads Rust reads it on a thread that ends with it, so the caller's map \
+         holds only the probe's"
+    );
+}
