@@ -121,6 +121,77 @@ fn write_package(root: &std::path::Path, path: &str, name: &str) -> Result<(), T
     Ok(())
 }
 
+fn census_tree() -> Result<tempfile::TempDir, TestError> {
+    let root = tempfile::tempdir()?;
+    xtask::repository::init(root.path())?;
+    write_package(root.path(), "crates/root", "root")?;
+    std::fs::write(
+        root.path().join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/root\"]\nresolver = \"3\"\n",
+    )?;
+    for (path, name) in [
+        ("fuzz", "fuzz"),
+        ("fixtures/fixture-held", "held"),
+        ("fixtures/fixture-other", "other"),
+    ] {
+        write_package(root.path(), path, name)?;
+        std::fs::write(
+            root.path().join(path).join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n"
+            ),
+        )?;
+    }
+    Ok(root)
+}
+
+#[test]
+fn a_manifest_beneath_a_workspace_but_outside_its_members_is_refused() -> Result<(), TestError> {
+    for (path, name) in [
+        ("fuzz/unlisted", "fuzz-unlisted"),
+        ("fixtures/fixture-held/unlisted", "fixture-unlisted"),
+        (".unlisted", "hidden-unlisted"),
+    ] {
+        let root = census_tree()?;
+        write_package(root.path(), path, name)?;
+        let report = match xtask::gates::deps(root.path()) {
+            Ok(report) => report,
+            Err(error) => error.to_string(),
+        };
+        if !report.contains(&format!("{path}/Cargo.toml")) || !report.contains("belong to no class")
+        {
+            return Err(TestError::Missing {
+                expected: format!("{path}/Cargo.toml refused by the manifest census"),
+                report,
+            });
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn declared_fuzz_and_fixture_members_are_in_their_workspace_class() -> Result<(), TestError> {
+    let root = census_tree()?;
+    for (path, member, name) in [
+        ("fuzz", "member", "fuzz-member"),
+        ("fixtures/fixture-held", "member", "fixture-member"),
+        ("fixtures/fixture-other", "member", "other-member"),
+    ] {
+        write_package(root.path(), &format!("{path}/{member}"), name)?;
+        let manifest = root.path().join(path).join("Cargo.toml");
+        let source = std::fs::read_to_string(&manifest)?;
+        std::fs::write(&manifest, format!("{source}members = [\"{member}\"]\n"))?;
+    }
+    let report = xtask::gates::deps(root.path())?;
+    if !report.contains("2 root-workspace, 2 fuzz-workspace, and 4 fixture-workspace manifest(s)") {
+        return Err(TestError::Missing {
+            expected: "three workspace classes count only their declared members".to_owned(),
+            report,
+        });
+    }
+    Ok(())
+}
+
 #[test]
 fn real_manifests_cannot_hide_generators_by_rename_kind_target_or_fuzz() -> Result<(), TestError> {
     let root = tempfile::tempdir()?;

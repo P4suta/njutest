@@ -1470,12 +1470,17 @@ pub fn seam_sighted(kind: devgates::SeamKind, planted: &str) -> Result<usize, Ga
 /// # Errors
 /// Returns every edge the direction rule refuses, or a `cargo metadata` failure.
 pub fn deps(root: &Path) -> Result<String, GateError> {
-    let census = census(root)?;
     let metadata = cargo_metadata::MetadataCommand::new()
         .manifest_path(root.join("Cargo.toml"))
         .no_deps()
         .exec()
         .map_err(|error| GateError(format!("cargo metadata: {error}")))?;
+    let fuzz = cargo_metadata::MetadataCommand::new()
+        .manifest_path(root.join("fuzz/Cargo.toml"))
+        .no_deps()
+        .exec()
+        .map_err(|error| GateError(format!("cargo metadata for fuzz/Cargo.toml: {error}")))?;
+    let census = census(root, &metadata, &fuzz)?;
     let members: Vec<String> = metadata
         .workspace_packages()
         .iter()
@@ -1501,11 +1506,6 @@ pub fn deps(root: &Path) -> Result<String, GateError> {
     }
     let violations = deps::check(&edges);
     let mut prohibited = deps::prohibited_direct_dependencies(direct);
-    let fuzz = cargo_metadata::MetadataCommand::new()
-        .manifest_path(root.join("fuzz/Cargo.toml"))
-        .no_deps()
-        .exec()
-        .map_err(|error| GateError(format!("cargo metadata for fuzz/Cargo.toml: {error}")))?;
     prohibited.extend(deps::prohibited_direct_dependencies(
         fuzz.workspace_packages().iter().flat_map(|package| {
             package
@@ -1636,35 +1636,50 @@ fn features_only_tests_build_with(
 ///
 /// # Errors
 /// A manifest that belongs to none of the three, or metadata that could not be read.
-fn census(root: &Path) -> Result<String, GateError> {
-    let members: BTreeSet<PathBuf> = cargo_metadata::MetadataCommand::new()
-        .manifest_path(root.join("Cargo.toml"))
-        .no_deps()
-        .exec()
-        .map_err(|error| GateError(format!("cargo metadata: {error}")))?
-        .workspace_packages()
-        .iter()
-        .map(|package| PathBuf::from(package.manifest_path.as_std_path()))
-        .collect();
-    let fuzz = root.join("fuzz");
-    let fixtures = root.join("fixtures");
+fn census(
+    root: &Path,
+    root_metadata: &cargo_metadata::Metadata,
+    fuzz_metadata: &cargo_metadata::Metadata,
+) -> Result<String, GateError> {
+    let listed = crate::repository::files(root)?;
+    let mut classes = [
+        workspace_manifests(root, root_metadata)?,
+        workspace_manifests(&root.join("fuzz"), fuzz_metadata)?,
+        BTreeSet::new(),
+    ];
+    if listed.iter().any(|path| path.starts_with("fixtures/")) {
+        let dir = root.join("fixtures");
+        let names = fixtures::discover(&dir)
+            .map_err(|error| GateError(format!("{}: {error}", dir.display())))?;
+        for name in names {
+            let fixture = dir.join(&name);
+            let manifest = fixture.join("Cargo.toml");
+            let metadata = cargo_metadata::MetadataCommand::new()
+                .manifest_path(&manifest)
+                .no_deps()
+                .exec()
+                .map_err(|error| {
+                    GateError(format!(
+                        "cargo metadata for {}: {error}",
+                        manifest.display()
+                    ))
+                })?;
+            classes[2].extend(workspace_manifests(&fixture, &metadata)?);
+        }
+    }
     let mut counted = [0_usize; 3];
     let mut loose = Vec::new();
-    for relative in crate::repository::files(root)? {
-        if !(relative == "Cargo.toml" || relative.ends_with("/Cargo.toml"))
-            || relative.starts_with('.')
-        {
+    for relative in listed {
+        if !(relative == "Cargo.toml" || relative.ends_with("/Cargo.toml")) {
             continue;
         }
         let whole = root.join(&relative);
-        let path = whole.as_path();
-        let at = if path == root.join("Cargo.toml") || members.contains(path) {
-            0
-        } else if path.starts_with(&fuzz) {
-            1
-        } else if path.starts_with(&fixtures) {
-            2
-        } else {
+        let path = std::fs::canonicalize(&whole)
+            .map_err(|error| GateError(format!("{}: {error}", whole.display())))?;
+        let Some(at) = classes
+            .iter()
+            .position(|manifests| manifests.contains(&path))
+        else {
             loose.push(relative);
             continue;
         };
@@ -1683,12 +1698,40 @@ fn census(root: &Path) -> Result<String, GateError> {
         )));
     }
     Ok(format!(
-        "{} root-workspace manifest(s), {} under fuzz/ and {} under fixtures/, each \
+        "{} root-workspace, {} fuzz-workspace, and {} fixture-workspace manifest(s), each \
          reached by a command",
         counted.first().copied().unwrap_or_default(),
         counted.get(1).copied().unwrap_or_default(),
         counted.get(2).copied().unwrap_or_default()
     ))
+}
+
+fn workspace_manifests(
+    root: &Path,
+    metadata: &cargo_metadata::Metadata,
+) -> Result<BTreeSet<PathBuf>, GateError> {
+    let expected = std::fs::canonicalize(root)
+        .map_err(|error| GateError(format!("{}: {error}", root.display())))?;
+    let actual = std::fs::canonicalize(metadata.workspace_root.as_std_path())
+        .map_err(|error| GateError(format!("{}: {error}", metadata.workspace_root.as_str())))?;
+    if actual != expected {
+        return Err(GateError(format!(
+            "{}: cargo metadata reports workspace root {}, not {}",
+            root.display(),
+            actual.display(),
+            expected.display()
+        )));
+    }
+    let manifest = expected.join("Cargo.toml");
+    let mut manifests = BTreeSet::from([manifest]);
+    for package in metadata.workspace_packages() {
+        let path = package.manifest_path.as_std_path();
+        manifests.insert(
+            std::fs::canonicalize(path)
+                .map_err(|error| GateError(format!("{}: {error}", path.display())))?,
+        );
+    }
+    Ok(manifests)
 }
 
 /// Conventions of the fixture projects.
