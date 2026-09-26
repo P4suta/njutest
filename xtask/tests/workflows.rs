@@ -65,6 +65,28 @@ fn jobs(source: &str) -> Vec<(String, String)> {
 const DEFAULT_SHELL: &str = "defaults:\n  run:\n    shell: bash\n";
 
 #[test]
+fn every_job_that_runs_the_repository_tests_fetches_the_comparison_base() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/workflows/ci.yml");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let shallow: Vec<String> = jobs(&source)
+        .into_iter()
+        .filter(|(_name, body)| body.contains("cargo nextest run"))
+        .filter_map(|(name, body)| (!body.contains("fetch-depth: 0")).then_some(name))
+        .collect();
+
+    assert!(
+        shallow.is_empty(),
+        "a job that runs the repository's tests also runs the repository gates, whose ratchets \
+         compare HEAD with `origin/main`. A shallow pull-request checkout has no `origin/main`, \
+         so the suite fails after all its other tests have passed. Fetch the whole history in \
+         every such job: {shallow:?}"
+    );
+}
+
+#[test]
 fn every_step_runs_in_a_shell_that_stops_at_the_first_failure_even_inside_a_pipe() {
     let mut loose = Vec::new();
     for path in workflows() {
