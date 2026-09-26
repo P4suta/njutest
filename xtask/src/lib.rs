@@ -278,7 +278,7 @@ where
         Gate::ReleaseCheck => gates::release_check(&root),
         Gate::KaniLaws { cache } => kanilaws::laws(&root, process.cargo, &cache),
         Gate::KaniLawsAudit { export } => kaniaudit::audit(&export, &root)
-            .map(|()| "kani-laws: 15 production harnesses, every assertion reachable and every cover satisfiable".to_owned())
+            .map(|()| format!("kani-laws: {} production harnesses, every assertion reachable, every cover satisfiable, and each within its ceiling", kanilaws::harnesses().len()))
             .map_err(|error| gates::GateError(error.coded())),
         Gate::Milestones => gates::milestones(&root),
         Gate::Adrs => gates::adrs(&root),

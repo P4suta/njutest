@@ -82,6 +82,11 @@ The `forgotten-value` lint rejects `mem::forget` and `ManuallyDrop`, including r
 Proof harnesses run the same destructors as shipped code: suppressing a destructor only for Kani would establish a theorem about weaker ownership semantics than the program has.
 An intentional ownership transfer is a named owner or state transition, not a value silently made immortal.
 
+Every production Kani harness has a ceiling in its entry of the harness table in `xtask/src/kaniaudit.rs`: the most program steps CBMC may unfold it into, which the audit of every export holds (`XT4006`).
+It is a count, which no load moves, set at the measured size times 1.1 rounded up to two significant figures, and a harness added to the table cannot compile without one.
+It exists because a law pays for every field of what it builds: the ledger's duration law built two whole execution records, a decline payload added to that record took it from 1,855,715 to 2,135,073 steps, and the SAT instance that followed ran a 16 GB runner out of memory.
+A law whose subject carries data it does not reason about runs on a stand-in the law's type admits (the ledger's `Attempt`), passes its subject through `plain`, which demands `Copy`, and leaves the real record's side of the seam to an ordinary test.
+
 The `fabricated-overflow` lint applies to report, accounting, identity, cache,
 key, offset, and count code.
 It rejects saturating arithmetic and numeric `unwrap_or(0)` / `unwrap_or(MAX)` fallbacks, including renamed and macro-hidden forms.

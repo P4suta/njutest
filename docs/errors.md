@@ -222,6 +222,7 @@ The first digit names an area: 0 the gates, their ledgers, and what runs them (t
 | `XT4003` | A harness or check ledger of the Kani export is missing, duplicated, or not the selected production one. | regenerate the export from the production harness list |
 | `XT4004` | A Kani proof's result, assertions, covers, properties, backend evidence or summary is not successful and exact. | read the harness the message names; a proof that does not hold is a defect to fix, not a gate to relax |
 | `XT4005` | Kani's result arithmetic exceeded the type its evidence is held in. | report it; a count that cannot be held is a count this audit refuses to guess |
+| `XT4006` | CBMC unfolded a production harness into more program steps than its entry in the harness table allows, so the law has started paying for state it does not reason about, which is what ran a 16 GB runner out of memory. | take the payload out of the law's subject, or raise the harness's ceiling in `xtask/src/kaniaudit.rs` in the same change that says why |
 | `XT4101` | The report's model evidence is not the closed verified-v1 shape, or contradicts itself. | re-run the verified run that wrote it |
 | `XT4102` | A retained model artifact is outside the run directory or cannot be read. | audit the run directory the artifacts were retained in |
 | `XT4103` | A retained Kani export is not the pinned schema, or does not establish the answer the report gives. | read the model record the message names |
