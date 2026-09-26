@@ -435,9 +435,9 @@ mod table {
                 },
                 Self::CargoMessageUnparsable => ErrorCode {
                     code: "RM1016",
-                    summary: "a --message-format=json line is not a message",
+                    summary: "a line of `cargo … --message-format=json` output is not a message",
                     remedy: Some(
-                        "run the same cargo command with --message-format=json yourself; what it prints is what could not be read",
+                        "run the same `cargo … --message-format=json` yourself; what it prints is what could not be read",
                     ),
                     sealed: Sealed,
                 },

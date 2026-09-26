@@ -30,6 +30,9 @@ pub struct Cli {
     /// `auto` paints a terminal that has not set `NO_COLOR`.
     #[arg(long, value_enum, value_name = "WHEN", default_value_t = crate::ui::Color::Auto, global = true)]
     pub color: crate::ui::Color,
+    /// Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one beside it.
+    #[arg(long, value_name = "PATH", global = true)]
+    pub cargo: Option<PathBuf>,
     /// What to do.
     #[command(subcommand)]
     pub command: Command,

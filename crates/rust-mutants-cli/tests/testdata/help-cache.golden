@@ -16,6 +16,10 @@ Options:
       --root <DIR>
           The workspace root, whose report directory holds the ledger of what was kept
 
+      --cargo <PATH>
+          Run this cargo, by path, rather than the one found on the `PATH`; its rustc is the one
+          beside it
+
       --gc
           Remove every abandoned snapshot, and the build caches no run can look up again
 

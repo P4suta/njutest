@@ -11,6 +11,7 @@ pub mod docs;
 pub mod fake_cargo;
 pub mod fixture;
 pub mod golden;
+pub mod named_flags;
 pub mod paths;
 pub mod process;
 pub mod repo;

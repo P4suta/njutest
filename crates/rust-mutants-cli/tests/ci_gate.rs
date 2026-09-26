@@ -246,6 +246,7 @@ fn gate(host: CiHost, root: &Path, args: &[&OsString]) -> Said {
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        cargo: None,
         ci: host,
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
