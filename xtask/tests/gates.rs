@@ -338,16 +338,118 @@ fn a_fixture_root_that_cannot_be_listed_never_passes_as_empty() -> Result<(), Te
 }
 
 #[test]
-fn a_public_function_only_a_test_names_is_what_the_reach_gate_reports() {
-    let declaring = "pub fn believed_shipped() -> u8 { 0 }\npub fn called() -> u8 { 1 }\n";
-    let ships = "pub fn believed_shipped() -> u8 { 0 }\npub fn called() -> u8 { 1 }\nfn use_it() { let _ = called(); }\n";
-    let tested = "believed_shipped();\ncalled();\npub fn believed_shipped() -> u8 { 0 }\npub fn called() -> u8 { 1 }\n";
-    assert_eq!(
-        gates::only_a_test_reaches(declaring, ships, tested),
-        vec!["believed_shipped".to_owned()],
-        "a capability with a test is a capability somebody believed shipped (ADR 0023), so the \
-         one nothing but a test names is the one to report and the one production calls is not"
-    );
+fn a_public_function_only_a_test_names_is_what_the_reach_gate_reports() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn believed_shipped() -> u8 { 0 }\npub fn called() -> u8 { 1 }\nfn use_it() { let _ = called(); }\n#[cfg(test)] mod tests { fn check() { super::believed_shipped(); super::called(); } }\n",
+    )?;
+    let failure = refused(
+        gates::reached(root.path()),
+        "a function called only by tests passed the reach gate",
+    )?;
+    let said = failure.to_string();
+    require(
+        said.contains("x::believed_shipped") && !said.contains("x::called"),
+        said,
+    )
+}
+
+fn reach_tree(source: &str) -> Result<tempfile::TempDir, TestError> {
+    let root = tempfile::tempdir()?;
+    xtask::repository::init(root.path())?;
+    std::fs::create_dir_all(root.path().join("crates/x/src"))?;
+    std::fs::create_dir_all(root.path().join("xtask"))?;
+    std::fs::write(
+        root.path().join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/x\"]\nresolver = \"3\"\n",
+    )?;
+    std::fs::write(
+        root.path().join("crates/x/Cargo.toml"),
+        "[package]\nname = \"x\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[package.metadata.njutest]\nsurface = \"incidental\"\n",
+    )?;
+    std::fs::write(root.path().join("crates/x/src/lib.rs"), source)?;
+    std::fs::write(root.path().join("xtask/reached_ceiling.txt"), "0\n")?;
+    Ok(root)
+}
+
+#[test]
+fn words_in_comments_and_literals_do_not_prove_production_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() {}\nfn words() { let _ = \"capability\"; /* capability(); */ }\n#[cfg(test)] mod tests { #[test] fn test() { super::capability(); } }\n",
+    )?;
+    let failure = refused(
+        gates::reached(root.path()),
+        "comments and string literals counted as production references",
+    )?;
+    require(
+        failure.to_string().contains("x::capability"),
+        failure.to_string(),
+    )
+}
+
+#[test]
+fn cfg_not_test_with_space_is_production_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() {}\n#[cfg(not (test))]\nfn production() { capability(); }\n#[cfg(test)] mod tests { #[test] fn test() { super::capability(); } }\n",
+    )?;
+    let report = gates::reached(root.path())?;
+    require(report.contains("0 public function"), report)
+}
+
+#[test]
+fn cfg_conjunction_excluding_testkit_does_not_prove_production_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() {}\n#[cfg(all(not(test), feature = \"testkit\"))]\nfn testkit_only() { capability(); }\n#[cfg(test)] mod tests { #[test] fn test() { super::capability(); } }\n",
+    )?;
+    let failure = refused(
+        gates::reached(root.path()),
+        "a cfg conjunction counted a testkit-only reference as production reach",
+    )?;
+    require(
+        failure.to_string().contains("x::capability"),
+        failure.to_string(),
+    )
+}
+
+#[test]
+fn cfg_any_with_a_production_branch_is_production_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() {}\n#[cfg(any(test, not(unix)))]\nfn production() { capability(); }\n#[cfg(test)] mod tests { #[test] fn test() { super::capability(); } }\n",
+    )?;
+    let report = gates::reached(root.path())?;
+    require(report.contains("0 public function"), report)
+}
+
+#[test]
+fn evaluated_macro_arguments_prove_production_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() {}\nfn production() { let _ = vec![capability()]; }\n#[cfg(test)] mod tests { #[test] fn test() { super::capability(); } }\n",
+    )?;
+    let report = gates::reached(root.path())?;
+    require(report.contains("0 public function"), report)
+}
+
+#[test]
+fn a_clap_command_attribute_expression_proves_production_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() -> String { String::new() }\n#[command(after_help = capability())] struct Command;\n#[cfg(test)] mod tests { #[test] fn test() { super::capability(); } }\n",
+    )?;
+    let report = gates::reached(root.path())?;
+    require(report.contains("0 public function"), report)
+}
+
+#[test]
+fn stringify_does_not_prove_production_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() {}\nfn production() { let _ = stringify!(capability()); }\n#[cfg(test)] mod tests { #[test] fn test() { super::capability(); } }\n",
+    )?;
+    let failure = refused(
+        gates::reached(root.path()),
+        "stringify syntax counted as a production reference",
+    )?;
+    require(
+        failure.to_string().contains("x::capability"),
+        failure.to_string(),
+    )
 }
 
 #[test]
