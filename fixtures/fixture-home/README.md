@@ -18,23 +18,18 @@ The run is `rust-mutants run --tier all --offline --locked`;
 `cargo test -p rust-mutants-cli --test toolchain_fates` does it again and refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates
-src/lib.rs:11:36 condition-to-false survived
-src/lib.rs:11:36 condition-to-true survived
-src/lib.rs:11:36 negate-condition survived
-src/lib.rs:11:52 string-to-empty unreached
-src/lib.rs:11:75 string-to-empty killed
-src/lib.rs:11:84 question-to-unwrap survived
-src/lib.rs:12:5 return-default killed
-src/lib.rs:12:5 return-some-default killed
-src/lib.rs:12:35 string-to-empty survived
-src/lib.rs:12:57 string-to-empty killed
-src/lib.rs:20:67 string-to-empty unreached
-src/lib.rs:20:78 question-to-unwrap survived
-src/lib.rs:22:9 delete-call-statement killed
-src/lib.rs:22:37 ignore-question-statement survived
-src/lib.rs:22:37 question-to-unwrap survived
-src/lib.rs:24:5 return-ok-default killed
-src/lib.rs:32:67 string-to-empty unreached
-src/lib.rs:32:78 question-to-unwrap survived
-src/lib.rs:33:5 return-ok-default killed
+src/lib.rs:11:5 return-default killed
+src/lib.rs:11:5 return-some-default killed
+src/lib.rs:11:30 question-to-unwrap survived
+src/lib.rs:11:37 string-to-empty survived
+src/lib.rs:11:59 string-to-empty killed
+src/lib.rs:19:67 string-to-empty unreached
+src/lib.rs:19:78 question-to-unwrap survived
+src/lib.rs:21:9 delete-call-statement killed
+src/lib.rs:21:37 ignore-question-statement survived
+src/lib.rs:21:37 question-to-unwrap survived
+src/lib.rs:23:5 return-ok-default killed
+src/lib.rs:31:67 string-to-empty unreached
+src/lib.rs:31:78 question-to-unwrap survived
+src/lib.rs:32:5 return-ok-default killed
 ```

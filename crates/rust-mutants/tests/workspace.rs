@@ -193,11 +193,12 @@ fn opening_copies_the_tree_and_asks_the_toolchain_in_the_copy() {
     );
     assert_eq!(
         installed.answered(),
-        vec![0, 1, 2, 3, 0, 3],
+        vec![0, 1, 2, 3, 0, 0, 3],
         "one banner each, the sysroot, then the metadata of the tree on disk — which is what \
          says whether a copy of it could build at all — then a bare cargo's banner from the \
-         copy, which is what says whether the tests find the run's toolchain there, and the \
-         metadata of the copy"
+         copy twice, once with the home the run was given and once with one of a test's own, \
+         which is what says whether the tests find the run's toolchain there, and the metadata \
+         of the copy"
     );
 }
 
@@ -642,7 +643,11 @@ fn what_a_run_adds_leaves_a_test_room_to_bind_a_socket() {
     const SUN_PATH: usize = 104;
     let parent = PathBuf::from("/var/folders/q9/8kq0lqv91bd3z5wz_0000gn/T");
     let scratch = rust_mutants::workspace::scratch_of(&parent, 7);
-    let socket = scratch.join("7").join(".tmpAbCdEf").join("service.sock");
+    let execution = rust_mutants::execute::Scratch::under(
+        &scratch.join("7"),
+        rust_mutants::execute::Home::Confined,
+    );
+    let socket = execution.tmp().join(".tmpAbCdEf").join("service.sock");
     assert!(
         socket.as_os_str().len() <= SUN_PATH,
         "a run leaves a test {} bytes of the {SUN_PATH} a Unix socket has: {}",

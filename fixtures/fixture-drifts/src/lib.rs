@@ -26,19 +26,16 @@ mod tests {
     /// The prefix of the directory a mutation run gives every process of one run, and removes when it ends.
     const RUN_SCRATCH: &str = "rm-scratch-";
 
-    /// Whether an earlier process of this run already looked, leaving a mark for the next where every process of one run can see it and no process of another run can.
+    /// Whether an earlier process of this run already looked, leaving a mark for the next in the run scratch above its temporary directory, where every process of one run can see it and no process of another run can.
     fn visited() -> bool {
         let temporary = std::env::temp_dir();
-        let Some(run) = temporary.parent() else {
+        let Some(run) = temporary.ancestors().find(|dir| {
+            dir.file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .is_some_and(|name| name.starts_with(RUN_SCRATCH))
+        }) else {
             return false;
         };
-        let shared = run
-            .file_name()
-            .and_then(std::ffi::OsStr::to_str)
-            .is_some_and(|name| name.starts_with(RUN_SCRATCH));
-        if !shared {
-            return false;
-        }
         let mark = run.join("fixture-drifts-visited");
         if mark.exists() {
             return true;

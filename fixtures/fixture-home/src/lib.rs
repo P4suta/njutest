@@ -8,8 +8,7 @@ use std::path::PathBuf;
 /// Where the setting lives: under the home directory the process was given.
 #[must_use]
 pub fn setting_path() -> Option<PathBuf> {
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })?;
-    Some(PathBuf::from(home).join(".fixture-home").join("setting"))
+    Some(std::env::home_dir()?.join(".fixture-home").join("setting"))
 }
 
 /// Keeps `value` as the setting.

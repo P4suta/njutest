@@ -193,19 +193,25 @@ impl Toolchain {
 
     /// The environment the tests are given, with this toolchain's own directory first on its search path where a bare `cargo` from `dir` would answer with another toolchain or not at all, and what it said that made it so.
     ///
+    /// A bare `cargo` is asked twice: with `env`, as a test that runs with the home the run was given asks it, and with `confined`, as a test in a home of its own does (ADR 0044), since a shim that reads its state from the home answers the two differently.
+    ///
     /// # Errors
     /// [`CargoErrorKind::TestsToolchain`] where even this toolchain's own directory first on the search path does not make a bare `cargo` answer as this toolchain does.
     pub fn for_tests(
         &self,
-        env: Vec<(OsString, OsString)>,
+        (env, confined): (Variables, Variables),
         dir: &Path,
         cancel: &Cancel,
     ) -> Result<ForTests, CargoError> {
-        let first = bare_banner(&env, dir, cancel);
-        if first == Bare::Is(self.cargo_version.clone()) {
+        let this = Bare::Is(self.cargo_version.clone());
+        let Some(said) = [&env, &confined]
+            .into_iter()
+            .map(|asked| bare_banner(asked, dir, cancel))
+            .find(|answered| *answered != this)
+            .map(|answered| answered.told())
+        else {
             return Ok(ForTests { env, pinned: None });
-        }
-        let said = first.told();
+        };
         let Some(sysroot) = self.sysroot.as_deref() else {
             return Err(CargoError::new(
                 CargoErrorKind::TestsToolchain,
@@ -219,23 +225,26 @@ impl Toolchain {
         };
         let bin = sysroot.join("bin");
         let pinned = first_on_search_path(env, &bin)?;
-        let again = bare_banner(&pinned, dir, cancel);
-        if again == Bare::Is(self.cargo_version.clone()) {
-            return Ok(ForTests {
+        let again = [pinned.clone(), first_on_search_path(confined, &bin)?]
+            .iter()
+            .map(|asked| bare_banner(asked, dir, cancel))
+            .find(|answered| *answered != this);
+        match again {
+            None => Ok(ForTests {
                 env: pinned,
                 pinned: Some(said),
-            });
+            }),
+            Some(again) => Err(CargoError::new(
+                CargoErrorKind::TestsToolchain,
+                format!(
+                    "a bare `cargo` from {} is not {}: {said}; and with {} first on the search path: {}",
+                    dir.display(),
+                    self.cargo_version.summary,
+                    bin.display(),
+                    again.told()
+                ),
+            )),
         }
-        Err(CargoError::new(
-            CargoErrorKind::TestsToolchain,
-            format!(
-                "a bare `cargo` from {} is not {}: {said}; and with {} first on the search path: {}",
-                dir.display(),
-                self.cargo_version.summary,
-                bin.display(),
-                again.told()
-            ),
-        ))
     }
 
     /// A spec that runs `cargo <args>` inside `dir` with the toolchain's environment, unbounded until the caller says otherwise.
@@ -411,6 +420,9 @@ pub struct ForTests {
     /// What a bare `cargo` from the copy said, where it was not the run's toolchain; nothing where the search path was left as it was.
     pub pinned: Option<String>,
 }
+
+/// The variables a process starts with, in the order they were given.
+type Variables = Vec<(OsString, OsString)>;
 
 /// What a bare `cargo -vV` answered from a directory: a banner, or what it said instead.
 #[derive(Debug, Clone, PartialEq, Eq)]

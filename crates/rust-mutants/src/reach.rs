@@ -45,6 +45,15 @@ pub struct Reached {
 }
 
 impl Reached {
+    /// This measurement with `target` unmeasured, so every mutant routes to it as to a target nothing measured.
+    pub fn unmeasured(&mut self, target: &str) {
+        self.targets.remove(target);
+        let named = format!("{UNMEASURED}:{target}");
+        if !self.limitations.contains(&named) {
+            self.limitations.push(named);
+        }
+    }
+
     /// Whether anything was measured at all.
     /// Nothing measured routes every mutant to every target.
     #[must_use]
@@ -221,6 +230,22 @@ fn run_targets(
             break;
         }
         let pattern = profile_pattern(reading.profiles, &key(target));
+        let scratch = match execute::Scratch::made(
+            &reading.profiles.join(format!("scratch-{}", key(target))),
+            execute::Home::Confined,
+            &workspace.base_env,
+        ) {
+            Ok(scratch) => scratch,
+            Err(error) => {
+                workspace
+                    .trace
+                    .note("coverage", &format!("{}: not measured: {error}", target.id));
+                reached
+                    .limitations
+                    .push(format!("{UNMEASURED}:{}", target.id));
+                continue;
+            }
+        };
         let context = Context {
             leaders: None,
             base_env: &workspace.base_env,
@@ -232,11 +257,10 @@ fn run_targets(
             steps: None,
             profile: Some(&pattern),
             crash: None,
-            home: execute::Home::Confined,
         };
         let request = ExecRequest::new(target)
             .with_timeout(Workspace::timeout(options.build_timeout))
-            .with_scratch(reading.profiles);
+            .with_scratch(scratch);
         let ran = execute::exec(&request, &context, cancel, &workspace.trace);
         drop(ran);
         match blocks_of(reading, target) {

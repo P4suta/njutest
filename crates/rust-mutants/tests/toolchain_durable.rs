@@ -60,9 +60,12 @@ fn a_write_torn_by_a_stop_is_one_the_next_run_cannot_start_over() {
             kept.stop().noticed(),
             "the runtime said it stopped at this call, which is what makes the status a stop"
         );
+        let left = kept.left().expect("the scratch reads");
         assert!(
-            !kept.left().expect("the scratch reads").is_empty(),
-            "the crashed run left what it wrote in its scratch"
+            !left.is_empty() && left.iter().all(|one| one.starts_with("fixture-durable/")),
+            "the crashed run left what its test wrote, under the directory it writes in, and \
+             nothing the engine made for the execution, since a crash that wrote nothing has to \
+             read as one that left nothing for the next run: {left:?}"
         );
         let next = session
             .control_in(&asked(String::new()), &kept, &Cancel::new())
