@@ -160,21 +160,25 @@ fn measured(name: &str, status: TargetStatus) -> Measured {
 }
 
 #[test]
-fn what_a_run_is_about_is_what_it_was_asked_for_narrowed_to_what_is_there() {
+fn what_a_run_is_about_is_the_whole_or_its_named_members() {
     let members = ["core".to_owned(), "app".to_owned()];
 
     let whole = request(Config::default(), &[]);
     assert!(
-        requested(&whole).is_empty() && resolved(&whole, &members) == Narrowing::Whole,
+        requested(&whole).is_empty()
+            && resolved(&whole, &members).expect("the whole workspace is a valid scope")
+                == Narrowing::Whole,
         "a run that named nothing is about the workspace, and says so by naming \
          nothing rather than by listing what it happens to hold today: a list would \
          make two runs of one workspace differ because somebody added a package"
     );
 
     let named = request(Config::default(), &["app"]);
+    let scope = resolved(&named, &members).expect("app is a member");
+    assert!(matches!(scope, Narrowing::Named(_)));
     assert_eq!(
-        resolved(&named, &members),
-        Narrowing::Named(vec!["app".to_owned()]),
+        scope.names(),
+        ["app"],
         "a run that named a package is about that one"
     );
     assert_eq!(
@@ -357,22 +361,18 @@ fn metadata(packages: &[(&str, &str)]) -> rust_mutants::cargo::Metadata {
 }
 
 #[test]
-fn a_scope_that_named_something_the_workspace_does_not_hold_measures_nothing_wider() {
-    let workspace = metadata(&[
-        ("core", "/w/core/Cargo.toml"),
-        ("edge", "/w/edge/Cargo.toml"),
-    ]);
+fn a_scope_with_an_unknown_package_is_refused_before_selection() {
     let members = ["core".to_owned(), "edge".to_owned()];
-    let typo = request(Config::default(), &["cor"]);
-    let scope = resolved(&typo, &members);
-    assert_ne!(
-        selected(&scope, &workspace).len(),
-        workspace.packages.len(),
-        "a reader who asked for one package and misspelled it had the whole workspace \
-         measured and was told the scope was assured: an empty resolved list means both \
-         `nothing was asked for` and `what was asked for is not here`, and the widening \
-         answers the first"
-    );
+    for named in [&["cor"][..], &["core", "cor"][..]] {
+        let typo = request(Config::default(), named);
+        assert!(
+            matches!(
+                resolved(&typo, &members),
+                Err(rust_mutants::discover::DiscoverError::UnknownPackage { name }) if name == "cor"
+            ),
+            "an unknown package is refused even when a known name precedes it"
+        );
+    }
 }
 
 #[test]
@@ -391,8 +391,13 @@ fn the_packages_an_inventory_walks_are_the_ones_in_scope_that_have_somewhere_to_
          widens: narrowing on it would inventory nothing at all and report a workspace \
          with no unsafe in it"
     );
+    let scope = resolved(
+        &request(Config::default(), &["edge"]),
+        &["core".to_owned(), "edge".to_owned()],
+    )
+    .expect("edge is a member");
     assert_eq!(
-        selected(&Narrowing::Named(vec!["edge".to_owned()]), &workspace),
+        selected(&scope, &workspace),
         vec![("edge".to_owned(), std::path::PathBuf::from("/w/edge"))],
         "and a scope that names one package walks that one"
     );

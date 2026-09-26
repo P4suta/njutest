@@ -416,12 +416,8 @@ fn surveyed(
         .iter()
         .map(|package| package.name.clone())
         .collect();
-    if let Some(name) = unknown_package(request, &report.repository.packages) {
-        return Err(RunnerError::Engine(
-            rust_mutants::discover::DiscoverError::UnknownPackage { name }.into(),
-        ));
-    }
-    let narrowing = resolved(request, &report.repository.packages);
+    let narrowing = resolved(request, &report.repository.packages)
+        .map_err(|error| RunnerError::Engine(error.into()))?;
     report.scope.resolved_packages = narrowing.names().to_vec();
     Ok(narrowing)
 }
@@ -1865,7 +1861,28 @@ pub enum Narrowing {
     /// Every member, because nothing named any.
     Whole,
     /// Exactly these members, each one the workspace holds.
-    Named(Vec<String>),
+    Named(NamedPackages),
+}
+
+/// A nonempty list of packages explicitly named for one run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamedPackages {
+    names: Vec<String>,
+}
+
+impl NamedPackages {
+    #[must_use]
+    fn new(first: String, more: impl IntoIterator<Item = String>) -> Self {
+        let mut names = vec![first];
+        names.extend(more);
+        Self { names }
+    }
+
+    /// The packages named for this run.
+    #[must_use]
+    pub fn names(&self) -> &[String] {
+        &self.names
+    }
 }
 
 impl Narrowing {
@@ -1874,7 +1891,7 @@ impl Narrowing {
     pub fn names(&self) -> &[String] {
         match self {
             Self::Whole => &[],
-            Self::Named(named) => named,
+            Self::Named(named) => named.names(),
         }
     }
 
@@ -1883,25 +1900,27 @@ impl Narrowing {
     pub fn holds(&self, name: &str) -> bool {
         match self {
             Self::Whole => true,
-            Self::Named(named) => named.iter().any(|held| held == name),
+            Self::Named(named) => named.names().iter().any(|held| held == name),
         }
     }
 }
 
 /// The packages the run settled on: what was asked for, or every member.
-#[must_use]
-pub fn resolved(request: &Request, members: &[String]) -> Narrowing {
-    let asked = requested(request);
-    if asked.is_empty() {
-        Narrowing::Whole
-    } else {
-        Narrowing::Named(
-            asked
-                .into_iter()
-                .filter(|name| members.contains(name))
-                .collect(),
-        )
+///
+/// # Errors
+/// A named package that is not in the workspace is refused before anything is measured.
+pub fn resolved(
+    request: &Request,
+    members: &[String],
+) -> Result<Narrowing, rust_mutants::discover::DiscoverError> {
+    let mut asked = requested(request).into_iter();
+    let Some(first) = asked.next() else {
+        return Ok(Narrowing::Whole);
+    };
+    if let Some(name) = unknown_package(request, members) {
+        return Err(rust_mutants::discover::DiscoverError::UnknownPackage { name });
     }
+    Ok(Narrowing::Named(NamedPackages::new(first, asked)))
 }
 
 /// The first package a run was narrowed to that the workspace does not hold, if one is.
