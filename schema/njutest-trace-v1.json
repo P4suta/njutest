@@ -634,7 +634,7 @@
                 "mutant": { "type": "string", "minLength": 1 },
                 "target": { "type": "string", "minLength": 1 },
                 "was": { "enum": ["survived", "unreached"] },
-                "now": { "enum": ["killed", "survived", "unreached", "waited", "step-limit-reached", "unconfirmed", "errored"] },
+                "now": { "enum": ["killed", "survived", "unreached", "waited", "step-limit-reached", "unconfirmed", "errored", "declined"] },
                 "reached": { "enum": ["reached", "not-reached", "unrecorded"] }
               }
             }

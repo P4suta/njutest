@@ -291,6 +291,9 @@ pub fn label(rule: &str, decided: &crate::report::Decided) -> String {
             format!("{rule} here, and {on} did not answer the same way twice")
         }
         Decided::Errored { on } => format!("{rule} here, and {on} could not be measured"),
+        Decided::Declined { on } => {
+            format!("{rule} here, and the tests of {on} declined to measure on this machine")
+        }
     }
 }
 

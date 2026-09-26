@@ -122,6 +122,13 @@ pub enum Disposition {
         /// What happened.
         detail: String,
     },
+    /// Every test that reached it declined to measure on this machine, as it did with nothing active, so nothing here says whether one would notice it (ADR 0043).
+    Declined {
+        /// The first target whose tests declined.
+        on: String,
+        /// Each test that declined, and its words, over every target.
+        tests: Vec<rust_mutants::decline::Decline>,
+    },
 }
 
 impl Disposition {
@@ -138,6 +145,7 @@ impl Disposition {
             Self::Equivalent { .. } => Recorded::Equivalent,
             Self::Unconfirmed { .. } => Recorded::Unconfirmed,
             Self::Errored { .. } => Recorded::Errored,
+            Self::Declined { .. } => Recorded::Declined,
         }
     }
 
@@ -163,6 +171,7 @@ impl Disposition {
             Self::Equivalent { .. } => crate::report::Decided::Equivalent,
             Self::Unconfirmed { on, .. } => crate::report::Decided::Unconfirmed { on: on.clone() },
             Self::Errored { on, .. } => crate::report::Decided::Errored { on: on.clone() },
+            Self::Declined { on, .. } => crate::report::Decided::Declined { on: on.clone() },
         }
     }
 
@@ -184,7 +193,8 @@ impl Disposition {
             Self::StepLimitReached { on, .. }
             | Self::Waited { on }
             | Self::Unconfirmed { on, .. }
-            | Self::Errored { on, .. } => Some(on),
+            | Self::Errored { on, .. }
+            | Self::Declined { on, .. } => Some(on),
             Self::Rejected { .. }
             | Self::Survived { .. }
             | Self::Unreached
@@ -295,7 +305,9 @@ impl Mutation {
                 Disposition::Equivalent { .. } => {
                     increment("equivalent mutants", &mut counts.equivalent)?;
                 }
-                Disposition::Unconfirmed { .. } | Disposition::Errored { .. } => {
+                Disposition::Unconfirmed { .. }
+                | Disposition::Errored { .. }
+                | Disposition::Declined { .. } => {
                     increment("executed mutants", &mut counts.executed)?;
                 }
             }
@@ -387,6 +399,21 @@ fn finding_of(judged: &Judged) -> Option<Finding> {
         Disposition::Errored { on, detail } => (
             FindingKind::TargetMissing,
             format!("{on}: the mutation could not be measured: {detail}"),
+        ),
+        Disposition::Declined { tests, .. } => (
+            FindingKind::NotMeasured,
+            format!(
+                "every test that reached {} at {} declined to measure on this machine, as it \
+                 did with nothing active, so nothing here says whether a test would notice it: \
+                 {}",
+                judged.rule,
+                judged.path,
+                tests
+                    .iter()
+                    .map(|one| format!("{} ({})", one.test, one.why))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         ),
         Disposition::Waited { on } => (
             FindingKind::WaitedMutant,
@@ -1146,7 +1173,8 @@ fn carry_answer(
         | Disposition::Unreached
         | Disposition::Equivalent { .. }
         | Disposition::Unconfirmed { .. }
-        | Disposition::Errored { .. } => return Ok(()),
+        | Disposition::Errored { .. }
+        | Disposition::Declined { .. } => return Ok(()),
     };
     let Some(answering) = ran.last() else {
         return Ok(());
@@ -1367,7 +1395,8 @@ pub fn keep(
         | Disposition::Unreached
         | Disposition::Equivalent { .. }
         | Disposition::Unconfirmed { .. }
-        | Disposition::Errored { .. } => {
+        | Disposition::Errored { .. }
+        | Disposition::Declined { .. } => {
             return Ok(Kept::NotKept(NotKept::NotAVerdict {
                 disposition: disposition.name(),
             }));
@@ -1446,6 +1475,10 @@ enum TargetFact {
         on: String,
         detail: String,
     },
+    Declined {
+        on: String,
+        tests: Vec<rust_mutants::decline::Decline>,
+    },
 }
 
 impl TargetFact {
@@ -1456,6 +1489,7 @@ impl TargetFact {
             Self::Waited { .. } => Recorded::Waited,
             Self::StepLimitReached { .. } => Recorded::StepLimitReached,
             Self::Errored { .. } => Recorded::Errored,
+            Self::Declined { .. } => Recorded::Declined,
         }
     }
 }
@@ -1550,6 +1584,12 @@ struct Aggregation {
     answered: Vec<crate::report::Answered>,
     unsettled: Vec<Unsettled>,
     observation: TargetObservation,
+    /// Whether any target measured it and noticed nothing, which no decline beside it can hide.
+    measured: bool,
+    /// The first target whose every test declined, where one did.
+    declined_on: Option<String>,
+    /// Each test that declined, and its words, over every target that declined.
+    declined: Vec<rust_mutants::decline::Decline>,
 }
 
 impl Aggregation {
@@ -1558,6 +1598,9 @@ impl Aggregation {
             answered: Vec::new(),
             unsettled: Vec::new(),
             observation: TargetObservation::Survived,
+            measured: false,
+            declined_on: None,
+            declined: Vec::new(),
         }
     }
 
@@ -1588,7 +1631,12 @@ impl Aggregation {
         );
         match fact {
             TargetFact::Survived => {
+                self.measured = true;
                 self.observation = self.observation.join(TargetObservation::Survived);
+            }
+            TargetFact::Declined { on, tests } => {
+                self.declined_on.get_or_insert(on);
+                self.declined.extend(tests);
             }
             TargetFact::Killed { on, retry } => {
                 match confirm(judging, (mutant, &on), &retry, ExpectedReproduction::Killed)? {
@@ -1629,7 +1677,13 @@ impl Aggregation {
     ) -> Result<(Disposition, Vec<crate::report::Answered>), crate::error::RunnerError> {
         let Some(selected) = select_unsettled(self.unsettled, self.observation) else {
             let disposition = match self.observation {
-                TargetObservation::Survived => Disposition::Survived { route },
+                TargetObservation::Survived => match (self.measured, self.declined_on) {
+                    (false, Some(on)) => Disposition::Declined {
+                        on,
+                        tests: self.declined,
+                    },
+                    (true, _) | (false, None) => Disposition::Survived { route },
+                },
                 TargetObservation::StepLimitReached
                 | TargetObservation::Waited
                 | TargetObservation::Unconfirmed
@@ -1864,17 +1918,9 @@ fn fact_of(request: Request, measured: Option<&Measured>, result: &MutantResult)
                 retry: narrowed(request, measured, &result.target),
             }
         }
-        MutantConclusion::Declined { tests } => TargetFact::Errored {
+        MutantConclusion::Declined { tests } => TargetFact::Declined {
             on: name,
-            detail: format!(
-                "every test that reached it declined to measure on this machine, as it did with \
-                 nothing active, so nothing here says whether a test would notice it: {}",
-                tests
-                    .iter()
-                    .map(|one| format!("{} ({})", one.test, one.why))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
+            tests: tests.clone(),
         },
         MutantConclusion::Waited => TargetFact::Waited {
             on: name,

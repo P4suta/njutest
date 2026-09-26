@@ -18,6 +18,7 @@ pub mod discover;
 pub mod duration;
 pub mod equivalence;
 pub mod error;
+pub mod escaped;
 pub mod execcost;
 pub mod execute;
 pub mod facts;

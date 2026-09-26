@@ -15,6 +15,7 @@ A test declines, as its last act, by appending `<its libtest name>\t<why>\n`, th
 | `shared` | `doubles_what_it_shares`, which then declines | nothing, except a mutation that panics before the test declines, which is a kill |
 | `counted` | `counts_what_it_shares`, which then declines, and `counts_without_looking`, which never looks at the answer | survived, on the test that measured, with the decline recorded beside it |
 | `measured` | `adds_ten` | killed |
+| `halved` | `halves_what_it_shares`, which then declines, and `tests/elsewhere.rs`'s `halves_without_looking`, a second target that never looks at the answer | survived: the unit target measured nothing, and the integration target measured and noticed nothing, which one target's declines cannot outweigh |
 
 ## Fates
 
@@ -48,4 +49,8 @@ src/lib.rs:28:5 return-default killed
 src/lib.rs:28:11 add-to-sub killed
 src/lib.rs:28:13 int-decrement killed
 src/lib.rs:28:13 int-increment killed
+src/lib.rs:33:5 return-default survived
+src/lib.rs:33:11 div-to-mul survived
+src/lib.rs:33:13 int-decrement survived
+src/lib.rs:33:13 int-increment survived
 ```

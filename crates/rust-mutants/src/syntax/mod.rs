@@ -536,6 +536,30 @@ pub fn discover_file(
     source: &[u8],
     selection: &Selection<'_>,
 ) -> Result<FileDiscovery, SyntaxError> {
+    discover_counting(path, source, selection).map(|(discovery, _read)| discovery)
+}
+
+/// How many items of `text` an operator swap is held to read alone as the file reads them, and the bytes of every one that does not, counted from the end of any byte order mark or shebang line.
+#[cfg(any(test, feature = "testkit"))]
+pub(crate) fn items_read_alone(
+    text: &str,
+) -> Result<(usize, Vec<std::ops::Range<usize>>), syn::Error> {
+    let (_, parsed) = strip_prefix(text).map_err(|_prefix| {
+        syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "a prefix past the file's end",
+        )
+    })?;
+    let file: syn::File = syn::parse_str(parsed)?;
+    Ok(regroup::Grouping::of(&file).read_alone(parsed))
+}
+
+/// Finds every candidate in one file, and says how many bytes of source holding its operator swaps read back, or nothing once that stopped fitting.
+pub(crate) fn discover_counting(
+    path: &str,
+    source: &[u8],
+    selection: &Selection<'_>,
+) -> Result<(FileDiscovery, Option<usize>), SyntaxError> {
     let text = std::str::from_utf8(source).map_err(|_invalid| SyntaxError::NotUtf8 {
         path: path.to_owned(),
     })?;
@@ -598,16 +622,19 @@ pub fn discover_file(
     });
     decisions.sort_by_key(|decision| (decision.offset, position(&decision.rule)));
     let skips = tally(path, skips);
-    Ok(FileDiscovery {
-        path: path.to_owned(),
-        includes,
-        source_digest,
-        candidates,
-        skips,
-        decisions,
-        no_std,
-        annotations,
-    })
+    Ok((
+        FileDiscovery {
+            path: path.to_owned(),
+            includes,
+            source_digest,
+            candidates,
+            skips,
+            decisions,
+            no_std,
+            annotations,
+        },
+        grouping.read(),
+    ))
 }
 
 fn parse_error(path: &str, error: &syn::Error) -> SyntaxError {

@@ -316,7 +316,7 @@ fn equivalence_says_what_the_compiler_renders_identically_and_never_says_equival
         }
         assert_eq!(columns.len(), 4, "{row}");
         assert!(
-            if njutest_devkit::reproducible::builds_the_same_twice() {
+            if njutest_devkit::reproducible::builds_a_reverted_change_to_the_same_bytes() {
                 columns[1] == "identical" || columns[1] == "differs"
             } else {
                 columns[1] == "not-established"
@@ -351,7 +351,7 @@ fn the_equivalence_tally_counts_the_rows_it_printed() {
         .iter()
         .filter(|columns| columns.get(1) == Some(&"identical"))
         .count();
-    if njutest_devkit::reproducible::builds_the_same_twice() {
+    if njutest_devkit::reproducible::builds_a_reverted_change_to_the_same_bytes() {
         assert!(
             identical > 0,
             "this fixture is built at an optimisation level where the compiler renders \
@@ -474,4 +474,234 @@ fn the_word_cargo_repeats_is_dropped_once_and_only_where_it_is_the_subcommand() 
     )
     .expect("which is this command");
     assert_eq!(format!("{elsewhere:?}"), format!("{direct:?}"));
+}
+
+/// A directory holding `cargo` and `rustc` scripts that run the real ones only from `trusted`, and refuse every other directory as mise refuses a configuration nobody trusted there.
+#[cfg(unix)]
+#[expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking"
+)]
+fn refusing_shims(fixture: &Fixture) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+    let trusted = std::fs::canonicalize(fixture.root()).expect("the fixture's root");
+    let sysroot = std::process::Command::new("rustc")
+        .args(["--print", "sysroot"])
+        .current_dir(&trusted)
+        .output()
+        .expect("rustc names its toolchain");
+    let sysroot =
+        std::path::PathBuf::from(njutest_devkit::process::strict_utf8(&sysroot.stdout).trim());
+    let shims = fixture.temp().join("shims");
+    std::fs::create_dir_all(&shims).expect("the shims' directory");
+    for name in ["cargo", "rustc"] {
+        let path = shims.join(name);
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\nif [ \"$(pwd -P)\" != '{}' ]; then echo \"mise ERROR Config files in $(pwd -P)/mise.toml are not trusted.\" >&2; exit 1; fi\nexec '{}' \"$@\"\n",
+                trusted.display(),
+                sysroot.join("bin").join(name).display()
+            ),
+        )
+        .expect("a shim");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+            .expect("a shim that runs");
+    }
+    shims
+}
+
+#[cfg(unix)]
+#[test]
+fn a_test_that_runs_a_bare_cargo_gets_the_runs_toolchain_rather_than_a_shim_that_refuses_the_copy()
+{
+    let fixture = Fixture::copy("fixture-bare-cargo");
+    let shims = refusing_shims(&fixture);
+    let mut given = environment(&fixture);
+    let searched = given
+        .vars
+        .iter()
+        .find(|(name, _)| name == "PATH")
+        .map(|(_, value)| value.clone());
+    let path = std::env::join_paths(
+        std::iter::once(shims).chain(searched.iter().flat_map(std::env::split_paths)),
+    )
+    .expect("a search path");
+    given.vars.retain(|(name, _)| name != "PATH");
+    given.vars.push(("PATH".into(), path));
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        [
+            "rust-mutants",
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-coverage",
+            "--ui",
+            "quiet",
+            "--root",
+            root.as_str(),
+        ]
+        .map(OsString::from),
+        &given,
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    let output = njutest_devkit::process::answered(code, out, err);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "a shim that chooses the toolchain by the directory it runs in refuses the copy a run \
+         measures, so a test that runs `cargo` by its bare name fails there for a reason none of \
+         its code holds; the run gives every test its own toolchain first instead: {output:?}"
+    );
+}
+
+/// Whether the process `pid` names is still running.
+#[cfg(unix)]
+fn running(pid: &str) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", pid])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// The processes `fixture-escapes`'s test said it started, whichever of them were still running when its run had ended, and whichever of those the test could not end itself.
+#[cfg(unix)]
+struct Escaped {
+    pids: Vec<String>,
+    survivors: Vec<String>,
+    unstopped: Vec<String>,
+}
+
+/// A run of `fixture-escapes` with every variable in `set`, and what its test started, of which it ends whatever the run left running.
+#[cfg(unix)]
+fn escaping(set: &[&str]) -> (Output, Fixture, std::io::Result<Escaped>) {
+    let fixture = Fixture::copy("fixture-escapes");
+    let record = fixture.temp().join("escaped");
+    let mut given = environment(&fixture);
+    given.vars.push((
+        "FIXTURE_ESCAPES_RECORD".into(),
+        record.clone().into_os_string(),
+    ));
+    for name in set {
+        given.vars.push(((*name).into(), "1".into()));
+    }
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        [
+            "rust-mutants",
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-coverage",
+            "--ui",
+            "quiet",
+            "--trace",
+            "--root",
+            root.as_str(),
+        ]
+        .map(OsString::from),
+        &given,
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    let output = njutest_devkit::process::answered(code, out, err);
+    let started = std::fs::read_to_string(&record).map(|started| {
+        let pids: Vec<String> = started
+            .lines()
+            .map(str::trim)
+            .filter(|pid| !pid.is_empty())
+            .map(str::to_owned)
+            .collect();
+        let survivors: Vec<String> = pids.iter().filter(|pid| running(pid)).cloned().collect();
+        let unstopped = survivors
+            .iter()
+            .filter(|pid| {
+                !std::process::Command::new("kill")
+                    .args(["-KILL", pid.as_str()])
+                    .status()
+                    .is_ok_and(|status| status.success())
+            })
+            .cloned()
+            .collect();
+        Escaped {
+            pids,
+            survivors,
+            unstopped,
+        }
+    });
+    (output, fixture, started)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_process_a_test_left_running_ends_with_the_run() {
+    let (output, fixture, started) = escaping(&[]);
+    let Escaped {
+        pids,
+        survivors,
+        unstopped,
+    } = started.expect("the test says what it started");
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "the run reaches a verdict: {output:?}"
+    );
+    assert!(!pids.is_empty(), "the test started something: {output:?}");
+    assert!(
+        survivors.is_empty(),
+        "a process a test started outside the execution's group outlived the run; it works where \
+         the test did, in the run's copy or scratch, and the run ends every process still working \
+         there when it closes, so nothing a test leaves behind holds a lock or a port past it: \
+         {survivors:?} of {pids:?}, of which {unstopped:?} are still running"
+    );
+    let trace = std::fs::read_to_string(
+        njutest_devkit::fixture::newest_run(
+            &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+        )
+        .join("trace/trace.jsonl"),
+    )
+    .expect("the run's trace");
+    assert!(
+        trace.contains("escaped-processes"),
+        "the run says which processes it ended, since a test that leaves one behind is a test \
+         somebody may want to fix"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_process_that_holds_a_refused_runs_output_ends_with_it() {
+    let (output, fixture, started) = escaping(&["FIXTURE_ESCAPES_HOLDS_OUTPUT"]);
+    let Escaped {
+        pids,
+        survivors,
+        unstopped,
+    } = started.expect("the test says what it started");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a daemon that keeps the test's output open leaves the execution unreadable to its end, \
+         and the baseline that cannot be read refuses the run: {output:?}"
+    );
+    assert!(!pids.is_empty(), "the test started something: {output:?}");
+    assert!(
+        survivors.is_empty(),
+        "a refused run removes its copy too, and ends what still works in it first: \
+         {survivors:?} of {pids:?}, of which {unstopped:?} are still running"
+    );
+    drop(fixture);
 }

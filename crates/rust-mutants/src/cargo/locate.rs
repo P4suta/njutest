@@ -191,6 +191,53 @@ impl Toolchain {
         self.env.as_deref()
     }
 
+    /// The environment the tests are given, with this toolchain's own directory first on its search path where a bare `cargo` from `dir` would answer with another toolchain or not at all, and what it said that made it so.
+    ///
+    /// # Errors
+    /// [`CargoErrorKind::TestsToolchain`] where even this toolchain's own directory first on the search path does not make a bare `cargo` answer as this toolchain does.
+    pub fn for_tests(
+        &self,
+        env: Vec<(OsString, OsString)>,
+        dir: &Path,
+        cancel: &Cancel,
+    ) -> Result<ForTests, CargoError> {
+        let first = bare_banner(&env, dir, cancel);
+        if first == Bare::Is(self.cargo_version.clone()) {
+            return Ok(ForTests { env, pinned: None });
+        }
+        let said = first.told();
+        let Some(sysroot) = self.sysroot.as_deref() else {
+            return Err(CargoError::new(
+                CargoErrorKind::TestsToolchain,
+                format!(
+                    "a bare `cargo` from {} is not {}: {said}; and {} names no toolchain directory to put first",
+                    dir.display(),
+                    self.cargo_version.summary,
+                    self.rustc.display()
+                ),
+            ));
+        };
+        let bin = sysroot.join("bin");
+        let pinned = first_on_search_path(env, &bin)?;
+        let again = bare_banner(&pinned, dir, cancel);
+        if again == Bare::Is(self.cargo_version.clone()) {
+            return Ok(ForTests {
+                env: pinned,
+                pinned: Some(said),
+            });
+        }
+        Err(CargoError::new(
+            CargoErrorKind::TestsToolchain,
+            format!(
+                "a bare `cargo` from {} is not {}: {said}; and with {} first on the search path: {}",
+                dir.display(),
+                self.cargo_version.summary,
+                bin.display(),
+                again.told()
+            ),
+        ))
+    }
+
     /// A spec that runs `cargo <args>` inside `dir` with the toolchain's environment, unbounded until the caller says otherwise.
     /// The length of a build or a test run is the project's, so the caller assigns [`Spec::timeout`] with the number that applies to it; the caller adds an output limit or a structured stdout as the command warrants.
     pub fn command<I, S>(&self, dir: &Path, args: I) -> Spec
@@ -352,6 +399,100 @@ fn with_toolchain(
         ))?
     {
         env.push(("RUSTDOC".into(), rustdoc.into_os_string()));
+    }
+    Ok(env)
+}
+
+/// The environment the tests are given, and, where the run's toolchain had to be put first on its search path, what a bare `cargo` said without it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForTests {
+    /// The environment every test process starts with.
+    pub env: Vec<(OsString, OsString)>,
+    /// What a bare `cargo` from the copy said, where it was not the run's toolchain; nothing where the search path was left as it was.
+    pub pinned: Option<String>,
+}
+
+/// What a bare `cargo -vV` answered from a directory: a banner, or what it said instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Bare {
+    /// The banner it printed.
+    Is(VersionInfo),
+    /// What it said, where it printed no banner this release reads.
+    Said(String),
+}
+
+impl Bare {
+    /// How a person reads it.
+    fn told(&self) -> String {
+        match self {
+            Self::Is(banner) => format!("it is {}", banner.summary),
+            Self::Said(said) => said.clone(),
+        }
+    }
+}
+
+/// What a `cargo` found by its bare name on `env`'s search path answers from `dir`, with `env` as its whole environment.
+fn bare_banner(env: &[(OsString, OsString)], dir: &Path, cancel: &Cancel) -> Bare {
+    let search_path = env
+        .iter()
+        .find(|(name, _)| is_search_path(name))
+        .map(|(_, value)| value.as_os_str());
+    let cargo = match resolve_executable(Path::new("cargo"), search_path) {
+        Ok(cargo) => cargo,
+        Err(error) => return Bare::Said(error.to_string()),
+    };
+    let mut spec = Spec::new([cargo.as_os_str(), OsStr::new("-vV")], Bound::After(PROBE));
+    spec.dir = Some(dir.to_path_buf());
+    spec.env = Some(env.to_vec());
+    spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
+    let result = run(&spec, cancel);
+    if !result.succeeded() {
+        return Bare::Said(match std::str::from_utf8(&result.output) {
+            Ok(text) => format!("{} said: {}", cargo.display(), text.trim()),
+            Err(_not_utf8) => format!("{} failed and said nothing readable", cargo.display()),
+        });
+    }
+    match std::str::from_utf8(&result.stdout).map(parse_version) {
+        Ok(Ok(banner)) => Bare::Is(banner),
+        Ok(Err(error)) => Bare::Said(error.to_string()),
+        Err(_not_utf8) => Bare::Said(format!(
+            "{} printed a banner that is not UTF-8",
+            cargo.display()
+        )),
+    }
+}
+
+/// Whether `name` is the variable a search path is read from, which Windows spells in any case.
+fn is_search_path(name: &OsStr) -> bool {
+    name.to_str().is_some_and(|name| {
+        if cfg!(windows) {
+            name.eq_ignore_ascii_case("PATH")
+        } else {
+            name == "PATH"
+        }
+    })
+}
+
+/// `env` with `bin` first on its search path, and the search path it had after it.
+fn first_on_search_path(
+    mut env: Vec<(OsString, OsString)>,
+    bin: &Path,
+) -> Result<Vec<(OsString, OsString)>, CargoError> {
+    let held = env.iter().position(|(name, _)| is_search_path(name));
+    let rest: Vec<PathBuf> = match held.and_then(|at| env.get(at)) {
+        Some((_, value)) => std::env::split_paths(value).collect(),
+        None => Vec::new(),
+    };
+    let joined =
+        std::env::join_paths(std::iter::once(bin.to_path_buf()).chain(rest)).map_err(|error| {
+            CargoError::new(
+                CargoErrorKind::TestsToolchain,
+                format!("{} cannot be put on a search path: {error}", bin.display()),
+            )
+        })?;
+    match held.and_then(|at| env.get_mut(at)) {
+        Some((_, value)) => *value = joined,
+        None => env.push(("PATH".into(), joined)),
     }
     Ok(env)
 }

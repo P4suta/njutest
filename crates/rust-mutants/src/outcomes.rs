@@ -134,12 +134,9 @@ impl Declared {
         for name in names {
             hash_length(&mut hasher, name.len());
             hasher.update(name.as_bytes());
-            match given
-                .iter()
-                .find(|(held, _)| held.as_os_str() == std::ffi::OsStr::new(name))
-            {
+            match crate::vars::var(given, name) {
                 None => hasher.update(b"unset"),
-                Some((_, value)) => {
+                Some(value) => {
                     let bytes = value.as_encoded_bytes();
                     hasher.update(b"set");
                     hash_length(&mut hasher, bytes.len());
