@@ -32,10 +32,11 @@ pub fn measured(value: u32) -> u32 {
 mod tests {
     use std::io::Write;
 
-    /// Says on the engine's channel, when a run opened one, that the test `name` did not measure here, and why, in one write so a line another test appends at once cannot land inside it.
-    fn decline(name: &str, why: &str) {
-        println!("skipping {name}: {why}");
+    /// Says on the engine's channel, when a run opened one, that the test on this thread did not measure here, and why: its last act, in one write, under the name libtest gave its thread.
+    fn decline(why: &str) {
+        println!("skipping: {why}");
         if let Some(path) = std::env::var_os("RUST_MUTANTS_DECLINE_NOTICE") {
+            let name = std::thread::current().name().unwrap_or_default().to_owned();
             let mut notice = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -51,7 +52,7 @@ mod tests {
     fn doubles_what_it_shares() {
         let doubled = super::shared(3);
         if !super::can_share() {
-            decline("tests::doubles_what_it_shares", "this machine cannot share blocks");
+            decline("this machine cannot share blocks");
             return;
         }
         assert_eq!(doubled, 6);
@@ -61,7 +62,7 @@ mod tests {
     fn counts_what_it_shares() {
         let counted = super::counted(1);
         if !super::can_share() {
-            decline("tests::counts_what_it_shares", "this machine cannot share blocks");
+            decline("this machine cannot share blocks");
             return;
         }
         assert_eq!(counted, 2);
@@ -75,7 +76,7 @@ mod tests {
     #[test]
     fn adds_ten() {
         if !super::can_measure() {
-            decline("tests::adds_ten", "this machine cannot add");
+            decline("this machine cannot add");
             return;
         }
         assert_eq!(super::measured(1), 11);
