@@ -1818,7 +1818,7 @@ pub enum GroupStop {
 }
 
 /// What stopping a group reached.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 #[must_use = "a stop that reached only the leader leaves the rest of the group running"]
 pub enum Stopped {
     /// Every process of the group was signalled, or none besides its unreaped leader was left.
@@ -1878,6 +1878,41 @@ pub const fn decide_stop(group: Delivered, leader: Delivered, others: Others) ->
     }
 }
 
+#[cfg(unix)]
+fn checked_decide_stop(
+    group: Delivered,
+    leader: Delivered,
+    others: Others,
+    classify: impl FnOnce(Delivered, Delivered, Others) -> StopDecision,
+) -> io::Result<StopDecision> {
+    let decision = classify(group, leader, others);
+    let valid = match decision {
+        StopDecision::Reached(Stopped::Group) => {
+            matches!(group, Delivered::Sent | Delivered::Gone)
+                || (group == Delivered::Refused
+                    && matches!(leader, Delivered::Sent | Delivered::Gone)
+                    && others == Others::Nobody)
+        }
+        StopDecision::Reached(Stopped::LeaderOnly) => {
+            group == Delivered::Refused
+                && matches!(leader, Delivered::Sent | Delivered::Gone)
+                && matches!(others, Others::Somebody | Others::Unseen)
+        }
+        StopDecision::Failed => {
+            group == Delivered::Failed
+                || (group == Delivered::Refused
+                    && matches!(leader, Delivered::Refused | Delivered::Failed))
+        }
+    };
+    if valid {
+        Ok(decision)
+    } else {
+        Err(io::Error::other(format!(
+            "group-stop decision {decision:?} contradicts group {group:?}, leader {leader:?}, others {others:?}"
+        )))
+    }
+}
+
 /// Stops every process of the group `leader` leads, a process started in a group of its own, and says how much of it the stop reached.
 ///
 /// A group already gone, or one whose members have all ended while its leader waits to be reaped, is reached whole: on macOS that group refuses a group signal with `EPERM`, and a look at the group finds nobody besides the leader.
@@ -1927,7 +1962,68 @@ mod tests {
         Bound, Cancel, ProcessExit, RunResult, SIDE_CHANNEL_LIMIT, Spec, Termination,
         read_side_channel, run,
     };
+    #[cfg(unix)]
+    use super::{Delivered, Others, StopDecision, Stopped, checked_decide_stop, decide_stop};
     use super::{MonitorState, Progress, classify_monitor, inspect_monitor};
+
+    #[cfg(unix)]
+    #[test]
+    fn group_stop_self_check_accepts_every_decision_the_classifier_makes() {
+        for group in Delivered::ALL {
+            for leader in Delivered::ALL {
+                for others in Others::ALL {
+                    let checked = checked_decide_stop(group, leader, others, decide_stop);
+                    assert_eq!(
+                        checked.expect("the classifier's decision matches the independent check"),
+                        decide_stop(group, leader, others)
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_whole_group_claim_for_a_refused_group_is_rejected() {
+        for others in [Others::Somebody, Others::Unseen] {
+            let checked =
+                checked_decide_stop(Delivered::Refused, Delivered::Sent, others, |_, _, _| {
+                    StopDecision::Reached(Stopped::Group)
+                });
+            let error = checked.expect_err("the planted classifier must not pass its self-check");
+            let said = error.to_string();
+            assert!(
+                said.contains("group-stop decision Reached(Group)")
+                    && said.contains(&format!("others {others:?}")),
+                "{said}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn every_planted_wrong_group_stop_decision_is_rejected() {
+        for group in Delivered::ALL {
+            for leader in Delivered::ALL {
+                for others in Others::ALL {
+                    for planted in Stopped::ALL
+                        .map(StopDecision::Reached)
+                        .into_iter()
+                        .chain(std::iter::once(StopDecision::Failed))
+                    {
+                        if planted == decide_stop(group, leader, others) {
+                            continue;
+                        }
+                        let checked = checked_decide_stop(group, leader, others, |_, _, _| planted);
+                        assert!(
+                            checked.is_err(),
+                            "a planted {planted:?} passed for {group:?}, {leader:?}, {others:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[cfg(unix)]
     #[test]

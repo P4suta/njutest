@@ -249,7 +249,12 @@ fn signal_group(leader: Pid, signal: Signal) -> io::Result<super::Stopped> {
         Err(rustix::io::Errno::PERM) => (kill_process(leader, signal), others_than(leader)),
         Ok(()) | Err(_) => (Ok(()), super::Others::Unseen),
     };
-    match super::decide_stop(delivered(grouped), delivered(alone), others) {
+    match super::checked_decide_stop(
+        delivered(grouped),
+        delivered(alone),
+        others,
+        super::decide_stop,
+    )? {
         super::StopDecision::Reached(stopped) => Ok(stopped),
         super::StopDecision::Failed => Err(match (grouped, alone) {
             (Err(rustix::io::Errno::PERM), Err(errno)) | (Err(errno), _) => {
