@@ -11,6 +11,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [Configuration](configuration.md)
 - [Limitations](limitations.md)
 - [Error codes](errors.md)
+- [Invariants of the critical decisions](invariants.md)
 - [Continuous integration](ci.md)
 - [Development](development.md)
 - [Releasing](release.md)
