@@ -295,7 +295,7 @@ fn linux_member_besides_leader(leader: i32) -> io::Result<bool> {
         let entry = entry?;
         let pid = match entry.file_name().to_str().map(str::parse::<i32>) {
             Some(Ok(pid)) => pid,
-            Some(Err(_not_a_process)) | None => continue,
+            Some(Err(_)) | None => continue,
         };
         if pid == leader {
             continue;
@@ -312,7 +312,7 @@ fn linux_member_besides_leader(leader: i32) -> io::Result<bool> {
         let state = fields.next();
         let group = match fields.nth(1).map(str::parse::<i32>) {
             Some(Ok(group)) => group,
-            Some(Err(_unreadable)) | None => continue,
+            Some(Err(_)) | None => continue,
         };
         if group == leader && state != Some("Z") {
             return Ok(true);
