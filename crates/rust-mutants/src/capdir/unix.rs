@@ -320,6 +320,13 @@ mod tests {
             "our own open directory is one to tighten"
         );
         assert_eq!(privacy_of(42, 42, Mode::RWXU), Privacy::OwnerOnly);
+        for mode in [0o500, 0o1700, 0o2700, 0o750, 0o701] {
+            assert_eq!(
+                privacy_of(42, 42, Mode::from_raw_mode(mode)),
+                Privacy::Loose,
+                "mode {mode:o} is not exactly owner read, write and enter"
+            );
+        }
     }
 
     #[test]

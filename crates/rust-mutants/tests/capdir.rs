@@ -140,20 +140,24 @@ mod posix {
 
         let temp = tempfile::tempdir().expect("tempdir");
         let dir = Dir::open(temp.path()).expect("the directory");
-        for (mode, expected) in [
-            (0o700, Privacy::OwnerOnly),
-            (0o500, Privacy::Loose),
-            (0o1700, Privacy::Loose),
-            (0o2700, Privacy::Loose),
-            (0o750, Privacy::Loose),
-            (0o701, Privacy::Loose),
-        ] {
+        for mode in [0o700, 0o500, 0o1700, 0o2700, 0o750, 0o701] {
             std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(mode))
                 .expect("chmod");
+            let applied = std::fs::metadata(temp.path())
+                .expect("the directory remains")
+                .permissions()
+                .mode()
+                & 0o7777;
+            assert_eq!(applied & 0o777, mode & 0o777);
+            let expected = if applied == 0o700 {
+                Privacy::OwnerOnly
+            } else {
+                Privacy::Loose
+            };
             assert_eq!(
                 dir.privacy().expect("privacy"),
                 expected,
-                "{mode:o}: owner-only is read, write and enter for the owner and no other bit"
+                "requested {mode:o}, applied {applied:o}: owner-only is read, write and enter for the owner and no other bit"
             );
             if expected == Privacy::Loose {
                 dir.restrict_to_owner().expect("tightened");
