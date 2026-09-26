@@ -57,7 +57,7 @@ discharged-mutant      every target that could have noticed f0d20edfda2959667ff1
 
 MUTANTS   10 mutants were cataloged: 9 executed, 0 refused by the compiler, 3 places that produced no candidate.
 OUTCOMES  killed=9 survived=0 step_limit_reached=0 waited=0 inconclusive=0 errored=0 not_run=1
-OF THOSE  Those 7 add to the 10 cataloged. Within them, not run is 0 unreached, not run is 1 discharged, survived is 0 expected.
+OF THOSE  Those 7 add to the 10 cataloged. Within them, not run is 0 unreached, not run is 1 discharged, not run is 0 declined, survived is 0 expected.
 SCORE     100.0%  (9 detected of 9 decided)
 WORK      started=9 of 30 pairs across 3 targets; 70.0% removed (unreached=20 never-infected=1)
           tests=9 of 30; 70.0% removed
@@ -120,7 +120,7 @@ LEFT      2 of 14 survivors are accounted for by no claim
 - **waited** — a bound expired before anything finished.
   Not counted as noticed, and not counted against the tests either: nothing was established.
 - **inconclusive** — the run could not decide, and says so rather than guessing.
-- **not run** — nothing executed it, and each one says why: `unreached` (no measured test reaches it), `discharged` (a proof says no target could have noticed), `unselected`, `stopped-early`, `interrupted`.
+- **not run** — nothing executed it, and each one says why: `unreached` (no measured test reaches it), `discharged` (a proof says no target could have noticed), `unselected`, `stopped-early`, `interrupted`, `declined` (every test that reached it declined to measure on this machine, as it did with nothing active).
 - **refused** — the compiler would not accept the mutation.
   Not a finding.
 - **skipped** — discovery passed over the place, and every skip states a reason.

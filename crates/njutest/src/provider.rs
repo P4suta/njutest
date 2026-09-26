@@ -497,7 +497,7 @@ impl Drop for JoinedThread {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum ReadFailure {
+enum ProviderReadError {
     #[error("cannot read what the provider said: {0}")]
     Io(#[from] std::io::Error),
     #[error("the provider wrote more than {limit} bytes")]
@@ -506,7 +506,7 @@ enum ReadFailure {
     Utf8(#[from] std::string::FromUtf8Error),
 }
 
-type ReadAnswer = Result<String, ReadFailure>;
+type ReadAnswer = Result<String, ProviderReadError>;
 
 fn send_answer(sender: &SyncSender<ReadAnswer>, answer: ReadAnswer) -> bool {
     match sender.send(answer) {
@@ -541,22 +541,24 @@ fn spawn_line_reader(
             match read {
                 Ok(0) => return,
                 Ok(_read) if bytes.len() > LINE_LIMIT => {
-                    let sent =
-                        send_answer(&sender, Err(ReadFailure::TooLong { limit: LINE_LIMIT }));
+                    let sent = send_answer(
+                        &sender,
+                        Err(ProviderReadError::TooLong { limit: LINE_LIMIT }),
+                    );
                     if !sent {
                         return;
                     }
                     return;
                 }
                 Ok(_read) => {
-                    let answer = String::from_utf8(bytes).map_err(ReadFailure::from);
+                    let answer = String::from_utf8(bytes).map_err(ProviderReadError::from);
                     let terminal = answer.is_err();
                     if !send_answer(&sender, answer) || terminal {
                         return;
                     }
                 }
                 Err(source) => {
-                    let sent = send_answer(&sender, Err(ReadFailure::Io(source)));
+                    let sent = send_answer(&sender, Err(ProviderReadError::Io(source)));
                     if !sent {
                         return;
                     }
@@ -599,9 +601,9 @@ fn spawn_all_reader(
             .take(capacity)
             .read_to_end(&mut bytes);
         let answer = match read {
-            Ok(_read) if bytes.len() > limit => Err(ReadFailure::TooLong { limit }),
-            Ok(_read) => String::from_utf8(bytes).map_err(ReadFailure::from),
-            Err(source) => Err(ReadFailure::Io(source)),
+            Ok(_read) if bytes.len() > limit => Err(ProviderReadError::TooLong { limit }),
+            Ok(_read) => String::from_utf8(bytes).map_err(ProviderReadError::from),
+            Err(source) => Err(ProviderReadError::Io(source)),
         };
         match sender.send(answer) {
             Ok(()) => {}

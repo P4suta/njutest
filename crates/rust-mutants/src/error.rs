@@ -138,6 +138,8 @@ mod table {
         InstrumentLinesMoved,
         /// A mutant index makes the generated runtime's inclusive window overflow.
         InstrumentIndexReserved,
+        /// The rewritten file does not read as Rust, down to what every identity macro holds.
+        InstrumentUnparsable,
         /// The tree does not compile before any mutant is live.
         ValidateNotMutantInduced,
         /// The mutants a compilation failure came from could not be isolated.
@@ -439,9 +441,9 @@ mod table {
                 },
                 Self::CargoMessageUnparsable => ErrorCode {
                     code: "RM1016",
-                    summary: "a --message-format=json line is not a message",
+                    summary: "a line of `cargo … --message-format=json` output is not a message",
                     remedy: Some(
-                        "run the same cargo command with --message-format=json yourself; what it prints is what could not be read",
+                        "run the same `cargo … --message-format=json` yourself; what it prints is what could not be read",
                     ),
                     sealed: Sealed,
                 },
@@ -624,6 +626,14 @@ mod table {
                     summary: "a mutant index makes the generated runtime's inclusive window overflow",
                     remedy: Some(
                         "this is a defect in this tool: the catalog outgrew the u32 window the generated runtime can represent",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::InstrumentUnparsable => ErrorCode {
+                    code: "RM3008",
+                    summary: "the rewritten file does not read as Rust",
+                    remedy: Some(
+                        "this is a defect in this tool: a guard changed how the syntax around it reads; the line is named, and the source there is the case to report",
                     ),
                     sealed: Sealed,
                 },
@@ -930,6 +940,7 @@ pub(crate) const INSTRUMENT_SPLICE_FAILED: ErrorCode = RmCode::InstrumentSpliceF
 pub(crate) const INSTRUMENT_LINES_MOVED: ErrorCode = RmCode::InstrumentLinesMoved.error_code();
 pub(crate) const INSTRUMENT_INDEX_RESERVED: ErrorCode =
     RmCode::InstrumentIndexReserved.error_code();
+pub(crate) const INSTRUMENT_UNPARSABLE: ErrorCode = RmCode::InstrumentUnparsable.error_code();
 pub(crate) const VALIDATE_NOT_MUTANT_INDUCED: ErrorCode =
     RmCode::ValidateNotMutantInduced.error_code();
 pub(crate) const VALIDATE_NOT_ISOLATED: ErrorCode = RmCode::ValidateNotIsolated.error_code();

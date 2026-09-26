@@ -73,6 +73,8 @@ pub struct RunDocument {
     pub expectations: Vec<ExpectationDocument>,
     /// Everything that stops the run from being clean.
     pub findings: Vec<FindingDocument>,
+    /// What the build's own rustc says its target is, kept to the names a target alone decides, sorted, which every claim's `where` was judged against (ADR 0042).
+    pub facts: Vec<String>,
 }
 
 /// When a run ran and how it ended.
@@ -139,6 +141,8 @@ pub struct Accounting {
     pub unreached: Within,
     /// How many of those never ran because a proof removed every target that could have noticed them.
     pub discharged: Within,
+    /// How many of those measured nothing because every test that reached them declined to measure on this machine, as the baseline's did (ADR 0043).
+    pub declined: Within,
     /// How many survivors a reviewer had declared, and the run confirmed.
     pub expected: Within,
 }
@@ -165,7 +169,7 @@ pub struct Beside(u32);
 /// A report accounting value exceeded its durable `u32` representation or contradicted a subset relation required by that representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("run accounting exceeds or contradicts its durable counters")]
-pub struct CountOverflow;
+pub struct CountOverflowError;
 
 /// Declares the three kinds with the same shape, and no `Display`.
 ///
@@ -190,13 +194,13 @@ macro_rules! counted {
             ///
             /// # Errors
             /// Refuses when the durable counter is exhausted.
-            pub const fn raise(&mut self) -> Result<(), CountOverflow> {
+            pub const fn raise(&mut self) -> Result<(), CountOverflowError> {
                 match self.0.checked_add(1) {
                     Some(raised) => {
                         self.0 = raised;
                         Ok(())
                     }
-                    None => Err(CountOverflow),
+                    None => Err(CountOverflowError),
                 }
             }
         }
@@ -286,9 +290,11 @@ pub struct RunMutantDocument {
     pub retried: bool,
     /// Whether the harness had already answered when the clock ended the process: a verdict the harness gave, from a process that would not end.
     pub lingered: bool,
-    /// Why it was never executed, when it was not: `unreached`, `discharged`, or `interrupted`.
+    /// Why it was never executed, or measured nothing where it was, when it was not.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub not_run_reason: Option<NotRunReason>,
+    /// Each test that declined to measure in the execution the outcome rests on, and its words (ADR 0043).
+    pub declined: Vec<crate::decline::Decline>,
     /// Which targets could have noticed it, and which of them ran.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub route: Option<RouteDocument>,
@@ -329,9 +335,26 @@ pub struct ExpectationDocument {
     /// What the run established instead, when the claim was contradicted.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub actual: Option<Outcome>,
-    /// Why the identity resolved to nothing, when it did not resolve.
+    /// Why the identity resolved to nothing, or which fact did not hold, when either is so.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub why: Option<String>,
+    /// Where the claim is judged, when the file said.
+    #[serde(
+        rename = "where",
+        deserialize_with = "crate::strictjson::required_option"
+    )]
+    pub holds: Option<WhereDocument>,
+}
+
+/// The facts a claim was established under, as a report writes them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WhereDocument {
+    /// The predicate over the target, as it reads back.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub cfg: Option<String>,
+    /// Each name of the tests' environment the claim names, with the value it holds under.
+    pub env: BTreeMap<String, String>,
 }
 
 /// One expectation locator in the current run-report wire shape.
@@ -412,7 +435,7 @@ pub enum DocumentError {
     CatalogTooLarge,
     /// Exact accounting exceeded a durable counter or contradicted a subset relation.
     #[error(transparent)]
-    Count(#[from] CountOverflow),
+    Count(#[from] CountOverflowError),
     /// The shard header is not a valid `K/N` selection.
     #[error("the run report has an invalid shard {shard:?}")]
     Shard {
@@ -473,6 +496,12 @@ pub enum DocumentError {
     /// The legacy convenience flag and the typed reason disagree.
     #[error("mutant {mutant} gives two different answers about whether it was unreached")]
     Unreached {
+        /// The contradictory mutant.
+        mutant: String,
+    },
+    /// The tests a mutant says declined contradict its outcome: a declined reason with no decline, a kill by a decline that is not among them, or a decline beside an outcome no decline can stand beside.
+    #[error("mutant {mutant} gives two different answers about which of its tests declined")]
+    Declined {
         /// The contradictory mutant.
         mutant: String,
     },
@@ -597,12 +626,24 @@ impl RunDocument {
                 mutant: one.id.clone(),
             });
         }
+        if !declines_agree(one) {
+            return Err(DocumentError::Declined {
+                mutant: one.id.clone(),
+            });
+        }
         if one.not_run_reason == Some(NotRunReason::Interrupted) && !self.run.interrupted {
             return Err(DocumentError::Interruption {
                 mutant: one.id.clone(),
             });
         }
-        let expected = verdict_finding(one, self.run.interrupted);
+        let expected = crate::run::verdict_finding(
+            crate::run::RowVerdict {
+                outcome: one.outcome,
+                not_run_reason: one.not_run_reason,
+                expected: one.expected,
+            },
+            self.run.interrupted,
+        );
         let actual: Vec<FindingKind> = self
             .findings
             .iter()
@@ -810,7 +851,9 @@ impl ExpectationDocument {
     /// Refuses a claim whose fields do not carry the standing it states.
     pub fn finding(&self) -> Result<Option<FindingDocument>, DocumentError> {
         match (self.standing.as_str(), self.actual, &self.why) {
-            ("met", None, _) | ("unjudged", None, None) => Ok(None),
+            ("met", None, _) | ("unjudged", None, None) | ("inapplicable", None, Some(_)) => {
+                Ok(None)
+            }
             ("stale", Some(actual), None) => Ok(Some(FindingDocument {
                 kind: FindingKind::StaleExpectation,
                 mutant: self.mutant.clone(),
@@ -859,24 +902,20 @@ impl FindingKind {
     }
 }
 
-const fn verdict_finding(one: &RunMutantDocument, interrupted: bool) -> Option<FindingKind> {
-    match one.outcome {
-        Outcome::Killed => None,
-        Outcome::Survived if one.expected => None,
-        Outcome::Survived => Some(FindingKind::SurvivingMutant),
-        Outcome::StepLimitReached => Some(FindingKind::StepLimitReachedMutant),
-        Outcome::Waited => Some(FindingKind::WaitedMutant),
-        Outcome::Inconclusive => Some(FindingKind::InconclusiveMutant),
-        Outcome::Errored => Some(FindingKind::ErroredMutant),
-        Outcome::NotRun => match one.not_run_reason {
-            Some(NotRunReason::Unreached) => Some(FindingKind::UnreachedMutant),
-            Some(NotRunReason::Discharged) => Some(FindingKind::DischargedMutant),
-            Some(
-                NotRunReason::Interrupted | NotRunReason::Unselected | NotRunReason::StoppedEarly,
-            ) => None,
-            None if interrupted => None,
-            None => Some(FindingKind::NotRunMutant),
+/// Whether the tests `one` says declined agree with its outcome (ADR 0043).
+fn declines_agree(one: &RunMutantDocument) -> bool {
+    match (one.outcome, one.declined.is_empty()) {
+        (_, true) => one.not_run_reason != Some(NotRunReason::Declined),
+        (Outcome::NotRun, false) => one.not_run_reason == Some(NotRunReason::Declined),
+        (Outcome::Survived, false) => true,
+        (Outcome::Killed, false) => match one.killed_by.as_slice() {
+            [killer] => one.declined.iter().any(|decline| &decline.test == killer),
+            _ => false,
         },
+        (
+            Outcome::StepLimitReached | Outcome::Waited | Outcome::Inconclusive | Outcome::Errored,
+            false,
+        ) => false,
     }
 }
 
@@ -912,6 +951,9 @@ fn accounting_from_document(document: &RunDocument) -> Result<Accounting, Docume
         if one.not_run_reason == Some(NotRunReason::Discharged) {
             accounting.discharged.raise()?;
         }
+        if one.not_run_reason == Some(NotRunReason::Declined) {
+            accounting.declined.raise()?;
+        }
         if one.expected {
             accounting.expected.raise()?;
         }
@@ -920,7 +962,7 @@ fn accounting_from_document(document: &RunDocument) -> Result<Accounting, Docume
         accounting
             .cataloged
             .checked_sub(accounting.not_run.count())
-            .ok_or(CountOverflow)?,
+            .ok_or(CountOverflowError)?,
     );
     Ok(accounting)
 }
@@ -967,6 +1009,11 @@ fn accounting_difference(actual: &Accounting, expected: &Accounting) -> Option<&
             "discharged",
             actual.discharged.count(),
             expected.discharged.count(),
+        ),
+        (
+            "declined",
+            actual.declined.count(),
+            expected.declined.count(),
         ),
         (
             "expected",
@@ -1052,6 +1099,7 @@ pub fn document(
             expected: tally.expected.into(),
             unreached: tally.unreached.into(),
             discharged: tally.discharged.into(),
+            declined: tally.declined.into(),
         },
         score: run.score()?.map(|score| ScoreDocument {
             detected: score.detected,
@@ -1074,6 +1122,7 @@ pub fn document(
         skips: crate::report::catalog::skip_documents(session),
         expectations: run.expectations.iter().map(expectation_document).collect(),
         findings: run.findings().iter().map(finding).collect(),
+        facts: session.facts().recorded(),
     })
 }
 
@@ -1092,15 +1141,21 @@ fn expectation_document(verified: &crate::run::Verified) -> ExpectationDocument 
             Standing::Met
             | Standing::Moved { .. }
             | Standing::Unmatched { .. }
-            | Standing::Unjudged => None,
+            | Standing::Unjudged
+            | Standing::Inapplicable { .. } => None,
         },
         why: match &verified.standing {
             Standing::Unmatched { why } => Some(why.clone()),
+            Standing::Inapplicable { because } => Some(because.said()),
             Standing::Moved { from, to } => {
                 Some(format!("the mutation moved from line {from} to line {to}"))
             }
             Standing::Met | Standing::Stale { .. } | Standing::Unjudged => None,
         },
+        holds: (verified.under != crate::run::Where::default()).then(|| WhereDocument {
+            cfg: verified.under.cfg.as_ref().map(ToString::to_string),
+            env: verified.under.env.clone(),
+        }),
     }
 }
 
@@ -1110,6 +1165,7 @@ const fn standing_name(standing: &Standing) -> &'static str {
         Standing::Stale { .. } => "stale",
         Standing::Unmatched { .. } => "unmatched",
         Standing::Unjudged => "unjudged",
+        Standing::Inapplicable { .. } => "inapplicable",
     }
 }
 
@@ -1180,6 +1236,7 @@ fn mutant(
         retried: one.retried,
         lingered: one.lingered,
         not_run_reason: one.not_run_reason,
+        declined: one.declined.clone(),
         route: one.route.clone(),
         identical: one.identical,
         expected: one.expected,
@@ -1281,6 +1338,16 @@ pub enum MergeError {
         /// The one that differs.
         other: String,
     },
+    /// Two parts were measured for targets that say different things of themselves, so a claim judged in one is not judged the same way in the other (ADR 0042).
+    #[error(
+        "one part was measured where the target is {first:?} and another where it is {other:?}, and a claim's where is judged against one target"
+    )]
+    TargetsDisagree {
+        /// What the first part's target says of itself.
+        first: String,
+        /// What the part that differs says.
+        other: String,
+    },
     /// One mutant appears in more than one part, so the parts overlap and the counts would say more happened than did.
     #[error(
         "{mutant} is in more than one of these reports, so they are not the parts of one whole"
@@ -1311,7 +1378,7 @@ pub enum MergeError {
     CatalogTooLarge,
     /// Exact merged accounting exceeded a durable counter or contradicted a subset relation.
     #[error(transparent)]
-    Count(#[from] CountOverflow),
+    Count(#[from] CountOverflowError),
 }
 
 /// Every claim the parts state, one each, answered as the whole run answers it.
@@ -1343,6 +1410,7 @@ fn claims_of(parts: &[RunDocument], rows: &[RunMutantDocument]) -> Vec<Expectati
                 && held.reason == one.reason
                 && held.outcome == one.outcome
                 && held.covered == one.covered
+                && held.holds == one.holds
         };
         match claims.iter_mut().find(|held| same(held)) {
             Some(held) if at(one) < at(held) => *held = one.clone(),
@@ -1377,6 +1445,12 @@ pub fn merge(parts: &[RunDocument]) -> Result<RunDocument, MergeError> {
     for part in parts {
         part.validate()
             .map_err(|error| MergeError::InvalidPart { error })?;
+        if part.facts != first.facts {
+            return Err(MergeError::TargetsDisagree {
+                first: first.facts.join(" "),
+                other: part.facts.join(" "),
+            });
+        }
         if part.workspace.catalog_digest != first.workspace.catalog_digest {
             return Err(MergeError::Disagree {
                 first: first.workspace.catalog_digest.clone(),
@@ -1459,6 +1533,9 @@ fn accounting_of(
         if one.not_run_reason == Some(NotRunReason::Discharged) {
             counted.discharged.raise()?;
         }
+        if one.not_run_reason == Some(NotRunReason::Declined) {
+            counted.declined.raise()?;
+        }
         if one.expected {
             counted.expected.raise()?;
         }
@@ -1467,16 +1544,16 @@ fn accounting_of(
         counted
             .cataloged
             .checked_sub(counted.not_run.count())
-            .ok_or(CountOverflow)?,
+            .ok_or(CountOverflowError)?,
     );
     Ok(counted)
 }
 
-fn score_of(accounting: &Accounting) -> Result<Option<ScoreDocument>, CountOverflow> {
+fn score_of(accounting: &Accounting) -> Result<Option<ScoreDocument>, CountOverflowError> {
     let detected = accounting.killed.count();
     let decided = detected
         .checked_add(accounting.survived.count())
-        .ok_or(CountOverflow)?;
+        .ok_or(CountOverflowError)?;
     Ok((decided > 0).then(|| ScoreDocument {
         detected,
         decided,
@@ -1511,6 +1588,9 @@ mod tests {
                 why: "the identity names nothing".to_owned(),
             },
             Standing::Unjudged,
+            Standing::Inapplicable {
+                because: crate::run::Unheld::NotCompiled,
+            },
         ];
         for standing in &every {
             match standing {
@@ -1518,7 +1598,8 @@ mod tests {
                 | Standing::Moved { .. }
                 | Standing::Stale { .. }
                 | Standing::Unmatched { .. }
-                | Standing::Unjudged => {}
+                | Standing::Unjudged
+                | Standing::Inapplicable { .. } => {}
             }
         }
         every
@@ -1535,6 +1616,7 @@ mod tests {
                 mutant: Some("a mutant".to_owned()),
                 covered: 1,
                 standing: standing.clone(),
+                under: crate::run::Where::default(),
             };
             let written = expectation_document(&verified);
             assert!(

@@ -6,6 +6,7 @@
 mod annotate;
 pub mod branch;
 mod position;
+mod regroup;
 mod rules;
 mod shape;
 mod walk;
@@ -567,11 +568,13 @@ pub fn discover_file(
             directive,
         },
     })?;
+    let grouping = regroup::Grouping::of(&file);
     let input = walk::Input {
         text,
         base,
         path,
         digest: &source_digest,
+        grouping: &grouping,
     };
     let mut walker = walk::Walker::new(input, selection, index);
     walker.annotate(markers);

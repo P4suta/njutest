@@ -17,7 +17,7 @@ use crate::id::{is_digest, is_id};
 use crate::instrument::{
     ACTIVE_ENV, CATALOG_ENV, CRASH_NONCE_ENV, CRASH_NOTICE_ENV, DELAY_ENV, FAULT_ENV,
     STEP_BEAT_ENV, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_PROTOCOL_EXIT,
-    STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, TOUCH_ENV,
+    STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, STOP_SCHEMA, TOUCH_ENV,
 };
 use crate::outcome::Outcome;
 use crate::runner::{
@@ -44,7 +44,7 @@ pub const RESERVED_ENV: [&str; 13] = [
 ];
 
 /// The variables a run composes for every test process it starts, which it therefore never lets one inherit.
-pub const COMPOSED_ENV: [&str; 14] = [
+pub const COMPOSED_ENV: [&str; 15] = [
     ACTIVE_ENV,
     CRASH_NOTICE_ENV,
     CRASH_NONCE_ENV,
@@ -59,6 +59,7 @@ pub const COMPOSED_ENV: [&str; 14] = [
     STEP_STATE_ENV,
     STEP_BEAT_ENV,
     crate::coverage::PROFILE_ENV,
+    crate::decline::DECLINE_NOTICE_ENV,
 ];
 
 /// A variable a control may be started with another value of: one the contract lets differ between machines, and never one the run composes to measure with.
@@ -117,18 +118,32 @@ pub enum Launcher {
     },
 }
 
+/// The shell line that starts the test binary under `mask`, on the platform that has the shell.
+#[cfg(unix)]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the same signature as the platform with no shell, which has nothing to return"
+)]
+fn umask_argv(mask: u32) -> Option<Vec<OsString>> {
+    Some(vec![
+        OsString::from("sh"),
+        OsString::from("-c"),
+        OsString::from(format!("umask {mask:03o}; exec \"$0\" \"$@\"")),
+    ])
+}
+
+/// Nothing, on a platform with no POSIX shell to start the binary through.
+#[cfg(not(unix))]
+const fn umask_argv(_mask: u32) -> Option<Vec<OsString>> {
+    None
+}
+
 impl Launcher {
     /// The program and arguments that start the test binary this way, or nothing on a platform that has no such program.
     #[must_use]
     pub fn argv(self) -> Option<Vec<OsString>> {
         match self {
-            Self::Umask { mask } => cfg!(unix).then(|| {
-                vec![
-                    OsString::from("sh"),
-                    OsString::from("-c"),
-                    OsString::from(format!("umask {mask:03o}; exec \"$0\" \"$@\"")),
-                ]
-            }),
+            Self::Umask { mask } => umask_argv(mask),
         }
     }
 }
@@ -542,8 +557,15 @@ pub enum StepProtocolFailure {
         /// The operating-system diagnostic.
         detail: String,
     },
-    /// The generated runtime reported that it could not publish a notice.
+    /// The generated runtime exited for a failed protocol and said nothing this release can read.
     Publication {},
+    /// The generated runtime exited for a failed protocol and named the check that failed.
+    Stated {
+        /// The check, as the runtime names it.
+        check: String,
+        /// The operating system's code where a call the runtime made is what failed, and `0` where none did.
+        os: i32,
+    },
     /// A monitor stop had no completed notice.
     NoticeMissing {},
     /// The opened notice was not a regular file.
@@ -607,7 +629,80 @@ pub enum StepProtocolFailure {
     },
 }
 
+impl StepProtocolFailure {
+    /// What a reader is told the protocol failure was, and what it means for the build or the run.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        match self {
+            Self::MonitorInvalid { path } => {
+                format!("the notice path {path} was not a regular file")
+            }
+            Self::MonitorInspect { path, detail } => {
+                format!("the notice path {path} could not be inspected: {detail}")
+            }
+            Self::Publication {} => "the step protocol's status came with no word of which check \
+                                     failed, which only a runtime this release did not generate \
+                                     leaves: a stale build is linked into the tree"
+                .to_owned(),
+            Self::Stated { check, os: 0 } => {
+                format!("the generated runtime stopped at its step-protocol check `{check}`")
+            }
+            Self::Stated { check, os } => format!(
+                "the generated runtime stopped at its step-protocol check `{check}`, where the \
+                 operating system answered {os}"
+            ),
+            Self::NoticeMissing {} => "the runtime stopped for its allowance and no complete \
+                                       notice was there"
+                .to_owned(),
+            Self::NoticeNotRegular { path } => format!("the notice {path} was not a regular file"),
+            Self::NoticeMetadata { path, detail } => {
+                format!("the notice {path} could not be inspected: {detail}")
+            }
+            Self::NoticeOpen { path, detail } => {
+                format!("the notice {path} could not be opened without following a link: {detail}")
+            }
+            Self::NoticeRead { path, detail } => {
+                format!("the notice {path} could not be read: {detail}")
+            }
+            Self::NoticeTooLarge { path, limit } => {
+                format!("the notice {path} was larger than the {limit} bytes the protocol allows")
+            }
+            Self::NoticeNotUtf8 { path } => format!("the notice {path} was not UTF-8"),
+            Self::NoticeEmpty {} => "the notice held no record".to_owned(),
+            Self::NoticeNonCanonical {} => {
+                "the notice was not in the one-line form the runtime writes".to_owned()
+            }
+            Self::NoticeExtraRecord {} => "the notice held more than one record".to_owned(),
+            Self::ExecutionMismatch {} => "the notice named another execution".to_owned(),
+            Self::InvalidLimit {} => "the notice's allowance was malformed".to_owned(),
+            Self::InvalidObserved {} => "the notice's observed count was malformed".to_owned(),
+            Self::BoundaryMismatch {} => {
+                "the notice did not carry the boundary one past the allowance".to_owned()
+            }
+            Self::Cleanup { path, detail } => {
+                format!("the consumed notice {path} could not be removed: {detail}")
+            }
+        }
+    }
+}
+
 impl Stopped {
+    /// How the step protocol failed, where that is what stopped the process.
+    #[must_use]
+    pub const fn protocol_failure(&self) -> Option<&StepProtocolFailure> {
+        match self {
+            Self::StepProtocolFailed { reason } => Some(reason),
+            Self::NotStarted { .. }
+            | Self::Exited { .. }
+            | Self::TimedOut { .. }
+            | Self::Stalled { .. }
+            | Self::Cancelled { .. }
+            | Self::WaitFailed
+            | Self::Answered
+            | Self::StepLimitReached { .. } => None,
+        }
+    }
+
     /// Why the process never started, where it did not.
     #[must_use]
     pub const fn start_failure(&self) -> Option<&StartFailure> {
@@ -951,12 +1046,12 @@ impl Stopped {
 }
 
 impl StepProtocolFailure {
-    fn from_monitor(failure: &crate::runner::MonitorFailure) -> Self {
+    fn from_monitor(failure: &crate::runner::MonitorError) -> Self {
         match failure {
-            crate::runner::MonitorFailure::InvalidType { path } => Self::MonitorInvalid {
+            crate::runner::MonitorError::InvalidType { path } => Self::MonitorInvalid {
                 path: path.display().to_string(),
             },
-            crate::runner::MonitorFailure::Inspect { path, source } => Self::MonitorInspect {
+            crate::runner::MonitorError::Inspect { path, source } => Self::MonitorInspect {
                 path: path.display().to_string(),
                 detail: source.to_string(),
             },
@@ -1423,7 +1518,7 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
             ) =>
         {
             Stopped::StepProtocolFailed {
-                reason: StepProtocolFailure::Publication {},
+                reason: stated(&result.output),
             }
         }
         Ok(None) if matches!(result.termination, Termination::StoppedByMonitor) => {
@@ -1441,6 +1536,42 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
         Err(reason) => Stopped::StepProtocolFailed {
             reason: reason.failure(),
         },
+    }
+}
+
+/// What the generated runtime said on its way out of a failed step protocol: the last line it wrote in the shape it writes, or that it said nothing this release reads.
+fn stated(output: &[u8]) -> StepProtocolFailure {
+    let said = output.split(|byte| *byte == b'\n').rev().find_map(|line| {
+        let line = match std::str::from_utf8(line) {
+            Ok(line) => line,
+            Err(_not_a_line_the_runtime_wrote) => return None,
+        };
+        let line = match line.strip_suffix('\r') {
+            Some(line) => line,
+            None => line,
+        };
+        let mut fields = line
+            .strip_prefix(STOP_SCHEMA)?
+            .strip_prefix('\t')?
+            .split('\t');
+        let (status, check, os, rest) = (
+            fields.next()?,
+            fields.next()?,
+            fields.next()?,
+            fields.next(),
+        );
+        let protocol = STEP_PROTOCOL_EXIT.to_string();
+        match (status == protocol, os.parse::<i32>(), rest) {
+            (true, Ok(os), None) => Some(StepProtocolFailure::Stated {
+                check: check.to_owned(),
+                os,
+            }),
+            (false, _, _) | (true, Err(_), _) | (true, Ok(_), Some(_)) => None,
+        }
+    });
+    match said {
+        Some(stated) => stated,
+        None => StepProtocolFailure::Publication {},
     }
 }
 
@@ -1628,16 +1759,33 @@ pub fn environment(
         }
         (None, None) => {}
     }
+    if let Some(engine) = engine {
+        env.insert(
+            OsString::from(crate::decline::DECLINE_NOTICE_ENV),
+            engine
+                .join(crate::decline::DECLINE_NOTICE_FILE)
+                .into_os_string(),
+        );
+    }
     if let Some(scratch) = scratch {
-        for name in ["TMPDIR", "TMP", "TEMP"] {
-            env.insert(OsString::from(name), scratch.as_os_str().to_owned());
-        }
-        match context.home {
-            Home::Confined => confine(&mut env, &scratch.join("home"))?,
-            Home::Given => {}
-        }
+        scratched(&mut env, scratch, context.home)?;
     }
     Ok(env.into_iter().collect())
+}
+
+/// Points `env`'s temporary directories at `scratch`, and its home there too unless the target keeps the given one.
+fn scratched(
+    env: &mut BTreeMap<OsString, OsString>,
+    scratch: &Path,
+    home: Home,
+) -> std::io::Result<()> {
+    for name in ["TMPDIR", "TMP", "TEMP"] {
+        env.insert(OsString::from(name), scratch.as_os_str().to_owned());
+    }
+    match home {
+        Home::Confined => confine(env, &scratch.join("home")),
+        Home::Given => Ok(()),
+    }
 }
 
 /// Gives `env` a home at `home`, with the homes a build needs pinned where the given home keeps them and git's identity copied in.
@@ -2027,6 +2175,16 @@ pub enum MutantConclusion {
     Unobserved,
     /// The execution apparatus failed.
     Errored,
+    /// Every test that passed declined to measure, each in the words the baseline's did, so the execution measured nothing (ADR 0043).
+    Declined {
+        /// Each test, and its words.
+        tests: Vec<crate::decline::Decline>,
+    },
+    /// A test declined where the baseline's did not, or in other words, so the mutation changed what it did: a detection (ADR 0043).
+    DeclinedUnderTheMutant {
+        /// The test, and the words it gave under the mutation.
+        by: crate::decline::Decline,
+    },
 }
 
 impl MutantConclusion {
@@ -2034,8 +2192,8 @@ impl MutantConclusion {
     #[must_use]
     pub const fn outcome(&self) -> Outcome {
         match self {
-            Self::NotRun => Outcome::NotRun,
-            Self::Killed => Outcome::Killed,
+            Self::NotRun | Self::Declined { .. } => Outcome::NotRun,
+            Self::Killed | Self::DeclinedUnderTheMutant { .. } => Outcome::Killed,
             Self::Survived => Outcome::Survived,
             Self::StepLimitReached { .. } => Outcome::StepLimitReached,
             Self::Waited => Outcome::Waited,
@@ -2055,7 +2213,9 @@ impl MutantConclusion {
             | Self::Waited
             | Self::Inconclusive
             | Self::Unobserved
-            | Self::Errored => None,
+            | Self::Errored
+            | Self::Declined { .. }
+            | Self::DeclinedUnderTheMutant { .. } => None,
         }
     }
 
@@ -2076,32 +2236,17 @@ impl MutantConclusion {
     }
 
     fn reconciled(self, outcome: Outcome) -> Self {
-        match outcome {
-            Outcome::NotRun => Self::NotRun,
-            Outcome::Killed => Self::Killed,
-            Outcome::Survived => Self::Survived,
-            Outcome::StepLimitReached => match self {
-                Self::StepLimitReached { notice } => Self::StepLimitReached { notice },
-                Self::NotRun
-                | Self::Killed
-                | Self::Survived
-                | Self::Waited
-                | Self::Inconclusive
-                | Self::Unobserved
-                | Self::Errored => Self::Errored,
-            },
-            Outcome::Waited => Self::Waited,
-            Outcome::Inconclusive => match self {
-                Self::Unobserved => Self::Unobserved,
-                Self::NotRun
-                | Self::Killed
-                | Self::Survived
-                | Self::StepLimitReached { .. }
-                | Self::Waited
-                | Self::Inconclusive
-                | Self::Errored => Self::Inconclusive,
-            },
-            Outcome::Errored => Self::Errored,
+        match (outcome, self) {
+            (Outcome::NotRun, declined @ Self::Declined { .. })
+            | (Outcome::Killed, declined @ Self::DeclinedUnderTheMutant { .. })
+            | (Outcome::StepLimitReached, declined @ Self::StepLimitReached { .. })
+            | (Outcome::Inconclusive, declined @ Self::Unobserved) => declined,
+            (Outcome::NotRun, _) => Self::NotRun,
+            (Outcome::Killed, _) => Self::Killed,
+            (Outcome::Survived, _) => Self::Survived,
+            (Outcome::StepLimitReached | Outcome::Errored, _) => Self::Errored,
+            (Outcome::Waited, _) => Self::Waited,
+            (Outcome::Inconclusive, _) => Self::Inconclusive,
         }
     }
 }
@@ -2140,6 +2285,8 @@ pub struct MutantResult {
     pub leader: Option<u32>,
     /// Whether the harness had already answered when the clock ended the process, so the verdict is the harness's and the process outlived it.
     pub lingered: bool,
+    /// What the process said, on the file the engine named for it, about the tests of it that could not measure where they ran (ADR 0043).
+    pub declines: crate::decline::Declines,
 }
 
 /// The protocol a test process answered in.
@@ -2154,7 +2301,7 @@ pub enum Protocol {
 }
 
 /// Whether the tests a run was read as passing are the harness's answer rather than the parser's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 pub enum Reading {
     /// libtest's named passing tests come to its own summary's count.
     Whole,
@@ -2209,6 +2356,7 @@ impl MutantResult {
             ignored_tests: Vec::new(),
             leader: None,
             lingered: false,
+            declines: crate::decline::Declines::none(),
         }
     }
 
@@ -2371,6 +2519,19 @@ pub fn exec(
         return MutantResult::apparatus_error(&target.id, refusal.said().to_owned());
     }
     spec.env = Some(env);
+    let notice = request
+        .engine_dir()
+        .map(|engine| engine.join(crate::decline::DECLINE_NOTICE_FILE));
+    if let Some(notice) = &notice
+        && let Err(error) = crate::decline::cleared(notice)
+    {
+        let message = format!(
+            "the decline notice {} could not be cleared before the process started: {error}",
+            notice.display()
+        );
+        trace.note("decline-notice", &message);
+        return MutantResult::apparatus_error(&target.id, message);
+    }
     let result = run(&spec, cancel);
     let observation = Observation::of(&result, step.as_ref());
     let record = ExecRecord::of(&spec, &result).map(|mut record| {
@@ -2378,13 +2539,22 @@ pub fn exec(
         record
     });
     trace.exec_result(record);
+    finished(target, (result, observation), notice.as_deref())
+}
+
+/// What one test process of `target` came to, read from how it ended, what it printed, and the decline notice at `notice` it could write.
+fn finished(
+    target: &TestTarget,
+    (result, observation): (RunResult, Observation),
+    notice: Option<&Path>,
+) -> MutantResult {
     let (conclusion, summary, lines) = concluded(target, &observation, &result.output);
     let signal = result.signal();
     let lingered = matches!(
         observation.stopped,
         Stopped::TimedOut { .. } | Stopped::Stalled { .. }
     ) && conclusion.outcome() != Outcome::Waited;
-    MutantResult {
+    let mut answered = MutantResult {
         entered: None,
         conclusion,
         target: target.id.clone(),
@@ -2404,7 +2574,11 @@ pub fn exec(
         leader: result.leader,
         lingered,
         stopped: observation.stopped,
-    }
+        declines: crate::decline::Declines::none(),
+    };
+    answered.declines =
+        crate::decline::Declines::of(notice, answered.reading(), &answered.passed_tests);
+    answered
 }
 
 /// Configures [`build`].
@@ -2764,9 +2938,10 @@ mod tests {
     };
 
     use super::{
-        Context, ExpectedStep, NoticeError, Observation, QUIET_WINDOWS_PER_CEILING, STEP_STATE_ENV,
-        STEP_STATE_SCHEMA, StepBoundaryScope, StepLimitNotice, StepProtocolFailure, StepSetupError,
-        Stopped, observed_stop, outcome_of, rustlib_targets, watched,
+        Context, ExpectedStep, NoticeError, Observation, QUIET_WINDOWS_PER_CEILING,
+        STEP_PROTOCOL_EXIT, STEP_STATE_ENV, STEP_STATE_SCHEMA, STOP_SCHEMA, StepBoundaryScope,
+        StepLimitNotice, StepProtocolFailure, StepSetupError, Stopped, observed_stop, outcome_of,
+        rustlib_targets, watched,
     };
     use crate::outcome::Outcome;
     use crate::runner::{Bound, ProcessExit, RunResult, Termination};
@@ -3269,6 +3444,41 @@ mod tests {
     }
 
     #[test]
+    fn a_protocol_stop_is_named_by_the_last_line_the_runtime_wrote_for_it() {
+        let line = |status: &str, check: &str, os: &str| {
+            format!("{STOP_SCHEMA}\t{status}\t{check}\t{os}\n")
+        };
+        let protocol = STEP_PROTOCOL_EXIT.to_string();
+        let output = format!(
+            "running 1 test\n{}{}",
+            line(&protocol, "open", "2"),
+            line(&protocol, "lock", "33")
+        );
+        assert_eq!(
+            super::stated(output.as_bytes()),
+            StepProtocolFailure::Stated {
+                check: "lock".to_owned(),
+                os: 33
+            },
+            "the last stop the runtime said is the one that ended it"
+        );
+        for unread in [
+            String::new(),
+            "running 1 test\n".to_owned(),
+            line("96", "touch: open", "5"),
+            line(&protocol, "lock", "not a code"),
+            format!("{STOP_SCHEMA}\t{protocol}\tlock\t33\tmore\n"),
+            format!("said: {}", line(&protocol, "lock", "33")),
+        ] {
+            assert_eq!(
+                super::stated(unread.as_bytes()),
+                StepProtocolFailure::Publication {},
+                "a line for another stop, or one out of shape, names nothing: {unread:?}"
+            );
+        }
+    }
+
+    #[test]
     fn only_an_execution_counting_its_steps_is_watched_for_progress() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
         let step = expected(directory.path());
@@ -3371,9 +3581,7 @@ mod tests {
     fn the_runtime_protocol_status_is_special_only_for_a_step_bounded_execution() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
         let step = expected(directory.path());
-        let exited = result(Termination::Exited(ProcessExit::Code(
-            crate::instrument::STEP_PROTOCOL_EXIT,
-        )));
+        let exited = result(Termination::Exited(ProcessExit::Code(STEP_PROTOCOL_EXIT)));
 
         assert!(matches!(
             observed_stop(&exited, Some(&step)),
@@ -3384,7 +3592,7 @@ mod tests {
         assert_eq!(
             observed_stop(&exited, None),
             Stopped::Exited {
-                exit: ProcessExit::Code(crate::instrument::STEP_PROTOCOL_EXIT)
+                exit: ProcessExit::Code(STEP_PROTOCOL_EXIT)
             }
         );
     }

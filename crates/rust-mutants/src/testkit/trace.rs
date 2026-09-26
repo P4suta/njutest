@@ -222,6 +222,10 @@ pub fn every_payload() -> Vec<Payload> {
                 args: vec!["--test-threads=1".to_owned()],
                 remembered: true,
                 retried: true,
+                declined: vec![crate::decline::Decline {
+                    test: "tests::shares".to_owned(),
+                    why: "this machine cannot share blocks".to_owned(),
+                }],
             },
         },
         Payload::PerturbedControl {
@@ -363,6 +367,10 @@ pub fn every_payload() -> Vec<Payload> {
                 timeout_source: "configured".to_owned(),
                 alone: true,
                 lingered: true,
+                declined: vec![crate::decline::Decline {
+                    test: "tests::shares".to_owned(),
+                    why: "this machine cannot share blocks".to_owned(),
+                }],
             },
         },
         Payload::Note {
@@ -502,7 +510,7 @@ pub fn every_stopped() -> [crate::execute::Stopped; 19] {
 
 /// Every closed step-protocol failure shape.
 #[must_use]
-pub fn every_step_protocol_failure() -> [crate::execute::StepProtocolFailure; 18] {
+pub fn every_step_protocol_failure() -> [crate::execute::StepProtocolFailure; 19] {
     use crate::execute::StepProtocolFailure;
 
     let failures = [
@@ -514,6 +522,10 @@ pub fn every_step_protocol_failure() -> [crate::execute::StepProtocolFailure; 18
             detail: "refused".to_owned(),
         },
         StepProtocolFailure::Publication {},
+        StepProtocolFailure::Stated {
+            check: "lock".to_owned(),
+            os: 33,
+        },
         StepProtocolFailure::NoticeMissing {},
         StepProtocolFailure::NoticeNotRegular {
             path: "notice".to_owned(),
@@ -554,6 +566,7 @@ pub fn every_step_protocol_failure() -> [crate::execute::StepProtocolFailure; 18
             StepProtocolFailure::MonitorInvalid { .. }
             | StepProtocolFailure::MonitorInspect { .. }
             | StepProtocolFailure::Publication {}
+            | StepProtocolFailure::Stated { .. }
             | StepProtocolFailure::NoticeMissing {}
             | StepProtocolFailure::NoticeNotRegular { .. }
             | StepProtocolFailure::NoticeMetadata { .. }

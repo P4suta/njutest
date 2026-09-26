@@ -8,10 +8,10 @@ use xtask::gates;
 
 /// A test setup or gate refusal that should reach the test harness without a second, panic-shaped failure path.
 #[derive(Debug, thiserror::Error)]
-enum TestFailure {
+enum TestError {
     /// A repository gate refused the tree.
     #[error(transparent)]
-    Gate(#[from] gates::GateFailure),
+    Gate(#[from] gates::GateError),
     /// Test setup could not create or read its fixture.
     #[error(transparent)]
     Io(#[from] std::io::Error),
@@ -34,79 +34,79 @@ enum TestFailure {
     Contract(String),
 }
 
-fn require(condition: bool, message: impl Into<String>) -> Result<(), TestFailure> {
+fn require(condition: bool, message: impl Into<String>) -> Result<(), TestError> {
     if condition {
         Ok(())
     } else {
-        Err(TestFailure::Contract(message.into()))
+        Err(TestError::Contract(message.into()))
     }
 }
 
 fn refused<T>(
-    result: Result<T, gates::GateFailure>,
+    result: Result<T, gates::GateError>,
     if_accepted: &'static str,
-) -> Result<gates::GateFailure, TestFailure> {
+) -> Result<gates::GateError, TestError> {
     match result {
-        Ok(_) => Err(TestFailure::UnexpectedSuccess(if_accepted)),
+        Ok(_) => Err(TestError::UnexpectedSuccess(if_accepted)),
         Err(failure) => Ok(failure),
     }
 }
 
 #[test]
-fn the_seam_ledger_agrees_with_the_tree() -> Result<(), TestFailure> {
+fn the_seam_ledger_agrees_with_the_tree() -> Result<(), TestError> {
     let report = gates::devgates(&gates::workspace_root())?;
     require(report.starts_with("devgates: "), report)
 }
 
 #[test]
-fn every_internal_dependency_points_in_the_allowed_direction() -> Result<(), TestFailure> {
+fn every_internal_dependency_points_in_the_allowed_direction() -> Result<(), TestError> {
     let report = gates::deps(&gates::workspace_root())?;
     require(report.starts_with("deps: "), report)
 }
 
 #[test]
-fn every_fixture_follows_the_conventions() -> Result<(), TestFailure> {
+fn every_fixture_follows_the_conventions() -> Result<(), TestError> {
     let report = gates::fixtures(&gates::workspace_root())?;
     require(report.starts_with("fixtures: "), report)
 }
 
 #[test]
-fn the_release_versions_agree() -> Result<(), TestFailure> {
+fn the_release_versions_agree() -> Result<(), TestError> {
     let report = gates::release_check(&gates::workspace_root())?;
     require(report.starts_with("release-check: "), report)
 }
 
 #[test]
-fn every_milestone_reference_resolves_to_the_roadmap() -> Result<(), TestFailure> {
+fn every_milestone_reference_resolves_to_the_roadmap() -> Result<(), TestError> {
     let report = gates::milestones(&gates::workspace_root())?;
     require(report.starts_with("milestones: "), report)
 }
 
 #[test]
-fn every_crate_surface_has_a_compiler_checked_meaning() -> Result<(), TestFailure> {
+fn every_crate_surface_has_a_compiler_checked_meaning() -> Result<(), TestError> {
     let report = gates::surfaces(&gates::workspace_root())?;
     require(report.starts_with("surfaces: "), report)
 }
 
 #[test]
-fn production_sources_exclude_test_support() -> Result<(), TestFailure> {
+fn production_sources_exclude_test_support() -> Result<(), TestError> {
     let root = gates::workspace_root();
     let files: Vec<String> = gates::production_sources(&root)?
         .iter()
         .map(|path| {
             let relative = path
                 .strip_prefix(&root)
-                .map_err(|source| TestFailure::OutsideRoot {
+                .map_err(|source| TestError::OutsideRoot {
                     path: path.clone(),
                     root: root.clone(),
                     source,
                 })?;
             let relative = relative
                 .to_str()
-                .ok_or_else(|| TestFailure::NonUtf8Path { path: path.clone() })?;
+                .ok_or_else(|| TestError::NonUtf8Path { path: path.clone() })?;
             Ok(relative.replace('\\', "/"))
         })
-        .collect::<Result<_, TestFailure>>()?;
+        .collect::<Result<_, TestError>>()?;
     require(
         files.iter().any(|f| f == "crates/rust-mutants/src/lib.rs"),
         format!("missing production library from {files:?}"),
@@ -128,7 +128,7 @@ fn production_sources_exclude_test_support() -> Result<(), TestFailure> {
 }
 
 #[test]
-fn a_source_tree_that_cannot_be_walked_never_passes_as_empty() -> Result<(), TestFailure> {
+fn a_source_tree_that_cannot_be_walked_never_passes_as_empty() -> Result<(), TestError> {
     let root = tempfile::tempdir()?;
     let failure = refused(
         gates::all_sources(root.path()),
@@ -142,8 +142,9 @@ fn a_source_tree_that_cannot_be_walked_never_passes_as_empty() -> Result<(), Tes
 
 #[cfg(unix)]
 #[test]
-fn a_symbolic_link_never_hides_source_from_a_repository_gate() -> Result<(), TestFailure> {
+fn a_symbolic_link_never_hides_source_from_a_repository_gate() -> Result<(), TestError> {
     let root = tempfile::tempdir()?;
+    xtask::repository::init(root.path())?;
     for base in ["compiler-surfaces", "crates", "xtask", "fuzz"] {
         std::fs::create_dir_all(root.path().join(base))?;
     }
@@ -161,8 +162,9 @@ fn a_symbolic_link_never_hides_source_from_a_repository_gate() -> Result<(), Tes
     )
 }
 
-fn lint_tree(app_source: &str) -> Result<tempfile::TempDir, TestFailure> {
+fn lint_tree(app_source: &str) -> Result<tempfile::TempDir, TestError> {
     let root = tempfile::tempdir()?;
+    xtask::repository::init(root.path())?;
     for directory in [
         "compiler-surfaces",
         "crates/app/src",
@@ -215,7 +217,7 @@ fn lint_tree(app_source: &str) -> Result<tempfile::TempDir, TestFailure> {
 }
 
 #[test]
-fn only_a_scanned_support_rs_file_may_be_included() -> Result<(), TestFailure> {
+fn only_a_scanned_support_rs_file_may_be_included() -> Result<(), TestError> {
     let root = lint_tree("include!(\"support/ok.rs\");\n")?;
     std::fs::create_dir_all(root.path().join("crates/app/src/support"))?;
     std::fs::write(
@@ -227,7 +229,7 @@ fn only_a_scanned_support_rs_file_may_be_included() -> Result<(), TestFailure> {
 }
 
 #[test]
-fn opaque_or_unscanned_source_redirects_are_refused() -> Result<(), TestFailure> {
+fn opaque_or_unscanned_source_redirects_are_refused() -> Result<(), TestError> {
     for source in [
         "include!(\"hidden.inc\");\n",
         "std::include!(\"hidden.inc\");\n",
@@ -251,8 +253,7 @@ fn opaque_or_unscanned_source_redirects_are_refused() -> Result<(), TestFailure>
 }
 
 #[test]
-fn included_proc_macro_source_cannot_escape_the_exact_export_inventory() -> Result<(), TestFailure>
-{
+fn included_proc_macro_source_cannot_escape_the_exact_export_inventory() -> Result<(), TestError> {
     let root = lint_tree("")?;
     let macro_root = root.path().join("crates/njutest-macros/src");
     std::fs::create_dir_all(macro_root.join("support"))?;
@@ -277,8 +278,8 @@ fn included_proc_macro_source_cannot_escape_the_exact_export_inventory() -> Resu
 }
 
 #[test]
-fn a_new_dependency_proc_macro_is_refused_before_its_expansion_is_trusted()
--> Result<(), TestFailure> {
+fn a_new_dependency_proc_macro_is_refused_before_its_expansion_is_trusted() -> Result<(), TestError>
+{
     let root = lint_tree("")?;
     let generator = root.path().join("crates/foreign-generator");
     std::fs::create_dir_all(generator.join("src"))?;
@@ -323,7 +324,7 @@ fn a_new_dependency_proc_macro_is_refused_before_its_expansion_is_trusted()
 }
 
 #[test]
-fn a_non_rs_cargo_target_is_not_a_proved_source_tree() -> Result<(), TestFailure> {
+fn a_non_rs_cargo_target_is_not_a_proved_source_tree() -> Result<(), TestError> {
     let root = lint_tree("")?;
     std::fs::write(
         root.path().join("crates/app/Cargo.toml"),
@@ -344,7 +345,7 @@ fn a_non_rs_cargo_target_is_not_a_proved_source_tree() -> Result<(), TestFailure
 }
 
 #[test]
-fn recursive_local_path_dependencies_stay_inside_the_source_roots() -> Result<(), TestFailure> {
+fn recursive_local_path_dependencies_stay_inside_the_source_roots() -> Result<(), TestError> {
     let root = lint_tree("pub fn visible() { hidden::hidden(); }\n")?;
     std::fs::write(
         root.path().join("crates/app/Cargo.toml"),
@@ -376,7 +377,7 @@ fn recursive_local_path_dependencies_stay_inside_the_source_roots() -> Result<()
 }
 
 #[test]
-fn rust_outside_the_closed_roots_is_refused_except_for_fixture_inputs() -> Result<(), TestFailure> {
+fn rust_outside_the_closed_roots_is_refused_except_for_fixture_inputs() -> Result<(), TestError> {
     let root = lint_tree("")?;
     std::fs::create_dir_all(root.path().join("fixtures/corpus/src"))?;
     std::fs::write(
@@ -409,8 +410,9 @@ fn rust_outside_the_closed_roots_is_refused_except_for_fixture_inputs() -> Resul
 }
 
 #[test]
-fn a_fixture_root_that_cannot_be_listed_never_passes_as_empty() -> Result<(), TestFailure> {
+fn a_fixture_root_that_cannot_be_listed_never_passes_as_empty() -> Result<(), TestError> {
     let root = tempfile::tempdir()?;
+    xtask::repository::init(root.path())?;
     let failure = refused(
         gates::fixtures(root.path()),
         "a missing fixture root passed as a repository with zero fixtures",
@@ -514,4 +516,43 @@ fn a_reader_is_held_to_exactly_its_ceiling() {
         gone.iter().any(|one| one.contains("remove the line")),
         "{gone:?}"
     );
+}
+
+#[test]
+fn a_gate_reads_what_the_repository_holds_and_never_what_a_build_left_in_it()
+-> Result<(), TestError> {
+    let root = tempfile::tempdir()?;
+    xtask::repository::init(root.path())?;
+    let initialised = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(root.path())
+        .status()?;
+    require(initialised.success(), "git init")?;
+    std::fs::write(root.path().join(".gitignore"), "target/\n")?;
+    for base in ["compiler-surfaces", "crates/app/src", "xtask", "fuzz"] {
+        std::fs::create_dir_all(root.path().join(base))?;
+    }
+    std::fs::write(root.path().join("crates/app/src/lib.rs"), "pub fn f() {}\n")?;
+    let built = root
+        .path()
+        .join("fuzz/target/debug/build/generated/out/src");
+    std::fs::create_dir_all(&built)?;
+    std::fs::write(built.join("generated.rs"), "pub fn generated() {}\n")?;
+
+    let production = gates::production_sources(root.path())?;
+    require(
+        production
+            .iter()
+            .all(|path| !path.components().any(|part| part.as_os_str() == "target")),
+        format!(
+            "a gate proved build output a build writes and removes while it reads, which is no \
+             part of what the repository commits: {production:?}"
+        ),
+    )?;
+    require(
+        production
+            .iter()
+            .any(|path| path.ends_with("crates/app/src/lib.rs")),
+        format!("the committed source is read: {production:?}"),
+    )
 }

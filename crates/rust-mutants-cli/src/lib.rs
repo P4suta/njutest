@@ -59,6 +59,8 @@ pub struct Environment {
     pub paints: bool,
     /// The continuous integration service the command runs under.
     pub ci: CiHost,
+    /// The cargo `--cargo` named, which every toolchain lookup runs rather than the one on the `PATH`.
+    pub cargo: Option<PathBuf>,
 }
 
 /// A continuous integration service, and where it takes what a step reports.
@@ -315,6 +317,7 @@ where
             no_color: environment.no_color,
             is_terminal: environment.stdout_is_terminal,
         }),
+        cargo: command.cargo.clone(),
         ..environment.clone()
     };
     let dispatched = app::dispatch(

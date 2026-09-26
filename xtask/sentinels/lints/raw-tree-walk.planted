@@ -1,0 +1,10 @@
+=== listing-call source xtask/src/gates.rs
+fn listed(path: &Path) -> std::io::Result<std::fs::ReadDir> { std::fs::read_dir(path) }
+=== listing-method source xtask/src/gates.rs
+fn listed(path: &Path) -> std::io::Result<std::fs::ReadDir> { path.read_dir() }
+=== walking-crate source xtask/src/docflows.rs
+fn walked(path: &Path) -> walkdir::IntoIter { walkdir::WalkDir::new(path).into_iter() }
+=== walking-import source xtask/src/fixtures.rs
+use walkdir::WalkDir;
+=== in-a-macro source xtask/src/gates.rs
+fn listed(path: &Path) -> String { format!("{:?}", std::fs::read_dir(path)) }

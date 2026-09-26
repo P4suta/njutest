@@ -44,6 +44,7 @@ fn against(fixture: &Fixture, args: &[&str]) -> Said {
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        cargo: None,
         ci: rust_mutants_cli::CiHost::None,
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());

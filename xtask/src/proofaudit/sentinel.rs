@@ -830,7 +830,7 @@ fn verified(args: &[&str]) -> Value {
         "type": "verify",
         "verify": {
             "target": TARGET, "outcome": "survived", "tests_run": 1, "duration_ms": 1,
-            "args": args, "remembered": false, "retried": false
+            "args": args, "remembered": false, "retried": false, "declined": []
         }
     })
 }

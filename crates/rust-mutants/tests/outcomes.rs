@@ -17,6 +17,7 @@ fn a_key_over_nothing_is_not_a_key_and_remembers_nothing() {
         build: Vec::new(),
         engine: "e".to_owned(),
         runner: None,
+        declared: rust_mutants::outcomes::Declared::of(&std::collections::BTreeSet::new(), &[]),
     };
     assert!(
         !keyed.usable(),
@@ -39,31 +40,9 @@ fn a_key_over_nothing_is_not_a_key_and_remembers_nothing() {
     );
 }
 
-#[test]
-fn what_the_key_is_computed_from_is_what_could_change_the_answer() {
-    let mutant = rust_mutants::id::HexDigest::try_from(
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    );
-    assert_eq!(result_state(&mutant), Returned, "canonical digest");
-    let Ok(mutant) = mutant else { return };
-    let another = rust_mutants::id::HexDigest::try_from(
-        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    );
-    assert_eq!(result_state(&another), Returned, "canonical digest");
-    let Ok(another) = another else { return };
-    let base = rust_mutants::outcomes::Keyed {
-        closure: "c".to_owned(),
-        manifests: "m".to_owned(),
-        toolchain: "rustc 1.98.0".to_owned(),
-        args: vec!["--test-threads=1".to_owned()],
-        timeout: "auto".to_owned(),
-        steps: 50_000_000,
-        build: vec!["--all-features".to_owned()],
-        engine: "e".to_owned(),
-        runner: None,
-    };
-    let key = base.key(&mutant);
-    for other in [
+/// `base` with each input a key is computed from changed, one at a time.
+fn every_change_of(base: &rust_mutants::outcomes::Keyed) -> Vec<rust_mutants::outcomes::Keyed> {
+    vec![
         rust_mutants::outcomes::Keyed {
             closure: "other".to_owned(),
             ..base.clone()
@@ -104,7 +83,49 @@ fn what_the_key_is_computed_from_is_what_could_change_the_answer() {
             runner: Some("none".to_owned()),
             ..base.clone()
         },
-    ] {
+        rust_mutants::outcomes::Keyed {
+            declared: rust_mutants::outcomes::Declared::of(
+                &std::collections::BTreeSet::from(["MODE".to_owned()]),
+                &[],
+            ),
+            ..base.clone()
+        },
+        rust_mutants::outcomes::Keyed {
+            declared: rust_mutants::outcomes::Declared::of(
+                &std::collections::BTreeSet::from(["MODE".to_owned()]),
+                &[("MODE".into(), "one".into())],
+            ),
+            ..base.clone()
+        },
+    ]
+}
+
+#[test]
+fn what_the_key_is_computed_from_is_what_could_change_the_answer() {
+    let mutant = rust_mutants::id::HexDigest::try_from(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    assert_eq!(result_state(&mutant), Returned, "canonical digest");
+    let Ok(mutant) = mutant else { return };
+    let another = rust_mutants::id::HexDigest::try_from(
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    );
+    assert_eq!(result_state(&another), Returned, "canonical digest");
+    let Ok(another) = another else { return };
+    let base = rust_mutants::outcomes::Keyed {
+        closure: "c".to_owned(),
+        manifests: "m".to_owned(),
+        toolchain: "rustc 1.98.0".to_owned(),
+        args: vec!["--test-threads=1".to_owned()],
+        timeout: "auto".to_owned(),
+        steps: 50_000_000,
+        build: vec!["--all-features".to_owned()],
+        engine: "e".to_owned(),
+        runner: None,
+        declared: rust_mutants::outcomes::Declared::of(&std::collections::BTreeSet::new(), &[]),
+    };
+    let key = base.key(&mutant);
+    for other in every_change_of(&base) {
         assert_ne!(
             other.key(&mutant),
             key,
@@ -138,9 +159,9 @@ fn only_decided_test_outcomes_fit_in_a_cache_record() {
 
 #[test]
 fn the_policy_break_has_a_new_schema_layout_and_cache_abi() {
-    assert_eq!(rust_mutants::outcomes::SCHEMA, "rust-mutants-outcome-v2");
-    assert_eq!(rust_mutants::outcomes::LAYOUT, "rust-mutants/outcomes-v2");
-    assert_eq!(rust_mutants::outcomes::CACHE_ABI, 8);
+    assert_eq!(rust_mutants::outcomes::SCHEMA, "rust-mutants-outcome-v3");
+    assert_eq!(rust_mutants::outcomes::LAYOUT, "rust-mutants/outcomes-v3");
+    assert_eq!(rust_mutants::outcomes::CACHE_ABI, 9);
     assert_eq!(rust_mutants::outcomes::INSTRUMENTATION_ABI, 3);
     assert_eq!(rust_mutants::outcomes::STEP_POLICY_ABI, 1);
 }
@@ -171,6 +192,43 @@ fn the_engine_is_named_by_what_it_is_and_not_by_where_it_lies() {
     );
 }
 
+/// What a key holds of a configuration that declared no variable.
+fn nothing_declared() -> serde_json::Value {
+    let declared = rust_mutants::outcomes::Declared::of(&std::collections::BTreeSet::new(), &[]);
+    serde_json::json!({ "names": declared.names, "digest": declared.digest })
+}
+
+#[test]
+fn a_record_that_does_not_say_what_it_declared_is_refused_rather_than_read_as_nothing() {
+    let keyed = serde_json::json!({
+        "closure": "c",
+        "manifests": "m",
+        "toolchain": "rustc 1.98.0",
+        "args": [],
+        "timeout": "auto",
+        "steps": 0,
+        "build": [],
+        "engine": "e",
+        "runner": null,
+    });
+    let absent = serde_json::from_value::<rust_mutants::outcomes::Keyed>(keyed.clone());
+    assert!(
+        absent.is_err(),
+        "a record with no `declared` was written before declared variables were keyed, and \
+         reading it as a record that depends on no variable would answer a run whose \
+         configuration says it does: {absent:?}"
+    );
+    let mut said = keyed;
+    if let Some(object) = said.as_object_mut() {
+        object.insert("declared".to_owned(), nothing_declared());
+    }
+    assert!(
+        serde_json::from_value::<rust_mutants::outcomes::Keyed>(said)
+            .is_ok_and(|keyed| keyed.declared.names.is_empty()),
+        "a record that says it declared nothing is read as one"
+    );
+}
+
 #[test]
 fn a_record_that_does_not_say_which_runner_asked_is_refused_rather_than_read_as_none() {
     let keyed = serde_json::json!({
@@ -182,6 +240,7 @@ fn a_record_that_does_not_say_which_runner_asked_is_refused_rather_than_read_as_
         "steps": 0,
         "build": [],
         "engine": "e",
+        "declared": nothing_declared(),
     });
     let absent = serde_json::from_value::<rust_mutants::outcomes::Keyed>(keyed.clone());
     assert!(

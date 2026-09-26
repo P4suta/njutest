@@ -4,6 +4,19 @@
   "title": "rust-mutants trace v1",
   "description": "One line of a recording: an envelope of sequence number and moment around a typed record. A trace is diagnostic exhaust and never evidence (ADR 0002); what it is for is telling a reader why a run behaved as it did.",
   "$defs": {
+    "declines": {
+      "description": "Each test that declined to measure, and its words (ADR 0043).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["test", "why"],
+        "properties": {
+          "test": { "type": "string", "minLength": 1 },
+          "why": { "type": "string" }
+        }
+      }
+    },
     "process-exit": {
       "description": "The one way a process that exited by itself did so.",
       "oneOf": [
@@ -1489,6 +1502,7 @@
               "additionalProperties": false,
               "required": [
                 "args",
+                "declined",
                 "duration_ms",
                 "outcome",
                 "remembered",
@@ -1527,6 +1541,9 @@
                 },
                 "retried": {
                   "type": "boolean"
+                },
+                "declined": {
+                  "$ref": "#/$defs/declines"
                 }
               }
             }
@@ -1946,6 +1963,7 @@
               "required": [
                 "entered_records",
                 "alone",
+                "declined",
                 "duration_ms",
                 "exit_code",
                 "failed_tests",
@@ -2037,6 +2055,9 @@
                 "lingered": {
                   "type": "boolean",
                   "description": "Whether the harness had already answered when the clock ended the process, so the verdict is the harness's."
+                },
+                "declined": {
+                  "$ref": "#/$defs/declines"
                 },
                 "step_notice": {
                   "oneOf": [
@@ -2173,7 +2194,8 @@
                     "discharged",
                     "interrupted",
                     "unselected",
-                    "stopped-early"
+                    "stopped-early",
+                    "declined"
                   ]
                 }
               }

@@ -319,6 +319,11 @@ fn fixture_custom_harness() {
 }
 
 #[test]
+fn fixture_declines() {
+    holds("fixture-declines");
+}
+
+#[test]
 fn fixture_doctest() {
     holds("fixture-doctest");
 }
@@ -554,6 +559,11 @@ fn fixture_two_bodies() {
 }
 
 #[test]
+fn fixture_uncompiled() {
+    holds("fixture-uncompiled");
+}
+
+#[test]
 fn fixture_unicode() {
     holds("fixture-unicode");
 }
@@ -735,6 +745,7 @@ fn environment(fixture: &Fixture) -> Environment {
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        cargo: None,
         ci: rust_mutants_cli::CiHost::None,
     }
 }
