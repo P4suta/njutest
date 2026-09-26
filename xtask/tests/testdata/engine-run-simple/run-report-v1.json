@@ -3,10 +3,10 @@
   "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260926t025231377z",
-    "started_at": "2026-09-26T02:52:31.377880188Z",
-    "finished_at": "2026-09-26T02:52:36.506392102Z",
-    "duration_ms": 382,
+    "id": "20260926t042437609z",
+    "started_at": "2026-09-26T04:24:37.60907442Z",
+    "finished_at": "2026-09-26T04:24:42.359351668Z",
+    "duration_ms": 315,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -18,7 +18,7 @@
   "workspace": {
     "root_name": "fixture-simple",
     "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "5c8624de2c3916c5b3d09e4b6697c13724771c18fb761104b7f1c52316e18216",
+    "workspace_digest": "fd4a97f012f128862804cbf70d54fb90046aed25f17e5b62d97e74d42fe93394",
     "catalog_digest": "82946360d0657b5f03d7a76baf4c58b9b82b9853b602678b838583310f27d624",
     "platform": {
       "os": "gnu",
@@ -250,7 +250,7 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": -1,
-      "duration_ms": 29,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -345,7 +345,7 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": -1,
-      "duration_ms": 28,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -441,7 +441,7 @@
       "step_notice": null,
       "target": "fixture-simple/test/parity",
       "exit_code": -1,
-      "duration_ms": 28,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -489,7 +489,7 @@
       "step_notice": null,
       "target": "fixture-simple/test/parity",
       "exit_code": -1,
-      "duration_ms": 26,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -537,7 +537,7 @@
       "step_notice": null,
       "target": "fixture-simple/test/parity",
       "exit_code": -1,
-      "duration_ms": 28,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -681,7 +681,7 @@
       "step_notice": null,
       "target": "fixture-simple/test/parity",
       "exit_code": -1,
-      "duration_ms": 26,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
