@@ -327,8 +327,10 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
         &mut complaints,
     );
     assert_ne!(
-        code, EXIT_ERROR,
-        "the configured search path contains the toolchain"
+        code,
+        EXIT_ERROR,
+        "the configured search path contains the toolchain: {}",
+        njutest_devkit::process::strict_utf8(&complaints)
     );
 
     let complained = njutest_devkit::process::strict_utf8(&complaints);
