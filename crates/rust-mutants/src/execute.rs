@@ -1565,7 +1565,10 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
 fn stated(output: &[u8]) -> StepProtocolFailure {
     let said = output.strip_suffix(b"\n").and_then(|complete| {
         let line = complete.rsplit(|byte| *byte == b'\n').next()?;
-        let line = std::str::from_utf8(line).ok()?;
+        let line = match std::str::from_utf8(line) {
+            Ok(line) => line,
+            Err(_not_a_runtime_line) => return None,
+        };
         let line = line.strip_suffix('\r').unwrap_or(line);
         let mut fields = line
             .strip_prefix(STOP_SCHEMA)?
@@ -1580,7 +1583,10 @@ fn stated(output: &[u8]) -> StepProtocolFailure {
         if status != STEP_PROTOCOL_EXIT.to_string() || rest.is_some() || !step_stop_check(check) {
             return None;
         }
-        let code = os.parse::<i32>().ok()?;
+        let code = match os.parse::<i32>() {
+            Ok(code) => code,
+            Err(_not_an_os_code) => return None,
+        };
         if code.to_string() != os {
             return None;
         }
@@ -3297,10 +3303,6 @@ mod tests {
         }
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "a test reports a setup failure by panicking"
-    )]
     fn generated_protocol_stop(
         directory: &Path,
         name: &str,
@@ -3330,11 +3332,7 @@ mod tests {
             .arg(&source)
             .output()
             .expect("rustc runs");
-        assert!(
-            built.status.success(),
-            "{}",
-            String::from_utf8_lossy(&built.stderr)
-        );
+        assert!(built.status.success(), "{:?}", built.stderr);
         let ran = Command::new(directory.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)))
             .env(crate::instrument::STEPS_ENV, "1")
             .env(crate::instrument::WATCHED_ENV, "/unwatched-step-stop")
