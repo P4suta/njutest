@@ -752,45 +752,47 @@ struct File<'a> {
 
 /// Whether `text` reads as Rust down to what every identity macro of the runtime module `module` holds, which the compiler reads only once it expands them.
 ///
+/// One parse reads all of it: every call of the macro is read as the parentheses it expands to.
+///
 /// # Errors
-/// The first place that does not read, as the parser says it.
+/// The first place that does not read, as the parser says it, at the line and column it has in `text`.
 pub(crate) fn read_through(text: &str, module: &str) -> Result<(), syn::Error> {
-    let file = syn::parse_file(text)?;
-    let mut held = Held {
-        module,
-        failure: None,
-    };
-    syn::visit::Visit::visit_file(&mut held, &file);
-    match held.failure {
-        None => Ok(()),
-        Some(error) => Err(error),
-    }
+    read_through_with(text, module, syn::parse_file)
 }
 
-/// Reads what every identity macro of one runtime module holds, keeping the first that does not read as an expression.
-struct Held<'m> {
-    module: &'m str,
-    failure: Option<syn::Error>,
+/// [`read_through`] with the parser given, which it calls exactly once whatever the guards hold.
+fn read_through_with(
+    text: &str,
+    module: &str,
+    mut parse: impl FnMut(&str) -> Result<syn::File, syn::Error>,
+) -> Result<(), syn::Error> {
+    parse(&unwrapped(text, module)).map(|_file| ())
 }
 
-impl<'ast> syn::visit::Visit<'ast> for Held<'_> {
-    fn visit_macro(&mut self, invocation: &'ast syn::Macro) {
-        let mut names = invocation
-            .path
-            .segments
-            .iter()
-            .rev()
-            .map(|segment| segment.ident.to_string());
-        let identity = names.next().is_some_and(|name| name == "value")
-            && names.next().is_some_and(|name| name == self.module);
-        if identity && self.failure.is_none() {
-            match invocation.parse_body::<syn::Expr>() {
-                Ok(held) => syn::visit::Visit::visit_expr(self, &held),
-                Err(error) => self.failure = Some(error),
-            }
+/// `text` with the path and `!` of every call of `module`'s identity macro written as spaces, so the call reads as the parentheses it expands to and every byte keeps its place.
+fn unwrapped(text: &str, module: &str) -> String {
+    const OUTER: &str = "super::";
+    let call = format!("{module}::value!");
+    let mut kept = String::with_capacity(text.len());
+    let mut from = 0_usize;
+    while let Some((before, rest)) = text.get(from..).and_then(|rest| rest.split_once(&call)) {
+        let mut path_start = before.len();
+        while before
+            .get(..path_start)
+            .is_some_and(|head| head.ends_with(OUTER))
+        {
+            path_start = path_start.saturating_sub(OUTER.len());
         }
-        syn::visit::visit_macro(self, invocation);
+        kept.push_str(before.get(..path_start).unwrap_or_default());
+        let blanked = before
+            .len()
+            .saturating_sub(path_start)
+            .saturating_add(call.len());
+        kept.extend(std::iter::repeat_n(' ', blanked));
+        from = text.len().saturating_sub(rest.len());
     }
+    kept.push_str(text.get(from..).unwrap_or_default());
+    kept
 }
 
 impl File<'_> {
@@ -1342,5 +1344,65 @@ impl File<'_> {
             original: self.slice(span)?.as_bytes().to_vec(),
             replacement: replacement.into_bytes(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read_through_with, unwrapped};
+
+    /// A function whose tail holds `depth` guards, each inside the original branch of the one around it, the innermost holding `inner`.
+    fn nested(depth: usize, inner: &str) -> String {
+        let mut guard = inner.to_owned();
+        for index in 0..depth {
+            guard = format!(
+                "super::rt::value!(if super::rt::active({index}) {{ 0 }} else {{ {guard} }})"
+            );
+        }
+        format!("mod m {{\n    fn f() -> u8 {{\n        {guard}\n    }}\n}}\n")
+    }
+
+    #[test]
+    fn one_parse_reads_every_identity_macro_however_deep_the_guards_nest() {
+        for depth in [0, 1, 8, 64] {
+            let mut parses = 0_usize;
+            let read = read_through_with(&nested(depth, "1"), "rt", |text| {
+                parses = parses.saturating_add(1);
+                syn::parse_file(text)
+            });
+            assert!(read.is_ok(), "{depth} nested guards read: {read:?}");
+            assert_eq!(
+                parses, 1,
+                "reading what {depth} nested identity macros hold is one parse of the file, not one \
+                 more for every guard a byte sits inside"
+            );
+        }
+    }
+
+    #[test]
+    fn a_guard_that_breaks_deep_inside_is_found_where_it_is() {
+        let text = nested(16, "{ 1 } + ");
+        let read = read_through_with(&text, "rt", syn::parse_file);
+        assert!(
+            read.as_ref()
+                .is_err_and(|error| error.span().start().line == 3),
+            "the innermost guard does not read, and the error names its line in the file: {read:?}"
+        );
+    }
+
+    #[test]
+    fn a_call_is_blanked_to_its_parentheses_and_every_byte_keeps_its_place() {
+        let text = "a(super::super::rt::value!(b), rt::value!(c), other::value!(d))";
+        let read = unwrapped(text, "rt");
+        assert_eq!(read.len(), text.len(), "{read}");
+        assert_eq!(
+            read,
+            format!(
+                "a({}(b), {}(c), other::value!(d))",
+                " ".repeat("super::super::rt::value!".len()),
+                " ".repeat("rt::value!".len())
+            ),
+            "only the module's own identity macro is read as its parentheses, `super::` and all"
+        );
     }
 }
