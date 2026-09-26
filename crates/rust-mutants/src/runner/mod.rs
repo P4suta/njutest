@@ -706,6 +706,14 @@ impl Watch for Watched<'_> {
 /// Starts the process described by `spec`, supervises the platform's declared process set, and returns when it has finished, timed out, or been cancelled.
 #[must_use]
 pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
+    run_with_stall_candidate(spec, cancel, |quiet| quiet.is_zero())
+}
+
+fn run_with_stall_candidate(
+    spec: &Spec,
+    cancel: &Cancel,
+    stall_candidate: impl Fn(Duration) -> bool,
+) -> RunResult {
     let started = Instant::now();
     let program = match preflight(spec, cancel, started) {
         Preflight::Ready(program) => program,
@@ -734,6 +742,7 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
             progress: spec.progress.as_ref(),
             answered: spec.stop_at_first_failure.then_some(answered.as_ref()),
         },
+        stall_candidate,
     );
     let completed = complete(
         started,
@@ -1553,6 +1562,22 @@ impl<'a> Watching<'a> {
         }
         self.moved.checked_add(self.progress.quiet)
     }
+
+    fn confirms_stall(&mut self, now: Instant) -> bool {
+        if now.saturating_duration_since(self.moved) < self.progress.quiet {
+            return false;
+        }
+        for (path, seen) in self.progress.signals().into_iter().zip(&mut self.seen) {
+            if let Ok(content) = read_between_writes(path)
+                && seen.as_ref() != Some(&content)
+            {
+                *seen = Some(content);
+                self.moved = now;
+                return false;
+            }
+        }
+        true
+    }
 }
 
 /// The most a side-channel file the supervised process writes may hold before reading it is refused.
@@ -1657,7 +1682,12 @@ fn answered(
 }
 
 /// Waits for the child to exit, the deadline to pass, or the cancellation flag to be raised — and in the latter two cases ends the declared process set.
-fn await_exit(supervisor: &sys::Supervisor, child: &SupervisedChild, stops: Stops<'_>) -> Exit {
+fn await_exit(
+    supervisor: &sys::Supervisor,
+    child: &SupervisedChild,
+    stops: Stops<'_>,
+    stall_candidate: impl Fn(Duration) -> bool,
+) -> Exit {
     let mut watching = stops
         .progress
         .map(|progress| Watching::of(progress, Instant::now()));
@@ -1727,7 +1757,9 @@ fn await_exit(supervisor: &sys::Supervisor, child: &SupervisedChild, stops: Stop
                 Err(error) => Exit::SupervisionFailed(error),
             };
         }
-        if quiet.is_some_and(|quiet| quiet.is_zero()) {
+        if quiet.is_some_and(&stall_candidate)
+            && watching.as_mut().is_some_and(|w| w.confirms_stall(now))
+        {
             return match terminate(supervisor, child) {
                 Ok(()) => Exit::Stalled,
                 Err(error) => Exit::SupervisionFailed(error),
@@ -2242,6 +2274,16 @@ mod tests {
 
     #[cfg(unix)]
     fn watched(script: &str, quiet: Duration, ceiling: Duration) -> Option<RunResult> {
+        watched_with(script, quiet, ceiling, |quiet| quiet.is_zero())
+    }
+
+    #[cfg(unix)]
+    fn watched_with(
+        script: &str,
+        quiet: Duration,
+        ceiling: Duration,
+        stall_candidate: impl Fn(Duration) -> bool,
+    ) -> Option<RunResult> {
         let directory = tempfile::tempdir();
         assert_eq!(result_state(&directory), Returned, "{directory:?}");
         let Ok(directory) = directory else {
@@ -2264,7 +2306,11 @@ mod tests {
             beat,
             quiet,
         });
-        Some(run(&spec, &Cancel::new()))
+        Some(super::run_with_stall_candidate(
+            &spec,
+            &Cancel::new(),
+            stall_candidate,
+        ))
     }
 
     #[cfg(unix)]
@@ -2287,6 +2333,31 @@ mod tests {
              {:?} after {:?}",
             result.termination,
             result.duration
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_stall_cannot_stop_a_child_that_keeps_beating() {
+        let planted = std::sync::atomic::AtomicUsize::new(0);
+        let result = watched_with(
+            "echo 0 > PROGRESS; i=0; while [ $i -lt 30 ]; do echo $i > BEAT; i=$((i+1)); sleep 0.05; done",
+            Duration::from_millis(500),
+            Duration::from_secs(20),
+            |_| {
+                planted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                true
+            },
+        );
+        let Some(result) = result else { return };
+        assert!(planted.load(std::sync::atomic::Ordering::SeqCst) > 0);
+        assert!(
+            matches!(
+                result.termination,
+                Termination::Exited(ProcessExit::Code(0))
+            ),
+            "a false stall decision cannot replace the exit of a child whose beat continues: {:?}",
+            result.termination
         );
     }
 
