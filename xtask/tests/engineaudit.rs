@@ -959,6 +959,25 @@ const SAMPLES: [(&str, usize, usize); 4] = [
     ("engine-run-declined", 25, 0),
 ];
 
+#[test]
+fn every_committed_engine_run_is_one_the_audit_re_decides() {
+    let kept: std::collections::BTreeSet<String> =
+        std::fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata"))
+            .expect("the committed runs")
+            .map(|entry| entry.expect("a committed entry").file_name())
+            .filter_map(|name| name.to_str().map(str::to_owned))
+            .filter(|name| name.starts_with("engine-run-"))
+            .collect();
+    let audited: std::collections::BTreeSet<String> = SAMPLES
+        .iter()
+        .map(|(name, ..)| (*name).to_owned())
+        .collect();
+    assert_eq!(
+        kept, audited,
+        "a committed engine run the audit does not re-decide is evidence nobody reads"
+    );
+}
+
 fn sample(name: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/testdata")

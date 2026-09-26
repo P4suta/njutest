@@ -23,6 +23,8 @@ So the test has to say it to this engine instead, on a channel the engine opens 
 
 **The engine names a file, and a test that declines writes one line to it.** Every test process the engine starts gets `RUST_MUTANTS_DECLINE_NOTICE`, the path of a file in that process's own scratch directory.
 A test that cannot measure here appends one line, `<its libtest name>\t<why>\n`, in one write, and returns.
+The decline is the test's last act: it sets the whole test aside, so a test that measured part of its work and declines the rest would hide what the measured part let survive, and a test that skips a section and goes on measuring does not decline.
+The name is the one libtest gives the test's thread, which a helper reads rather than a person types.
 libtest runs tests on several threads, and a line appended in pieces can have another test's land inside it; one write to a file opened for appending cannot.
 Nothing is needed from this engine to do it: the protocol is an environment variable and a line of text, so a test suite adopts it with the file API it already uses, and a suite that never runs under the engine never sees the variable.
 

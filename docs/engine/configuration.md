@@ -310,14 +310,19 @@ The variable is `RUST_MUTANTS_DECLINE_NOTICE`; it is composed for each process a
 A test that cannot measure here appends one line, its libtest name, a tab, why, and a newline, in one write, and returns:
 
 ```rust
-fn decline(name: &str, why: &str) -> std::io::Result<()> {
+fn decline(why: &str) -> std::io::Result<()> {
     if let Some(path) = std::env::var_os("RUST_MUTANTS_DECLINE_NOTICE") {
+        let name = std::thread::current().name().unwrap_or_default().to_owned();
         let mut notice = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
         std::io::Write::write_all(&mut notice, format!("{name}\t{why}\n").as_bytes())?;
     }
     Ok(())
 }
 ```
+
+libtest names the thread a test runs on after the test, with one thread or many, so the name is taken from there rather than typed: a name that is not a test the process passed makes its notice unbelievable, and every pass of that process with it.
+A decline is the test's last act.
+It sets the whole test aside, so a test that measured part of its work and then declines the rest would hide what the measured part let survive; a test that skips a section and goes on measuring does not decline, and passes on what it measured.
 
 One write matters: libtest runs tests on several threads, and a line appended in pieces can have another test's land inside it, which the run refuses rather than reads.
 The words are compared with the baseline's, so they are the same on every run of the same machine: a temporary path, a process id or a time in them makes every decline under a mutation one the baseline did not make, which is a kill; that detail belongs on standard error.

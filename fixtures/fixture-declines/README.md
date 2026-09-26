@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 # fixture-declines
 
 One library crate whose tests decline to measure where the machine cannot hold what they ask of it, as [ADR 0043](../../docs/adr/0043-a-test-may-decline-to-measure.md) lets them.
-A test declines by appending `<its libtest name>\t<why>\n` in one write to the file `RUST_MUTANTS_DECLINE_NOTICE` names, when a run named one, and returning; under a plain `cargo test` it only prints why.
+A test declines, as its last act, by appending `<its libtest name>\t<why>\n`, the name read from the thread libtest runs it on, in one write to the file `RUST_MUTANTS_DECLINE_NOTICE` names, when a run named one, and returning; under a plain `cargo test` it only prints why.
 
 | Item | Reached by | What a run establishes |
 | --- | --- | --- |
