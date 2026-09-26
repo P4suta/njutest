@@ -32,7 +32,9 @@ pub use depinfo::{
     parse_dep_info, units_of,
 };
 
-pub use locate::{LocateOptions, Selecting, Toolchain, command_failed, resolve_executable};
+pub use locate::{
+    ForTests, LocateOptions, Selecting, Toolchain, command_failed, resolve_executable,
+};
 pub use messages::{
     Artifact, BuildScript, CompilerMessage, Diagnostic, DiagnosticSpan, Message, Profile,
     names_file, parse_messages,
@@ -80,6 +82,8 @@ pub enum CargoErrorKind {
     Cancelled,
     /// A target directory's record of what its members were built from could not be read or written, or a unit it names as stale could not be forgotten.
     BuildLedger,
+    /// A bare `cargo` from the copy a run measures answers as no toolchain the run can put first on the tests' search path.
+    TestsToolchain,
 }
 
 impl CargoErrorKind {
@@ -97,6 +101,7 @@ impl CargoErrorKind {
             Self::DepInfoMissing => error::DEP_INFO_MISSING,
             Self::Cancelled => error::INTERRUPTED,
             Self::BuildLedger => error::BUILD_LEDGER_UNREADABLE,
+            Self::TestsToolchain => error::TESTS_TOOLCHAIN_UNREACHABLE,
         }
     }
 }

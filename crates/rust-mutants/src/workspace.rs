@@ -155,6 +155,29 @@ fn within(root: &Path, path: &Path) -> Result<Option<String>, crate::id::Slashed
     Ok((!named.is_empty()).then_some(named))
 }
 
+/// The trace note saying the tests were given the run's toolchain first on their search path, and why.
+const TESTS_TOOLCHAIN: &str = "tests-toolchain";
+
+/// The environment the tests get: `env`, with the run's toolchain first on its search path where a bare `cargo` from the copy is not that toolchain, which the trace notes with what it said.
+fn tested(
+    env: Vec<(OsString, OsString)>,
+    toolchain: &Toolchain,
+    (copy, trace): (&Snapshot, &Recorder),
+    cancel: &Cancel,
+) -> Result<Vec<(OsString, OsString)>, crate::cargo::CargoError> {
+    let given = toolchain.for_tests(env, copy.root(), cancel)?;
+    if let Some(said) = &given.pinned {
+        trace.note(
+            TESTS_TOOLCHAIN,
+            &format!(
+                "a bare `cargo` from the copy is not the run's toolchain ({said}), so every test \
+                 is given the run's toolchain directory first on its search path"
+            ),
+        );
+    }
+    Ok(given.env)
+}
+
 /// Whether a file of the copy lies under a member's directory, where a member whose directory cannot be named holds every file.
 fn member_holds(under: Option<&str>, rel_path: &str) -> bool {
     match under {
@@ -886,6 +909,7 @@ impl Workspace {
         let rules = Self::rules_for(&root, build_dir, parent.path(), &options)?;
         let snapshot = Self::copy(&root, &rules, &options, now)?;
         let (watched, base_env) = Self::watching(&snapshot, &options.env)?;
+        let base_env = tested(base_env, &toolchain, (&snapshot, &options.trace), cancel)?;
         options.trace.open(OpenRecord {
             root: root.display().to_string(),
             snapshot_dir: snapshot.dir().display().to_string(),

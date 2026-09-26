@@ -372,6 +372,16 @@ A test process the engine starts is told what cargo would have told it:
 | `CARGO_TARGET_TMPDIR` | the build directory, for an integration test or a tested example |
 | `OUT_DIR` and every `cargo::rustc-env` value | the package's own build script, from the `build-script-executed` message |
 
+### The toolchain a test process finds
+
+A test that runs `cargo` by its bare name finds whatever the search path holds first, and a shim that chooses a toolchain by the directory it runs in, as mise and direnv do, may refuse the copy a run measures: mise refuses a `mise.toml` nobody trusted in that place, and the copy's is one.
+Such a test would fail for a reason no code of it holds, under every mutation alike.
+So when the workspace opens, the engine asks a bare `cargo -vV` from the copy's root, with the environment the tests get.
+Where it answers as the run's own toolchain does — a rustup proxy honouring `rust-toolchain.toml`, say — the search path is left as it is, and a test's `cargo +nightly` still reaches rustup.
+Where it fails, or names another toolchain, every test is given the run's toolchain directory, `<sysroot>/bin`, first on its search path, the trace notes `tests-toolchain` with what the bare `cargo` said, and the engine asks again to be sure.
+Where even that does not answer as the run's toolchain, the run refuses with `RM1023`, quoting both answers, rather than letting each test fail on its own.
+The copy's configuration is never trusted on the user's behalf.
+
 ### The environment a test process gets
 
 A test process inherits the environment the run was started with, plus what cargo sets for its target, minus the four variables a run composes for itself: `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_CATALOG`, `RUST_MUTANTS_TOUCH`,
