@@ -61,7 +61,7 @@ pub(super) fn pristine(
             locked: workspace.locked,
             offline: workspace.offline,
             timeout: Workspace::timeout(options.build_timeout),
-            env: Vec::new(),
+            env: crate::vars::Variables::empty(),
             build: options.build.clone(),
         },
     )?;
@@ -195,7 +195,7 @@ fn scripts_of(
 /// The paths and the variables one build script's output named as what it depends on.
 fn said_by(
     text: &str,
-    env: &[(std::ffi::OsString, std::ffi::OsString)],
+    env: &crate::vars::Variables,
 ) -> (Vec<String>, BTreeMap<String, Option<String>>) {
     let mut changed = Vec::new();
     let mut watched = BTreeMap::new();
@@ -207,7 +207,8 @@ fn said_by(
         if let Some(path) = line.strip_prefix("rerun-if-changed=") {
             changed.push(path.to_owned());
         } else if let Some(name) = line.strip_prefix("rerun-if-env-changed=") {
-            let value = crate::vars::var(env, name)
+            let value = env
+                .var(name)
                 .and_then(std::ffi::OsStr::to_str)
                 .map(ToOwned::to_owned);
             watched.insert(name.to_owned(), value);
@@ -1470,10 +1471,10 @@ impl Compile for TreeCompiler<'_> {
                 locked: self.workspace.locked,
                 offline: self.workspace.offline,
                 timeout: self.timeout,
-                env: vec![(
+                env: crate::vars::Variables::of([(
                     std::ffi::OsString::from(crate::instrument::COMPILED_CATALOG_ENV),
                     std::ffi::OsString::from(self.catalog.digest()),
-                )],
+                )]),
                 build: self.build.clone(),
             },
         )?;

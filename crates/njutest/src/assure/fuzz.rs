@@ -65,7 +65,7 @@ pub struct Fuzzing<'a> {
     /// The cargo to drive, which must be one that understands `+nightly`.
     pub cargo: rust_mutants::cargo::Selecting<'a>,
     /// The environment it runs with.
-    pub env: Vec<(OsString, OsString)>,
+    pub env: rust_mutants::vars::Variables,
     /// The targets to drive.
     /// Empty is every target the tree holds.
     pub targets: &'a [String],

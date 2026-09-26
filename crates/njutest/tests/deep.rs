@@ -27,18 +27,12 @@ fn cargo() -> PathBuf {
 }
 
 /// What that cargo is told to say, and how it is told to end.
-fn saying(said: &str, code: i32) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
-    let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os()
+fn saying(said: &str, code: i32) -> rust_mutants::vars::Variables {
+    let mut env: rust_mutants::vars::Variables = std::env::vars_os()
         .filter(|(name, _)| njutest_devkit::paths::same_name(name, std::ffi::OsStr::new("PATH")))
         .collect();
-    env.push((
-        std::ffi::OsString::from("FAKE_CARGO_SAYS"),
-        std::ffi::OsString::from(said),
-    ));
-    env.push((
-        std::ffi::OsString::from("FAKE_CARGO_CODE"),
-        std::ffi::OsString::from(code.to_string()),
-    ));
+    env.set("FAKE_CARGO_SAYS", said);
+    env.set("FAKE_CARGO_CODE", code.to_string());
     env
 }
 
@@ -314,14 +308,8 @@ fn the_flags_a_configuration_gives_the_interpreter_are_the_ones_it_ran_with() {
     let trace = Recorder::disabled();
     let cargo = cargo();
     let mut env = saying(PASSED, 0);
-    env.push((
-        std::ffi::OsString::from("MIRIFLAGS"),
-        std::ffi::OsString::from("-Zmiri-from-the-outside"),
-    ));
-    env.push((
-        std::ffi::OsString::from("FAKE_CARGO_ENV_OUT"),
-        std::ffi::OsString::from(seen.display().to_string()),
-    ));
+    env.set("MIRIFLAGS", "-Zmiri-from-the-outside");
+    env.set("FAKE_CARGO_ENV_OUT", seen.display().to_string());
     let flags = [
         "-Zmiri-strict-provenance".to_owned(),
         "-Zmiri-symbolic-alignment-check".to_owned(),
@@ -367,14 +355,8 @@ fn an_interpreter_left_to_run_as_it_was_started_keeps_the_variable_it_was_given(
     let trace = Recorder::disabled();
     let cargo = cargo();
     let mut env = saying(PASSED, 0);
-    env.push((
-        std::ffi::OsString::from("MIRIFLAGS"),
-        std::ffi::OsString::from("-Zmiri-from-the-outside"),
-    ));
-    env.push((
-        std::ffi::OsString::from("FAKE_CARGO_ENV_OUT"),
-        std::ffi::OsString::from(seen.display().to_string()),
-    ));
+    env.set("MIRIFLAGS", "-Zmiri-from-the-outside");
+    env.set("FAKE_CARGO_ENV_OUT", seen.display().to_string());
 
     let done = interpret(
         &Interpreting {
@@ -409,10 +391,7 @@ fn an_interpreter_that_runs_out_of_time_has_interpreted_nothing() {
     let trace = Recorder::disabled();
     let cargo = cargo();
     let mut env = saying(PASSED, 0);
-    env.push((
-        std::ffi::OsString::from("FAKE_CARGO_SLEEP"),
-        std::ffi::OsString::from("5"),
-    ));
+    env.set("FAKE_CARGO_SLEEP", "5");
 
     let done = interpret(
         &Interpreting {
@@ -531,10 +510,7 @@ fn an_interpreter_that_ran_out_of_time_interpreted_nothing_whole() {
     let trace = Recorder::disabled();
     let cargo = cargo();
     let mut env = saying(PASSED, 0);
-    env.push((
-        std::ffi::OsString::from("FAKE_CARGO_SLEEP"),
-        std::ffi::OsString::from("5"),
-    ));
+    env.set("FAKE_CARGO_SLEEP", "5");
     let done = interpret(
         &Interpreting {
             root: dir.path(),

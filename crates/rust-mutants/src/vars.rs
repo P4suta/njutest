@@ -76,7 +76,13 @@ impl Variables {
         }
     }
 
-    /// `pairs` under `spelling`, a later spelling of a name replacing an earlier one as it does for a process started with them.
+    /// No variables, under this platform's rule.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self::none(Spelling::HOST)
+    }
+
+    /// `pairs` under `spelling`, where the first spelling of a name hides every later one, as `getenv` reads a list that repeats a name.
     #[must_use]
     pub fn spelled(
         spelling: Spelling,
@@ -84,7 +90,9 @@ impl Variables {
     ) -> Self {
         let mut variables = Self::none(spelling);
         for (name, value) in pairs {
-            variables.set(name, value);
+            if variables.var_os(&name).is_none() {
+                variables.held.push((name, value));
+            }
         }
         variables
     }
@@ -133,6 +141,13 @@ impl Variables {
         let name = name.into();
         self.remove_os(&name);
         self.held.push((name, value.into()));
+    }
+
+    /// Gives every variable of `over` its value here, replacing every spelling of its name.
+    pub fn overlay(&mut self, over: &Self) {
+        for (name, value) in over.for_process() {
+            self.set(name, value);
+        }
     }
 
     /// Takes `name` out, however it was spelled.
@@ -206,17 +221,14 @@ impl Variables {
     }
 }
 
-/// The value `vars` gives `name`, if it has one.
-#[must_use]
-pub fn var<'a>(vars: &'a [(OsString, OsString)], name: &str) -> Option<&'a OsStr> {
-    let wanted = OsStr::new(name);
-    vars.iter()
-        .find(|(key, _value)| same_name(key, wanted))
-        .map(|(_key, value)| value.as_os_str())
+impl Default for Variables {
+    fn default() -> Self {
+        Self::empty()
+    }
 }
 
-/// The search path a bare program name is resolved on, if `vars` names one.
-#[must_use]
-pub fn search_path(vars: &[(OsString, OsString)]) -> Option<OsString> {
-    var(vars, "PATH").map(OsStr::to_owned)
+impl FromIterator<(OsString, OsString)> for Variables {
+    fn from_iter<I: IntoIterator<Item = (OsString, OsString)>>(pairs: I) -> Self {
+        Self::of(pairs)
+    }
 }

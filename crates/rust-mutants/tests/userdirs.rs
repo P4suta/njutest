@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use rust_mutants::userdirs::cache_directory;
 
 /// An environment of exactly these variables, in this order.
-fn given(named: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
+fn given(named: &[(&str, &str)]) -> rust_mutants::vars::Variables {
     named
         .iter()
         .map(|(name, value)| (OsString::from(*name), OsString::from(*value)))

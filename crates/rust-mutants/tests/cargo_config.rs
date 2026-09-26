@@ -22,7 +22,7 @@ fn write(root: &Path, relative: &str, text: &str) {
     std::fs::write(&path, text).expect("the file");
 }
 
-fn env(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
+fn env(pairs: &[(&str, &str)]) -> rust_mutants::vars::Variables {
     pairs
         .iter()
         .map(|(name, value)| (OsString::from(name), OsString::from(value)))
@@ -176,10 +176,10 @@ fn nothing_configured_and_nothing_asked_for_leaves_the_variable_unset() {
 fn non_utf8_environment_flags_are_refused_without_lossy_rewriting() {
     use std::os::unix::ffi::OsStringExt as _;
 
-    let environment = vec![(
+    let environment = rust_mutants::vars::Variables::of([(
         OsString::from("RUSTFLAGS"),
         OsString::from_vec(vec![b'-', b'D', 0xff]),
-    )];
+    )]);
     assert_eq!(
         encoded(&environment, &Configured::default(), &[]),
         Err(ConfigError::NonUtf8Environment {

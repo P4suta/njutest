@@ -3,8 +3,7 @@
 
 //! Running the suite under a sanitizer, when the configuration asks for one.
 
-use std::collections::BTreeMap;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::path::Path;
 use std::time::Duration;
 
@@ -42,7 +41,7 @@ pub struct Sanitizing<'a> {
     /// The target triple the suite is built for, which a sanitizer needs named so the host tools are not instrumented too.
     pub host: &'a str,
     /// The environment it runs with.
-    pub env: Vec<(OsString, OsString)>,
+    pub env: rust_mutants::vars::Variables,
     /// The packages to run.
     /// Empty is the whole workspace.
     pub packages: &'a [String],
@@ -189,11 +188,11 @@ fn refuse(done: &mut Sanitized, sanitizer: &str, why: &str) {
 
 /// The environment one sanitizer run adds: the flag, and nothing else the caller did not already have.
 fn instrumenting(
-    base: &[(OsString, OsString)],
+    base: &rust_mutants::vars::Variables,
     sanitizer: &str,
-) -> Result<Vec<(OsString, OsString)>, RunnerError> {
-    let mut env: BTreeMap<OsString, OsString> = base.iter().cloned().collect();
-    let mut flags: Vec<String> = match env.get(OsStr::new("RUSTFLAGS")) {
+) -> Result<rust_mutants::vars::Variables, RunnerError> {
+    let mut env = base.clone();
+    let mut flags: Vec<String> = match env.var("RUSTFLAGS") {
         Some(value) => std::str::from_utf8(value.as_encoded_bytes())
             .map_err(|source| RunnerError::PhaseOutput {
                 phase: "sanitizer RUSTFLAGS",
@@ -204,11 +203,8 @@ fn instrumenting(
             .collect(),
         None => Vec::new(),
     };
-    env.retain(|name, _value| name != OsStr::new("CARGO_ENCODED_RUSTFLAGS"));
+    env.remove("CARGO_ENCODED_RUSTFLAGS");
     flags.push(format!("-Zsanitizer={sanitizer}"));
-    env.extend(std::iter::once((
-        OsString::from("RUSTFLAGS"),
-        OsString::from(flags.join(" ")),
-    )));
-    Ok(env.into_iter().collect())
+    env.set("RUSTFLAGS", flags.join(" "));
+    Ok(env)
 }

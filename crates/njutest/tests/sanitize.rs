@@ -26,18 +26,12 @@ fn cargo() -> PathBuf {
 }
 
 /// What that cargo is told to say, and how it is told to end.
-fn saying(said: &str, code: i32) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
-    let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os()
+fn saying(said: &str, code: i32) -> rust_mutants::vars::Variables {
+    let mut env: rust_mutants::vars::Variables = std::env::vars_os()
         .filter(|(name, _)| njutest_devkit::paths::same_name(name, std::ffi::OsStr::new("PATH")))
         .collect();
-    env.push((
-        std::ffi::OsString::from("FAKE_CARGO_SAYS"),
-        std::ffi::OsString::from(said),
-    ));
-    env.push((
-        std::ffi::OsString::from("FAKE_CARGO_CODE"),
-        std::ffi::OsString::from(code.to_string()),
-    ));
+    env.set("FAKE_CARGO_SAYS", said);
+    env.set("FAKE_CARGO_CODE", code.to_string());
     env
 }
 
@@ -238,16 +232,13 @@ fn what_a_run_asks_of_the_sanitizer_is_the_whole_of_what_it_asks() {
 }
 
 /// What the cargo a run started actually saw in its environment.
-fn as_started(dir: &Path, base: Vec<(std::ffi::OsString, std::ffi::OsString)>) -> String {
+fn as_started(dir: &Path, base: rust_mutants::vars::Variables) -> String {
     let seen = dir.join("environment");
     let cancel = Cancel::new();
     let trace = Recorder::disabled();
     let cargo = cargo();
     let mut env = base;
-    env.push((
-        std::ffi::OsString::from("FAKE_CARGO_ENV_OUT"),
-        std::ffi::OsString::from(seen.display().to_string()),
-    ));
+    env.set("FAKE_CARGO_ENV_OUT", seen.display().to_string());
     let done = sanitize(
         &Sanitizing {
             root: dir,
@@ -278,14 +269,8 @@ fn the_flags_a_sanitizer_needs_are_the_ones_the_process_it_started_had() {
     );
 
     let mut carrying = saying("test result: ok", 0);
-    carrying.push((
-        std::ffi::OsString::from("RUSTFLAGS"),
-        std::ffi::OsString::from("--cfg mine"),
-    ));
-    carrying.push((
-        std::ffi::OsString::from("CARGO_ENCODED_RUSTFLAGS"),
-        std::ffi::OsString::from("--cfg\u{1f}theirs"),
-    ));
+    carrying.set("RUSTFLAGS", "--cfg mine");
+    carrying.set("CARGO_ENCODED_RUSTFLAGS", "--cfg\u{1f}theirs");
     let seen = as_started(dir.path(), carrying);
     assert!(
         seen.contains("RUSTFLAGS=--cfg mine -Zsanitizer=address\n"),
@@ -422,10 +407,7 @@ fn a_sanitizer_that_runs_out_of_time_has_not_checked_anything() {
     let trace = Recorder::disabled();
     let cargo = cargo();
     let mut env = saying("test result: ok", 0);
-    env.push((
-        std::ffi::OsString::from("FAKE_CARGO_SLEEP"),
-        std::ffi::OsString::from("5"),
-    ));
+    env.set("FAKE_CARGO_SLEEP", "5");
     let done = sanitize(
         &Sanitizing {
             root: dir.path(),

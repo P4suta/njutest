@@ -23,7 +23,7 @@ const RUN: &str = "20260101T000000Z-aaaaaa";
 
 fn environment(root: &Path) -> Environment {
     Environment {
-        vars: Vec::new(),
+        vars: rust_mutants::vars::Variables::empty(),
         working_directory: root.to_path_buf(),
         temp_directory: root.join("tmp"),
         program: std::path::PathBuf::from(env!("CARGO_BIN_EXE_njutest")),

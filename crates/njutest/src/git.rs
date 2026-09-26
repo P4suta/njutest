@@ -3,7 +3,6 @@
 
 //! What the repository was when the run started, in the report's own words.
 
-use std::ffi::OsString;
 use std::path::Path;
 
 use rust_mutants::git::{Asking, Facts};
@@ -20,7 +19,7 @@ pub struct Asked<'a> {
     /// The tree the question is about.
     pub root: &'a Path,
     /// The environment git is run with.
-    pub env: &'a [(OsString, OsString)],
+    pub env: &'a rust_mutants::vars::Variables,
     /// Directories this project writes rather than verifies.
     pub excluded: &'a Excluded,
     /// What stops the commands, and who hears that they ran.

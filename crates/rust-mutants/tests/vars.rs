@@ -5,20 +5,27 @@
 
 use std::ffi::OsString;
 
-use rust_mutants::vars::{Spelling, Variables, search_path, var};
+use rust_mutants::vars::{Spelling, Variables};
 
-/// An environment of exactly these variables, in this order.
-fn given(named: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
-    named
-        .iter()
-        .map(|(name, value)| (OsString::from(*name), OsString::from(*value)))
-        .collect()
+/// The variables `named`, in this order, under `spelling`.
+fn spelled(spelling: Spelling, named: &[(&str, &str)]) -> Variables {
+    Variables::spelled(
+        spelling,
+        named
+            .iter()
+            .map(|(name, value)| (OsString::from(*name), OsString::from(*value))),
+    )
+}
+
+/// An environment of exactly these variables, in this order, as this platform reads it.
+fn given(named: &[(&str, &str)]) -> Variables {
+    spelled(Spelling::HOST, named)
 }
 
 #[test]
 fn a_name_spelled_the_way_it_was_set_is_found_everywhere() {
     assert_eq!(
-        var(&given(&[("PATH", "/usr/bin")]), "PATH"),
+        given(&[("PATH", "/usr/bin")]).var("PATH"),
         Some(std::ffi::OsStr::new("/usr/bin")),
         "the ordinary case is a name asked for as it was set, and a machine where that \
          did not answer would be one where nothing could be found at all"
@@ -29,7 +36,7 @@ fn a_name_spelled_the_way_it_was_set_is_found_everywhere() {
 fn a_name_spelled_another_way_is_the_same_name_only_where_the_platform_says_so() {
     let windows = given(&[("Path", "C:\\bin")]);
     assert_eq!(
-        var(&windows, "PATH").is_some(),
+        windows.var("PATH").is_some(),
         cfg!(windows),
         "Windows spells its search path `Path` and treats the name as one name however it \
          is written, so a run given that environment has a search path; a unix machine \
@@ -40,13 +47,17 @@ fn a_name_spelled_another_way_is_the_same_name_only_where_the_platform_says_so()
 #[test]
 fn the_search_path_is_the_one_the_environment_names() {
     assert_eq!(
-        search_path(&given(&[("PATH", "/usr/bin")])),
+        given(&[("PATH", "/usr/bin")])
+            .search_path()
+            .map(ToOwned::to_owned),
         Some(OsString::from("/usr/bin")),
         "resolving a bare program name is what the search path is for, and a run that \
          could not read the one it was handed refuses every bare name it is given"
     );
     assert_eq!(
-        search_path(&given(&[("HOME", "/home/somebody")])),
+        given(&[("HOME", "/home/somebody")])
+            .search_path()
+            .map(ToOwned::to_owned),
         None,
         "an environment that names no search path names none, and answering with \
          something else would resolve a program against a path nobody gave"
@@ -56,10 +67,7 @@ fn the_search_path_is_the_one_the_environment_names() {
 #[test]
 fn a_variable_of_another_name_is_not_the_one_asked_for() {
     assert_eq!(
-        var(
-            &given(&[("PATHEXT", ".EXE"), ("MANPATH", "/usr/share/man")]),
-            "PATH"
-        ),
+        given(&[("PATHEXT", ".EXE"), ("MANPATH", "/usr/share/man")]).var("PATH"),
         None,
         "the names are the names, and matching a prefix or a suffix of one would read a \
          variable somebody set for something else"
@@ -69,7 +77,7 @@ fn a_variable_of_another_name_is_not_the_one_asked_for() {
 #[test]
 fn the_first_of_a_repeated_variable_is_the_one_read() {
     assert_eq!(
-        var(&given(&[("PATH", "/first"), ("PATH", "/second")]), "PATH"),
+        given(&[("PATH", "/first"), ("PATH", "/second")]).var("PATH"),
         Some(std::ffi::OsStr::new("/first")),
         "an environment is a list and a shell may hand over the same name twice; reading \
          the first is what a process does with `getenv`, and answering differently would \
@@ -77,24 +85,27 @@ fn the_first_of_a_repeated_variable_is_the_one_read() {
     );
 }
 
-/// The variables `named`, in this order, under `spelling`.
-fn spelled(spelling: Spelling, named: &[(&str, &str)]) -> Variables {
-    Variables::spelled(spelling, given(named))
-}
-
 #[test]
 fn every_rule_holds_a_variable_once_however_its_name_was_spelled() {
     for spelling in Spelling::ALL {
         let variables = spelled(spelling, &[("Path", "C:\\first"), ("PATH", "C:\\second")]);
-        let (held, value) = match spelling {
-            Spelling::Exact => (2, "C:\\first"),
-            Spelling::AsciiCaseless => (1, "C:\\second"),
+        let (held, second) = match spelling {
+            Spelling::Exact => (2, "C:\\second"),
+            Spelling::AsciiCaseless => (1, "C:\\first"),
         };
         assert_eq!(
-            (variables.len(), variables.var("Path")),
-            (held, Some(std::ffi::OsStr::new(value))),
-            "{spelling:?}: where two spellings are one name, the later is the one a process \
-             started with both sees, and it is the only one held"
+            (
+                variables.len(),
+                variables.var("Path"),
+                variables.var("PATH")
+            ),
+            (
+                held,
+                Some(std::ffi::OsStr::new("C:\\first")),
+                Some(std::ffi::OsStr::new(second))
+            ),
+            "{spelling:?}: where two spellings are one name, the first is the one `getenv` \
+             reads, and it is the only one held"
         );
     }
 }
@@ -203,10 +214,28 @@ fn the_host_rule_is_the_one_every_reading_of_a_name_uses() {
         }
     );
     assert_eq!(
-        Variables::of(given(&[("Path", "C:\\bin")]))
-            .search_path()
-            .is_some(),
+        given(&[("Path", "C:\\bin")]).search_path().is_some(),
         cfg!(windows),
         "the variables a run is given are read by the platform's own rule"
     );
+}
+
+#[test]
+fn the_test_support_reads_a_name_by_the_rule_the_engine_does() {
+    for (one, other) in [
+        ("PATH", "PATH"),
+        ("Path", "PATH"),
+        ("path", "PATH"),
+        ("PATHEXT", "PATH"),
+        ("Rust_Mutants_Active", "RUST_MUTANTS_ACTIVE"),
+    ] {
+        let (one, other) = (std::ffi::OsStr::new(one), std::ffi::OsStr::new(other));
+        assert_eq!(
+            njutest_devkit::paths::same_name(one, other),
+            Spelling::HOST.same(one, other),
+            "the devkit cannot depend on the engine and keeps its own reading of a name, which \
+             the suites use to compose what a run is given; on every platform the suite runs \
+             on, it is the engine's: {one:?} and {other:?}"
+        );
+    }
 }

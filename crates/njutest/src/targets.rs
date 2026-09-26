@@ -193,7 +193,7 @@ pub struct Unit {
     pub cwd: PathBuf,
     /// The complete environment its processes run with: the run's own, what cargo sets for this target, and the scratch build layer.
     /// An argument rather than an inheritance, so a listing and an execution see the same machine and a test can say what that is.
-    pub env: Vec<(OsString, OsString)>,
+    pub env: rust_mutants::vars::Variables,
 }
 
 /// One test a run measures.
@@ -216,7 +216,7 @@ pub struct Target {
     /// The directory it runs in.
     pub cwd: PathBuf,
     /// The complete environment its process runs with, from the unit it came from.
-    pub env: Vec<(OsString, OsString)>,
+    pub env: rust_mutants::vars::Variables,
 }
 
 impl Target {

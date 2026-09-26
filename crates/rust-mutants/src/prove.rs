@@ -507,7 +507,7 @@ const CAP_LINTS: &str = "--cap-lints=warn";
 /// The compiler flags the witness check adds to what the workspace is otherwise compiled with.
 fn capping(
     workspace: &Workspace,
-) -> Result<Vec<(OsString, OsString)>, crate::cargo::config::ConfigError> {
+) -> Result<crate::vars::Variables, crate::cargo::config::ConfigError> {
     let flags = crate::cargo::config::configured(
         workspace.snapshot_root(),
         crate::cargo::config::home(&workspace.base_env).as_deref(),
@@ -516,7 +516,7 @@ fn capping(
         Some(encoded) => encoded,
         None => OsString::new(),
     };
-    Ok(vec![
+    Ok(crate::vars::Variables::of([
         (
             OsString::from(crate::cargo::config::ENCODED_RUSTFLAGS),
             encoded,
@@ -525,7 +525,7 @@ fn capping(
             OsString::from(crate::cargo::config::RUSTFLAGS),
             OsString::new(),
         ),
-    ])
+    ]))
 }
 
 /// Writes the witness tree over the pristine sources.

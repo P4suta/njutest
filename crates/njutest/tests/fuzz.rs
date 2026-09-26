@@ -56,7 +56,6 @@ fn targets_that_are_here_and_were_not_driven_are_said_to_be() {
 
 #[cfg(unix)]
 mod driving {
-    use std::ffi::OsString;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
@@ -74,28 +73,22 @@ mod driving {
     }
 
     /// What that cargo is told to say, what it is told to leave behind, and how it is told to end.
-    fn saying(said: &str, code: i32, artifact: Option<&str>) -> Vec<(OsString, OsString)> {
-        let mut env: Vec<(OsString, OsString)> = std::env::vars_os()
+    fn saying(said: &str, code: i32, artifact: Option<&str>) -> rust_mutants::vars::Variables {
+        let mut env: rust_mutants::vars::Variables = std::env::vars_os()
             .filter(|(name, _)| {
                 njutest_devkit::paths::same_name(name, std::ffi::OsStr::new("PATH"))
             })
             .collect();
-        env.push((OsString::from("FAKE_CARGO_SAYS"), OsString::from(said)));
-        env.push((
-            OsString::from("FAKE_CARGO_CODE"),
-            OsString::from(code.to_string()),
-        ));
+        env.set("FAKE_CARGO_SAYS", said);
+        env.set("FAKE_CARGO_CODE", code.to_string());
         if let Some(artifact) = artifact {
-            env.push((
-                OsString::from("FAKE_CARGO_ARTIFACT"),
-                OsString::from(artifact),
-            ));
+            env.set("FAKE_CARGO_ARTIFACT", artifact);
         }
         env
     }
 
     fn driven(
-        env: Vec<(OsString, OsString)>,
+        env: rust_mutants::vars::Variables,
         root: &Path,
         targets: &[String],
     ) -> njutest::assure::fuzz::Fuzzed {
@@ -141,7 +134,7 @@ mod driving {
     fn a_target_stopped_before_its_time_was_up_was_driven_for_less_than_it_was_asked() {
         let dir = tree(&["parse"]);
         let mut env = saying("Done 1 runs", 0, None);
-        env.push((OsString::from("FAKE_CARGO_SLEEP"), OsString::from("5")));
+        env.set("FAKE_CARGO_SLEEP", "5");
         let cancel = Cancel::new();
         let trace = Recorder::disabled();
         let cargo = cargo();
@@ -279,7 +272,7 @@ mod driving {
             &Fuzzing {
                 root: dir.path(),
                 cargo: rust_mutants::cargo::Selecting::named(&missing),
-                env: Vec::new(),
+                env: rust_mutants::vars::Variables::empty(),
                 targets: &[],
                 max_total_time: Duration::from_secs(1),
                 timeout: Some(Duration::from_secs(30)),
@@ -300,10 +293,7 @@ mod driving {
         let dir = tree(&["parse"]);
         let argv = dir.path().join("argv");
         let mut env = saying("Done", 0, None);
-        env.push((
-            OsString::from("FAKE_CARGO_ARGV_OUT"),
-            argv.clone().into_os_string(),
-        ));
+        env.set("FAKE_CARGO_ARGV_OUT", argv.clone().into_os_string());
         let cancel = Cancel::new();
         let trace = recording();
         let cargo = cargo();
@@ -364,10 +354,7 @@ mod driving {
             77,
             Some(later.to_str().expect("test protocol paths are UTF-8")),
         );
-        env.push((
-            OsString::from("FAKE_CARGO_ARTIFACT_TWO"),
-            earlier.into_os_string(),
-        ));
+        env.set("FAKE_CARGO_ARTIFACT_TWO", earlier.into_os_string());
         let done = driven(env, dir.path(), &[]);
 
         assert_eq!(

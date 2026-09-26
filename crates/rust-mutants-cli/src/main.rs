@@ -10,7 +10,7 @@ use std::process::ExitCode;
 use rust_mutants_cli::Environment;
 
 pub(crate) fn main() -> ExitCode {
-    let vars: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
+    let vars: rust_mutants::vars::Variables = std::env::vars_os().collect();
     let interrupt = match rust_mutants_cli::interruptible() {
         Ok(interruptible) => interruptible,
         Err(error) => {

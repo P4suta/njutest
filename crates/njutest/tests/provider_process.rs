@@ -11,7 +11,6 @@
     )
 )]
 #![cfg(unix)]
-use std::ffi::OsString;
 use std::path::Path;
 use std::time::Duration;
 
@@ -54,17 +53,14 @@ fn resource(command: Vec<String>) -> Resource {
 }
 
 /// What a provider is told, which is what it answers with.
-fn saying(ready: &str, silent: bool) -> Vec<(OsString, OsString)> {
-    let mut env: Vec<(OsString, OsString)> = std::env::vars_os()
+fn saying(ready: &str, silent: bool) -> rust_mutants::vars::Variables {
+    let mut env: rust_mutants::vars::Variables = std::env::vars_os()
         .filter(|(name, _)| njutest_devkit::paths::same_name(name, std::ffi::OsStr::new("PATH")))
         .collect();
-    env.push((OsString::from("FAKE_PROVIDER_READY"), OsString::from(ready)));
-    env.push((
-        OsString::from("FAKE_PROVIDER_STOPPED"),
-        OsString::from(STOPPED),
-    ));
+    env.set("FAKE_PROVIDER_READY", ready);
+    env.set("FAKE_PROVIDER_STOPPED", STOPPED);
     if silent {
-        env.push((OsString::from("FAKE_PROVIDER_SILENT"), OsString::from("1")));
+        env.set("FAKE_PROVIDER_SILENT", "1");
     }
     env
 }

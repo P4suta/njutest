@@ -53,7 +53,9 @@ fn verify(fixture: &Fixture) -> Output {
             temp_directory: njutest_devkit::paths::temp_beside(&fixture.root)
                 .expect("a temporary directory"),
             program: PathBuf::from("this test never runs it"),
-            vars: njutest_devkit::paths::environment_for_a_toolchain_run(&[]),
+            vars: njutest_devkit::paths::environment_for_a_toolchain_run(&[])
+                .into_iter()
+                .collect::<rust_mutants::vars::Variables>(),
             cancel: Cancel::new(),
             terminal: njutest::presentation::Terminal::default(),
         },

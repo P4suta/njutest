@@ -16,7 +16,7 @@ use rust_mutants::runner::Cancel;
 fn seen(repo: &Repo, base: &str) -> Option<njutest::git::Change> {
     let cancel = Cancel::new();
     let trace = Recorder::disabled();
-    let env: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os()
+    let env: rust_mutants::vars::Variables = std::env::vars_os()
         .filter(|(key, _)| {
             ["PATH", "HOME", "USER", "TMPDIR"]
                 .iter()

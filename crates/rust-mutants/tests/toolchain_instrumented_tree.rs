@@ -12,7 +12,6 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use njutest_devkit::fixture::copy_tree;
@@ -103,7 +102,7 @@ fn prepare(fixture: &str) -> Tree {
             locked: true,
             offline: true,
             timeout: None,
-            env: Vec::new(),
+            env: rust_mutants::vars::Variables::empty(),
             build: rust_mutants::cargo::BuildConfig::default(),
         },
     )
@@ -223,20 +222,17 @@ impl Tree {
             rust_mutants::runner::Bound::Unbounded,
         );
         spec.dir = Some(self.root.clone());
-        let mut env: Vec<(OsString, OsString)> = std::env::vars_os()
-            .filter(|(key, _)| {
-                !rust_mutants::execute::RESERVED_ENV
-                    .iter()
-                    .any(|reserved| key == std::ffi::OsStr::new(reserved))
-            })
-            .collect();
-        env.push((WATCHED_ENV.into(), self.watched.clone().into()));
+        let mut env: rust_mutants::vars::Variables = std::env::vars_os().collect();
+        for reserved in rust_mutants::execute::RESERVED_ENV {
+            env.remove(reserved);
+        }
+        env.set(WATCHED_ENV, &self.watched);
         if let Some(active) = active {
-            env.push((ACTIVE_ENV.into(), active.into()));
-            env.push((
-                CATALOG_ENV.into(),
-                catalog.unwrap_or_else(|| self.catalog.digest()).into(),
-            ));
+            env.set(ACTIVE_ENV, active);
+            env.set(
+                CATALOG_ENV,
+                catalog.unwrap_or_else(|| self.catalog.digest()),
+            );
         }
         spec.env = Some(env);
         run(&spec, &Cancel::new())

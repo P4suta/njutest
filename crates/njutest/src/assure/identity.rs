@@ -141,7 +141,7 @@ pub struct Asked<'a> {
     /// The machine the run happens on.
     pub machine: &'a Machine<'a>,
     /// The process environment.
-    pub vars: &'a [(OsString, OsString)],
+    pub vars: &'a rust_mutants::vars::Variables,
     /// Directories a run writes rather than reads that the standing exclusions do not cover: cargo's build directory, the user's cache directory.
     pub elsewhere: &'a [&'a Path],
 }
@@ -250,7 +250,7 @@ pub fn of(
 /// # Errors
 /// [`EnvironmentError`] when a selected name or value is not UTF-8.
 pub fn environment_of(
-    vars: &[(OsString, OsString)],
+    vars: &rust_mutants::vars::Variables,
     config: &Config,
 ) -> Result<Vec<(String, String)>, EnvironmentError> {
     selected(vars, &config.execution.environment)
@@ -261,21 +261,21 @@ pub fn environment_of(
 /// # Errors
 /// A selected variable's name or value is not UTF-8.
 pub fn selected(
-    vars: &[(OsString, OsString)],
+    vars: &rust_mutants::vars::Variables,
     named: &[String],
 ) -> Result<Vec<(String, String)>, EnvironmentError> {
+    let spelling = vars.spelling();
     let mut selected = Vec::new();
-    for (name, value) in vars {
-        let wanted_by_bytes = SELECTED_NAMES
+    for (name, value) in vars.canonical() {
+        let wanted = SELECTED_NAMES
             .iter()
-            .any(|one| one.as_bytes() == name.as_encoded_bytes())
+            .copied()
+            .chain(named.iter().map(String::as_str))
+            .any(|one| spelling.same(&name, std::ffi::OsStr::new(one)))
             || SELECTED_PREFIXES
                 .iter()
-                .any(|prefix| name.as_encoded_bytes().starts_with(prefix.as_bytes()))
-            || named
-                .iter()
-                .any(|one| one.as_bytes() == name.as_encoded_bytes());
-        if !wanted_by_bytes {
+                .any(|prefix| spelling.begins(&name, prefix));
+        if !wanted {
             continue;
         }
         let name_text = std::str::from_utf8(name.as_encoded_bytes()).map_err(|source| {
@@ -313,7 +313,7 @@ const TOOL_NAMES: [&str; 5] = [
 ];
 
 /// A program as a run's identity folds it: its file name and the digest of its bytes, so one toolchain unpacked in two places is one program; the value as written where it names nothing this run can read, which only ever costs a reuse.
-fn program(value: &str, vars: &[(OsString, OsString)]) -> String {
+fn program(value: &str, vars: &rust_mutants::vars::Variables) -> String {
     let Some(path) = located(value, vars) else {
         return value.to_owned();
     };
@@ -334,7 +334,7 @@ fn program(value: &str, vars: &[(OsString, OsString)]) -> String {
 }
 
 /// The file a program value names: itself where it is a path, or the first match on the run's own `PATH`.
-fn located(value: &str, vars: &[(OsString, OsString)]) -> Option<std::path::PathBuf> {
+fn located(value: &str, vars: &rust_mutants::vars::Variables) -> Option<std::path::PathBuf> {
     let written = Path::new(value);
     if value.is_empty() || value.contains(char::is_whitespace) {
         return None;
@@ -342,10 +342,7 @@ fn located(value: &str, vars: &[(OsString, OsString)]) -> Option<std::path::Path
     if written.components().count() > 1 {
         return Some(written.to_path_buf());
     }
-    let search = vars
-        .iter()
-        .find(|(name, _)| name.as_encoded_bytes() == b"PATH")
-        .map(|(_, path)| path)?;
+    let search = vars.search_path()?;
     std::env::split_paths(search)
         .map(|directory| directory.join(value))
         .find(|candidate| std::fs::metadata(candidate).is_ok_and(|metadata| metadata.is_file()))

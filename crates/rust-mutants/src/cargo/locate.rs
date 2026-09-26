@@ -23,7 +23,7 @@ pub struct LocateOptions {
     pub search_path: Option<OsString>,
     /// The complete environment every cargo command runs with.
     /// `None` inherits this process's environment.
-    pub env: Option<Vec<(OsString, OsString)>>,
+    pub env: Option<crate::vars::Variables>,
 }
 
 /// A located cargo and the rustc beside it, named by their banners.
@@ -35,7 +35,7 @@ pub struct Toolchain {
     sysroot: Option<PathBuf>,
     cargo_version: VersionInfo,
     rustc_version: VersionInfo,
-    env: Option<Vec<(OsString, OsString)>>,
+    env: Option<crate::vars::Variables>,
 }
 
 impl Toolchain {
@@ -81,7 +81,7 @@ impl Toolchain {
         };
         let cargo_version = banner(&cargo)?;
         let rustc_version = banner(&rustc)?;
-        let sysroot = sysroot_of(&rustc, dir, options.env.as_deref(), cancel)?;
+        let sysroot = sysroot_of(&rustc, dir, options.env.as_ref(), cancel)?;
         let chosen_by_path = name.components().count() == 1 && !name.is_absolute();
         let toolchain = if chosen_by_path {
             sysroot.as_deref()
@@ -187,8 +187,8 @@ impl Toolchain {
 
     /// The environment cargo commands run with, when frozen.
     #[must_use]
-    pub fn env(&self) -> Option<&[(OsString, OsString)]> {
-        self.env.as_deref()
+    pub const fn env(&self) -> Option<&crate::vars::Variables> {
+        self.env.as_ref()
     }
 
     /// A spec that runs `cargo <args>` inside `dir` with the toolchain's environment, unbounded until the caller says otherwise.
@@ -326,32 +326,21 @@ fn pinned(
 
 /// `env` with `RUSTC` naming the pinned `rustc` and `RUSTDOC` the `rustdoc` beside it, unless the environment already names them, so cargo never asks a shim again.
 fn with_toolchain(
-    mut env: Vec<(OsString, OsString)>,
+    mut env: crate::vars::Variables,
     rustc: &Path,
     sysroot: Option<&Path>,
-) -> Result<Vec<(OsString, OsString)>, CargoError> {
-    let named = |env: &[(OsString, OsString)], variable: &str| {
-        env.iter().any(|(name, _)| {
-            name.to_str().is_some_and(|name| {
-                if cfg!(windows) {
-                    name.eq_ignore_ascii_case(variable)
-                } else {
-                    name == variable
-                }
-            })
-        })
-    };
-    if !named(&env, "RUSTC") {
-        env.push(("RUSTC".into(), rustc.as_os_str().to_owned()));
+) -> Result<crate::vars::Variables, CargoError> {
+    if !env.holds("RUSTC") {
+        env.set("RUSTC", rustc.as_os_str());
     }
     if let Some(sysroot) = sysroot
-        && !named(&env, "RUSTDOC")
+        && !env.holds("RUSTDOC")
         && let Some(rustdoc) = first_executable(executable_variants(
             &sysroot.join("bin"),
             Path::new("rustdoc"),
         ))?
     {
-        env.push(("RUSTDOC".into(), rustdoc.into_os_string()));
+        env.set("RUSTDOC", rustdoc);
     }
     Ok(env)
 }
@@ -481,7 +470,7 @@ fn executable_variants(dir: &Path, name: &Path) -> Vec<PathBuf> {
 fn sysroot_of(
     rustc: &Path,
     dir: &Path,
-    env: Option<&[(OsString, OsString)]>,
+    env: Option<&crate::vars::Variables>,
     cancel: &Cancel,
 ) -> Result<Option<PathBuf>, CargoError> {
     let mut spec = Spec::new(
@@ -493,7 +482,7 @@ fn sysroot_of(
         Bound::After(PROBE),
     );
     spec.dir = Some(dir.to_path_buf());
-    spec.env = env.map(<[(OsString, OsString)]>::to_vec);
+    spec.env = env.cloned();
     spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
     let result = run(&spec, cancel);
     if !result.succeeded() {

@@ -25,12 +25,12 @@ fn touching() -> PrepareOptions {
 }
 
 /// The toolchain a run of this workspace resolves to, located the way a run locates it.
-fn located(cargo: &std::path::Path, env: &[(std::ffi::OsString, std::ffi::OsString)]) -> Toolchain {
+fn located(cargo: &std::path::Path, env: &rust_mutants::vars::Variables) -> Toolchain {
     Toolchain::locate(
         &LocateOptions {
             cargo: Some(cargo.to_path_buf()),
             search_path: std::env::var_os("PATH"),
-            env: Some(env.to_vec()),
+            env: Some(env.clone()),
         },
         &njutest_devkit::paths::workspace_root(),
         &Cancel::new(),

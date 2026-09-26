@@ -109,7 +109,7 @@ fn prepare(name: &str) -> Prepared {
             locked: true,
             offline: true,
             timeout: None,
-            env: Vec::new(),
+            env: rust_mutants::vars::Variables::empty(),
             build: rust_mutants::cargo::BuildConfig::default(),
         },
     )
@@ -531,7 +531,7 @@ fn the_check_records_an_exec_event_and_keeps_the_messages() {
             locked: true,
             offline: true,
             timeout: None,
-            env: Vec::new(),
+            env: rust_mutants::vars::Variables::empty(),
             build: rust_mutants::cargo::BuildConfig::default(),
         },
     )

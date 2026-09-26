@@ -73,7 +73,9 @@ impl Write for Stopping<'_> {
 
 /// The machine a watch is given: this tree, that scratch, and nothing of the outside.
 fn working_in(root: &std::path::Path, scratch: std::path::PathBuf) -> Environment {
-    let vars: Vec<(OsString, OsString)> = njutest_devkit::paths::environment_for_a_run();
+    let vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .collect::<rust_mutants::vars::Variables>();
     Environment {
         cache_directory: Environment::cache_directory_of(&vars),
         working_directory: root.to_owned(),
@@ -179,7 +181,9 @@ fn a_run_with_nowhere_to_work_stops_before_it_says_it_looked() {
         working_directory: root.path().to_owned(),
         temp_directory: occupied,
         program: std::path::PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
-        vars: njutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect(),
         cancel: Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),
     };
@@ -273,7 +277,9 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
         vars: vec![(
             OsString::from("PATH"),
             OsString::from(empty.display().to_string()),
-        )],
+        )]
+        .into_iter()
+        .collect::<rust_mutants::vars::Variables>(),
         cancel: Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),
     };
@@ -634,7 +640,9 @@ fn a_second_run_of_one_tree_reads_back_what_the_first_established_and_says_whose
     njutest_devkit::fixture::pin_contract(&root, "standard-v1");
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
-    let vars: Vec<(OsString, OsString)> = njutest_devkit::paths::environment_for_a_run();
+    let vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
@@ -771,7 +779,9 @@ fn fuzz_targets_a_run_was_not_asked_to_drive_are_a_gap_it_states_rather_than_pas
 
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
-    let vars: Vec<(OsString, OsString)> = njutest_devkit::paths::environment_for_a_run();
+    let vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
@@ -836,7 +846,9 @@ fn a_mutation_the_compiler_renders_identically_is_only_equivalent_where_the_test
     njutest_devkit::fixture::pin_contract(&root, "standard-v1");
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
-    let vars: Vec<(OsString, OsString)> = njutest_devkit::paths::environment_for_a_run();
+    let vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
@@ -952,17 +964,14 @@ fn a_run_that_held_something_says_what_it_held_and_lets_go_of_it() {
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
 
-    let mut vars: Vec<(OsString, OsString)> = njutest_devkit::paths::environment_for_a_run();
-    vars.push((
-        OsString::from("FAKE_PROVIDER_READY"),
-        OsString::from(
-            r#"{"version":1,"status":"ready","instance":"pg-1","environment":{"DATABASE_URL":"postgres://127.0.0.1/test"}}"#,
-        ),
-    ));
-    vars.push((
-        OsString::from("FAKE_PROVIDER_STOPPED"),
-        OsString::from(r#"{"version":1,"status":"stopped","instance":"pg-1"}"#),
-    ));
+    let mut vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .collect::<rust_mutants::vars::Variables>();
+    vars.set("FAKE_PROVIDER_READY", r#"{"version":1,"status":"ready","instance":"pg-1","environment":{"DATABASE_URL":"postgres://127.0.0.1/test"}}"#,);
+    vars.set(
+        "FAKE_PROVIDER_STOPPED",
+        r#"{"version":1,"status":"stopped","instance":"pg-1"}"#,
+    );
     let environment = Environment {
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
@@ -1070,17 +1079,13 @@ fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
 
     let asked = dir.path().join("asked.jsonl");
-    let mut vars: Vec<(OsString, OsString)> = njutest_devkit::paths::environment_for_a_run();
-    vars.push((
-        OsString::from("FAKE_GENERATOR_ASKED"),
-        OsString::from(asked.display().to_string()),
-    ));
-    vars.push((
-        OsString::from("FAKE_GENERATOR_OFFERS"),
-        OsString::from(format!(
+    let mut vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .collect::<rust_mutants::vars::Variables>();
+    vars.set("FAKE_GENERATOR_ASKED", asked.display().to_string());
+    vars.set("FAKE_GENERATOR_OFFERS", format!(
             r#"{{"version":1,"candidates":[{{"kind":"patch","path":"tests/zero.rs","preimage_sha256":null,"content_base64":"{OFFERED}"}}]}}"#
-        )),
-    ));
+        ));
     let environment = Environment {
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
@@ -1301,7 +1306,9 @@ fn a_run_that_was_stopped_leaves_what_it_established_for_the_next_one() {
     njutest_devkit::fixture::pin_contract(&root, "standard-v1");
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
-    let vars: Vec<(OsString, OsString)> = njutest_devkit::paths::environment_for_a_run();
+    let vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
@@ -1438,7 +1445,9 @@ fn once(
     njutest_devkit::fixture::pin_contract(&root, "standard-v1");
     let scratch = dir.join(format!("{name}-scratch"));
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
-    let vars: Vec<(OsString, OsString)> = njutest_devkit::paths::environment_for_a_run();
+    let vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
         cache_directory: dir.join(format!("{name}-cache")),
         working_directory: root.clone(),
@@ -1525,7 +1534,9 @@ fn shard_of(document: &serde_json::Value) -> njutest::report::ShardReport {
 fn part(root: &std::path::Path, dir: &std::path::Path, shard: &str) -> serde_json::Value {
     let scratch = dir.join(format!("part-{}-scratch", shard.replace('/', "-")));
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
-    let vars: Vec<(OsString, OsString)> = njutest_devkit::paths::environment_for_a_run();
+    let vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
         cache_directory: dir.join("parts-cache"),
         working_directory: root.to_path_buf(),
@@ -1640,7 +1651,9 @@ fn refused(fixture: &str, dir: &std::path::Path, name: &str, configured: &str) -
         working_directory: root,
         temp_directory: scratch,
         program: std::path::PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
-        vars: njutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect(),
         cancel: Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),
     };
@@ -1769,7 +1782,9 @@ fn a_target_the_fuzzer_could_not_drive_is_a_gap_and_never_a_target_that_found_no
 
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
-    let vars: Vec<(OsString, OsString)> = njutest_devkit::paths::environment_for_a_run();
+    let vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
@@ -1849,12 +1864,12 @@ fn verified_in_process(
     let scratch = dir.join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
 
-    let mut vars: Vec<(OsString, OsString)> = njutest_devkit::paths::environment_for_a_run();
-    vars.extend(
-        carrying
-            .iter()
-            .map(|(name, value)| (OsString::from(*name), OsString::from(*value))),
-    );
+    let mut vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .collect::<rust_mutants::vars::Variables>();
+    for (name, value) in carrying {
+        vars.set(*name, *value);
+    }
     let environment = Environment {
         cache_directory: Environment::cache_directory_of(&vars),
         working_directory: root.clone(),
@@ -1972,7 +1987,9 @@ fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
 
-    let vars: Vec<(OsString, OsString)> = njutest_devkit::paths::environment_for_a_run();
+    let vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
         cache_directory: Environment::cache_directory_of(&vars),
         working_directory: root.clone(),

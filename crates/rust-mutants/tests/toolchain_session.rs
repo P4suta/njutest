@@ -814,7 +814,7 @@ fn the_app_integration_test_finds_its_binary_where_cargo_put_it() {
         .clone();
     let binaries: Vec<(String, std::path::PathBuf)> = target
         .cargo_env
-        .iter()
+        .for_process()
         .filter_map(|(name, value)| {
             name.to_str()
                 .expect("cargo environment names are exact UTF-8")

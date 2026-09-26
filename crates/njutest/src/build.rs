@@ -5,7 +5,7 @@
 
 #[cfg(feature = "testkit")]
 use std::collections::BTreeMap;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 #[cfg(feature = "testkit")]
 use std::path::Path;
 use std::path::PathBuf;
@@ -87,7 +87,7 @@ pub struct BuildOptions {
     /// `CARGO_TARGET_DIR` for anything the build itself starts — a build script that spawns cargo lands here rather than in the base layer.
     pub scratch_build_dir: PathBuf,
     /// The environment the command runs with.
-    pub env: Vec<(OsString, OsString)>,
+    pub env: rust_mutants::vars::Variables,
     /// How cargo is bounded.
     pub cargo: Cargo,
     /// How long the build may take.
@@ -101,7 +101,7 @@ pub struct Built {
     pub units: Vec<Unit>,
     /// The environment the build ran with, which is what anything compiling against its artifacts has to run with to reuse them.
     #[cfg(feature = "testkit")]
-    pub env: Vec<(OsString, OsString)>,
+    pub env: rust_mutants::vars::Variables,
     /// What the compiler said, when it refused.
     /// A workspace that does not compile is a finding, not an error.
     pub failure: Option<String>,
@@ -217,9 +217,8 @@ pub fn build(
         .into_iter()
         .map(|target| {
             let mut env = spec.env.clone().unwrap_or_default();
-            env.retain(|(key, _)| !target.cargo_env.iter().any(|(name, _)| name == key));
-            env.extend(target.cargo_env.iter().cloned());
-            set(&mut env, "CARGO", toolchain.cargo().as_os_str().to_owned());
+            env.overlay(&target.cargo_env);
+            env.set("CARGO", toolchain.cargo().as_os_str());
             Unit {
                 package: target.package,
                 kind: UnitKind::of(target.kind),
@@ -309,10 +308,9 @@ pub fn configured_limitations(configured: &rustflags::Configured) -> Vec<&'stati
 fn environment(
     options: &BuildOptions,
     limitations: &mut Vec<String>,
-) -> Result<Vec<(OsString, OsString)>, BuildError> {
+) -> Result<rust_mutants::vars::Variables, BuildError> {
     let mut env = options.env.clone();
-    set(
-        &mut env,
+    env.set(
         "CARGO_TARGET_DIR",
         options.scratch_build_dir.clone().into_os_string(),
     );
@@ -326,11 +324,10 @@ fn environment(
             .map(str::to_owned),
     );
     if let Some(flags) = rustflags::encoded(&options.env, &configured, &[COVERAGE_FLAG])? {
-        set(&mut env, "CARGO_ENCODED_RUSTFLAGS", flags);
-        env.retain(|(key, _)| key != OsStr::new("RUSTFLAGS"));
+        env.set("CARGO_ENCODED_RUSTFLAGS", flags);
+        env.remove("RUSTFLAGS");
     }
-    set(
-        &mut env,
+    env.set(
         crate::coverage::PROFILE_ENV,
         options
             .scratch_build_dir
@@ -339,12 +336,6 @@ fn environment(
             .into_os_string(),
     );
     Ok(env)
-}
-
-/// Sets one variable, replacing what was there.
-fn set(env: &mut Vec<(OsString, OsString)>, name: &str, value: OsString) {
-    env.retain(|(key, _)| key != OsStr::new(name));
-    env.push((OsString::from(name), value));
 }
 
 /// What the compiler said when it refused, or nothing when it did not.

@@ -57,11 +57,11 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// # Errors
 /// Returns an error rather than changing an environment value that is not valid UTF-8 into a different terminal policy.
 pub fn asked(
-    vars: &[(OsString, OsString)],
+    vars: &rust_mutants::vars::Variables,
 ) -> Result<presentation::Asked, PresentationEnvironmentError> {
     use std::io::IsTerminal as _;
     let said = |name: &'static str| -> Result<Option<String>, PresentationEnvironmentError> {
-        let Some(value) = rust_mutants::vars::var(vars, name) else {
+        let Some(value) = vars.var(name) else {
             return Ok(None);
         };
         let value = std::str::from_utf8(value.as_encoded_bytes())

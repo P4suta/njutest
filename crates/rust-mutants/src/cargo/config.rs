@@ -136,9 +136,9 @@ pub fn read(text: &str) -> Configured {
 
 /// Where cargo keeps its own configuration, as the environment spells it.
 #[must_use]
-pub fn home(env: &[(OsString, OsString)]) -> Option<PathBuf> {
+pub fn home(env: &crate::vars::Variables) -> Option<PathBuf> {
     let of = |name: &str| {
-        crate::vars::var(env, name)
+        env.var(name)
             .map(PathBuf::from)
             .filter(|path| !path.as_os_str().is_empty())
     };
@@ -157,7 +157,7 @@ pub fn home(env: &[(OsString, OsString)]) -> Option<PathBuf> {
 /// # Errors
 /// Refuses a non-UTF-8 flag variable instead of changing its bytes with a lossy conversion.
 pub fn encoded(
-    env: &[(OsString, OsString)],
+    env: &crate::vars::Variables,
     configured: &Configured,
     extra: &[&str],
 ) -> Result<Option<OsString>, ConfigError> {
@@ -204,9 +204,9 @@ fn as_flags(value: &toml::Value) -> Option<Vec<String>> {
 }
 
 /// What cargo takes from the environment instead of the configuration, in cargo's order.
-fn inherited(env: &[(OsString, OsString)]) -> Result<Option<Vec<String>>, ConfigError> {
+fn inherited(env: &crate::vars::Variables) -> Result<Option<Vec<String>>, ConfigError> {
     let of = |name: &'static str| -> Result<Option<String>, ConfigError> {
-        match crate::vars::var(env, name) {
+        match env.var(name) {
             Some(value) => value
                 .to_str()
                 .map(str::to_owned)

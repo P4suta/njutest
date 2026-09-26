@@ -44,7 +44,9 @@ fn environment() -> Environment {
         Err(error) => panic!("the test process has no working directory: {error}"),
     };
     Environment {
-        vars: njutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect(),
         temp_directory: std::env::temp_dir(),
         program: PathBuf::from("this test never runs it"),
         cache_directory: std::env::temp_dir(),
@@ -409,7 +411,7 @@ fn with(switch: Option<&str>, root: &Path) -> (rust_mutants_cli::config::Config,
         panic!("`list` parses as List")
     };
     let environment = Environment {
-        vars: Vec::new(),
+        vars: rust_mutants::vars::Variables::empty(),
         temp_directory: PathBuf::from("/tmp"),
         program: PathBuf::from("this test never runs it"),
         cache_directory: PathBuf::from("/tmp/cache"),

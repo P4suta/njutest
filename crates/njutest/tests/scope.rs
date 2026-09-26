@@ -31,7 +31,7 @@ fn tree_of(root: &Path, config: &Config) -> String {
         root,
         config,
         machine: &machine,
-        vars: &[],
+        vars: &rust_mutants::vars::Variables::empty(),
         elsewhere: &[],
     };
     inputs(&asked, Mode::Full, &[], None)
@@ -135,7 +135,7 @@ fn only_compiler_inputs_and_explicitly_named_variables_enter_the_run_identity() 
         root: repo.root(),
         config: &config,
         machine: &machine,
-        vars: &vars,
+        vars: &vars.into_iter().collect::<rust_mutants::vars::Variables>(),
         elsewhere: &[],
     };
 
@@ -143,14 +143,16 @@ fn only_compiler_inputs_and_explicitly_named_variables_enter_the_run_identity() 
     assert_eq!(
         read.environment,
         [
-            ("RUSTFLAGS".to_owned(), "-Copt-level=2".to_owned()),
             ("CARGO_PROFILE_DEV_OPT_LEVEL".to_owned(), "1".to_owned()),
             (
                 "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER".to_owned(),
                 "clang".to_owned()
             ),
             ("CUSTOM_INPUT".to_owned(), "present".to_owned()),
-        ]
+            ("RUSTFLAGS".to_owned(), "-Copt-level=2".to_owned()),
+        ],
+        "the variables enter in name order, so one environment the platform lists in another \
+         order is one identity"
     );
     assert!(
         of(&asked, Mode::Full, common(), None)
@@ -179,7 +181,7 @@ fn a_variable_name_that_is_not_text_is_not_guessed_into_the_identity() {
         root: repo.root(),
         config: &config,
         machine: &machine,
-        vars: &vars,
+        vars: &vars.into_iter().collect::<rust_mutants::vars::Variables>(),
         elsewhere: &[],
     };
 
@@ -208,7 +210,7 @@ fn neither_identity_entry_point_panics_when_the_tree_or_lockfile_cannot_be_read(
             root,
             config: &config,
             machine: &machine,
-            vars: &[],
+            vars: &rust_mutants::vars::Variables::empty(),
             elsewhere: &[],
         };
         assert!(

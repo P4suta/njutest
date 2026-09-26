@@ -346,17 +346,17 @@ fn refused(limitation: &str, trace: &Recorder) -> Reached {
 
 /// The environment a coverage build adds: whatever the tree already compiles with, then the instrumentation.
 fn instrumenting(
-    base: &[(OsString, OsString)],
+    base: &crate::vars::Variables,
     flags: &Configured,
-) -> Result<Vec<(OsString, OsString)>, config::ConfigError> {
+) -> Result<crate::vars::Variables, config::ConfigError> {
     let encoded = match config::encoded(base, flags, &[INSTRUMENT])? {
         Some(encoded) => encoded,
         None => OsString::new(),
     };
-    Ok(vec![
+    Ok(crate::vars::Variables::of([
         (OsString::from(ENCODED_RUSTFLAGS), encoded),
         (OsString::from(RUSTFLAGS), OsString::new()),
-    ])
+    ]))
 }
 
 /// The flag that instruments every region, spelled without a space so it survives every form of the variable.

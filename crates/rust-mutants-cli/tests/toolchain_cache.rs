@@ -43,7 +43,9 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: njutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect(),
         temp_directory: fixture.temp().to_path_buf(),
         program: std::env::current_exe().expect(
             "this test's own executable stands in for the engine a remembered outcome is keyed on",
@@ -640,10 +642,7 @@ fn under(fixture: &Fixture, args: &[&str], (name, value): (&str, &str)) -> Outpu
     let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let mut given = environment(fixture);
-    given.vars.retain(|(held, _)| held != name);
-    given
-        .vars
-        .push((OsString::from(name), OsString::from(value)));
+    given.vars.set(name, value);
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
             .chain(args.iter().copied())
