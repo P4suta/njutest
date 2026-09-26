@@ -454,7 +454,7 @@ fn prepared(
         .prepare(
             &rust_mutants::session::PrepareOptions {
                 tier: Tier::All,
-                ..rust_mutants::session::PrepareOptions::default()
+                ..rust_mutants::session::PrepareOptions::new(Tier::Balanced)
             },
             &cancel,
         )

@@ -38,7 +38,10 @@ fn recording(fixture: &Fixture, trace: Recorder) -> Session {
         &Cancel::new(),
     )
     .expect("open")
-    .prepare(&PrepareOptions::default(), &Cancel::new())
+    .prepare(
+        &PrepareOptions::new(rust_mutants::rule::Tier::Balanced),
+        &Cancel::new(),
+    )
     .expect("prepare")
 }
 

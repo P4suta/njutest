@@ -25,7 +25,7 @@ fn a_failed_call_is_noticed_where_a_test_checks_it_and_refused_where_nothing_can
         &PrepareOptions {
             operators: vec!["inject-error".to_owned()],
             touch: true,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
         },
         &Cancel::new(),
     )
@@ -95,7 +95,7 @@ fn a_survivor_is_told_apart_only_with_the_fault_at_its_own_site_beside_it() {
         &PrepareOptions {
             operators: vec!["question-to-unwrap".to_owned(), "inject-error".to_owned()],
             touch: true,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
         },
         &Cancel::new(),
     )
@@ -171,7 +171,7 @@ fn a_fault_the_instrumentation_did_not_carry_into_a_branch_is_refused_beside_it(
         &PrepareOptions {
             operators: vec!["question-to-unwrap".to_owned(), "inject-error".to_owned()],
             touch: true,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
         },
         &Cancel::new(),
     )

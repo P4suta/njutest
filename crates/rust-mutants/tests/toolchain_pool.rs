@@ -76,7 +76,7 @@ fn prepared_within(fixture: &Fixture, timeout: Timeout, steps: u64) -> Session {
                 tier: Tier::All,
                 mutant_timeout: timeout,
                 mutant_steps: Some(steps),
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &Cancel::new(),
         )
@@ -286,7 +286,7 @@ fn every_judged_mutant_leaves_one_route_record_from_the_engine() {
         .prepare(
             &PrepareOptions {
                 tier: Tier::All,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &Cancel::new(),
         )

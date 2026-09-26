@@ -256,7 +256,7 @@ fn a_target_that_runs_with_the_given_home_is_routed_as_one_nothing_measured() {
     .prepare(
         &rust_mutants::session::PrepareOptions {
             coverage: true,
-            ..rust_mutants::session::PrepareOptions::default()
+            ..rust_mutants::session::PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
         },
         &rust_mutants::runner::Cancel::new(),
     )

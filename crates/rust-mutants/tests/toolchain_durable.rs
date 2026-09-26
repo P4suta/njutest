@@ -28,7 +28,7 @@ fn a_write_torn_by_a_stop_is_one_the_next_run_cannot_start_over() {
         &PrepareOptions {
             operators: vec!["crash-after-write".to_owned()],
             touch: true,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
         },
         &Cancel::new(),
     )
@@ -109,7 +109,7 @@ fn a_test_that_ends_with_the_stop_status_itself_is_not_a_stop() {
         &PrepareOptions {
             operators: vec!["crash-after-write".to_owned()],
             touch: true,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
         },
         &Cancel::new(),
     )
@@ -155,7 +155,7 @@ fn what_a_crash_wrote_under_its_home_is_what_it_left() {
         &PrepareOptions {
             operators: vec!["crash-after-write".to_owned()],
             touch: true,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
         },
         &Cancel::new(),
     )

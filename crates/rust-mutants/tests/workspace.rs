@@ -484,7 +484,10 @@ fn preparing_refuses_a_tree_that_does_not_compile_before_anything_is_instrumente
         "the workspace opens: {opened:?}"
     );
     let Ok(workspace) = opened else { return };
-    let error = workspace.prepare(&PrepareOptions::default(), &Cancel::new());
+    let error = workspace.prepare(
+        &PrepareOptions::new(rust_mutants::rule::Tier::Balanced),
+        &Cancel::new(),
+    );
     assert_eq!(
         result_state(&error),
         Refused,
@@ -518,7 +521,10 @@ fn a_message_stream_line_that_is_not_a_message_is_refused_by_line_number() {
         "the workspace opens: {opened:?}"
     );
     let Ok(workspace) = opened else { return };
-    let error = workspace.prepare(&PrepareOptions::default(), &Cancel::new());
+    let error = workspace.prepare(
+        &PrepareOptions::new(rust_mutants::rule::Tier::Balanced),
+        &Cancel::new(),
+    );
     assert_eq!(
         result_state(&error),
         Refused,
@@ -555,7 +561,7 @@ fn a_check_that_takes_longer_than_the_build_timeout_says_it_timed_out() {
     let Ok(workspace) = opened else { return };
     let options = PrepareOptions {
         build_timeout: Some(std::time::Duration::from_millis(200)),
-        ..PrepareOptions::default()
+        ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
     };
     let error = workspace.prepare(&options, &Cancel::new());
     assert_eq!(

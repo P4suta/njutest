@@ -31,7 +31,7 @@ fn prepared(fixture: &Fixture) -> Session {
             tier: Tier::All,
             coverage: false,
             branch_proofs: false,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(Tier::Balanced)
         },
         &Cancel::new(),
     )

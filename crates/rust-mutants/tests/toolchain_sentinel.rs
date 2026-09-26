@@ -20,7 +20,7 @@ use rust_mutants::workspace::Workspace;
 fn touching() -> PrepareOptions {
     PrepareOptions {
         coverage: false,
-        ..PrepareOptions::default()
+        ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
     }
 }
 
@@ -231,7 +231,7 @@ fn a_run_that_routes_by_coverage_or_asks_equivalence_has_each_sighted_too() {
         rust_mutants::sentinel::Run {
             toolchain: &run,
             open,
-            options: &PrepareOptions::default(),
+            options: &PrepareOptions::new(rust_mutants::rule::Tier::Balanced),
             equivalence: true,
         },
         &root,

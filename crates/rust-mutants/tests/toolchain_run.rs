@@ -48,7 +48,7 @@ fn prepared(fixture: &Fixture, env: &[(&str, String)]) -> Session {
                 tier: Tier::All,
                 mutant_timeout: Timeout::Fixed(Duration::from_secs(2)),
                 mutant_steps: Some(10),
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &Cancel::new(),
         )
@@ -316,7 +316,7 @@ fn the_budget_one_execution_gets_is_derived_from_what_that_target_cost() {
     .prepare(
         &PrepareOptions {
             tier: Tier::All,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(Tier::Balanced)
         },
         &Cancel::new(),
     )

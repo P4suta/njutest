@@ -32,7 +32,7 @@ fn prepared(fixture: &Fixture, coverage: bool) -> rust_mutants::session::Session
                 tier: Tier::All,
                 coverage,
                 branch_proofs: true,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &cancel,
         )
@@ -51,7 +51,7 @@ fn a_tree_whose_own_warnings_are_denied_still_earns_the_proofs_its_conditions_ca
             &PrepareOptions {
                 tier: Tier::All,
                 branch_proofs: true,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &cancel,
         )
@@ -84,7 +84,7 @@ fn the_compiler_vouches_for_a_condition_of_primitives_and_refuses_the_rest() {
             &PrepareOptions {
                 tier: Tier::All,
                 verify: false,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &cancel,
         )
@@ -155,7 +155,7 @@ fn a_witnessed_tree_is_put_back_before_anything_is_instrumented() {
             &PrepareOptions {
                 tier: Tier::All,
                 verify: false,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &cancel,
         )
@@ -427,7 +427,7 @@ fn a_file_the_witness_tree_does_not_hold_vouches_for_nothing() {
             options: &PrepareOptions {
                 tier: Tier::All,
                 branch_proofs: true,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
         },
         &cancel,
@@ -480,7 +480,7 @@ fn a_condition_the_compiler_takes_is_one_the_pass_vouches_for() {
             options: &PrepareOptions {
                 tier: Tier::All,
                 branch_proofs: true,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
         },
         &cancel,
@@ -574,7 +574,7 @@ mod tests {
             options: &PrepareOptions {
                 tier: Tier::All,
                 branch_proofs: true,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
         },
         &cancel,
@@ -700,7 +700,7 @@ fn recorded_over(
             options: &PrepareOptions {
                 tier: Tier::All,
                 branch_proofs: true,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
         },
         &cancel,
@@ -974,7 +974,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
         options: &PrepareOptions {
             tier: Tier::All,
             branch_proofs: true,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(Tier::Balanced)
         },
     };
     let refused =
@@ -1085,7 +1085,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
             options: &PrepareOptions {
                 tier: Tier::All,
                 branch_proofs: true,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
         },
         &cancel,
@@ -1156,7 +1156,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
             options: &PrepareOptions {
                 tier: Tier::All,
                 branch_proofs: true,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
         },
         &cancel,
@@ -1218,7 +1218,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
             options: &PrepareOptions {
                 tier: Tier::All,
                 branch_proofs: true,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
         },
         &cancel,
@@ -1281,7 +1281,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
             options: &PrepareOptions {
                 tier: Tier::All,
                 branch_proofs: true,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
         },
         &cancel,
@@ -1346,7 +1346,7 @@ pub fn both(a: i32, b: i32, c: i32, d: i32) -> i32 {
             options: &PrepareOptions {
                 tier: Tier::All,
                 branch_proofs: true,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
         },
         &cancel,
@@ -1457,7 +1457,7 @@ pub mod b;
             options: &PrepareOptions {
                 tier: Tier::All,
                 branch_proofs: true,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
         },
         &cancel,

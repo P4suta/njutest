@@ -26,7 +26,7 @@ fn prepare(fixture: &Fixture) -> Session {
     .prepare(
         &PrepareOptions {
             tier: Tier::All,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(Tier::Balanced)
         },
         &Cancel::new(),
     )

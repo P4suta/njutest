@@ -83,7 +83,7 @@ fn prepared(fixture: &Fixture, coverage: bool) -> Session {
                 coverage,
                 branch_proofs: coverage,
                 touch: coverage,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &Cancel::new(),
         )
@@ -240,7 +240,7 @@ fn a_scoped_session_keeps_the_catalog_but_cannot_execute_an_unvalidated_candidat
                     rules: vec!["gt-to-ge".to_owned()],
                     ..Filter::default()
                 }),
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &Cancel::new(),
         )
@@ -292,7 +292,7 @@ fn consecutive_scopes_cannot_reuse_a_stale_instrumented_binary() {
         branch_proofs: false,
         touch: false,
         validation_filter: Some(filter),
-        ..PrepareOptions::default()
+        ..PrepareOptions::new(Tier::Balanced)
     };
 
     let first = open(&fixture)
@@ -543,7 +543,7 @@ fn the_trace_says_what_every_phase_did() {
                 verify: false,
                 coverage: false,
                 branch_proofs: false,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &Cancel::new(),
         )
@@ -733,7 +733,7 @@ fn the_trace_of_a_covered_run_names_every_layer() {
         .prepare(
             &PrepareOptions {
                 coverage: true,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &Cancel::new(),
         )
@@ -844,7 +844,7 @@ fn the_app_integration_test_finds_its_binary_where_cargo_put_it() {
 fn a_tree_that_checks_but_does_not_link_is_refused_as_a_tree_and_not_as_a_mutation() {
     let fixture = Fixture::copy("fixture-links-nowhere");
     let workspace = open(&fixture);
-    let refused = workspace.prepare(&PrepareOptions::default(), &Cancel::new());
+    let refused = workspace.prepare(&PrepareOptions::new(Tier::Balanced), &Cancel::new());
     assert_eq!(
         result_state(&refused),
         Refused,
@@ -871,9 +871,12 @@ fn a_tree_that_checks_but_does_not_link_is_refused_as_a_tree_and_not_as_a_mutati
 fn list_and_why_skipped_still_only_type_check() {
     let fixture = Fixture::copy("fixture-links-nowhere");
     let workspace = open(&fixture);
-    let discovery =
-        rust_mutants::session::preview(&workspace, &PrepareOptions::default(), &Cancel::new())
-            .expect("a preview rules on nothing, so a tree that does not link is one it can read");
+    let discovery = rust_mutants::session::preview(
+        &workspace,
+        &PrepareOptions::new(Tier::Balanced),
+        &Cancel::new(),
+    )
+    .expect("a preview rules on nothing, so a tree that does not link is one it can read");
     assert!(
         !discovery.candidates.is_empty(),
         "the preview still finds the candidates it would have proposed"
@@ -1393,7 +1396,7 @@ fn targets_measured_under_coverage(skip_targets: Vec<String>) -> usize {
             &PrepareOptions {
                 coverage: true,
                 skip_targets,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &Cancel::new(),
         )

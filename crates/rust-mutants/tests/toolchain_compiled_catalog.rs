@@ -131,7 +131,7 @@ fn a_session_embeds_its_complete_catalog_in_the_binary_it_builds() {
                 branch_proofs: false,
                 touch: false,
                 doctests: false,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
             },
             &Cancel::new(),
         )

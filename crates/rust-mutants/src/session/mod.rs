@@ -668,21 +668,11 @@ pub struct PrepareOptions {
 }
 
 impl PrepareOptions {
-    /// The patterns a file must match to be mutated: the change set's where there is one, the configuration's otherwise.
+    /// Configures a preparation with an explicitly chosen mutation tier.
     #[must_use]
-    pub fn mutable(&self) -> &[Pattern] {
-        if self.narrowing.is_empty() {
-            &self.include
-        } else {
-            &self.narrowing
-        }
-    }
-}
-
-impl Default for PrepareOptions {
-    fn default() -> Self {
+    pub fn new(tier: Tier) -> Self {
         Self {
-            tier: Tier::Balanced,
+            tier,
             operators: Vec::new(),
             scratch_working_directory: false,
             include: Vec::new(),
@@ -705,6 +695,16 @@ impl Default for PrepareOptions {
             build: crate::cargo::BuildConfig::default(),
             skip_targets: Vec::new(),
             validation_filter: None,
+        }
+    }
+
+    /// The patterns a file must match to be mutated: the change set's where there is one, the configuration's otherwise.
+    #[must_use]
+    pub fn mutable(&self) -> &[Pattern] {
+        if self.narrowing.is_empty() {
+            &self.include
+        } else {
+            &self.narrowing
         }
     }
 }
@@ -4069,10 +4069,21 @@ pub fn target_name(package: &str, kind: TargetKind, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{AttemptLedger, InitialAttempt, WaitedAttempt, aggregate_outcomes, retry_outcome};
+    use super::{
+        AttemptLedger, InitialAttempt, PrepareOptions, WaitedAttempt, aggregate_outcomes,
+        retry_outcome,
+    };
     use crate::execute::{MutantConclusion, MutantResult, StepLimitNotice};
     use crate::outcome::Outcome;
+    use crate::rule::Tier;
     use std::time::Duration;
+
+    #[test]
+    fn preparation_keeps_the_chosen_tier() {
+        for tier in Tier::ALL {
+            assert_eq!(PrepareOptions::new(tier).tier, tier);
+        }
+    }
 
     fn result(conclusion: MutantConclusion, duration: Duration) -> MutantResult {
         MutantResult {

@@ -36,7 +36,7 @@ fn prepare(fixture: &Fixture, failing: Failing) -> Result<Session, EngineError> 
         &PrepareOptions {
             tier: Tier::All,
             failing,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(Tier::Balanced)
         },
         &Cancel::new(),
     )
@@ -49,7 +49,7 @@ fn baseline_options(fixture: &Fixture) -> PrepareOptions {
         branch_proofs: false,
         doctests: false,
         measurements: Some(fixture.cache().to_path_buf()),
-        ..PrepareOptions::default()
+        ..PrepareOptions::new(Tier::Balanced)
     }
 }
 
@@ -444,7 +444,7 @@ fn a_failing_baseline_is_never_remembered() {
                 doctests: false,
                 failing: Failing::Exclude,
                 measurements: Some(fixture.cache().to_path_buf()),
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &Cancel::new(),
         )

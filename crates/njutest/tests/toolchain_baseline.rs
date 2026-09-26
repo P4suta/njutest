@@ -35,7 +35,7 @@ fn prepared(fixture: &Fixture) -> Session {
     .prepare(
         &PrepareOptions {
             failing: Failing::Exclude,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
         },
         &Cancel::new(),
     )
