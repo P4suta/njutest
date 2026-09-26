@@ -57,7 +57,7 @@ discharged-mutant      every target that could have noticed f0d20edfda2959667ff1
 
 MUTANTS   10 mutants were cataloged: 9 executed, 0 refused by the compiler, 3 places that produced no candidate.
 OUTCOMES  killed=9 survived=0 step_limit_reached=0 waited=0 inconclusive=0 errored=0 not_run=1
-OF THOSE  Those 7 add to the 10 cataloged. Within them, not run is 0 unreached, not run is 1 discharged, survived is 0 expected.
+OF THOSE  Those 7 add to the 10 cataloged. Within them, not run is 0 unreached, not run is 1 discharged, not run is 0 declined, survived is 0 expected.
 SCORE     100.0%  (9 detected of 9 decided)
 WORK      started=9 of 30 pairs across 3 targets; 70.0% removed (unreached=20 never-infected=1)
           tests=9 of 30; 70.0% removed
