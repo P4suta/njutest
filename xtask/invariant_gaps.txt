@@ -11,9 +11,7 @@
 answered-stop self-check njutest-14
 answered-stop plant njutest-14
 answered-stop mutation njutest-14
-group-stop types njutest-14
 group-stop self-check njutest-14
-group-stop oracle njutest-14
 group-stop plant njutest-14
 group-stop mutation njutest-14
 stall-watch plant njutest-14
