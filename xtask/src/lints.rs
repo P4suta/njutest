@@ -108,6 +108,12 @@ const UNOWNED_SPAWN_REMEDY: &str = "construct threads and child processes only i
     owner that must join, kill, or reap them on every path. Raw `thread::spawn`, \
     `Builder::spawn`, and `Command::spawn` make cleanup an optional convention; scoped work must \
     likewise pass through a typed scope helper whose lifetime proves the join";
+const RAW_GROUP_SIGNAL_REMEDY: &str = "stop a process group through \
+    `rust_mutants::runner::stop_group`. What the kernel answers a group signal is one question \
+    wherever it is asked: on macOS a group whose members have all ended while its leader waits to \
+    be reaped refuses it with EPERM, which is the group being gone, and a second place that sends \
+    the signal itself decides that again, which is how the provider kept reporting a failed \
+    cleanup after the runner had stopped doing so";
 const UNBOUNDED_CHANNEL_REMEDY: &str = "use a bounded `sync_channel` whose capacity and full or \
     disconnected policy are named at the construction boundary. `mpsc::channel` lets a stalled \
     consumer turn producer progress into unbounded memory growth";
@@ -253,6 +259,7 @@ declare_kinds! {
     WrappingCounter => "wrapping-counter",
     UncheckedCast => "unchecked-cast",
     UnownedSpawn => "unowned-spawn",
+    RawGroupSignal => "raw-group-signal",
     UnboundedChannel => "unbounded-channel",
     PoisonRecovery => "poison-recovery",
     LossyText => "lossy-text",
@@ -304,6 +311,7 @@ impl Kind {
             Self::WrappingCounter => WRAPPING_COUNTER_REMEDY,
             Self::UncheckedCast => UNCHECKED_CAST_REMEDY,
             Self::UnownedSpawn => UNOWNED_SPAWN_REMEDY,
+            Self::RawGroupSignal => RAW_GROUP_SIGNAL_REMEDY,
             Self::UnboundedChannel => UNBOUNDED_CHANNEL_REMEDY,
             Self::PoisonRecovery => POISON_RECOVERY_REMEDY,
             Self::LossyText => LOSSY_TEXT_REMEDY,
@@ -560,6 +568,9 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
         scan.found.extend(foreign_remainders(&parsed, file));
     }
     scan.found.extend(broad_expectations(&parsed, file));
+    if shipped_source(file) && file != GROUP_SIGNALLER {
+        scan.found.extend(raw_group_signals(&parsed, file));
+    }
     scan.found.extend(implied_cfgs(&parsed, file));
     scan.found.sort();
     scan.found.dedup();
@@ -6311,6 +6322,95 @@ fn cfg_constant(meta: &syn::Meta) -> CfgTruth {
 }
 
 /// Every `#[cfg]` whose condition an enclosing item's `#[cfg]` already guarantees, which a reader takes for a second condition the item is under.
+/// The one shipped file that signals a process group itself.
+const GROUP_SIGNALLER: &str = "crates/rust-mutants/src/runner/unix.rs";
+
+/// The functions that send a signal to a process or a group by id.
+const RAW_SIGNALS: [&str; 5] = [
+    "kill_process_group",
+    "kill_process",
+    "kill_current_process_group",
+    "killpg",
+    "kill",
+];
+
+/// Every place a shipped file names a function that signals a process or group by id, but the one that does it for everybody.
+fn raw_group_signals(parsed: &syn::File, file: &str) -> Vec<Finding> {
+    let mut visitor = RawSignal {
+        file,
+        found: Vec::new(),
+    };
+    visitor.visit_file(parsed);
+    visitor.found
+}
+
+/// Every signalling function a file names, by path, import, or macro token.
+struct RawSignal<'a> {
+    file: &'a str,
+    found: Vec<Finding>,
+}
+
+impl RawSignal<'_> {
+    fn note(&mut self, span: proc_macro2::Span) {
+        self.found.push(Finding {
+            kind: Kind::RawGroupSignal,
+            file: self.file.to_owned(),
+            line: span.start().line,
+        });
+    }
+
+    fn scan_tokens(&mut self, tokens: &proc_macro2::TokenStream) {
+        for tree in tokens.clone() {
+            match tree {
+                proc_macro2::TokenTree::Ident(name) if signals(&name, false) => {
+                    self.note(name.span());
+                }
+                proc_macro2::TokenTree::Group(group) => self.scan_tokens(&group.stream()),
+                proc_macro2::TokenTree::Ident(_)
+                | proc_macro2::TokenTree::Punct(_)
+                | proc_macro2::TokenTree::Literal(_) => {}
+            }
+        }
+    }
+}
+
+/// Whether `name` is a function that signals by id; a bare `kill` counts only where a path or import says it is the C library's, since a child's own `kill` is a method.
+fn signals(name: &proc_macro2::Ident, qualified: bool) -> bool {
+    let name = name.to_string();
+    RAW_SIGNALS.contains(&name.as_str()) && (qualified || name != "kill")
+}
+
+impl Visit<'_> for RawSignal<'_> {
+    fn visit_path(&mut self, path: &syn::Path) {
+        if let Some(last) = path.segments.last() {
+            let qualified = path.segments.len() > 1;
+            if signals(&last.ident, qualified)
+                && (last.ident != "kill"
+                    || path.segments.iter().any(|segment| segment.ident == "libc"))
+            {
+                self.note(last.ident.span());
+            }
+        }
+        syn::visit::visit_path(self, path);
+    }
+
+    fn visit_use_name(&mut self, name: &syn::UseName) {
+        if signals(&name.ident, false) {
+            self.note(name.ident.span());
+        }
+    }
+
+    fn visit_use_rename(&mut self, rename: &syn::UseRename) {
+        if signals(&rename.ident, false) {
+            self.note(rename.ident.span());
+        }
+    }
+
+    fn visit_macro(&mut self, invocation: &syn::Macro) {
+        self.scan_tokens(&invocation.tokens);
+    }
+}
+
 fn implied_cfgs(parsed: &syn::File, file: &str) -> Vec<Finding> {
     let mut visitor = ImpliedCfg {
         file,

@@ -2360,3 +2360,36 @@ fn a_set_that_says_it_may_grow_is_not_asked_for_a_list_nothing_could_hold() {
         "no match of an open set is exhaustive either, so there is nothing to ask for: {open}"
     );
 }
+
+#[test]
+fn only_the_runner_signals_a_process_group_in_shipped_code() {
+    let shipped = |file: &str, source: &str| {
+        scan_source(file, source)
+            .expect("the source parses")
+            .into_iter()
+            .any(|finding| finding.kind == Kind::RawGroupSignal)
+    };
+    let group_kill = "fn stop(pid: rustix::process::Pid) { let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL); }";
+    assert!(
+        shipped("crates/njutest/src/provider.rs", group_kill),
+        "a second place that signals a group decides again what the kernel's refusal means"
+    );
+    assert!(
+        !shipped("crates/rust-mutants/src/runner/unix.rs", group_kill),
+        "the runner is where the question is answered for everybody"
+    );
+    assert!(
+        !shipped("crates/njutest/tests/toolchain_interrupt.rs", group_kill),
+        "a test that interrupts a process the way a person would is not shipped code"
+    );
+    for passing in [
+        "fn stop(child: &mut std::process::Child) -> std::io::Result<()> { child.kill() }",
+        "fn alive(pid: rustix::process::Pid) -> bool { rustix::process::test_kill_process(pid).is_ok() }",
+        "fn kill() {}",
+    ] {
+        assert!(
+            !shipped("crates/njutest/src/provider.rs", passing),
+            "a child's own `kill`, a liveness probe, and a function merely named `kill` signal no group: {passing}"
+        );
+    }
+}

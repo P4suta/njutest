@@ -1,0 +1,12 @@
+=== qualified-group source crates/app/src/lib.rs
+fn stop(pid: rustix::process::Pid) { let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL); }
+=== imported-process source crates/app/src/lib.rs
+use rustix::process::kill_process;
+=== renamed-import source crates/app/src/lib.rs
+use rustix::process::kill_process_group as stop_all;
+=== libc-kill source crates/app/src/lib.rs
+fn stop(pid: i32) { unsafe { libc::kill(-pid, 9); } }
+=== libc-killpg source crates/app/src/lib.rs
+fn stop(pid: i32) { unsafe { libc::killpg(pid, 9); } }
+=== in-a-macro source crates/app/src/lib.rs
+macro_rules! stop { ($pid:expr) => { rustix::process::kill_process_group($pid, rustix::process::Signal::TERM) } }

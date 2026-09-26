@@ -219,10 +219,7 @@ impl Supervisor {
                 "the supervisor has no adopted process group",
             )
         })?;
-        match kill_process_group(pgid, signal) {
-            Err(rustix::io::Errno::PERM) => signal_result(kill_process(pgid, signal)),
-            grouped => signal_result(grouped),
-        }
+        signal_group(pgid, signal)
     }
 
     /// Forgets the group id only after the caller has forcefully signalled the group while its leader remained waitable, then reaped that leader.
@@ -287,6 +284,36 @@ impl Drop for Supervisor {
             std::process::abort();
         }
     }
+}
+
+/// Signals every process of the group `leader` leads, and where the kernel refuses the group whole, `leader` by name; a group or a leader already gone is success.
+///
+/// This is the one place in the shipped crates that signals a group, because what the kernel answers is the same question wherever it is asked: see [`Supervisor::signal`] for why a refusal is not a failure.
+fn signal_group(leader: Pid, signal: Signal) -> io::Result<()> {
+    match kill_process_group(leader, signal) {
+        Err(rustix::io::Errno::PERM) => signal_result(kill_process(leader, signal)),
+        grouped => signal_result(grouped),
+    }
+}
+
+/// Stops the group a process started in a group of its own leads, as [`super::stop_group`] describes.
+pub(super) fn stop_group(leader: u32, how: super::GroupStop) -> io::Result<()> {
+    let unled = || {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{leader} is not a process id a group can be led by"),
+        )
+    };
+    let raw = match i32::try_from(leader) {
+        Ok(raw) => raw,
+        Err(_wider_than_a_pid) => return Err(unled()),
+    };
+    let pid = Pid::from_raw(raw).ok_or_else(unled)?;
+    let signal = match how {
+        super::GroupStop::Ask => Signal::TERM,
+        super::GroupStop::Kill => Signal::KILL,
+    };
+    signal_group(pid, signal)
 }
 
 fn signal_result(result: rustix::io::Result<()>) -> io::Result<()> {

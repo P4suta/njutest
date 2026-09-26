@@ -1808,6 +1808,26 @@ use windows as sys;
 
 pub use sys::Membership;
 
+/// How a process group is asked to stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupStop {
+    /// Asked to end, which a process may answer by cleaning up.
+    Ask,
+    /// Ended.
+    Kill,
+}
+
+/// Stops every process of the group `leader` leads, a process started in a group of its own, and where the kernel refuses the group whole, `leader` by name.
+///
+/// A group already gone, or one whose members have all ended while its leader waits to be reaped, is success: on macOS that group refuses a group signal with `EPERM`, and that refusal is the group being gone, not a stop that failed.
+///
+/// # Errors
+/// `leader` is no process id, or the kernel refuses the leader too for a reason other than its being gone.
+#[cfg(unix)]
+pub fn stop_group(leader: u32, how: GroupStop) -> io::Result<()> {
+    unix::stop_group(leader, how)
+}
+
 /// How long a forceful end waits to see the child reaped before aborting the supervising process.
 pub const REAPING_GRACE: Duration = Duration::from_secs(10);
 
