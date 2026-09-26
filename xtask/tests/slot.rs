@@ -535,3 +535,106 @@ fn a_group_is_alive_while_it_holds_a_process_that_has_not_ended_and_unseen_when_
         );
     }
 }
+
+#[test]
+fn a_record_from_another_boot_names_no_group_and_one_without_a_boot_still_does() {
+    use xtask::lanes::groups_of;
+
+    let written = "pid=1\nboot=A\ngroup=40 then\n";
+    assert_eq!(groups_of(written, Some("A")), [(40, "then".to_owned())]);
+    assert!(
+        groups_of(written, Some("B")).is_empty(),
+        "after a reboot every id in the record names something else, so nothing is ended for it"
+    );
+    assert_eq!(
+        groups_of(written, None),
+        [(40, "then".to_owned())],
+        "a boot this run cannot read is no reason to leave the record's work running"
+    );
+    assert_eq!(
+        groups_of("pid=1\nboot=\ngroup=40 then\n", Some("B")),
+        [(40, "then".to_owned())],
+        "a record that could not say its boot is read as this boot's"
+    );
+}
+
+#[test]
+fn a_live_group_a_record_from_another_boot_names_is_left_alone() {
+    use std::os::unix::process::CommandExt as _;
+
+    let machine = Machine::new();
+    let mut sleeping = Command::new("sleep");
+    sleeping.arg("30").process_group(0);
+    let mut stranger = SupervisedChild::launch(&mut sleeping).expect("a live group to name");
+    let pid = stranger.id().expect("a live stranger");
+    let born = xtask::lanes::started(pid).expect("when the stranger started");
+    let record = machine.slots.path().join("heavy.holder");
+    std::fs::write(
+        &record,
+        format!("pid=1\nboot=a-boot-long-gone\ngroup={pid} {born}\n"),
+    )
+    .expect("a record from another boot");
+    let mut next = machine.run("true");
+    let went_in = finished_within(Duration::from_secs(60), &mut next);
+    let alive = stranger
+        .try_wait()
+        .expect("the stranger can be looked at")
+        .is_none();
+    std::fs::write(
+        &record,
+        format!(
+            "pid=1\nboot={}\ngroup={pid} {born}\n",
+            xtask::lanes::boot().unwrap_or_default()
+        ),
+    )
+    .expect("a record from this boot");
+    let mut control = machine.run("true");
+    let control_in = finished_within(Duration::from_secs(60), &mut control);
+    let ended = stranger
+        .try_wait()
+        .expect("the stranger can be looked at")
+        .is_some();
+    assert!(
+        went_in.is_some_and(|status| status.success()),
+        "{went_in:?}"
+    );
+    assert!(
+        alive,
+        "a group named by a record written in another boot is somebody else's now, and the next \
+         run went in without touching it"
+    );
+    assert!(
+        control_in.is_some_and(|status| status.success()),
+        "{control_in:?}"
+    );
+    assert!(
+        ended,
+        "the same record from this boot is the dead holder's work, and it is ended"
+    );
+}
+
+#[test]
+fn what_a_holder_that_let_go_itself_left_in_its_group_is_left_alone() {
+    let machine = Machine::new();
+    let mut holder =
+        machine.run("sh -c 'echo $$ > \"$TURNS/daemon\"; exec sleep 30' > /dev/null 2>&1 &");
+    let finished = finished_within(Duration::from_secs(60), &mut holder);
+    assert!(
+        finished.is_some_and(|status| status.success()),
+        "{finished:?}"
+    );
+    assert!(
+        until(Duration::from_secs(60), || machine.marker("daemon")),
+        "the daemon never started"
+    );
+    let daemon = written(&machine, "daemon");
+    let mut next = machine.run(&format!("kill -0 {daemon}"));
+    let went_in = finished_within(Duration::from_secs(60), &mut next);
+    kill_outright(&daemon);
+    assert!(
+        went_in.is_some_and(|status| status.success()),
+        "a holder that ended and let the lane go left a server in its group the way a build \
+         leaves the compilation cache's, and the next run went in beside it without ending it: \
+         {went_in:?}"
+    );
+}
