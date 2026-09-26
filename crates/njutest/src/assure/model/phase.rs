@@ -296,7 +296,7 @@ pub(crate) fn confirm_not_required(prepared: &[(String, Preparation)]) -> Result
 #[derive(Debug, Clone)]
 pub(crate) struct Proving<'a> {
     pub scratch_dir: &'a Path,
-    pub environment: &'a [(std::ffi::OsString, std::ffi::OsString)],
+    pub environment: &'a rust_mutants::vars::Variables,
     pub target: &'a str,
     pub verified: crate::config::Verified,
     pub artifact_dir: &'a Path,
@@ -541,9 +541,9 @@ fn execute(
     Ok(record)
 }
 
-fn installed_checker(environment: &[(std::ffi::OsString, std::ffi::OsString)]) -> Option<PathBuf> {
+fn installed_checker(environment: &rust_mutants::vars::Variables) -> Option<PathBuf> {
     let cargo_home = environment
-        .iter()
+        .for_process()
         .find(|(name, _value)| {
             name.to_str()
                 .is_some_and(|name| name.eq_ignore_ascii_case("CARGO_HOME"))

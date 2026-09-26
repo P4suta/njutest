@@ -55,6 +55,8 @@ mod forbid;
 mod git;
 #[path = "glob.rs"]
 mod glob;
+#[path = "group_stop.rs"]
+mod group_stop;
 #[path = "id.rs"]
 mod id;
 #[path = "instrument.rs"]

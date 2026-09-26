@@ -65,6 +65,60 @@ fn jobs(source: &str) -> Vec<(String, String)> {
 const DEFAULT_SHELL: &str = "defaults:\n  run:\n    shell: bash\n";
 
 #[test]
+fn every_job_that_runs_the_repository_tests_fetches_the_comparison_base() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/workflows/ci.yml");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let shallow: Vec<String> = jobs(&source)
+        .into_iter()
+        .filter(|(_name, body)| body.contains("cargo nextest run"))
+        .filter_map(|(name, body)| (!body.contains("fetch-depth: 0")).then_some(name))
+        .collect();
+
+    assert!(
+        shallow.is_empty(),
+        "a job that runs the repository's tests also runs the repository gates, whose ratchets \
+         compare HEAD with `origin/main`. A shallow pull-request checkout has no `origin/main`, \
+         so the suite fails after all its other tests have passed. Fetch the whole history in \
+         every such job: {shallow:?}"
+    );
+}
+
+#[test]
+fn windows_runs_exactly_the_two_hash_partitions() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/workflows/ci.yml");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let test = jobs(&source)
+        .into_iter()
+        .find_map(|(name, body)| (name == "test").then_some(body))
+        .unwrap_or_else(|| panic!("ci.yml has the test matrix"));
+    let lines: Vec<&str> = test.lines().collect();
+    let windows: Vec<&str> = lines
+        .windows(2)
+        .filter_map(|pair| {
+            let [os, part] = pair else {
+                return None;
+            };
+            (os.trim() == "- os: windows-2025")
+                .then(|| part.trim())
+                .and_then(|part| part.strip_prefix("part: "))
+        })
+        .collect();
+
+    assert_eq!(
+        windows,
+        ["hash:1/2", "hash:2/2"],
+        "one whole Windows row set the pull request's wall time, so Windows must ask the two \
+         disjoint halves in parallel and neither ask the whole again nor leave one half unasked"
+    );
+}
+
+#[test]
 fn every_step_runs_in_a_shell_that_stops_at_the_first_failure_even_inside_a_pipe() {
     let mut loose = Vec::new();
     for path in workflows() {
@@ -1082,5 +1136,54 @@ fn code_only_one_platform_compiles_is_linted_on_that_platform() {
         "clippy ran only on Linux, so every `cfg(windows)` and `cfg(target_os = \"macos\")` \
          line in the tree was compiled on its own platform and linted nowhere; the matrix \
          lints on every platform the lint job does not stand on"
+    );
+}
+
+/// The block of `on:` a workflow's `trigger` opens, up to the next trigger or the end of `on:`.
+fn trigger_block<'s>(source: &'s str, trigger: &str) -> Option<&'s str> {
+    let on = source.split_once("\non:\n")?.1;
+    let on = on.split("\n\n").next().unwrap_or(on);
+    let start = on.find(&format!("  {trigger}:"))?;
+    let rest = on.get(start..)?;
+    let body_start = rest
+        .find('\n')
+        .map_or(rest.len(), |at| at.saturating_add(1));
+    let body = rest.get(body_start..)?;
+    let end = body
+        .lines()
+        .take_while(|line| line.starts_with("    ") || line.trim().is_empty())
+        .map(|line| line.len().saturating_add(1))
+        .sum::<usize>()
+        .min(body.len());
+    body.get(..end)
+}
+
+/// Whether a trigger block filters by the paths a change touches.
+fn filters_paths(block: &str) -> bool {
+    block.lines().any(|line| {
+        let key = line.trim_start();
+        key.starts_with("paths:") || key.starts_with("paths-ignore:")
+    })
+}
+
+#[test]
+fn the_required_check_is_asked_of_every_pull_request() {
+    let planted = "name: ci\n\non:\n  pull_request:\n    branches: [main]\n    paths-ignore: [\"docs/**\"]\n  workflow_dispatch:\n\njobs:\n";
+    assert!(
+        trigger_block(planted, "pull_request").is_some_and(filters_paths),
+        "the law must see a path filter on the trigger it reads, or its silence about ci.yml says nothing"
+    );
+    let path = workflows()
+        .into_iter()
+        .find(|path| path.ends_with("ci.yml"))
+        .unwrap_or_else(|| panic!("ci.yml is one of the workflows"));
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let block = trigger_block(&source, "pull_request")
+        .unwrap_or_else(|| panic!("ci.yml runs on pull requests"));
+    assert!(
+        !filters_paths(block),
+        "ci-success is the check a pull request cannot merge without, and a pull request its paths \
+         filter skips never gets one: with strict up-to-date and no bypass it waits forever. {block}"
     );
 }

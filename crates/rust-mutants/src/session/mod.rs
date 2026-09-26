@@ -91,11 +91,21 @@ impl Locator {
     /// Whether this names the mutation at `place`, however the place was read: from a live catalog or a stored one.
     #[must_use]
     pub fn describes_place(&self, place: &Place<'_>) -> bool {
-        place.path == self.path
-            && place.rule == self.rule
-            && (self.original.is_empty() || place.original == self.original.as_bytes())
-            && place.item.is_some_and(|item| names(item, &self.item))
-            && self.line.is_none_or(|wanted| wanted == place.line)
+        self.names_edit(&Edit {
+            path: place.path,
+            rule: place.rule,
+            original: place.original,
+            item: place.item,
+        }) && self.line.is_none_or(|wanted| wanted == place.line)
+    }
+
+    /// Whether this names `edit`, wherever it sits: the one reading of a locator's path, rule, original and item, which a claim and a name on a command line both take.
+    #[must_use]
+    pub fn names_edit(&self, edit: &Edit<'_>) -> bool {
+        edit.path == self.path
+            && edit.rule == self.rule
+            && (self.original.is_empty() || edit.original == self.original.as_bytes())
+            && edit.item.is_some_and(|item| names(item, &self.item))
     }
 
     /// How a claim written as this locator is named to a reader: every field that tells it apart from another, the line included.
@@ -167,6 +177,107 @@ pub enum LocateError {
 /// Whether an item path is the one a locator names, which a suffix says.
 fn names(item: &str, wanted: &str) -> bool {
     item == wanted || item.ends_with(&format!("::{wanted}"))
+}
+
+/// What a mutation edits, as a locator reads it apart from where it sits: the file, the rule, the bytes it replaces, and the item it is in where one is known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Edit<'a> {
+    /// The workspace-relative path with forward slashes.
+    pub path: &'a str,
+    /// The rule's name.
+    pub rule: &'a str,
+    /// The bytes the edit replaces.
+    pub original: &'a [u8],
+    /// The item it is in, when one is known.
+    pub item: Option<&'a str>,
+}
+
+/// The ones of `edits` a locator names, which a run and a check of the claims before one both ask here.
+///
+/// # Errors
+/// [`LocateError::Nothing`] where it names none, [`LocateError::Several`] where it names more than one and neither the line nor a count separates them, and [`LocateError::Counted`] where a count is stated and another number of them is what the edits hold.
+pub fn locate<'a, T>(
+    edits: impl IntoIterator<Item = (T, Edit<'a>)>,
+    locator: &Locator,
+    (line_of, label_of): (impl Fn(&T) -> Option<u32>, impl Fn(&T) -> String),
+) -> Result<Vec<T>, LocateError> {
+    let matching: Vec<T> = edits
+        .into_iter()
+        .filter(|(_, edit)| locator.names_edit(edit))
+        .map(|(one, _)| one)
+        .collect();
+    let narrowed: Vec<T> = match locator.line {
+        Some(line) if matching.len() > 1 => matching
+            .into_iter()
+            .filter(|one| line_of(one) == Some(line))
+            .collect(),
+        _ => matching,
+    };
+    let labelled = |several: &[T]| -> Vec<String> {
+        several
+            .iter()
+            .map(|one| match line_of(one) {
+                Some(line) => format!("{}@{line}", label_of(one)),
+                None => label_of(one),
+            })
+            .collect()
+    };
+    match (narrowed.len(), locator.count) {
+        (0, _) => Err(LocateError::Nothing),
+        (held, Some(wanted)) if usize::try_from(wanted).is_ok_and(|wanted| held == wanted) => {
+            Ok(narrowed)
+        }
+        (_, Some(wanted)) => Err(LocateError::Counted {
+            wanted,
+            display_ids: labelled(&narrowed),
+        }),
+        (1, None) => Ok(narrowed),
+        (_, None) => Err(LocateError::Several {
+            display_ids: labelled(&narrowed),
+        }),
+    }
+}
+
+/// What a build whose units read `files` of the tree at `root` made of the file `locator` names: one a unit read, or one none did, walked with `selection` as discovery walks the ones it did to say whether the locator names something in it (ADR 0042).
+fn unread_in(
+    (root, files): (&std::path::Path, &[FileReport]),
+    selection: &crate::syntax::Selection<'_>,
+    locator: &Locator,
+) -> Unread {
+    if files.iter().any(|file| file.path == locator.path) {
+        return Unread::Compiled;
+    }
+    let inside = std::path::Path::new(&locator.path)
+        .components()
+        .all(|part| matches!(part, std::path::Component::Normal(_)));
+    if !inside {
+        return Unread::Nothing;
+    }
+    let Ok(walked) = discover::walk(root, &locator.path, selection) else {
+        return Unread::Nothing;
+    };
+    let found = locate(
+        walked.candidates.iter().map(|found| {
+            (
+                found,
+                Edit {
+                    path: &found.candidate.path,
+                    rule: found.candidate.rule.name,
+                    original: &found.candidate.original,
+                    item: Some(&found.item),
+                },
+            )
+        }),
+        locator,
+        (
+            |found: &&crate::syntax::Found| Some(found.position.line),
+            |found: &&crate::syntax::Found| found.item.clone(),
+        ),
+    );
+    match found {
+        Ok(_) => Unread::Named,
+        Err(_) => Unread::Nothing,
+    }
 }
 
 /// Whether a control records what its guards reached, so a caller that confirms a kill can learn whether the baseline's reach held.
@@ -291,7 +402,7 @@ const ENTERED_LOG: &str = "entered.log";
 /// One control process's question: which target, asked how, for how long.
 /// A scratch directory a run left, kept so a next run can start over what it holds.
 #[derive(Debug)]
-pub struct Kept(PathBuf, Stop, Notice);
+pub struct Kept(execute::Scratch, Stop, Notice);
 
 /// What the engine issued a crashed run and what it found published, which is the evidence a stop is decided on: the audit decides it again from exactly this.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -357,55 +468,89 @@ impl Kept {
         &self.2
     }
 
-    /// Every file and directory the run left in this scratch directory, a directory named with a trailing `/`, relative to it and in path order; the engine keeps its own files elsewhere, so every one of them is the run's.
+    /// Every file and directory the run left in its temporary directory, a directory named with a trailing `/`, relative to it, and under its own home, named from `~/`, in path order; the engine keeps its own files beside them and leaves out what it made for the home, so every one of them is the run's, and each is what the next run over them is given.
     ///
     /// # Errors
     /// [`SessionError::ScratchUnreadable`] where the directory could not be walked.
     pub fn left(&self) -> Result<Vec<String>, EngineError> {
-        let mut found = Vec::new();
-        let mut pending = vec![self.0.clone()];
-        while let Some(directory) = pending.pop() {
-            let entries = std::fs::read_dir(&directory).map_err(|source| {
-                SessionError::ScratchUnreadable {
-                    path: directory.clone(),
-                    source,
-                }
-            })?;
-            for entry in entries {
-                let entry = entry.map_err(|source| SessionError::ScratchUnreadable {
-                    path: directory.clone(),
-                    source,
-                })?;
-                let path = entry.path();
-                let kind = entry
-                    .file_type()
-                    .map_err(|source| SessionError::ScratchUnreadable {
-                        path: path.clone(),
-                        source,
-                    })?;
-                let Ok(relative) = path.strip_prefix(&self.0) else {
-                    continue;
-                };
-                let relative = crate::id::slashed(relative).map_err(|_not_utf8| {
-                    SessionError::ScratchUnreadable {
-                        path: path.clone(),
-                        source: std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "a path left in the scratch is not UTF-8",
-                        ),
+        let mut found: Vec<String> = walked(self.0.tmp())?
+            .into_iter()
+            .map(|(relative, _file)| relative)
+            .collect();
+        if let Some((home, made)) = self.0.made_in_home() {
+            for (relative, file) in walked(home)? {
+                let engines = match (made.get(&relative), file) {
+                    (Some(None), None) => true,
+                    (Some(Some(digest)), Some(path)) => {
+                        let bytes = std::fs::read(&path).map_err(|source| {
+                            SessionError::ScratchUnreadable {
+                                path: path.clone(),
+                                source,
+                            }
+                        })?;
+                        crate::id::digest(&bytes) == *digest
                     }
-                })?;
-                if kind.is_dir() {
-                    found.push(format!("{relative}/"));
-                    pending.push(path);
-                } else {
-                    found.push(relative);
+                    (Some(_) | None, _) => false,
+                };
+                if !engines {
+                    found.push(format!("{HOME_LEFT}{relative}"));
                 }
             }
         }
         found.sort();
         Ok(found)
     }
+}
+
+/// How what a run left under its own home is named among what it left, before the path under the home.
+const HOME_LEFT: &str = "~/";
+
+/// Every file and directory under `root`, relative to it, a directory named with a trailing `/`, each file with its path.
+///
+/// # Errors
+/// [`SessionError::ScratchUnreadable`] where the directory could not be walked.
+fn walked(root: &std::path::Path) -> Result<Vec<(String, Option<PathBuf>)>, EngineError> {
+    let mut found = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        let entries =
+            std::fs::read_dir(&directory).map_err(|source| SessionError::ScratchUnreadable {
+                path: directory.clone(),
+                source,
+            })?;
+        for entry in entries {
+            let entry = entry.map_err(|source| SessionError::ScratchUnreadable {
+                path: directory.clone(),
+                source,
+            })?;
+            let path = entry.path();
+            let kind = entry
+                .file_type()
+                .map_err(|source| SessionError::ScratchUnreadable {
+                    path: path.clone(),
+                    source,
+                })?;
+            let Ok(relative) = path.strip_prefix(root) else {
+                continue;
+            };
+            let relative = crate::id::slashed(relative).map_err(|_not_utf8| {
+                SessionError::ScratchUnreadable {
+                    path: path.clone(),
+                    source: std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "a path left in the scratch is not UTF-8",
+                    ),
+                }
+            })?;
+            if kind.is_dir() {
+                found.push((format!("{relative}/"), None));
+                pending.push(path);
+            } else {
+                found.push((relative, Some(path)));
+            }
+        }
+    }
+    Ok(found)
 }
 
 /// A fresh nonce a crash notice must carry to be this execution's.
@@ -1121,55 +1266,24 @@ impl Session {
     /// # Errors
     /// Returns [`LocateError::Nothing`] when the catalog holds no such mutation, [`LocateError::Several`] when it holds more than one and neither the line nor a count separates them, and [`LocateError::Counted`] when a count is stated and another number of them is what the catalog holds.
     pub fn locate_all(&self, locator: &Locator) -> Result<Vec<&Mutant>, LocateError> {
-        let matching: Vec<&Mutant> = self
-            .catalog
-            .mutants()
-            .iter()
-            .filter(|mutant| {
-                mutant.candidate.path == locator.path
-                    && mutant.candidate.rule.name == locator.rule
-                    && (locator.original.is_empty()
-                        || mutant.candidate.original == locator.original.as_bytes())
-                    && self
-                        .item_of(mutant.index)
-                        .is_some_and(|item| names(item, &locator.item))
-            })
-            .collect();
-        let narrowed = match locator.line {
-            Some(line) if matching.len() > 1 => matching
-                .iter()
-                .copied()
-                .filter(|mutant| self.position(mutant).is_some_and(|at| at.line == line))
-                .collect(),
-            _ => matching,
-        };
-        let named = |several: &[&Mutant]| -> Vec<String> {
-            several
-                .iter()
-                .map(|mutant| {
-                    self.position(mutant).map_or_else(
-                        || mutant.display_id.to_string(),
-                        |at| format!("{}@{}", mutant.display_id, at.line),
-                    )
-                })
-                .collect()
-        };
-        match (narrowed.as_slice(), locator.count) {
-            ([], _) => Err(LocateError::Nothing),
-            (several, Some(wanted))
-                if usize::try_from(wanted).is_ok_and(|wanted| several.len() == wanted) =>
-            {
-                Ok(narrowed)
-            }
-            (several, Some(wanted)) => Err(LocateError::Counted {
-                wanted,
-                display_ids: named(several),
+        locate(
+            self.catalog.mutants().iter().filter_map(|mutant| {
+                Some((
+                    mutant,
+                    Edit {
+                        path: &mutant.candidate.path,
+                        rule: mutant.candidate.rule.name,
+                        original: &mutant.candidate.original,
+                        item: Some(self.item_of(mutant.index)?),
+                    },
+                ))
             }),
-            ([one], None) => Ok(vec![one]),
-            (several, None) => Err(LocateError::Several {
-                display_ids: named(several),
-            }),
-        }
+            locator,
+            (
+                |mutant: &&Mutant| self.position(mutant).map(|at| at.line),
+                |mutant: &&Mutant| mutant.display_id.to_string(),
+            ),
+        )
     }
 
     /// What the toolchain says the build's target is, kept to the names a target alone decides.
@@ -1191,7 +1305,7 @@ impl Session {
             });
         }
         for (name, wanted) in &under.env {
-            let given = crate::vars::var(&self.workspace.base_env, name);
+            let given = self.workspace.base_env.var(name);
             match given {
                 Some(value) if value == std::ffi::OsStr::new(wanted) => {}
                 Some(_) | None => {
@@ -1214,45 +1328,11 @@ impl Session {
     /// What this build made of the file `locator` names: one a unit read, or one none did, walked with the rules discovery applied to say whether the locator names something in it.
     #[must_use]
     pub fn unread(&self, locator: &Locator) -> Unread {
-        if self.files.iter().any(|file| file.path == locator.path) {
-            return Unread::Compiled;
-        }
-        let inside = std::path::Path::new(&locator.path)
-            .components()
-            .all(|part| matches!(part, std::path::Component::Normal(_)));
-        if !inside {
-            return Unread::Nothing;
-        }
-        let Ok(walked) = discover::walk(self.snapshot_root(), &locator.path, &self.selection)
-        else {
-            return Unread::Nothing;
-        };
-        let matching: Vec<&crate::syntax::Found> = walked
-            .candidates
-            .iter()
-            .filter(|found| {
-                found.candidate.rule.name == locator.rule
-                    && (locator.original.is_empty()
-                        || found.candidate.original == locator.original.as_bytes())
-                    && names(&found.item, &locator.item)
-            })
-            .collect();
-        let narrowed: Vec<&crate::syntax::Found> = match locator.line {
-            Some(line) if matching.len() > 1 => matching
-                .into_iter()
-                .filter(|found| found.position.line == line)
-                .collect(),
-            _ => matching,
-        };
-        let named = match locator.count {
-            Some(wanted) => usize::try_from(wanted).is_ok_and(|wanted| narrowed.len() == wanted),
-            None => narrowed.len() == 1,
-        };
-        if named {
-            Unread::Named
-        } else {
-            Unread::Nothing
-        }
+        unread_in(
+            (self.snapshot_root(), &self.files),
+            &self.selection,
+            locator,
+        )
     }
 
     /// The source of one of the tree's mutable files, as it was before instrumentation.
@@ -1412,6 +1492,14 @@ impl Session {
         }
     }
 
+    /// The home `target`'s executions run with: the one its baseline passed under, and one of their own where nothing was verified (ADR 0044).
+    fn home_of(&self, target: &str) -> execute::Home {
+        match self.verified.targets.get(target) {
+            Some(measured) => measured.baseline().home,
+            None => execute::Home::Confined,
+        }
+    }
+
     /// How long one target's own baseline took, when it was verified.
     #[must_use]
     pub fn baseline(&self, target: &str) -> Option<Duration> {
@@ -1559,7 +1647,7 @@ impl Session {
         let request = ExecRequest::new(target)
             .with_tests(tests.to_vec())
             .with_timeout(Some(timeout))
-            .with_scratch(self.exec_scratch()?)
+            .with_scratch(self.exec_scratch(self.home_of(&target.id))?)
             .in_scratch(self.scratch_working_directory);
         let result = execute::exec(&request, &context, cancel, &self.workspace.trace);
         let asked = u32::try_from(tests.len())
@@ -1852,8 +1940,8 @@ impl Session {
         }))
     }
 
-    /// A temporary directory of this execution's own, so two executions at once cannot meet in one another's files.
-    fn exec_scratch(&self) -> Result<PathBuf, EngineError> {
+    /// The directories of this execution's own, made, with a home of its own where `home` confines it, so two executions at once cannot meet in one another's files.
+    fn exec_scratch(&self, home: execute::Home) -> Result<execute::Scratch, EngineError> {
         let mut next = self
             .executions
             .lock()
@@ -1871,7 +1959,11 @@ impl Session {
         })?;
         *next = after;
         drop(next);
-        Ok(own)
+        Ok(execute::Scratch::made(
+            &own,
+            home,
+            &self.workspace.base_env,
+        )?)
     }
 
     /// Runs one mutant against the one target `request` names, and keeps the scratch directory it ran in for a next run to start over (ADR 0035).
@@ -1886,17 +1978,8 @@ impl Session {
         let mutant = self.executable(&request.mutant)?;
         let target = self.named(request)?;
         let timeout = self.timeout_for(request, &target.id)?.0;
-        let own = self.exec_scratch()?;
-        let (tmp, engine) = (own.join("tmp"), own.join("engine"));
-        for directory in [&tmp, &engine] {
-            std::fs::DirBuilder::new()
-                .create(directory)
-                .map_err(|source| SessionError::ScratchCreateFailed {
-                    path: directory.clone(),
-                    source,
-                })?;
-        }
-        let notice = engine.join("crash-notice");
+        let scratch = self.exec_scratch(self.home_of(&target.id))?;
+        let notice = scratch.engine().join("crash-notice");
         let nonce = crash_nonce()?;
         let context = Context {
             base_env: &self.workspace.base_env,
@@ -1916,8 +1999,7 @@ impl Session {
         let mut exec = ExecRequest::new(target)
             .with_args(self.arguments(request))
             .with_timeout(Some(timeout))
-            .with_scratch(tmp.clone())
-            .with_engine(engine)
+            .with_scratch(scratch.clone())
             .in_scratch(self.scratch_working_directory);
         if let Some(test) = &request.test {
             exec = exec.with_test(test.clone());
@@ -1936,7 +2018,7 @@ impl Session {
             },
         };
         let stopped = result.exit_code == crate::instrument::CRASH_EXIT && evidence.published();
-        Ok((result, Kept(tmp, Stop(stopped), evidence)))
+        Ok((result, Kept(scratch, Stop(stopped), evidence)))
     }
 
     /// Runs the one target `request` names with nothing active, in the scratch directory `kept` holds, over whatever the run that kept it left there.
@@ -1952,7 +2034,7 @@ impl Session {
         let target = self.named(request)?;
         let timeout = self.timeout_for(request, &target.id)?.0;
         let none = Perturbation::none();
-        let engine = self.exec_scratch()?;
+        let fresh = self.exec_scratch(execute::Home::Given)?;
         Ok(self.control_once(
             &Once {
                 request,
@@ -1960,7 +2042,10 @@ impl Session {
                 timeout,
                 perturbation: &none,
             },
-            (&kept.0, Some(&engine), None),
+            (
+                kept.0.clone().with_engine(fresh.engine().to_path_buf()),
+                None,
+            ),
             cancel,
         ))
     }
@@ -2022,8 +2107,8 @@ impl Session {
                 })
             })?;
         let (timeout, source) = self.timeout_for(request, &target.id)?;
-        let own = self.exec_scratch()?;
-        let log = own.join(CONTROL_TOUCH_LOG);
+        let scratch = self.exec_scratch(self.home_of(&target.id))?;
+        let log = scratch.engine().join(CONTROL_TOUCH_LOG);
         let context = Context {
             base_env: &self.workspace.base_env,
             cargo: Some(self.workspace.toolchain.cargo()),
@@ -2043,7 +2128,7 @@ impl Session {
         let mut exec = ExecRequest::new(target)
             .with_args(self.arguments(request))
             .with_timeout(Some(timeout))
-            .with_scratch(own)
+            .with_scratch(scratch)
             .in_scratch(self.scratch_working_directory);
         if let Some(test) = &request.test {
             exec = exec.with_test(test.clone());
@@ -2178,10 +2263,10 @@ impl Session {
         let mut asked: Vec<MutantResult> = Vec::new();
         for target in targets {
             let (timeout, source) = self.timeout_for(request, &target.id)?;
-            let scratch = self.exec_scratch()?;
+            let scratch = self.exec_scratch(self.home_of(&target.id))?;
             let log = match request.entered {
                 Recording::Off => None,
-                Recording::Items => Some(scratch.join(ENTERED_LOG)),
+                Recording::Items => Some(scratch.engine().join(ENTERED_LOG)),
             };
             let context = self.mutant_context((mutant, beside), log.as_deref());
             let mut exec = ExecRequest::new(target)
@@ -2496,18 +2581,18 @@ impl Session {
         let mut observed = Vec::new();
         for target in targets {
             let (timeout, source) = self.timeout_for(request, &target.id)?;
-            let own = self.exec_scratch()?;
+            let scratch = self.exec_scratch(self.home_of(&target.id))?;
             let log = (observing == Observing::Reach
                 && request.test.is_none()
                 && verify::recordable(target))
-            .then(|| own.join(CONTROL_TOUCH_LOG));
+            .then(|| scratch.engine().join(CONTROL_TOUCH_LOG));
             let once = Once {
                 request,
                 target,
                 timeout,
                 perturbation,
             };
-            let mut result = self.control_once(&once, (&own, None, log.as_deref()), cancel);
+            let mut result = self.control_once(&once, (scratch, log.as_deref()), cancel);
             let unrecorded =
                 log.is_some() && result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT;
             if unrecorded {
@@ -2520,7 +2605,11 @@ impl Session {
                         target.id
                     ),
                 );
-                result = self.control_once(&once, (&self.exec_scratch()?, None, None), cancel);
+                result = self.control_once(
+                    &once,
+                    (self.exec_scratch(self.home_of(&target.id))?, None),
+                    cancel,
+                );
             }
             let perturbed = (*perturbation != Perturbation::none()).then(|| perturbation.record());
             if perturbed.is_none() {
@@ -2565,11 +2654,7 @@ impl Session {
     fn control_once(
         &self,
         once: &Once<'_>,
-        (own, engine, log): (
-            &std::path::Path,
-            Option<&std::path::Path>,
-            Option<&std::path::Path>,
-        ),
+        (scratch, log): (execute::Scratch, Option<&std::path::Path>),
         cancel: &Cancel,
     ) -> MutantResult {
         let perturbation = once.perturbation;
@@ -2609,7 +2694,7 @@ impl Session {
         let mut exec = ExecRequest::new(once.target)
             .with_args(arguments)
             .with_timeout(Some(once.timeout))
-            .with_scratch(own)
+            .with_scratch(scratch)
             .in_scratch(self.scratch_working_directory)
             .with_overlay(perturbation.environment.clone())
             .with_launcher(perturbation.launcher)
@@ -2618,9 +2703,6 @@ impl Session {
                     .delay
                     .map(|delay| (delay, self.catalog.digest())),
             );
-        if let Some(engine) = engine {
-            exec = exec.with_engine(engine);
-        }
         if let Some(test) = &once.request.test {
             exec = exec.with_test(test.clone());
         }
@@ -2739,7 +2821,7 @@ impl Session {
             let mut exec = ExecRequest::new(target)
                 .with_args(self.arguments(request))
                 .with_timeout(Some(timeout))
-                .with_scratch(self.exec_scratch()?)
+                .with_scratch(self.exec_scratch(self.home_of(&target.id))?)
                 .in_scratch(self.scratch_working_directory);
             if let Some(test) = &request.test {
                 exec = exec.with_test(test.clone());
@@ -2858,6 +2940,135 @@ pub fn preview(
     )?;
     phase.end();
     Ok(discovery)
+}
+
+/// What one claim of a configuration names in a tree read without building it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Resolution {
+    /// It names as many mutations as it says, by display identity.
+    Names {
+        /// The display identities, in catalog order.
+        mutants: Vec<String>,
+    },
+    /// It names as many mutations as it says, and the line it holds is not where the first of them now is.
+    Moved {
+        /// The display identities, in catalog order.
+        mutants: Vec<String>,
+        /// The line the claim holds.
+        from: u32,
+        /// The line the first of them is on now.
+        to: u32,
+    },
+    /// What it names sits only in a file no unit of this build reads, so it is judged where one does (ADR 0042).
+    Uncompiled,
+    /// It names nothing, or not as many as it says, so a run finds it unmatched.
+    Unmatched {
+        /// Why, in the words a run gives it.
+        why: String,
+    },
+}
+
+impl Resolution {
+    /// Whether the claim says something that is not so: it names nothing, not as many as it says, or a line its mutation left.
+    #[must_use]
+    pub const fn rotted(&self) -> bool {
+        match self {
+            Self::Unmatched { .. } | Self::Moved { .. } => true,
+            Self::Names { .. } | Self::Uncompiled => false,
+        }
+    }
+
+    /// Whether what it names sits only in a file another build reads.
+    #[must_use]
+    pub const fn uncompiled(&self) -> bool {
+        match self {
+            Self::Uncompiled => true,
+            Self::Names { .. } | Self::Moved { .. } | Self::Unmatched { .. } => false,
+        }
+    }
+}
+
+/// What each of `expectations` names in the tree `discovery` read, found by the locator a run finds it by.
+///
+/// # Errors
+/// Refuses options that name a rule the registry does not hold.
+pub fn resolve_claims(
+    workspace: &Workspace,
+    options: &PrepareOptions,
+    discovery: &discover::Discovery,
+    expectations: &[crate::run::Expectation],
+) -> Result<Vec<Resolution>, EngineError> {
+    let selection = selection(options)?;
+    let label = |located: &&discover::Located| {
+        let catalogued = match located.found.candidate.id() {
+            Ok(id) => discovery.catalog.by_id(id.as_str()),
+            Err(_unnameable) => None,
+        };
+        catalogued.map_or_else(
+            || located.found.item.clone(),
+            |mutant| mutant.display_id.to_string(),
+        )
+    };
+    let located = |locator: &Locator| {
+        locate(
+            discovery.candidates.iter().map(|located| {
+                (
+                    located,
+                    Edit {
+                        path: &located.found.candidate.path,
+                        rule: located.found.candidate.rule.name,
+                        original: &located.found.candidate.original,
+                        item: Some(&located.found.item),
+                    },
+                )
+            }),
+            locator,
+            (
+                |located: &&discover::Located| Some(located.found.position.line),
+                label,
+            ),
+        )
+        .map(|found| {
+            let moved = locator.line.zip(found.first()).and_then(|(from, first)| {
+                let to = first.found.position.line;
+                (to != from).then_some((from, to))
+            });
+            (found.iter().map(label).collect::<Vec<_>>(), moved)
+        })
+    };
+    Ok(expectations
+        .iter()
+        .map(|expectation| {
+            let named = match (&expectation.id, &expectation.locator) {
+                (Some(id), _) => match Locator::parse(id) {
+                    Some(locator) => located(&locator).map_err(|error| error.to_string()),
+                    None => discovery
+                        .catalog
+                        .resolve_prefix(id)
+                        .map(|mutant| (vec![mutant.display_id.to_string()], None))
+                        .map_err(|error| error.to_string()),
+                },
+                (None, Some(locator)) => located(locator).map_err(|error| error.to_string()),
+                (None, None) => Err("the claim names no mutant".to_owned()),
+            };
+            match named {
+                Ok((mutants, None)) => Resolution::Names { mutants },
+                Ok((mutants, Some((from, to)))) => Resolution::Moved { mutants, from, to },
+                Err(_)
+                    if expectation.locator.as_ref().is_some_and(|locator| {
+                        unread_in(
+                            (workspace.snapshot_root(), &discovery.files),
+                            &selection,
+                            locator,
+                        ) == Unread::Named
+                    }) =>
+                {
+                    Resolution::Uncompiled
+                }
+                Err(why) => Resolution::Unmatched { why },
+            }
+        })
+        .collect())
 }
 
 /// One test target, as a document says what it is.

@@ -4,7 +4,7 @@
 //! Running one test process per mutant, and reading what its exit status means.
 
 use std::collections::BTreeMap;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -24,6 +24,7 @@ use crate::runner::{
     Bound, Cancel, EXIT_CODE_UNAVAILABLE, ProcessExit, Progress, RunResult, Spec, Termination, run,
 };
 use crate::trace::{ExecRecord, Recorder};
+use crate::workspace::SessionError;
 
 /// Every variable the engine owns.
 /// A test process sees exactly the ones this run set, never one an outer run left behind.
@@ -262,7 +263,7 @@ pub struct TestTarget {
     /// The directory it runs in: the package's manifest directory, which is what cargo uses and what a test reading a relative path expects.
     pub cwd: PathBuf,
     /// What cargo sets for this target that the parent environment does not have: `CARGO_MANIFEST_DIR`, `CARGO_PKG_*`, `CARGO_BIN_EXE_*`.
-    pub cargo_env: Vec<(OsString, OsString)>,
+    pub cargo_env: crate::vars::Variables,
     /// Whether the target is built with the libtest harness.
     pub harness: bool,
     /// What a run could not establish about this target, each named.
@@ -302,7 +303,7 @@ impl TestTarget {
             cwd,
             harness: true,
             limitations: Vec::new(),
-            cargo_env: Vec::new(),
+            cargo_env: crate::vars::Variables::empty(),
             through: Vec::new(),
         }
     }
@@ -323,7 +324,7 @@ impl TestTarget {
 
     /// What cargo sets for this target that the parent environment does not have.
     #[must_use]
-    pub fn with_cargo_env(mut self, env: Vec<(OsString, OsString)>) -> Self {
+    pub fn with_cargo_env(mut self, env: crate::vars::Variables) -> Self {
         self.cargo_env = env;
         self
     }
@@ -1302,16 +1303,10 @@ impl ExpectedStep {
         }))
     }
 
-    fn add_environment(&self, env: &mut Vec<(OsString, OsString)>) {
-        env.push((
-            OsString::from(STEP_NOTICE_ENV),
-            self.path.as_os_str().to_owned(),
-        ));
-        env.push((OsString::from(STEP_NONCE_ENV), OsString::from(&self.nonce)));
-        env.push((
-            OsString::from(STEP_STATE_ENV),
-            self.state_path.as_os_str().to_owned(),
-        ));
+    fn add_environment(&self, env: &mut crate::vars::Variables) {
+        env.set(STEP_NOTICE_ENV, self.path.as_os_str());
+        env.set(STEP_NONCE_ENV, &self.nonce);
+        env.set(STEP_STATE_ENV, self.state_path.as_os_str());
     }
 
     /// How many boundaries the process had raised when it stopped, from the state it shares.
@@ -1675,8 +1670,8 @@ fn binaries_built(
 }
 
 /// What a package's own build script left for every unit of that package: where it wrote, and what it put in the environment.
-fn built_by_a_script(messages: &[Message], package_id: &str) -> Vec<(OsString, OsString)> {
-    let mut found = Vec::new();
+fn built_by_a_script(messages: &[Message], package_id: &str) -> crate::vars::Variables {
+    let mut found = crate::vars::Variables::empty();
     for message in messages {
         let Message::BuildScriptExecuted(script) = message else {
             continue;
@@ -1685,10 +1680,10 @@ fn built_by_a_script(messages: &[Message], package_id: &str) -> Vec<(OsString, O
             continue;
         }
         if let Some(out_dir) = &script.out_dir {
-            found.push((OsString::from("OUT_DIR"), out_dir.as_os_str().to_owned()));
+            found.set("OUT_DIR", out_dir.as_os_str());
         }
         for (name, value) in &script.env {
-            found.push((OsString::from(name), OsString::from(value)));
+            found.set(name, value);
         }
     }
     found
@@ -1701,50 +1696,46 @@ fn built_by_a_script(messages: &[Message], package_id: &str) -> Vec<(OsString, O
 pub fn environment(
     context: &Context<'_>,
     target: &TestTarget,
-    (scratch, engine): (Option<&Path>, Option<&Path>),
-) -> std::io::Result<Vec<(OsString, OsString)>> {
+    scratch: Option<&Scratch>,
+) -> std::io::Result<crate::vars::Variables> {
     let (base, active, cargo) = (context.base_env, context.active, context.cargo);
-    let mut env: BTreeMap<OsString, OsString> = base
-        .iter()
-        .filter(|(name, _)| {
-            !COMPOSED_ENV
-                .iter()
-                .any(|composed| crate::vars::same_name(name, OsStr::new(composed)))
-        })
-        .cloned()
-        .collect();
-    env.extend(target.cargo_env.iter().cloned());
+    let engine = scratch.map(Scratch::engine);
+    let mut env = base.clone();
+    for composed in COMPOSED_ENV {
+        env.remove(composed);
+    }
+    env.overlay(&target.cargo_env);
     if let Some(cargo) = cargo {
-        env.insert(OsString::from("CARGO"), cargo.as_os_str().to_owned());
+        env.set(OsString::from("CARGO"), cargo.as_os_str().to_owned());
     }
     if let Some(sysroot) = context.sysroot {
         let (name, value) = library_path(sysroot, base)?;
-        env.insert(name, value);
+        env.set(name, value);
     }
     if let Some((id, catalog)) = active {
-        env.insert(OsString::from(ACTIVE_ENV), OsString::from(id));
+        env.set(OsString::from(ACTIVE_ENV), OsString::from(id));
         if let Some(fault) = context.beside {
-            env.insert(OsString::from(FAULT_ENV), OsString::from(fault));
+            env.set(OsString::from(FAULT_ENV), OsString::from(fault));
         }
-        env.insert(OsString::from(CATALOG_ENV), OsString::from(catalog));
+        env.set(OsString::from(CATALOG_ENV), OsString::from(catalog));
         if let Some(steps) = context.steps {
-            env.insert(OsString::from(STEPS_ENV), OsString::from(steps.to_string()));
+            env.set(OsString::from(STEPS_ENV), OsString::from(steps.to_string()));
         }
     }
     if let Some(crash) = context.crash {
-        env.insert(
+        env.set(
             OsString::from(CRASH_NOTICE_ENV),
             crash.notice.as_os_str().to_owned(),
         );
-        env.insert(OsString::from(CRASH_NONCE_ENV), OsString::from(crash.nonce));
+        env.set(OsString::from(CRASH_NONCE_ENV), OsString::from(crash.nonce));
     }
     if let Some(touch) = context.touch {
-        env.insert(OsString::from(TOUCH_ENV), touch.log.as_os_str().to_owned());
-        env.insert(OsString::from(CATALOG_ENV), OsString::from(touch.catalog));
+        env.set(OsString::from(TOUCH_ENV), touch.log.as_os_str().to_owned());
+        env.set(OsString::from(CATALOG_ENV), OsString::from(touch.catalog));
         match touch.scope {
             TouchScope::Everything => {}
             TouchScope::Items => {
-                env.insert(
+                env.set(
                     OsString::from(crate::instrument::TOUCH_ITEMS_ENV),
                     OsString::from("1"),
                 );
@@ -1753,13 +1744,13 @@ pub fn environment(
     }
     match (context.profile, engine) {
         (Some(profile), _) => {
-            env.insert(
+            env.set(
                 OsString::from(crate::coverage::PROFILE_ENV),
                 profile.as_os_str().to_owned(),
             );
         }
         (None, Some(engine)) => {
-            env.insert(
+            env.set(
                 OsString::from(crate::coverage::PROFILE_ENV),
                 engine.join(SPILLED_PROFILE).into_os_string(),
             );
@@ -1767,7 +1758,7 @@ pub fn environment(
         (None, None) => {}
     }
     if let Some(engine) = engine {
-        env.insert(
+        env.set(
             OsString::from(crate::decline::DECLINE_NOTICE_ENV),
             engine
                 .join(crate::decline::DECLINE_NOTICE_FILE)
@@ -1775,18 +1766,300 @@ pub fn environment(
         );
     }
     if let Some(scratch) = scratch {
-        for name in ["TMPDIR", "TMP", "TEMP"] {
-            env.insert(OsString::from(name), scratch.as_os_str().to_owned());
+        scratched(&mut env, scratch);
+    }
+    Ok(env)
+}
+
+/// Points `env`'s temporary directories at `scratch`'s, and its home at `scratch`'s own where it has one.
+fn scratched(env: &mut crate::vars::Variables, scratch: &Scratch) {
+    for name in ["TMPDIR", "TMP", "TEMP"] {
+        env.set(name, scratch.tmp.as_os_str().to_owned());
+    }
+    if let Some(home) = &scratch.home {
+        confine(env, home);
+    }
+}
+
+/// The home the run was given, as the platform names it.
+const GIVEN_HOME: &str = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+
+/// Gives `env` the home at `home`, with the homes a build needs pinned where the given home keeps them and nothing left that names the given home's git identity.
+fn confine(env: &mut crate::vars::Variables, home: &Path) {
+    let given = env.var(GIVEN_HOME).map(PathBuf::from);
+    for (name, beside) in PINNED_HOMES {
+        if env.holds(name) {
+            continue;
+        }
+        if let Some(given) = &given {
+            env.set(name, given.join(beside).into_os_string());
         }
     }
-    Ok(env.into_iter().collect())
+    env.remove(GIT_GLOBAL_CONFIG);
+    for (name, under) in CONFINED_HOME {
+        env.set(name, home.join(under).into_os_string());
+    }
+    drive_and_rest(env, home);
+}
+
+/// Gives `env` `home` as Windows spells a home in two variables, `HOMEDRIVE` and a `HOMEPATH` under it, where it has a drive.
+fn drive_and_rest(env: &mut crate::vars::Variables, home: &Path) {
+    let mut parts = home.components();
+    let Some(std::path::Component::Prefix(prefix)) = parts.next() else {
+        return;
+    };
+    let rest: PathBuf = parts.collect();
+    let mut under = OsString::from(std::path::MAIN_SEPARATOR_STR);
+    under.push(rest.as_os_str());
+    env.set("HOMEDRIVE", prefix.as_os_str().to_owned());
+    env.set("HOMEPATH", under);
+}
+
+/// The directories one execution is given, none inside another (ADR 0044): the temporary directory its process sees, the engine's own files about it, and a home of its own where its home is confined.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Scratch {
+    tmp: PathBuf,
+    engine: PathBuf,
+    home: Option<PathBuf>,
+    /// What making the home put in it, each by its path under the home, a directory with a trailing `/`, with the digest of a file's bytes.
+    made: BTreeMap<String, Option<String>>,
+}
+
+impl Scratch {
+    /// The layout under `own`, a directory one execution alone holds, without making any of it.
+    #[must_use]
+    pub fn under(own: &Path, home: Home) -> Self {
+        Self {
+            tmp: own.join("tmp"),
+            engine: own.join("engine"),
+            home: match home {
+                Home::Confined => Some(own.join("home")),
+                Home::Given => None,
+            },
+            made: BTreeMap::new(),
+        }
+    }
+
+    /// The layout under `own`, made: its temporary and engine directories, and where `home` confines it a home with the given home's git identity copied in.
+    ///
+    /// # Errors
+    /// [`SessionError::ScratchCreateFailed`] naming a temporary or engine directory that could not be made, [`SessionError::HomeUnbuilt`] naming a directory of the home, and [`SessionError::IdentityUncopied`] naming the file that could not be copied.
+    pub fn made(
+        own: &Path,
+        home: Home,
+        base: &crate::vars::Variables,
+    ) -> Result<Self, SessionError> {
+        let mut scratch = Self::under(own, home);
+        for directory in [&scratch.tmp, &scratch.engine] {
+            std::fs::create_dir_all(directory).map_err(|source| {
+                SessionError::ScratchCreateFailed {
+                    path: directory.clone(),
+                    source,
+                }
+            })?;
+        }
+        if let Some(home) = &scratch.home {
+            for (_, under) in CONFINED_HOME {
+                made_directory(&home.join(under))?;
+                let mut directory = String::new();
+                for part in under.split('/').filter(|part| !part.is_empty()) {
+                    directory.push_str(part);
+                    directory.push('/');
+                    scratch.made.insert(directory.clone(), None);
+                }
+            }
+            owner_only(&home.join(RUNTIME_UNDER_HOME))?;
+            for (from, under) in identity(base) {
+                if let Some(digest) = copied_if_present(&from, &home.join(under))? {
+                    if let Some((parent, _)) = under.rsplit_once('/') {
+                        let mut directory = String::new();
+                        for part in parent.split('/') {
+                            directory.push_str(part);
+                            directory.push('/');
+                            scratch.made.insert(directory.clone(), None);
+                        }
+                    }
+                    scratch.made.insert(under.to_owned(), Some(digest));
+                }
+            }
+        }
+        Ok(scratch)
+    }
+
+    /// This layout, keeping the engine's own files in `engine` instead: a run over what another left in the rest.
+    #[must_use]
+    pub fn with_engine(self, engine: PathBuf) -> Self {
+        Self { engine, ..self }
+    }
+
+    /// The temporary directory the process sees.
+    #[must_use]
+    pub fn tmp(&self) -> &Path {
+        &self.tmp
+    }
+
+    /// Where the engine keeps its own files about the process.
+    #[must_use]
+    pub fn engine(&self) -> &Path {
+        &self.engine
+    }
+
+    /// The home the process is given where it is its own, with what making it put there, each by its path under it, a directory with a trailing `/`, with the digest of a file's bytes.
+    #[must_use]
+    pub fn made_in_home(&self) -> Option<(&Path, &BTreeMap<String, Option<String>>)> {
+        self.home.as_deref().map(|home| (home, &self.made))
+    }
+
+    /// Which home the process is given.
+    #[must_use]
+    pub const fn home(&self) -> Home {
+        match self.home {
+            Some(_) => Home::Confined,
+            None => Home::Given,
+        }
+    }
+}
+
+/// `base` as a process given `scratch`'s directories sees it, with nothing else a run composes.
+#[must_use]
+pub fn within(base: &crate::vars::Variables, scratch: &Scratch) -> crate::vars::Variables {
+    let mut env = base.clone();
+    scratched(&mut env, scratch);
+    env
+}
+
+/// The trace note saying an execution was refused because its environment would not confine it.
+const EXECUTION_CONFINEMENT: &str = "execution-confinement";
+
+/// Why an environment does not confine a process to its execution's home.
+#[derive(Debug, thiserror::Error)]
+enum ConfinementError {
+    /// A variable the engine confines names somewhere else, or nothing.
+    #[error("{name} is {found:?}, where it is {}", expected.display())]
+    Escaped {
+        /// The variable.
+        name: &'static str,
+        /// The value it has.
+        found: Option<OsString>,
+        /// The one it must have.
+        expected: PathBuf,
+    },
+    /// The global git configuration is still named, so `git config --global` would write the given home's.
+    #[error("{GIT_GLOBAL_CONFIG} still names {found:?}")]
+    GitGlobal {
+        /// What it names.
+        found: OsString,
+    },
+}
+
+/// Whether `env` gives the process exactly `scratch`'s home under every name the engine confines, and no global git configuration of the given home's.
+fn confinement_held(
+    env: &crate::vars::Variables,
+    scratch: &Scratch,
+) -> Result<(), ConfinementError> {
+    let Some(home) = &scratch.home else {
+        return Ok(());
+    };
+    for (name, under) in CONFINED_HOME {
+        let expected = home.join(under);
+        let found = env.var(name);
+        if found != Some(expected.as_os_str()) {
+            return Err(ConfinementError::Escaped {
+                name,
+                found: found.map(std::ffi::OsStr::to_owned),
+                expected,
+            });
+        }
+    }
+    match env.var(GIT_GLOBAL_CONFIG) {
+        Some(found) => Err(ConfinementError::GitGlobal {
+            found: found.to_owned(),
+        }),
+        None => Ok(()),
+    }
+}
+
+/// Makes `directory` and every directory above it.
+fn made_directory(directory: &Path) -> Result<(), SessionError> {
+    std::fs::create_dir_all(directory).map_err(|source| SessionError::HomeUnbuilt {
+        path: directory.to_path_buf(),
+        source,
+    })
+}
+
+/// Lets only its owner enter `directory`, as a runtime directory must.
+#[cfg(unix)]
+fn owner_only(directory: &Path) -> Result<(), SessionError> {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700)).map_err(|source| {
+        SessionError::HomeUnbuilt {
+            path: directory.to_path_buf(),
+            source,
+        }
+    })
+}
+
+/// Nothing, on a platform whose directories a process's own user already alone may enter.
+#[cfg(not(unix))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the same signature as unix's, which can fail"
+)]
+const fn owner_only(_directory: &Path) -> Result<(), SessionError> {
+    Ok(())
+}
+
+/// The files git reads a user's identity from under the home the run was given, each with where a confined home keeps it: `GIT_CONFIG_GLOBAL` in place of `~/.gitconfig` where it is set, and `$XDG_CONFIG_HOME/git/config`, or `~/.config/git/config` where that is unset.
+fn identity(base: &crate::vars::Variables) -> Vec<(PathBuf, &'static str)> {
+    let given = base.var(GIVEN_HOME).map(PathBuf::from);
+    let named = |name: &str| {
+        base.var(name)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    };
+    let mut found = Vec::new();
+    match (named(GIT_GLOBAL_CONFIG), &given) {
+        (Some(global), _) => found.push((global, ".gitconfig")),
+        (None, Some(given)) => found.push((given.join(".gitconfig"), ".gitconfig")),
+        (None, None) => {}
+    }
+    let configuration =
+        named("XDG_CONFIG_HOME").or_else(|| given.map(|given| given.join(".config")));
+    if let Some(configuration) = configuration {
+        found.push((
+            configuration.join("git").join("config"),
+            ".config/git/config",
+        ));
+    }
+    found
+}
+
+/// Copies `from` to `to`, making `to`'s directory first, where `from` is a regular file, and answers the digest of what it copied: an absent source, or one that is no regular file as `/dev/null` is when git is told to read no global configuration, is nothing to copy, and every other failure is one.
+fn copied_if_present(from: &Path, to: &Path) -> Result<Option<String>, SessionError> {
+    let uncopied = |source| SessionError::IdentityUncopied {
+        from: from.to_path_buf(),
+        to: to.to_path_buf(),
+        source,
+    };
+    match std::fs::metadata(from) {
+        Ok(found) if found.file_type().is_file() => {}
+        Ok(_no_regular_file) => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(uncopied(error)),
+    }
+    if let Some(parent) = to.parent() {
+        made_directory(parent)?;
+    }
+    let bytes = std::fs::read(from).map_err(uncopied)?;
+    std::fs::write(to, &bytes).map_err(uncopied)?;
+    Ok(Some(crate::id::digest(&bytes)))
 }
 
 /// The variable a dynamically linked test binary is found through, and what it should hold.
 fn library_path(
     sysroot: &Path,
-    base: &[(OsString, OsString)],
-) -> std::io::Result<(OsString, OsString)> {
+    base: &crate::vars::Variables,
+) -> std::io::Result<(&'static str, OsString)> {
     let name = if cfg!(target_os = "macos") {
         "DYLD_FALLBACK_LIBRARY_PATH"
     } else if cfg!(windows) {
@@ -1800,11 +2073,11 @@ fn library_path(
         value.push(&separator);
         value.push(triple.into_os_string());
     }
-    if let Some(existing) = crate::vars::var(base, name).filter(|existing| !existing.is_empty()) {
+    if let Some(existing) = base.var(name).filter(|existing| !existing.is_empty()) {
         value.push(&separator);
         value.push(existing);
     }
-    Ok((OsString::from(name), value))
+    Ok((name, value))
 }
 
 /// Every `lib/rustlib/<triple>/lib` the toolchain holds, which is where the target's own `libstd` is.
@@ -1858,10 +2131,9 @@ pub struct ExecRequest<'a> {
     tests: Vec<String>,
     args: Vec<String>,
     timeout: Option<Duration>,
-    scratch: Option<PathBuf>,
-    /// Where the engine keeps its own files for the process, apart from the scratch the process sees; the scratch where unset.
-    engine: Option<PathBuf>,
-    /// Whether the process starts in its scratch directory rather than in the one cargo would give it.
+    /// The directories the process is given, and where the engine keeps its own files about it.
+    scratch: Option<Scratch>,
+    /// Whether the process starts in its temporary directory rather than in the one cargo would give it.
     scratch_cwd: bool,
     /// Variables set over the environment the process would otherwise have, each replacing one of the same name.
     overlay: Vec<(Variable, OsString)>,
@@ -1881,7 +2153,6 @@ impl<'a> ExecRequest<'a> {
             args: Vec::new(),
             timeout: None,
             scratch: None,
-            engine: None,
             scratch_cwd: false,
             overlay: Vec::new(),
             launcher: None,
@@ -1944,26 +2215,19 @@ impl<'a> ExecRequest<'a> {
         self
     }
 
-    /// Points the process's temporary directory at a directory of its own.
+    /// Gives the process the directories of `scratch`, and keeps the engine's own files about it there.
     #[must_use]
-    pub fn with_scratch(mut self, scratch: impl Into<PathBuf>) -> Self {
-        self.scratch = Some(scratch.into());
-        self
-    }
-
-    /// Keeps the engine's own files for the process in `engine` rather than in its scratch, so what the process leaves there is only its own.
-    #[must_use]
-    pub fn with_engine(mut self, engine: impl Into<PathBuf>) -> Self {
-        self.engine = Some(engine.into());
+    pub fn with_scratch(mut self, scratch: Scratch) -> Self {
+        self.scratch = Some(scratch);
         self
     }
 
     /// Where the engine keeps its own files for the process.
     fn engine_dir(&self) -> Option<&Path> {
-        self.engine.as_deref().or(self.scratch.as_deref())
+        self.scratch.as_ref().map(Scratch::engine)
     }
 
-    /// Starts the process in its scratch directory rather than where cargo would.
+    /// Starts the process in its temporary directory rather than where cargo would.
     #[must_use]
     pub const fn in_scratch(mut self, within: bool) -> Self {
         self.scratch_cwd = within;
@@ -1999,7 +2263,7 @@ impl<'a> ExecRequest<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct Context<'a> {
     /// The environment the workspace was opened with.
-    pub base_env: &'a [(OsString, OsString)],
+    pub base_env: &'a crate::vars::Variables,
     /// The cargo that built the tree, which cargo itself puts in `CARGO` for every process it runs.
     pub cargo: Option<&'a Path>,
     /// The toolchain directory a dynamically linked test binary finds `libstd` under.
@@ -2028,6 +2292,38 @@ pub struct Context<'a> {
     /// `None` runs a process whose crash, if it has one, says nothing it can be told by.
     pub crash: Option<Crashing<'a>>,
 }
+
+/// Which home a test process is given (ADR 0044).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Home {
+    /// A home of the execution's own, beside its temporary directory, which the scratch's emptying takes with it.
+    Confined,
+    /// The home the run was given, for a target whose tests pass only with it.
+    Given,
+}
+
+/// The variables a confined home replaces, each as a path under the execution's home, in the order they are set.
+const CONFINED_HOME: [(&str, &str); 9] = [
+    ("HOME", ""),
+    ("XDG_CONFIG_HOME", ".config"),
+    ("XDG_CACHE_HOME", ".cache"),
+    ("XDG_STATE_HOME", ".local/state"),
+    ("XDG_DATA_HOME", ".local/share"),
+    ("XDG_RUNTIME_DIR", RUNTIME_UNDER_HOME),
+    ("USERPROFILE", ""),
+    ("APPDATA", "AppData/Roaming"),
+    ("LOCALAPPDATA", "AppData/Local"),
+];
+
+/// Where a confined home keeps the runtime directory, which only its owner may enter.
+const RUNTIME_UNDER_HOME: &str = ".local/run";
+
+/// The homes a build needs where they are, each with the directory it defaults to under the home the run was given.
+const PINNED_HOMES: [(&str, &str); 2] = [("CARGO_HOME", ".cargo"), ("RUSTUP_HOME", ".rustup")];
+
+/// The variable naming the file git reads a user's global configuration from in place of `~/.gitconfig`.
+const GIT_GLOBAL_CONFIG: &str = "GIT_CONFIG_GLOBAL";
 
 /// A fresh 128-bit nonce in lowercase hexadecimal, which ties a notice the runtime publishes to exactly one execution.
 ///
@@ -2327,25 +2623,17 @@ impl Unput {
 fn perturbed(
     request: &ExecRequest<'_>,
     active: bool,
-    env: &mut Vec<(OsString, OsString)>,
+    env: &mut crate::vars::Variables,
 ) -> Result<(), Unput> {
     for (variable, value) in &request.overlay {
-        let name = OsStr::new(variable.name());
-        env.retain(|(held, _)| !crate::vars::same_name(held, name));
-        env.push((name.to_owned(), value.clone()));
+        env.set(variable.name(), value);
     }
     if let Some((delay, catalog)) = request.delay {
         if active {
             return Err(Unput::DelayBesideMutant);
         }
-        for name in [DELAY_ENV, CATALOG_ENV] {
-            env.retain(|(held, _)| !crate::vars::same_name(held, OsStr::new(name)));
-        }
-        env.push((
-            OsString::from(DELAY_ENV),
-            OsString::from(format!("{}@{}", delay.site, delay.pause_ms)),
-        ));
-        env.push((OsString::from(CATALOG_ENV), OsString::from(catalog)));
+        env.set(DELAY_ENV, format!("{}@{}", delay.site, delay.pause_ms));
+        env.set(CATALOG_ENV, catalog);
     }
     Ok(())
 }
@@ -2414,14 +2702,10 @@ pub fn exec(
     spec.leaders = context.leaders.cloned();
     spec.stop_at_first_failure = answered_by_one_failure(target, context);
     spec.dir = Some(match (&request.scratch, request.scratch_cwd) {
-        (Some(scratch), true) => scratch.clone(),
+        (Some(scratch), true) => scratch.tmp.clone(),
         _ => target.cwd.clone(),
     });
-    let mut env = match environment(
-        context,
-        target,
-        (request.scratch.as_deref(), request.engine_dir()),
-    ) {
+    let mut env = match environment(context, target, request.scratch.as_ref()) {
         Ok(env) => env,
         Err(error) => {
             let message = format!("the toolchain environment could not be inspected: {error}");
@@ -2432,6 +2716,14 @@ pub fn exec(
     if let Some(step) = &step {
         step.add_environment(&mut env);
         spec.stop_file = Some(step.path.clone());
+    }
+    if let Some(scratch) = &request.scratch
+        && let Err(escaped) = confinement_held(&env, scratch)
+    {
+        let message =
+            format!("the process would not be confined to its execution's home: {escaped}");
+        trace.note(EXECUTION_CONFINEMENT, &message);
+        return MutantResult::apparatus_error(&target.id, message);
     }
     if let Err(refusal) = perturbed(request, context.active.is_some(), &mut env) {
         return MutantResult::apparatus_error(&target.id, refusal.said().to_owned());
@@ -2533,7 +2825,7 @@ pub fn build(
             locked: options.locked,
             offline: options.offline,
             timeout: None,
-            env: Vec::new(),
+            env: crate::vars::Variables::empty(),
             build: options.build.clone(),
         },
     )?;
@@ -2604,7 +2896,7 @@ pub fn targets_of(
             None => &empty_binaries,
         };
         let mut env = cargo_environment(package, kind, target_dir, package_binaries);
-        env.extend(built_by_a_script(messages, &artifact.package_id));
+        env.overlay(&built_by_a_script(messages, &artifact.package_id));
         let held = match harnesses.entry(package.id.clone()) {
             std::collections::btree_map::Entry::Occupied(held) => held.into_mut(),
             std::collections::btree_map::Entry::Vacant(empty) => {
@@ -2706,24 +2998,18 @@ fn cargo_environment(
     kind: TargetKind,
     target_dir: Option<&Path>,
     binaries: &BTreeMap<String, PathBuf>,
-) -> Vec<(OsString, OsString)> {
+) -> crate::vars::Variables {
     let mut env = package_environment(package);
     if matches!(kind, TargetKind::Test | TargetKind::Example) {
         if let Some(target_dir) = target_dir {
-            env.push((
-                OsString::from("CARGO_TARGET_TMPDIR"),
-                target_dir.join("tmp").into_os_string(),
-            ));
+            env.set("CARGO_TARGET_TMPDIR", target_dir.join("tmp"));
         }
         for target in &package.targets {
             if !target.is_bin() {
                 continue;
             }
             if let Some(built) = binaries.get(&target.name) {
-                env.push((
-                    OsString::from(format!("CARGO_BIN_EXE_{}", target.name)),
-                    built.as_os_str().to_owned(),
-                ));
+                env.set(format!("CARGO_BIN_EXE_{}", target.name), built.as_os_str());
             }
         }
     }
@@ -2732,12 +3018,12 @@ fn cargo_environment(
 
 /// What cargo tells every unit of a package about the package.
 #[must_use]
-pub fn package_environment(package: &Package) -> Vec<(OsString, OsString)> {
+pub fn package_environment(package: &Package) -> crate::vars::Variables {
     let (major, minor, patch, pre) = version_parts(&package.version);
     let said = |value: Option<&str>| OsString::from(value.unwrap_or_default());
     let named =
         |value: Option<&Path>| value.map_or_else(OsString::new, |one| one.as_os_str().to_owned());
-    vec![
+    crate::vars::Variables::of([
         (
             OsString::from("CARGO_MANIFEST_DIR"),
             package.manifest_dir().as_os_str().to_owned(),
@@ -2799,7 +3085,7 @@ pub fn package_environment(package: &Package) -> Vec<(OsString, OsString)> {
             OsString::from("CARGO_PKG_README"),
             named(package.readme.as_deref()),
         ),
-    ]
+    ])
 }
 
 /// A semantic version cut the way cargo cuts it: three numbers and whatever follows the first hyphen.
@@ -2820,6 +3106,53 @@ fn version_parts(version: &str) -> (&str, &str, &str, &str) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_home_that_escaped_its_execution_is_refused_before_the_process_starts() {
+        type Plant = fn(&mut crate::vars::Variables);
+        let own = Path::new("/scratch/7");
+        let scratch = super::Scratch::under(own, super::Home::Confined);
+        let given = crate::vars::Variables::of([
+            (OsString::from("HOME"), OsString::from("/home/somebody")),
+            (
+                OsString::from("GIT_CONFIG_GLOBAL"),
+                OsString::from("/home/somebody/.gitconfig"),
+            ),
+        ]);
+        let composed = super::within(&given, &scratch);
+        assert_eq!(
+            result_state(&super::confinement_held(&composed, &scratch)),
+            Returned,
+            "the environment the engine composes confines the process: {composed:?}"
+        );
+        let planted: [(&str, Plant); 3] = [
+            ("a home put back", |env| env.set("HOME", "/home/somebody")),
+            ("a confined name dropped", |env| {
+                env.remove("XDG_STATE_HOME");
+            }),
+            ("the given global git configuration named again", |env| {
+                env.set("GIT_CONFIG_GLOBAL", "/home/somebody/.gitconfig");
+            }),
+        ];
+        for (defect, plant) in planted {
+            let mut escaped = composed.clone();
+            plant(&mut escaped);
+            assert_eq!(
+                result_state(&super::confinement_held(&escaped, &scratch)),
+                Refused,
+                "{defect}: a process whose home is not its execution's is one a mutation can \
+                 write the given home through, so the engine refuses to start it"
+            );
+        }
+        assert_eq!(
+            result_state(&super::confinement_held(
+                &given,
+                &super::Scratch::under(own, super::Home::Given)
+            )),
+            Returned,
+            "a target that runs with the given home is not confined, and says so elsewhere"
+        );
+    }
+
     #[test]
     fn a_start_refused_for_want_of_room_or_a_writer_is_named_as_such() {
         let refused = |source: std::io::Error| {
@@ -2968,7 +3301,7 @@ mod tests {
         };
         let context = Context {
             leaders: None,
-            base_env: &[],
+            base_env: &crate::vars::Variables::empty(),
             cargo: None,
             sysroot: None,
             active: Some((MUTANT_A, CATALOG_A)),
@@ -2990,7 +3323,7 @@ mod tests {
         let scratch = returned!(tempfile::tempdir(), "scratch");
         let context = Context {
             leaders: None,
-            base_env: &[],
+            base_env: &crate::vars::Variables::empty(),
             cargo: None,
             sysroot: None,
             active: Some((MUTANT_A, CATALOG_A)),
@@ -3010,12 +3343,12 @@ mod tests {
                 step.nonce
             )
         );
-        let mut environment = Vec::new();
+        let mut environment = crate::vars::Variables::empty();
         step.add_environment(&mut environment);
-        assert!(environment.contains(&(
-            OsString::from(STEP_STATE_ENV),
-            step.state_path.as_os_str().to_owned()
-        )));
+        assert_eq!(
+            environment.var(STEP_STATE_ENV),
+            Some(step.state_path.as_os_str())
+        );
         let cleared = step.clear();
         assert_eq!(result_state(&cleared), Returned, "clear: {cleared:?}");
         assert_absent(&step.path);

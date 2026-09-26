@@ -24,7 +24,8 @@ use std::fmt::Write as _;
 use rust_mutants::catalog::Mutant;
 use rust_mutants::discover::Discovery;
 use rust_mutants::execute::MutantResult;
-use rust_mutants::session::Session;
+use rust_mutants::run::Expectation;
+use rust_mutants::session::{Resolution, Session};
 use rust_mutants::syntax::{Position, Skip};
 
 fn candidate_text(
@@ -147,6 +148,51 @@ pub fn list(
     );
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
     Ok(text)
+}
+
+/// One line per claim of the configuration, saying what it names or why a run finds it unmatched, and a line counting them.
+#[must_use]
+pub fn claims(expectations: &[Expectation], resolved: &[Resolution]) -> String {
+    let mut text = String::new();
+    for (expectation, resolution) in expectations.iter().zip(resolved) {
+        let written = match resolution {
+            Resolution::Names { mutants } => {
+                writeln!(
+                    text,
+                    "names      {}  {}",
+                    expectation.name(),
+                    mutants.join(" ")
+                )
+            }
+            Resolution::Moved { mutants, from, to } => writeln!(
+                text,
+                "moved      {}  {}  is on line {to} now, not {from}; write `line = {to}`",
+                expectation.name(),
+                mutants.join(" ")
+            ),
+            Resolution::Uncompiled => writeln!(
+                text,
+                "elsewhere  {}  a file no unit of this build reads",
+                expectation.name()
+            ),
+            Resolution::Unmatched { why } => {
+                writeln!(text, "unmatched  {}  {why}", expectation.name())
+            }
+        };
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    let counted = |kept: fn(&Resolution) -> bool| resolved.iter().filter(|one| kept(one)).count();
+    let written = writeln!(
+        text,
+        "\n{} claims: {} name what they say, {} name a file only another build reads, and {} \
+         name nothing, not as many as they say, or a line their mutation left.",
+        resolved.len(),
+        counted(|one| !one.rotted() && !one.uncompiled()),
+        counted(Resolution::uncompiled),
+        counted(Resolution::rotted),
+    );
+    debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    text
 }
 
 /// The skip tallies, widest reason first.

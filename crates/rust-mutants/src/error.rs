@@ -174,6 +174,8 @@ mod table {
         SessionNonceUnavailable,
         /// A mutant's execution changed the test executables the run starts.
         SessionApparatusChanged,
+        /// The home an execution is given could not be made, or the given home's git identity could not be copied into it.
+        SessionHomeUnbuilt,
         /// A coverage export that could not be read.
         CoverageUnreadable,
         /// The LLVM tools the toolchain ships, not installed.
@@ -779,6 +781,14 @@ mod table {
                     ),
                     sealed: Sealed,
                 },
+                Self::SessionHomeUnbuilt => ErrorCode {
+                    code: "RM5012",
+                    summary: "the home an execution is given could not be made, or the given home's git identity could not be copied into it",
+                    remedy: Some(
+                        "the path named is under the run's scratch directory or is the given home's git configuration: check there is room under TMPDIR and that this user may read the file named",
+                    ),
+                    sealed: Sealed,
+                },
                 Self::CoverageUnreadable => ErrorCode {
                     code: "RM6001",
                     summary: "a coverage export that could not be read",
@@ -991,6 +1001,7 @@ pub(crate) const SENTINEL_OTHER_TOOLCHAIN: ErrorCode = RmCode::SentinelOtherTool
 pub(crate) const SESSION_NOT_BESIDE: ErrorCode = RmCode::SessionNotBeside.error_code();
 pub(crate) const SESSION_NONCE_UNAVAILABLE: ErrorCode =
     RmCode::SessionNonceUnavailable.error_code();
+pub(crate) const SESSION_HOME_UNBUILT: ErrorCode = RmCode::SessionHomeUnbuilt.error_code();
 
 /// Every failure the engine reports.
 #[derive(Debug, thiserror::Error)]

@@ -44,10 +44,10 @@ fn environment(
     root: &Path,
     temp: PathBuf,
     path: OsString,
-    vars: Vec<(OsString, OsString)>,
+    vars: rust_mutants::vars::Variables,
 ) -> Environment {
     let mut vars = vars;
-    vars.push((OsString::from("PATH"), path));
+    vars.set("PATH", path);
     Environment {
         cache_directory: root.join("cache"),
         working_directory: root.to_path_buf(),
@@ -64,7 +64,10 @@ fn fake_environment(repo: &Repo, installed: &Installed) -> Environment {
         repo.root(),
         repo.root().join("temp"),
         installed.bin().as_os_str().to_owned(),
-        installed.env(),
+        installed
+            .env()
+            .into_iter()
+            .collect::<rust_mutants::vars::Variables>(),
     )
 }
 
@@ -187,7 +190,12 @@ fn located(root: &Path, installed: &Installed) -> Toolchain {
         &LocateOptions {
             cargo: Some(installed.cargo()),
             search_path: None,
-            env: Some(installed.env()),
+            env: Some(
+                installed
+                    .env()
+                    .into_iter()
+                    .collect::<rust_mutants::vars::Variables>(),
+            ),
         },
         root,
         &Cancel::new(),
@@ -205,7 +213,7 @@ fn options(
     root: &Path,
     target: PathBuf,
     scratch: PathBuf,
-    env: Vec<(OsString, OsString)>,
+    env: rust_mutants::vars::Variables,
 ) -> BuildOptions {
     BuildOptions {
         root: root.to_path_buf(),
@@ -232,7 +240,7 @@ fn an_invalid_configuration_is_an_error_and_not_a_panic() {
         repo.root(),
         repo.root().join("temp"),
         empty.into_os_string(),
-        Vec::new(),
+        rust_mutants::vars::Variables::empty(),
     );
 
     let said = asked(&environment, &[]);
@@ -256,7 +264,7 @@ fn a_missing_toolchain_is_an_error_and_not_a_panic() {
         repo.root(),
         repo.root().join("temp"),
         empty.into_os_string(),
-        Vec::new(),
+        rust_mutants::vars::Variables::empty(),
     );
 
     let said = asked(&environment, &[]);
@@ -341,7 +349,10 @@ fn an_unusable_scratch_parent_is_an_error() {
         repo.root(),
         occupied,
         installed.bin().as_os_str().to_owned(),
-        installed.env(),
+        installed
+            .env()
+            .into_iter()
+            .collect::<rust_mutants::vars::Variables>(),
     );
 
     let said = asked(&environment, &[]);
@@ -583,7 +594,12 @@ fn build_defaults_command_environment_limit_and_trace_are_exact() {
         (OsString::from("RUSTFLAGS"), OsString::from("-Dwarnings")),
         (OsString::from("KEEP"), OsString::from("yes")),
     ]);
-    let mut build_options = options(repo.root(), target.clone(), scratch.clone(), env);
+    let mut build_options = options(
+        repo.root(),
+        target.clone(),
+        scratch.clone(),
+        env.into_iter().collect::<rust_mutants::vars::Variables>(),
+    );
     build_options.selection = Selection {
         packages: vec!["alpha".to_owned(), "beta".to_owned()],
         features: vec!["one".to_owned(), "two".to_owned()],
@@ -655,8 +671,8 @@ fn build_defaults_command_environment_limit_and_trace_are_exact() {
     let value = |name: &str| {
         built
             .env
-            .iter()
-            .find(|(key, _)| key == name)
+            .for_process()
+            .find(|(key, _)| *key == name)
             .map(|(_, value)| {
                 value
                     .to_str()
@@ -717,15 +733,25 @@ fn a_native_build_preserves_plain_flags_and_uses_the_workspace_default_selection
     let built = build(
         &toolchain,
         &packages(repo.root()),
-        &options(repo.root(), target, scratch, env),
+        &options(
+            repo.root(),
+            target,
+            scratch,
+            env.into_iter().collect::<rust_mutants::vars::Variables>(),
+        ),
         Watch::new(&Cancel::new(), &Recorder::disabled()),
     )
     .expect("native build");
     assert!(built.limitations.is_empty());
-    assert!(built.env.iter().any(|(key, value)| {
+    assert!(built.env.for_process().any(|(key, value)| {
         key == "RUSTFLAGS" && value == std::ffi::OsStr::new("--cfg native")
     }));
-    assert!(built.env.iter().all(|(key, _)| key != "LLVM_PROFILE_FILE"));
+    assert!(
+        built
+            .env
+            .for_process()
+            .all(|(key, _)| key != "LLVM_PROFILE_FILE")
+    );
 }
 
 #[test]
@@ -751,7 +777,10 @@ fn a_build_timeout_is_a_not_run_error_and_is_recorded() {
         repo.root(),
         repo.root().join("target"),
         repo.root().join("scratch"),
-        installed.env(),
+        installed
+            .env()
+            .into_iter()
+            .collect::<rust_mutants::vars::Variables>(),
     );
     build_options.timeout = Some(std::time::Duration::from_millis(10));
     let trace = Recorder::new(
@@ -884,7 +913,10 @@ fn compiler_failures_prefer_each_rendered_error_and_have_a_nonempty_fallback() {
             repo.root(),
             repo.root().join("target"),
             repo.root().join("scratch"),
-            installed.env(),
+            installed
+                .env()
+                .into_iter()
+                .collect::<rust_mutants::vars::Variables>(),
         ),
         Watch::new(&Cancel::new(), &Recorder::disabled()),
     )
@@ -920,7 +952,10 @@ fn compiler_failures_prefer_each_rendered_error_and_have_a_nonempty_fallback() {
             repo.root(),
             repo.root().join("target-two"),
             repo.root().join("scratch-two"),
-            installed.env(),
+            installed
+                .env()
+                .into_iter()
+                .collect::<rust_mutants::vars::Variables>(),
         ),
         Watch::new(&Cancel::new(), &Recorder::disabled()),
     )
@@ -1053,7 +1088,10 @@ fn library_sources_are_only_workspace_library_inputs_and_dep_info_failure_is_an_
             repo.root(),
             repo.root().join("target-layer"),
             repo.root().join("scratch"),
-            installed.env(),
+            installed
+                .env()
+                .into_iter()
+                .collect::<rust_mutants::vars::Variables>(),
         ),
         Watch::new(&Cancel::new(), &Recorder::disabled()),
     )
@@ -1100,7 +1138,10 @@ fn library_sources_are_only_workspace_library_inputs_and_dep_info_failure_is_an_
             repo.root(),
             repo.root().join("target-missing"),
             repo.root().join("scratch-missing"),
-            installed.env(),
+            installed
+                .env()
+                .into_iter()
+                .collect::<rust_mutants::vars::Variables>(),
         ),
         Watch::new(&Cancel::new(), &Recorder::disabled()),
     )
@@ -1171,7 +1212,7 @@ fn each_unit_gets_cargos_environment_over_the_parent_environment() {
             repo.root(),
             repo.root().join("target-layer"),
             scratch.clone(),
-            env,
+            env.into_iter().collect::<rust_mutants::vars::Variables>(),
         ),
         Watch::new(&Cancel::new(), &Recorder::disabled()),
     )
@@ -1179,8 +1220,8 @@ fn each_unit_gets_cargos_environment_over_the_parent_environment() {
     let unit = built.units.first().expect("the library test unit");
     let values = |name: &str| {
         unit.env
-            .iter()
-            .filter(|(key, _)| key == name)
+            .for_process()
+            .filter(|(key, _)| *key == name)
             .map(|(_, value)| {
                 value
                     .to_str()

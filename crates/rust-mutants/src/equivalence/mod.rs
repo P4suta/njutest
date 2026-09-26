@@ -5,7 +5,6 @@
 
 pub mod artifacts;
 
-use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::time::Duration;
 
@@ -70,12 +69,7 @@ impl Prover {
     ) -> Result<Self, EngineError> {
         let mut open = options.open.clone();
         open.trace = trace.clone();
-        open.env
-            .retain(|(name, _value)| !crate::vars::same_name(name, OsStr::new(WHOLE_BUILDS.0)));
-        open.env.push((
-            OsString::from(WHOLE_BUILDS.0),
-            OsString::from(WHOLE_BUILDS.1),
-        ));
+        open.env.set(WHOLE_BUILDS.0, WHOLE_BUILDS.1);
         let workspace = Workspace::open(root, open, cancel)?;
         let mut prover = Self {
             workspace,

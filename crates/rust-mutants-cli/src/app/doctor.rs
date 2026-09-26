@@ -160,7 +160,7 @@ fn git_check(environment: &Environment) -> doctor_report::Check {
     use doctor_report::Standing::{Ok as Well, Warn};
     let printed = std::process::Command::new("git")
         .arg("--version")
-        .envs(environment.vars.clone())
+        .envs(environment.vars.for_process())
         .output();
     match printed {
         Ok(printed) if printed.status.success() => {

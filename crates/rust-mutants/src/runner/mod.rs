@@ -148,7 +148,7 @@ pub struct Spec {
     pub dir: Option<PathBuf>,
     /// The child's complete environment, but for [`PRESENTATION`], which the runner sets over it.
     /// `None` inherits this process's environment, which is convenient for one-shot probes; the engine composes the full set explicitly for mutant executions.
-    pub env: Option<Vec<(OsString, OsString)>>,
+    pub env: Option<crate::vars::Variables>,
     /// Bounds the child's wall-clock run time.
     /// `None` means no timeout.
     pub timeout: Option<Duration>,
@@ -951,11 +951,11 @@ impl SupervisedChild {
     }
 
     fn terminate_unadopted(&mut self) {
-        let kill = self.child.kill();
+        let ended = self.child.kill();
         if !reap_or_abort(self, REAPING_GRACE) {
             terminal_process_ownership_failure();
         }
-        match kill {
+        match ended {
             Ok(()) | Err(_) => {}
         }
     }
@@ -1129,7 +1129,7 @@ fn resolved(spec: &Spec, program: &OsString) -> io::Result<OsString> {
     let Some(env) = &spec.env else {
         return Ok(program.clone());
     };
-    crate::cargo::resolve_executable(Path::new(program), crate::vars::search_path(env).as_deref())
+    crate::cargo::resolve_executable(Path::new(program), env.search_path())
         .map(PathBuf::into_os_string)
         .map_err(|unfound| io::Error::new(io::ErrorKind::NotFound, unfound.to_string()))
 }
@@ -1160,7 +1160,7 @@ fn wire(spec: &Spec, program: &OsString) -> io::Result<Wired> {
     }
     if let Some(env) = &spec.env {
         command.env_clear();
-        command.envs(env.iter().map(|(key, value)| (key, value)));
+        command.envs(env.for_process());
     }
     command.envs(PRESENTATION);
     if let Some(progress) = &spec.progress {
@@ -1807,6 +1807,102 @@ use unix as sys;
 use windows as sys;
 
 pub use sys::Membership;
+
+/// How a process group is asked to stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupStop {
+    /// Asked to end, which a process may answer by cleaning up.
+    Ask,
+    /// Ended.
+    Kill,
+}
+
+/// What stopping a group reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use = "a stop that reached only the leader leaves the rest of the group running"]
+pub enum Stopped {
+    /// Every process of the group was signalled, or none besides its unreaped leader was left.
+    Group,
+    /// The kernel refused the group whole and only its leader was signalled, with other members still in the group or not seen.
+    LeaderOnly,
+}
+
+/// What the kernel answered one signal with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum Delivered {
+    /// It was sent.
+    Sent,
+    /// Nothing by that id was left to send it to.
+    Gone,
+    /// Sending it is beyond this process's authority for some process it names.
+    Refused,
+    /// Any other failure.
+    Failed,
+}
+
+/// Who besides its leader a group was seen to hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum Others {
+    /// Nobody.
+    Nobody,
+    /// Somebody still running.
+    Somebody,
+    /// The group could not be looked at.
+    Unseen,
+}
+
+/// What a group stop comes to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopDecision {
+    /// It reached this much.
+    Reached(Stopped),
+    /// It failed.
+    Failed,
+}
+
+/// What a group stop comes to, from what the group's signal got, what its leader's got when the group was refused, and who else the group was seen to hold, as `tests/testdata/group-stop.tsv` lists for every combination.
+#[must_use]
+pub const fn decide_stop(group: Delivered, leader: Delivered, others: Others) -> StopDecision {
+    match group {
+        Delivered::Sent | Delivered::Gone => StopDecision::Reached(Stopped::Group),
+        Delivered::Failed => StopDecision::Failed,
+        Delivered::Refused => match (leader, others) {
+            (Delivered::Refused | Delivered::Failed, _) => StopDecision::Failed,
+            (Delivered::Sent | Delivered::Gone, Others::Nobody) => {
+                StopDecision::Reached(Stopped::Group)
+            }
+            (Delivered::Sent | Delivered::Gone, Others::Somebody | Others::Unseen) => {
+                StopDecision::Reached(Stopped::LeaderOnly)
+            }
+        },
+    }
+}
+
+/// Stops every process of the group `leader` leads, a process started in a group of its own, and says how much of it the stop reached.
+///
+/// A group already gone, or one whose members have all ended while its leader waits to be reaped, is reached whole: on macOS that group refuses a group signal with `EPERM`, and a look at the group finds nobody besides the leader.
+///
+/// # Errors
+/// `leader` is no process id, or the kernel refuses the leader too, or fails for a reason other than its being gone.
+#[cfg(unix)]
+pub fn stop_group(leader: u32, how: GroupStop) -> io::Result<Stopped> {
+    unix::stop_group(leader, how)
+}
+
+/// Ends the one process `pid` at once, where it is still there: a process a run started that left every group it supervised.
+///
+/// # Errors
+/// The process could not be signalled for a reason other than having ended.
+#[cfg_attr(
+    windows,
+    expect(
+        clippy::missing_const_for_fn,
+        reason = "the Windows implementation is an inert stub, while the Unix implementation this cross-platform facade also exposes signals a process"
+    )
+)]
+pub fn stop_process(pid: u32) -> io::Result<()> {
+    sys::stop_process(pid)
+}
 
 /// How long a forceful end waits to see the child reaped before aborting the supervising process.
 pub const REAPING_GRACE: Duration = Duration::from_secs(10);

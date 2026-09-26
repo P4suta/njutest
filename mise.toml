@@ -111,20 +111,18 @@ git rev-parse --verify "${head_ref}^{commit}" >/dev/null
 committed "${base_ref}..${head_ref}"
 """
 
-# The suite is written for three platforms and run here on one. Most of what
-# the other two answer differently needs their machine to find out, but code
-# behind `#[cfg(windows)]` is not even read by this one's compiler, and a
-# workspace that builds here can fail to build there on a lint. This asks for
-# the reading without the machine; the prerequisite task installs that target's
-# standard library for the same exact compiler the workspace pins.
+# The suite is written for three platforms and run here on one.
+# Most of what the other two answer differently needs their machine to find out, but code behind `#[cfg(windows)]` is not even read by this one's compiler, and a workspace that builds here can fail to build there on a lint.
+# This asks for the reading without the machine; the prerequisite task installs that target's standard library for the same exact compiler the workspace pins.
+# It is clippy and not a type check: batch 10 type-checked clean for Windows and failed CI's Windows job on `missing_const_for_fn`, a function the Unix branch of a cfg split had made const on Windows alone.
 [tasks."setup:windows-target"]
-description = "Install the pinned Windows standard library used by the cross-target type check"
+description = "Install the pinned Windows standard library used by the cross-target lint"
 run = "rustup target add --toolchain 1.98.0 x86_64-pc-windows-msvc"
 
-[tasks."check:windows"]
-description = "Type-check every non-benchmark target with every non-benchmark feature for Windows; real Windows CI covers feature-complete benchmarks"
+[tasks."lint:windows"]
+description = "Lint every non-benchmark target with every non-benchmark feature for Windows, where CI reads the cfgs this machine does not compile; real Windows CI covers feature-complete benchmarks"
 depends = ["setup:windows-target"]
-run = "cargo check --locked --workspace --all-targets --features njutest/testkit,rust-mutants-cli/testkit,rust-mutants/testkit,xtask/testkit --target x86_64-pc-windows-msvc"
+run = "cargo clippy --locked --workspace --all-targets --features njutest/testkit,rust-mutants-cli/testkit,rust-mutants/testkit,xtask/testkit --target x86_64-pc-windows-msvc -- -D warnings"
 
 # CI's Linux runners are where a `cfg` this machine never compiles is first read, and `-D warnings` turns each one into a failed job rather than a note.
 # Three arrived at once the first time CI got far enough to run clippy: a function that is const once the macOS branch is gone, a placeholder binding with nothing to bind, and a widening conversion that is the identity where `st_mode` is already a u32.
@@ -341,7 +339,7 @@ step mise run audit
 # CI reads all three on their own runners, so a push learns from there rather than paying for it here.
 [tasks."check:cross"]
 description = "Type-check and lint the other platforms this machine can read"
-run = ["mise run check:windows", "mise run lint:linux"]
+run = ["mise run lint:windows", "mise run lint:linux"]
 
 # The release profile and the book, which a push does not wait for.
 #

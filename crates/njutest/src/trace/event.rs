@@ -348,7 +348,7 @@ impl ExecRecord {
                 .env
                 .as_ref()
                 .map(|env| {
-                    env.iter()
+                    env.for_process()
                         .map(|(key, _)| trace_text(key, "environment name"))
                         .collect::<Result<Vec<_>, _>>()
                 })

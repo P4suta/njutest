@@ -460,7 +460,7 @@ fn measured(name: &str) -> njutest::assure::baseline::Measured {
             ignored: false,
             executable: std::path::PathBuf::from("/nowhere"),
             cwd: std::path::PathBuf::from("/nowhere"),
-            env: Vec::new(),
+            env: rust_mutants::vars::Variables::empty(),
         },
         status: njutest::report::TargetStatus::Passed,
         finding: None,

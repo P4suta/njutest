@@ -334,6 +334,15 @@ impl Drop for Supervisor {
     }
 }
 
+/// Nothing to end on Windows, where the job object ended every process it held.
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the same signature as the unix stop, which can fail"
+)]
+pub(super) const fn stop_process(_pid: u32) -> io::Result<()> {
+    Ok(())
+}
+
 /// Observes leader exit without reaping it.
 /// The Job Object independently retains ownership of every contained descendant.
 pub(super) fn exit_observed(child: &Child) -> io::Result<bool> {

@@ -126,15 +126,12 @@ pub struct Declared {
 impl Declared {
     /// What `given`, the environment the tests are given, holds of each of `names`.
     #[must_use]
-    pub fn of(
-        names: &std::collections::BTreeSet<String>,
-        given: &[(std::ffi::OsString, std::ffi::OsString)],
-    ) -> Self {
+    pub fn of(names: &std::collections::BTreeSet<String>, given: &crate::vars::Variables) -> Self {
         let mut hasher = Sha256::new();
         for name in names {
             hash_length(&mut hasher, name.len());
             hasher.update(name.as_bytes());
-            match crate::vars::var(given, name) {
+            match given.var(name) {
                 None => hasher.update(b"unset"),
                 Some(value) => {
                     let bytes = value.as_encoded_bytes();

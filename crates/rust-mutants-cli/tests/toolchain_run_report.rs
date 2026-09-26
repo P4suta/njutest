@@ -746,6 +746,79 @@ fn a_test_that_declines_to_measure_leaves_no_survivor_and_no_answer_to_keep() {
     nothing_resting_on_a_decline_is_read_back(&report, &stored(&fixture));
 }
 
+/// A claim of fixture-simple, in the configuration's own words.
+fn claim(item: &str, rule: &str, original: &str) -> String {
+    format!(
+        "[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"{item}\"\nrule = \"{rule}\"\n\
+         original = \"{original}\"\noutcome = \"survived\"\nreason = \"a claim for this test\"\n"
+    )
+}
+
+#[test]
+fn list_claims_refuses_every_claim_that_says_what_is_not_so() {
+    let fixture = Fixture::copy("fixture-simple");
+    let good = claim("max", "gt-to-ge", ">");
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        [
+            good.as_str(),
+            &claim("max", "eq-to-neq", "=="),
+            &format!("{}count = 2\n", claim("is_even", "eq-to-neq", "==")),
+            &format!("{}line = 99\n", claim("is_even", "rem-to-mul", "%")),
+            "[[mutation.expect]]\nid = \"0000000000000000000000000000000000000000000000000000000000000000\"\n\
+             outcome = \"survived\"\nreason = \"a claim for this test\"\n",
+        ]
+        .join("\n"),
+    )
+    .expect("a configuration");
+    let rotted = against(
+        &fixture,
+        &["list", "--offline", "--locked", "--tier", "all", "--claims"],
+    );
+    let said = stdout(&rotted);
+    assert_eq!(
+        rotted.status.code(),
+        Some(1),
+        "a claim that names nothing, more than it says, or a line its mutation left says \
+         something that is not so, and a push that carries one fails rather than waiting for a \
+         run to notice: {said}\n{}",
+        stderr(&rotted)
+    );
+    for (kind, rotten) in [
+        ("unmatched ", "src/lib.rs max eq-to-neq \"==\""),
+        ("unmatched ", "src/lib.rs is_even eq-to-neq \"==\""),
+        (
+            "unmatched ",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ),
+        ("moved ", "src/lib.rs is_even rem-to-mul \"%\" @99"),
+    ] {
+        assert!(
+            said.lines()
+                .any(|line| line.starts_with(kind) && line.contains(rotten)),
+            "{rotten} is named as {kind}: {said}"
+        );
+    }
+    assert!(
+        said.lines()
+            .any(|line| line.starts_with("names ") && line.contains("max gt-to-ge")),
+        "the claim that names its one mutation is not refused: {said}"
+    );
+
+    std::fs::write(fixture.root().join(".rust-mutants.toml"), good).expect("a configuration");
+    let sound = against(
+        &fixture,
+        &["list", "--offline", "--locked", "--tier", "all", "--claims"],
+    );
+    assert_eq!(
+        sound.status.code(),
+        Some(0),
+        "{}\n{}",
+        stdout(&sound),
+        stderr(&sound)
+    );
+}
+
 #[test]
 fn a_tree_that_changed_is_a_different_question_and_is_answered_again() {
     let fixture = Fixture::copy("fixture-simple");
@@ -1349,7 +1422,9 @@ fn a_proof_removing_a_mutation_and_nothing_reaching_it_are_two_answers() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: njutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect(),
         temp_directory: fixture.temp().to_path_buf(),
         program: std::env::current_exe().expect(
             "this test's own executable stands in for the engine a remembered outcome is keyed on",
@@ -1384,7 +1459,9 @@ fn asked(environment: &Environment, args: &[&str]) -> Output {
 /// The environment of a tree a test laid out itself rather than copied as a fixture.
 fn environment_at(root: &Path, temp: &Path, cache: &Path) -> Environment {
     Environment {
-        vars: njutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect(),
         temp_directory: temp.to_path_buf(),
         program: std::env::current_exe().expect(
             "this test's own executable stands in for the engine a remembered outcome is keyed on",

@@ -129,55 +129,7 @@ impl Supervisor {
                 "the supervisor has no adopted process group",
             )
         })?;
-        let leader = pgid.as_raw_nonzero().get();
-        #[expect(
-            unsafe_code,
-            reason = "a null proc_listpgrppids query is the macOS boundary for sizing its PID buffer"
-        )]
-        let estimate = unsafe { proc_listpgrppids(leader, std::ptr::null_mut(), 0) };
-        if estimate < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let mut capacity = usize::try_from(estimate)
-            .map_err(|source| io::Error::new(io::ErrorKind::InvalidData, source))?;
-        if capacity == 0 {
-            return Err(io::Error::other(
-                "proc_listpgrppids returned no capacity for its known waitable leader",
-            ));
-        }
-        loop {
-            let mut members = Vec::new();
-            members
-                .try_reserve_exact(capacity)
-                .map_err(io::Error::other)?;
-            members.resize(capacity, 0_i32);
-            let buffer_bytes = size_of_val(members.as_slice());
-            let buffer_size = i32::try_from(buffer_bytes)
-                .map_err(|source| io::Error::new(io::ErrorKind::InvalidData, source))?;
-            #[expect(
-                unsafe_code,
-                reason = "proc_listpgrppids fills the owned macOS process-group PID buffer"
-            )]
-            let returned =
-                unsafe { proc_listpgrppids(leader, members.as_mut_ptr().cast(), buffer_size) };
-            if returned < 0 {
-                return Err(io::Error::last_os_error());
-            }
-            let returned = usize::try_from(returned)
-                .map_err(|source| io::Error::new(io::ErrorKind::InvalidData, source))?;
-            if returned > capacity {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "proc_listpgrppids returned more PIDs than its buffer holds",
-                ));
-            }
-            if returned < capacity {
-                return snapshot_has_member_besides_leader(leader, returned, &members);
-            }
-            capacity = capacity.checked_mul(2).ok_or_else(|| {
-                io::Error::other("the macOS process-group PID buffer size overflowed")
-            })?;
-        }
+        member_besides_leader(pgid)
     }
 
     /// What the supervisor can say about the group it owns, for the note before an abort.
@@ -219,9 +171,8 @@ impl Supervisor {
                 "the supervisor has no adopted process group",
             )
         })?;
-        match kill_process_group(pgid, signal) {
-            Err(rustix::io::Errno::PERM) => signal_result(kill_process(pgid, signal)),
-            grouped => signal_result(grouped),
+        match signal_group(pgid, signal)? {
+            super::Stopped::Group | super::Stopped::LeaderOnly => Ok(()),
         }
     }
 
@@ -289,11 +240,173 @@ impl Drop for Supervisor {
     }
 }
 
-fn signal_result(result: rustix::io::Result<()>) -> io::Result<()> {
-    match result {
-        Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
-        Err(source) => Err(io::Error::from_raw_os_error(source.raw_os_error())),
+/// Signals every process of the group `leader` leads, and where the kernel refuses the group whole, `leader` by name, and says how much of the group that reached, as [`super::decide_stop`] decides.
+///
+/// This is the one place in the shipped crates that signals a group, because what the kernel answers is the same question wherever it is asked.
+fn signal_group(leader: Pid, signal: Signal) -> io::Result<super::Stopped> {
+    let grouped = kill_process_group(leader, signal);
+    let (alone, others) = match grouped {
+        Err(rustix::io::Errno::PERM) => (kill_process(leader, signal), others_than(leader)),
+        Ok(()) | Err(_) => (Ok(()), super::Others::Unseen),
+    };
+    match super::decide_stop(delivered(grouped), delivered(alone), others) {
+        super::StopDecision::Reached(stopped) => Ok(stopped),
+        super::StopDecision::Failed => Err(match (grouped, alone) {
+            (Err(rustix::io::Errno::PERM), Err(errno)) | (Err(errno), _) => {
+                io::Error::from_raw_os_error(errno.raw_os_error())
+            }
+            (Ok(()), Ok(()) | Err(_)) => io::Error::other("a stop the kernel answered failed"),
+        }),
     }
+}
+
+/// What the kernel's answer to one signal comes to.
+const fn delivered(answer: rustix::io::Result<()>) -> super::Delivered {
+    match answer {
+        Ok(()) => super::Delivered::Sent,
+        Err(rustix::io::Errno::SRCH) => super::Delivered::Gone,
+        Err(rustix::io::Errno::PERM) => super::Delivered::Refused,
+        Err(_) => super::Delivered::Failed,
+    }
+}
+
+/// Who besides `leader` its group holds, as far as this platform can see.
+fn others_than(leader: Pid) -> super::Others {
+    #[cfg(target_os = "macos")]
+    let seen = member_besides_leader(leader);
+    #[cfg(target_os = "linux")]
+    let seen = linux_member_besides_leader(leader.as_raw_nonzero().get());
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let seen: io::Result<bool> = {
+        let _ = leader;
+        Err(io::Error::other("this platform cannot list a group"))
+    };
+    match seen {
+        Ok(true) => super::Others::Somebody,
+        Ok(false) => super::Others::Nobody,
+        Err(_unlisted) => super::Others::Unseen,
+    }
+}
+
+/// Whether a process besides `leader` that has not ended belongs to the group `leader` leads, as `/proc` lists them.
+#[cfg(target_os = "linux")]
+fn linux_member_besides_leader(leader: i32) -> io::Result<bool> {
+    for entry in std::fs::read_dir("/proc")? {
+        let entry = entry?;
+        let pid = match entry.file_name().to_str().map(str::parse::<i32>) {
+            Some(Ok(pid)) => pid,
+            Some(Err(_)) | None => continue,
+        };
+        if pid == leader {
+            continue;
+        }
+        let stat = match std::fs::read_to_string(entry.path().join("stat")) {
+            Ok(stat) => stat,
+            Err(gone) if gone.kind() == io::ErrorKind::NotFound => continue,
+            Err(other) => return Err(other),
+        };
+        let Some((_, after_name)) = stat.rsplit_once(')') else {
+            continue;
+        };
+        let mut fields = after_name.split_whitespace();
+        let state = fields.next();
+        let group = match fields.nth(1).map(str::parse::<i32>) {
+            Some(Ok(group)) => group,
+            Some(Err(_)) | None => continue,
+        };
+        if group == leader && state != Some("Z") {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+/// Whether the group `pgid` leads holds a process besides its leader, as the kernel lists it.
+#[cfg(target_os = "macos")]
+fn member_besides_leader(pgid: Pid) -> io::Result<bool> {
+    let leader = pgid.as_raw_nonzero().get();
+    #[expect(
+        unsafe_code,
+        reason = "a null proc_listpgrppids query is the macOS boundary for sizing its PID buffer"
+    )]
+    let estimate = unsafe { proc_listpgrppids(leader, std::ptr::null_mut(), 0) };
+    if estimate < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut capacity = usize::try_from(estimate)
+        .map_err(|source| io::Error::new(io::ErrorKind::InvalidData, source))?;
+    if capacity == 0 {
+        return Err(io::Error::other(
+            "proc_listpgrppids returned no capacity for its known waitable leader",
+        ));
+    }
+    loop {
+        let mut members = Vec::new();
+        members
+            .try_reserve_exact(capacity)
+            .map_err(io::Error::other)?;
+        members.resize(capacity, 0_i32);
+        let buffer_bytes = size_of_val(members.as_slice());
+        let buffer_size = i32::try_from(buffer_bytes)
+            .map_err(|source| io::Error::new(io::ErrorKind::InvalidData, source))?;
+        #[expect(
+            unsafe_code,
+            reason = "proc_listpgrppids fills the owned macOS process-group PID buffer"
+        )]
+        let returned =
+            unsafe { proc_listpgrppids(leader, members.as_mut_ptr().cast(), buffer_size) };
+        if returned < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let returned = usize::try_from(returned)
+            .map_err(|source| io::Error::new(io::ErrorKind::InvalidData, source))?;
+        if returned > capacity {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "proc_listpgrppids returned more PIDs than its buffer holds",
+            ));
+        }
+        if returned < capacity {
+            return snapshot_has_member_besides_leader(leader, returned, &members);
+        }
+        capacity = capacity.checked_mul(2).ok_or_else(|| {
+            io::Error::other("the macOS process-group PID buffer size overflowed")
+        })?;
+    }
+}
+
+/// Ends the one process `pid`, as [`super::stop_process`] describes.
+pub(super) fn stop_process(pid: u32) -> io::Result<()> {
+    let raw = match i32::try_from(pid) {
+        Ok(raw) => raw,
+        Err(_out_of_range) => return Ok(()),
+    };
+    let Some(pid) = Pid::from_raw(raw) else {
+        return Ok(());
+    };
+    match kill_process(pid, Signal::KILL) {
+        Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
+        Err(errno) => Err(io::Error::from_raw_os_error(errno.raw_os_error())),
+    }
+}
+
+/// Stops the group a process started in a group of its own leads, as [`super::stop_group`] describes.
+pub(super) fn stop_group(leader: u32, how: super::GroupStop) -> io::Result<super::Stopped> {
+    let unled = || {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{leader} is not a process id a group can be led by"),
+        )
+    };
+    let raw = match i32::try_from(leader) {
+        Ok(raw) => raw,
+        Err(_wider_than_a_pid) => return Err(unled()),
+    };
+    let pid = Pid::from_raw(raw).ok_or_else(unled)?;
+    let signal = match how {
+        super::GroupStop::Ask => Signal::TERM,
+        super::GroupStop::Kill => Signal::KILL,
+    };
+    signal_group(pid, signal)
 }
 
 /// Observes leader exit without reaping it, so its PID continues to pin the process-group id until the supervisor has forcefully signalled that group.
@@ -343,20 +456,24 @@ pub(super) fn process_exit(status: ExitStatus) -> ProcessExit {
 
 #[cfg(test)]
 mod tests {
-    use super::{signal_result, snapshot_has_member_besides_leader};
+    use super::{delivered, snapshot_has_member_besides_leader};
 
     #[test]
-    fn an_absent_group_and_a_forbidden_group_are_distinct_signal_results() {
-        assert!(matches!(
-            signal_result(Err(rustix::io::Errno::SRCH)),
-            Ok(())
-        ));
-        let refused = signal_result(Err(rustix::io::Errno::PERM));
-        assert!(matches!(
-            refused,
-            Err(ref error)
-                if error.raw_os_error() == Some(rustix::io::Errno::PERM.raw_os_error())
-        ));
+    fn an_absent_group_and_a_forbidden_group_are_distinct_answers() {
+        assert_eq!(delivered(Ok(())), super::super::Delivered::Sent);
+        assert_eq!(
+            delivered(Err(rustix::io::Errno::SRCH)),
+            super::super::Delivered::Gone
+        );
+        assert_eq!(
+            delivered(Err(rustix::io::Errno::PERM)),
+            super::super::Delivered::Refused,
+            "a refusal is its own answer, never read as the group being gone"
+        );
+        assert_eq!(
+            delivered(Err(rustix::io::Errno::INVAL)),
+            super::super::Delivered::Failed
+        );
     }
 
     #[test]

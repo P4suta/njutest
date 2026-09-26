@@ -86,4 +86,5 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0041 An answer carries across an edit it never entered](adr/0041-an-answer-carries-across-an-edit-it-never-entered.md)
 - [0042 A claim holds where its facts do](adr/0042-a-claim-holds-where-its-facts-do.md)
 - [0043 A test may decline to measure](adr/0043-a-test-may-decline-to-measure.md)
+- [0044 A test writes only where its execution may](adr/0044-a-test-writes-only-where-its-execution-may.md)
 - [0045 Rust is read on a thread that ends with it](adr/0045-rust-is-read-on-a-thread-that-ends-with-it.md)

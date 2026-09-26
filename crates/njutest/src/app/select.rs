@@ -84,7 +84,7 @@ pub fn selected(measuring: &Measuring<'_>) -> Result<(Selection, Measurement), R
         rust_mutants::workspace::Workspace::survey_at(root, &measure::opening(measuring), cancel)?;
     let vars: BTreeMap<String, String> = environment
         .vars
-        .iter()
+        .for_process()
         .filter_map(|(name, value)| Some((name.to_str()?.to_owned(), value.to_str()?.to_owned())))
         .collect();
     let found = differences(

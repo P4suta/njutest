@@ -2431,3 +2431,78 @@ fn text_read_by_the_reader_or_for_a_test_or_as_no_rust_is_no_raw_lexing() {
         );
     }
 }
+
+#[test]
+fn an_environment_held_as_raw_pairs_is_refused_wherever_it_is_named() {
+    for refused in [
+        "fn given() -> Vec<(OsString, OsString)> { Vec::new() }",
+        "struct Options { env: Vec<(std::ffi::OsString, std::ffi::OsString)> }",
+        "fn read(env: &[(OsString, OsString)]) {}",
+        "fn one() -> (OsString, OsString) { unimplemented!() }",
+    ] {
+        assert!(
+            kinds(refused).contains(&Kind::RawEnvironment),
+            "an environment held as raw pairs is one any reader compares names in by bytes, \
+             which is the comparison Windows does not make: {refused}"
+        );
+    }
+    for passing in [
+        "fn given() -> Variables { Variables::of([(OsString::from(\"A\"), OsString::from(\"b\"))]) }",
+        "fn names(env: &Variables) -> Vec<&OsStr> { env.for_process().map(|(n, _)| n).collect() }",
+        "fn pair() -> (OsString, String) { unimplemented!() }",
+        "fn paths() -> Vec<(PathBuf, OsString)> { Vec::new() }",
+    ] {
+        assert!(
+            !kinds(passing).contains(&Kind::RawEnvironment),
+            "a pair built to hand to `Variables`, or one that is not two names and values, is \
+             no environment: {passing}"
+        );
+    }
+    for held in [
+        "crates/rust-mutants/src/vars.rs",
+        "crates/njutest-devkit/src/paths.rs",
+    ] {
+        let found = scan_source(
+            held,
+            "fn given() -> Vec<(OsString, OsString)> { Vec::new() }",
+        );
+        assert!(
+            found.is_ok_and(|found| found.iter().all(|one| one.kind != Kind::RawEnvironment)),
+            "{held} is where the pairs are read, or test support the engine cannot be a \
+             dependency of"
+        );
+    }
+}
+
+#[test]
+fn only_the_runner_signals_a_process_group_in_shipped_code() {
+    let shipped = |file: &str, source: &str| {
+        scan_source(file, source)
+            .expect("the source parses")
+            .into_iter()
+            .any(|finding| finding.kind == Kind::RawGroupSignal)
+    };
+    let group_kill = "fn stop(pid: rustix::process::Pid) { let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL); }";
+    assert!(
+        shipped("crates/njutest/src/provider.rs", group_kill),
+        "a second place that signals a group decides again what the kernel's refusal means"
+    );
+    assert!(
+        !shipped("crates/rust-mutants/src/runner/unix.rs", group_kill),
+        "the runner is where the question is answered for everybody"
+    );
+    assert!(
+        !shipped("crates/njutest/tests/toolchain_interrupt.rs", group_kill),
+        "a test that interrupts a process the way a person would is not shipped code"
+    );
+    for passing in [
+        "fn stop(child: &mut std::process::Child) -> std::io::Result<()> { child.kill() }",
+        "fn alive(pid: rustix::process::Pid) -> bool { rustix::process::test_kill_process(pid).is_ok() }",
+        "fn kill() {}",
+    ] {
+        assert!(
+            !shipped("crates/njutest/src/provider.rs", passing),
+            "a child's own `kill`, a liveness probe, and a function merely named `kill` signal no group: {passing}"
+        );
+    }
+}
