@@ -84,3 +84,57 @@ An edit to the body of an item the execution never entered cannot change what th
   - **The unit graph** comes from cargo's metadata and dep-info, not from its unstable unit graph.
   - **A shared store is trusted** by whoever reads it; a store is written only by runs that could have run the mutant.
 - A proof layer that can be wrong about one of these is audited against recordings like every other; the differential is the check that it removes work without changing an answer.
+
+## Amendment, 2026-09-26: a line moves only what runs after it
+
+### Context
+
+Measured on a real workspace (storage-scout, 1202 mutants): one comment line added inside one sealed body carried nothing.
+1100 answers were refused `skeleton-changed`, because decision 3's placeholder names the shape of a sealed body's lines, and the tree skeleton every execution is held to folds every unit.
+That is sound: a line added moves every position after it, and a position can be observed.
+It is also why a second run after "a handful of edits" reuses nothing, since an edit that adds or removes a line is the usual kind.
+
+A position is observed only by code that runs, or by the compiler while it evaluates something.
+Code that runs is code an execution enters; every cataloged body the compiler does not evaluate records its entry, sealed or not ([ADR 0027](0027-an-item-is-entered-where-its-body-starts.md)).
+So a line that moves need move only what entered code, or compile-time evaluation, can see.
+
+### Decision
+
+1. **Placeholders lose their shape.** A sealed body's placeholder in the skeleton is `{sealed:<entry>#<ordinal>}`: its lines no longer move the skeleton.
+2. **The skeleton keeps positions only where the compiler reads them.** Each `$root` file contributes one more entry: the position of every compile-time consumer of a position outside a sealed body.
+   A position is a line and a column, counted as the compiler counts them: only a line feed ends a line, a leading byte-order mark is not a column, and a column counts characters.
+   The consumers are:
+   - every `const fn` body, and every `const` and `static` initializer, at its first token;
+   - every expression the compiler evaluates outside a body that holds a macro invocation or a call: an array length in a field, a type alias or a signature, an enum discriminant, a const generic argument or default, and an associated const default;
+     a literal or a path cannot observe a position, so it is not one;
+   - every item-level macro invocation, every attribute macro and every derive, at the invocation, since the positions of its expansion resolve to the outermost invocation;
+   - every documentation code block, since a doctest is named after its line.
+     An edit that shifts none of these moves no skeleton.
+3. **Every body that runs records its entry.** A body that is not mutated records its entry all the same, with a marker and no candidate: a `#[test]` function, an item under `#[cfg(test)]`, a file the configuration excludes, and a workspace package the run left out of its selection.
+   Each is already parsed; each can run whenever a test calls into it; and an entry marker is the only way to know that it did without a premise about what its code reads.
+4. **An entered body is held where it starts.** Every entered item of an execution records the position of its body's opening brace beside its body digest.
+   A new premise, P8: every item an execution entered starts where it started, or the answer is refused `item-moved`.
+   With decision 3 this covers every body that runs, sealed or not, mutated or not: a panic's location, `line!()`, `Location::caller()`, a location a dependency's `#[track_caller]` function captures into a value (`error-stack`, `snafu`), a snapshot macro's position, and a backtrace frame are each read by code that is running, and that code is either an entered body, whose own positions are then unchanged, or code outside the tree, which no edit moves.
+5. **The engine never reads what libtest records of a test's position.** `TestDesc` holds a start and an end line for every `#[test]`, built whichever test runs, but it is visible only through `--list --format json`.
+   A law holds that no verdict and no key reads that output; if one ever must, a `#[test]` body keeps its line shape.
+6. The refusal words gain `item-moved`.
+   The audit re-derives both halves from `docs/engine/carry.md`, with the same position rule and its own parser.
+   Planted defects: a kill carried though an entered body moved; a carried answer across a moved `const` initializer that uses `line!()`; an answer carried though a field `[u8; line!() as usize]` below an edited body moved, read by an entered body that did not; a test body that moved and ran; and a documentation code block moved by an edit above it, whose doctest is renamed and must not carry.
+   The edit-pair differential gains a scripted line insertion above an entered body and one above a body nothing entered: the first runs again, the second carries, and both agree with `--no-cache`.
+
+### Consequences
+
+- An edit that adds lines inside a body carries every answer whose executions entered nothing below it in that file, and nothing that entered what moved.
+  Inserting an item still moves ordinals and signature text, so it still refuses everything in the unit.
+- An `async` body, or one whose return type holds an `impl` type, stays unsealed for its layout as before; its positions are observed only once it is polled, which runs its entry marker, so P8 covers them.
+- No premise is added: every runtime body of the tree records its entry, so what moved and ran is known rather than argued about.
+  A test that moved refuses only the answers of executions that ran it, which is the tests below the edit in its file; integration tests, and tests above the edit, still carry.
+- Markers in bodies nobody mutates cost what an entry costs where nothing else is recorded; decision 3 is measured before it ships, as ADR 0027 measured the markers it introduced.
+- A macro defined with `macro_rules!` is not a consumer by its definition; its positions are those of its invocation, which decision 2 records.
+  A test holds that a `panic!` expanded from a macro defined above an edit and invoked below it reports the invocation's line.
+
+### Future work
+
+A body that moved without changing is refused because a position can reach a verdict through a dependency's `#[track_caller]` function, and whether a call resolves to one is a question of types, not of text.
+A build with `-Zlocation-detail=none` and no debuginfo would redact every such position alike on both trees, leaving only `line!` and `column!`, which text can find; that would let most moved bodies carry.
+It needs a nightly compiler, it changes the program from what `cargo test` builds, and the redaction would have to enter the build's identity, so it is an opt-in for later rather than a default.
