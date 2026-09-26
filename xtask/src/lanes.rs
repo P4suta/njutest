@@ -137,6 +137,18 @@ pub enum LaneError {
         /// The holder.
         pid: u32,
     },
+    /// Whether a run waiting for the lane still exists could not be read.
+    #[cfg(unix)]
+    #[error(
+        "whether the run waiting for the {lane} lane (pid {pid}) still exists could not be read, \
+         so its place in line is not removed"
+    )]
+    WaiterUnseen {
+        /// The lane.
+        lane: &'static str,
+        /// The waiting run.
+        pid: u32,
+    },
     /// Whether the group a dead holder's work ran in is still there could not be seen.
     #[cfg(unix)]
     #[error(
@@ -169,9 +181,10 @@ impl crate::error::Coded for LaneError {
             | Self::Lock { .. }
             | Self::Progress { .. } => crate::error::XtCode::LaneUnavailable,
             #[cfg(unix)]
-            Self::Unended { .. } | Self::Unseen { .. } | Self::HolderUnseen { .. } => {
-                crate::error::XtCode::LaneUnavailable
-            }
+            Self::Unended { .. }
+            | Self::Unseen { .. }
+            | Self::HolderUnseen { .. }
+            | Self::WaiterUnseen { .. } => crate::error::XtCode::LaneUnavailable,
             Self::Interrupted { .. } => crate::error::XtCode::LaneInterrupted,
         }
     }
@@ -189,7 +202,10 @@ impl LaneError {
             | Self::Lock { .. }
             | Self::Progress { .. } => None,
             #[cfg(unix)]
-            Self::Unended { .. } | Self::Unseen { .. } | Self::HolderUnseen { .. } => None,
+            Self::Unended { .. }
+            | Self::Unseen { .. }
+            | Self::HolderUnseen { .. }
+            | Self::WaiterUnseen { .. } => None,
         }
     }
 }
@@ -453,6 +469,8 @@ impl Place<'_> {
         let entries = crate::repository::entries(self.directory)
             .map_err(|source| io(self.directory, source))?;
         let mut alive = Vec::new();
+        #[cfg(unix)]
+        let me = std::process::id();
         for entry in entries {
             let Some(pid) = entry
                 .file_name()
@@ -471,19 +489,30 @@ impl Place<'_> {
                 text.lines()
                     .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
             };
-            let started = started_at(pid);
-            let living = match (started.as_deref(), field("born")) {
-                (None, _) => cfg!(not(unix)),
-                (Some(_), None | Some("")) => true,
-                (Some(now), Some(born)) => now == born,
-            };
-            if !living {
-                match std::fs::remove_file(&entry) {
-                    Ok(()) => {}
-                    Err(gone) if gone.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(source) => return Err(io(&entry, source)),
+            #[cfg(unix)]
+            {
+                let now = if pid == me {
+                    Start::Unread
+                } else {
+                    start_of(pid)
+                };
+                match waiter_state(me, pid, field("born"), &now) {
+                    HolderState::Alive => {}
+                    HolderState::Dead => {
+                        match std::fs::remove_file(&entry) {
+                            Ok(()) => {}
+                            Err(gone) if gone.kind() == std::io::ErrorKind::NotFound => {}
+                            Err(source) => return Err(io(&entry, source)),
+                        }
+                        continue;
+                    }
+                    HolderState::Unseen => {
+                        return Err(LaneError::WaiterUnseen {
+                            lane: lane.name(),
+                            pid,
+                        });
+                    }
                 }
-                continue;
             }
             let ticket = match field("ticket").map(str::parse::<u64>) {
                 Some(Ok(ticket)) => ticket,
@@ -646,6 +675,61 @@ pub fn holder_state(now: &Start, born: &str) -> HolderState {
         Start::Running(started) if started == born => HolderState::Alive,
         Start::Running(_) | Start::Absent => HolderState::Dead,
         Start::Unread => HolderState::Unseen,
+    }
+}
+
+#[cfg(unix)]
+fn waiter_state(me: u32, pid: u32, born: Option<&str>, now: &Start) -> HolderState {
+    if pid == me {
+        return HolderState::Alive;
+    }
+    match now {
+        Start::Running(started) if born.is_none_or(|born| born.is_empty() || born == started) => {
+            HolderState::Alive
+        }
+        Start::Running(_) | Start::Absent => HolderState::Dead,
+        Start::Unread => HolderState::Unseen,
+    }
+}
+
+#[cfg(all(test, unix))]
+mod waiter_tests {
+    use super::{HolderState, Start, waiter_state};
+
+    #[test]
+    fn a_waiting_run_is_removed_only_when_absent_or_recycled() {
+        let cases = [
+            (7, Some("before"), Start::Unread, HolderState::Alive),
+            (
+                8,
+                Some("before"),
+                Start::Running("before".to_owned()),
+                HolderState::Alive,
+            ),
+            (
+                8,
+                None,
+                Start::Running("now".to_owned()),
+                HolderState::Alive,
+            ),
+            (
+                8,
+                Some(""),
+                Start::Running("now".to_owned()),
+                HolderState::Alive,
+            ),
+            (
+                8,
+                Some("before"),
+                Start::Running("now".to_owned()),
+                HolderState::Dead,
+            ),
+            (8, Some("before"), Start::Absent, HolderState::Dead),
+            (8, Some("before"), Start::Unread, HolderState::Unseen),
+        ];
+        for (pid, born, now, expected) in cases {
+            assert_eq!(waiter_state(7, pid, born, &now), expected);
+        }
     }
 }
 
