@@ -44,6 +44,14 @@ pub enum XtCode {
     RemoteUnrun,
     /// Another machine refused the commit.
     RemoteRefused,
+    /// git could not list the repository.
+    RepositoryUnlisted,
+    /// git listed a repository path that is not UTF-8.
+    RepositoryPath,
+    /// The repository holds a symbolic link.
+    RepositorySymlink,
+    /// A path git listed could not be read.
+    RepositoryUnreadable,
     /// A fixture tree could not be walked or read.
     FixtureUnreadable,
     /// A fixture tree holds a symbolic link.
@@ -263,6 +271,26 @@ impl XtCode {
                 "XT0402",
                 "At least one other machine refused the commit.",
                 "read each machine's answer and fix what it names",
+            ),
+            Self::RepositoryUnlisted => (
+                "XT0501",
+                "git could not list what the repository holds, so no gate can say what it read.",
+                "run the gate inside the repository's checkout, with git on the path",
+            ),
+            Self::RepositoryPath => (
+                "XT0502",
+                "git listed a path of the repository that is not UTF-8, which no path this repository holds is.",
+                "rename the path",
+            ),
+            Self::RepositorySymlink => (
+                "XT0503",
+                "The repository holds a symbolic link, which a gate never follows.",
+                "replace the link with the file it points at",
+            ),
+            Self::RepositoryUnreadable => (
+                "XT0504",
+                "A path git listed could not be read.",
+                "check the path the message names exists and is readable",
             ),
             Self::FixtureUnreadable => (
                 "XT1001",

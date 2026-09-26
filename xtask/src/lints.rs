@@ -181,6 +181,11 @@ const OPEN_AND_CLOSED_REMEDY: &str = "drop `#[non_exhaustive]`. A type that publ
     also disables `clippy::match_wildcard_for_single_variants`. Keep it only on an error whose \
     callers branch on no published exhaustive list";
 
+const RAW_TREE_WALK_REMEDY: &str = "read the repository through \
+    `crate::repository::files`, which is what git lists, and any other directory through \
+    `crate::repository::entries`; a gate that walks the filesystem reads what a build, a \
+    run or a report left beside the tree, and one that a concurrent build rewrites fails the gate \
+    for a reason that is no finding";
 const RAW_READ_REMEDY: &str = "ask `crate::observe` what the path is. A reader of evidence that \
     touches the filesystem itself decides at its own call site what an I/O failure means, which is \
     how a lock file beside the profiles became a directory that could not be read and how running \
@@ -265,6 +270,7 @@ declare_kinds! {
     OpenAndClosed => "open-and-closed",
     ForeignRemainder => "foreign-remainder",
     RawRead => "raw-read",
+    RawTreeWalk => "raw-tree-walk",
     LoneTemporaryVariable => "lone-temporary-variable",
     ErrorName => "error-name",
 }
@@ -317,6 +323,7 @@ impl Kind {
             Self::OpenAndClosed => OPEN_AND_CLOSED_REMEDY,
             Self::ForeignRemainder => FOREIGN_REMAINDER_REMEDY,
             Self::RawRead => RAW_READ_REMEDY,
+            Self::RawTreeWalk => RAW_TREE_WALK_REMEDY,
             Self::LoneTemporaryVariable => LONE_TEMPORARY_VARIABLE_REMEDY,
             Self::ErrorName => ERROR_NAME_REMEDY,
         }
@@ -418,6 +425,14 @@ fn overflow_sensitive(file: &str) -> bool {
 /// The modules that read evidence from the filesystem, every one of which looks through the observer rather than at the filesystem.
 const EVIDENCE_READERS: [&str; 1] = ["crates/njutest/src/concurrency/"];
 
+/// The one module of the gates that lists a directory: what git lists for the repository, and what a directory outside one holds.
+const REPOSITORY_WALKER: &str = "xtask/src/repository.rs";
+
+/// Whether `file` is a gate, which lists a directory only through [`REPOSITORY_WALKER`].
+fn gate_source(file: &str) -> bool {
+    file != REPOSITORY_WALKER && file.starts_with("xtask/src/")
+}
+
 /// The one module that looks at the filesystem for the readers of evidence.
 const OBSERVER: &str = "crates/njutest/src/observe.rs";
 
@@ -441,6 +456,17 @@ const FILESYSTEM_QUESTIONS: [&str; 12] = [
     "read_link",
     "file_type",
 ];
+
+/// What lists a directory: the standard library's listing, and the crate that walks a tree.
+const TREE_WALKS: [&str; 3] = ["read_dir", "WalkDir", "walkdir"];
+
+/// Where `path` names a way of listing a directory, which a gate reaches only through the repository walker.
+fn tree_walk_span(path: &syn::Path) -> Option<proc_macro2::Span> {
+    path.segments
+        .iter()
+        .find(|segment| TREE_WALKS.iter().any(|name| segment.ident == name))
+        .map(|segment| segment.ident.span())
+}
 
 /// Where `path` names the filesystem module, or its `File` alone or under that module, which a reader of evidence reaches only through the observer.
 fn filesystem_path_span(path: &syn::Path) -> Option<proc_macro2::Span> {
@@ -543,6 +569,7 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
         (overflow_sensitive(file), SourcePolicy::OverflowSensitive),
         (strict_conversions(file), SourcePolicy::StrictConversions),
         (evidence_reader(file), SourcePolicy::EvidenceReader),
+        (gate_source(file), SourcePolicy::GateSource),
     ]
     .into_iter()
     .filter(|(enabled, _policy)| *enabled)
@@ -4724,6 +4751,7 @@ enum SourcePolicy {
     OverflowSensitive,
     StrictConversions,
     EvidenceReader,
+    GateSource,
 }
 
 struct Scan {
@@ -5389,6 +5417,13 @@ impl Visit<'_> for Scan {
                 }
             }
         }
+        if self.has_policy(SourcePolicy::GateSource) {
+            for name in TREE_WALKS {
+                if let Some(span) = use_tree_name_span(&item.tree, name) {
+                    self.note(Kind::RawTreeWalk, span);
+                }
+            }
+        }
         syn::visit::visit_item_use(self, item);
     }
 
@@ -5441,6 +5476,9 @@ impl Visit<'_> for Scan {
             && FILESYSTEM_QUESTIONS.contains(&call.method.to_string().as_str())
         {
             self.note(Kind::RawRead, call.method.span());
+        }
+        if self.has_policy(SourcePolicy::GateSource) && call.method == "read_dir" {
+            self.note(Kind::RawTreeWalk, call.method.span());
         }
         if call.method == "spawn" && !self.raw_spawn_boundary(call.method.span()) {
             self.note(Kind::UnownedSpawn, call.method.span());
@@ -5511,6 +5549,11 @@ impl Visit<'_> for Scan {
         {
             self.note(Kind::RawRead, span);
         }
+        if self.has_policy(SourcePolicy::GateSource)
+            && let Some(span) = tree_walk_span(&path.path)
+        {
+            self.note(Kind::RawTreeWalk, span);
+        }
         if let Some(segment) = path
             .path
             .segments
@@ -5542,6 +5585,14 @@ impl Visit<'_> for Scan {
     }
 
     fn visit_macro(&mut self, macro_: &syn::Macro) {
+        if self.has_policy(SourcePolicy::GateSource) {
+            for name in TREE_WALKS {
+                self.note_each(
+                    Kind::RawTreeWalk,
+                    identifier_spans_in_tokens(&macro_.tokens, name),
+                );
+            }
+        }
         if self.has_policy(SourcePolicy::EvidenceReader) {
             for name in std::iter::once("fs").chain(FILESYSTEM_QUESTIONS) {
                 self.note_each(
@@ -5579,6 +5630,11 @@ impl Visit<'_> for Scan {
     }
 
     fn visit_type_path(&mut self, path: &syn::TypePath) {
+        if self.has_policy(SourcePolicy::GateSource)
+            && let Some(span) = tree_walk_span(&path.path)
+        {
+            self.note(Kind::RawTreeWalk, span);
+        }
         if let Some(segment) = path
             .path
             .segments

@@ -34,6 +34,7 @@ pub mod release;
 pub mod remote;
 pub mod repair;
 pub mod reportdiff;
+pub mod repository;
 pub mod route;
 pub mod sbom;
 pub mod schemas;
@@ -571,12 +572,15 @@ fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> 
 
 /// The run's own exit `code` where it left nothing in `scratch`, and a refusal naming each entry where it did.
 fn left_behind(scratch: &Path, code: u8, stderr: &mut dyn Write) -> ExitCode {
-    let left = match std::fs::read_dir(scratch) {
-        Ok(entries) => entries
-            .map(|entry| entry.map(|entry| entry.file_name().display().to_string()))
-            .collect::<std::io::Result<Vec<String>>>(),
-        Err(source) => Err(source),
-    };
+    let left = repository::entries(scratch).map(|entries| {
+        entries
+            .iter()
+            .map(|entry| match entry.file_name() {
+                Some(name) => name.display().to_string(),
+                None => entry.display().to_string(),
+            })
+            .collect::<Vec<String>>()
+    });
     match left {
         Ok(left) if left.is_empty() => ExitCode::from(code),
         Ok(mut left) => {

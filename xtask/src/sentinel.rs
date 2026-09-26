@@ -159,6 +159,7 @@ fn opened(header: &str) -> Result<Shape, PlantedError> {
 /// # Errors
 /// A directory or file that could not be written.
 pub fn skeleton(root: &Path) -> std::io::Result<()> {
+    crate::repository::init(root)?;
     for directory in [
         "compiler-surfaces",
         "crates/app/src",

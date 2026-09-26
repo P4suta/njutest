@@ -144,6 +144,7 @@ fn a_source_tree_that_cannot_be_walked_never_passes_as_empty() -> Result<(), Tes
 #[test]
 fn a_symbolic_link_never_hides_source_from_a_repository_gate() -> Result<(), TestError> {
     let root = tempfile::tempdir()?;
+    xtask::repository::init(root.path())?;
     for base in ["compiler-surfaces", "crates", "xtask", "fuzz"] {
         std::fs::create_dir_all(root.path().join(base))?;
     }
@@ -163,6 +164,7 @@ fn a_symbolic_link_never_hides_source_from_a_repository_gate() -> Result<(), Tes
 
 fn lint_tree(app_source: &str) -> Result<tempfile::TempDir, TestError> {
     let root = tempfile::tempdir()?;
+    xtask::repository::init(root.path())?;
     for directory in [
         "compiler-surfaces",
         "crates/app/src",
@@ -410,6 +412,7 @@ fn rust_outside_the_closed_roots_is_refused_except_for_fixture_inputs() -> Resul
 #[test]
 fn a_fixture_root_that_cannot_be_listed_never_passes_as_empty() -> Result<(), TestError> {
     let root = tempfile::tempdir()?;
+    xtask::repository::init(root.path())?;
     let failure = refused(
         gates::fixtures(root.path()),
         "a missing fixture root passed as a repository with zero fixtures",
@@ -513,4 +516,43 @@ fn a_reader_is_held_to_exactly_its_ceiling() {
         gone.iter().any(|one| one.contains("remove the line")),
         "{gone:?}"
     );
+}
+
+#[test]
+fn a_gate_reads_what_the_repository_holds_and_never_what_a_build_left_in_it()
+-> Result<(), TestError> {
+    let root = tempfile::tempdir()?;
+    xtask::repository::init(root.path())?;
+    let initialised = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(root.path())
+        .status()?;
+    require(initialised.success(), "git init")?;
+    std::fs::write(root.path().join(".gitignore"), "target/\n")?;
+    for base in ["compiler-surfaces", "crates/app/src", "xtask", "fuzz"] {
+        std::fs::create_dir_all(root.path().join(base))?;
+    }
+    std::fs::write(root.path().join("crates/app/src/lib.rs"), "pub fn f() {}\n")?;
+    let built = root
+        .path()
+        .join("fuzz/target/debug/build/generated/out/src");
+    std::fs::create_dir_all(&built)?;
+    std::fs::write(built.join("generated.rs"), "pub fn generated() {}\n")?;
+
+    let production = gates::production_sources(root.path())?;
+    require(
+        production
+            .iter()
+            .all(|path| !path.components().any(|part| part.as_os_str() == "target")),
+        format!(
+            "a gate proved build output a build writes and removes while it reads, which is no \
+             part of what the repository commits: {production:?}"
+        ),
+    )?;
+    require(
+        production
+            .iter()
+            .any(|path| path.ends_with("crates/app/src/lib.rs")),
+        format!("the committed source is read: {production:?}"),
+    )
 }

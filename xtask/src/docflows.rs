@@ -70,19 +70,15 @@ const OWN: [&str; 2] = ["<owner>/njutest/.github/", "P4suta/njutest/.github/"];
 /// [`DocflowsError::Io`] when a page cannot be read.
 pub fn snippets(root: &Path) -> Result<Vec<Snippet>, DocflowsError> {
     let mut pages = vec![root.join("README.md")];
-    for entry in walkdir::WalkDir::new(root.join("docs")).sort_by_file_name() {
-        let entry = entry.map_err(|error| DocflowsError::Io {
-            path: root.join("docs").display().to_string(),
-            source: std::io::Error::other(error),
-        })?;
-        if entry
-            .path()
-            .extension()
-            .is_some_and(|extension| extension == "md")
-        {
-            pages.push(entry.path().to_path_buf());
-        }
-    }
+    let listed = crate::repository::under(root, "docs").map_err(|failure| DocflowsError::Io {
+        path: root.join("docs").display().to_string(),
+        source: std::io::Error::other(failure.to_string()),
+    })?;
+    pages.extend(
+        listed
+            .into_iter()
+            .filter(|page| page.extension().is_some_and(|extension| extension == "md")),
+    );
     let mut found = Vec::new();
     for page in pages {
         let text = std::fs::read_to_string(&page).map_err(|source| DocflowsError::Io {
@@ -287,24 +283,17 @@ fn snippet_of(line: &str, count: usize) -> Option<(usize, &str)> {
 }
 
 fn copy_tree(from: &Path, to: &Path) -> Result<(), DocflowsError> {
-    for entry in walkdir::WalkDir::new(from) {
-        let entry = entry.map_err(|error| DocflowsError::Io {
-            path: from.display().to_string(),
-            source: std::io::Error::other(error),
-        })?;
-        let relative = entry
-            .path()
-            .strip_prefix(from)
-            .map_err(|error| DocflowsError::Io {
-                path: entry.path().display().to_string(),
-                source: std::io::Error::other(error),
-            })?;
-        let target = to.join(relative);
-        let copied = if entry.file_type().is_dir() {
-            std::fs::create_dir_all(&target)
-        } else {
-            std::fs::copy(entry.path(), &target).map(|_bytes| ())
-        };
+    let listed = crate::repository::files(from).map_err(|failure| DocflowsError::Io {
+        path: from.display().to_string(),
+        source: std::io::Error::other(failure.to_string()),
+    })?;
+    for relative in listed {
+        let target = to.join(&relative);
+        let copied = match target.parent() {
+            Some(parent) => std::fs::create_dir_all(parent),
+            None => Ok(()),
+        }
+        .and_then(|()| std::fs::copy(from.join(&relative), &target).map(|_bytes| ()));
         copied.map_err(|source| DocflowsError::Io {
             path: target.display().to_string(),
             source,
