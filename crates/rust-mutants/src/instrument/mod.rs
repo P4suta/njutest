@@ -1250,8 +1250,20 @@ impl File<'_> {
             );
         let replacement = resolved.as_str();
         if placement.hint.form == Form::M {
+            let text = replacement
+                .strip_prefix(crate::syntax::ARM_GUARD_OPENING)
+                .ok_or_else(|| {
+                    self.error(
+                        InstrumentErrorKind::SourceMismatch,
+                        format!(
+                            "mutant {} writes a guard its edit does not open with {:?}",
+                            placement.index,
+                            crate::syntax::ARM_GUARD_OPENING
+                        ),
+                    )
+                })?;
             return Ok(Written {
-                text: replacement.to_owned(),
+                text: text.to_owned(),
                 carries: in_replacement,
             });
         }
