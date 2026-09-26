@@ -451,43 +451,46 @@ fn read_positions(
             if read.contains_key(name) {
                 continue;
             }
-            let Some((base, file)) = parsed(bytes) else {
+            let Some(positions) = reading(None, |parsing| {
+                let (base, file) = parsed(parsing, bytes)?;
+                let in_file: Vec<(&Item, &ItemEvidence)> = items
+                    .iter()
+                    .zip(evidence)
+                    .filter(|((_, reference), _)| reference.path == path)
+                    .map(|((item, _), said)| (*item, said))
+                    .collect();
+                let bodies: Vec<(u32, u32)> = in_file
+                    .iter()
+                    .map(|(item, _)| (item.body.start, item.body.end))
+                    .collect();
+                let mut consumers = Consumers {
+                    base,
+                    bodies: &bodies,
+                    found: Vec::new(),
+                };
+                consumers.visit_file(&file);
+                let mut lines: Vec<String> = consumers
+                    .found
+                    .into_iter()
+                    .map(|(kind, at)| match position(bytes, at) {
+                        Some(Position { line, column }) => format!("{kind} {line}:{column}"),
+                        None => format!("{kind} @{at}"),
+                    })
+                    .collect();
+                for (_, said) in in_file.iter().filter(|(_, said)| !said.sealed) {
+                    lines.push(match said.start {
+                        Some(Position { line, column }) => {
+                            format!("body {} {line}:{column}", said.item.ordinal)
+                        }
+                        None => format!("body {} unplaced", said.item.ordinal),
+                    });
+                }
+                lines.sort();
+                Some(crate::id::digest(lines.join("\n").as_bytes()))
+            }) else {
                 continue;
             };
-            let in_file: Vec<(&Item, &ItemEvidence)> = items
-                .iter()
-                .zip(evidence)
-                .filter(|((_, reference), _)| reference.path == path)
-                .map(|((item, _), said)| (*item, said))
-                .collect();
-            let bodies: Vec<(u32, u32)> = in_file
-                .iter()
-                .map(|(item, _)| (item.body.start, item.body.end))
-                .collect();
-            let mut consumers = Consumers {
-                base,
-                bodies: &bodies,
-                found: Vec::new(),
-            };
-            consumers.visit_file(&file);
-            let mut lines: Vec<String> = consumers
-                .found
-                .into_iter()
-                .map(|(kind, at)| match position(bytes, at) {
-                    Some(Position { line, column }) => format!("{kind} {line}:{column}"),
-                    None => format!("{kind} @{at}"),
-                })
-                .collect();
-            for (_, said) in in_file.iter().filter(|(_, said)| !said.sealed) {
-                lines.push(match said.start {
-                    Some(Position { line, column }) => {
-                        format!("body {} {line}:{column}", said.item.ordinal)
-                    }
-                    None => format!("body {} unplaced", said.item.ordinal),
-                });
-            }
-            lines.sort();
-            read.insert(name.clone(), crate::id::digest(lines.join("\n").as_bytes()));
+            read.insert(name.clone(), positions);
         }
     }
     read
