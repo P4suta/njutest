@@ -62,6 +62,7 @@ pub enum WorkError {
         source: std::io::Error,
     },
     /// The kernel refused the work's group whole, and a process besides its leader is still running or could not be seen.
+    #[cfg(unix)]
     #[error(
         "the work's process group refused the stop, and a process besides its leader is still \
          running or could not be seen, so the work is not stopped"
@@ -72,9 +73,11 @@ pub enum WorkError {
 impl crate::error::Coded for WorkError {
     fn code(&self) -> crate::error::XtCode {
         match self {
-            Self::Start { .. } | Self::Watch { .. } | Self::Signals { .. } | Self::Outlived => {
+            Self::Start { .. } | Self::Watch { .. } | Self::Signals { .. } => {
                 crate::error::XtCode::WorkUnrun
             }
+            #[cfg(unix)]
+            Self::Outlived => crate::error::XtCode::WorkUnrun,
         }
     }
 }
@@ -410,6 +413,7 @@ fn others_than(leader: i32) -> Others {
 }
 
 /// What stopping a group reached.
+#[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stopped {
     /// Every process of the group was signalled, or none besides its unreaped leader was left.
@@ -419,6 +423,7 @@ pub enum Stopped {
 }
 
 /// What the kernel answered one signal with.
+#[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 pub enum Delivered {
     /// It was sent.
@@ -432,6 +437,7 @@ pub enum Delivered {
 }
 
 /// Who besides its leader a group was seen to hold.
+#[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 pub enum Others {
     /// Nobody.
@@ -443,6 +449,7 @@ pub enum Others {
 }
 
 /// What a group stop comes to.
+#[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StopDecision {
     /// It reached this much.
@@ -452,6 +459,7 @@ pub enum StopDecision {
 }
 
 /// What a group stop comes to, decided by the table the engine's runner is held to as well, `crates/rust-mutants/tests/testdata/group-stop.tsv`.
+#[cfg(unix)]
 #[must_use]
 pub const fn decide_stop(group: Delivered, leader: Delivered, others: Others) -> StopDecision {
     match group {
