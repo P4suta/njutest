@@ -1294,14 +1294,15 @@ fn target_key(
                     target: target.id.clone(),
                     source,
                 })?;
+        let canonical = environment.canonical();
         key.text("home", attempt.name())?;
         key.u64(
             "environment-count",
-            baseline_count(BaselineQuantity::Environment, environment.len())?,
+            baseline_count(BaselineQuantity::Environment, canonical.len())?,
         )?;
-        for (name, value) in environment {
+        for (name, value) in canonical {
             key.os("environment-name", &name)?;
-            key.os("environment-value", &value)?;
+            key.os("environment-value", value)?;
         }
     }
     Ok(())

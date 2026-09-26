@@ -4,7 +4,6 @@
 //! Talking to a provider: one process, newline-delimited strict JSON.
 
 use std::collections::BTreeMap;
-use std::ffi::OsString;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -636,7 +635,7 @@ impl Process {
     pub fn start(
         command: &[String],
         dir: &Path,
-        env: &[(OsString, OsString)],
+        env: &rust_mutants::vars::Variables,
     ) -> Result<Self, ProviderError> {
         let Some((program, arguments)) = command.split_first() else {
             return Err(ProviderError::new(
@@ -649,7 +648,7 @@ impl Process {
             .args(arguments)
             .current_dir(dir)
             .env_clear()
-            .envs(env.iter().cloned())
+            .envs(env.for_process())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
@@ -855,7 +854,7 @@ pub struct Once<'a> {
     /// The directory it runs in.
     pub dir: &'a Path,
     /// The environment it runs with.
-    pub env: &'a [(OsString, OsString)],
+    pub env: &'a rust_mutants::vars::Variables,
     /// What it is asked, which goes to its standard input.
     pub question: &'a str,
     /// How long it may take to end.
@@ -889,7 +888,7 @@ pub fn once(asking: &Once<'_>) -> Result<String, ProviderError> {
         .args(arguments)
         .current_dir(dir)
         .env_clear()
-        .envs(env.iter().cloned())
+        .envs(env.for_process())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());

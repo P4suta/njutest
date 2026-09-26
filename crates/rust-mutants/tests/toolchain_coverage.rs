@@ -45,13 +45,12 @@ fn measure(fixture: &str, test: &str) -> Measured {
     let trace = Recorder::disabled();
     let engine_trace = Recorder::disabled();
 
-    let mut env: Vec<(OsString, OsString)> = std::env::vars_os()
-        .filter(|(name, _)| name != "RUSTFLAGS" && name != "CARGO_ENCODED_RUSTFLAGS")
-        .collect();
-    env.push((
-        OsString::from("CARGO_ENCODED_RUSTFLAGS"),
-        OsString::from(INSTRUMENT_FLAG.replace(' ', "\u{1f}")),
-    ));
+    let mut env: rust_mutants::vars::Variables = std::env::vars_os().collect();
+    env.remove("RUSTFLAGS");
+    env.set(
+        "CARGO_ENCODED_RUSTFLAGS",
+        INSTRUMENT_FLAG.replace(' ', "\u{1f}"),
+    );
 
     let toolchain = Toolchain::locate(
         &LocateOptions {
@@ -90,7 +89,7 @@ fn measure(fixture: &str, test: &str) -> Measured {
             locked: true,
             offline: true,
             timeout: None,
-            env: Vec::new(),
+            env: rust_mutants::vars::Variables::empty(),
             build: rust_mutants::cargo::BuildConfig::default(),
         },
     )
@@ -117,10 +116,7 @@ fn measure(fixture: &str, test: &str) -> Measured {
     );
     spec.dir = Some(root.clone());
     let mut run_env = env;
-    run_env.push((
-        OsString::from(PROFILE_ENV),
-        profile_pattern(profiles.path(), "one").into_os_string(),
-    ));
+    run_env.set(PROFILE_ENV, profile_pattern(profiles.path(), "one"));
     spec.env = Some(run_env);
     let ran = run(&spec, &cancel);
     assert!(
@@ -244,19 +240,12 @@ fn a_target_that_runs_with_the_given_home_is_routed_as_one_nothing_measured() {
         .map(PathBuf::from)
         .expect("a real home");
     for (name, beside) in [("CARGO_HOME", ".cargo"), ("RUSTUP_HOME", ".rustup")] {
-        if !options.env.iter().any(|(held, _)| held == name) {
-            options
-                .env
-                .push((name.into(), real.join(beside).into_os_string()));
+        if !options.env.holds(name) {
+            options.env.set(name, real.join(beside).into_os_string());
         }
     }
-    options
-        .env
-        .retain(|(name, _)| name != "HOME" && name != "USERPROFILE");
     for name in ["HOME", "USERPROFILE"] {
-        options
-            .env
-            .push((name.into(), home.clone().into_os_string()));
+        options.env.set(name, home.clone().into_os_string());
     }
     let session = rust_mutants::workspace::Workspace::open(
         fixture.root(),

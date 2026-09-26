@@ -98,7 +98,7 @@ pub fn settings(measuring: &Measuring<'_>) -> BTreeMap<String, String> {
     let config = measuring.config;
     let vars = &measuring.environment.vars;
     let pointing: Vec<String> = vars
-        .iter()
+        .for_process()
         .filter_map(|(name, value)| {
             let name = name.to_str()?;
             let points = name.starts_with("CARGO_BUILD_")

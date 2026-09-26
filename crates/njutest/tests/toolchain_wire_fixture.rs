@@ -253,7 +253,9 @@ fn environment(fixture: &Fixture) -> Environment {
         working_directory: fixture.root().to_path_buf(),
         temp_directory: fixture.temp().to_path_buf(),
         program: PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
-        vars: njutest_devkit::paths::environment_for_a_toolchain_run(&[]),
+        vars: njutest_devkit::paths::environment_for_a_toolchain_run(&[])
+            .into_iter()
+            .collect::<rust_mutants::vars::Variables>(),
         cancel: Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),
     }

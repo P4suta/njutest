@@ -148,7 +148,7 @@ pub struct Spec {
     pub dir: Option<PathBuf>,
     /// The child's complete environment, but for [`PRESENTATION`], which the runner sets over it.
     /// `None` inherits this process's environment, which is convenient for one-shot probes; the engine composes the full set explicitly for mutant executions.
-    pub env: Option<Vec<(OsString, OsString)>>,
+    pub env: Option<crate::vars::Variables>,
     /// Bounds the child's wall-clock run time.
     /// `None` means no timeout.
     pub timeout: Option<Duration>,
@@ -1129,7 +1129,7 @@ fn resolved(spec: &Spec, program: &OsString) -> io::Result<OsString> {
     let Some(env) = &spec.env else {
         return Ok(program.clone());
     };
-    crate::cargo::resolve_executable(Path::new(program), crate::vars::search_path(env).as_deref())
+    crate::cargo::resolve_executable(Path::new(program), env.search_path())
         .map(PathBuf::into_os_string)
         .map_err(|unfound| io::Error::new(io::ErrorKind::NotFound, unfound.to_string()))
 }
@@ -1160,7 +1160,7 @@ fn wire(spec: &Spec, program: &OsString) -> io::Result<Wired> {
     }
     if let Some(env) = &spec.env {
         command.env_clear();
-        command.envs(env.iter().map(|(key, value)| (key, value)));
+        command.envs(env.for_process());
     }
     command.envs(PRESENTATION);
     if let Some(progress) = &spec.progress {

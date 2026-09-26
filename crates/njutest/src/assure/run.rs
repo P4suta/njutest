@@ -593,13 +593,8 @@ fn driven(
 }
 
 /// The environment the fuzzer runs with: the toolchain's own, since a fuzz build is a build.
-fn environment_of(
-    toolchain: &rust_mutants::cargo::Toolchain,
-) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
-    toolchain
-        .env()
-        .map(<[(std::ffi::OsString, std::ffi::OsString)]>::to_vec)
-        .unwrap_or_default()
+fn environment_of(toolchain: &rust_mutants::cargo::Toolchain) -> rust_mutants::vars::Variables {
+    toolchain.env().cloned().unwrap_or_default()
 }
 
 /// Keeps one crashing input as a candidate for the corpus.
@@ -872,30 +867,14 @@ fn hold(
 /// The environment every later phase runs with: this run's own, and what the resources it holds told it.
 fn with_seams(environment: &Environment, seams: &super::wire::Seams) -> Environment {
     let mut held = environment.clone();
-    held.vars = held
-        .vars
-        .into_iter()
-        .chain(seams.environment.iter().map(|(name, value)| {
-            (
-                std::ffi::OsString::from(name),
-                std::ffi::OsString::from(value),
-            )
-        }))
-        .collect::<BTreeMap<_, _>>()
-        .into_iter()
-        .collect();
+    for (name, value) in &seams.environment {
+        held.vars.set(name, value);
+    }
     held
 }
 
 fn set_environment(environment: &mut Environment, name: &str, value: &str) {
-    environment.vars.retain(|(held, _value)| {
-        !held
-            .to_str()
-            .is_some_and(|held| held.eq_ignore_ascii_case(name))
-    });
-    environment
-        .vars
-        .push((name.into(), std::ffi::OsString::from(value)));
+    environment.vars.set(name, value);
 }
 
 /// The report as it is before anything has run: what the run is, what it was asked to verify, and what it already knows it will not claim.

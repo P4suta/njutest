@@ -4,7 +4,7 @@
 //! Running one test process per mutant, and reading what its exit status means.
 
 use std::collections::BTreeMap;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -263,7 +263,7 @@ pub struct TestTarget {
     /// The directory it runs in: the package's manifest directory, which is what cargo uses and what a test reading a relative path expects.
     pub cwd: PathBuf,
     /// What cargo sets for this target that the parent environment does not have: `CARGO_MANIFEST_DIR`, `CARGO_PKG_*`, `CARGO_BIN_EXE_*`.
-    pub cargo_env: Vec<(OsString, OsString)>,
+    pub cargo_env: crate::vars::Variables,
     /// Whether the target is built with the libtest harness.
     pub harness: bool,
     /// What a run could not establish about this target, each named.
@@ -303,7 +303,7 @@ impl TestTarget {
             cwd,
             harness: true,
             limitations: Vec::new(),
-            cargo_env: Vec::new(),
+            cargo_env: crate::vars::Variables::empty(),
             through: Vec::new(),
         }
     }
@@ -324,7 +324,7 @@ impl TestTarget {
 
     /// What cargo sets for this target that the parent environment does not have.
     #[must_use]
-    pub fn with_cargo_env(mut self, env: Vec<(OsString, OsString)>) -> Self {
+    pub fn with_cargo_env(mut self, env: crate::vars::Variables) -> Self {
         self.cargo_env = env;
         self
     }
@@ -1303,16 +1303,10 @@ impl ExpectedStep {
         }))
     }
 
-    fn add_environment(&self, env: &mut Vec<(OsString, OsString)>) {
-        env.push((
-            OsString::from(STEP_NOTICE_ENV),
-            self.path.as_os_str().to_owned(),
-        ));
-        env.push((OsString::from(STEP_NONCE_ENV), OsString::from(&self.nonce)));
-        env.push((
-            OsString::from(STEP_STATE_ENV),
-            self.state_path.as_os_str().to_owned(),
-        ));
+    fn add_environment(&self, env: &mut crate::vars::Variables) {
+        env.set(STEP_NOTICE_ENV, self.path.as_os_str());
+        env.set(STEP_NONCE_ENV, &self.nonce);
+        env.set(STEP_STATE_ENV, self.state_path.as_os_str());
     }
 
     /// How many boundaries the process had raised when it stopped, from the state it shares.
@@ -1676,8 +1670,8 @@ fn binaries_built(
 }
 
 /// What a package's own build script left for every unit of that package: where it wrote, and what it put in the environment.
-fn built_by_a_script(messages: &[Message], package_id: &str) -> Vec<(OsString, OsString)> {
-    let mut found = Vec::new();
+fn built_by_a_script(messages: &[Message], package_id: &str) -> crate::vars::Variables {
+    let mut found = crate::vars::Variables::empty();
     for message in messages {
         let Message::BuildScriptExecuted(script) = message else {
             continue;
@@ -1686,10 +1680,10 @@ fn built_by_a_script(messages: &[Message], package_id: &str) -> Vec<(OsString, O
             continue;
         }
         if let Some(out_dir) = &script.out_dir {
-            found.push((OsString::from("OUT_DIR"), out_dir.as_os_str().to_owned()));
+            found.set("OUT_DIR", out_dir.as_os_str());
         }
         for (name, value) in &script.env {
-            found.push((OsString::from(name), OsString::from(value)));
+            found.set(name, value);
         }
     }
     found
@@ -1703,50 +1697,45 @@ pub fn environment(
     context: &Context<'_>,
     target: &TestTarget,
     scratch: Option<&Scratch>,
-) -> std::io::Result<Vec<(OsString, OsString)>> {
+) -> std::io::Result<crate::vars::Variables> {
     let (base, active, cargo) = (context.base_env, context.active, context.cargo);
     let engine = scratch.map(Scratch::engine);
-    let mut env: BTreeMap<OsString, OsString> = base
-        .iter()
-        .filter(|(name, _)| {
-            !COMPOSED_ENV
-                .iter()
-                .any(|composed| crate::vars::same_name(name, OsStr::new(composed)))
-        })
-        .cloned()
-        .collect();
-    env.extend(target.cargo_env.iter().cloned());
+    let mut env = base.clone();
+    for composed in COMPOSED_ENV {
+        env.remove(composed);
+    }
+    env.overlay(&target.cargo_env);
     if let Some(cargo) = cargo {
-        env.insert(OsString::from("CARGO"), cargo.as_os_str().to_owned());
+        env.set(OsString::from("CARGO"), cargo.as_os_str().to_owned());
     }
     if let Some(sysroot) = context.sysroot {
         let (name, value) = library_path(sysroot, base)?;
-        env.insert(name, value);
+        env.set(name, value);
     }
     if let Some((id, catalog)) = active {
-        env.insert(OsString::from(ACTIVE_ENV), OsString::from(id));
+        env.set(OsString::from(ACTIVE_ENV), OsString::from(id));
         if let Some(fault) = context.beside {
-            env.insert(OsString::from(FAULT_ENV), OsString::from(fault));
+            env.set(OsString::from(FAULT_ENV), OsString::from(fault));
         }
-        env.insert(OsString::from(CATALOG_ENV), OsString::from(catalog));
+        env.set(OsString::from(CATALOG_ENV), OsString::from(catalog));
         if let Some(steps) = context.steps {
-            env.insert(OsString::from(STEPS_ENV), OsString::from(steps.to_string()));
+            env.set(OsString::from(STEPS_ENV), OsString::from(steps.to_string()));
         }
     }
     if let Some(crash) = context.crash {
-        env.insert(
+        env.set(
             OsString::from(CRASH_NOTICE_ENV),
             crash.notice.as_os_str().to_owned(),
         );
-        env.insert(OsString::from(CRASH_NONCE_ENV), OsString::from(crash.nonce));
+        env.set(OsString::from(CRASH_NONCE_ENV), OsString::from(crash.nonce));
     }
     if let Some(touch) = context.touch {
-        env.insert(OsString::from(TOUCH_ENV), touch.log.as_os_str().to_owned());
-        env.insert(OsString::from(CATALOG_ENV), OsString::from(touch.catalog));
+        env.set(OsString::from(TOUCH_ENV), touch.log.as_os_str().to_owned());
+        env.set(OsString::from(CATALOG_ENV), OsString::from(touch.catalog));
         match touch.scope {
             TouchScope::Everything => {}
             TouchScope::Items => {
-                env.insert(
+                env.set(
                     OsString::from(crate::instrument::TOUCH_ITEMS_ENV),
                     OsString::from("1"),
                 );
@@ -1755,13 +1744,13 @@ pub fn environment(
     }
     match (context.profile, engine) {
         (Some(profile), _) => {
-            env.insert(
+            env.set(
                 OsString::from(crate::coverage::PROFILE_ENV),
                 profile.as_os_str().to_owned(),
             );
         }
         (None, Some(engine)) => {
-            env.insert(
+            env.set(
                 OsString::from(crate::coverage::PROFILE_ENV),
                 engine.join(SPILLED_PROFILE).into_os_string(),
             );
@@ -1769,7 +1758,7 @@ pub fn environment(
         (None, None) => {}
     }
     if let Some(engine) = engine {
-        env.insert(
+        env.set(
             OsString::from(crate::decline::DECLINE_NOTICE_ENV),
             engine
                 .join(crate::decline::DECLINE_NOTICE_FILE)
@@ -1779,66 +1768,51 @@ pub fn environment(
     if let Some(scratch) = scratch {
         scratched(&mut env, scratch);
     }
-    Ok(env.into_iter().collect())
+    Ok(env)
 }
 
 /// Points `env`'s temporary directories at `scratch`'s, and its home at `scratch`'s own where it has one.
-fn scratched(env: &mut BTreeMap<OsString, OsString>, scratch: &Scratch) {
+fn scratched(env: &mut crate::vars::Variables, scratch: &Scratch) {
     for name in ["TMPDIR", "TMP", "TEMP"] {
-        set(env, name, scratch.tmp.as_os_str().to_owned());
+        env.set(name, scratch.tmp.as_os_str().to_owned());
     }
     if let Some(home) = &scratch.home {
         confine(env, home);
     }
 }
 
-/// Sets `name` to `value` in `env`, in place of every spelling of it the platform reads as that name.
-fn set(env: &mut BTreeMap<OsString, OsString>, name: &str, value: OsString) {
-    env.retain(|held, _| !crate::vars::same_name(held, OsStr::new(name)));
-    env.insert(OsString::from(name), value);
-}
-
-/// The value `env` gives `name`, under any spelling the platform reads as that name.
-fn looked_up<'a>(env: &'a BTreeMap<OsString, OsString>, name: &str) -> Option<&'a OsStr> {
-    env.iter()
-        .find(|(held, _)| crate::vars::same_name(held, OsStr::new(name)))
-        .map(|(_, value)| value.as_os_str())
-}
-
 /// The home the run was given, as the platform names it.
 const GIVEN_HOME: &str = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
 
 /// Gives `env` the home at `home`, with the homes a build needs pinned where the given home keeps them and nothing left that names the given home's git identity.
-fn confine(env: &mut BTreeMap<OsString, OsString>, home: &Path) {
-    let given = looked_up(env, GIVEN_HOME).map(PathBuf::from);
+fn confine(env: &mut crate::vars::Variables, home: &Path) {
+    let given = env.var(GIVEN_HOME).map(PathBuf::from);
     for (name, beside) in PINNED_HOMES {
-        if looked_up(env, name).is_some() {
+        if env.holds(name) {
             continue;
         }
         if let Some(given) = &given {
-            set(env, name, given.join(beside).into_os_string());
+            env.set(name, given.join(beside).into_os_string());
         }
     }
-    env.retain(|held, _| !crate::vars::same_name(held, OsStr::new(GIT_GLOBAL_CONFIG)));
+    env.remove(GIT_GLOBAL_CONFIG);
     for (name, under) in CONFINED_HOME {
-        set(env, name, home.join(under).into_os_string());
+        env.set(name, home.join(under).into_os_string());
     }
-    if let Some((drive, rest)) = drive_and_rest(home) {
-        set(env, "HOMEDRIVE", drive);
-        set(env, "HOMEPATH", rest);
-    }
+    drive_and_rest(env, home);
 }
 
-/// `home` as Windows spells a home in two variables, `HOMEDRIVE` and a `HOMEPATH` under it, where it has a drive.
-fn drive_and_rest(home: &Path) -> Option<(OsString, OsString)> {
+/// Gives `env` `home` as Windows spells a home in two variables, `HOMEDRIVE` and a `HOMEPATH` under it, where it has a drive.
+fn drive_and_rest(env: &mut crate::vars::Variables, home: &Path) {
     let mut parts = home.components();
-    let std::path::Component::Prefix(prefix) = parts.next()? else {
-        return None;
+    let Some(std::path::Component::Prefix(prefix)) = parts.next() else {
+        return;
     };
     let rest: PathBuf = parts.collect();
     let mut under = OsString::from(std::path::MAIN_SEPARATOR_STR);
     under.push(rest.as_os_str());
-    Some((prefix.as_os_str().to_owned(), under))
+    env.set("HOMEDRIVE", prefix.as_os_str().to_owned());
+    env.set("HOMEPATH", under);
 }
 
 /// The directories one execution is given, none inside another (ADR 0044): the temporary directory its process sees, the engine's own files about it, and a home of its own where its home is confined.
@@ -1873,7 +1847,7 @@ impl Scratch {
     pub fn made(
         own: &Path,
         home: Home,
-        base: &[(OsString, OsString)],
+        base: &crate::vars::Variables,
     ) -> Result<Self, SessionError> {
         let mut scratch = Self::under(own, home);
         for directory in [&scratch.tmp, &scratch.engine] {
@@ -1948,10 +1922,10 @@ impl Scratch {
 
 /// `base` as a process given `scratch`'s directories sees it, with nothing else a run composes.
 #[must_use]
-pub fn within(base: &[(OsString, OsString)], scratch: &Scratch) -> Vec<(OsString, OsString)> {
-    let mut env: BTreeMap<OsString, OsString> = base.iter().cloned().collect();
+pub fn within(base: &crate::vars::Variables, scratch: &Scratch) -> crate::vars::Variables {
+    let mut env = base.clone();
     scratched(&mut env, scratch);
-    env.into_iter().collect()
+    env
 }
 
 /// The trace note saying an execution was refused because its environment would not confine it.
@@ -1960,13 +1934,13 @@ const EXECUTION_CONFINEMENT: &str = "execution-confinement";
 /// Why an environment does not confine a process to its execution's home.
 #[derive(Debug, thiserror::Error)]
 enum ConfinementError {
-    /// A variable the engine confines names somewhere else, or is there under more than one spelling.
-    #[error("{name} is {found:?}, where it is {} alone", expected.display())]
+    /// A variable the engine confines names somewhere else, or nothing.
+    #[error("{name} is {found:?}, where it is {}", expected.display())]
     Escaped {
         /// The variable.
         name: &'static str,
-        /// Every value it has.
-        found: Vec<OsString>,
+        /// The value it has.
+        found: Option<OsString>,
         /// The one it must have.
         expected: PathBuf,
     },
@@ -1980,7 +1954,7 @@ enum ConfinementError {
 
 /// Whether `env` gives the process exactly `scratch`'s home under every name the engine confines, and no global git configuration of the given home's.
 fn confinement_held(
-    env: &[(OsString, OsString)],
+    env: &crate::vars::Variables,
     scratch: &Scratch,
 ) -> Result<(), ConfinementError> {
     let Some(home) = &scratch.home else {
@@ -1988,23 +1962,16 @@ fn confinement_held(
     };
     for (name, under) in CONFINED_HOME {
         let expected = home.join(under);
-        let found: Vec<OsString> = env
-            .iter()
-            .filter(|(held, _)| crate::vars::same_name(held, OsStr::new(name)))
-            .map(|(_, value)| value.clone())
-            .collect();
-        match found.as_slice() {
-            [one] if one.as_os_str() == expected.as_os_str() => {}
-            _ => {
-                return Err(ConfinementError::Escaped {
-                    name,
-                    found,
-                    expected,
-                });
-            }
+        let found = env.var(name);
+        if found != Some(expected.as_os_str()) {
+            return Err(ConfinementError::Escaped {
+                name,
+                found: found.map(std::ffi::OsStr::to_owned),
+                expected,
+            });
         }
     }
-    match crate::vars::var(env, GIT_GLOBAL_CONFIG) {
+    match env.var(GIT_GLOBAL_CONFIG) {
         Some(found) => Err(ConfinementError::GitGlobal {
             found: found.to_owned(),
         }),
@@ -2043,10 +2010,10 @@ const fn owner_only(_directory: &Path) -> Result<(), SessionError> {
 }
 
 /// The files git reads a user's identity from under the home the run was given, each with where a confined home keeps it: `GIT_CONFIG_GLOBAL` in place of `~/.gitconfig` where it is set, and `$XDG_CONFIG_HOME/git/config`, or `~/.config/git/config` where that is unset.
-fn identity(base: &[(OsString, OsString)]) -> Vec<(PathBuf, &'static str)> {
-    let given = crate::vars::var(base, GIVEN_HOME).map(PathBuf::from);
+fn identity(base: &crate::vars::Variables) -> Vec<(PathBuf, &'static str)> {
+    let given = base.var(GIVEN_HOME).map(PathBuf::from);
     let named = |name: &str| {
-        crate::vars::var(base, name)
+        base.var(name)
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
     };
@@ -2091,8 +2058,8 @@ fn copied_if_present(from: &Path, to: &Path) -> Result<Option<String>, SessionEr
 /// The variable a dynamically linked test binary is found through, and what it should hold.
 fn library_path(
     sysroot: &Path,
-    base: &[(OsString, OsString)],
-) -> std::io::Result<(OsString, OsString)> {
+    base: &crate::vars::Variables,
+) -> std::io::Result<(&'static str, OsString)> {
     let name = if cfg!(target_os = "macos") {
         "DYLD_FALLBACK_LIBRARY_PATH"
     } else if cfg!(windows) {
@@ -2106,11 +2073,11 @@ fn library_path(
         value.push(&separator);
         value.push(triple.into_os_string());
     }
-    if let Some(existing) = crate::vars::var(base, name).filter(|existing| !existing.is_empty()) {
+    if let Some(existing) = base.var(name).filter(|existing| !existing.is_empty()) {
         value.push(&separator);
         value.push(existing);
     }
-    Ok((OsString::from(name), value))
+    Ok((name, value))
 }
 
 /// Every `lib/rustlib/<triple>/lib` the toolchain holds, which is where the target's own `libstd` is.
@@ -2296,7 +2263,7 @@ impl<'a> ExecRequest<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct Context<'a> {
     /// The environment the workspace was opened with.
-    pub base_env: &'a [(OsString, OsString)],
+    pub base_env: &'a crate::vars::Variables,
     /// The cargo that built the tree, which cargo itself puts in `CARGO` for every process it runs.
     pub cargo: Option<&'a Path>,
     /// The toolchain directory a dynamically linked test binary finds `libstd` under.
@@ -2656,25 +2623,17 @@ impl Unput {
 fn perturbed(
     request: &ExecRequest<'_>,
     active: bool,
-    env: &mut Vec<(OsString, OsString)>,
+    env: &mut crate::vars::Variables,
 ) -> Result<(), Unput> {
     for (variable, value) in &request.overlay {
-        let name = OsStr::new(variable.name());
-        env.retain(|(held, _)| !crate::vars::same_name(held, name));
-        env.push((name.to_owned(), value.clone()));
+        env.set(variable.name(), value);
     }
     if let Some((delay, catalog)) = request.delay {
         if active {
             return Err(Unput::DelayBesideMutant);
         }
-        for name in [DELAY_ENV, CATALOG_ENV] {
-            env.retain(|(held, _)| !crate::vars::same_name(held, OsStr::new(name)));
-        }
-        env.push((
-            OsString::from(DELAY_ENV),
-            OsString::from(format!("{}@{}", delay.site, delay.pause_ms)),
-        ));
-        env.push((OsString::from(CATALOG_ENV), OsString::from(catalog)));
+        env.set(DELAY_ENV, format!("{}@{}", delay.site, delay.pause_ms));
+        env.set(CATALOG_ENV, catalog);
     }
     Ok(())
 }
@@ -2866,7 +2825,7 @@ pub fn build(
             locked: options.locked,
             offline: options.offline,
             timeout: None,
-            env: Vec::new(),
+            env: crate::vars::Variables::empty(),
             build: options.build.clone(),
         },
     )?;
@@ -2937,7 +2896,7 @@ pub fn targets_of(
             None => &empty_binaries,
         };
         let mut env = cargo_environment(package, kind, target_dir, package_binaries);
-        env.extend(built_by_a_script(messages, &artifact.package_id));
+        env.overlay(&built_by_a_script(messages, &artifact.package_id));
         let held = match harnesses.entry(package.id.clone()) {
             std::collections::btree_map::Entry::Occupied(held) => held.into_mut(),
             std::collections::btree_map::Entry::Vacant(empty) => {
@@ -3039,24 +2998,18 @@ fn cargo_environment(
     kind: TargetKind,
     target_dir: Option<&Path>,
     binaries: &BTreeMap<String, PathBuf>,
-) -> Vec<(OsString, OsString)> {
+) -> crate::vars::Variables {
     let mut env = package_environment(package);
     if matches!(kind, TargetKind::Test | TargetKind::Example) {
         if let Some(target_dir) = target_dir {
-            env.push((
-                OsString::from("CARGO_TARGET_TMPDIR"),
-                target_dir.join("tmp").into_os_string(),
-            ));
+            env.set("CARGO_TARGET_TMPDIR", target_dir.join("tmp"));
         }
         for target in &package.targets {
             if !target.is_bin() {
                 continue;
             }
             if let Some(built) = binaries.get(&target.name) {
-                env.push((
-                    OsString::from(format!("CARGO_BIN_EXE_{}", target.name)),
-                    built.as_os_str().to_owned(),
-                ));
+                env.set(format!("CARGO_BIN_EXE_{}", target.name), built.as_os_str());
             }
         }
     }
@@ -3065,12 +3018,12 @@ fn cargo_environment(
 
 /// What cargo tells every unit of a package about the package.
 #[must_use]
-pub fn package_environment(package: &Package) -> Vec<(OsString, OsString)> {
+pub fn package_environment(package: &Package) -> crate::vars::Variables {
     let (major, minor, patch, pre) = version_parts(&package.version);
     let said = |value: Option<&str>| OsString::from(value.unwrap_or_default());
     let named =
         |value: Option<&Path>| value.map_or_else(OsString::new, |one| one.as_os_str().to_owned());
-    vec![
+    crate::vars::Variables::of([
         (
             OsString::from("CARGO_MANIFEST_DIR"),
             package.manifest_dir().as_os_str().to_owned(),
@@ -3132,7 +3085,7 @@ pub fn package_environment(package: &Package) -> Vec<(OsString, OsString)> {
             OsString::from("CARGO_PKG_README"),
             named(package.readme.as_deref()),
         ),
-    ]
+    ])
 }
 
 /// A semantic version cut the way cargo cuts it: three numbers and whatever follows the first hyphen.
@@ -3155,16 +3108,16 @@ fn version_parts(version: &str) -> (&str, &str, &str, &str) {
 mod tests {
     #[test]
     fn a_home_that_escaped_its_execution_is_refused_before_the_process_starts() {
-        type Plant = fn(&mut Vec<(OsString, OsString)>);
+        type Plant = fn(&mut crate::vars::Variables);
         let own = Path::new("/scratch/7");
         let scratch = super::Scratch::under(own, super::Home::Confined);
-        let given = vec![
+        let given = crate::vars::Variables::of([
             (OsString::from("HOME"), OsString::from("/home/somebody")),
             (
                 OsString::from("GIT_CONFIG_GLOBAL"),
                 OsString::from("/home/somebody/.gitconfig"),
             ),
-        ];
+        ]);
         let composed = super::within(&given, &scratch);
         assert_eq!(
             result_state(&super::confinement_held(&composed, &scratch)),
@@ -3172,18 +3125,12 @@ mod tests {
             "the environment the engine composes confines the process: {composed:?}"
         );
         let planted: [(&str, Plant); 3] = [
-            ("a home put back", |env| {
-                env.retain(|(name, _)| name != "HOME");
-                env.push(("HOME".into(), "/home/somebody".into()));
-            }),
+            ("a home put back", |env| env.set("HOME", "/home/somebody")),
             ("a confined name dropped", |env| {
-                env.retain(|(name, _)| name != "XDG_STATE_HOME");
+                env.remove("XDG_STATE_HOME");
             }),
             ("the given global git configuration named again", |env| {
-                env.push((
-                    "GIT_CONFIG_GLOBAL".into(),
-                    "/home/somebody/.gitconfig".into(),
-                ));
+                env.set("GIT_CONFIG_GLOBAL", "/home/somebody/.gitconfig");
             }),
         ];
         for (defect, plant) in planted {
@@ -3354,7 +3301,7 @@ mod tests {
         };
         let context = Context {
             leaders: None,
-            base_env: &[],
+            base_env: &crate::vars::Variables::empty(),
             cargo: None,
             sysroot: None,
             active: Some((MUTANT_A, CATALOG_A)),
@@ -3376,7 +3323,7 @@ mod tests {
         let scratch = returned!(tempfile::tempdir(), "scratch");
         let context = Context {
             leaders: None,
-            base_env: &[],
+            base_env: &crate::vars::Variables::empty(),
             cargo: None,
             sysroot: None,
             active: Some((MUTANT_A, CATALOG_A)),
@@ -3396,12 +3343,12 @@ mod tests {
                 step.nonce
             )
         );
-        let mut environment = Vec::new();
+        let mut environment = crate::vars::Variables::empty();
         step.add_environment(&mut environment);
-        assert!(environment.contains(&(
-            OsString::from(STEP_STATE_ENV),
-            step.state_path.as_os_str().to_owned()
-        )));
+        assert_eq!(
+            environment.var(STEP_STATE_ENV),
+            Some(step.state_path.as_os_str())
+        );
         let cleared = step.clear();
         assert_eq!(result_state(&cleared), Returned, "clear: {cleared:?}");
         assert_absent(&step.path);

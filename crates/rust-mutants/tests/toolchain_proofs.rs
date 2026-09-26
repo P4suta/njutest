@@ -44,10 +44,7 @@ fn a_tree_whose_own_warnings_are_denied_still_earns_the_proofs_its_conditions_ca
     let fixture = Fixture::copy("fixture-coverage");
     let cancel = Cancel::new();
     let mut options = opening(&njutest_devkit::paths::cargo_binary(), fixture.temp());
-    options.env.push((
-        std::ffi::OsString::from("RUSTFLAGS"),
-        std::ffi::OsString::from("-D warnings"),
-    ));
+    options.env.set("RUSTFLAGS", "-D warnings");
     let workspace = Workspace::open(fixture.root(), options, &cancel).expect("the workspace opens");
     let session = workspace
         .prepare(

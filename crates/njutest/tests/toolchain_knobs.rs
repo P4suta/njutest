@@ -56,7 +56,7 @@ fn each_knob_breaks_the_one_target_that_depends_on_it_and_moves_no_other() {
     let session = prepare(&fixture);
     let cancel = Cancel::new();
     let trace = Recorder::disabled();
-    let vars: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
+    let vars: rust_mutants::vars::Variables = std::env::vars_os().collect();
     let place = Place::probed(fixture.temp(), &vars, &cancel).expect("the knobs' directories");
     let baseline = njutest::assure::baseline::observe(
         &session,

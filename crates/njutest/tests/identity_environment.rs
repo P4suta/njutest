@@ -20,7 +20,7 @@ fn tool(directory: &Path, name: &str, bytes: &[u8]) -> OsString {
     path.into_os_string()
 }
 
-fn vars(pairs: &[(&str, OsString)]) -> Vec<(OsString, OsString)> {
+fn vars(pairs: &[(&str, OsString)]) -> rust_mutants::vars::Variables {
     pairs
         .iter()
         .map(|(name, value)| (OsString::from(name), value.clone()))

@@ -3,7 +3,6 @@
 
 //! The `deep-v1` soundness phase: interpreting the tests rather than counting the `unsafe`.
 
-use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::Path;
 use std::time::Duration;
@@ -60,7 +59,7 @@ pub struct Interpreting<'a> {
     /// The cargo to drive, which must be one that understands `+nightly`.
     pub cargo: rust_mutants::cargo::Selecting<'a>,
     /// The environment it runs with.
-    pub env: Vec<(OsString, OsString)>,
+    pub env: rust_mutants::vars::Variables,
     /// The packages to interpret.
     /// Empty is the whole workspace.
     pub packages: &'a [String],
@@ -213,15 +212,12 @@ fn missing(
 }
 
 /// What Miri's own environment is: the run's, plus what the configuration passes to the interpreter.
-fn environment(interpreting: &Interpreting<'_>) -> Vec<(OsString, OsString)> {
-    let mut env: BTreeMap<OsString, OsString> = interpreting.env.iter().cloned().collect();
+fn environment(interpreting: &Interpreting<'_>) -> rust_mutants::vars::Variables {
+    let mut env = interpreting.env.clone();
     if !interpreting.flags.is_empty() {
-        env.extend(std::iter::once((
-            OsString::from("MIRIFLAGS"),
-            OsString::from(interpreting.flags.join(" ")),
-        )));
+        env.set("MIRIFLAGS", interpreting.flags.join(" "));
     }
-    env.into_iter().collect()
+    env
 }
 
 /// How one Miri run ended, apart from what it said.

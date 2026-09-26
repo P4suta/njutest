@@ -3,14 +3,13 @@
 
 //! Where on this machine a run keeps what it establishes between runs.
 
-use std::ffi::OsString;
 use std::path::PathBuf;
 
 /// The directory below which a run keeps what it establishes between runs, from the environment it was given.
 #[must_use]
-pub fn cache_directory(vars: &[(OsString, OsString)], fallback: &str) -> PathBuf {
+pub fn cache_directory(vars: &crate::vars::Variables, fallback: &str) -> PathBuf {
     let named = |name: &str| -> Option<PathBuf> {
-        crate::vars::var(vars, name)
+        vars.var(name)
             .map(PathBuf::from)
             .filter(|path| path.is_absolute())
     };

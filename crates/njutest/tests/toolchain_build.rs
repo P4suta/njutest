@@ -27,8 +27,10 @@ struct Built0 {
     target_dir: PathBuf,
 }
 
-fn env() -> Vec<(OsString, OsString)> {
+fn env() -> rust_mutants::vars::Variables {
     njutest_devkit::paths::environment_for_a_toolchain_run(&["TMPDIR"])
+        .into_iter()
+        .collect::<rust_mutants::vars::Variables>()
 }
 
 fn build_fixture(fixture: &str, flavour: Flavour, packages: &[&str]) -> Built0 {
@@ -122,7 +124,7 @@ fn a_unit_carries_the_environment_cargo_would_have_given_its_process() {
     let unit = &outcome.built.units[0];
     let names: Vec<String> = unit
         .env
-        .iter()
+        .for_process()
         .map(|(key, _)| {
             key.to_str()
                 .expect("test protocol paths are UTF-8")
@@ -137,8 +139,8 @@ fn a_unit_carries_the_environment_cargo_would_have_given_its_process() {
     }
     let target_dir = unit
         .env
-        .iter()
-        .find(|(key, _)| key == "CARGO_TARGET_DIR")
+        .for_process()
+        .find(|(key, _)| *key == "CARGO_TARGET_DIR")
         .map(|(_, value)| PathBuf::from(value))
         .expect("the scratch layer");
     assert!(
@@ -197,10 +199,10 @@ fn an_instrumented_build_lands_under_the_host_triple_and_writes_a_profile_when_i
     );
     spec.dir = Some(unit.cwd.clone());
     let mut env = unit.env.clone();
-    env.push((
-        OsString::from("LLVM_PROFILE_FILE"),
+    env.set(
+        "LLVM_PROFILE_FILE",
         profiles.join("baseline.%p.profraw").into_os_string(),
-    ));
+    );
     spec.env = Some(env);
     let ran = run(&spec, &Cancel::new());
     assert!(
@@ -261,7 +263,9 @@ fn the_build_says_what_it_did_into_the_trace_without_saying_what_the_variables_h
             env: vec![
                 (OsString::from("SECRET_TOKEN"), OsString::from("hunter2")),
                 (OsString::from("PATH"), path_of()),
-            ],
+            ]
+            .into_iter()
+            .collect::<rust_mutants::vars::Variables>(),
             cargo: Cargo {
                 offline: true,
                 locked: true,
@@ -296,8 +300,8 @@ fn the_build_says_what_it_did_into_the_trace_without_saying_what_the_variables_h
 
 fn path_of() -> OsString {
     env()
-        .into_iter()
+        .for_process()
         .find(|(key, _)| njutest_devkit::paths::same_name(key, std::ffi::OsStr::new("PATH")))
-        .map(|(_, value)| value)
+        .map(|(_, value)| value.to_owned())
         .unwrap_or_default()
 }

@@ -26,7 +26,7 @@ fuzz_target!(|data: &[u8]| {
             "a flag holding the separator would reach the compiler as two: {flag:?}"
         );
     }
-    let Ok(value) = encoded(&[], &found, &[]) else {
+    let Ok(value) = encoded(&rust_mutants::vars::Variables::empty(), &found, &[]) else {
         return;
     };
     let Some(value) = value else {

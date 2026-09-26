@@ -398,7 +398,9 @@ fn equivalence_asks_about_at_most_the_limit_it_was_given() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: njutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect(),
         temp_directory: fixture.temp().to_path_buf(),
         program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
@@ -518,17 +520,12 @@ fn a_test_that_runs_a_bare_cargo_gets_the_runs_toolchain_rather_than_a_shim_that
     let fixture = Fixture::copy("fixture-bare-cargo");
     let shims = refusing_shims(&fixture);
     let mut given = environment(&fixture);
-    let searched = given
-        .vars
-        .iter()
-        .find(|(name, _)| name == "PATH")
-        .map(|(_, value)| value.clone());
+    let searched = given.vars.search_path().map(std::ffi::OsStr::to_os_string);
     let path = std::env::join_paths(
         std::iter::once(shims).chain(searched.iter().flat_map(std::env::split_paths)),
     )
     .expect("a search path");
-    given.vars.retain(|(name, _)| name != "PATH");
-    given.vars.push(("PATH".into(), path));
+    given.vars.set("PATH", path);
     let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
@@ -587,12 +584,9 @@ fn escaping(set: &[&str]) -> (Output, Fixture, std::io::Result<Escaped>) {
     let fixture = Fixture::copy("fixture-escapes");
     let record = fixture.temp().join("escaped");
     let mut given = environment(&fixture);
-    given.vars.push((
-        "FIXTURE_ESCAPES_RECORD".into(),
-        record.clone().into_os_string(),
-    ));
+    given.vars.set("FIXTURE_ESCAPES_RECORD", record.clone());
     for name in set {
-        given.vars.push(((*name).into(), "1".into()));
+        given.vars.set(*name, "1");
     }
     let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
@@ -717,14 +711,13 @@ fn given_home(fixture: &Fixture, home: &std::path::Path) -> Environment {
     for (name, beside) in [("CARGO_HOME", ".cargo"), ("RUSTUP_HOME", ".rustup")] {
         let pinned = std::env::var_os(name)
             .or_else(|| real.as_ref().map(|home| home.join(beside).into_os_string()));
-        given.vars.retain(|(held, _)| held != name);
-        if let Some(pinned) = pinned {
-            given.vars.push((name.into(), pinned));
+        match pinned {
+            Some(pinned) => given.vars.set(name, pinned),
+            None => given.vars.remove(name),
         }
     }
     for name in ["HOME", "USERPROFILE"] {
-        given.vars.retain(|(held, _)| held != name);
-        given.vars.push((name.into(), home.as_os_str().to_owned()));
+        given.vars.set(name, home.as_os_str().to_owned());
     }
     given
 }
@@ -903,13 +896,13 @@ fn a_remembered_baseline_that_needed_the_given_home_answers_only_for_that_home()
         "a recalled baseline says the target runs with the given home, as the run that measured \
          it did, since every execution of it is measured with that home"
     );
-    given.vars.push((
-        "XDG_CONFIG_HOME".into(),
+    given.vars.set(
+        "XDG_CONFIG_HOME",
         fixture
             .temp()
             .join("another-configuration")
             .into_os_string(),
-    ));
+    );
     let third = run_given(&fixture, &given);
     assert!(
         !newest_trace(&fixture).contains("baseline-remembered"),
@@ -983,17 +976,12 @@ fn a_shim_that_answers_only_in_the_given_home_is_asked_as_a_confined_test_asks_i
     std::fs::create_dir_all(home.join(".local/state")).expect("the given home");
     std::fs::write(home.join(".local/state/trusted"), "").expect("a trust the given home holds");
     let mut given = given_home(&fixture, &home);
-    let searched = given
-        .vars
-        .iter()
-        .find(|(name, _)| name == "PATH")
-        .map(|(_, value)| value.clone());
+    let searched = given.vars.search_path().map(std::ffi::OsStr::to_os_string);
     let path = std::env::join_paths(
         std::iter::once(shims).chain(searched.iter().flat_map(std::env::split_paths)),
     )
     .expect("a search path");
-    given.vars.retain(|(name, _)| name != "PATH");
-    given.vars.push(("PATH".into(), path));
+    given.vars.set("PATH", path);
     let output = run_given(&fixture, &given);
     assert_eq!(
         output.status.code(),

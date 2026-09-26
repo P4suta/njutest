@@ -23,7 +23,7 @@ pub struct LocateOptions {
     pub search_path: Option<OsString>,
     /// The complete environment every cargo command runs with.
     /// `None` inherits this process's environment.
-    pub env: Option<Vec<(OsString, OsString)>>,
+    pub env: Option<crate::vars::Variables>,
 }
 
 /// A located cargo and the rustc beside it, named by their banners.
@@ -35,7 +35,7 @@ pub struct Toolchain {
     sysroot: Option<PathBuf>,
     cargo_version: VersionInfo,
     rustc_version: VersionInfo,
-    env: Option<Vec<(OsString, OsString)>>,
+    env: Option<crate::vars::Variables>,
 }
 
 impl Toolchain {
@@ -81,7 +81,7 @@ impl Toolchain {
         };
         let cargo_version = banner(&cargo)?;
         let rustc_version = banner(&rustc)?;
-        let sysroot = sysroot_of(&rustc, dir, options.env.as_deref(), cancel)?;
+        let sysroot = sysroot_of(&rustc, dir, options.env.as_ref(), cancel)?;
         let chosen_by_path = name.components().count() == 1 && !name.is_absolute();
         let toolchain = if chosen_by_path {
             sysroot.as_deref()
@@ -187,8 +187,8 @@ impl Toolchain {
 
     /// The environment cargo commands run with, when frozen.
     #[must_use]
-    pub fn env(&self) -> Option<&[(OsString, OsString)]> {
-        self.env.as_deref()
+    pub const fn env(&self) -> Option<&crate::vars::Variables> {
+        self.env.as_ref()
     }
 
     /// The environment the tests are given, with this toolchain's own directory first on its search path where a bare `cargo` from `dir` would answer with another toolchain or not at all, and what it said that made it so.
@@ -199,7 +199,7 @@ impl Toolchain {
     /// [`CargoErrorKind::TestsToolchain`] where even this toolchain's own directory first on the search path does not make a bare `cargo` answer as this toolchain does.
     pub fn for_tests(
         &self,
-        (env, confined): (Variables, Variables),
+        (env, confined): (crate::vars::Variables, crate::vars::Variables),
         dir: &Path,
         cancel: &Cancel,
     ) -> Result<ForTests, CargoError> {
@@ -382,32 +382,21 @@ fn pinned(
 
 /// `env` with `RUSTC` naming the pinned `rustc` and `RUSTDOC` the `rustdoc` beside it, unless the environment already names them, so cargo never asks a shim again.
 fn with_toolchain(
-    mut env: Vec<(OsString, OsString)>,
+    mut env: crate::vars::Variables,
     rustc: &Path,
     sysroot: Option<&Path>,
-) -> Result<Vec<(OsString, OsString)>, CargoError> {
-    let named = |env: &[(OsString, OsString)], variable: &str| {
-        env.iter().any(|(name, _)| {
-            name.to_str().is_some_and(|name| {
-                if cfg!(windows) {
-                    name.eq_ignore_ascii_case(variable)
-                } else {
-                    name == variable
-                }
-            })
-        })
-    };
-    if !named(&env, "RUSTC") {
-        env.push(("RUSTC".into(), rustc.as_os_str().to_owned()));
+) -> Result<crate::vars::Variables, CargoError> {
+    if !env.holds("RUSTC") {
+        env.set("RUSTC", rustc.as_os_str());
     }
     if let Some(sysroot) = sysroot
-        && !named(&env, "RUSTDOC")
+        && !env.holds("RUSTDOC")
         && let Some(rustdoc) = first_executable(executable_variants(
             &sysroot.join("bin"),
             Path::new("rustdoc"),
         ))?
     {
-        env.push(("RUSTDOC".into(), rustdoc.into_os_string()));
+        env.set("RUSTDOC", rustdoc);
     }
     Ok(env)
 }
@@ -416,13 +405,10 @@ fn with_toolchain(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForTests {
     /// The environment every test process starts with.
-    pub env: Vec<(OsString, OsString)>,
+    pub env: crate::vars::Variables,
     /// What a bare `cargo` from the copy said, where it was not the run's toolchain; nothing where the search path was left as it was.
     pub pinned: Option<String>,
 }
-
-/// The variables a process starts with, in the order they were given.
-type Variables = Vec<(OsString, OsString)>;
 
 /// What a bare `cargo -vV` answered from a directory: a banner, or what it said instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -444,18 +430,14 @@ impl Bare {
 }
 
 /// What a `cargo` found by its bare name on `env`'s search path answers from `dir`, with `env` as its whole environment.
-fn bare_banner(env: &[(OsString, OsString)], dir: &Path, cancel: &Cancel) -> Bare {
-    let search_path = env
-        .iter()
-        .find(|(name, _)| is_search_path(name))
-        .map(|(_, value)| value.as_os_str());
-    let cargo = match resolve_executable(Path::new("cargo"), search_path) {
+fn bare_banner(env: &crate::vars::Variables, dir: &Path, cancel: &Cancel) -> Bare {
+    let cargo = match resolve_executable(Path::new("cargo"), env.search_path()) {
         Ok(cargo) => cargo,
         Err(error) => return Bare::Said(error.to_string()),
     };
     let mut spec = Spec::new([cargo.as_os_str(), OsStr::new("-vV")], Bound::After(PROBE));
     spec.dir = Some(dir.to_path_buf());
-    spec.env = Some(env.to_vec());
+    spec.env = Some(env.clone());
     spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
     let result = run(&spec, cancel);
     if !result.succeeded() {
@@ -474,25 +456,13 @@ fn bare_banner(env: &[(OsString, OsString)], dir: &Path, cancel: &Cancel) -> Bar
     }
 }
 
-/// Whether `name` is the variable a search path is read from, which Windows spells in any case.
-fn is_search_path(name: &OsStr) -> bool {
-    name.to_str().is_some_and(|name| {
-        if cfg!(windows) {
-            name.eq_ignore_ascii_case("PATH")
-        } else {
-            name == "PATH"
-        }
-    })
-}
-
 /// `env` with `bin` first on its search path, and the search path it had after it.
 fn first_on_search_path(
-    mut env: Vec<(OsString, OsString)>,
+    mut env: crate::vars::Variables,
     bin: &Path,
-) -> Result<Vec<(OsString, OsString)>, CargoError> {
-    let held = env.iter().position(|(name, _)| is_search_path(name));
-    let rest: Vec<PathBuf> = match held.and_then(|at| env.get(at)) {
-        Some((_, value)) => std::env::split_paths(value).collect(),
+) -> Result<crate::vars::Variables, CargoError> {
+    let rest: Vec<PathBuf> = match env.search_path() {
+        Some(value) => std::env::split_paths(value).collect(),
         None => Vec::new(),
     };
     let joined =
@@ -502,10 +472,7 @@ fn first_on_search_path(
                 format!("{} cannot be put on a search path: {error}", bin.display()),
             )
         })?;
-    match held.and_then(|at| env.get_mut(at)) {
-        Some((_, value)) => *value = joined,
-        None => env.push(("PATH".into(), joined)),
-    }
+    env.set("PATH", joined);
     Ok(env)
 }
 
@@ -634,7 +601,7 @@ fn executable_variants(dir: &Path, name: &Path) -> Vec<PathBuf> {
 fn sysroot_of(
     rustc: &Path,
     dir: &Path,
-    env: Option<&[(OsString, OsString)]>,
+    env: Option<&crate::vars::Variables>,
     cancel: &Cancel,
 ) -> Result<Option<PathBuf>, CargoError> {
     let mut spec = Spec::new(
@@ -646,7 +613,7 @@ fn sysroot_of(
         Bound::After(PROBE),
     );
     spec.dir = Some(dir.to_path_buf());
-    spec.env = env.map(<[(OsString, OsString)]>::to_vec);
+    spec.env = env.cloned();
     spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
     let result = run(&spec, cancel);
     if !result.succeeded() {

@@ -870,13 +870,9 @@ pub fn sighted(run: Run<'_>, root: &Path, cancel: &Cancel) -> Result<Sighted, En
     } = run;
     materialise(root)?;
     let compiler = Compiler::of(run);
-    let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = open
-        .env
-        .into_iter()
-        .filter(|(name, _)| name != "RUSTC" && name != "RUSTDOC")
-        .collect();
-    env.push(("RUSTC".into(), compiler.rustc.into_os_string()));
-    env.push(("RUSTDOC".into(), compiler.rustdoc.into_os_string()));
+    let mut env = open.env;
+    env.set("RUSTC", compiler.rustc);
+    env.set("RUSTDOC", compiler.rustdoc);
     let planting = OpenOptions {
         cargo: Some(compiler.cargo),
         env,

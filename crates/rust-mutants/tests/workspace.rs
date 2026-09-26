@@ -35,8 +35,8 @@ fn opened(
     script: &Script,
 ) -> (Result<Workspace, rust_mutants::EngineError>, Installed) {
     let installed = install(script);
-    let mut env: Vec<(OsString, OsString)> = installed.env();
-    env.push((OsString::from("PATH"), OsString::from(installed.bin())));
+    let mut env: rust_mutants::vars::Variables = installed.env().into_iter().collect();
+    env.set("PATH", installed.bin());
     let opened = Workspace::open(
         fixture.root(),
         OpenOptions {
@@ -153,8 +153,8 @@ fn opening_copies_the_tree_and_asks_the_toolchain_in_the_copy() {
         Invocation::new("cargo", &["metadata"]).printing(&metadata_document(fixture.root())),
     );
     let installed = install(&script);
-    let mut env: Vec<(OsString, OsString)> = installed.env();
-    env.push((OsString::from("PATH"), OsString::from(installed.bin())));
+    let mut env: rust_mutants::vars::Variables = installed.env().into_iter().collect();
+    env.set("PATH", installed.bin());
     let workspace = Workspace::open(
         fixture.root(),
         OpenOptions {
@@ -242,8 +242,8 @@ fn a_temporary_root_alias_is_resolved_before_any_workspace_path_is_minted()
         Invocation::new("cargo", &["metadata"]).printing(&metadata_document(fixture.root())),
     );
     let installed = install(&script);
-    let mut env: Vec<(OsString, OsString)> = installed.env();
-    env.push((OsString::from("PATH"), OsString::from(installed.bin())));
+    let mut env: rust_mutants::vars::Variables = installed.env().into_iter().collect();
+    env.set("PATH", installed.bin());
     let workspace = Workspace::open(
         fixture.root(),
         OpenOptions {
@@ -357,8 +357,8 @@ fn an_allowed_directory_outside_the_root_is_read_rather_than_refused() {
     let script =
         toolchain_answers().answering(Invocation::new("cargo", &["metadata"]).printing(&document));
     let installed = install(&script);
-    let mut env: Vec<(OsString, OsString)> = installed.env();
-    env.push((OsString::from("PATH"), OsString::from(installed.bin())));
+    let mut env: rust_mutants::vars::Variables = installed.env().into_iter().collect();
+    env.set("PATH", installed.bin());
     let opened = Workspace::open(
         fixture.root(),
         OpenOptions {

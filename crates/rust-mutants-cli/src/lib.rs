@@ -39,7 +39,7 @@ pub const EXIT_USAGE: u8 = run::Exit::Unestablished.code();
 #[derive(Debug, Clone)]
 pub struct Environment {
     /// The process environment, which the engine hands to every command and test process it starts.
-    pub vars: Vec<(OsString, OsString)>,
+    pub vars: rust_mutants::vars::Variables,
     /// The directory snapshots and target directories are created in.
     pub temp_directory: PathBuf,
     /// This program's own path, which `doctor` copies to measure what running a newly written file costs.
@@ -141,27 +141,20 @@ impl std::fmt::Debug for Streams<'_> {
 impl Environment {
     /// Where a user's caches belong, from `vars` alone: `XDG_CACHE_HOME`, then `HOME/.cache`, then `LOCALAPPDATA` on Windows.
     #[must_use]
-    pub fn cache_directory_of(vars: &[(OsString, OsString)]) -> PathBuf {
+    pub fn cache_directory_of(vars: &rust_mutants::vars::Variables) -> PathBuf {
         rust_mutants::userdirs::cache_directory(vars, ".rust-mutants-cache")
     }
 
     /// Whether `vars` asks for no colour, which one variable being set at all says.
     #[must_use]
-    pub fn no_color_of(vars: &[(OsString, OsString)]) -> bool {
-        vars.iter()
-            .any(|(key, value)| key == "NO_COLOR" && !value.is_empty())
+    pub fn no_color_of(vars: &rust_mutants::vars::Variables) -> bool {
+        vars.var("NO_COLOR").is_some_and(|value| !value.is_empty())
     }
 
     /// The service `vars` says the command runs under: GitHub Actions only when it names every file a step reports through.
     #[must_use]
-    pub fn ci_host_of(vars: &[(OsString, OsString)]) -> CiHost {
-        let named = |wanted: &str| {
-            vars.iter()
-                .rev()
-                .find(|(key, _)| key == wanted)
-                .map(|(_, value)| value)
-                .filter(|value| !value.is_empty())
-        };
+    pub fn ci_host_of(vars: &rust_mutants::vars::Variables) -> CiHost {
+        let named = |wanted: &str| vars.var(wanted).filter(|value| !value.is_empty());
         if named("GITHUB_ACTIONS").is_some_and(|value| value == "true")
             && let (Some(summary), Some(output), Some(workspace)) = (
                 named("GITHUB_STEP_SUMMARY"),

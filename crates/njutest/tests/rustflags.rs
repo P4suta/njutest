@@ -14,7 +14,7 @@ use std::path::Path;
 
 use njutest::rustflags::{COVERAGE_FLAG, Configured, SEPARATOR, configured, encoded};
 
-fn env(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
+fn env(pairs: &[(&str, &str)]) -> rust_mutants::vars::Variables {
     pairs
         .iter()
         .map(|(key, value)| (OsString::from(key), OsString::from(value)))

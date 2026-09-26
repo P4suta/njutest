@@ -352,9 +352,7 @@ impl Tools {
             Bound::After(crate::runner::PROBE),
         );
         spec.dir = Some(dir.to_path_buf());
-        spec.env = toolchain
-            .env()
-            .map(<[(std::ffi::OsString, std::ffi::OsString)]>::to_vec);
+        spec.env = toolchain.env().cloned();
         spec.structured_stdout = Some(crate::runner::PROBE_OUTPUT_LIMIT);
         let printed = run(&spec, watch.cancel());
         watch.exec(&spec, &printed);
