@@ -399,7 +399,11 @@ impl Place<'_> {
 
     /// Ends every group the last holder's work ran in, when that holder died before its work did: each is asked to stop, then killed, and the lane is taken only once every one is seen gone.
     fn outlast(&self, request: &Request<'_>, progress: &mut dyn Write) -> Result<(), LaneError> {
-        for (pid, born) in groups_of(self.record) {
+        let text = match std::fs::read_to_string(self.record) {
+            Ok(text) => text,
+            Err(_no_record) => return Ok(()),
+        };
+        for (pid, born) in groups_of(&text, boot().as_deref()) {
             self.end_group(request, progress, (pid, &born))?;
         }
         Ok(())
@@ -487,13 +491,23 @@ fn liveness(pid: u32, born: &str) -> Liveness {
     )
 }
 
-/// Every group the lane's record says its work ran in, with when each group's leader started.
-fn groups_of(record: &Path) -> Vec<(u32, String)> {
-    let text = match std::fs::read_to_string(record) {
-        Ok(text) => text,
-        Err(_no_record) => return Vec::new(),
-    };
-    text.lines()
+/// Every group a lane's record says its work ran in, with when each group's leader started, or none when its holder let the lane go itself or the record was written in another boot, whose ids name nothing of it now.
+#[must_use]
+pub fn groups_of(record: &str, this_boot: Option<&str>) -> Vec<(u32, String)> {
+    let written_in = record
+        .lines()
+        .find_map(|line| line.strip_prefix("boot="))
+        .filter(|then| !then.is_empty());
+    if let (Some(then), Some(now)) = (written_in, this_boot)
+        && then != now
+    {
+        return Vec::new();
+    }
+    if record.lines().any(|line| line == "released") {
+        return Vec::new();
+    }
+    record
+        .lines()
         .filter_map(|line| {
             line.strip_prefix("group=")
                 .or_else(|| line.strip_prefix("leader="))
@@ -503,6 +517,24 @@ fn groups_of(record: &Path) -> Vec<(u32, String)> {
             Some((number(pid)?, born.to_owned()))
         })
         .collect()
+}
+
+/// What names this boot of the machine: the kernel's boot id on Linux, and when it booted on macOS.
+#[must_use]
+pub fn boot() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        match std::fs::read_to_string("/proc/sys/kernel/random/boot_id") {
+            Ok(id) => Some(id.trim().to_owned()),
+            Err(_unreadable) => None,
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        answer(Command::new("sysctl").args(["-n", "kern.boottime"]))
+            .and_then(|said| said.split(',').next().map(str::to_owned))
+            .filter(|seconds| seconds.contains("sec"))
+    }
 }
 
 /// Stops the group led by `pid`, whether or not its leader is still alive.
@@ -539,12 +571,25 @@ const fn stop_group(_pid: u32, _sent: crate::work::Sent) -> std::io::Result<()> 
 #[derive(Debug)]
 #[must_use = "a lane is held only for as long as this value lives"]
 pub struct Held {
-    #[expect(
-        dead_code,
-        reason = "the file is held for what dropping it does: the operating system releases the lock"
-    )]
     lock: Option<File>,
     record: Option<PathBuf>,
+}
+
+impl Drop for Held {
+    /// Writes into the record that this holder let the lane go itself, before the lock goes: what its work left in its groups — a compilation cache's server, Git's file monitor — is somebody's to keep, and the next run leaves it; a holder that dies never writes it, and its groups are ended.
+    fn drop(&mut self) {
+        if self.lock.is_some()
+            && let Some(record) = &self.record
+        {
+            match OpenOptions::new()
+                .append(true)
+                .open(record)
+                .and_then(|mut appending| appending.write_all(b"released\n"))
+            {
+                Ok(()) | Err(_) => {}
+            }
+        }
+    }
 }
 
 impl Held {
@@ -597,6 +642,13 @@ pub fn revision_of(directory: &Path, environment: &[(OsString, OsString)]) -> St
         ask(&["rev-parse", "--abbrev-ref", "HEAD"]),
         ask(&["rev-parse", "--short", "HEAD"])
     )
+}
+
+/// When the process `pid` started, as a lane records it.
+#[cfg(feature = "testkit")]
+#[must_use]
+pub fn started(pid: u32) -> Option<String> {
+    started_at(pid)
 }
 
 /// When the process `pid` started, as the operating system spells it, so a recycled pid is not taken for the process that had it.
@@ -659,13 +711,14 @@ fn state_directory(environment: &[(OsString, OsString)]) -> Option<PathBuf> {
 
 fn record_of(holder: &Holder) -> String {
     format!(
-        "pid={}\nsince={}\nworktree={}\nrevision={}\ncommand={}\nload={}\n",
+        "pid={}\nsince={}\nworktree={}\nrevision={}\ncommand={}\nload={}\nboot={}\n",
         std::process::id(),
         now(),
         holder.worktree.display(),
         holder.revision,
         holder.command,
-        load()
+        load(),
+        boot().unwrap_or_default()
     )
 }
 
