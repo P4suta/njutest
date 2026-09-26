@@ -32,7 +32,7 @@ Every entry point that reads — discovery, instrumentation and its parts, the c
 `syn::Error` is `Send` and keeps its location only on the thread that made it, so no reading returns one: `ReadingError` is converted on the reading thread, and carries a line and column rather than a span.
 
 **A thread's reading is budgeted before a byte is lexed.** `Parsing` carries what its thread has spent and may spend; each read is charged three times its length plus one, covering the literals `syn` lexes a second time and the gap left between texts, and past half of the 32-bit space it is refused as `ReadingError::Exhausted` (RM0018), never wrapped.
-A reading that fails for that reason, or because its thread could not start or panicked (RM0019), is not an answer about the text: discovery fails the file by name, instrumentation says why, and a check that already answers conservatively for a file that does not parse — the skeleton seals nothing, the scan assumes an include, the selection shadows every name — takes that same answer.
+A reading that fails for that reason, or because its thread could not start (RM0019), is not an answer about the text: discovery fails the file by name, instrumentation says why, and a check that already answers conservatively for a file that does not parse — the skeleton seals nothing, the scan assumes an include, the selection shadows every name — takes that same answer.
 
 **A lint holds every reading there.** `raw-lexing` refuses, in shipped code outside `parsing.rs`, `parse_str` and `parse_file` however they are named, called or passed, a `TokenStream` or `Literal` `from_str` and an inferred `FromStr::from_str`, a `.parse::<T>()` of a type not on a list of types that are not Rust text, `parse_with` and a parser's `parse_str`, `LitInt::new` and `LitFloat::new`, and `quote!` and its kin, which lex every literal they quote.
 The macros crate, which is handed the compiler's own tokens, the devkit, which only measuring code links, and code compiled only for tests are outside it.
@@ -43,6 +43,7 @@ The macros crate, which is handed the compiler's own tokens, the devkit, which o
 - A watch session holds no round's sources after the round.
 - A file that would take its reading past the budget is refused by name, where it used to be read to wrong places or, before that, to panic.
 - A long chain of operators reads on the reading thread's stack, which is larger than a main thread's; a 6000-term chain that aborts on 8 MiB reads.
+- A panic in a reading is raised again in the thread that asked for it, so under the test profile it unwinds there as any panic would, and in a release build, which aborts on a panic, it ends the process; no value ever stands in for one.
 - Each reading starts a thread: a few hundred per run, against the build of the tree it reads.
 - A reading inside a reading is a thread and a budget of its own, since the budget travels with the right to read rather than living in the thread; nothing does that on a hot path.
 - A new kind of text a `.parse::<T>()` reads is a line on `PARSED_TYPES`, which is where someone decides it is not Rust.

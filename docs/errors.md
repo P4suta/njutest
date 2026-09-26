@@ -45,7 +45,7 @@ The first digit names an area:
 | `RM0016` | A file the host named for a step's summary or outputs, which could not be appended to. | the runner names the file for this step; check no earlier step removed it or its directory |
 | `RM0017` | Rust text the engine read is not Rust of the kind it asked for. | the message names the line and column in the text read; the file or fragment it came from is the one to look at |
 | `RM0018` | Rust text that would take its reading thread's locations past what they address: proc-macro2 keeps 32-bit locations per thread, and past them every location wraps. | a single file this large is refused rather than read to the wrong places; split it, or skip it with an exclude pattern |
-| `RM0019` | The thread Rust text is read on could not be started or did not finish. | the operating system refused a thread, or the reading panicked; run again, and report the panic if it repeats |
+| `RM0019` | The thread Rust text is read on could not be started. | the operating system refused a thread; check the process and memory limits of this user, and run again |
 | `RM1001` | Snapshot options that cannot be honoured, such as a report directory that is absolute or climbs out of the source root. | name a report directory inside the workspace; one that climbs out of it would have the run write where nothing sweeps |
 | `RM1002` | A source root that is relative, cannot be read, or is not a directory. | pass --root at a directory that exists and holds the workspace manifest |
 | `RM1003` | An operating system failure while reading a tree: a directory that cannot be listed, an entry that cannot be stat'ed. | this is what the operating system said; the path it names is the one to look at |

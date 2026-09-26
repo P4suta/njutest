@@ -557,8 +557,7 @@ impl SyntaxError {
                 message,
             },
             unread @ (crate::parsing::ReadingError::Exhausted { .. }
-            | crate::parsing::ReadingError::ThreadUnavailable { .. }
-            | crate::parsing::ReadingError::ThreadPanicked) => Self::Unread {
+            | crate::parsing::ReadingError::ThreadUnavailable { .. }) => Self::Unread {
                 path: path.to_owned(),
                 source: unread,
             },

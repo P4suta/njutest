@@ -60,9 +60,6 @@ pub enum ReadingError {
         /// What the operating system said.
         source: std::io::Error,
     },
-    /// The reading thread panicked.
-    #[error("the thread that reads Rust source panicked")]
-    ThreadPanicked,
 }
 
 /// Where text is not Rust, and what the parser said there.
@@ -92,9 +89,9 @@ impl ReadingError {
                 column,
                 message,
             }),
-            unreadable @ (Self::Exhausted { .. }
-            | Self::ThreadUnavailable { .. }
-            | Self::ThreadPanicked) => Err(unreadable),
+            unreadable @ (Self::Exhausted { .. } | Self::ThreadUnavailable { .. }) => {
+                Err(unreadable)
+            }
         }
     }
 
@@ -104,7 +101,7 @@ impl ReadingError {
         match self {
             Self::Syntax { .. } => crate::error::READING_SYNTAX,
             Self::Exhausted { .. } => crate::error::READING_EXHAUSTED,
-            Self::ThreadUnavailable { .. } | Self::ThreadPanicked => crate::error::READING_THREAD,
+            Self::ThreadUnavailable { .. } => crate::error::READING_THREAD,
         }
     }
 
@@ -216,15 +213,19 @@ impl<'scope, T: Send + 'scope> ReadingThread<'scope, T> {
             .map_err(|source| ReadingError::ThreadUnavailable { source })
     }
 
-    fn join(self) -> Result<T, ReadingError> {
-        self.0.join().map_err(|_panic| ReadingError::ThreadPanicked)
+    /// The answer, or the reading's panic raised again here, so a panic in a reading is a panic in its caller under every profile and nothing stands in for it.
+    fn join(self) -> T {
+        match self.0.join() {
+            Ok(answer) => answer,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
     }
 }
 
 /// Runs `work` with the right to read Rust text, on a thread of its own whose locations end with it.
 ///
 /// # Errors
-/// The thread could not be started or panicked.
+/// The thread could not be started; a panic in `work` is raised again in the caller.
 pub fn apart<T: Send>(work: impl FnOnce(&Parsing) -> T + Send) -> Result<T, ReadingError> {
     apart_within(CEILING, work)
 }
@@ -241,7 +242,7 @@ pub(crate) fn apart_within<T: Send>(
                 ceiling,
                 on_this_thread: PhantomData,
             })
-        })?
-        .join()
+        })
+        .map(ReadingThread::join)
     })
 }

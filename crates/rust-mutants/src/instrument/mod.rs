@@ -365,8 +365,9 @@ impl InstrumentError {
         let kind = match unread {
             crate::parsing::ReadingError::Syntax { .. } => syntax,
             crate::parsing::ReadingError::Exhausted { .. } => InstrumentErrorKind::ReadingExhausted,
-            crate::parsing::ReadingError::ThreadUnavailable { .. }
-            | crate::parsing::ReadingError::ThreadPanicked => InstrumentErrorKind::ReadingThread,
+            crate::parsing::ReadingError::ThreadUnavailable { .. } => {
+                InstrumentErrorKind::ReadingThread
+            }
         };
         Self::new(kind, path, unread.to_string())
     }
@@ -896,8 +897,7 @@ impl File<'_> {
                 ),
             ),
             crate::parsing::ReadingError::Exhausted { .. }
-            | crate::parsing::ReadingError::ThreadUnavailable { .. }
-            | crate::parsing::ReadingError::ThreadPanicked => {
+            | crate::parsing::ReadingError::ThreadUnavailable { .. } => {
                 InstrumentError::unread(InstrumentErrorKind::Unparsable, self.path, error)
             }
         }

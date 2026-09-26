@@ -152,3 +152,10 @@ fn every_way_into_the_engine_that_reads_rust_leaves_the_callers_locations_as_the
          holds only the probe's"
     );
 }
+
+#[test]
+#[should_panic(expected = "a reading that panics")]
+fn a_panic_in_a_reading_is_a_panic_in_the_caller() {
+    let answered = rust_mutants::parsing::apart(|_| -> u8 { panic!("a reading that panics") });
+    drop(answered);
+}

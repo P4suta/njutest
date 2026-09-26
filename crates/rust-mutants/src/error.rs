@@ -64,7 +64,7 @@ mod table {
         ReadingSyntax,
         /// Rust text that would take its reading thread's locations past what they address.
         ReadingExhausted,
-        /// The thread Rust text is read on could not be started or did not finish.
+        /// The thread Rust text is read on could not be started.
         ReadingThread,
         /// Snapshot options that cannot be honoured, such as an escaping report directory.
         SnapshotInvalidOptions,
@@ -343,9 +343,9 @@ mod table {
                 },
                 Self::ReadingThread => ErrorCode {
                     code: "RM0019",
-                    summary: "the thread Rust text is read on could not be started or did not finish",
+                    summary: "the thread Rust text is read on could not be started",
                     remedy: Some(
-                        "the operating system refused a thread, or the reading panicked; run again, and report the panic if it repeats",
+                        "the operating system refused a thread; check the process and memory limits of this user, and run again",
                     ),
                     sealed: Sealed,
                 },
