@@ -597,6 +597,20 @@ fn a_live_group_a_record_from_another_boot_names_is_left_alone() {
     std::fs::write(
         &record,
         format!(
+            "pid={dead}\nboot={}\ngroup={pid} holder={dead} session={session} born={born}\n",
+            xtask::lanes::boot().unwrap_or_default()
+        ),
+    )
+    .expect("an old record without the holder's start");
+    let mut unknown = machine.run("true");
+    let refused = finished_within(Duration::from_secs(60), &mut unknown);
+    let spared = stranger
+        .try_wait()
+        .expect("the stranger can still be looked at")
+        .is_none();
+    std::fs::write(
+        &record,
+        format!(
             "pid={dead}\nholder_born=gone\nboot={}\ngroup={pid} holder={dead} session={session} born={born}\n",
             xtask::lanes::boot().unwrap_or_default()
         ),
@@ -616,6 +630,12 @@ fn a_live_group_a_record_from_another_boot_names_is_left_alone() {
         alive,
         "a group named by a record written in another boot is somebody else's now, and the next \
          run went in without touching it"
+    );
+    assert!(
+        refused.is_some_and(|status| !status.success()) && spared,
+        "a record from before holders recorded their start proves neither that the holder died \
+         nor that its groups are orphaned, so the next run refused the lane and spared the group: \
+         {refused:?}"
     );
     assert!(
         control_in.is_some_and(|status| status.success()),

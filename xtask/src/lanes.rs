@@ -470,16 +470,18 @@ impl Place<'_> {
         record: &str,
     ) -> Result<(), LaneError> {
         let lane = request.lane.name();
-        let (Some(pid), Some(born)) = (
-            record
-                .lines()
-                .find_map(|line| line.strip_prefix("pid="))
-                .and_then(number),
-            record
-                .lines()
-                .find_map(|line| line.strip_prefix("holder_born=")),
-        ) else {
+        let Some(pid) = record
+            .lines()
+            .find_map(|line| line.strip_prefix("pid="))
+            .and_then(number)
+        else {
             return Ok(());
+        };
+        let Some(born) = record
+            .lines()
+            .find_map(|line| line.strip_prefix("holder_born="))
+        else {
+            return Err(LaneError::HolderUnseen { lane, pid });
         };
         let mut reported: Option<Instant> = None;
         loop {
