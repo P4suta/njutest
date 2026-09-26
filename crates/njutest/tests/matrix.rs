@@ -77,8 +77,14 @@ fn each_fault_decision_is_answered_a_hole_or_a_class_the_column_does_not_speak_a
 #[test]
 fn every_seam_that_could_not_be_watched_is_a_hole_of_its_own() {
     let unwatched = [
-        Limitation::new("seam-not-watched", "payments could not be watched"),
-        Limitation::new("seam-not-watched", "search could not be watched"),
+        Limitation::new(
+            njutest::limitation::Limitation::SeamNotWatched,
+            "payments could not be watched",
+        ),
+        Limitation::new(
+            njutest::limitation::Limitation::SeamNotWatched,
+            "search could not be watched",
+        ),
     ];
     let evidence = Evidence {
         mutations: (0, 0),

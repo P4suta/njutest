@@ -161,6 +161,9 @@ pub fn every_failure() -> Vec<RunnerError> {
             crate::report::json::parse("{}"),
             "an empty object is not a report",
         )),
+        RunnerError::LimitationName {
+            source: crate::limitation::NameError("unknown-limitation".to_owned()),
+        },
         RunnerError::Scratch(crate::scratch::ScratchError::Unusable {
             path: nowhere.to_path_buf(),
             source: std::io::Error::other("no"),
@@ -253,6 +256,7 @@ pub fn every_failure() -> Vec<RunnerError> {
             | RunnerError::Resource(_)
             | RunnerError::Report(_)
             | RunnerError::ReportCount { .. }
+            | RunnerError::LimitationName { .. }
             | RunnerError::Scratch(_)
             | RunnerError::Build(_)
             | RunnerError::Measure(_)
@@ -1280,7 +1284,7 @@ pub mod reports {
         report.timing.duration_ms = 1;
         report.scope.configured_builds = builds.to_vec();
         report.limitations.push(Limitation::new(
-            "git-metadata-unavailable",
+            crate::limitation::Limitation::GitMetadataUnavailable,
             "a report assembled from rows has no repository process",
         ));
         report.targets.push(TargetRecord {

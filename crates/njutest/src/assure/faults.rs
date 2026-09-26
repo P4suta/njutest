@@ -102,7 +102,7 @@ pub fn put(
         .extend(crate::report::faults::limited(&records));
     if records.is_empty() {
         report.limitations.push(crate::report::Limitation::new(
-            crate::limitation::FAULT_NO_SITE,
+            crate::limitation::Limitation::FaultNoSite,
             "no measured file has a `?`, so there was no call a fault could fail",
         ));
     }

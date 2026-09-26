@@ -62,7 +62,7 @@ fn report(run_id: &str, identity: &str) -> Report {
     "2026-01-01T00:00:00Z".clone_into(&mut source.timing.started);
     "2026-01-01T00:00:00Z".clone_into(&mut source.timing.finished);
     source.limitations.push(njutest::report::Limitation::new(
-        "git-metadata-unavailable",
+        njutest::limitation::Limitation::GitMetadataUnavailable,
         "the tree a test builds is not a git repository",
     ));
     source.targets.push(TargetRecord {

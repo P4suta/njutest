@@ -98,7 +98,7 @@ fn report(run: &str, outcomes: &[(&str, &str)]) -> BuildReport {
     report.timing.finished = "2026-09-08T00:00:00Z".to_owned();
     report.timing.duration_ms = 1;
     report.limitations.push(Limitation::new(
-        "git-metadata-unavailable",
+        njutest::limitation::Limitation::GitMetadataUnavailable,
         "this synthetic fixture has no repository process",
     ));
     report.targets.push(TargetRecord {

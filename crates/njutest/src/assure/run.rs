@@ -397,7 +397,7 @@ fn licensed(
 fn state_unwatched(report: &mut BuildReport, seams: &super::wire::Seams) {
     for (capability, why) in &seams.unwatched {
         report.limitations.push(Limitation::new(
-            crate::limitation::SEAM_NOT_WATCHED,
+            crate::limitation::Limitation::SeamNotWatched,
             &format!("{capability}: {}", why.why()),
         ));
     }
@@ -501,7 +501,7 @@ pub fn opened(
     )?;
     if report.repository.git.said().is_none() {
         report.limitations.push(Limitation::new(
-            crate::limitation::GIT_METADATA_UNAVAILABLE,
+            crate::limitation::Limitation::GitMetadataUnavailable,
             "git could not be asked, so the run cannot name the commit it verified",
         ));
     }
@@ -539,7 +539,7 @@ fn driven(
         Ok(held) => held,
         Err(error) => {
             report.limitations.push(Limitation::new(
-                crate::limitation::CARGO_FUZZ_UNAVAILABLE,
+                crate::limitation::Limitation::CargoFuzzUnavailable,
                 &format!("fuzz targets could not be read completely: {error}"),
             ));
             report.findings.push(Finding {
@@ -604,7 +604,7 @@ fn kept(report: &mut BuildReport, request: &Request, crash: &super::fuzz::Crash)
     };
     if crate::repair::keep(&request.root, &proposal).is_err() {
         report.limitations.push(Limitation::new(
-            crate::limitation::CARGO_FUZZ_UNAVAILABLE,
+            crate::limitation::Limitation::CargoFuzzUnavailable,
             &format!(
                 "the input that crashed {} could not be kept, so it cannot be promoted",
                 crash.target
@@ -681,7 +681,7 @@ fn propose(
             Ok(said) => said,
             Err(refusal) => {
                 report.limitations.push(Limitation::new(
-                    crate::limitation::GENERATION_PROVIDER_UNAVAILABLE,
+                    crate::limitation::Limitation::GenerationProviderUnavailable,
                     &format!("the generation provider could not be asked: {refusal}"),
                 ));
                 return;
@@ -694,7 +694,7 @@ fn propose(
                 }
             }
             Err(refusal) => report.limitations.push(Limitation::new(
-                crate::limitation::GENERATION_PROVIDER_UNAVAILABLE,
+                crate::limitation::Limitation::GenerationProviderUnavailable,
                 &format!("a candidate for {mutant} was not read: {refusal}"),
             )),
         }
@@ -768,7 +768,7 @@ fn considered(
     };
     if verdict.accepted && crate::repair::keep(&request.root, proposal).is_err() {
         report.limitations.push(Limitation::new(
-            crate::limitation::GENERATION_CANDIDATE_NOT_KEPT,
+            crate::limitation::Limitation::GenerationCandidateNotKept,
             &format!("a candidate for {mutant} could not be kept, so it cannot be applied"),
         ));
         return;
@@ -791,7 +791,7 @@ fn considered(
 fn released(resources: &mut crate::resource::Manager, report: &mut BuildReport) {
     for refusal in resources.release() {
         report.limitations.push(Limitation::new(
-            crate::limitation::RESOURCE_NOT_STOPPED,
+            crate::limitation::Limitation::ResourceNotStopped,
             &format!("a resource would not stop: {refusal}"),
         ));
     }
@@ -922,7 +922,7 @@ pub fn identity(request: &Request) -> Result<BuildReport, RunnerError> {
             .collect();
     if !request.config.execution.skip_targets.is_empty() {
         report.limitations.push(Limitation::new(
-            rust_mutants::limitation::TARGET_SKIPPED_BY_CONFIGURATION,
+            rust_mutants::limitation::Limitation::TargetSkippedByConfiguration,
             &format!(
                 "{} ({})",
                 limitation_detail(rust_mutants::limitation::TARGET_SKIPPED_BY_CONFIGURATION),
@@ -932,7 +932,7 @@ pub fn identity(request: &Request) -> Result<BuildReport, RunnerError> {
     }
     if !request.evidence.is_known() {
         report.limitations.push(Limitation::new(
-            crate::limitation::WORKSPACE_DIGEST_NOT_COMPUTED,
+            crate::limitation::Limitation::WorkspaceDigestNotComputed,
             "the tree could not be read as one number, so no result of this run can be \
              reused by another",
         ));
@@ -967,7 +967,7 @@ fn resume_state(
         return Ok(None);
     }
     report.limitations.push(Limitation::new(
-        crate::limitation::RESUMED_FROM_CHECKPOINT,
+        crate::limitation::Limitation::ResumedFromCheckpoint,
         &format!(
             "an interrupted run had already measured {} targets and established {} mutants; \
              a restored target carries the files it reached and not the regions inside them, \
@@ -1087,7 +1087,7 @@ fn open_phase(
     } = *opening;
     if !scratch.is_claimed() {
         report.limitations.push(Limitation::new(
-            crate::limitation::TEMP_DIRECTORY_UNCLAIMED,
+            crate::limitation::Limitation::TempDirectoryUnclaimed,
             "the run works in a directory it could not claim, so a sweep may remove it \
              while the run is still using it",
         ));
@@ -1126,7 +1126,7 @@ fn take_inventory(
     let selected = selected(narrowing, metadata);
     let Ok(taken) = soundness::inventory(&request.root, &selected) else {
         report.limitations.push(Limitation::new(
-            crate::limitation::SOUNDNESS_SOURCE_UNREADABLE,
+            crate::limitation::Limitation::SoundnessSourceUnreadable,
             "the tree could not be walked for the places the compiler stops vouching for, so \
              the run makes no claim about them",
         ));
@@ -1164,7 +1164,7 @@ pub fn stated(taken: &soundness::Inventory) -> Vec<Limitation> {
     let mut stated = Vec::new();
     if !taken.unreadable.is_empty() {
         stated.push(Limitation::new(
-            crate::limitation::SOUNDNESS_SOURCE_UNREADABLE,
+            crate::limitation::Limitation::SoundnessSourceUnreadable,
             &format!(
                 "{} files could not be read as Rust this release understands, so what they \
                  hold is not in the inventory: {}",
@@ -1175,7 +1175,7 @@ pub fn stated(taken: &soundness::Inventory) -> Vec<Limitation> {
     }
     if !taken.is_empty() {
         stated.push(Limitation::new(
-            crate::limitation::SOUNDNESS_NOT_EXECUTED,
+            crate::limitation::Limitation::SoundnessNotExecuted,
             &format!(
                 "{} places in {} packages step outside what the compiler guarantees, and this \
                  contract counts them rather than executing them; `contract = \"deep-v1\"` \
@@ -1386,7 +1386,7 @@ fn run_mutation(
     let tree_written = !session.changes()?.is_empty();
     if tree_written {
         mutating.report.limitations.push(Limitation::new(
-            crate::limitation::TREE_WRITTEN_DURING_MEASUREMENT,
+            crate::limitation::Limitation::TreeWrittenDuringMeasurement,
             "a test wrote into the tree while it was being measured, so every later \
              mutation was measured against what it wrote",
         ));
@@ -1742,14 +1742,15 @@ pub fn record(
     }
     for (reason, count) in &mutation.skips {
         report.limitations.push(Limitation::new(
-            &format!("skipped-{reason}"),
+            *reason,
             &format!(
-                "{count} {} not mutated: {reason}",
+                "{count} {} not mutated: {}",
                 if *count == 1 {
                     "place was"
                 } else {
                     "places were"
-                }
+                },
+                reason.name()
             ),
         ));
     }
@@ -1777,19 +1778,17 @@ pub fn about(limitations: &[String]) -> Vec<(String, Vec<String>)> {
 /// Puts what the baseline observed into the report.
 ///
 /// # Errors
-/// Returns [`crate::report::CountError`] when exact report counters cannot represent the baseline ledger.
-pub fn absorb(
-    report: &mut BuildReport,
-    baseline: &baseline::Baseline,
-) -> Result<(), crate::report::CountError> {
+/// Returns a typed refusal when the baseline names an unknown limitation or an exact report counter cannot represent its ledger.
+pub fn absorb(report: &mut BuildReport, baseline: &baseline::Baseline) -> Result<(), RunnerError> {
     for (name, targets) in about(&baseline.limitations) {
+        let named = name.parse::<crate::limitation::Name>()?;
         let detail = limitation_detail(&name);
         let detail = if targets.is_empty() {
             detail
         } else {
             format!("{detail} ({})", targets.join(", "))
         };
-        report.limitations.push(Limitation::new(&name, &detail));
+        report.limitations.push(Limitation::new(named, &detail));
     }
     if let Some(failure) = &baseline.failure {
         report.findings.push(Finding::new(

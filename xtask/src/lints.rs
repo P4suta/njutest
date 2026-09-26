@@ -8566,7 +8566,7 @@ const RUST_READER: &str = "crates/rust-mutants/src/parsing.rs";
 const OUTSIDE_THE_MAP: [&str; 2] = ["crates/njutest-macros/", "crates/njutest-devkit/"];
 
 /// Every type a `.parse::<T>()` may name outside the reader, none of them Rust text.
-const PARSED_TYPES: [&str; 19] = [
+const PARSED_TYPES: [&str; 20] = [
     "u8",
     "u16",
     "u32",
@@ -8586,6 +8586,7 @@ const PARSED_TYPES: [&str; 19] = [
     "String",
     "toml::Table",
     "jiff::Timestamp",
+    "crate::limitation::Name",
 ];
 
 /// Functions and constructors that lex the text they are given, whatever path names them.

@@ -85,6 +85,18 @@ fn what_the_baseline_could_not_do_reaches_the_report_with_the_targets_it_was_abo
 }
 
 #[test]
+fn a_baseline_cannot_state_a_limitation_the_report_does_not_know() {
+    let mut report = blank();
+    let baseline = Baseline {
+        limitations: vec!["fictional-limitation:pkg/test/one".to_owned()],
+        ..Baseline::default()
+    };
+
+    assert!(absorb(&mut report, &baseline).is_err());
+    assert!(report.limitations.is_empty());
+}
+
+#[test]
 fn a_workspace_that_did_not_build_is_a_finding_and_the_compiler_speaks_first() {
     let mut report = blank();
     "demo".clone_into(&mut report.repository.root_name);
@@ -136,7 +148,7 @@ fn every_mutation_judged_is_a_row_that_says_what_became_of_it() {
                 false,
             ),
         ],
-        skips: BTreeMap::from([("macro-invocation".to_owned(), 7u64)]),
+        skips: BTreeMap::from([(rust_mutants::syntax::SkipReason::MacroInvocation, 7u64)]),
         drift: Vec::new(),
         sources: read_as_measured(),
         repaired: BTreeMap::new(),
@@ -227,7 +239,7 @@ fn a_ledger_entry_cannot_mark_an_outcome_that_is_not_answerable_as_accepted() {
         "2026-01-01T00:00:00Z".clone_into(&mut report.timing.finished);
         report.scope.configured_builds = vec![njutest::config::DEFAULT_CONFIGURATION.to_owned()];
         report.limitations.push(njutest::report::Limitation::new(
-            "git-metadata-unavailable",
+            njutest::limitation::Limitation::GitMetadataUnavailable,
             "the fixture is not a git repository",
         ));
         let measurements = njutest::report::across::BuildMeasurements::checked(vec![(

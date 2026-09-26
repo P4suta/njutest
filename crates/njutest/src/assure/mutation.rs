@@ -241,7 +241,7 @@ pub struct Mutation {
     /// Every mutant, in catalog order.
     pub judged: Vec<Judged>,
     /// What every phase of the engine skipped, by reason, for the report's limitations.
-    pub skips: BTreeMap<String, u64>,
+    pub skips: BTreeMap<rust_mutants::syntax::SkipReason, u64>,
     /// Whether each target the baseline measured held its reach on a control, one record each.
     pub drift: Vec<Drift>,
     /// The SHA-256 of each file the catalog's mutants were read from, as the catalog read it.
@@ -571,10 +571,12 @@ impl std::fmt::Debug for Resume<'_> {
 }
 
 /// How many places of the catalog each reason left unmutated.
-fn skip_census(session: &Session) -> Result<BTreeMap<String, u64>, crate::error::RunnerError> {
+fn skip_census(
+    session: &Session,
+) -> Result<BTreeMap<rust_mutants::syntax::SkipReason, u64>, crate::error::RunnerError> {
     let mut census = BTreeMap::new();
     for skip in session.skips() {
-        let count = census.entry(skip.reason.name().to_owned()).or_insert(0_u64);
+        let count = census.entry(skip.reason).or_insert(0_u64);
         *count = count
             .checked_add(1)
             .ok_or(crate::report::CountError::Overflow {

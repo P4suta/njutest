@@ -174,6 +174,18 @@ fn aliases(root: &Path) -> BTreeMap<String, Vec<String>> {
                 continue;
             }
             for line in std::fs::read_to_string(&path).unwrap_or_default().lines() {
+                if let Some((alias, held)) = line
+                    .trim()
+                    .strip_prefix("pub const ")
+                    .and_then(|line| line.split_once(": &str = "))
+                    && held.contains("limitation::")
+                    && let Some(name) = held.trim_end_matches(';').rsplit("::").next()
+                {
+                    found
+                        .entry(name.to_owned())
+                        .or_default()
+                        .push(alias.to_owned());
+                }
                 let Some(rest) = line.trim().strip_prefix("pub use ") else {
                     continue;
                 };
@@ -336,14 +348,16 @@ fn declared_and_registered(module: &str) -> (Vec<String>, Vec<String>) {
 
 /// Every limitation the register `text` declares, and every one its `ALL` names.
 fn registered(module: &str, text: &str) -> (Vec<String>, Vec<String>) {
-    let held = if module == "crates/rust-mutants/src/limitation.rs" {
+    let held: Vec<String> = if module == "crates/rust-mutants/src/limitation.rs" {
         rust_mutants::limitation::Limitation::ALL
             .into_iter()
             .map(|limitation| shouted(limitation.name()))
             .collect()
     } else {
-        njutest_devkit::rust_source::names_listed(text, "ALL")
-            .expect("the register names each limitation it holds in ALL")
+        njutest::limitation::Limitation::ALL
+            .into_iter()
+            .map(|limitation| shouted(limitation.name()))
+            .collect()
     };
     (
         njutest_devkit::rust_source::public_text_constants(text)
@@ -400,5 +414,45 @@ fn every_limitation_a_register_declares_is_one_its_register_holds() {
         );
         let stale: Vec<&String> = held.iter().filter(|one| !declared.contains(one)).collect();
         assert!(stale.is_empty(), "{module}: {stale:?}");
+    }
+}
+
+#[test]
+fn report_limitations_accept_only_names_this_release_can_state() {
+    use njutest::limitation::Name;
+    use njutest::report::Limitation;
+
+    for limitation in njutest::limitation::Limitation::ALL {
+        let name = Name::Runner(limitation).name();
+        let report = format!("{{\"name\":{name:?},\"detail\":\"measured\"}}");
+        let read: Limitation = njutest_devkit::strictjson::decode_str(&report)
+            .expect("a runner limitation has one wire spelling");
+        assert_eq!(read.name, name);
+    }
+    for limitation in rust_mutants::limitation::Limitation::ALL {
+        let name = Name::Engine(limitation).name();
+        let report = format!("{{\"name\":{name:?},\"detail\":\"measured\"}}");
+        let read: Limitation = njutest_devkit::strictjson::decode_str(&report)
+            .expect("an engine limitation has one wire spelling");
+        assert_eq!(read.name, name);
+    }
+    for reason in rust_mutants::syntax::SkipReason::ALL {
+        let name = Name::Skipped(reason).name();
+        let report = format!("{{\"name\":{name:?},\"detail\":\"measured\"}}");
+        let read: Limitation = njutest_devkit::strictjson::decode_str(&report)
+            .expect("a skipped reason has one wire spelling");
+        assert_eq!(read.name, name);
+    }
+    for name in [
+        "doctests-not-routed",
+        "skipped-fictional",
+        "",
+        "custom-harness:pkg/test/one",
+    ] {
+        let report = format!("{{\"name\":{name:?},\"detail\":\"measured\"}}");
+        assert!(
+            njutest_devkit::strictjson::decode_str::<Limitation>(&report).is_err(),
+            "{name}"
+        );
     }
 }

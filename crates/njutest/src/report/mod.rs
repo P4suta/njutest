@@ -4729,6 +4729,7 @@ pub struct CandidateRecord {
 #[serde(deny_unknown_fields)]
 pub struct Limitation {
     /// The stable name a reader can grep for.
+    #[serde(deserialize_with = "limitation_name")]
     pub name: String,
     /// One sentence saying what is not claimed.
     pub detail: String,
@@ -4737,12 +4738,22 @@ pub struct Limitation {
 impl Limitation {
     /// A limitation named `name`.
     #[must_use]
-    pub fn new(name: &str, detail: &str) -> Self {
+    pub fn new(name: impl Into<crate::limitation::Name>, detail: &str) -> Self {
         Self {
-            name: name.to_owned(),
+            name: name.into().name(),
             detail: detail.to_owned(),
         }
     }
+}
+
+fn limitation_name<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let name = String::deserialize(deserializer)?;
+    name.parse::<crate::limitation::Name>()
+        .map(crate::limitation::Name::name)
+        .map_err(serde::de::Error::custom)
 }
 
 /// When a run happened and how long it took.

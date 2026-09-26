@@ -1772,7 +1772,7 @@ mod tests {
             draft.timing.started = "2026-01-01T00:00:00Z".to_owned();
             draft.timing.finished = "2026-01-01T00:00:00Z".to_owned();
             draft.limitations.push(crate::report::Limitation::new(
-                "git-metadata-unavailable",
+                crate::limitation::Limitation::GitMetadataUnavailable,
                 "the fixture has no repository metadata",
             ));
             let measurements = BuildMeasurements::checked(vec![(

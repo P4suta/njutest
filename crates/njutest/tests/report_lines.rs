@@ -86,7 +86,7 @@ fn report_varying(vary: &dyn Fn(&mut BuildReport)) -> Report {
         "no test noticed the edit at crates/core/src/lib.rs:12",
     )];
     source.limitations.push(Limitation::new(
-        "git-metadata-unavailable",
+        njutest::limitation::Limitation::GitMetadataUnavailable,
         "the stream fixture is not a git repository",
     ));
     njutest::testkit::read_every_named_file(&mut source);

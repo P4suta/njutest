@@ -458,7 +458,7 @@ fn reported(findings: Vec<njutest::report::Finding>) -> njutest::report::Report 
     "2026-09-09T00:00:00Z".clone_into(&mut source.timing.started);
     "2026-09-09T00:00:00Z".clone_into(&mut source.timing.finished);
     source.limitations.push(njutest::report::Limitation::new(
-        "git-metadata-unavailable",
+        njutest::limitation::Limitation::GitMetadataUnavailable,
         "this synthetic fixture has no repository process",
     ));
     source.findings = findings;

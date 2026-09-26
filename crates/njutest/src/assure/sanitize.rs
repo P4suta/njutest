@@ -74,7 +74,7 @@ pub fn sanitize(sanitizing: &Sanitizing<'_>, watch: Watch<'_>) -> Result<Sanitiz
     let mut done = Sanitized::default();
     if !sanitizing.sanitizers.is_empty() {
         done.limitations.push(Limitation::new(
-            crate::limitation::SANITIZER_STANDARD_LIBRARY_NOT_INSTRUMENTED,
+            crate::limitation::Limitation::SanitizerStandardLibraryNotInstrumented,
             "the standard library the suite links is not built with the sanitizer, so what \
              it holds is not what was checked",
         ));
@@ -171,7 +171,7 @@ fn one(
 /// A sanitizer that was asked for and could not be run: a gap somebody asked to close, stated as one.
 fn refuse(done: &mut Sanitized, sanitizer: &str, why: &str) {
     done.limitations.push(Limitation::new(
-        crate::limitation::SANITIZER_UNAVAILABLE,
+        crate::limitation::Limitation::SanitizerUnavailable,
         &format!("{sanitizer} was asked for and {why}"),
     ));
     done.findings.push(Finding {

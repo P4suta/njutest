@@ -137,7 +137,7 @@ fn measured(read: Option<rust_mutants::id::HexDigest>) -> BuildReport {
         "no test noticed gt-to-ge",
     ));
     source.limitations.push(Limitation::new(
-        "git-metadata-unavailable",
+        njutest::limitation::Limitation::GitMetadataUnavailable,
         "this fixture is not a git repository",
     ));
     source.verdict = source.concluded();

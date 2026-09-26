@@ -11,19 +11,13 @@ use crate::wire::derive::{Fault, derive};
 use crate::wire::settle::settle;
 
 /// The limitation a run states where it could not put a question it derived.
-pub const NOT_PUT: &str = "wire-fault-not-put";
+pub const NOT_PUT: &str = crate::limitation::WIRE_FAULT_NOT_PUT;
 
 /// What a finding is about when a question was put and the run could not read what the suite did with it.
 pub const NOT_MEASURED: &str = "wire-fault-not-measured";
 
 /// What a finding is about when the only targets that failed with a question in place were ones already failing without it.
 pub const ALREADY_FAILING: &str = "wire-fault-not-attributable";
-
-/// What a limitation is named when no target passed without a fault, so the suite can answer nothing about one.
-pub const SUITE_NOT_GREEN: &str = "wire-baseline-not-green";
-
-/// What a limitation is named when a caller reached a seam and the exchange did not complete with no fault in place.
-pub const TRANSPORT_FAILED: &str = "wire-transport-incomplete";
 
 /// What a finding is about when a target failed once with a question in place and did not fail again with the same one.
 pub const NOT_REPRODUCED: &str = "wire-fault-not-reproduced";
@@ -163,7 +157,7 @@ where
     if measuring.before.nothing_passed() {
         let mut done = Measured::default();
         done.limitations.push(Limitation::new(
-            SUITE_NOT_GREEN,
+            crate::limitation::Limitation::WireBaselineNotGreen,
             "no target passed with no fault in place, so nothing in the suite could have \
              noticed one: the questions this recording licensed are not put, because a row \
              saying nothing noticed them would be a reading of a suite that was already \
@@ -407,7 +401,7 @@ where
         let dropped = one.interposer.did_not_complete();
         if dropped > 0 {
             done.limitations.push(Limitation::new(
-                TRANSPORT_FAILED,
+                crate::limitation::Limitation::WireTransportIncomplete,
                 &format!(
                     "{}: {dropped} caller(s) reached this seam and did not complete an exchange \
                      with no fault in place, so what a target did with those is about this \
@@ -501,7 +495,7 @@ pub fn licensing(
         return Ok(None);
     }
     Ok(Some(Limitation::new(
-        NOT_PUT,
+        crate::limitation::Limitation::WireFaultNotPut,
         &format!(
             "{} exchange(s) went past the seams this run watched, licensing {derived} \
              question(s) about them; this run records them and puts none of them back \

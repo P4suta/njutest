@@ -135,7 +135,7 @@ pub fn limited(records: &[ConcurrencyRecord]) -> Vec<Limitation> {
     let mut limitations = Vec::new();
     if !unexplored.is_empty() {
         limitations.push(Limitation::new(
-            crate::limitation::SCHEDULE_NOT_EXPLORED,
+            crate::limitation::Limitation::ScheduleNotExplored,
             &format!(
                 "{} not proven to run one thread and no schedule of {} was explored, so what {} \
                  when {} threads interleave otherwise is not known ({})",
@@ -157,7 +157,7 @@ pub fn limited(records: &[ConcurrencyRecord]) -> Vec<Limitation> {
     }
     if !sampled.is_empty() {
         limitations.push(Limitation::new(
-            crate::limitation::SCHEDULE_SAMPLED,
+            crate::limitation::Limitation::ScheduleSampled,
             &format!(
                 "{} passed every schedule a delayed guard made, which is a sample of the schedules \
                  and not all of them, so a race none of those delays exposed is not ruled out ({})",
@@ -168,7 +168,7 @@ pub fn limited(records: &[ConcurrencyRecord]) -> Vec<Limitation> {
     }
     if !undecided.is_empty() {
         limitations.push(Limitation::new(
-            crate::limitation::SCHEDULE_UNDECIDED,
+            crate::limitation::Limitation::ScheduleUndecided,
             &format!(
                 "{} not broken by any delay, and the controls of at least one delayed guard settled \
                  nothing, so neither a passing sample nor a failure is known of that schedule ({})",

@@ -309,7 +309,7 @@ pub fn limited(records: &[FaultRecord]) -> Vec<Limitation> {
         .map(|(class, places)| format!("{class} at {}", places.join(", ")))
         .collect();
     vec![Limitation::new(
-        crate::limitation::FAULT_NOT_PUT,
+        crate::limitation::Limitation::FaultNotPut,
         &format!(
             "the compiler refused {} fault(s), because the engine makes only the standard \
              error types it can build without guessing and these sites propagate another, so \

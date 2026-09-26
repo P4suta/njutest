@@ -159,7 +159,7 @@ fn reported_at(position: Position, unplaced_finding: bool, measured: &str) -> Re
         });
     }
     source.limitations.push(Limitation::new(
-        "git-metadata-unavailable",
+        njutest::limitation::Limitation::GitMetadataUnavailable,
         "the LSP fixture is not a git repository",
     ));
     source

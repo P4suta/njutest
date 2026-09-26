@@ -107,11 +107,11 @@ fn report_varying(findings: Vec<Finding>, vary: &dyn Fn(&mut BuildReport)) -> Re
     njutest::testkit::raise_what_the_records_decide(&mut source);
     source.limitations = vec![
         Limitation::new(
-            rust_mutants::limitation::DOCTESTS_ROUTED_BY_FILE,
+            rust_mutants::limitation::Limitation::DoctestsRoutedByFile,
             "doctests run once",
         ),
         Limitation::new(
-            "git-metadata-unavailable",
+            njutest::limitation::Limitation::GitMetadataUnavailable,
             "the fixture is not a git repository",
         ),
     ];

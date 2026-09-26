@@ -271,7 +271,7 @@ pub fn limited(records: &[CrashRecord]) -> Vec<Limitation> {
         return Vec::new();
     }
     vec![Limitation::new(
-        crate::limitation::CRASH_NOT_PUT,
+        crate::limitation::Limitation::CrashNotPut,
         &format!(
             "the compiler refused {} crash(es), so nothing is claimed about a stop after those \
              calls: {}",

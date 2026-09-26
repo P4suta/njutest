@@ -40,7 +40,7 @@ fn platform_report() -> Result<njutest::report::Report, PlatformReportError> {
     "2026-01-01T00:00:00Z".clone_into(&mut source.timing.started);
     "2026-01-01T00:00:00Z".clone_into(&mut source.timing.finished);
     source.limitations.push(njutest::report::Limitation::new(
-        "git-metadata-unavailable",
+        njutest::limitation::Limitation::GitMetadataUnavailable,
         "the platform-contract fixture is not a git repository",
     ));
     let run_id = rust_mutants::id::RunId::try_from("platform-contract")?;
@@ -480,7 +480,7 @@ mod unix {
         "2026-01-01T00:00:00Z".clone_into(&mut report.timing.started);
         "2026-01-01T00:00:00Z".clone_into(&mut report.timing.finished);
         report.limitations.push(njutest::report::Limitation::new(
-            "git-metadata-unavailable",
+            njutest::limitation::Limitation::GitMetadataUnavailable,
             "the tree a test builds is not a git repository",
         ));
         report

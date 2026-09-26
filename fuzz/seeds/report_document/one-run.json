@@ -258,7 +258,7 @@
             "findings": [],
             "limitations": [
               {
-                "name": "doctests-not-routed",
+                "name": "doctests-routed-by-file",
                 "detail": "doctests run once and are not routed to mutants"
               }
             ],

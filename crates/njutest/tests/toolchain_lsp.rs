@@ -46,7 +46,7 @@ fn verified(root: &std::path::Path) -> String {
         duration_ms: 1,
     };
     source.limitations.push(njutest::report::Limitation::new(
-        "git-metadata-unavailable",
+        njutest::limitation::Limitation::GitMetadataUnavailable,
         "the LSP fixture is not a git repository",
     ));
     source.mutants.push(MutantRecord {

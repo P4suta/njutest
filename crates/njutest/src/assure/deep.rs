@@ -176,7 +176,7 @@ fn unavailable(absent: Absent, message: String) -> Result<Interpreted, RunnerErr
                 position: None,
             }],
             limitations: vec![Limitation::new(
-                crate::limitation::MIRI_UNAVAILABLE,
+                crate::limitation::Limitation::MiriUnavailable,
                 &format!("the toolchain has no interpreter: {message}"),
             )],
         }),
@@ -244,7 +244,7 @@ fn ran_no_test(interpreted: &mut Interpreted, said: &str) {
             |line| format!("it last said: {line}"),
         );
     interpreted.limitations.push(Limitation::new(
-        crate::limitation::MIRI_RAN_NO_TEST,
+        crate::limitation::Limitation::MiriRanNoTest,
         &format!(
             "the interpreter ended without a test result that says a test failed or every one \
              passed, so its status is its own trouble and not the suite's; it started {} test \
@@ -397,7 +397,7 @@ fn read(said: &str, ending: Ending) -> Interpreted {
     if ending == Ending::TimedOut {
         interpreted.executed = false;
         interpreted.limitations.push(Limitation::new(
-            crate::limitation::MIRI_TIMED_OUT,
+            crate::limitation::Limitation::MiriTimedOut,
             "the interpreter ran out of time, so the suite was not interpreted whole",
         ));
         return interpreted;
@@ -416,7 +416,7 @@ fn read(said: &str, ending: Ending) -> Interpreted {
     }
     if let Some(unsupported) = read.unsupported {
         interpreted.limitations.push(Limitation::new(
-            crate::limitation::MIRI_UNSUPPORTED,
+            crate::limitation::Limitation::MiriUnsupported,
             &format!("the interpreter could not interpret the suite whole: {unsupported}"),
         ));
         interpreted.findings.push(Finding {

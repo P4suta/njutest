@@ -270,7 +270,7 @@ pub fn repaired(
         .map(|target| {
             let again = counted.get(target).copied().unwrap_or_default();
             Limitation::new(
-                crate::limitation::REACH_MOVED,
+                crate::limitation::Limitation::ReachMoved,
                 &format!(
                     "a target reached something on an original-code control that it did not \
                      reach on its baseline, so what it reaches is not a function of the target; \
@@ -331,7 +331,7 @@ pub fn unmeasured(drift: &[Drift]) -> Option<Limitation> {
         return None;
     }
     Some(Limitation::new(
-        crate::limitation::DRIFT_NOT_MEASURED,
+        crate::limitation::Limitation::DriftNotMeasured,
         &format!(
             "no original-code control over the tests its baseline passed recorded what {} \
              reached, so whether {} reach is a function of the target is not known and every \

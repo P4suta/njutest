@@ -60,7 +60,7 @@ pub fn put(
     let records = sites(&session, request, watch)?;
     if session.catalog().mutants().is_empty() {
         report.limitations.push(Limitation::new(
-            crate::limitation::CRASH_NO_SITE,
+            crate::limitation::Limitation::CrashNoSite,
             "no measured file calls anything that writes, so there was nothing to stop after",
         ));
     }

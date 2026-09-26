@@ -112,7 +112,7 @@ pub fn targets_of(root: &Path) -> io::Result<Vec<String>> {
 #[must_use]
 pub fn found(targets: &[String]) -> Limitation {
     Limitation::new(
-        crate::limitation::FUZZ_NOT_EXECUTED,
+        crate::limitation::Limitation::FuzzNotExecuted,
         &format!(
             "{} fuzz targets are here and were not driven, so nothing is claimed about what \
              they would find; `[fuzz] run = true` drives them: {}",
@@ -190,7 +190,7 @@ fn one(
         || (!ran.timed_out() && ran.conventional_exit_code() != 0 && left.is_empty());
     if undriven {
         done.limitations.push(Limitation::new(
-            crate::limitation::CARGO_FUZZ_UNAVAILABLE,
+            crate::limitation::Limitation::CargoFuzzUnavailable,
             &format!("{target} was to be driven and cargo-fuzz could not be run"),
         ));
         done.findings.push(Finding {
@@ -206,7 +206,7 @@ fn one(
     done.ran.push(target.to_owned());
     if ran.timed_out() {
         done.limitations.push(Limitation::new(
-            crate::limitation::CARGO_FUZZ_UNAVAILABLE,
+            crate::limitation::Limitation::CargoFuzzUnavailable,
             &format!("{target} ran out of time before it was driven for as long as it was asked"),
         ));
     }
@@ -267,7 +267,7 @@ fn record_crashes(done: &mut Fuzzed, target: &str, left: Vec<Artifact>) {
 
 fn unavailable(done: &mut Fuzzed, subject: &str, error: &io::Error) {
     done.limitations.push(Limitation::new(
-        crate::limitation::CARGO_FUZZ_UNAVAILABLE,
+        crate::limitation::Limitation::CargoFuzzUnavailable,
         &format!("fuzz:{subject} could not be read completely: {error}"),
     ));
     done.findings.push(Finding {

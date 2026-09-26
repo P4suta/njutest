@@ -439,7 +439,7 @@ fn an_unavailable_fact_is_a_sentinel_and_never_an_empty_string() {
     let stated = completed(|source| {
         source.repository.git = Git::Unavailable;
         source.limitations.push(Limitation::new(
-            "git-metadata-unavailable",
+            njutest::limitation::Limitation::GitMetadataUnavailable,
             "git is not available, so the run cannot name what it verified",
         ));
     })

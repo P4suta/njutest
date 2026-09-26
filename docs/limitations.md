@@ -138,6 +138,8 @@ Pure computation that does not open or mutate a report store remains available.
   A suite that took a different path this time and passed throughout was asked nothing, and reading that as nothing noticing would report a gap the tests could close where nobody was asked at all.
 - A seam the configuration names with `interpose` is recorded, and every fault the recording licenses is put back to the suite with nothing mutated.
   A run that recorded a seam and could not put its questions — the workspace did not build, or the run was cancelled — says `wire-fault-not-put` and counts none of them as survivors: a question nobody was asked establishes nothing, and reporting it as a gap would put something in the report no test could close.
+  If no target passed with no fault in place, `wire-baseline-not-green` says that the suite cannot judge any licensed question.
+  If a caller reached a seam but its baseline exchange did not complete, `wire-transport-incomplete` says that its failure is about the transport rather than the code.
 - Repository reads are not observed at run time.
   A package that names a directory-reading crate keys the whole snapshot for evidence reuse; nothing is excluded from testing.
   The names searched for are the paths those crates are reached through (`ignore::`, `glob::`) rather than their bare words,

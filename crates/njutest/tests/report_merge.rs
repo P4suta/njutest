@@ -186,7 +186,7 @@ fn measured(
         message: None,
     });
     source.limitations.push(Limitation::new(
-        "git-metadata-unavailable",
+        njutest::limitation::Limitation::GitMetadataUnavailable,
         "this synthetic fixture has no repository process",
     ));
     vary(&mut source);
@@ -678,7 +678,7 @@ fn what_only_the_last_part_found_is_still_what_the_whole_found() {
         vec![row(1, &"b".repeat(64), "survived", false)],
         &|source| {
             source.limitations.push(Limitation::new(
-                "custom-harness",
+                rust_mutants::limitation::Limitation::CustomHarness,
                 "the target brings its own harness",
             ));
             source.candidates = vec![offered("bbbbbbbbbbbbbbbbbbbb")];
