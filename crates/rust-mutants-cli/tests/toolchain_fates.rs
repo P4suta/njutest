@@ -364,6 +364,11 @@ fn fixture_families() {
 }
 
 #[test]
+fn fixture_escapes() {
+    holds("fixture-escapes");
+}
+
+#[test]
 fn fixture_faulted() {
     holds("fixture-faulted");
 }

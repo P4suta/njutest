@@ -1432,6 +1432,9 @@ impl Drop for Snapshot {
     fn drop(&mut self) {
         if self.state == State::Live {
             self.state = State::Released;
+            if let Err(unswept) = crate::escaped::end_working_under(&[&self.dir]) {
+                drop(unswept);
+            }
             if let Err(cleanup_failure) = self.remove(
                 &|dir: &Path| tempowner::remove_tree(dir),
                 &std::thread::sleep,

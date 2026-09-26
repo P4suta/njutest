@@ -282,6 +282,19 @@ Three things follow and are not hidden.
 A knob asked for and not put — no such zone in the time zone database, no such locale installed, no shell to set the mask through, a target that runs through cargo, a target that does not run under libtest, a platform with no way to put it — is `knob-not-put`, naming the knob, the targets, and why, because a pass under a knob that was never put says nothing.
 A knob whose controls established nothing to compare — a record that did not read back, other tests passing, a baseline that passed only on retry, a control that errored or ran out of time — is `knob-not-compared`, one per knob and reason, naming the targets.
 And the working directory and the order of the tests are not knobs: cargo's contract fixes the first at the package root, and stable libtest cannot reorder the second.
+
+## What a run asks of a suite that starts a process of its own
+
+On unix an execution is a process group, and stopping it ends every member; a process a test starts that calls `setsid` or `setpgid` leaves that group, as a daemon does, and outlives the execution.
+A run ends every such process when it closes: it lists the processes whose working directory lies in its copy of the tree or its scratch, which only a process the run started has once its executions have ended, ends them, and names them in the trace as `escaped-processes`.
+A run that refuses or is cancelled ends them too, as it removes its copy, since a copy is never removed while a process still works in it; that path writes no trace record of them.
+On Windows the execution's Job Object ends every descendant, so nothing escapes it.
+
+Three things follow and are not hidden.
+The sweep is at the run's end, not the execution's: executions of one copy share its package root as their working directory, so a process one execution left behind keeps running, and holding what it holds, while the next ones run.
+A process that changed its working directory out of the copy and the scratch, as a daemon that `chdir`s to `/` does, is not found, and outlives the run as it did before.
+And a process that keeps the test's output open keeps the execution from reading to its end, so after two seconds of waiting the execution is `errored` (`wait-failed`) and the run says so; `fixture-escapes` holds both cases.
+
 ## What a run asks of a suite that runs more than one thread
 
 A suite whose tests race each other passes on the schedule it happened to get, so a run first proves, per test binary, where there is nothing to explore ([ADR 0034](adr/0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)): its baseline reached no code off the threads its tests ran on, and no package in its dependency closure has a token that can start a thread, a task, a parallel iterator, a runtime, or a process, and none links native code or declares an `extern` block.

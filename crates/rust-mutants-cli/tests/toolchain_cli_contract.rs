@@ -475,3 +475,146 @@ fn the_word_cargo_repeats_is_dropped_once_and_only_where_it_is_the_subcommand() 
     .expect("which is this command");
     assert_eq!(format!("{elsewhere:?}"), format!("{direct:?}"));
 }
+
+/// Whether the process `pid` names is still running.
+#[cfg(unix)]
+fn running(pid: &str) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", pid])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// The processes `fixture-escapes`'s test said it started, whichever of them were still running when its run had ended, and whichever of those the test could not end itself.
+#[cfg(unix)]
+struct Escaped {
+    pids: Vec<String>,
+    survivors: Vec<String>,
+    unstopped: Vec<String>,
+}
+
+/// A run of `fixture-escapes` with every variable in `set`, and what its test started, of which it ends whatever the run left running.
+#[cfg(unix)]
+fn escaping(set: &[&str]) -> (Output, Fixture, std::io::Result<Escaped>) {
+    let fixture = Fixture::copy("fixture-escapes");
+    let record = fixture.temp().join("escaped");
+    let mut given = environment(&fixture);
+    given.vars.push((
+        "FIXTURE_ESCAPES_RECORD".into(),
+        record.clone().into_os_string(),
+    ));
+    for name in set {
+        given.vars.push(((*name).into(), "1".into()));
+    }
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        [
+            "rust-mutants",
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-coverage",
+            "--ui",
+            "quiet",
+            "--trace",
+            "--root",
+            root.as_str(),
+        ]
+        .map(OsString::from),
+        &given,
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    let output = njutest_devkit::process::answered(code, out, err);
+    let started = std::fs::read_to_string(&record).map(|started| {
+        let pids: Vec<String> = started
+            .lines()
+            .map(str::trim)
+            .filter(|pid| !pid.is_empty())
+            .map(str::to_owned)
+            .collect();
+        let survivors: Vec<String> = pids.iter().filter(|pid| running(pid)).cloned().collect();
+        let unstopped = survivors
+            .iter()
+            .filter(|pid| {
+                !std::process::Command::new("kill")
+                    .args(["-KILL", pid.as_str()])
+                    .status()
+                    .is_ok_and(|status| status.success())
+            })
+            .cloned()
+            .collect();
+        Escaped {
+            pids,
+            survivors,
+            unstopped,
+        }
+    });
+    (output, fixture, started)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_process_a_test_left_running_ends_with_the_run() {
+    let (output, fixture, started) = escaping(&[]);
+    let Escaped {
+        pids,
+        survivors,
+        unstopped,
+    } = started.expect("the test says what it started");
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "the run reaches a verdict: {output:?}"
+    );
+    assert!(!pids.is_empty(), "the test started something: {output:?}");
+    assert!(
+        survivors.is_empty(),
+        "a process a test started outside the execution's group outlived the run; it works where \
+         the test did, in the run's copy or scratch, and the run ends every process still working \
+         there when it closes, so nothing a test leaves behind holds a lock or a port past it: \
+         {survivors:?} of {pids:?}, of which {unstopped:?} are still running"
+    );
+    let trace = std::fs::read_to_string(
+        njutest_devkit::fixture::newest_run(
+            &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+        )
+        .join("trace/trace.jsonl"),
+    )
+    .expect("the run's trace");
+    assert!(
+        trace.contains("escaped-processes"),
+        "the run says which processes it ended, since a test that leaves one behind is a test \
+         somebody may want to fix"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_process_that_holds_a_refused_runs_output_ends_with_it() {
+    let (output, fixture, started) = escaping(&["FIXTURE_ESCAPES_HOLDS_OUTPUT"]);
+    let Escaped {
+        pids,
+        survivors,
+        unstopped,
+    } = started.expect("the test says what it started");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a daemon that keeps the test's output open leaves the execution unreadable to its end, \
+         and the baseline that cannot be read refuses the run: {output:?}"
+    );
+    assert!(!pids.is_empty(), "the test started something: {output:?}");
+    assert!(
+        survivors.is_empty(),
+        "a refused run removes its copy too, and ends what still works in it first: \
+         {survivors:?} of {pids:?}, of which {unstopped:?} are still running"
+    );
+    drop(fixture);
+}
