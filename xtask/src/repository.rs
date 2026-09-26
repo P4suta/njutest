@@ -32,7 +32,7 @@ pub enum ListingError {
         /// The link.
         path: PathBuf,
     },
-    /// A path git listed could not be read.
+    /// A path git listed could not be read, or copied where it was asked to go.
     #[error("{}: {source}", path.display())]
     Unreadable {
         /// The path.
@@ -58,6 +58,26 @@ impl From<ListingError> for GateError {
     fn from(error: ListingError) -> Self {
         Self(format!("walking the repository: {error}"))
     }
+}
+
+/// Copies every file of the repository at `from` to the same relative path under `to`.
+///
+/// # Errors
+/// What [`files`] refuses, or a file that could not be copied.
+pub fn copy(from: &Path, to: &Path) -> Result<(), ListingError> {
+    for relative in files(from)? {
+        let target = to.join(&relative);
+        match target.parent() {
+            Some(parent) => std::fs::create_dir_all(parent),
+            None => Ok(()),
+        }
+        .and_then(|()| std::fs::copy(from.join(&relative), &target).map(|_bytes| ()))
+        .map_err(|source| ListingError::Unreadable {
+            path: target,
+            source,
+        })?;
+    }
+    Ok(())
 }
 
 /// Every file of the repository at `root`, by its workspace-relative slash path, in byte order: what git tracks and what it would track once added, less what the working tree has deleted.

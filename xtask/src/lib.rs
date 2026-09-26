@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 pub mod adrs;
+pub mod claims;
 pub mod concurrency;
 pub mod crashes;
 pub mod defaulted;
@@ -97,6 +98,8 @@ enum Gate {
     Fixtures,
     /// Nothing a build writes is committed: no tracked path lies under a directory named `target`.
     Tracked,
+    /// Every claim of `.rust-mutants.toml` names as many mutations as it says, asked of the engine's own locator.
+    Claims,
     /// Clippy every independent fuzz target under the root workspace lint policy.
     FuzzClippy {
         /// Reserved for a future alternate manifest; keeps this execution gate out of `all`.
@@ -269,6 +272,7 @@ where
         Gate::Deps => gates::deps(&root),
         Gate::Fixtures => gates::fixtures(&root),
         Gate::Tracked => gates::tracked(&root),
+        Gate::Claims => claims::claims(&root),
         Gate::FuzzClippy { alternate: _ } => fuzzclippy::check(&root, process.cargo)
             .map_err(|error| gates::GateError(error.coded())),
         Gate::Docflows { actionlint } => docflows::check(&root, actionlint.as_os_str())

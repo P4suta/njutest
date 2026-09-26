@@ -2141,6 +2141,7 @@ pub fn all(root: &Path) -> Result<String, GateError> {
         defaulted,
         waivers,
         tracked,
+        crate::claims::claims,
     ] {
         line(&mut report, format_args!("{}", gate(root)?));
     }
