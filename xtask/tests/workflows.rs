@@ -87,6 +87,32 @@ fn every_job_that_runs_the_repository_tests_fetches_the_comparison_base() {
 }
 
 #[test]
+fn windows_runs_exactly_the_two_hash_partitions() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/workflows/ci.yml");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let test = jobs(&source)
+        .into_iter()
+        .find_map(|(name, body)| (name == "test").then_some(body))
+        .unwrap_or_else(|| panic!("ci.yml has the test matrix"));
+    let lines: Vec<&str> = test.lines().collect();
+    let windows: Vec<&str> = lines
+        .windows(2)
+        .filter(|pair| pair[0].trim() == "- os: windows-2025")
+        .filter_map(|pair| pair[1].trim().strip_prefix("part: "))
+        .collect();
+
+    assert_eq!(
+        windows,
+        ["hash:1/2", "hash:2/2"],
+        "one whole Windows row set the pull request's wall time, so Windows must ask the two \
+         disjoint halves in parallel and neither ask the whole again nor leave one half unasked"
+    );
+}
+
+#[test]
 fn every_step_runs_in_a_shell_that_stops_at_the_first_failure_even_inside_a_pipe() {
     let mut loose = Vec::new();
     for path in workflows() {
