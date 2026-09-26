@@ -1702,7 +1702,7 @@ pub fn environment(
         .filter(|(name, _)| {
             !COMPOSED_ENV
                 .iter()
-                .any(|composed| name == OsStr::new(composed))
+                .any(|composed| crate::vars::same_name(name, OsStr::new(composed)))
         })
         .cloned()
         .collect();
