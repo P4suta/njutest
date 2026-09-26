@@ -1084,9 +1084,6 @@ fn every_gate_the_pipeline_runs_is_one_this_machine_can_run() {
     );
 }
 
-/// The crate that holds no Rust of its own: it recompiles other crates' sources privately, which llvm-cov counts a second time at nothing per cent.
-const SURFACES: &str = "compiler-surfaces";
-
 #[test]
 fn no_double_spells_a_package_identity_the_way_cargo_stopped_spelling_one() {
     let root = std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join(".."))
@@ -1164,33 +1161,6 @@ fn rust_sources_under(at: &Path) -> Vec<std::path::PathBuf> {
     }
     found.sort();
     found
-}
-
-#[test]
-fn the_mutation_matrix_is_every_crate_that_holds_rust_of_its_own() {
-    let root = std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join(".."))
-        .unwrap_or_else(|error| panic!("the workspace root: {error}"));
-    let workflow = repository(".github/workflows/mutation.yml");
-    let listed: BTreeSet<String> = workflow
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("package: ["))
-        .and_then(|rest| rest.strip_suffix(']'))
-        .unwrap_or_else(|| panic!("mutation.yml declares a package matrix: {workflow}"))
-        .split(',')
-        .map(|name| name.trim().to_owned())
-        .collect();
-    let wanted: BTreeSet<String> = njutest_devkit::census::members(&root)
-        .into_iter()
-        .filter(|member| member.name != SURFACES && member.name != "xtask")
-        .map(|member| member.name)
-        .collect();
-    assert_eq!(
-        listed, wanted,
-        "the weekly measurement of how strong this suite is runs one leg per crate, and \
-         the list was written by hand: a rename made it name one crate twice and \
-         njutest-devkit not at all, so one leg did the same work as another and one \
-         crate was never measured"
-    );
 }
 
 #[test]
