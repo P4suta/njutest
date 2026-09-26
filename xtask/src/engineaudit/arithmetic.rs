@@ -599,6 +599,7 @@ pub(super) fn expectations(report: &Report, audit: &mut Audit) -> Decided {
         }
     }
     accounted(report, &met, &mut notes);
+    super::held::held(report, &mut notes);
     notes.looked()
 }
 

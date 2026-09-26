@@ -11,6 +11,7 @@ pub use crate::layers::Coverage;
 mod arithmetic;
 pub mod carry;
 mod evidence;
+mod held;
 mod ledger;
 mod recording;
 pub mod sentinel;
@@ -857,6 +858,9 @@ struct Claim {
     id: String,
     mutant: Option<String>,
     standing: ClaimStanding,
+    why: Option<String>,
+    cfg: Option<String>,
+    env: bool,
 }
 
 /// One thing that stops the run from being clean.
@@ -961,6 +965,7 @@ struct Report {
     expectations: Vec<Claim>,
     findings: Vec<Finding>,
     skip_counts: Vec<u64>,
+    facts: Vec<String>,
 }
 
 impl Report {

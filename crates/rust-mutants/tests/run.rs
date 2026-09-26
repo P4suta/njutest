@@ -187,6 +187,7 @@ fn a_mutant_a_reviewer_expected_to_survive_is_not_a_finding_and_a_stale_claim_is
             mutant: Some(met.id.clone()),
             covered: 1,
             standing: Standing::Met,
+            under: rust_mutants::run::Where::default(),
         },
         Verified {
             id: "bbbb".to_owned(),
@@ -198,6 +199,7 @@ fn a_mutant_a_reviewer_expected_to_survive_is_not_a_finding_and_a_stale_claim_is
             standing: Standing::Stale {
                 actual: Outcome::Killed,
             },
+            under: rust_mutants::run::Where::default(),
         },
         Verified {
             id: "cccc".to_owned(),
@@ -209,6 +211,7 @@ fn a_mutant_a_reviewer_expected_to_survive_is_not_a_finding_and_a_stale_claim_is
             standing: Standing::Unmatched {
                 why: "no mutant answers to \"cccc\"".to_owned(),
             },
+            under: rust_mutants::run::Where::default(),
         },
     ];
     let run = Run {

@@ -124,10 +124,11 @@ pub fn base() -> Value {
                 "id": SURVIVED, "reason": "the bound is equivalent under the invariant",
                 "outcome": "survived", "mutant": SURVIVED,
                 "locator": null, "covered": null,
-                "standing": "met", "actual": "survived", "why": null
+                "standing": "met", "actual": "survived", "why": null, "where": null
             }
         ],
-        "findings": []
+        "findings": [],
+        "facts": ["panic=\"unwind\"", "target_os=\"linux\"", "unix"]
     })
 }
 

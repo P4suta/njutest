@@ -88,10 +88,8 @@ pub enum Unheld {
     Env {
         /// The name.
         name: String,
-        /// The value the claim names.
-        wanted: String,
-        /// The value the tests are given, if any.
-        found: Option<String>,
+        /// Whether the tests are given the name at all; its value is never written anywhere, since it may be a secret.
+        given: bool,
     },
 }
 
@@ -102,18 +100,10 @@ impl Unheld {
         match self {
             Self::NotCompiled => "no unit of this build compiled the file it names".to_owned(),
             Self::Cfg { predicate } => format!("the target does not satisfy cfg({predicate})"),
-            Self::Env {
-                name,
-                wanted,
-                found: Some(found),
-            } => format!(
-                "the tests are given {name}={found:?}, and the claim holds under {wanted:?}"
+            Self::Env { name, given: true } => format!(
+                "the tests are given {name} with another value than the one the claim holds under"
             ),
-            Self::Env {
-                name,
-                wanted,
-                found: None,
-            } => format!("the tests are given no {name}, and the claim holds under {wanted:?}"),
+            Self::Env { name, given: false } => format!("the tests are given no {name}"),
         }
     }
 }
@@ -266,6 +256,8 @@ pub struct Verified {
     pub covered: u32,
     /// Whether the claim held.
     pub standing: Standing,
+    /// Where the claim is judged, as the file wrote it.
+    pub under: Where,
 }
 
 /// What kind of hole a finding names.
@@ -2341,6 +2333,7 @@ pub fn verify(
             mutant,
             covered,
             standing,
+            under: expectation.under.clone(),
         });
     }
     Ok(verified)

@@ -3,10 +3,10 @@
   "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260925t173156387z",
-    "started_at": "2026-09-25T17:31:56.387592Z",
-    "finished_at": "2026-09-25T17:31:58.907326Z",
-    "duration_ms": 318,
+    "id": "20260926t000949085z",
+    "started_at": "2026-09-26T00:09:49.085400962Z",
+    "finished_at": "2026-09-26T00:10:06.137859868Z",
+    "duration_ms": 6164,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -16,14 +16,14 @@
     }
   },
   "workspace": {
-    "root_name": "fixture-simple",
+    "root_name": "tmp.X3YvN9j5ev",
     "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "7c7690c5ee01ea3c125d81e9373b0d7fdc85abe5c203b7141b562f01009e0094",
+    "workspace_digest": "778dad0a77e397bc5ff5bbce26e6636c291bcdc003a46489dd5a18605e12b8eb",
     "catalog_digest": "82946360d0657b5f03d7a76baf4c58b9b82b9853b602678b838583310f27d624",
     "platform": {
-      "os": "darwin",
-      "arch": "aarch64",
-      "target": "aarch64-apple-darwin"
+      "os": "gnu",
+      "arch": "x86_64",
+      "target": "x86_64-unknown-linux-gnu"
     }
   },
   "selection": {
@@ -105,7 +105,7 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": 101,
-      "duration_ms": 27,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -152,7 +152,7 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": 101,
-      "duration_ms": 25,
+      "duration_ms": 26,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -199,7 +199,7 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": 101,
-      "duration_ms": 30,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -246,7 +246,7 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": 101,
-      "duration_ms": 28,
+      "duration_ms": 29,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -338,8 +338,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
-      "exit_code": 101,
-      "duration_ms": 30,
+      "exit_code": -1,
+      "duration_ms": 54,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -386,7 +386,7 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": 101,
-      "duration_ms": 26,
+      "duration_ms": 28,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -432,8 +432,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-simple/test/parity",
-      "exit_code": 101,
-      "duration_ms": 30,
+      "exit_code": -1,
+      "duration_ms": 77,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -480,7 +480,7 @@
       "step_notice": null,
       "target": "fixture-simple/test/parity",
       "exit_code": 101,
-      "duration_ms": 30,
+      "duration_ms": 92,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -526,8 +526,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-simple/test/parity",
-      "exit_code": 101,
-      "duration_ms": 29,
+      "exit_code": -1,
+      "duration_ms": 56,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -573,8 +573,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-simple/test/parity",
-      "exit_code": 101,
-      "duration_ms": 30,
+      "exit_code": -1,
+      "duration_ms": 75,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -667,8 +667,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-simple/test/parity",
-      "exit_code": 101,
-      "duration_ms": 27,
+      "exit_code": -1,
+      "duration_ms": 50,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -723,5 +723,27 @@
       "mutant": "f0d20edfda2959667ff19be48ef229cba965a672c7a6e367624a73bc4fcec22f",
       "detail": "every target that could have noticed f0d20edfda2959667ff1 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
     }
+  ],
+  "facts": [
+    "panic=\"unwind\"",
+    "target_abi=\"\"",
+    "target_arch=\"x86_64\"",
+    "target_endian=\"little\"",
+    "target_env=\"gnu\"",
+    "target_family=\"unix\"",
+    "target_has_atomic=\"16\"",
+    "target_has_atomic=\"32\"",
+    "target_has_atomic=\"64\"",
+    "target_has_atomic=\"8\"",
+    "target_has_atomic=\"ptr\"",
+    "target_has_atomic_primitive_alignment=\"16\"",
+    "target_has_atomic_primitive_alignment=\"32\"",
+    "target_has_atomic_primitive_alignment=\"64\"",
+    "target_has_atomic_primitive_alignment=\"8\"",
+    "target_has_atomic_primitive_alignment=\"ptr\"",
+    "target_os=\"linux\"",
+    "target_pointer_width=\"64\"",
+    "target_vendor=\"unknown\"",
+    "unix"
   ]
 }

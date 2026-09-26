@@ -121,6 +121,7 @@ fn document(mutants: Vec<RunMutantDocument>) -> RunDocument {
         skips: Vec::new(),
         expectations: Vec::new(),
         findings: Vec::new(),
+        facts: Vec::new(),
     }
 }
 

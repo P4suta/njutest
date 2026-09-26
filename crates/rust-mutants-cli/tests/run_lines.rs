@@ -185,12 +185,14 @@ fn document() -> RunDocument {
             standing: "met".to_owned(),
             actual: None,
             why: None,
+            holds: None,
         }],
         findings: vec![FindingDocument {
             kind: FindingKind::SurvivingMutant,
             mutant: Some(surviving_id),
             detail: format!("no test noticed {surviving_display_id}; 1 tests ran and passed"),
         }],
+        facts: Vec::new(),
     }
 }
 
@@ -785,6 +787,7 @@ fn claim(id: &str, stale: Option<&RunMutantDocument>) -> ExpectationDocument {
         why: stale
             .is_none()
             .then(|| "the claim names nothing".to_owned()),
+        holds: None,
     }
 }
 
@@ -800,6 +803,7 @@ fn claimed(why: &str, mutant: &RunMutantDocument) -> ExpectationDocument {
         standing: "met".to_owned(),
         actual: None,
         why: None,
+        holds: None,
     }
 }
 

@@ -57,7 +57,8 @@ fn document(targets: &[&str], rows: &[serde_json::Value]) -> RunDocument {
         "rejections": [],
         "skips": [],
         "expectations": [],
-        "findings": []
+        "findings": [],
+        "facts": []
     });
     serde_json::from_value(value).expect("the report reads back")
 }

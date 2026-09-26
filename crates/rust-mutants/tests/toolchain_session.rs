@@ -1558,7 +1558,7 @@ fn a_claim_is_judged_only_where_the_facts_it_names_hold() {
         matches!(
             &verified[2].standing,
             rust_mutants::run::Standing::Inapplicable {
-                because: rust_mutants::run::Unheld::Env { name, found: None, .. }
+                because: rust_mutants::run::Unheld::Env { name, given: false }
             } if name == "RUST_MUTANTS_ADR_0042_NEVER_SET"
         ),
         "a claim that holds under a variable the tests are not given is not judged: {:?}",

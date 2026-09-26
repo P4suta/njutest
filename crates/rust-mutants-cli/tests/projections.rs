@@ -140,6 +140,7 @@ fn document() -> RunDocument {
             mutant: Some(format!("{:064x}", 1)),
             detail: "no test noticed this".to_owned(),
         }],
+        facts: Vec::new(),
     }
 }
 

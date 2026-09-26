@@ -1127,22 +1127,19 @@ impl Session {
             });
         }
         for (name, wanted) in &under.env {
-            let found = self
+            let given = self
                 .workspace
                 .base_env
                 .iter()
-                .find(|(held, _)| held == std::ffi::OsStr::new(name))
-                .map(|(_, value)| {
-                    value
-                        .to_str()
-                        .map_or_else(|| "a value that is not UTF-8".to_owned(), ToOwned::to_owned)
-                });
-            if found.as_deref() != Some(wanted.as_str()) {
-                return Err(crate::run::Unheld::Env {
-                    name: name.clone(),
-                    wanted: wanted.clone(),
-                    found,
-                });
+                .find(|(held, _)| held == std::ffi::OsStr::new(name));
+            match given {
+                Some((_, value)) if value == std::ffi::OsStr::new(wanted) => {}
+                Some(_) | None => {
+                    return Err(crate::run::Unheld::Env {
+                        name: name.clone(),
+                        given: given.is_some(),
+                    });
+                }
             }
         }
         Ok(())

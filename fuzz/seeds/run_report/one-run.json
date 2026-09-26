@@ -713,5 +713,11 @@
       "mutant": "16b0cd40508fc0785477d495daa14695fcff4d61ada9eb35a8c2c995eb1f881f",
       "detail": "every target that could have noticed 16b0cd40508fc0785477 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
     }
+  ],
+  "facts": [
+    "panic=\"unwind\"",
+    "target_arch=\"x86_64\"",
+    "target_os=\"linux\"",
+    "unix"
   ]
 }
