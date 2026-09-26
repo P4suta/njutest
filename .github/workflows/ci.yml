@@ -33,7 +33,7 @@ defaults:
 
 jobs:
   test:
-    name: test (${{ matrix.os }}, ${{ matrix.part }})
+    name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     # The backstop for a runner that stops answering; a test that stalls is nextest's slow-timeout to name, well inside this.
     # On a hosted macOS runner the toolchain suite alone took 36.5 of the 45 minutes, and the job was cancelled in clippy with every test passed.
@@ -49,18 +49,10 @@ jobs:
       # So the newest row is the closest CI can stand to where the code is written, and the gap is a reason to keep reading a macOS failure rather than a reason to assume the local gate saw it.
       # `macos-15` is the oldest still supported, and it is not ballast: it is where `proc_listpgrppids` reports an empty process group after a timeout, which the supervisor read as a failure and turned into `abort()`.
       # The newer kernel still listed the waitable leader, so the machine that wrote the code could never have seen it.
-      # What that row answers for is the kernel, so on a pull request it runs the part of the suite that meets the kernel (`kernel` below), and the whole suite weekly.
-      #
       # Linux runs the whole suite in `coverage`, which has to run all of it to measure it, so a second uninstrumented Linux run would ask the same questions again.
       fail-fast: false
       matrix:
-        include:
-          - os: macos-26
-            part: whole
-          - os: macos-15
-            part: kernel
-          - os: windows-2025
-            part: whole
+        os: [macos-26, macos-15, windows-2025]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -87,31 +79,7 @@ jobs:
       # A failing test took the job's forty-five minute timeout to be reported, and would have been reported as a pass had the second half succeeded.
       - name: Test every target
         shell: bash
-        env:
-          PART: ${{ matrix.part }}
-          EVENT: ${{ github.event_name }}
-        run: |
-          in_process='not binary(/^toolchain_/)'
-          toolchain='binary(/^toolchain_/)'
-          case "$PART" in
-            whole) ;;
-            kernel)
-              # The in-process suite runs whole everywhere: it is two minutes, and it holds the supervisor's, the runner's and the temporary directories' own laws.
-              # Of the suites that drive a real cargo, these are the ones whose answer is a process group, a signal, a crash, a durable write or a schedule.
-              if [ "$EVENT" = pull_request ]; then
-                toolchain='binary(/^toolchain_(hang|interrupt|panics|crashes|durable|wire_fixture|concurrency|pool|work|knobs)$/)'
-              fi
-              ;;
-            *)
-              echo "::error::a test row names the part '$PART', which is neither whole nor kernel"
-              exit 1
-              ;;
-          esac
-          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E "$in_process"
-          # Each test in these binaries drives its own Cargo. Two outer tests
-          # keep hosted runners busy without multiplying their build jobs into
-          # resource exhaustion; the ordinary suite above remains fully parallel.
-          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 -E "$toolchain"
+        run: cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2
       - name: Doctests
         shell: bash
         run: cargo test --locked --workspace --all-features --doc

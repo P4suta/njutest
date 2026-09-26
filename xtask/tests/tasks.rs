@@ -357,6 +357,34 @@ fn every_gate_the_pipeline_waits_for_is_one_this_machine_answered_first() {
 }
 
 #[test]
+fn every_ci_platform_runs_the_same_complete_suite() {
+    let workflow = repository(".github/workflows/ci.yml");
+    let test_job = workflow
+        .split_once("  test:")
+        .and_then(|(_, tail)| tail.split_once("\n  lint:"))
+        .map(|(job, _)| job)
+        .expect("the test job precedes the lint job");
+    assert!(
+        test_job.contains("os: [macos-26, macos-15, windows-2025]"),
+        "each supported platform has a full test row"
+    );
+    assert!(
+        !test_job.contains("matrix.part") && !test_job.contains("part:"),
+        "no CI test row selects only part of the suite"
+    );
+    let run = "cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2";
+    assert_eq!(
+        test_job.matches(run).count(),
+        1,
+        "one complete suite run per row"
+    );
+    assert!(
+        !test_job.contains(" -E ") && !test_job.contains("--exclude"),
+        "the CI test row must not filter or shard the suite"
+    );
+}
+
+#[test]
 fn the_inner_loop_starts_no_toolchain_and_the_whole_suite_still_runs_everything() {
     let fast = task("\"test:fast\"");
     assert!(
