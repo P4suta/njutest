@@ -2360,3 +2360,31 @@ fn a_set_that_says_it_may_grow_is_not_asked_for_a_list_nothing_could_hold() {
         "no match of an open set is exhaustive either, so there is nothing to ask for: {open}"
     );
 }
+
+#[test]
+fn a_shell_compiled_only_for_unix_or_only_compared_against_is_not_a_bare_one() {
+    for passing in [
+        "#[cfg(unix)] fn argv() -> &'static str { \"sh\" }",
+        "#![cfg(unix)]\nfn argv() -> &'static str { \"sh\" }",
+        "#[cfg(all(unix, test))] mod tests { fn argv() -> Vec<&'static str> { vec![\"sh\"] } }",
+        "impl Launcher { #[cfg(unix)] fn argv() -> &'static str { \"sh\" } }",
+        "fn script(path: &std::path::Path) -> bool { path.extension().is_some_and(|e| e == \"sh\") }",
+        "fn other(text: &str) -> bool { text != \"sh\" }",
+        "macro_rules! m { ($x:expr) => { $x == \"sh\" } }",
+        "fn name() -> &'static str { \"shell\" }",
+    ] {
+        assert!(
+            !kinds(passing).contains(&Kind::BareShell),
+            "a shell only Unix compiles, or a name only compared against, is no program started \
+             on a platform without one: {passing}"
+        );
+    }
+    let finder = scan_source(
+        "crates/njutest-devkit/src/paths.rs",
+        "fn candidates() -> [&'static str; 2] { [\"sh\", \"sh.exe\"] }",
+    );
+    assert!(
+        finder.is_ok_and(|found| found.iter().all(|one| one.kind != Kind::BareShell)),
+        "the one place that looks for the shell names what it looks for"
+    );
+}

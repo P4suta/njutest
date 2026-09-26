@@ -28,6 +28,73 @@ pub fn cargo_binary() -> PathBuf {
     std::env::var_os("CARGO").map_or_else(|| PathBuf::from("cargo"), PathBuf::from)
 }
 
+/// The POSIX `sh` a test that writes its child as a shell script runs, found on the search path, or on Windows beside the Git that is.
+///
+/// A missing shell is a missing precondition of the test, never its subject failing, so it is refused here in words that say what to install rather than read later as an empty output.
+///
+/// # Panics
+/// No `sh` is on the search path, and on Windows none is where Git for Windows keeps one beside the `git` that is.
+#[must_use]
+#[track_caller]
+#[expect(
+    clippy::panic,
+    reason = "a test without its shell cannot say anything about its subject, and saying so is its only honest answer"
+)]
+pub fn posix_sh() -> PathBuf {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let directories: Vec<PathBuf> = std::env::split_paths(&path).collect();
+    let named = ["sh", "sh.exe"];
+    let on_path = directories
+        .iter()
+        .flat_map(|directory| named.iter().map(move |name| directory.join(name)))
+        .find(|candidate| a_file(candidate));
+    if let Some(found) = on_path {
+        return found;
+    }
+    let beside_git = directories
+        .iter()
+        .filter(|directory| a_file(&directory.join("git.exe")))
+        .filter_map(|directory| directory.parent())
+        .flat_map(|git| {
+            [
+                git.join("usr").join("bin").join("sh.exe"),
+                git.join("bin").join("sh.exe"),
+            ]
+        })
+        .find(|candidate| a_file(candidate));
+    match beside_git {
+        Some(found) => found,
+        None => panic!(
+            "this test writes its child as a POSIX shell script and needs `sh`: none is on PATH, \
+             and none is beside a Git for Windows on it; on Windows put Git's usr\\bin on PATH"
+        ),
+    }
+}
+
+/// Whether `candidate` is a file, where a path that is not there, or goes through something that is not a directory, is simply not one.
+///
+/// # Panics
+/// The path is there and cannot be inspected, which is not the same as absent.
+#[track_caller]
+#[expect(
+    clippy::panic,
+    reason = "a shell that is there and unreadable is a broken machine, not a missing shell"
+)]
+fn a_file(candidate: &Path) -> bool {
+    match fs::metadata(candidate) {
+        Ok(metadata) => metadata.is_file(),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            false
+        }
+        Err(error) => panic!("{} cannot be inspected: {error}", candidate.display()),
+    }
+}
+
 /// Borrows the exact UTF-8 spelling of a path used by a textual test protocol.
 ///
 /// # Panics

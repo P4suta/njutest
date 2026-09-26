@@ -117,18 +117,32 @@ pub enum Launcher {
     },
 }
 
+/// The shell line that starts the test binary under `mask`, on the platform that has the shell.
+#[cfg(unix)]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the same signature as the platform with no shell, which has nothing to return"
+)]
+fn umask_argv(mask: u32) -> Option<Vec<OsString>> {
+    Some(vec![
+        OsString::from("sh"),
+        OsString::from("-c"),
+        OsString::from(format!("umask {mask:03o}; exec \"$0\" \"$@\"")),
+    ])
+}
+
+/// Nothing, on a platform with no POSIX shell to start the binary through.
+#[cfg(not(unix))]
+const fn umask_argv(_mask: u32) -> Option<Vec<OsString>> {
+    None
+}
+
 impl Launcher {
     /// The program and arguments that start the test binary this way, or nothing on a platform that has no such program.
     #[must_use]
     pub fn argv(self) -> Option<Vec<OsString>> {
         match self {
-            Self::Umask { mask } => cfg!(unix).then(|| {
-                vec![
-                    OsString::from("sh"),
-                    OsString::from("-c"),
-                    OsString::from(format!("umask {mask:03o}; exec \"$0\" \"$@\"")),
-                ]
-            }),
+            Self::Umask { mask } => umask_argv(mask),
         }
     }
 }
