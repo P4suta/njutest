@@ -177,10 +177,24 @@ pub fn every_failure() -> Vec<RunnerError> {
             path: nowhere.to_path_buf(),
             source: std::io::Error::other("no"),
         }),
+        RunnerError::Carry {
+            source: rust_mutants::outcomes::StoreError::Io {
+                path: nowhere.to_path_buf(),
+                source: std::io::Error::other("no"),
+            },
+        },
         RunnerError::Model {
             message: "model artifact could not be retained".to_owned(),
         },
-        RunnerError::Schedule(crate::assure::schedule::ScheduleError::WorkerPanicked),
+        RunnerError::Schedule(crate::assure::schedule::ScheduleError::WorkerPanicked {
+            worker: "njutest-measure-0".to_owned(),
+            item: "mutation abcdef".to_owned(),
+            message: "no".to_owned(),
+        }),
+        RunnerError::Sources(crate::observe::SourceReadError::Exhausted {
+            path: nowhere.to_path_buf(),
+            source: std::io::Error::other("no"),
+        }),
         RunnerError::Equivalence {
             source: crate::assure::equivalence::EquivalenceError::DuplicateDecision {
                 display_id: "abcdef".to_owned(),
@@ -225,6 +239,7 @@ pub fn every_failure() -> Vec<RunnerError> {
             | RunnerError::Cache(_)
             | RunnerError::Checkpoint(_)
             | RunnerError::MutationEvidence(_)
+            | RunnerError::Carry { .. }
             | RunnerError::Coverage(_)
             | RunnerError::Provider(_)
             | RunnerError::IdentityEnvironment { .. }
@@ -233,6 +248,7 @@ pub fn every_failure() -> Vec<RunnerError> {
             | RunnerError::PhaseOutput { .. }
             | RunnerError::Model { .. }
             | RunnerError::Schedule(_)
+            | RunnerError::Sources(_)
             | RunnerError::Equivalence { .. }
             | RunnerError::Resource(_)
             | RunnerError::Report(_)
@@ -309,6 +325,8 @@ fn complete_route() -> crate::trace::RouteRecord {
         considered: vec!["demo/test/other".to_owned()],
         reused: Some("earlier-run".to_owned()),
         refused: Some("key-changed".to_owned()),
+        rule: Some(crate::trace::ReuseRule::Carried),
+        carry_refused: Some("item-changed".to_owned()),
     }
 }
 

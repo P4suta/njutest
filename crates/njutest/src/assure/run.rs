@@ -444,7 +444,7 @@ fn deepened(
     let done = super::deep::interpret(
         &super::deep::Interpreting {
             root: &request.root,
-            cargo: toolchain.cargo(),
+            cargo: toolchain.selecting(),
             env: environment.vars.clone(),
             packages: &report.scope.resolved_packages,
             flags: &request.config.soundness.miri_flags,
@@ -466,7 +466,7 @@ fn deepened(
     let checked = super::sanitize::sanitize(
         &super::sanitize::Sanitizing {
             root: &request.root,
-            cargo: toolchain.cargo(),
+            cargo: toolchain.selecting(),
             host: toolchain.host(),
             env: environment.vars.clone(),
             packages: &report.scope.resolved_packages,
@@ -569,7 +569,7 @@ fn driven(
     let done = super::fuzz::fuzz(
         &super::fuzz::Fuzzing {
             root: &request.root,
-            cargo: toolchain.cargo(),
+            cargo: toolchain.selecting(),
             env: environment_of(toolchain),
             targets: &request.config.fuzz.targets,
             max_total_time: request.config.fuzz.max_total_time,
@@ -1440,7 +1440,23 @@ fn concurrency_of(
     session: &rust_mutants::session::Session,
     watch: Watch<'_>,
 ) -> Result<(), RunnerError> {
-    let mut concurrency = super::concurrency::recorded(session, &mutating.request.test_args);
+    let workers = super::schedule::workers(
+        mutating.request.config.execution.jobs,
+        super::schedule::available()?,
+        false,
+    );
+    let (mut concurrency, uncompiled) =
+        super::concurrency::recorded(session, (&mutating.request.test_args, workers))?;
+    if !uncompiled.is_empty() {
+        watch.trace.note(
+            "concurrency-uncompiled",
+            &format!(
+                "the build compiled no unit of these packages for this target and these features, \
+                 so no binary links them and none was read: {}",
+                uncompiled.join(", ")
+            ),
+        );
+    }
     let whole = mutating.report.scope.shard.is_none();
     super::concurrency::explored(
         session,
@@ -1647,11 +1663,27 @@ fn evidence_of(mutating: &Mutating<'_>) -> Result<Option<mutation::Evidence>, Ru
         );
         names.insert(measured.target.id.to_string(), measured.target.name());
     }
+    let keyed = rust_mutants::outcomes::Keyed {
+        closure: mutating.session.closure().to_owned(),
+        manifests: mutating.session.manifests().to_owned(),
+        toolchain: keying.common.toolchain.clone(),
+        args: keying.common.test_args.clone(),
+        timeout: format!("{}ms", keying.common.timeout_ms),
+        steps: keying.common.steps,
+        build: vec![keying.common.build.digest().to_string()],
+        engine: keying.common.engine.clone(),
+        runner: Some(crate::evidence::key::runner(&keying.common)),
+    };
+    let carry = keyed.usable().then(|| mutation::Carry {
+        store: rust_mutants::carry::Store::new(root),
+        keyed,
+    });
     Ok(Some(mutation::Evidence {
         root: root.clone(),
         run_id: request.run_id.to_string(),
         standing,
         names,
+        carry,
     }))
 }
 
@@ -1678,7 +1710,7 @@ fn narrowing(
     let Some(change) = request.changed.as_ref() else {
         return Ok(configured);
     };
-    rust_mutants::git::within(change, &configured)?.patterns()
+    rust_mutants::git::within(&request.root, change, &configured)?.patterns()
 }
 
 /// Puts what the mutation phase judged into the report: the counts, one row per mutation, the findings, and what was not mutated.

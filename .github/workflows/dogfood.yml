@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# rust-mutants against its own engine, in four parts, and then an independent re-decision of what it reported.
+# rust-mutants against its own engine in one job, through the action another repository uses, and then an independent re-decision of what it reported.
 # This is the second of the two measurements of how strong this suite is; the other is cargo-mutants (mutation.yml).
-# A survivor the ledger does not accept fails the merge job.
+# A survivor the ledger does not accept fails the job.
 name: dogfood
 
 on:
@@ -38,14 +38,10 @@ defaults:
     shell: bash
 
 jobs:
-  shard:
-    name: shard ${{ matrix.shard }} of 4
+  whole:
+    name: the whole engine, in one job
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
+    timeout-minutes: 345
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -53,69 +49,43 @@ jobs:
       - uses: ./.github/actions/setup-rust
       - name: Fetch the locked dependency graph
         run: cargo fetch --locked
-      - name: Build the engine
-        run: cargo build --release --bin rust-mutants
-      - name: Run this part of the catalog
+      - name: Build the engine and the gates, and put the engine on the path
+        run: |
+          cargo build --locked --release --bin rust-mutants -p xtask
+          echo "$PWD/target/release" >> "$GITHUB_PATH"
+      # The store the action restores and saves is what makes this one job: a run reads back every answer the last one established that still holds, and a run the clock ends keeps what it established for the next.
+      # A survivor is the audit's business, not this step's, so the step's outcome and verdict are decided on below rather than failing here.
+      - name: Measure the whole catalog
+        id: mutation
+        continue-on-error: true
+        uses: ./.github/actions/rust-mutants
+        with:
+          args: >-
+            --locked --tier ${{ inputs.tier || 'balanced' }} --trace
+            ${{ inputs.include && format('--include {0}', inputs.include) || '' }}
+          changed-from: ""
+          upload-sarif: "false"
+      - name: Say whether the recording is complete, and re-decide the run against the ledger
         env:
-          SHARD: ${{ matrix.shard }}
-          TIER: ${{ inputs.tier || 'balanced' }}
-          INCLUDE: ${{ inputs.include }}
-        # The exit code says what the run found, and what it found is the merge job's business.
-        # A part that reports a finding (1) is not a part that failed; a run that failed (2) or was stopped is.
-        run: |
-          ./target/release/rust-mutants run \
-            --shard "$SHARD/4" --tier "$TIER" --jobs 4 --trace \
-            ${INCLUDE:+--include "$INCLUDE"} \
-            || case "$?" in 1) ;; *) exit 1 ;; esac
-      - name: Upload this part and its recording
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: dogfood-part-${{ matrix.shard }}
-          path: reports/mutation
-          if-no-files-found: error
-
-  audit:
-    name: re-decide the whole
-    needs: shard
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-rust
-      - name: Fetch the locked dependency graph
-        run: cargo fetch --locked
-      - name: Build the engine and the gates
-        run: cargo build --release --bin rust-mutants -p xtask
-      - name: Download every part
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: dogfood-part-*
-          path: parts
-      - name: Put the parts back together
+          OUTCOME: ${{ steps.mutation.outcome }}
+          VERDICT: ${{ steps.mutation.outputs.verdict }}
+          REPORT: ${{ steps.mutation.outputs.report }}
         run: |
           set -euo pipefail
-          find parts -name run-report-v2.json -print0 \
-            | sort -z \
-            | xargs -0 ./target/release/rust-mutants merge --output whole.json
-      - name: Say whether each recording is complete
-        run: |
-          set -euo pipefail
-          for trace in parts/*/*/trace; do
-            ./target/release/rust-mutants trace check --dir "$trace"
-          done
-      - name: Re-decide every part from its own recording and the ledger
-        run: |
-          set -euo pipefail
-          status=0
-          for run in parts/*/*/; do
-            [ -f "$run/run-report-v2.json" ] || continue
-            echo "== $run"
-            ./target/release/xtask engine-audit "$run" \
-              --trace "$run/trace" --sites --ledger .rust-mutants.toml || status=1
-          done
-          exit "$status"
+          case "$OUTCOME/$VERDICT" in
+            success/detected | failure/found | failure/interrupted) ;;
+            *)
+              echo "the step ended $OUTCOME and the run concluded '$VERDICT', which is not a measurement to audit"
+              exit 1
+              ;;
+          esac
+          run=$(dirname "$REPORT")
+          rust-mutants trace check --dir "$run/trace"
+          xtask engine-audit "$run" --trace "$run/trace" --sites --ledger .rust-mutants.toml
+          cp "$REPORT" whole.json
+          if [ "$VERDICT" = interrupted ]; then
+            echo "the run was ended by the clock; the next one continues from the store this one kept" >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Say what moved since the last complete run
         env:
           GH_TOKEN: ${{ github.token }}
@@ -135,15 +105,15 @@ jobs:
             echo "## What moved since run $previous"
             echo
             echo '```'
-            ./target/release/xtask report-diff before/whole.json whole.json
+            xtask report-diff before/whole.json whole.json
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload the whole and the parts
+      - name: Upload the run
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: dogfood-whole
           path: |
             whole.json
-            parts
+            reports/mutation
           if-no-files-found: error

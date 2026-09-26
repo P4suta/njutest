@@ -52,6 +52,7 @@ fn keyed(closure: &str) -> Keyed {
         timeout: "auto".to_owned(),
         steps: 0,
         build: Vec::new(),
+        runner: None,
     }
 }
 
@@ -332,7 +333,9 @@ fn the_key_holds_the_locus_and_not_the_closure() {
     let mut ruled = locus();
     ruled.rule = "arith@2".to_owned();
     assert_ne!(base, key(&keyed("closure-0"), &ruled));
-    let keys: [fn(&mut Keyed); 7] = [
+    let keys: [fn(&mut Keyed); 9] = [
+        |one| one.runner = Some("a runner's contract".to_owned()),
+        |one| one.runner = Some("none".to_owned()),
         |one| one.manifests = "m".to_owned(),
         |one| one.toolchain = "t".to_owned(),
         |one| one.engine = "e".to_owned(),

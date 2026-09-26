@@ -439,6 +439,22 @@ pub struct RouteRecord {
     /// Why the answer an earlier run left was not the one this run used, when there was a store to ask.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub refused: Option<String>,
+    /// Which store the disposition was read back from, when it was: this tree's own, or one an earlier tree left across an edit no execution of it entered (ADR 0041).
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub rule: Option<ReuseRule>,
+    /// Why an answer an earlier tree left under this mutation's locus was not believed, where one was found, by the premise it failed (ADR 0041).
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub carry_refused: Option<String>,
+}
+
+/// Which store an answer read back from an earlier run came out of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReuseRule {
+    /// The store of this exact tree, under every behaviour key the route's targets have now.
+    Exact,
+    /// The store of answers carried across an edit no execution of them entered.
+    Carried,
 }
 
 /// Which tests of one target a route puts the mutation to.

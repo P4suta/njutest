@@ -3,7 +3,7 @@
   "report": {
     "schema": "njutest-assurance-shard-report-v1",
     "schema_version": 2,
-    "run_id": "20260925t164408721z-03ba9a",
+    "run_id": "20260925t184226069z-13c4ce",
     "run_kind": "full",
     "contract": "whole-v1",
     "tool": {
@@ -27,7 +27,7 @@
       }
     },
     "provenance": {
-      "identity": "af18623b5b7a4fc6323275471bead10b528683cf3ad3a797a11e882521db768f",
+      "identity": "2fa4906c28c78386c4ccb8031d61f68338aaed35624f5486e4db0fe0b3667104",
       "cached": false,
       "source_run_id": null
     },
@@ -43,7 +43,7 @@
       "shard": null
     },
     "shard": {
-      "index": 2,
+      "index": 1,
       "of": 2
     },
     "builds": [
@@ -60,10 +60,10 @@
           "digest": "c5a587d94348b75388f86ec2495002bcecf82b4abb21333627414c945c0746ed"
         },
         "source": {
-          "run_id": "20260925t164408721z-03ba9a-b0000000000",
+          "run_id": "20260925t184226069z-13c4ce-b0000000000",
           "part": {
             "kind": "shard",
-            "index": 2,
+            "index": 1,
             "of": 2
           },
           "toolchain": {
@@ -74,9 +74,9 @@
             "arch": "x86_64"
           },
           "timing": {
-            "started": "2026-09-25T16:44:08.721632505Z",
-            "finished": "2026-09-25T16:44:22.149662063Z",
-            "duration_ms": 13428
+            "started": "2026-09-25T18:42:26.069663097Z",
+            "finished": "2026-09-25T18:42:40.286735466Z",
+            "duration_ms": 14217
           },
           "accounting": {
             "targets": {
@@ -150,7 +150,7 @@
               "name": "fixture-assured/test/doubling",
               "package": "fixture-assured",
               "status": "passed",
-              "duration_ms": 26,
+              "duration_ms": 25,
               "message": null
             },
             {
@@ -170,19 +170,19 @@
           ],
           "mutants": [
             {
-              "catalog_index": 1,
-              "id": "aaa2ce24eee3548cd2837b2fda40be1b2b38b148719d7edc67cab93899bf6c4a",
-              "display_id": "aaa2ce24eee3548cd283",
+              "catalog_index": 0,
+              "id": "754587d92aeadc857975a4cea72f9e04155efc7f1c81685185d0fa321ab3555d",
+              "display_id": "754587d92aeadc857975",
               "path": "src/lib.rs",
               "position": {
                 "line": 9,
-                "column": 7,
-                "character_column": 7
+                "column": 5,
+                "character_column": 5
               },
-              "rule": "gt-to-ge",
+              "rule": "return-true",
               "item": "is_positive",
-              "original": ">",
-              "replacement": ">=",
+              "original": "n > 0",
+              "replacement": "true",
               "decision": {
                 "outcome": "killed",
                 "killed_by": "fixture-assured/lib/fixture_assured",
@@ -210,19 +210,19 @@
               }
             },
             {
-              "catalog_index": 3,
-              "id": "9e156499bc852ea65db35d70f2cdc891f74c74f83175460e433affe6b6bb2340",
-              "display_id": "9e156499bc852ea65db3",
+              "catalog_index": 2,
+              "id": "e1a8798fb39e6bd0105369d707d184b2160fd1f242f52cec8313b4c219034d1b",
+              "display_id": "e1a8798fb39e6bd01053",
               "path": "src/lib.rs",
               "position": {
                 "line": 15,
-                "column": 7,
-                "character_column": 7
+                "column": 5,
+                "character_column": 5
               },
-              "rule": "mul-to-div",
+              "rule": "return-default",
               "item": "double",
-              "original": "*",
-              "replacement": "/",
+              "original": "n * 2",
+              "replacement": "Default::default()",
               "decision": {
                 "outcome": "killed",
                 "killed_by": "fixture-assured/test/doubling",

@@ -100,7 +100,7 @@ It takes about six seconds, which is why it runs with every other test rather th
 | `never-infected` | the guard: the value a return replacement overwrites is of a type whose equality is the whole of what a program can tell apart | nothing of this target ever returned a value that differed from what the replacement writes | the (mutant, target) pair, and the tests of a kept target that never returned a differing one |
 
 `branch-never-taken` has two premises and either will do.
-The instrumenter writes a marker at the first statement of every body a claim names — in the witness tree first, so the one `cargo check` that sifts the type witnesses sifts the markers too, and a body a call cannot go into (a `const` context,
+The instrumenter writes a marker at the first statement of every body a claim names — in the witness tree first, so the check that sifts the type witnesses sifts the markers too, and a body a call cannot go into (a `const` context,
 a body inside a guard's own site) simply carries none.
 That check caps every lint at a warning: the tree it compiles is written by this engine to ask about types, and an ordinary warning somewhere else in the workspace would otherwise stop it, leaving nothing vouched for and no way to tell a proof that was refused from one that was never made.
 The marker is exact where a coverage region is inferred from where regions begin, and it needs no coverage build.
@@ -131,6 +131,8 @@ A type of your own is outside it too: a `PartialEq` that answers about one field
 
 The question goes to the compiler in the witness tree, in the shape the guard will hold — `{ let v = <value>; w_default(&v); v }` — so what the compiler vouched for is literally what gets written.
 A value it refuses costs the probe and never the mutant: the mutation is still measured, by running it.
+A crate that fails to compile stops cargo before the crates that depend on it, so a check the compiler refused something in has said nothing about the crates it never reached.
+The witness tree is therefore checked again, without what the check before refused, until one check compiles every target, and only that check vouches for anything; a probe no check compiled is one nobody vouched for, and after eight checks nothing is.
 And the syntax refuses first, before the compiler is asked: a value is offered a probe only when evaluating it is not itself an event, which rules out every call and every arithmetic operator.
 
 Guard routing is the default and costs no build: the guards of the instrumented tree record which of a target's tests reached them on the run that verifies the baseline, and libtest names each test's thread after the test.

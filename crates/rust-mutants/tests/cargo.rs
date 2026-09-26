@@ -20,7 +20,7 @@ use njutest_devkit::result::{
 use rust_mutants::cargo::{
     BuildConfig, CargoError, CargoErrorKind, CompileKind, CompileOptions, Diagnostic,
     LocateOptions, Message, Metadata, Toolchain, compile_arguments, dep_info_path, env_deps,
-    parse_dep_info, parse_messages, parse_version,
+    parse_dep_info, parse_messages, parse_version, resolve_executable,
 };
 use rust_mutants::runner::Cancel;
 
@@ -550,6 +550,20 @@ fn a_run_told_not_to_touch_the_network_tells_every_command_it_starts() {
 }
 
 #[test]
+fn a_windows_path_in_dep_info_keeps_its_separators() {
+    let parsed = parse_dep_info("C:\\t\\demo.d: C:\\src\\lib.rs C:\\with\\ space\\x.rs\n");
+    let Ok(parsed) = parsed else {
+        panic!("dep-info: {parsed:?}");
+    };
+    assert_eq!(
+        parsed,
+        ["C:\\src\\lib.rs", "C:\\with space\\x.rs"],
+        "only a space or another backslash follows an escaping backslash, so every other one is \
+         a separator the path keeps"
+    );
+}
+
+#[test]
 fn a_dep_info_names_the_environment_it_read_set_or_not() {
     let text = "target/debug/deps/lib.rmeta: src/lib.rs src/answer.txt\n\nsrc/lib.rs:\nsrc/answer.txt:\n\n# env-dep:OUT_DIR=/tmp/out\n# env-dep:NEVER_SET\n";
     assert_eq!(
@@ -559,5 +573,188 @@ fn a_dep_info_names_the_environment_it_read_set_or_not() {
             ("OUT_DIR".to_owned(), Some("/tmp/out".to_owned())),
         ]),
         "an `env!` a compilation read is an input to what it computes, and an unset one as much as a set one"
+    );
+}
+
+#[test]
+fn a_search_path_entry_the_shell_would_pass_over_does_not_stop_the_search() {
+    let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("tempdir: {error}"));
+    let blocker = temp.path().join("not-a-directory");
+    std::fs::write(
+        &blocker,
+        "a file where a directory of programs was expected",
+    )
+    .unwrap_or_else(|error| panic!("write {}: {error}", blocker.display()));
+    let bin = temp.path().join("bin");
+    std::fs::create_dir_all(&bin)
+        .unwrap_or_else(|error| panic!("mkdir {}: {error}", bin.display()));
+    let cargo = bin.join(if cfg!(windows) { "cargo.exe" } else { "cargo" });
+    std::fs::write(&cargo, "").unwrap_or_else(|error| panic!("write {}: {error}", cargo.display()));
+    let search = std::env::join_paths([&blocker, &bin])
+        .unwrap_or_else(|error| panic!("join paths: {error}"));
+    let found = resolve_executable(Path::new("cargo"), Some(&search));
+    assert!(
+        matches!(&found, Ok(path) if *path == cargo),
+        "a shell looking for `cargo` passes over an entry of PATH it cannot look inside and runs \
+         the next one, so the engine must find the same program: {found:?}"
+    );
+}
+
+#[test]
+fn a_search_that_passed_over_entries_and_found_nothing_names_them() {
+    let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("tempdir: {error}"));
+    let blocker = temp.path().join("not-a-directory");
+    std::fs::write(
+        &blocker,
+        "a file where a directory of programs was expected",
+    )
+    .unwrap_or_else(|error| panic!("write {}: {error}", blocker.display()));
+    let search =
+        std::env::join_paths([&blocker]).unwrap_or_else(|error| panic!("join paths: {error}"));
+    let Err(error) = resolve_executable(Path::new("cargo"), Some(&search)) else {
+        panic!("nothing on this search path is cargo");
+    };
+    assert_eq!(error.kind(), CargoErrorKind::ToolchainNotFound, "{error}");
+    let said = error.to_string();
+    if !cfg!(windows) {
+        assert!(
+            said.contains(&blocker.join("cargo").display().to_string()),
+            "a miss that passed over an entry it could not read says which, so it is never \
+             mistaken for a clean miss: {said}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_toolchain_chosen_where_the_run_was_asked_is_the_one_every_later_command_runs() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("tempdir: {error}"));
+    let root = std::fs::canonicalize(temp.path())
+        .unwrap_or_else(|error| panic!("canonical tempdir: {error}"));
+    let asked = root.join("asked");
+    let elsewhere = root.join("elsewhere");
+    let bin = root.join("toolchain").join("bin");
+    let shims = root.join("shims");
+    for dir in [&asked, &elsewhere, &bin, &shims] {
+        std::fs::create_dir_all(dir)
+            .unwrap_or_else(|error| panic!("mkdir {}: {error}", dir.display()));
+    }
+    let write = |path: &Path, script: &str| {
+        std::fs::write(path, script)
+            .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+            .unwrap_or_else(|error| panic!("chmod {}: {error}", path.display()));
+    };
+    write(
+        &bin.join("cargo"),
+        "#!/bin/sh\nprintf 'cargo 1.98.1 (797e8a9bc 2026-08-05)\\nrelease: 1.98.1\\nhost: fake-host\\n'\n",
+    );
+    write(
+        &bin.join("rustc"),
+        &format!(
+            "#!/bin/sh\nif [ \"$1\" = --print ]; then echo '{}'; exit 0; fi\nprintf 'rustc 1.98.1 (48a229cea 2026-09-01)\\nrelease: 1.98.1\\nhost: fake-host\\n'\n",
+            root.join("toolchain").display()
+        ),
+    );
+    for name in ["cargo", "rustc"] {
+        write(
+            &shims.join(name),
+            &format!(
+                "#!/bin/sh\nif [ \"$(pwd -P)\" != '{}' ]; then echo 'this directory is not trusted' >&2; exit 1; fi\nexec '{}' \"$@\"\n",
+                asked.display(),
+                bin.join(name).display()
+            ),
+        );
+    }
+    let path = std::ffi::OsString::from(&shims);
+    let options = LocateOptions {
+        cargo: None,
+        search_path: Some(path.clone()),
+        env: Some(vec![("PATH".into(), path)]),
+    };
+    let toolchain = Toolchain::locate(&options, &asked, &Cancel::new())
+        .unwrap_or_else(|error| panic!("the shims answer where the run was asked: {error}"));
+    assert_eq!(
+        toolchain.selecting().path(),
+        shims.join("cargo"),
+        "a command that names another toolchain (`cargo +nightly`) asks the cargo the search path \
+         chose, which is rustup's proxy where rustup is installed; the pinned cargo knows no \
+         `+name`"
+    );
+    let spec = toolchain.command(&elsewhere, ["-vV"]);
+    let ran = rust_mutants::runner::run(&spec, &Cancel::new());
+    let said = match std::str::from_utf8(&ran.output) {
+        Ok(said) => said,
+        Err(_not_utf8) => "output that is not UTF-8",
+    };
+    assert!(
+        ran.succeeded(),
+        "a shim that chooses a toolchain by the directory it runs in, as mise and direnv do, is \
+         asked once, where the run was asked; the snapshot every later command runs in is \
+         another directory, which it may refuse: {:?} said {}",
+        spec.argv,
+        said
+    );
+    let rustc = spec
+        .env
+        .as_ref()
+        .and_then(|env| env.iter().find(|(name, _)| name == "RUSTC"))
+        .map(|(_, value)| PathBuf::from(value));
+    assert_eq!(
+        rustc,
+        Some(bin.join("rustc")),
+        "and cargo compiles with that toolchain's own rustc rather than asking the shim again"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_cargo_named_by_its_path_is_the_one_every_command_runs() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("tempdir: {error}"));
+    let root = std::fs::canonicalize(temp.path())
+        .unwrap_or_else(|error| panic!("canonical tempdir: {error}"));
+    let bin = root.join("toolchain").join("bin");
+    let wrapper = root.join("wrapper");
+    for dir in [&bin, &wrapper] {
+        std::fs::create_dir_all(dir)
+            .unwrap_or_else(|error| panic!("mkdir {}: {error}", dir.display()));
+    }
+    let write = |path: &Path, script: &str| {
+        std::fs::write(path, script)
+            .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+            .unwrap_or_else(|error| panic!("chmod {}: {error}", path.display()));
+    };
+    write(
+        &bin.join("cargo"),
+        "#!/bin/sh\nprintf 'cargo 1.98.1 (797e8a9bc 2026-08-05)\\nrelease: 1.98.1\\nhost: fake-host\\n'\n",
+    );
+    write(
+        &bin.join("rustc"),
+        &format!(
+            "#!/bin/sh\nif [ \"$1\" = --print ]; then echo '{}'; exit 0; fi\nprintf 'rustc 1.98.1 (48a229cea 2026-09-01)\\nrelease: 1.98.1\\nhost: fake-host\\n'\n",
+            root.join("toolchain").display()
+        ),
+    );
+    let named = wrapper.join("cargo");
+    write(
+        &named,
+        &format!("#!/bin/sh\nexec '{}' \"$@\"\n", bin.join("cargo").display()),
+    );
+    let path = std::ffi::OsString::from(&bin);
+    let options = LocateOptions {
+        cargo: Some(named.clone()),
+        search_path: Some(path.clone()),
+        env: Some(vec![("PATH".into(), path)]),
+    };
+    let toolchain = Toolchain::locate(&options, &root, &Cancel::new())
+        .unwrap_or_else(|error| panic!("the named cargo answers: {error}"));
+    assert_eq!(
+        toolchain.cargo(),
+        named.as_path(),
+        "a cargo somebody named by its path is a choice, a wrapper that records or rewrites what \
+         it runs perhaps, and running the toolchain's own cargo instead would silently undo it"
     );
 }

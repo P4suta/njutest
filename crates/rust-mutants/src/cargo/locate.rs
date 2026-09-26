@@ -30,6 +30,7 @@ pub struct LocateOptions {
 #[derive(Debug, Clone)]
 pub struct Toolchain {
     cargo: PathBuf,
+    chosen: PathBuf,
     rustc: PathBuf,
     sysroot: Option<PathBuf>,
     cargo_version: VersionInfo,
@@ -81,13 +82,28 @@ impl Toolchain {
         let cargo_version = banner(&cargo)?;
         let rustc_version = banner(&rustc)?;
         let sysroot = sysroot_of(&rustc, dir, options.env.as_deref(), cancel)?;
+        let chosen_by_path = name.components().count() == 1 && !name.is_absolute();
+        let toolchain = if chosen_by_path {
+            sysroot.as_deref()
+        } else {
+            None
+        };
+        let pinned_cargo = pinned((&cargo, "cargo"), toolchain, &cargo_version, banner)?;
+        let pinned_rustc = pinned((&rustc, "rustc"), toolchain, &rustc_version, banner)?;
+        let env = match options.env.clone() {
+            Some(env) if pinned_rustc != rustc => {
+                Some(with_toolchain(env, &pinned_rustc, sysroot.as_deref())?)
+            }
+            unpinned => unpinned,
+        };
         Ok(Self {
-            cargo,
-            rustc,
+            chosen: cargo,
+            cargo: pinned_cargo,
+            rustc: pinned_rustc,
             sysroot,
             cargo_version,
             rustc_version,
-            env: options.env.clone(),
+            env,
         })
     }
 
@@ -95,6 +111,12 @@ impl Toolchain {
     #[must_use]
     pub fn cargo(&self) -> &Path {
         &self.cargo
+    }
+
+    /// The cargo the search path chose, before it was pinned, which is the one a command naming another toolchain than this run's (`+nightly`) runs.
+    #[must_use]
+    pub fn selecting(&self) -> Selecting<'_> {
+        Selecting(&self.chosen)
     }
 
     /// The rustc executable.
@@ -146,6 +168,24 @@ impl Toolchain {
         spec.dir = Some(dir.to_path_buf());
         spec.env.clone_from(&self.env);
         spec
+    }
+}
+
+/// A cargo that may select a toolchain by `+name`: the one the search path chose, which is rustup's proxy where rustup is installed, and never the toolchain's own cargo, which knows no `+name`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Selecting<'a>(&'a Path);
+
+impl<'a> Selecting<'a> {
+    /// A cargo somebody named by its path, which is run as named.
+    #[must_use]
+    pub const fn named(path: &'a Path) -> Self {
+        Self(path)
+    }
+
+    /// The program to run.
+    #[must_use]
+    pub const fn path(self) -> &'a Path {
+        self.0
     }
 }
 
@@ -220,6 +260,66 @@ fn diagnostic_os(value: &OsStr) -> String {
     }
 }
 
+/// The executable `name` in the toolchain directory `sysroot` where it says exactly what `located` said, which is the same program without whatever chose it, and otherwise `located`.
+///
+/// A shim that chooses a toolchain by the directory it runs in, as mise and direnv do, is asked once, in the directory the run was asked in; every later command runs in a snapshot, which such a shim may refuse or answer differently.
+/// Only a cargo found by its bare name is pinned: one named by its path is somebody's choice, a wrapper perhaps, and is run as named.
+fn pinned(
+    (located, name): (&Path, &str),
+    sysroot: Option<&Path>,
+    said: &VersionInfo,
+    banner: impl Fn(&Path) -> Result<VersionInfo, CargoError>,
+) -> Result<PathBuf, CargoError> {
+    let Some(sysroot) = sysroot else {
+        return Ok(located.to_path_buf());
+    };
+    let Some(candidate) =
+        first_executable(executable_variants(&sysroot.join("bin"), Path::new(name)))?
+    else {
+        return Ok(located.to_path_buf());
+    };
+    if candidate == located {
+        return Ok(candidate);
+    }
+    match banner(&candidate) {
+        Ok(candidate_said) if candidate_said == *said => Ok(candidate),
+        Ok(_another_toolchain) => Ok(located.to_path_buf()),
+        Err(_unrunnable) => Ok(located.to_path_buf()),
+    }
+}
+
+/// `env` with `RUSTC` naming the pinned `rustc` and `RUSTDOC` the `rustdoc` beside it, unless the environment already names them, so cargo never asks a shim again.
+fn with_toolchain(
+    mut env: Vec<(OsString, OsString)>,
+    rustc: &Path,
+    sysroot: Option<&Path>,
+) -> Result<Vec<(OsString, OsString)>, CargoError> {
+    let named = |env: &[(OsString, OsString)], variable: &str| {
+        env.iter().any(|(name, _)| {
+            name.to_str().is_some_and(|name| {
+                if cfg!(windows) {
+                    name.eq_ignore_ascii_case(variable)
+                } else {
+                    name == variable
+                }
+            })
+        })
+    };
+    if !named(&env, "RUSTC") {
+        env.push(("RUSTC".into(), rustc.as_os_str().to_owned()));
+    }
+    if let Some(sysroot) = sysroot
+        && !named(&env, "RUSTDOC")
+        && let Some(rustdoc) = first_executable(executable_variants(
+            &sysroot.join("bin"),
+            Path::new("rustdoc"),
+        ))?
+    {
+        env.push(("RUSTDOC".into(), rustdoc.into_os_string()));
+    }
+    Ok(env)
+}
+
 /// The executable `name` beside `program`, if there is one.
 fn sibling(program: &Path, name: &str) -> Result<Option<PathBuf>, CargoError> {
     let Some(dir) = program.parent() else {
@@ -247,18 +347,54 @@ pub fn resolve_executable(name: &Path, search_path: Option<&OsStr>) -> Result<Pa
             name.display()
         )));
     };
+    let mut unreadable = Vec::new();
     for dir in std::env::split_paths(search_path) {
         if dir.as_os_str().is_empty() {
             continue;
         }
-        if let Some(found) = first_executable(executable_variants(&dir, name))? {
-            return Ok(found);
+        for candidate in executable_variants(&dir, name) {
+            match std::fs::metadata(&candidate) {
+                Ok(metadata) if metadata.file_type().is_file() => return Ok(candidate),
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) if passed_over(&error) => {
+                    unreadable.push(format!("{}: {error}", candidate.display()));
+                }
+                Err(source) => {
+                    return Err(CargoError::new(
+                        CargoErrorKind::ToolchainNotFound,
+                        format!(
+                            "cannot inspect executable candidate {}",
+                            candidate.display()
+                        ),
+                    )
+                    .with_source(source));
+                }
+            }
         }
     }
+    if unreadable.is_empty() {
+        return Err(not_found(format!(
+            "{} was not found on the search path",
+            name.display()
+        )));
+    }
     Err(not_found(format!(
-        "{} was not found on the search path",
-        name.display()
+        "{} was not found on the search path, which holds candidates that could not be read: {}",
+        name.display(),
+        unreadable.join("; ")
     )))
+}
+
+/// Windows' refusal to traverse a mount point the process does not trust, such as a junction a user made.
+const ERROR_UNTRUSTED_MOUNT_POINT: i32 = 448;
+
+/// Whether a shell searching its path passes over a candidate whose metadata fails with `error`, as `execvp` does over an entry that is not a directory or that it may not enter, and Windows does over a path through a mount point it does not trust.
+fn passed_over(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::NotADirectory | std::io::ErrorKind::PermissionDenied
+    ) || (cfg!(windows) && error.raw_os_error() == Some(ERROR_UNTRUSTED_MOUNT_POINT))
 }
 
 fn first_executable(
@@ -342,5 +478,19 @@ fn sysroot_of(
         Ok(None)
     } else {
         Ok(Some(PathBuf::from(line)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_path_through_an_untrusted_mount_point_is_passed_over_where_windows_refuses_it() {
+        let untrusted = std::io::Error::from_raw_os_error(super::ERROR_UNTRUSTED_MOUNT_POINT);
+        assert_eq!(
+            super::passed_over(&untrusted),
+            cfg!(windows),
+            "Windows refuses to traverse a junction a user made, as scoop's `current` is, and \
+             its own command lookup moves past it: {untrusted}"
+        );
     }
 }

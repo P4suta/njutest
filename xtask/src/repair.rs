@@ -21,12 +21,10 @@ pub struct Repair {
 }
 
 /// Every repair record of a runner recording, in the order it was written.
-///
-/// # Errors
-/// A corrupt non-empty line is rejected rather than disappearing from the evidence.
-pub fn read(recorded: &str) -> Result<Vec<Repair>, crate::route::ReadError> {
+#[must_use]
+pub fn read(recorded: &crate::route::Checked<crate::schemas::RunnerLines>) -> Vec<Repair> {
     let mut repairs = Vec::new();
-    for event in crate::route::events(recorded, crate::schemas::Producer::Runner)? {
+    for event in recorded.events() {
         if event.get("type").and_then(Value::as_str) != Some("repair") {
             continue;
         }
@@ -48,7 +46,7 @@ pub fn read(recorded: &str) -> Result<Vec<Repair>, crate::route::ReadError> {
             reached: text("reached"),
         });
     }
-    Ok(repairs)
+    repairs
 }
 
 /// What one repair's own evidence decides: whether its run reached the site, and the dispositions it may now carry.

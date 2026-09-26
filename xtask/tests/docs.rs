@@ -163,7 +163,7 @@ fn every_job_ci_md_names_exists_in_the_workflow_that_would_hold_it() {
         jobs.extend(jobs_of(&name));
     }
     assert!(jobs.contains("ci-success"), "{jobs:?}");
-    for named in ["ci-success", "shard", "audit", "cargo-mutants"] {
+    for named in ["ci-success", "whole", "audit", "cargo-mutants"] {
         assert!(
             page.contains(named),
             "docs/ci.md does not name the {named} job"

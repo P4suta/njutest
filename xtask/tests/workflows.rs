@@ -495,6 +495,80 @@ fn pages() -> Vec<PathBuf> {
     found
 }
 
+/// How far a line is indented, in spaces.
+fn indent(line: &str) -> usize {
+    line.chars().take_while(|one| *one == ' ').count()
+}
+
+/// Every line of a `run: |` script that reads a command's exit status anywhere but after `||`, where the shell, which stops at the first failure, would already have stopped, by file and line.
+fn unprotected_statuses(path: &Path, text: &str) -> Vec<String> {
+    let mut lines = (1_usize..).zip(text.lines()).peekable();
+    let mut found = Vec::new();
+    while let Some((_, line)) = lines.next() {
+        if !line
+            .trim_start()
+            .trim_start_matches("- ")
+            .starts_with("run: |")
+        {
+            continue;
+        }
+        let depth = indent(line);
+        while let Some((number, script)) =
+            lines.next_if(|(_, script)| script.trim().is_empty() || indent(script) > depth)
+        {
+            let said = script.trim();
+            if (said.contains("$?") || said.contains("PIPESTATUS")) && !said.contains("||") {
+                found.push(format!("{}:{number}: {said}", path.display()));
+            }
+        }
+    }
+    found
+}
+
+/// The `id` of the step holding the line at `at` (zero-based), where the step names one.
+fn step_id(lines: &[&str], at: usize) -> Option<String> {
+    let own = lines.get(at)?;
+    let starts = |line: &str| line.trim_start().starts_with("- ");
+    let start = if starts(own) {
+        at
+    } else {
+        (0..at).rev().find(|&index| {
+            lines
+                .get(index)
+                .is_some_and(|line| starts(line) && indent(line) < indent(own))
+        })?
+    };
+    let dash = indent(lines.get(start)?);
+    lines
+        .iter()
+        .skip(start)
+        .enumerate()
+        .take_while(|(offset, line)| *offset == 0 || line.trim().is_empty() || indent(line) > dash)
+        .find_map(|(_, line)| {
+            line.trim_start()
+                .trim_start_matches("- ")
+                .strip_prefix("id:")
+                .map(|id| id.trim().to_owned())
+        })
+}
+
+/// Every `continue-on-error: true` in `source` whose step's outcome nothing later reads, by line: a step allowed to fail is one whose failure is decided on, by `steps.<id>.outcome`, or it is a failure turned into a success.
+fn undecided_continuations(source: &str) -> Vec<usize> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut found = Vec::new();
+    for (at, line) in lines.iter().enumerate() {
+        if !line.contains("continue-on-error: true") {
+            continue;
+        }
+        let decided =
+            step_id(&lines, at).is_some_and(|id| source.contains(&format!("steps.{id}.outcome")));
+        if !decided {
+            found.push(at.saturating_add(1));
+        }
+    }
+    found
+}
+
 /// The shell text a workflow, an action, a task or a script runs: the whole file, since a line that is not shell holds no `||` outside the expressions [`shell_text`] removes.
 fn shell_sources() -> Vec<(PathBuf, String)> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -642,7 +716,6 @@ fn swallowed(text: &str) -> Vec<usize> {
             .collect::<Vec<_>>()
             .windows(2)
             .any(|pair| pair == ["set", "+e"])
-            || line.contains("continue-on-error: true")
         {
             found.push(at.saturating_add(1));
         }
@@ -675,7 +748,10 @@ fn swallowed(text: &str) -> Vec<usize> {
 fn no_command_turns_its_own_failure_into_a_success() {
     let mut swallowing = Vec::new();
     for (path, source) in shell_sources() {
-        for line in swallowed(&shell_text(&source)) {
+        for line in swallowed(&shell_text(&source))
+            .into_iter()
+            .chain(undecided_continuations(&source))
+        {
             swallowing.push(format!("{}:{line}", path.display()));
         }
     }
@@ -684,8 +760,9 @@ fn no_command_turns_its_own_failure_into_a_success() {
         "a command that cannot fail says nothing when it goes wrong: the dogfood parts passed a \
          flag the engine does not have, every part refused to run, and `|| true` reported each \
          one as a part that measured. After `||`, end non-zero, record the status for a later \
-         decision, or accept the exit codes that are answers by name in a `case`; `set +e` and \
-         `continue-on-error` are refused outright. {swallowing:#?}"
+         decision, or accept the exit codes that are answers by name in a `case`; `set +e` is \
+         refused outright, and `continue-on-error` on a step whose `steps.<id>.outcome` no \
+         later step reads. {swallowing:#?}"
     );
 }
 
@@ -699,7 +776,6 @@ fn the_swallowing_rule_tells_a_refusal_from_a_decision() {
         "cmd || exit 0",
         "a || b || true",
         "set +e",
-        "continue-on-error: true",
     ] {
         assert!(
             !swallowed(&shell_text(swallowing)).is_empty(),
@@ -879,6 +955,66 @@ fn invocations(line: &str) -> Vec<(String, Option<String>, String)> {
         }
     }
     found
+}
+
+#[test]
+fn a_step_that_reads_an_exit_status_first_stops_the_shell_stopping_at_it() {
+    let mut unprotected = Vec::new();
+    for path in workflows().into_iter().chain(actions()) {
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        unprotected.extend(unprotected_statuses(&path, &text));
+    }
+    assert!(
+        unprotected.is_empty(),
+        "the runner starts `bash` with -e, so a command that exits non-zero ends the step \
+         before the next line reads its status: a verdict the step exists to report is lost \
+         with every output after it; read it with `||`, as `cmd || status=$?`: \
+         {unprotected:#?}"
+    );
+}
+
+#[test]
+fn the_status_law_sees_a_status_read_after_a_command_that_stops_the_shell() {
+    let said = unprotected_statuses(
+        Path::new("action.yml"),
+        "    - run: |\n        set -uo pipefail\n        verify | tee out\n        status=${PIPESTATUS[0]}\n    - run: |\n        set +e\n        verify\n        echo \"$?\"\n    - run: |\n        verify || status=$?\n",
+    );
+    assert_eq!(
+        said,
+        [
+            "action.yml:4: status=${PIPESTATUS[0]}",
+            "action.yml:8: echo \"$?\""
+        ],
+        "{said:#?}"
+    );
+}
+
+#[test]
+fn a_step_let_fail_is_one_whose_outcome_a_later_step_decides() {
+    for (undecided, line) in [
+        (
+            "      - continue-on-error: true\n        run: verify\n",
+            1_usize,
+        ),
+        (
+            "      - id: found\n        continue-on-error: true\n        run: verify\n",
+            2,
+        ),
+        (
+            "      - id: found\n        continue-on-error: true\n        run: verify\n      - run: test \"${{ steps.other.outcome }}\" = failure\n",
+            2,
+        ),
+    ] {
+        assert_eq!(undecided_continuations(undecided), [line], "{undecided}");
+    }
+    let decided = "      - id: found\n        uses: ./.github/actions/rust-mutants\n        continue-on-error: true\n      - env:\n          OUTCOME: ${{ steps.found.outcome }}\n        run: test \"${OUTCOME}\" = failure\n";
+    assert!(undecided_continuations(decided).is_empty(), "{decided}");
+    let named_below = "      - continue-on-error: true\n        id: found\n        run: verify\n      - run: test \"${{ steps.found.outcome }}\" = failure\n";
+    assert!(
+        undecided_continuations(named_below).is_empty(),
+        "{named_below}"
+    );
 }
 
 #[test]

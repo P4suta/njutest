@@ -113,6 +113,7 @@ fn keyed() -> rust_mutants::outcomes::Keyed {
         steps: 0,
         build: Vec::new(),
         engine: "e".to_owned(),
+        runner: None,
     }
 }
 

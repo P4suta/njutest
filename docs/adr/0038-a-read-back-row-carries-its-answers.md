@@ -9,6 +9,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Accepted, 2026-09-25.
 Decides what a mutation row read back from the evidence store, or inherited from a checkpoint, says about the targets that were asked.
+Amended 2026-09-26: the order a run asks its targets in puts the killer an earlier record names first, as `rust-mutants` does, and `before` is held to that order.
 
 ## Context
 
@@ -35,7 +36,8 @@ Three directions were weighed.
 A kill carries the answers given before it, wherever it is kept.
 
 - The evidence store's `Killed` record carries `before`: every target asked before the killer, in order, each with its behaviour key and outcome.
-  It is believed only when those are exactly the targets this run would ask before the killer, in the same order — a run asks the targets its route reaches in name order and stops at the first confirmed kill — each with the same key and seen to pass by this run's baseline.
+  It is believed only when those are exactly the targets this run would ask before the killer, in the same order — a run asks first the target a record says killed the mutation last time, where its route still reaches it, then the rest in name order, and stops at the first confirmed kill — each with the same key and seen to pass by this run's baseline.
+  Asked that way, a record believed is always one whose killer was asked first, so its `before` is empty; one written before a run asked its killer first names targets this run would not ask before it, and its store layout, `mutants-v2`, leaves it unread rather than refused.
   A record naming them in another order, or holding a kill among them, is one no run wrote and is unreadable: a kill that did not reproduce is recorded as unconfirmed and the run moves on.
   A target this run would ask that the record has no answer from refuses reuse as `target-entered`; one the record answered for that this run would not ask refuses it as `not-routed`.
 - The checkpoint's `SavedDisposition::Killed` carries the same `before`, by target name, and a `before` that names the target that noticed, or holds a kill, is not a checkpoint.

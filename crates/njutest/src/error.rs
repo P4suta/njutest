@@ -101,6 +101,10 @@ mod table {
         SchedulerUnusable,
         /// An assurance phase printed output that is not valid UTF-8.
         PhaseOutputUnreadable,
+        /// The run ran out of descriptors or memory while reading the sources a proof rests on.
+        SourcesUnreadable,
+        /// A worker of the run panicked, which is a defect in njutest.
+        WorkerPanicked,
         /// The run has nowhere to work.
         ScratchUnusable,
         /// The store of earlier answers could not be used.
@@ -354,13 +358,25 @@ mod table {
                 Self::SchedulerUnusable => ErrorCode {
                     code: "NJ7003",
                     summary: "the run could not schedule measurements without trusting interrupted state",
-                    remedy: "run it again; a worker panic or poisoned coordination lock is never recovered as ordinary state",
+                    remedy: "run it again; a poisoned coordination lock is never recovered as ordinary state",
                     sealed: Sealed,
                 },
                 Self::PhaseOutputUnreadable => ErrorCode {
                     code: "NJ7004",
                     summary: "an assurance phase printed output that is not valid UTF-8",
                     remedy: "the named tool violated its text-output contract; fix or replace that tool before trusting its result",
+                    sealed: Sealed,
+                },
+                Self::SourcesUnreadable => ErrorCode {
+                    code: "NJ7005",
+                    summary: "the run ran out of descriptors or memory while reading the sources a proof rests on",
+                    remedy: "raise the open-file limit or free memory and run it again; what could not be opened is not known to be unreadable",
+                    sealed: Sealed,
+                },
+                Self::WorkerPanicked => ErrorCode {
+                    code: "NJ7006",
+                    summary: "a worker of the run panicked, which is a defect in njutest",
+                    remedy: "report it with the message, which names the worker, what it was measuring and what it said; running it again meets the same panic",
                     sealed: Sealed,
                 },
                 Self::ScratchUnusable => ErrorCode {
@@ -442,6 +458,8 @@ pub(crate) const MIRI_MISSING: ErrorCode = NjCode::MiriMissing.error_code();
 pub(crate) const MODEL_PHASE_FAILED: ErrorCode = NjCode::ModelPhaseFailed.error_code();
 pub(crate) const SCHEDULER_UNUSABLE: ErrorCode = NjCode::SchedulerUnusable.error_code();
 pub(crate) const PHASE_OUTPUT_UNREADABLE: ErrorCode = NjCode::PhaseOutputUnreadable.error_code();
+pub(crate) const SOURCES_UNREADABLE: ErrorCode = NjCode::SourcesUnreadable.error_code();
+pub(crate) const WORKER_PANICKED: ErrorCode = NjCode::WorkerPanicked.error_code();
 pub(crate) const GENERATION_PROTOCOL: ErrorCode = NjCode::GenerationProtocol.error_code();
 pub(crate) const GENERATION_PATH_REFUSED: ErrorCode = NjCode::GenerationPathRefused.error_code();
 pub(crate) const GENERATION_PREIMAGE_MOVED: ErrorCode =
@@ -481,6 +499,13 @@ pub enum RunnerError {
     /// Per-mutant evidence could not be preserved.
     #[error(transparent)]
     MutationEvidence(#[from] crate::evidence::store::StoreError),
+    /// An answer to carry across an edit could not be filed (ADR 0041).
+    #[error("{}: the answer could not be filed for a later tree to carry: {source}", CACHE_UNUSABLE.code)]
+    Carry {
+        /// Why the carried store refused it.
+        #[source]
+        source: rust_mutants::outcomes::StoreError,
+    },
     /// Coverage could not be read.
     #[error(transparent)]
     Coverage(#[from] crate::coverage::CoverageError),
@@ -531,6 +556,9 @@ pub enum RunnerError {
     /// Measurements could not be scheduled without trusting state interrupted by a panic.
     #[error(transparent)]
     Schedule(#[from] crate::assure::schedule::ScheduleError),
+    /// The sources a proof rests on could not be read just now.
+    #[error(transparent)]
+    Sources(#[from] crate::observe::SourceReadError),
     /// Equivalence answers could not be correlated without ambiguity.
     #[error("{}: {source}", REPORT_UNSOUND.code)]
     Equivalence {
@@ -607,6 +635,7 @@ impl RunnerError {
             Self::Cache(error) => error.code(),
             Self::Checkpoint(error) => error.code(),
             Self::MutationEvidence(error) => error.code(),
+            Self::Carry { .. } => CACHE_UNUSABLE,
             Self::Coverage(error) => error.code(),
             Self::Provider(error) => error.code(),
             Self::IdentityEnvironment { .. } => CONFIG_INVALID,
@@ -618,7 +647,8 @@ impl RunnerError {
             Self::MiriMissing { .. } => MIRI_MISSING,
             Self::PhaseOutput { .. } => PHASE_OUTPUT_UNREADABLE,
             Self::Model { .. } => MODEL_PHASE_FAILED,
-            Self::Schedule(_) => SCHEDULER_UNUSABLE,
+            Self::Schedule(error) => error.code(),
+            Self::Sources(error) => error.code(),
             Self::Blind { .. } => SENTINEL_BLIND,
             Self::Resource(error) => error.code(),
             Self::Report(error) => error.code(),

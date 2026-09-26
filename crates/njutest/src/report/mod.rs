@@ -181,7 +181,9 @@ impl Verdict {
 }
 
 /// How much of the workspace a run looked at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, njutest_macros::AllVariants,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RunKind {
     /// Everything in the workspace.
@@ -4350,7 +4352,7 @@ pub struct MutantRecord {
 }
 
 /// Whether any target's reach moved between its baseline and a control.
-fn moved(drift: &[drift::Drift]) -> bool {
+pub(crate) fn moved(drift: &[drift::Drift]) -> bool {
     drift
         .iter()
         .any(|one| matches!(one, drift::Drift::Moved { .. }))

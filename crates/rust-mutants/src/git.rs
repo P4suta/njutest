@@ -87,7 +87,7 @@ pub fn facts<W: Watch>(asking: &Asking<'_, W>) -> Option<Facts> {
     })
 }
 
-/// Every file that differs from `base`, committed and not, leaving out anything under an excluded directory.
+/// Every file under the root that differs from `base`, committed and not, named relative to the root, leaving out anything under an excluded directory.
 #[must_use]
 pub fn changed<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Change> {
     let merge_base = ask(
@@ -112,6 +112,12 @@ pub fn changed<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Change> {
         Shape::Verbatim,
         &["status", "--porcelain"],
     )?;
+    let prefix = ask(
+        asking,
+        Empty::Accept,
+        Shape::Trimmed,
+        &["rev-parse", "--show-prefix"],
+    )?;
     let mut files: Vec<String> = committed
         .lines()
         .map(str::trim)
@@ -120,6 +126,11 @@ pub fn changed<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Change> {
         .collect();
     let uncommitted_paths: Option<Vec<String>> = uncommitted.lines().map(porcelain_path).collect();
     files.extend(uncommitted_paths?);
+    let mut files: Vec<String> = files
+        .iter()
+        .filter_map(|path| path.strip_prefix(prefix.as_str()))
+        .map(str::to_owned)
+        .collect();
     files.retain(|path| !is_under(path, asking.excluded));
     files.sort();
     files.dedup();
@@ -305,15 +316,16 @@ fn number(text: &str) -> Option<u32> {
     }
 }
 
-/// The Rust files a change set names, keeping only what `include` already admits when it admits anything, or that it names none.
+/// The Rust files a change set names that are still under `root`, keeping only what `include` already admits when it admits anything, or that it names none.
 /// # Errors
 /// Refuses a changed path which cannot be represented by the mutation glob language.
 /// Silently omitting such a path would make a partial change set indistinguishable from the complete one the caller asked for.
-pub fn within(change: &Change, include: &[Pattern]) -> Result<Within, GlobError> {
+pub fn within(root: &Path, change: &Change, include: &[Pattern]) -> Result<Within, GlobError> {
     let sources: Vec<&String> = change
         .files
         .iter()
         .filter(|path| Path::new(path).extension() == Some(std::ffi::OsStr::new("rs")))
+        .filter(|path| present(&root.join(path)))
         .filter(|path| include.is_empty() || include.iter().any(|pattern| pattern.matches(path)))
         .collect();
     if sources.is_empty() {
@@ -326,6 +338,14 @@ pub fn within(change: &Change, include: &[Pattern]) -> Result<Within, GlobError>
         .map(|path| Pattern::compile(path))
         .collect::<Result<Vec<Pattern>, GlobError>>()
         .map(Within::Changed)
+}
+
+/// Whether a changed path is still there to mutate: a deleted one is not, and one that cannot be looked at is kept, so the run that reads it says why.
+fn present(path: &Path) -> bool {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => true,
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    }
 }
 
 /// Whether an empty answer is an answer.

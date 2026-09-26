@@ -66,17 +66,18 @@ fn audited(document: &serde_json::Value) -> Audit {
     let directory = run_directory(document);
     let concluded = sentinel::concluding(document, &[]);
     if concluded.is_empty() {
-        return gates::proofaudit(directory.path(), None).expect("a recording this audit can read");
+        return gates::proofaudit(&checkers(), directory.path(), None)
+            .expect("a recording this audit can read");
     }
     let trace = recorded(&concluded);
-    gates::proofaudit(directory.path(), Some(trace.path()))
+    gates::proofaudit(&checkers(), directory.path(), Some(trace.path()))
         .expect("a recording this audit can read")
 }
 
 fn off_schema(document: &serde_json::Value) -> bool {
     let directory = run_directory(document);
     matches!(
-        gates::proofaudit(directory.path(), None),
+        gates::proofaudit(&checkers(), directory.path(), None),
         Err(AuditError::OffSchema { .. })
     )
 }
@@ -88,7 +89,8 @@ fn audited_with_routes(document: &serde_json::Value) -> Audit {
 fn audited_with(document: &serde_json::Value, lines: &[serde_json::Value]) -> Audit {
     let run = run_directory(document);
     let trace = recorded(&sentinel::concluding(document, lines));
-    gates::proofaudit(run.path(), Some(trace.path())).expect("a recording this audit can read")
+    gates::proofaudit(&checkers(), run.path(), Some(trace.path()))
+        .expect("a recording this audit can read")
 }
 
 fn subjects(document: &serde_json::Value, standing: Standing) -> Vec<String> {
@@ -102,10 +104,6 @@ fn subjects(document: &serde_json::Value, standing: Standing) -> Vec<String> {
 
 fn violations(document: &serde_json::Value) -> Vec<String> {
     subjects(document, Standing::Violated)
-}
-
-fn unaudited(document: &serde_json::Value) -> Vec<String> {
-    subjects(document, Standing::Unaudited)
 }
 
 fn exit_code(directory: &Path) -> i32 {
@@ -122,8 +120,8 @@ fn exit_code(directory: &Path) -> i32 {
 #[test]
 fn a_recording_that_agrees_with_itself_violates_nothing_and_leaves_only_the_package_scan() {
     let laid = sentinel::clean().lay().expect("the specimen is laid out");
-    let audit =
-        gates::proofaudit(laid.run(), laid.trace()).expect("a recording this audit can read");
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        .expect("a recording this audit can read");
     assert_eq!(audit.violations(), 0, "{audit}");
     let unaudited: Vec<(Layer, &str)> = audit
         .remarks
@@ -452,6 +450,134 @@ fn a_defect_that_names_nothing_a_reader_can_act_on_is_a_violation() {
 }
 
 #[test]
+fn a_run_that_found_a_defect_and_concludes_less_than_defect_is_a_violation() {
+    for (weaker, scope) in [
+        ("INSUFFICIENT", serde_json::json!({})),
+        ("PARTIAL", serde_json::json!({ "shard": "1/2" })),
+    ] {
+        let document = with(serde_json::json!({
+            "verdict": weaker,
+            "scope": scope,
+            "findings": [{ "kind": "failing-test", "subject": TARGET, "detail": "d", "position": null }]
+        }));
+        assert!(
+            violations(&document).contains(&"verdict".to_owned()),
+            "{weaker}: a run that found a defect says DEFECT, whole or in part"
+        );
+    }
+}
+
+#[test]
+fn a_part_that_carries_a_finding_is_a_violation() {
+    let document = with(serde_json::json!({
+        "verdict": "PARTIAL",
+        "scope": { "shard": "1/2" }
+    }));
+    assert!(
+        violations(&document).contains(&"verdict".to_owned()),
+        "a finding in a part is a finding, so a part that carries one is INSUFFICIENT"
+    );
+}
+
+#[test]
+fn an_assurance_from_one_part_is_a_violation() {
+    let mut document = assured();
+    merge(
+        &mut document,
+        serde_json::json!({ "scope": { "shard": "1/2" } }),
+    );
+    assert!(
+        violations(&document).contains(&"verdict".to_owned()),
+        "a part assures nothing on its own"
+    );
+}
+
+#[test]
+fn a_part_of_nothing_is_a_violation() {
+    let mut document = assured();
+    merge(&mut document, serde_json::json!({ "verdict": "PARTIAL" }));
+    assert!(
+        violations(&document).contains(&"verdict".to_owned()),
+        "PARTIAL is what a part concludes, and a run that records no shard is not one"
+    );
+}
+
+#[test]
+fn an_insufficient_run_that_established_everything_says_less_than_it_found() {
+    let mut document = assured();
+    merge(
+        &mut document,
+        serde_json::json!({ "verdict": "INSUFFICIENT" }),
+    );
+    assert!(
+        violations(&document).contains(&"verdict".to_owned()),
+        "a run that found nothing and answered every mutation it asked is assured, and saying \
+         INSUFFICIENT sends its reader looking for a gap that is not there"
+    );
+    merge(
+        &mut document,
+        serde_json::json!({ "scope": { "shard": "1/2" } }),
+    );
+    assert!(
+        violations(&document).contains(&"verdict".to_owned()),
+        "and one part of it is PARTIAL"
+    );
+}
+
+#[test]
+fn every_verdict_the_trace_can_carry_is_one_the_audit_holds_to_a_rule() {
+    let schema = xtask::strictjson::from_str(
+        &std::fs::read_to_string(gates::workspace_root().join("schema/njutest-trace-v1.json"))
+            .expect("the trace schema"),
+    )
+    .expect("the schema is JSON");
+    let mut published: Vec<String> = Vec::new();
+    verdict_enums(&schema, &mut published);
+    published.sort();
+    published.dedup();
+    let mut held: Vec<String> = xtask::proofaudit::Concluded::ALL
+        .iter()
+        .map(|verdict| verdict.name().to_owned())
+        .collect();
+    held.sort();
+    assert_eq!(
+        published, held,
+        "a verdict the trace can carry and the audit has no rule for passes unexamined"
+    );
+}
+
+fn verdict_enums(value: &serde_json::Value, found: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(names) = map
+                .get("verdict")
+                .and_then(|verdict| verdict.get("enum"))
+                .and_then(serde_json::Value::as_array)
+            {
+                found.extend(
+                    names
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_owned),
+                );
+            }
+            for child in map.values() {
+                verdict_enums(child, found);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for child in items {
+                verdict_enums(child, found);
+            }
+        }
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => {}
+    }
+}
+
+#[test]
 fn a_kill_that_names_no_target_at_all_is_refused_before_any_layer_reads_it() {
     assert!(
         off_schema(&with(
@@ -552,23 +678,118 @@ fn a_source_run_on_a_disposition_this_run_established_is_refused_before_any_laye
     }))));
 }
 
-#[test]
-fn what_a_reused_disposition_rests_on_is_unaudited() {
-    let document = with(serde_json::json!({
+/// A run that read the kill back from [`EARLIER`] under a route reaching `reaching` that names `reused` as its source, and ran the survivor; it ran the kill too where `ran`.
+fn read_back_kill(reaching: &[&str], reused: Option<&str>, ran: bool) -> Vec<serde_json::Value> {
+    let route = |mutant: &str, reaching: &[&str], reused: Option<&str>| {
+        serde_json::json!({
+            "type": "route",
+            "route": {
+                "mutant": mutant, "granularity": "block", "fallback": null,
+                "reaching": reaching, "tests": [], "discharged": [], "considered": [],
+                "reused": reused, "refused": null,
+                "rule": reused.map(|_| "exact"), "carry_refused": null
+            }
+        })
+    };
+    let exec = |mutant: &str, target: &str, outcome: &str| {
+        serde_json::json!({
+            "type": "mutant-exec",
+            "mutant": {
+                "mutant": mutant, "target": target, "args": [], "outcome": outcome,
+                "duration_ms": 5
+            }
+        })
+    };
+    let mut events = vec![route(KILLED, reaching, reused)];
+    if ran {
+        events.push(exec(KILLED, TARGET, "killed"));
+    }
+    events.push(route(SURVIVED, &["t1"], None));
+    events.push(exec(SURVIVED, "t1", "survived"));
+    events
+}
+
+/// A report that says its kill was read back from [`EARLIER`].
+fn reads_the_kill_back() -> serde_json::Value {
+    with(serde_json::json!({
         "mutants": [{ "reuse": { "reused": true, "source_run_id": EARLIER } }],
         "accounting": { "mutants": { "reused_killed": 1 } }
-    }));
-    assert_eq!(violations(&document), Vec::<String>::new());
+    }))
+}
+
+/// The reuse layer's remarks about `document` read against `events`, by standing and subject.
+fn reuse_remarks(
+    document: &serde_json::Value,
+    events: &[serde_json::Value],
+) -> Vec<(Standing, String)> {
+    audited_with(document, events)
+        .remarks
+        .into_iter()
+        .filter(|remark| remark.layer == Layer::Reuse)
+        .map(|remark| (remark.standing, remark.subject))
+        .collect()
+}
+
+#[test]
+fn what_a_reused_disposition_rests_on_is_unaudited() {
+    let remarks = reuse_remarks(
+        &reads_the_kill_back(),
+        &read_back_kill(&[TARGET], Some(EARLIER), false),
+    );
     assert!(
-        unaudited(&document).contains(&"provenance".to_owned()),
-        "whether the recorded killer is still routed under the same behaviour key is not in the report"
+        !remarks
+            .iter()
+            .any(|(standing, _)| *standing == Standing::Violated),
+        "a kill read back from the run its route names, by a target the route still reaches, \
+         with nothing of it run here, is what reading an answer back is: {remarks:?}"
+    );
+    assert!(
+        remarks.contains(&(Standing::Unaudited, "provenance".to_owned())),
+        "whether the killer's behaviour key is the one it had is not in the report: {remarks:?}"
+    );
+}
+
+#[test]
+fn a_disposition_whose_route_does_not_say_it_was_read_back_is_a_violation() {
+    assert!(
+        reuse_remarks(
+            &reads_the_kill_back(),
+            &read_back_kill(&[TARGET], None, false)
+        )
+        .contains(&(Standing::Violated, KILLED.to_owned())),
+        "the report says the kill was read back and the run's own route says it was not"
+    );
+}
+
+#[test]
+fn a_kill_read_back_by_a_target_the_route_no_longer_reaches_is_a_violation() {
+    assert!(
+        reuse_remarks(
+            &reads_the_kill_back(),
+            &read_back_kill(&["t1"], Some(EARLIER), false)
+        )
+        .contains(&(Standing::Violated, KILLED.to_owned())),
+        "a kill is believed only where this run's route still reaches its killer"
+    );
+}
+
+#[test]
+fn a_disposition_read_back_that_also_ran_is_a_violation() {
+    assert!(
+        reuse_remarks(
+            &reads_the_kill_back(),
+            &read_back_kill(&[TARGET], Some(EARLIER), true)
+        )
+        .contains(&(Standing::Violated, KILLED.to_owned())),
+        "an answer read back is an execution that did not happen, and the recording holds one"
     );
 }
 
 #[test]
 fn a_run_directory_with_no_report_in_it_cannot_be_audited() {
     let directory = tempfile::tempdir().expect("a temporary directory");
-    let error = gates::proofaudit(directory.path(), None).expect_err("nothing to re-decide");
+    let error =
+        gates::proofaudit(&checkers(), directory.path(), None).expect_err("nothing to re-decide");
     assert!(matches!(error, AuditError::Unreadable { .. }), "{error}");
     assert!(error.to_string().contains(REPORT_FILE), "{error}");
 }
@@ -577,7 +798,7 @@ fn a_run_directory_with_no_report_in_it_cannot_be_audited() {
 fn an_explicit_recording_that_is_missing_cannot_be_audited() {
     let run = run_directory(&base());
     let trace = tempfile::tempdir().expect("a temporary directory");
-    let error = gates::proofaudit(run.path(), Some(trace.path()))
+    let error = gates::proofaudit(&checkers(), run.path(), Some(trace.path()))
         .expect_err("an explicitly requested recording must exist");
     assert!(matches!(error, AuditError::Unreadable { .. }), "{error}");
     assert!(error.to_string().contains("trace.jsonl"), "{error}");
@@ -588,7 +809,7 @@ fn a_corrupt_line_rejects_the_entire_explicit_recording() {
     let run = run_directory(&base());
     let trace = tempfile::tempdir().expect("a temporary directory");
     std::fs::write(trace.path().join("trace.jsonl"), "not json\n").expect("the corrupt recording");
-    let error = gates::proofaudit(run.path(), Some(trace.path()))
+    let error = gates::proofaudit(&checkers(), run.path(), Some(trace.path()))
         .expect_err("corrupt evidence must not become an empty recording");
     assert!(
         matches!(error, AuditError::MalformedRecording { .. }),
@@ -601,7 +822,8 @@ fn a_corrupt_line_rejects_the_entire_explicit_recording() {
 fn a_report_that_is_not_json_cannot_be_audited() {
     let directory = tempfile::tempdir().expect("a temporary directory");
     std::fs::write(directory.path().join(REPORT_FILE), "not json").expect("the recording");
-    let error = gates::proofaudit(directory.path(), None).expect_err("nothing to re-decide");
+    let error =
+        gates::proofaudit(&checkers(), directory.path(), None).expect_err("nothing to re-decide");
     assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
 }
 
@@ -646,8 +868,17 @@ fn duplicate_report_keys_are_malformed_before_any_redecision() {
             engines: &[],
             outputs: &[],
         };
-        let error = xtask::proofaudit::audit_with("duplicate.json", &document, nothing, None)
-            .expect_err("duplicate keys never reach proof redecision");
+        let checkers = xtask::schemas::Checkers::compiled().expect("the published schemas compile");
+        let error = xtask::proofaudit::audit_with(
+            &checkers,
+            xtask::proofaudit::Reported {
+                path: "duplicate.json",
+                text: &document,
+            },
+            nothing,
+            None,
+        )
+        .expect_err("duplicate keys never reach proof redecision");
         assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
         assert!(
             error.to_string().contains("duplicate JSON object key"),
@@ -660,7 +891,8 @@ fn duplicate_report_keys_are_malformed_before_any_redecision() {
 fn a_document_of_another_schema_cannot_be_audited() {
     let document = with(serde_json::json!({ "schema": "njutest-trace-v1" }));
     let directory = run_directory(&document);
-    let error = gates::proofaudit(directory.path(), None).expect_err("nothing to re-decide");
+    let error =
+        gates::proofaudit(&checkers(), directory.path(), None).expect_err("nothing to re-decide");
     assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 }
 
@@ -2093,7 +2325,8 @@ fn with_engine(document: serde_json::Value, engine: Vec<serde_json::Value>) -> A
     }
     .lay()
     .expect("the specimen is laid out");
-    gates::proofaudit(laid.run(), laid.trace()).expect("a recording this audit can read")
+    gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        .expect("a recording this audit can read")
 }
 
 fn drift_violations(audit: &Audit) -> Vec<String> {
@@ -2206,7 +2439,8 @@ fn a_complete_report_is_re_decided_as_the_one_build_it_measured_whole() {
     }
     .lay()
     .expect("the specimen is laid out");
-    let audit = gates::proofaudit(laid.run(), laid.trace()).expect("a complete report is read");
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        .expect("a complete report is read");
     assert_eq!(audit.violations(), 0, "{audit}");
     assert_eq!(audit.mutants, 2, "{audit}");
     assert!(
@@ -2228,7 +2462,8 @@ fn a_complete_report_of_two_builds_is_refused_rather_than_read_as_one() {
     let second = builds.first().cloned().expect("one build");
     builds.push(second);
     let directory = run_directory(&document);
-    let error = gates::proofaudit(directory.path(), None).expect_err("two builds are not one");
+    let error =
+        gates::proofaudit(&checkers(), directory.path(), None).expect_err("two builds are not one");
     assert!(matches!(error, AuditError::Unprojected { .. }), "{error}");
     assert!(error.to_string().contains("2 configured builds"), "{error}");
 }
@@ -2729,7 +2964,8 @@ fn a_report_that_says_there_was_nothing_to_crash_is_unaudited_without_a_recordin
         "limitations": [{ "name": "crash-no-site", "detail": "no measured file writes" }]
     }));
     let directory = run_directory(&document);
-    let audit = gates::proofaudit(directory.path(), None).expect("a report this audit can read");
+    let audit = gates::proofaudit(&checkers(), directory.path(), None)
+        .expect("a report this audit can read");
     assert!(
         audit.remarks.iter().any(|remark| {
             remark.layer == Layer::Crashes
@@ -2772,7 +3008,8 @@ fn a_binary_the_run_did_not_measure_owes_no_thread_record() {
     }
     .lay()
     .expect("the specimen is laid out");
-    let audit = gates::proofaudit(laid.run(), laid.trace()).expect("the specimen is read");
+    let audit =
+        gates::proofaudit(&checkers(), laid.run(), laid.trace()).expect("the specimen is read");
     assert!(
         !audit
             .remarks
@@ -2806,7 +3043,8 @@ fn a_built_binary_with_no_baseline_record_is_said_to_be_unaccounted_for() {
     }
     .lay()
     .expect("the specimen is laid out");
-    let audit = gates::proofaudit(laid.run(), laid.trace()).expect("the specimen is read");
+    let audit =
+        gates::proofaudit(&checkers(), laid.run(), laid.trace()).expect("the specimen is read");
     assert!(
         audit
             .remarks
@@ -2994,8 +3232,8 @@ fn repair_audit(repaired: &[&str], engine: Vec<serde_json::Value>) -> Vec<String
     }
     .lay()
     .expect("the specimen is laid out");
-    let audit =
-        gates::proofaudit(laid.run(), laid.trace()).expect("a recording this audit can read");
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        .expect("a recording this audit can read");
     audit
         .remarks
         .iter()
@@ -3113,8 +3351,8 @@ fn two_repairs(second_was: &str) -> Vec<String> {
     }
     .lay()
     .expect("the specimen is laid out");
-    let audit =
-        gates::proofaudit(laid.run(), laid.trace()).expect("a recording this audit can read");
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        .expect("a recording this audit can read");
     audit
         .remarks
         .iter()
@@ -3151,7 +3389,7 @@ fn merge_audit(perturbation: &sentinel::Perturbation) -> Result<Audit, AuditErro
     let laid = laid_sharded(perturbation);
     let shards: Vec<std::path::PathBuf> =
         laid.shards().into_iter().map(Path::to_path_buf).collect();
-    gates::proofaudit_merged(laid.run(), &shards, laid.traces())
+    gates::proofaudit_merged(&checkers(), laid.run(), &shards, laid.traces())
 }
 
 fn merge_violations(perturbation: &sentinel::Perturbation) -> Vec<String> {
@@ -3178,7 +3416,8 @@ fn a_shard_document_is_re_decided_against_its_own_recording_as_the_one_part_it_m
         .traces()
         .expect("the shards' recordings")
         .join(format!("{}-s1", sentinel::MERGED));
-    let audit = gates::proofaudit(first, Some(&trace)).expect("a shard is read as its part");
+    let audit =
+        gates::proofaudit(&checkers(), first, Some(&trace)).expect("a shard is read as its part");
     assert_eq!(audit.violations(), 0, "{audit}");
     assert_eq!(audit.mutants, 1, "{audit}");
     assert_eq!(audit.run_id, format!("{}-s1", sentinel::MERGED), "{audit}");
@@ -3202,7 +3441,8 @@ fn a_merged_report_is_held_to_every_shard_it_names_and_says_which_it_could_not_s
         "a shard the report names and nobody gave is unaudited, not agreed: {half}"
     );
     let alone = run_directory(&clean.document);
-    let error = gates::proofaudit(alone.path(), None).expect_err("two parts are not one");
+    let error =
+        gates::proofaudit(&checkers(), alone.path(), None).expect_err("two parts are not one");
     assert!(matches!(error, AuditError::Unprojected { .. }), "{error}");
 }
 
@@ -3273,6 +3513,7 @@ fn a_real_run_measured_in_two_shards_and_merged_is_re_decided_clean_shard_by_sha
         .collect();
     shards.sort();
     let audit = gates::proofaudit_merged(
+        &checkers(),
         &recorded.join("merged.json"),
         &shards,
         Some(&recorded.join("traces")),
@@ -3358,4 +3599,9 @@ fn an_audit_that_left_something_unaudited_does_not_exit_as_one_that_checked_ever
          the exit code must not read that as an audit that checked everything"
     );
     assert_eq!(xtask::proofaudit::EXIT_UNAUDITED, 3);
+}
+
+/// Every published schema, compiled.
+fn checkers() -> xtask::schemas::Checkers {
+    xtask::schemas::Checkers::compiled().expect("the published schemas compile")
 }

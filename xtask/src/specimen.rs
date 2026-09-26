@@ -23,6 +23,8 @@ const NEUTRAL: [Neutral; 5] = [
             ("considered", NeutralValue::Empty),
             ("reused", NeutralValue::Null),
             ("refused", NeutralValue::Null),
+            ("rule", NeutralValue::Null),
+            ("carry_refused", NeutralValue::Null),
         ],
     },
     Neutral {

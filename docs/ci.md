@@ -40,9 +40,9 @@ To diagnose a run that only misbehaves on the runner, set `NJUTEST_TRACE: '1'` o
 
 | Workflow | Jobs | When |
 | --- | --- | --- |
-| `ci.yml` | the three-OS test matrix, lint (fmt, clippy, rustdoc, the `cargo xtask` gates, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, the coverage ratchet, the `book` build, `soundness`, `action-smoke`, and `ci-success` which gathers them | every push and pull request |
+| `ci.yml` | the three-OS test matrix, lint (fmt, clippy, rustdoc, the `cargo xtask` gates, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, the coverage ratchet, the `book` build, `soundness`, `action-smoke`, `action-smoke-rust-mutants`, and `ci-success` which gathers them | every push and pull request |
 | `mutation.yml` | `cargo-mutants` over each package | weekly, and on request |
-| `dogfood.yml` | `shard` runs the engine over its own catalog in four parts, and `audit` puts the parts back together, checks each recording, and re-decides every part against the ledger | weekly, and on request |
+| `dogfood.yml` | `whole` runs the engine over its own catalog in one job through the `rust-mutants` action, checks the recording, and re-decides the run against the ledger | weekly, and on request |
 | `fuzz.yml` | every fuzz target for a fixed time | weekly, and on an engine pull request |
 | `dependabot-auto-merge.yml` | asks for the merge of a dependency bump, which GitHub performs once `ci-success` passes; the label `no-auto-merge` says not to | on a dependabot pull request |
 | `release-plz.yml`, `release.yml` | the release train | every push to `main`, and on a tag |
@@ -66,100 +66,63 @@ The required checks are the ones `ci-success` gathers.
 
 ## Dogfooding the engine
 
-`dogfood.yml` runs `rust-mutants` over its own engine with `--jobs 4 --trace`, cut into four parts by `--shard K/4` so no part runs into the 120-minute limit and reports every remaining mutant as interrupted.
-Coverage is measured because it is the default.
-The `audit` job then:
+`dogfood.yml` runs `rust-mutants` over its own engine in one job, through `.github/actions/rust-mutants`, the action another repository uses, with `--trace`.
+The store the action restores and saves is what lets one job hold the whole catalog: a run reads back every answer the last one established that still holds, and a run the clock ends keeps what it established, so the next one continues from there.
+The job then:
 
-1. merges the four reports into the one the whole would have written,
-2. asks `rust-mutants trace check` whether each recording is complete,
-3. runs `cargo xtask engine-audit <part> --trace <part>/trace --ledger .rust-mutants.toml` over every part, which re-mints every identity,
-   re-tallies every column, re-derives every discharge from the measurement and the catalog the part kept, holds every row to the recording of what actually ran, and refuses a survivor the ledger does not accept,
-4. says what moved since the last complete run, with `xtask report-diff` against that run's own artifact.
+1. asks `rust-mutants trace check` whether the recording is complete,
+2. runs `cargo xtask engine-audit <run> --trace <run>/trace --sites --ledger .rust-mutants.toml`, which re-mints every identity,
+   re-tallies every column, re-derives every discharge and every carried answer from the evidence the run kept, holds every row to the recording of what actually ran, and refuses a survivor the ledger does not accept,
+3. says what moved since the last complete run, with `xtask report-diff` against that run's own artifact.
    There is nothing to compare on the first run of the workflow, and a diff against nothing is not a failure; a diff that cannot be read is.
 
-The first three steps run locally as `mise run dogfood:engine:audit`.
+The first two steps run locally as `mise run dogfood:engine:audit`.
 
 ## Mutation testing somebody else's project
 
-`rust-mutants` is a product in its own right, and this is what a project that uses it puts in its own workflow.
-Nothing here is specific to this repository.
+`rust-mutants` is a product in its own right, and this is what a project that uses it puts in its own workflow: one job, with no matrix to write and nothing to put back together.
 
 ```yaml
 name: mutation
 on:
   pull_request:
-  schedule: [{ cron: "17 5 * * 2" }]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
 
 jobs:
-  measure:
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0 # --changed needs history to see what changed
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools # coverage routing; without it every mutant runs everywhere
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo install rust-mutants-cli --locked
-      - run: rust-mutants doctor
-      - name: Measure one part of the catalog
-        run: |
-          rust-mutants run --locked --jobs 4 \
-            --shard ${{ matrix.shard }}/4 \
-            --run-id "${{ github.run_id }}-${{ matrix.shard }}of4" \
-            --json > "mutants-${{ matrix.shard }}.jsonl" \
-            || case "$?" in 1) ;; *) exit 1 ;; esac # a finding is the merged report's to judge; a failure is not
-      - uses: actions/upload-artifact@v4
-        with:
-          name: mutants-${{ matrix.shard }}
-          path: reports/mutation/
-
-  report:
-    needs: measure
+  mutation:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install rust-mutants-cli --locked
-      - uses: actions/download-artifact@v4
         with:
-          path: reports/mutation/
-          merge-multiple: true
-      - name: Put the parts back together
-        run: rust-mutants merge --runs "${{ github.run_id }}-*" --output mutants.json
-      - run: rust-mutants report --format markdown >> "$GITHUB_STEP_SUMMARY"
-      - run: rust-mutants report --format junit --output mutants.xml
-      - run: rust-mutants report --format sarif --output mutants.sarif
-      - uses: github/codeql-action/upload-sarif@v3
+          components: llvm-tools
+      - uses: P4suta/njutest/.github/actions/rust-mutants@main
         with:
-          sarif_file: mutants.sarif
-      - uses: actions/upload-artifact@v4
-        with:
-          name: mutation-report
-          path: |
-            mutants.json
-            mutants.xml
+          args: --locked
 ```
 
-Four things are worth saying about that file.
+On a pull request the action measures what the change touched, against the pull request's base; on a push it measures the whole catalog.
+It runs as many executions at once as the runner has cores (`--jobs all`), writes the step summary, annotates every survivor on a changed line, uploads the survivors to code scanning, and exits with the run's verdict.
 
-**The gate is the merged exit code, not a percentage.** `merge` refuses parts that are not parts of one catalog (`RM0011`), so a green `report` job means every part measured the same tree with the same catalog and nothing was silently lost.
-There is no threshold flag; see [ADR 0004](adr/0004-proof-layers-not-budgets.md).
+Four things are worth saying about it.
 
-**Every part must be the same tree.** `workspace_digest` has to match across shards for `merge` to accept them, so a Windows leg with `autocrlf` on cannot be merged with a Linux one.
-Shard on one platform.
+**The gate is the verdict, not a percentage.** There is no threshold input; see [ADR 0004](adr/0004-proof-layers-not-budgets.md).
+The gate reads exactly the report the run printed, so a run that wrote none is never judged by an older one.
 
-**The cache is per tree.** A run reads back what an earlier run of this exact tree established, so a re-run of an unchanged commit is nearly free and a changed commit is a cold cache.
-`--shard` is what makes a long run fit in a job's limit; the cache is not.
+**Speed comes from less work, not more machines.** The action restores the store earlier runs left and saves it again, so a push to `main` reads what the last one established and a pull request reads what its base established.
+An answer is read back only where a proof says it still holds: under the exact tree, or carried across an edit its executions never entered ([ADR 0041](adr/0041-an-answer-carries-across-an-edit-it-never-entered.md)).
+A mutant's process ends at its first failing test, and the target that killed a mutant before is asked first.
+Splitting the catalog across a matrix lowers no mutant's cost and multiplies the jobs with the size of the change, so the action does not.
 
-**Narrow the pull-request leg.** `--changed` on a pull request measures only what differs, which is usually the difference between two minutes and two hours.
-Keep the whole catalog for the weekly run.
+**What it does not carry is the build.** The compiled tree is the engine's, under the temporary directory, and every run of the action compiles it once.
+
+**The inputs.** `args` passes further arguments to `rust-mutants run`, `changed-from` names another revision to measure against (empty measures the whole catalog), `upload-sarif: "false"` skips code scanning, `working-directory` names a workspace below the checkout, and `version` installs a given release.
+Its outputs are `verdict` (`detected`, `found`, `failed` or `interrupted`, or `untouched` when the change touched no Rust file the configuration measures, which is a complete answer and passes), `report` and `sarif`.
 
 ## The contract that promises interpretation
 
@@ -232,4 +195,5 @@ A job that built the commit under test, restored a cached binary, or installed f
 
 That is also what makes the action testable here.
 `action-smoke` builds this workspace's own `njutest`, puts it on the path, and runs the action against `fixtures/fixture-assured` the way another repository would, checking that the `verdict` output is the one the run reached and that every other output names a file that exists, so an output added later is held to the same check.
+`action-smoke-rust-mutants` does the same for `.github/actions/rust-mutants`, over a tree whose tests notice every mutant, which must say `detected` and pass, and over one that leaves a finding, which must say `found` and fail the step.
 What it does not exercise is the install itself, which needs a published release; until there is one, that step is checked by reading.

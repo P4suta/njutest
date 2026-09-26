@@ -2058,6 +2058,22 @@ fn by_place(
         .collect()
 }
 
+/// Every place whose answer with carrying differs from the answer running it gives, which is the edit-pair differential: a carried answer is only ever one running it would have given.
+fn disagreements(
+    with_carry: &std::collections::BTreeMap<(u64, String, String, String), serde_json::Value>,
+    without: &std::collections::BTreeMap<(u64, String, String, String), serde_json::Value>,
+) -> Vec<(u64, String, String, String)> {
+    with_carry
+        .iter()
+        .filter(|(place, row)| {
+            without
+                .get(*place)
+                .is_none_or(|fresh| fresh["outcome"] != row["outcome"])
+        })
+        .map(|(place, _row)| place.clone())
+        .collect()
+}
+
 #[test]
 fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
     let fixture = Fixture::copy("fixture-two-bodies");
@@ -2105,15 +2121,11 @@ fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
         stderr(&fresh)
     );
     let without = by_place(&stored(&fixture));
-    for (place, row) in &with_carry {
-        assert_eq!(
-            row["outcome"],
-            without
-                .get(place)
-                .map_or(serde_json::Value::Null, |fresh| fresh["outcome"].clone()),
-            "a carried answer must be the answer running it gives: {place:?}"
-        );
-    }
+    let differ = disagreements(&with_carry, &without);
+    assert!(
+        differ.is_empty(),
+        "a carried answer must be the answer running it gives: {differ:?}"
+    );
     let over: Vec<&serde_json::Value> = with_carry
         .iter()
         .filter(|(place, _)| place.0 >= 12)
@@ -2167,4 +2179,152 @@ fn an_execution_a_silent_process_ran_inside_records_what_it_entered_as_cut() {
             );
         }
     }
+}
+
+#[test]
+fn the_differential_names_an_answer_carried_on_a_record_that_hides_an_entered_item() {
+    let fixture = Fixture::copy("fixture-two-bodies");
+    let asked = ["run", "--offline", "--locked", "--tier", "all"];
+    let first = against(&fixture, &asked);
+    assert!(
+        first.status.code() == Some(0) || first.status.code() == Some(1),
+        "{}",
+        stderr(&first)
+    );
+    let planted = hide_an_entered_item(
+        &fixture.cache().join(rust_mutants::carry::LAYOUT),
+        (0, "return-default"),
+        2,
+    );
+    assert_eq!(
+        planted, 1,
+        "the planted defect is one record: the one for `total` returning its default, which says \
+         it never entered the test that noticed it"
+    );
+    let source = fixture.root().join("src/lib.rs");
+    let text = std::fs::read_to_string(&source).expect("the library");
+    std::fs::write(
+        &source,
+        text.replace(
+            "assert_eq!(super::total(2, 3), 5);",
+            "let _ = super::total(2, 3);",
+        ),
+    )
+    .expect("an edit inside the test the record hides, which stops it noticing");
+    let carried = against(&fixture, &asked);
+    assert!(
+        carried.status.code() == Some(0) || carried.status.code() == Some(1),
+        "{}",
+        stderr(&carried)
+    );
+    let with_carry = by_place(&stored(&fixture));
+    let fresh = against(
+        &fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-cache",
+        ],
+    );
+    assert!(
+        fresh.status.code() == Some(0) || fresh.status.code() == Some(1),
+        "{}",
+        stderr(&fresh)
+    );
+    let differ = disagreements(&with_carry, &by_place(&stored(&fixture)));
+    assert!(
+        differ
+            .iter()
+            .any(|(line, rule, _original, _replacement)| *line == 8 && rule == "return-default"),
+        "a record that hides an item its execution entered carries an answer running it would \
+         not give, and the audit, which reads what the record says was entered, cannot see what \
+         it leaves out: only the edit-pair differential can, and it has to name that mutant: \
+         {differ:?}"
+    );
+}
+
+/// Rewrites every carried record in `store` about the item with ordinal `mutated.0` and a rule named `mutated.1` so that no execution of it says it entered the item with ordinal `hidden`, and counts them: a defect planted where no audit reading the record can see it.
+fn hide_an_entered_item(store: &Path, mutated: (u64, &str), hidden: u64) -> usize {
+    let mut planted = 0_usize;
+    for entry in std::fs::read_dir(store).expect("a run that keeps outcomes keeps carried records")
+    {
+        let path = entry.expect("an entry").path();
+        let mut record: serde_json::Value = njutest_devkit::strictjson::decode_str(
+            &std::fs::read_to_string(&path).expect("a record"),
+        )
+        .expect("a carried record");
+        let about = record["locus"]["item"]["ordinal"] == mutated.0
+            && record["locus"]["rule"]
+                .as_str()
+                .is_some_and(|rule| rule.starts_with(mutated.1));
+        if !about {
+            continue;
+        }
+        for execution in record["executions"].as_array_mut().expect("its executions") {
+            execution["entered"]
+                .as_array_mut()
+                .expect("what it entered")
+                .retain(|entered| entered["item"]["ordinal"] != hidden);
+        }
+        std::fs::write(&path, serde_json::to_vec(&record).expect("the record"))
+            .expect("the planted record");
+        planted = planted.saturating_add(1);
+    }
+    planted
+}
+
+#[test]
+fn a_probe_in_a_crate_no_witness_check_compiled_is_never_vouched_for() {
+    let fixture = Fixture::copy("fixture-witness-downstream");
+    let recording = fixture.temp().join("recording");
+    let trace = format!("--trace={}", recording.display());
+    let output = against(
+        &fixture,
+        &["run", "--offline", "--locked", "--tier", "all", &trace],
+    );
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let report = stored(&fixture);
+    let refused: Vec<&serde_json::Value> = report["rejections"]
+        .as_array()
+        .expect("the report lists what the compiler refused")
+        .iter()
+        .collect();
+    assert!(
+        refused.is_empty(),
+        "both returned types have a `Default`, so both replacements compile; a probe the \
+         compiler cannot take costs the probe and never the mutant: {refused:#?}"
+    );
+    let text = std::fs::read_to_string(recording.join("trace.jsonl")).expect("the recording");
+    let events: Vec<serde_json::Value> = text
+        .lines()
+        .map(|line| {
+            njutest_devkit::strictjson::decode_str::<serde_json::Value>(line)
+                .expect("a recorded line is JSON")
+        })
+        .collect();
+    let bisections = events
+        .iter()
+        .filter(|event| event["payload"]["type"] == "bisect")
+        .count();
+    assert_eq!(
+        bisections, 0,
+        "the check that stopped at the upstream crate never compiled the downstream one, so it \
+         vouched for nothing there, and validation had no error it could not name a mutant for"
+    );
+    let witness = events
+        .iter()
+        .filter(|event| event["payload"]["type"] == "note")
+        .filter(|event| event["payload"]["note"]["kind"] == "witness")
+        .filter_map(|event| event["payload"]["note"]["detail"].as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        witness
+            .iter()
+            .any(|said| said.contains("2 values probed of which 0 vouched for")),
+        "neither probe is vouched for, the one the first check refused and the one only a later \
+         check reached: {witness:#?}"
+    );
 }
