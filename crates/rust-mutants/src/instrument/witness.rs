@@ -10,7 +10,6 @@ use crate::span::Span;
 use crate::splice::{Splice, apply};
 use crate::syntax::branch::{Claim, Witness};
 
-use super::runtime::module_named;
 use super::{InstrumentError, InstrumentErrorKind};
 
 /// The module the witness functions live in.
@@ -142,7 +141,7 @@ pub fn witness_file(
             witnessed: false,
         });
     }
-    let module = module_named(&text, MODULE_STEM).map_err(|error| {
+    let module = super::module_named_for(&text, MODULE_STEM).map_err(|error| {
         InstrumentError::new(
             InstrumentErrorKind::SourceMismatch,
             path,

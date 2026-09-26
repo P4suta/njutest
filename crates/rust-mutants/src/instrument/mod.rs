@@ -15,7 +15,7 @@ pub mod witness;
 ///
 /// Returns [`ModuleNameError`] when `text` is not a Rust token stream or the collision suffix namespace cannot be searched without overflow.
 pub fn module_named_for(text: &str, stem: &str) -> Result<String, ModuleNameError> {
-    runtime::module_named(text, stem)
+    crate::parsing::apart(|parsing| runtime::module_named(parsing, text, stem))?
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,7 +23,6 @@ use std::fmt;
 
 use crate::catalog::Catalog;
 use crate::error::{self, ErrorCode};
-use crate::flatten::flatten;
 use crate::interval::{self, Item, Node};
 use crate::span::Span;
 use crate::splice::{Splice, apply, count_lines};
@@ -90,7 +89,10 @@ pub fn items(path: &str, source: &[u8], first_item: u32) -> Result<Vec<ItemBody>
             format!("the source is not valid UTF-8: {error}"),
         )
     })?;
-    steps::plant(text, MODULE_STEM, first_item)
+    crate::parsing::apart(|parsing| steps::plant(parsing, text, MODULE_STEM, first_item))
+        .map_err(|unread| {
+            InstrumentError::unread(InstrumentErrorKind::SourceMismatch, path, &unread)
+        })?
         .map(|planted| planted.items)
         .map_err(|error| {
             InstrumentError::new(
@@ -320,6 +322,10 @@ pub enum InstrumentErrorKind {
     IndexReserved,
     /// The rewritten file does not read as Rust, down to what every identity macro holds: a guard changed how the syntax around it reads.
     Unparsable,
+    /// Reading the file would take its reading thread's locations past what they address.
+    ReadingExhausted,
+    /// The thread the file is read on could not be started or did not finish.
+    ReadingThread,
 }
 
 impl InstrumentErrorKind {
@@ -335,6 +341,8 @@ impl InstrumentErrorKind {
             Self::LinesMoved => error::INSTRUMENT_LINES_MOVED,
             Self::IndexReserved => error::INSTRUMENT_INDEX_RESERVED,
             Self::Unparsable => error::INSTRUMENT_UNPARSABLE,
+            Self::ReadingExhausted => error::READING_EXHAUSTED,
+            Self::ReadingThread => error::READING_THREAD,
         }
     }
 }
@@ -348,6 +356,22 @@ pub struct InstrumentError {
 }
 
 impl InstrumentError {
+    /// Why text read while instrumenting `path` failed: a syntax error as `syntax`, and a reading that could not happen at all as what stopped it.
+    fn unread(
+        syntax: InstrumentErrorKind,
+        path: &str,
+        unread: &crate::parsing::ReadingError,
+    ) -> Self {
+        let kind = match unread {
+            crate::parsing::ReadingError::Syntax { .. } => syntax,
+            crate::parsing::ReadingError::Exhausted { .. } => InstrumentErrorKind::ReadingExhausted,
+            crate::parsing::ReadingError::ThreadUnavailable { .. } => {
+                InstrumentErrorKind::ReadingThread
+            }
+        };
+        Self::new(kind, path, unread.to_string())
+    }
+
     fn new(kind: InstrumentErrorKind, path: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             kind,
@@ -485,6 +509,7 @@ fn guards_of(placements: &[Placement]) -> Vec<Guard> {
 }
 
 fn checkpointed(
+    parsing: &crate::parsing::Parsing,
     file: &Instrumenting<'_>,
     text: &str,
     module: String,
@@ -500,7 +525,7 @@ fn checkpointed(
         first_item,
         watched: _watched,
     } = *file;
-    let planted = steps::plant(text, &module, first_item).map_err(|error| {
+    let planted = steps::plant(parsing, text, &module, first_item).map_err(|error| {
         InstrumentError::new(
             InstrumentErrorKind::SourceMismatch,
             path,
@@ -575,6 +600,16 @@ fn text_of<'a>(
 /// # Errors
 /// See [`InstrumentErrorKind`].
 pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, InstrumentError> {
+    crate::parsing::apart(|parsing| instrument_with(parsing, file)).map_err(|unread| {
+        InstrumentError::unread(InstrumentErrorKind::SourceMismatch, file.path, &unread)
+    })?
+}
+
+/// [`instrument_file`], reading with `parsing` on the thread already reading.
+fn instrument_with(
+    parsing: &crate::parsing::Parsing,
+    file: &Instrumenting<'_>,
+) -> Result<FileOutput, InstrumentError> {
     let Instrumenting {
         path,
         source,
@@ -591,21 +626,16 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
         (InstrumentErrorKind::SourceMismatch, path),
         "the source",
     )?;
-    let module = module_name(path, text).map_err(|error| {
-        InstrumentError::new(
-            InstrumentErrorKind::SourceMismatch,
-            path,
-            format!("the source token stream is invalid: {error}"),
-        )
-    })?;
-    check_pristine(file, text, &module)?;
-    let checkpointed = checkpointed(file, text, module)?;
+    let module = named(parsing, path, text)?;
+    check_pristine(parsing, file, text, &module)?;
+    let checkpointed = checkpointed(parsing, file, text, module)?;
     let bounded_text = text_of(
         &checkpointed.source,
         (InstrumentErrorKind::SpliceFailed, path),
         "the checkpointed source",
     )?;
     let worker = File {
+        parsing,
         path,
         text: bounded_text,
         module: checkpointed.module,
@@ -658,12 +688,29 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
     })
 }
 
+/// The runtime module name `text` can take, or why its tokens could not be read.
+fn named(
+    parsing: &crate::parsing::Parsing,
+    path: &str,
+    text: &str,
+) -> Result<String, InstrumentError> {
+    runtime::module_name_in(parsing, path, text).map_err(|error| {
+        InstrumentError::new(
+            InstrumentErrorKind::SourceMismatch,
+            path,
+            format!("the source token stream is invalid: {error}"),
+        )
+    })
+}
+
 fn check_pristine(
+    parsing: &crate::parsing::Parsing,
     file: &Instrumenting<'_>,
     text: &str,
     module: &str,
 ) -> Result<(), InstrumentError> {
     File {
+        parsing,
         path: file.path,
         text,
         module: module.to_owned(),
@@ -741,6 +788,7 @@ fn mapped_source<'a>(
 
 /// One file being rewritten.
 struct File<'a> {
+    parsing: &'a crate::parsing::Parsing,
     path: &'a str,
     text: &'a str,
     module: String,
@@ -756,17 +804,23 @@ struct File<'a> {
 ///
 /// # Errors
 /// The first place that does not read, as the parser says it, at the line and column it has in `text`.
-pub(crate) fn read_through(text: &str, module: &str) -> Result<(), syn::Error> {
-    read_through_with(text, module, syn::parse_file)
+pub(crate) fn read_through(
+    parsing: &crate::parsing::Parsing,
+    text: &str,
+    module: &str,
+) -> Result<(), crate::parsing::ReadingError> {
+    read_through_with(text, module, |unwrapped| {
+        parsing.file(unwrapped).map(|_file| ())
+    })
 }
 
 /// [`read_through`] with the parser given, which it calls exactly once whatever the guards hold.
 fn read_through_with(
     text: &str,
     module: &str,
-    mut parse: impl FnMut(&str) -> Result<syn::File, syn::Error>,
-) -> Result<(), syn::Error> {
-    parse(&unwrapped(text, module)).map(|_file| ())
+    mut parse: impl FnMut(&str) -> Result<(), crate::parsing::ReadingError>,
+) -> Result<(), crate::parsing::ReadingError> {
+    parse(&unwrapped(text, module))
 }
 
 /// `text` with the path and `!` of every call of `module`'s identity macro written as spaces, so the call reads as the parentheses it expands to and every byte keeps its place.
@@ -827,19 +881,26 @@ impl File<'_> {
 
     /// Whether the rewritten file reads as Rust down to what every identity macro holds, which the compiler reads only once it expands them.
     fn reparsed(&self, text: &str) -> Result<(), InstrumentError> {
-        read_through(text, &self.module).map_err(|error| self.unparsable(&error))
+        read_through(self.parsing, text, &self.module).map_err(|error| self.unparsable(&error))
     }
 
-    fn unparsable(&self, error: &syn::Error) -> InstrumentError {
-        let at = error.span().start();
-        self.error(
-            InstrumentErrorKind::Unparsable,
-            format!(
-                "the rewritten file does not read as Rust at line {}, column {}: {error}",
-                at.line,
-                at.column.saturating_add(1)
+    fn unparsable(&self, error: &crate::parsing::ReadingError) -> InstrumentError {
+        match error {
+            crate::parsing::ReadingError::Syntax {
+                line,
+                column,
+                message,
+            } => self.error(
+                InstrumentErrorKind::Unparsable,
+                format!(
+                    "the rewritten file does not read as Rust at line {line}, column {column}: {message}"
+                ),
             ),
-        )
+            crate::parsing::ReadingError::Exhausted { .. }
+            | crate::parsing::ReadingError::ThreadUnavailable { .. } => {
+                InstrumentError::unread(InstrumentErrorKind::Unparsable, self.path, error)
+            }
+        }
     }
 
     fn slice(&self, span: Span) -> Result<&str, InstrumentError> {
@@ -1275,7 +1336,7 @@ impl File<'_> {
                 carries: Vec::new(),
             });
         }
-        let text = flatten(&text).map_err(|error| {
+        let text = crate::flatten::flatten_with(self.parsing, &text).map_err(|error| {
             self.error(
                 InstrumentErrorKind::FlattenFailed,
                 format!(
@@ -1374,13 +1435,18 @@ mod tests {
         format!("mod m {{\n    fn f() -> u8 {{\n        {guard}\n    }}\n}}\n")
     }
 
+    /// `text` read as a file on a reading thread, for the laws that count or place the reads.
+    fn file_of(text: &str) -> Result<(), crate::parsing::ReadingError> {
+        crate::parsing::apart(|parsing| parsing.file(text).map(|_file| ()))?
+    }
+
     #[test]
     fn one_parse_reads_every_identity_macro_however_deep_the_guards_nest() {
         for depth in [0, 1, 8, 64] {
             let mut parses = 0_usize;
             let read = read_through_with(&nested(depth, "1"), "rt", |text| {
                 parses = parses.saturating_add(1);
-                syn::parse_file(text)
+                file_of(text)
             });
             assert!(read.is_ok(), "{depth} nested guards read: {read:?}");
             assert_eq!(
@@ -1394,10 +1460,12 @@ mod tests {
     #[test]
     fn a_guard_that_breaks_deep_inside_is_found_where_it_is() {
         let text = nested(16, "{ 1 } + ");
-        let read = read_through_with(&text, "rt", syn::parse_file);
+        let read = read_through_with(&text, "rt", file_of);
         assert!(
-            read.as_ref()
-                .is_err_and(|error| error.span().start().line == 3),
+            matches!(
+                read,
+                Err(crate::parsing::ReadingError::Syntax { line: 3, .. })
+            ),
             "the innermost guard does not read, and the error names its line in the file: {read:?}"
         );
     }

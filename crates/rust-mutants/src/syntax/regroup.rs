@@ -3,6 +3,7 @@
 
 //! Whether an operator swap is the tree it names: the same operands, grouped as they were, joined by the new operator.
 
+use crate::parsing::{Parsing, ReadingError};
 use syn::spanned::Spanned as _;
 use syn::visit_mut::VisitMut;
 use syn::{BinOp, Expr};
@@ -138,16 +139,20 @@ enum Unit {
 
 impl Unit {
     /// `text` read as an item of this unit's kind, or nothing where it does not read as one whole.
-    fn read_as(&self, text: &str) -> Option<Self> {
+    ///
+    /// # Errors
+    /// The text could not be read at all, which is not an answer about it.
+    fn read_as(&self, parsing: &Parsing, text: &str) -> Result<Option<Self>, ReadingError> {
         let read = match self {
-            Self::Free(_) => syn::parse_str(text).map(Self::Free),
-            Self::OfImpl(_) => syn::parse_str(text).map(Self::OfImpl),
-            Self::OfTrait(_) => syn::parse_str(text).map(Self::OfTrait),
-            Self::Foreign(_) => syn::parse_str(text).map(Self::Foreign),
+            Self::Free(_) => parsing.read(text).map(Self::Free),
+            Self::OfImpl(_) => parsing.read(text).map(Self::OfImpl),
+            Self::OfTrait(_) => parsing.read(text).map(Self::OfTrait),
+            Self::Foreign(_) => parsing.read(text).map(Self::Foreign),
         };
         match read {
-            Ok(unit) => Some(unit),
-            Err(_does_not_read) => None,
+            Ok(unit) => Ok(Some(unit)),
+            Err(ReadingError::Syntax { .. }) => Ok(None),
+            Err(unread) => Err(unread),
         }
     }
 
@@ -242,19 +247,21 @@ fn leaves(items: &[syn::Item], found: &mut Vec<Leaf>) {
 ///
 /// A file is its items read one after another, and each is read by its own tokens up to its own closing brace or semicolon, so an edit inside one unit changes that unit's tree and no other: holding a swap to its unit holds it to the file, at the cost of the unit rather than of the file.
 #[derive(Debug)]
-pub(super) struct Grouping {
+pub(super) struct Grouping<'p> {
     leaves: Vec<Leaf>,
     read: std::cell::Cell<Option<usize>>,
+    parsing: &'p Parsing,
 }
 
-impl Grouping {
-    /// The units `file` holds.
-    pub(super) fn of(file: &syn::File) -> Self {
+impl<'p> Grouping<'p> {
+    /// The units `file` holds, read back with `parsing`.
+    pub(super) fn of(file: &syn::File, parsing: &'p Parsing) -> Self {
         let mut found = Vec::new();
         leaves(&file.items, &mut found);
         Self {
             leaves: found,
             read: std::cell::Cell::new(Some(0)),
+            parsing,
         }
     }
 
@@ -264,30 +271,41 @@ impl Grouping {
     }
 
     /// How many units read alone as the file `text` reads them, and the bytes of every one that does not.
+    ///
+    /// # Errors
+    /// A unit could not be read at all, which says nothing about how it reads.
     #[cfg(any(test, feature = "testkit"))]
-    pub(super) fn read_alone(&self, text: &str) -> (usize, Vec<std::ops::Range<usize>>) {
-        let (alike, differing): (Vec<&Leaf>, Vec<&Leaf>) = self.leaves.iter().partition(|leaf| {
-            text.get(leaf.bytes.clone())
-                .and_then(|unit| leaf.ungrouped.read_as(unit))
-                .is_some_and(|read| read.ungrouped() == leaf.ungrouped)
-        });
-        (
-            alike.len(),
-            differing
-                .into_iter()
-                .map(|leaf| leaf.bytes.clone())
-                .collect(),
-        )
+    pub(super) fn read_alone(
+        &self,
+        text: &str,
+    ) -> Result<(usize, Vec<std::ops::Range<usize>>), ReadingError> {
+        let mut alike = 0_usize;
+        let mut differing = Vec::new();
+        for leaf in &self.leaves {
+            let read = match text.get(leaf.bytes.clone()) {
+                Some(unit) => leaf.ungrouped.read_as(self.parsing, unit)?,
+                None => None,
+            };
+            if read.is_some_and(|read| read.ungrouped() == leaf.ungrouped) {
+                alike = alike.saturating_add(1);
+            } else {
+                differing.push(leaf.bytes.clone());
+            }
+        }
+        Ok((alike, differing))
     }
 
     /// Whether `text` with `edit` rewritten as `written` reads as this file's tree with exactly the operator starting at byte `at` replaced by `new`: the operands it had, grouped as they were.
     /// An edit no single unit holds is one this cannot vouch for, and it says so.
+    ///
+    /// # Errors
+    /// The unit could not be read back at all, which is not an answer about the swap.
     pub(super) fn keeps(
         &self,
         text: &str,
         (edit, written): (std::ops::Range<usize>, &str),
         (at, new): (usize, &BinOp),
-    ) -> bool {
+    ) -> Result<bool, ReadingError> {
         let after = self
             .leaves
             .partition_point(|leaf| leaf.bytes.end < edit.end);
@@ -296,13 +314,13 @@ impl Grouping {
             .get(after)
             .filter(|leaf| leaf.bytes.start <= edit.start && edit.end <= leaf.bytes.end)
         else {
-            return false;
+            return Ok(false);
         };
         let (Some(head), Some(tail)) = (
             text.get(leaf.bytes.start..edit.start),
             text.get(edit.end..leaf.bytes.end),
         ) else {
-            return false;
+            return Ok(false);
         };
         let unit = format!("{head}{written}{tail}");
         self.read.set(
@@ -311,11 +329,11 @@ impl Grouping {
                 .and_then(|read| read.checked_add(unit.len())),
         );
         let (Some(read), Some(expected)) = (
-            leaf.ungrouped.read_as(&unit),
+            leaf.ungrouped.read_as(self.parsing, &unit)?,
             leaf.ungrouped.swapped(at, new),
         ) else {
-            return false;
+            return Ok(false);
         };
-        expected == read.ungrouped()
+        Ok(expected == read.ungrouped())
     }
 }

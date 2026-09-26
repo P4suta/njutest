@@ -721,27 +721,41 @@ fn crate_root_forbids_guard_noise(
             path: rel.to_owned(),
             source,
         })?;
-    Ok(forbids_guard_noise(&source, forbidden))
+    forbids_guard_noise(&source, forbidden).map_err(|unread| unread_root(rel, unread))
 }
 
-/// Whether a crate compiled this way forbids a lint the guards' own attribute turns off.
-#[must_use]
-pub fn forbids_guard_noise(source: &str, forbidden: &[String]) -> bool {
+/// A crate root that could not be read at all, as the discovery failure it is.
+fn unread_root(rel: &str, unread: crate::parsing::ReadingError) -> DiscoverError {
+    DiscoverError::Parse(SyntaxError::Unread {
+        path: rel.to_owned(),
+        source: unread,
+    })
+}
+
+/// Whether a crate compiled this way forbids a lint the guards' own attribute turns off; a root that does not parse forbids nothing, since discovering it refuses it.
+///
+/// # Errors
+/// The root could not be read at all.
+pub fn forbids_guard_noise(
+    source: &str,
+    forbidden: &[String],
+) -> Result<bool, crate::parsing::ReadingError> {
     if forbidden
         .iter()
         .any(|lint| crate::instrument::GENERATED_MODULE_CONFLICTING_LINTS.contains(&lint.as_str()))
     {
-        return true;
+        return Ok(true);
     }
-    let Ok(file) = syn::parse_file(source) else {
-        return false;
-    };
-    file.attrs.iter().any(
-        |attribute| match generated_module_forbidden_by(&attribute.meta) {
-            Ok(forbidden) => forbidden,
-            Err(_) => true,
-        },
-    )
+    crate::parsing::apart(|parsing| match parsing.file(source) {
+        Ok(file) => Ok(file.attrs.iter().any(|attribute| {
+            match generated_module_forbidden_by(&attribute.meta) {
+                Ok(forbidden) => forbidden,
+                Err(_) => true,
+            }
+        })),
+        Err(crate::parsing::ReadingError::Syntax { .. }) => Ok(false),
+        Err(unread) => Err(unread),
+    })?
 }
 
 /// Whether one crate attribute, including a conditional attribute, forbids a lint the generated support module must allow.
@@ -789,15 +803,22 @@ fn crate_root_is_freestanding(
             path: rel.to_owned(),
             source,
         })?;
-    Ok(freestanding(&text, edition))
+    freestanding(&text, edition).map_err(|unread| unread_root(rel, unread))
 }
 
-/// Whether a crate root's own text says the host cannot lend it `std`.
-#[must_use]
-pub fn freestanding(source: &str, edition: &str) -> bool {
-    let Ok(file) = syn::parse_file(source) else {
-        return false;
-    };
+/// Whether a crate root's own text says the host cannot lend it `std`; a root that does not parse says nothing.
+///
+/// # Errors
+/// The root could not be read at all.
+pub fn freestanding(source: &str, edition: &str) -> Result<bool, crate::parsing::ReadingError> {
+    crate::parsing::apart(|parsing| match parsing.file(source) {
+        Ok(file) => Ok(says_freestanding(&file, edition)),
+        Err(crate::parsing::ReadingError::Syntax { .. }) => Ok(false),
+        Err(unread) => Err(unread),
+    })?
+}
+
+fn says_freestanding(file: &syn::File, edition: &str) -> bool {
     if !file.attrs.iter().any(|attr| attr.path().is_ident("no_std")) {
         return false;
     }

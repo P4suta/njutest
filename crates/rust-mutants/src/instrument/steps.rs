@@ -20,9 +20,9 @@ pub(super) enum StepError {
     /// A byte-order mark or shebang prefix did not fit the source-span schema.
     #[error("the source prefix is out of range: {0}")]
     Prefix(#[from] crate::syntax::PrefixError),
-    /// The source was not a Rust file.
+    /// The source was not a Rust file, or could not be read at all.
     #[error("the source token stream is invalid: {0}")]
-    Parse(#[from] syn::Error),
+    Parse(#[from] crate::parsing::ReadingError),
     /// A parser byte offset, an inline-module depth, or an item index did not fit the engine's representations.
     #[error("a checkpoint source offset, inline-module depth, or item index is out of range")]
     OutOfRange,
@@ -40,9 +40,14 @@ pub(super) struct Planted {
 }
 
 /// Plants the checkpoints and the entry markers of one file, numbering its items from `first_item`.
-pub(super) fn plant(text: &str, module: &str, first_item: u32) -> Result<Planted, StepError> {
+pub(super) fn plant(
+    parsing: &crate::parsing::Parsing,
+    text: &str,
+    module: &str,
+    first_item: u32,
+) -> Result<Planted, StepError> {
     let (base, parsed) = crate::syntax::strip_prefix(text)?;
-    let file: syn::File = syn::parse_str(parsed)?;
+    let file: syn::File = parsing.read(parsed)?;
     let mut collector = Collector {
         base,
         module,
@@ -468,8 +473,12 @@ impl<'ast> Visit<'ast> for Collector<'_> {
 mod tests {
     use njutest_devkit::result::{ResultState::Returned, result_state};
 
-    use super::{StepError, plant};
+    use super::StepError;
     use crate::splice::apply;
+
+    fn plant(source: &str, module: &str, first_item: u32) -> Result<super::Planted, StepError> {
+        crate::parsing::apart(|parsing| super::plant(parsing, source, module, first_item))?
+    }
 
     #[derive(Debug, thiserror::Error)]
     enum PlantError {

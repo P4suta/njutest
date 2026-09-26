@@ -56,6 +56,14 @@ pub enum ScanError {
         /// What the parser said.
         message: String,
     },
+    /// It could not be read at all, which says nothing about whether it is Rust.
+    #[error("{path}: {source}")]
+    Unread {
+        /// The file.
+        path: String,
+        /// Why it could not be read.
+        source: rust_mutants::parsing::ReadingError,
+    },
     /// Its groups nest deeper than the scan reads, which building and dropping its token tree could not survive on every stack.
     #[error("{path}: groups nest deeper than {limit}, which the scan does not read")]
     TooDeep {
@@ -109,14 +117,21 @@ pub fn includes_code(source: &str) -> bool {
     if nesting(source) > MAX_DEPTH {
         return true;
     }
-    let Ok(stream) = <proc_macro2::TokenStream as std::str::FromStr>::from_str(source) else {
-        return true;
-    };
-    let mut tokens = Vec::new();
-    flattened(stream, &mut tokens);
-    tokens
-        .windows(2)
-        .any(|pair| matches!(pair, [Token::Ident(name, _), Token::Punct('!')] if name == "include"))
+    let read = rust_mutants::parsing::apart(|parsing| {
+        let stream = match parsing.tokens(source) {
+            Ok(stream) => stream,
+            Err(_not_read) => return true,
+        };
+        let mut tokens = Vec::new();
+        flattened(stream, &mut tokens);
+        tokens.windows(2).any(
+            |pair| matches!(pair, [Token::Ident(name, _), Token::Punct('!')] if name == "include"),
+        )
+    });
+    match read {
+        Ok(includes) => includes,
+        Err(_no_thread) => true,
+    }
 }
 
 /// The names that are always something that can start one, wherever they appear.
@@ -356,16 +371,26 @@ pub fn scanned(path: &str, source: &str) -> Result<Vec<Found>, ScanError> {
             limit: MAX_DEPTH,
         });
     }
-    let stream =
-        <proc_macro2::TokenStream as std::str::FromStr>::from_str(source).map_err(|error| {
-            ScanError::Unparsable {
-                path: path.to_owned(),
-                line: error.span().start().line,
-                message: error.to_string(),
-            }
-        })?;
-    let mut tokens = Vec::new();
-    flattened(stream, &mut tokens);
+    let unread = |source: rust_mutants::parsing::ReadingError| match source.syntax() {
+        Ok(not_rust) => ScanError::Unparsable {
+            path: path.to_owned(),
+            line: not_rust.line,
+            message: not_rust.message,
+        },
+        Err(unreadable) => ScanError::Unread {
+            path: path.to_owned(),
+            source: unreadable,
+        },
+    };
+    let tokens = rust_mutants::parsing::apart(|parsing| {
+        parsing.tokens(source).map(|stream| {
+            let mut tokens = Vec::new();
+            flattened(stream, &mut tokens);
+            tokens
+        })
+    })
+    .map_err(unread)?
+    .map_err(unread)?;
     Ok(tokens
         .iter()
         .enumerate()

@@ -57,6 +57,9 @@ pub(crate) enum ModelError {
     /// A supposedly compiler-derived model identity lost a typed invariant.
     #[error(transparent)]
     EvidenceIdentity(#[from] crate::report::ModelInvariantError),
+    /// A catalogued source could not be read at all to generate its harness.
+    #[error("reading a catalogued source to generate its harness: {0}")]
+    Unread(#[from] rust_mutants::parsing::ReadingError),
     /// A post-lattice model phase received no configured-build preparation.
     #[error("the completed build lattice has no model preparation")]
     EmptyPreparation,
@@ -461,7 +464,7 @@ fn admit(proving: &Proving<'_>, asked: Vec<Asked>) -> Result<Admission, ModelErr
     let mut decided = Vec::new();
     let mut admitted = Vec::new();
     for (index, one) in asked.into_iter().enumerate() {
-        match super::generate(&one.source, &one.mutant, proving.verified) {
+        match super::generate(&one.source, &one.mutant, proving.verified)? {
             Ok(harness) => admitted.push(Admitted {
                 index,
                 asked: one,

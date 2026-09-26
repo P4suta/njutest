@@ -512,6 +512,14 @@ pub enum SyntaxError {
         /// The parser's message.
         message: String,
     },
+    /// The file, or text discovery had to read back from it, could not be read at all.
+    #[error("{path}: {source}")]
+    Unread {
+        /// The path.
+        path: String,
+        /// Why it could not be read.
+        source: crate::parsing::ReadingError,
+    },
 }
 
 impl SyntaxError {
@@ -526,6 +534,36 @@ impl SyntaxError {
                 crate::error::DISCOVER_ANNOTATION_WITHOUT_REASON
             }
             Self::UnknownAnnotation { .. } => crate::error::DISCOVER_UNKNOWN_ANNOTATION,
+            Self::Unread { source, .. } => source.code(),
+        }
+    }
+
+    fn walked(path: &str, failed: walk::WalkError) -> Self {
+        match failed {
+            walk::WalkError::Bounds => Self::TooLarge {
+                path: path.to_owned(),
+            },
+            walk::WalkError::Unread(unread) => Self::unread(path, unread),
+        }
+    }
+
+    fn unread(path: &str, source: crate::parsing::ReadingError) -> Self {
+        match source {
+            crate::parsing::ReadingError::Syntax {
+                line,
+                column,
+                message,
+            } => Self::Parse {
+                path: path.to_owned(),
+                line,
+                column,
+                message,
+            },
+            unread @ (crate::parsing::ReadingError::Exhausted { .. }
+            | crate::parsing::ReadingError::ThreadUnavailable { .. }) => Self::Unread {
+                path: path.to_owned(),
+                source: unread,
+            },
         }
     }
 }
@@ -539,26 +577,30 @@ pub fn discover_file(
     source: &[u8],
     selection: &Selection<'_>,
 ) -> Result<FileDiscovery, SyntaxError> {
-    discover_counting(path, source, selection).map(|(discovery, _read)| discovery)
+    crate::parsing::apart(|parsing| discover_counting(parsing, path, source, selection))
+        .map_err(|unread| SyntaxError::unread(path, unread))?
+        .map(|(discovery, _read)| discovery)
 }
 
 /// How many items of `text` an operator swap is held to read alone as the file reads them, and the bytes of every one that does not, counted from the end of any byte order mark or shebang line.
 #[cfg(any(test, feature = "testkit"))]
 pub(crate) fn items_read_alone(
     text: &str,
-) -> Result<(usize, Vec<std::ops::Range<usize>>), syn::Error> {
-    let (_, parsed) = strip_prefix(text).map_err(|_prefix| {
-        syn::Error::new(
-            proc_macro2::Span::call_site(),
-            "a prefix past the file's end",
-        )
+) -> Result<(usize, Vec<std::ops::Range<usize>>), SyntaxError> {
+    let (_, parsed) = strip_prefix(text).map_err(|_prefix| SyntaxError::TooLarge {
+        path: "src/lib.rs".to_owned(),
     })?;
-    let file: syn::File = syn::parse_str(parsed)?;
-    Ok(regroup::Grouping::of(&file).read_alone(parsed))
+    crate::parsing::apart(|parsing| {
+        let file: syn::File = parsing.read(parsed)?;
+        regroup::Grouping::of(&file, parsing).read_alone(parsed)
+    })
+    .and_then(|read| read)
+    .map_err(|unread| SyntaxError::unread("src/lib.rs", unread))
 }
 
 /// Finds every candidate in one file, and says how many bytes of source holding its operator swaps read back, or nothing once that stopped fitting.
 pub(crate) fn discover_counting(
+    parsing: &crate::parsing::Parsing,
     path: &str,
     source: &[u8],
     selection: &Selection<'_>,
@@ -575,12 +617,15 @@ pub(crate) fn discover_counting(
     let (base, parsed) = strip_prefix(text).map_err(|_prefix| SyntaxError::TooLarge {
         path: path.to_owned(),
     })?;
-    let file: syn::File = syn::parse_str(parsed).map_err(|error| parse_error(path, &error))?;
+    let file: syn::File = parsing
+        .read(parsed)
+        .map_err(|unread| SyntaxError::unread(path, unread))?;
     let index = LineIndex::new(text).map_err(|_position| SyntaxError::TooLarge {
         path: path.to_owned(),
     })?;
-    let stream: proc_macro2::TokenStream =
-        syn::parse_str(parsed).map_err(|error| parse_error(path, &error))?;
+    let stream = parsing
+        .tokens(parsed)
+        .map_err(|unread| SyntaxError::unread(path, unread))?;
     let markers = annotate::markers(text, base, &stream, &index).map_err(|error| match error {
         annotate::MarkerError::SourceBounds => SyntaxError::TooLarge {
             path: path.to_owned(),
@@ -595,13 +640,14 @@ pub(crate) fn discover_counting(
             directive,
         },
     })?;
-    let grouping = regroup::Grouping::of(&file);
+    let grouping = regroup::Grouping::of(&file, parsing);
     let input = walk::Input {
         text,
         base,
         path,
         digest: &source_digest,
         grouping: &grouping,
+        parsing,
     };
     let mut walker = walk::Walker::new(input, selection, index);
     walker.annotate(markers);
@@ -612,9 +658,9 @@ pub(crate) fn discover_counting(
         mut decisions,
         includes,
         annotations,
-    } = walker.finish().map_err(|_bounds| SyntaxError::TooLarge {
-        path: path.to_owned(),
-    })?;
+    } = walker
+        .finish()
+        .map_err(|failed| SyntaxError::walked(path, failed))?;
 
     let position = |name: &str| selection.registry().position(name).unwrap_or(usize::MAX);
     candidates.sort_by_key(|found| {
@@ -638,21 +684,6 @@ pub(crate) fn discover_counting(
         },
         grouping.read(),
     ))
-}
-
-fn parse_error(path: &str, error: &syn::Error) -> SyntaxError {
-    let start = error.span().start();
-    let Some(column) = start.column.checked_add(1) else {
-        return SyntaxError::TooLarge {
-            path: path.to_owned(),
-        };
-    };
-    SyntaxError::Parse {
-        path: path.to_owned(),
-        line: start.line,
-        column,
-        message: error.to_string(),
-    }
 }
 
 /// The skip tallies of one file, in reason order.

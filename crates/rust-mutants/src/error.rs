@@ -60,6 +60,12 @@ mod table {
         CiRootOutsideCheckout,
         /// A file the host named for a step's summary or outputs, which could not be appended to.
         CiSinkUnwritable,
+        /// Rust text the engine read is not Rust of the kind it asked for.
+        ReadingSyntax,
+        /// Rust text that would take its reading thread's locations past what they address.
+        ReadingExhausted,
+        /// The thread Rust text is read on could not be started.
+        ReadingThread,
         /// Snapshot options that cannot be honoured, such as an escaping report directory.
         SnapshotInvalidOptions,
         /// A source root that is relative, cannot be read, or is not a directory.
@@ -318,6 +324,30 @@ mod table {
                     summary: "a file the host named for a step's summary or outputs could not be appended to",
                     remedy: Some(
                         "the runner names the file for this step; check no earlier step removed it or its directory",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::ReadingSyntax => ErrorCode {
+                    code: "RM0017",
+                    summary: "Rust text the engine read is not Rust of the kind it asked for",
+                    remedy: Some(
+                        "the message names the line and column in the text read; the file or fragment it came from is the one to look at",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::ReadingExhausted => ErrorCode {
+                    code: "RM0018",
+                    summary: "Rust text that would take its reading thread's locations past what they address",
+                    remedy: Some(
+                        "a single file this large is refused rather than read to the wrong places; split it, or skip it with an exclude pattern",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::ReadingThread => ErrorCode {
+                    code: "RM0019",
+                    summary: "the thread Rust text is read on could not be started",
+                    remedy: Some(
+                        "the operating system refused a thread; check the process and memory limits of this user, and run again",
                     ),
                     sealed: Sealed,
                 },
@@ -897,6 +927,9 @@ pub const CI_ROOT_OUTSIDE_CHECKOUT: ErrorCode = RmCode::CiRootOutsideCheckout.er
 
 /// A file the host named for a step's summary or outputs, which could not be appended to.
 pub const CI_SINK_UNWRITABLE: ErrorCode = RmCode::CiSinkUnwritable.error_code();
+pub(crate) const READING_SYNTAX: ErrorCode = RmCode::ReadingSyntax.error_code();
+pub(crate) const READING_EXHAUSTED: ErrorCode = RmCode::ReadingExhausted.error_code();
+pub(crate) const READING_THREAD: ErrorCode = RmCode::ReadingThread.error_code();
 
 pub(crate) const SNAPSHOT_INVALID_OPTIONS: ErrorCode = RmCode::SnapshotInvalidOptions.error_code();
 pub(crate) const SNAPSHOT_SOURCE_ROOT: ErrorCode = RmCode::SnapshotSourceRoot.error_code();
