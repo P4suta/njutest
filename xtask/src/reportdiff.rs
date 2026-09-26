@@ -53,6 +53,14 @@ pub enum DiffError {
         /// The unknown value.
         found: String,
     },
+    /// A mutation run has a mutant row whose identity or outcome cannot be compared.
+    #[error("{path}: invalid run mutant row: {reason}")]
+    InvalidRunMutant {
+        /// The document.
+        path: String,
+        /// The row or field that is invalid.
+        reason: String,
+    },
 }
 
 impl crate::error::Coded for DiffError {
@@ -66,6 +74,7 @@ impl crate::error::Coded for DiffError {
 /// # Errors
 /// [`DiffError::Unreadable`] for a document that is not JSON.
 /// [`DiffError::UnsupportedDocumentType`] for a document whose kind is unknown.
+/// [`DiffError::InvalidRunMutant`] for a mutation run with an invalid mutant row.
 pub fn compare(before: (&str, &str), after: (&str, &str)) -> Result<Vec<Change>, DiffError> {
     let left = parse(before)?;
     let right = parse(after)?;
@@ -73,6 +82,12 @@ pub fn compare(before: (&str, &str), after: (&str, &str)) -> Result<Vec<Change>,
         ReportKind::of(before.0, &left)?,
         ReportKind::of(after.0, &right)?,
     );
+    if left_kind == ReportKind::Run {
+        validate_run_mutants(before.0, &left)?;
+    }
+    if right_kind == ReportKind::Run {
+        validate_run_mutants(after.0, &right)?;
+    }
     let mut changes = Vec::new();
 
     let pair = Pair {
@@ -85,7 +100,12 @@ pub fn compare(before: (&str, &str), after: (&str, &str)) -> Result<Vec<Change>,
             ReportKind::Assurance(AssuranceShape::Envelope),
             ReportKind::Assurance(AssuranceShape::Envelope),
         ) => {
-            compare_tree("", Some(pair.before), Some(pair.after), &mut changes);
+            compare_tree(
+                "",
+                ReportLocation::Envelope,
+                (Some(pair.before), Some(pair.after)),
+                &mut changes,
+            );
         }
         (
             ReportKind::Assurance(AssuranceShape::Bare),
@@ -133,20 +153,96 @@ impl ReportKind {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ReportLocation {
+    Envelope,
+    Report,
+    Builds,
+    Build,
+    Parts,
+    Part,
+    Targets,
+    Target,
+    Other,
+}
+
+impl ReportLocation {
+    fn field(self, name: &str) -> Self {
+        match (self, name) {
+            (Self::Envelope, "report") => Self::Report,
+            (Self::Report, "builds") => Self::Builds,
+            (Self::Build, "parts") => Self::Parts,
+            (Self::Part, "targets") => Self::Targets,
+            _ => Self::Other,
+        }
+    }
+
+    const fn element(self) -> Self {
+        match self {
+            Self::Builds => Self::Build,
+            Self::Parts => Self::Part,
+            Self::Targets => Self::Target,
+            _ => Self::Other,
+        }
+    }
+
+    fn volatile(self, name: &str) -> bool {
+        matches!(
+            (self, name),
+            (Self::Report, "run_id") | (Self::Part, "timing") | (Self::Target, "duration_ms")
+        )
+    }
+}
+
+fn validate_run_mutants(path: &str, document: &serde_json::Value) -> Result<(), DiffError> {
+    let rows = document
+        .get("mutants")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| DiffError::InvalidRunMutant {
+            path: path.to_owned(),
+            reason: "mutants must be an array".to_owned(),
+        })?;
+    let mut seen = BTreeSet::new();
+    for (index, row) in rows.iter().enumerate() {
+        let name = row
+            .get("display_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| DiffError::InvalidRunMutant {
+                path: path.to_owned(),
+                reason: format!("mutants[{index}].display_id must be a nonempty string"),
+            })?;
+        if !seen.insert(name) {
+            return Err(DiffError::InvalidRunMutant {
+                path: path.to_owned(),
+                reason: format!("mutants[{index}].display_id repeats {name:?}"),
+            });
+        }
+        if row
+            .get("outcome")
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(str::is_empty)
+        {
+            return Err(DiffError::InvalidRunMutant {
+                path: path.to_owned(),
+                reason: format!("mutants[{index}].outcome must be a nonempty string"),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn compare_tree(
     path: &str,
-    before: Option<&serde_json::Value>,
-    after: Option<&serde_json::Value>,
+    location: ReportLocation,
+    pair: (Option<&serde_json::Value>, Option<&serde_json::Value>),
     changes: &mut Vec<Change>,
 ) {
-    match (before, after) {
+    match pair {
         (Some(serde_json::Value::Object(left)), Some(serde_json::Value::Object(right))) => {
             let names: BTreeSet<&String> = left.keys().chain(right.keys()).collect();
             for name in names {
-                if matches!(
-                    name.as_str(),
-                    "run_id" | "source_run_id" | "timing" | "duration_ms"
-                ) {
+                if location.volatile(name) {
                     continue;
                 }
                 let at = if path.is_empty() {
@@ -154,20 +250,25 @@ fn compare_tree(
                 } else {
                     format!("{path}.{name}")
                 };
-                compare_tree(&at, left.get(name), right.get(name), changes);
+                compare_tree(
+                    &at,
+                    location.field(name),
+                    (left.get(name), right.get(name)),
+                    changes,
+                );
             }
         }
         (Some(serde_json::Value::Array(left)), Some(serde_json::Value::Array(right))) => {
             for index in 0..left.len().max(right.len()) {
                 compare_tree(
                     &format!("{path}[{index}]"),
-                    left.get(index),
-                    right.get(index),
+                    location.element(),
+                    (left.get(index), right.get(index)),
                     changes,
                 );
             }
         }
-        _ => {
+        (before, after) => {
             let (before, after) = (text_of(before), text_of(after));
             if before != after {
                 changes.push(Change {
