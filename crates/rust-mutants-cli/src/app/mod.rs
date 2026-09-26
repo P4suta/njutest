@@ -542,6 +542,15 @@ fn measured(
             write(stdout, &rendered(&said, cataloged)?)?;
             Ok(0)
         }
+        cli::Command::List { claims: true, .. } => {
+            let discovery = session::preview(&workspace, &options, cancel)?;
+            let expectations = expectations(settings);
+            let resolved =
+                session::resolve_claims(&workspace, &options, &discovery, &expectations)?;
+            write(stdout, &report::claims(&expectations, &resolved))?;
+            workspace.close()?;
+            Ok(u8::from(resolved.iter().any(session::Resolution::rotted)))
+        }
         cli::Command::List { .. }
         | cli::Command::WhySkipped { .. }
         | cli::Command::Instrument { .. } => {
@@ -2193,7 +2202,6 @@ fn merge(
     Ok(merged.run.exit_code)
 }
 
-/// A closed stream is the reader's choice, not a failure of ours.
 /// The claims the file wrote, as the engine reads them.
 fn expectations(settings: &Settings) -> Vec<Expectation> {
     settings
@@ -2205,6 +2213,7 @@ fn expectations(settings: &Settings) -> Vec<Expectation> {
         .collect()
 }
 
+/// Writes `text` to `stream`, where a closed stream is the reader's choice, not a failure of ours.
 pub(crate) fn write(stream: &mut dyn Write, text: &str) -> Result<(), CliError> {
     match stream
         .write_all(text.as_bytes())

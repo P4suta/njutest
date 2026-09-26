@@ -339,6 +339,10 @@ Options:
       --json
           Write the candidates as one JSON document instead of as lines
 
+      --claims
+          Resolve every claim the configuration makes, and fail where one names nothing, not as many
+          as it says, or a line its mutation left
+
   -h, --help
           Print help (see a summary with '-h')
 

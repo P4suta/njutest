@@ -283,21 +283,8 @@ fn snippet_of(line: &str, count: usize) -> Option<(usize, &str)> {
 }
 
 fn copy_tree(from: &Path, to: &Path) -> Result<(), DocflowsError> {
-    let listed = crate::repository::files(from).map_err(|failure| DocflowsError::Io {
+    crate::repository::copy(from, to).map_err(|failure| DocflowsError::Io {
         path: from.display().to_string(),
         source: std::io::Error::other(failure.to_string()),
-    })?;
-    for relative in listed {
-        let target = to.join(&relative);
-        let copied = match target.parent() {
-            Some(parent) => std::fs::create_dir_all(parent),
-            None => Ok(()),
-        }
-        .and_then(|()| std::fs::copy(from.join(&relative), &target).map(|_bytes| ()));
-        copied.map_err(|source| DocflowsError::Io {
-            path: target.display().to_string(),
-            source,
-        })?;
-    }
-    Ok(())
+    })
 }
