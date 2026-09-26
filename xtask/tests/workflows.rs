@@ -100,8 +100,10 @@ fn each_matrix_platform_runs_one_whole_suite() {
     let matrix = test
         .split_once("      matrix:\n")
         .and_then(|(_, rest)| rest.split_once("    steps:\n"))
-        .map(|(matrix, _)| matrix)
-        .unwrap_or_else(|| panic!("ci.yml has a test matrix before its steps"));
+        .map_or_else(
+            || panic!("ci.yml has a test matrix before its steps"),
+            |(matrix, _)| matrix,
+        );
     let dimensions: Vec<&str> = matrix.lines().map(str::trim).collect();
     assert_eq!(
         dimensions,
