@@ -220,9 +220,9 @@ pub fn build(
             env.overlay(&target.cargo_env);
             env.set("CARGO", toolchain.cargo().as_os_str());
             Unit {
-                package: target.package,
-                kind: UnitKind::of(target.kind),
-                name: target.name,
+                package: target.package().to_owned(),
+                kind: UnitKind::of(target.kind()),
+                name: target.name().to_owned(),
                 harness: target.harness,
                 executable: target.executable,
                 cwd: target.cwd,

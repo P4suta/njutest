@@ -29,7 +29,7 @@ pub fn recorded(
     let mut binaries: BTreeMap<String, (&str, Harness)> = BTreeMap::new();
     for target in session.targets() {
         let harness = harness_of(target, threads);
-        binaries.insert(target.id.clone(), (target.package.as_str(), harness));
+        binaries.insert(target.id().to_owned(), (target.package(), harness));
     }
     let metadata = session.metadata();
     let touched = &session.verified().touched.targets;
@@ -143,7 +143,7 @@ fn unread_manifest(package: &str) -> PackageScan {
 
 /// What runs `target`'s tests, when libtest runs them on `threads`.
 const fn harness_of(target: &rust_mutants::execute::TestTarget, threads: Threads) -> Harness {
-    match (target.kind, target.harness) {
+    match (target.kind(), target.harness) {
         (TargetKind::Doc, _) => Harness::Doctest,
         (
             TargetKind::Lib

@@ -230,7 +230,7 @@ fn run_targets(
                 .extend(targets.get(at..).unwrap_or_default().iter().map(|left| {
                     Limited::for_target(
                         Limitation::CoverageNotMeasured,
-                        TargetId::generated(&left.id),
+                        TargetId::generated(left.id()),
                     )
                 }));
             break;
@@ -243,12 +243,13 @@ fn run_targets(
         ) {
             Ok(scratch) => scratch,
             Err(error) => {
-                workspace
-                    .trace
-                    .note("coverage", &format!("{}: not measured: {error}", target.id));
+                workspace.trace.note(
+                    "coverage",
+                    &format!("{}: not measured: {error}", target.id()),
+                );
                 reached.limitations.push(Limited::for_target(
                     Limitation::CoverageNotMeasured,
-                    TargetId::generated(&target.id),
+                    TargetId::generated(target.id()),
                 ));
                 continue;
             }
@@ -273,11 +274,13 @@ fn run_targets(
         match blocks_of(reading, target) {
             Some(measured) => {
                 reached.instrumented.extend(measured.instrumented);
-                reached.targets.insert(target.id.clone(), measured.covered);
+                reached
+                    .targets
+                    .insert(target.id().to_owned(), measured.covered);
             }
             None => reached.limitations.push(Limited::for_target(
                 Limitation::CoverageNotMeasured,
-                TargetId::generated(&target.id),
+                TargetId::generated(target.id()),
             )),
         }
     }
@@ -301,7 +304,7 @@ fn executables(messages: &[crate::cargo::Message]) -> Vec<PathBuf> {
 
 /// A target's identity as one file name: the identity is a path of its own, and a profile is a file beside the others rather than a tree.
 fn key(target: &execute::TestTarget) -> String {
-    target.id.replace('/', "-")
+    target.id().replace('/', "-")
 }
 
 /// What one target's run is read back with.

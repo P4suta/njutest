@@ -1042,10 +1042,10 @@ fn target_documents(session: &Session) -> Vec<TargetDocument> {
         .targets()
         .iter()
         .map(|target| TargetDocument {
-            id: target.id.clone(),
-            kind: target.kind.name().to_owned(),
+            id: target.id().to_owned(),
+            kind: target.kind().name().to_owned(),
             harness: target.harness,
-            tests: session.tests_of(&target.id),
+            tests: session.tests_of(target.id()),
             limitations: target
                 .limitations
                 .iter()

@@ -176,7 +176,7 @@ impl Prover {
         )?;
         let executables: Vec<(&str, &Path)> = targets
             .iter()
-            .map(|target| (target.id.as_str(), target.executable.as_path()))
+            .map(|target| (target.id(), target.executable.as_path()))
             .collect();
         Ok(Some(artifacts::digests(executables)?))
     }

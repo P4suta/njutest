@@ -116,7 +116,7 @@ fn a_target_the_run_could_not_record_is_named_as_unmeasured_rather_than_read_as_
     let session = prepared(&fixture);
     let touched = session.touched();
     for target in session.targets() {
-        let id = target.id.as_str();
+        let id = target.id();
         assert!(
             touched.targets.contains_key(id)
                 || touched.limitations.iter().any(|limitation| {
@@ -330,7 +330,7 @@ fn a_process_that_cannot_record_costs_its_target_the_measurement_and_not_the_run
             .all(|target| touched.limitations.iter().any(|one| one
                 .target
                 .as_ref()
-                .is_some_and(|id| id.as_str() == target.id))),
+                .is_some_and(|id| id.as_str() == target.id()))),
         "and every one of them says why: {touched:?}"
     );
     let one = session

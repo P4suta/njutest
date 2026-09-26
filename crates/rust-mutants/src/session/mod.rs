@@ -1048,7 +1048,7 @@ impl Session {
         }
         result.entered = self.entered_by(log, &result, cancel);
         let ended = std::time::SystemTime::now();
-        let unseen = self.uncontrolled(&exec.target().id)
+        let unseen = self.uncontrolled(exec.target().id())
             || self.orphaned(before.as_ref(), (started, ended), result.leader)?;
         if unseen {
             if result.conclusion == MutantConclusion::Survived {
@@ -1058,7 +1058,7 @@ impl Session {
                 entered.completeness = crate::touch::Completeness::Cut;
             }
         }
-        Ok(self.declined(&exec.target().id, result))
+        Ok(self.declined(exec.target().id(), result))
     }
 
     /// `result`, a mutant execution against `target`, with its survival held to the tests that declined in it (ADR 0043).
@@ -1359,10 +1359,10 @@ impl Session {
                 .targets
                 .iter()
                 .map(|target| TargetDescription {
-                    id: target.id.clone(),
-                    package: target.package.clone(),
-                    kind: target.kind.name().to_owned(),
-                    name: target.name.clone(),
+                    id: target.id().to_owned(),
+                    package: target.package().to_owned(),
+                    kind: target.kind().name().to_owned(),
+                    name: target.name().to_owned(),
                     harness: target.harness,
                     limitations: target
                         .limitations
@@ -1469,13 +1469,13 @@ impl Session {
         };
         self.targets
             .iter()
-            .filter(|target| target.kind == TargetKind::Doc && target.package == package)
+            .filter(|target| target.kind() == TargetKind::Doc && target.package() == package)
             .filter(|target| {
                 !target
                     .limitations
                     .contains(&crate::limitation::Limitation::DoctestsNone)
             })
-            .map(|target| target.id.as_str())
+            .map(TestTarget::id)
             .collect()
     }
 
@@ -1583,16 +1583,12 @@ impl Session {
 
     /// Every target, the ones a measurement can place, and the ones routed to `mutant` by another rule.
     fn among(&self, mutant: &Mutant) -> (Vec<&str>, Vec<&str>, Vec<&str>) {
-        let targets = self
-            .targets
-            .iter()
-            .map(|target| target.id.as_str())
-            .collect();
+        let targets = self.targets.iter().map(TestTarget::id).collect();
         let measurable = self
             .targets
             .iter()
-            .filter(|target| target.kind != TargetKind::Doc)
-            .map(|target| target.id.as_str())
+            .filter(|target| target.kind() != TargetKind::Doc)
+            .map(TestTarget::id)
             .collect();
         (targets, measurable, self.documenting(mutant))
     }
@@ -1609,7 +1605,7 @@ impl Session {
         chosen: &Chosen,
         cancel: &Cancel,
     ) -> Result<Option<Vec<String>>, EngineError> {
-        let Some(named) = chosen.tests_of(&target.id) else {
+        let Some(named) = chosen.tests_of(target.id()) else {
             return Ok(None);
         };
         if self.usable(target, named, cancel)?.is_none() {
@@ -1625,7 +1621,7 @@ impl Session {
         tests: &[String],
         cancel: &Cancel,
     ) -> Result<Option<Duration>, EngineError> {
-        let key = (target.id.clone(), tests.to_vec());
+        let key = (target.id().to_owned(), tests.to_vec());
         let mut established = self
             .established
             .lock()
@@ -1645,11 +1641,11 @@ impl Session {
             profile: None,
             crash: None,
         };
-        let timeout = self.mutant_timeout.of(self.baseline(&target.id))?.0;
+        let timeout = self.mutant_timeout.of(self.baseline(target.id()))?.0;
         let request = ExecRequest::new(target)
             .with_tests(tests.to_vec())
             .with_timeout(Some(timeout))
-            .with_scratch(self.exec_scratch(self.home_of(&target.id))?)
+            .with_scratch(self.exec_scratch(self.home_of(target.id()))?)
             .in_scratch(self.scratch_working_directory);
         let result = execute::exec(&request, &context, cancel, &self.workspace.trace);
         let asked = u32::try_from(tests.len())
@@ -1675,7 +1671,7 @@ impl Session {
                 &format!(
                     "{}: the set {} ({}), so every test of it runs instead of the ones a \
                      measurement named",
-                    target.id,
+                    target.id(),
                     why,
                     result.outcome().name()
                 ),
@@ -1979,8 +1975,8 @@ impl Session {
     ) -> Result<(MutantResult, Kept), EngineError> {
         let mutant = self.executable(&request.mutant)?;
         let target = self.named(request)?;
-        let timeout = self.timeout_for(request, &target.id)?.0;
-        let scratch = self.exec_scratch(self.home_of(&target.id))?;
+        let timeout = self.timeout_for(request, target.id())?.0;
+        let scratch = self.exec_scratch(self.home_of(target.id()))?;
         let notice = scratch.engine().join("crash-notice");
         let nonce = crash_nonce()?;
         let context = Context {
@@ -2007,7 +2003,7 @@ impl Session {
             exec = exec.with_test(test.clone());
         }
         let result = self.declined(
-            &target.id,
+            target.id(),
             execute::exec(&exec, &context, cancel, &self.workspace.trace),
         );
         let evidence = Notice {
@@ -2034,7 +2030,7 @@ impl Session {
         cancel: &Cancel,
     ) -> Result<MutantResult, EngineError> {
         let target = self.named(request)?;
-        let timeout = self.timeout_for(request, &target.id)?.0;
+        let timeout = self.timeout_for(request, target.id())?.0;
         let none = Perturbation::none();
         let fresh = self.exec_scratch(execute::Home::Given)?;
         Ok(self.control_once(
@@ -2059,7 +2055,7 @@ impl Session {
         targets.into_iter().next().ok_or_else(|| {
             EngineError::from(SessionError::UnknownTarget {
                 name: name.to_owned(),
-                available: self.targets.iter().map(|one| one.id.clone()).collect(),
+                available: self.targets.iter().map(|one| one.id().to_owned()).collect(),
             })
         })
     }
@@ -2105,11 +2101,11 @@ impl Session {
             .ok_or_else(|| {
                 EngineError::from(SessionError::UnknownTarget {
                     name: name.to_owned(),
-                    available: self.targets.iter().map(|one| one.id.clone()).collect(),
+                    available: self.targets.iter().map(|one| one.id().to_owned()).collect(),
                 })
             })?;
-        let (timeout, source) = self.timeout_for(request, &target.id)?;
-        let scratch = self.exec_scratch(self.home_of(&target.id))?;
+        let (timeout, source) = self.timeout_for(request, target.id())?;
+        let scratch = self.exec_scratch(self.home_of(target.id()))?;
         let log = scratch.engine().join(CONTROL_TOUCH_LOG);
         let context = Context {
             base_env: &self.workspace.base_env,
@@ -2168,7 +2164,7 @@ impl Session {
         let reached = recorded.reached.any(index);
         let gathered = crate::touch::TargetTouches::of(recorded, &result.passed_tests);
         let mut record = verify::touch_record(
-            &target.id,
+            target.id(),
             crate::trace::Measurement::Repair,
             &gathered,
             crate::trace::SummaryRecord::of(result),
@@ -2244,14 +2240,14 @@ impl Session {
         } = how;
         let mut targets = self.selected(request.target.as_deref())?;
         if let Some(first) = request.first.as_deref() {
-            targets.sort_by_key(|target| target.id != first);
+            targets.sort_by_key(|target| target.id() != first);
         }
         let targets = match chosen {
             Chosen::Everything => targets,
             Chosen::Narrowed { only, .. } => {
                 let routed: Vec<&TestTarget> = targets
                     .into_iter()
-                    .filter(|target| only.iter().any(|one| one == &target.id))
+                    .filter(|target| only.iter().any(|one| one == target.id()))
                     .collect();
                 if routed.is_empty() {
                     return Ok(Ran {
@@ -2264,8 +2260,8 @@ impl Session {
         };
         let mut asked: Vec<MutantResult> = Vec::new();
         for target in targets {
-            let (timeout, source) = self.timeout_for(request, &target.id)?;
-            let scratch = self.exec_scratch(self.home_of(&target.id))?;
+            let (timeout, source) = self.timeout_for(request, target.id())?;
+            let scratch = self.exec_scratch(self.home_of(target.id()))?;
             let log = match request.entered {
                 Recording::Off => None,
                 Recording::Items => Some(scratch.engine().join(ENTERED_LOG)),
@@ -2397,7 +2393,7 @@ impl Session {
         self.workspace.trace.mutant_exec(MutantExecRecord {
             id: mutant.id.to_string(),
             index: mutant.index,
-            target: target.id.clone(),
+            target: target.id().to_owned(),
             outcome: result.outcome().name().to_owned(),
             step_notice: result.step_notice().cloned(),
             exit_code: result.exit_code,
@@ -2426,7 +2422,7 @@ impl Session {
             entered_records: None,
             id: String::new(),
             index: u32::MAX,
-            target: target.id.clone(),
+            target: target.id().to_owned(),
             outcome: result.outcome().name().to_owned(),
             step_notice: result.step_notice().cloned(),
             exit_code: result.exit_code,
@@ -2455,7 +2451,7 @@ impl Session {
                 self.workspace
                     .trace
                     .perturbed(crate::trace::PerturbedRecord {
-                        target: target.id.clone(),
+                        target: target.id().to_owned(),
                         perturbation,
                         outcome: result.outcome().name().to_owned(),
                         failed_tests: result.failed_tests.clone(),
@@ -2582,8 +2578,8 @@ impl Session {
         let mut asked = Vec::new();
         let mut observed = Vec::new();
         for target in targets {
-            let (timeout, source) = self.timeout_for(request, &target.id)?;
-            let scratch = self.exec_scratch(self.home_of(&target.id))?;
+            let (timeout, source) = self.timeout_for(request, target.id())?;
+            let scratch = self.exec_scratch(self.home_of(target.id()))?;
             let log = (observing == Observing::Reach
                 && request.test.is_none()
                 && verify::recordable(target))
@@ -2604,12 +2600,12 @@ impl Session {
                         "{}: the control could not write what its guards reached, so it is run \
                          again with nothing to record and whether its baseline reach holds is \
                          not measured",
-                        target.id
+                        target.id()
                     ),
                 );
                 result = self.control_once(
                     &once,
-                    (self.exec_scratch(self.home_of(&target.id))?, None),
+                    (self.exec_scratch(self.home_of(target.id()))?, None),
                     cancel,
                 );
             }
@@ -2632,7 +2628,7 @@ impl Session {
             };
             if let Some(steadiness) = steadiness {
                 observed.push(Observed {
-                    target: target.id.clone(),
+                    target: target.id().to_owned(),
                     steadiness,
                 });
             }
@@ -2678,10 +2674,11 @@ impl Session {
         };
         if perturbation.schedule != execute::Schedule::AsConfigured && !once.target.harness {
             return MutantResult::apparatus_error(
-                &once.target.id,
+                once.target.id(),
                 format!(
                     "{:?} is a libtest argument, and {} does not run under libtest",
-                    perturbation.schedule, once.target.id
+                    perturbation.schedule,
+                    once.target.id()
                 ),
             );
         }
@@ -2728,7 +2725,7 @@ impl Session {
         let unreadable = |why: &dyn std::fmt::Display| {
             self.workspace.trace.note(
                 crate::touch::UNREADABLE,
-                &format!("{}: the control's record: {why}", target.id),
+                &format!("{}: the control's record: {why}", target.id()),
             );
             Steadiness::NotMeasured(Unmeasured::Unreadable)
         };
@@ -2743,7 +2740,7 @@ impl Session {
         };
         let control = crate::touch::TargetTouches::of(recorded, &result.passed_tests);
         let touch = verify::touch_record(
-            &target.id,
+            target.id(),
             crate::trace::Measurement::Control,
             &control,
             crate::trace::SummaryRecord::of(result),
@@ -2764,21 +2761,21 @@ impl Session {
         use crate::touch::{Steadiness, Unmeasured};
         let retried = crate::limitation::Limited::for_target(
             crate::limitation::Limitation::BaselinePassedOnRetry,
-            crate::limitation::TargetId::generated(&target.id),
+            crate::limitation::TargetId::generated(target.id()),
         );
         if self.verified.touched.limitations.contains(&retried) {
             return Steadiness::NotMeasured(Unmeasured::BaselineRetried);
         }
         let unparsed = crate::limitation::Limited::for_target(
             crate::limitation::Limitation::BaselinePassedUnparsed,
-            crate::limitation::TargetId::generated(&target.id),
+            crate::limitation::TargetId::generated(target.id()),
         );
         if result.reading() == Reading::Short
             || self.verified.touched.limitations.contains(&unparsed)
         {
             return Steadiness::NotMeasured(Unmeasured::Unparsed);
         }
-        let Some(baseline) = self.verified.touched.targets.get(&target.id) else {
+        let Some(baseline) = self.verified.touched.targets.get(target.id()) else {
             return Steadiness::NotMeasured(Unmeasured::NoBaseline);
         };
         let passed = |ran: &[String]| ran.iter().cloned().collect::<BTreeSet<String>>();
@@ -2817,11 +2814,11 @@ impl Session {
         };
         let mut asked = Vec::new();
         for target in targets {
-            let (timeout, source) = self.timeout_for(request, &target.id)?;
+            let (timeout, source) = self.timeout_for(request, target.id())?;
             let mut exec = ExecRequest::new(target)
                 .with_args(self.arguments(request))
                 .with_timeout(Some(timeout))
-                .with_scratch(self.exec_scratch(self.home_of(&target.id))?)
+                .with_scratch(self.exec_scratch(self.home_of(target.id()))?)
                 .in_scratch(self.scratch_working_directory);
             if let Some(test) = &request.test {
                 exec = exec.with_test(test.clone());
@@ -2897,12 +2894,12 @@ impl Session {
         let matching: Vec<&TestTarget> = self
             .targets
             .iter()
-            .filter(|target| target.id == name || target.name == name)
+            .filter(|target| target.id() == name || target.name() == name)
             .collect();
         if matching.is_empty() {
             return Err(EngineError::from(SessionError::UnknownTarget {
                 name: name.to_owned(),
-                available: self.targets.iter().map(|one| one.id.clone()).collect(),
+                available: self.targets.iter().map(|one| one.id().to_owned()).collect(),
             }));
         }
         Ok(matching)

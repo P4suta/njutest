@@ -14,6 +14,7 @@ use std::path::Path;
 
 use njutest_devkit::fixture::Fixture;
 use njutest_devkit::result::{ResultState::Refused, result_state};
+use rust_mutants::execute::TestTarget;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::Tier;
 use rust_mutants::run::Filter;
@@ -194,11 +195,7 @@ fn preparing_catalogs_instruments_validates_and_builds() {
         ]
     );
 
-    let targets: Vec<&str> = session
-        .targets()
-        .iter()
-        .map(|target| target.id.as_str())
-        .collect();
+    let targets: Vec<&str> = session.targets().iter().map(TestTarget::id).collect();
     assert_eq!(
         targets,
         [
@@ -698,8 +695,8 @@ fn a_dependency_s_documentation_is_not_this_run_s_to_measure() {
     let documentation: Vec<&str> = session
         .targets()
         .iter()
-        .filter(|target| target.kind == rust_mutants::execute::TargetKind::Doc)
-        .map(|target| target.package.as_str())
+        .filter(|target| target.kind() == rust_mutants::execute::TargetKind::Doc)
+        .map(TestTarget::package)
         .collect();
 
     assert_eq!(
@@ -809,7 +806,7 @@ fn the_app_integration_test_finds_its_binary_where_cargo_put_it() {
     let target = session
         .targets()
         .iter()
-        .find(|target| target.id.contains("/test/"))
+        .find(|target| target.id().contains("/test/"))
         .expect("the workspace has an integration test")
         .clone();
     let binaries: Vec<(String, std::path::PathBuf)> = target
@@ -1318,8 +1315,8 @@ fn a_mutation_reaches_the_documentation_of_its_own_library_and_no_other() {
     let doc: Vec<&str> = session
         .targets()
         .iter()
-        .filter(|target| target.kind == rust_mutants::execute::TargetKind::Doc)
-        .map(|target| target.id.as_str())
+        .filter(|target| target.kind() == rust_mutants::execute::TargetKind::Doc)
+        .map(TestTarget::id)
         .collect();
     assert_eq!(
         doc.len(),
@@ -1348,12 +1345,12 @@ fn a_mutation_reaches_the_documentation_of_its_own_library_and_no_other() {
         .targets()
         .iter()
         .filter(|target| {
-            target.kind == rust_mutants::execute::TargetKind::Doc
+            target.kind() == rust_mutants::execute::TargetKind::Doc
                 && target
                     .limitations
                     .contains(&rust_mutants::limitation::Limitation::DoctestsNone)
         })
-        .map(|target| target.id.as_str())
+        .map(TestTarget::id)
         .collect();
     assert_eq!(
         empty.len(),

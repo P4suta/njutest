@@ -118,7 +118,7 @@ pub fn observe(
         limitations: limitations(session.targets(), &verified.touched.limitations),
         ..Baseline::default()
     };
-    let built = |id: &str| session.targets().iter().find(|one| one.id.as_str() == id);
+    let built = |id: &str| session.targets().iter().find(|one| one.id() == id);
     let rows: Vec<(&String, &rust_mutants::session::Baseline)> = verified
         .targets
         .iter()
@@ -207,7 +207,7 @@ pub fn limitations(
     named.extend(touched.iter().map(ToString::to_string));
     if targets
         .iter()
-        .any(|target| target.kind == rust_mutants::execute::TargetKind::ProcMacro)
+        .any(|target| target.kind() == rust_mutants::execute::TargetKind::ProcMacro)
     {
         named.extend(std::iter::once(
             crate::limitation::PROC_MACRO_EXPANSION_NOT_MEASURED.to_owned(),
@@ -220,13 +220,13 @@ pub fn limitations(
 /// # Errors
 /// Returns a typed refusal if a target field cannot be framed by the stable identity recipe.
 pub fn target_of(target: &TestTarget) -> Result<Target, crate::targets::TargetError> {
-    let unit = UnitKind::of(target.kind);
+    let unit = UnitKind::of(target.kind());
     Ok(Target {
-        id: target_id(&target.package, unit, &target.name, WHOLE_BINARY)
-            .map_err(|error| crate::targets::TargetError::invalid(&target.name, error))?,
-        package: target.package.clone(),
+        id: target_id(target.package(), unit, target.name(), WHOLE_BINARY)
+            .map_err(|error| crate::targets::TargetError::invalid(target.name(), error))?,
+        package: target.package().to_owned(),
         unit,
-        unit_name: target.name.clone(),
+        unit_name: target.name().to_owned(),
         path: WHOLE_BINARY.to_owned(),
         ignored: false,
         executable: target.executable.clone(),

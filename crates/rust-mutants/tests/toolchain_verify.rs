@@ -127,7 +127,7 @@ fn ran(session: &Session) -> Ran {
         .iter()
         .map(|target| {
             (
-                target.id.clone(),
+                target.id().to_owned(),
                 (
                     target.executable.clone(),
                     njutest_devkit::reproducible::digest(&target.executable),
@@ -274,7 +274,7 @@ fn excluding_hands_back_the_table_of_what_every_target_came_to() {
             "the table covers every target that ran, not only the ones that passed"
         );
         assert!(
-            session.targets().iter().all(|kept| kept.id != target),
+            session.targets().iter().all(|kept| kept.id() != target),
             "{target} was left out of the run rather than measured against"
         );
     }

@@ -326,8 +326,8 @@ fn the_budget_one_execution_gets_is_derived_from_what_that_target_cost() {
         .targets()
         .first()
         .expect("a target the run built")
-        .id
-        .clone();
+        .id()
+        .to_owned();
     let measured = session
         .baseline(&target)
         .expect("a target that was verified says what its own baseline took");

@@ -510,8 +510,8 @@ fn built_untraced(building: &Building<'_>) -> Result<Built, EngineError> {
     let built: Vec<crate::trace::TargetRecord> = targets
         .iter()
         .map(|target| crate::trace::TargetRecord {
-            id: target.id.clone(),
-            kind: target.kind.name().to_owned(),
+            id: target.id().to_owned(),
+            kind: target.kind().name().to_owned(),
             harness: target.harness,
             limitations: target
                 .limitations
@@ -595,8 +595,8 @@ fn left_out(
     }
     Ok(targets
         .iter()
-        .filter(|target| named.iter().any(|one| one == &target.id))
-        .map(|target| target.id.clone())
+        .filter(|target| named.iter().any(|one| one == target.id()))
+        .map(|target| target.id().to_owned())
         .collect())
 }
 
@@ -606,7 +606,7 @@ fn excluded(targets: &mut Vec<TestTarget>, verified: &Verified, options: &Prepar
         return;
     }
     let failing = verified.failing();
-    targets.retain(|target| !failing.contains(&target.id.as_str()));
+    targets.retain(|target| !failing.contains(&target.id()));
 }
 
 /// What cargo is told before the documentation examples' own arguments, so that running them reuses the build this session already made.

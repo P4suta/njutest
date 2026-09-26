@@ -283,6 +283,15 @@ fn target() -> TestTarget {
 }
 
 #[test]
+fn a_target_id_is_derived_from_its_read_only_identity() {
+    let built = target();
+    assert_eq!(
+        built.id(),
+        target_id(built.package(), built.kind(), built.name())
+    );
+}
+
+#[test]
 fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
     let base = Variables::of([
         (OsString::from("PATH"), OsString::from("/usr/bin")),
@@ -573,8 +582,13 @@ fn a_test_process_learns_which_cargo_built_it() {
 
 #[test]
 fn a_target_cargo_runs_puts_the_harness_arguments_after_a_separator() {
-    let mut doc = target();
-    doc.kind = TargetKind::ProcMacro;
+    let mut doc = TestTarget::new(
+        "demo",
+        TargetKind::ProcMacro,
+        "cli",
+        PathBuf::from("/t/debug/deps/cli-abc"),
+        PathBuf::from("/w/demo"),
+    );
     doc.executable = PathBuf::from("/bin/cargo");
     doc.through = ["test", "--doc", "--package", "demo"]
         .into_iter()
@@ -722,10 +736,10 @@ fn a_test_target_built_step_by_step_equals_the_literal_it_replaces() {
         OsString::from("/w/demo"),
     )]))
     .with_through(vec![OsString::from("test"), OsString::from("--doc")]);
-    assert_eq!(built.id, "demo/lib/demo");
-    assert_eq!(built.package, "demo");
-    assert_eq!(built.kind, TargetKind::Lib);
-    assert_eq!(built.name, "demo");
+    assert_eq!(built.id(), "demo/lib/demo");
+    assert_eq!(built.package(), "demo");
+    assert_eq!(built.kind(), TargetKind::Lib);
+    assert_eq!(built.name(), "demo");
     assert_eq!(built.cwd, PathBuf::from("/w/demo"));
     assert_eq!(built.cargo_env.len(), 1);
     assert_eq!(built.through.len(), 2);

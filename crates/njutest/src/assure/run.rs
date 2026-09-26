@@ -277,9 +277,9 @@ fn attributed(
 ) -> Result<Vec<crate::wire::settle::Answered>, RunnerError> {
     let mut answered = Vec::new();
     for target in session.targets() {
-        seams.during(Some(target.id.as_str()));
+        seams.during(Some(target.id()));
         let asked = rust_mutants::session::Request::new(String::new())
-            .with_target(target.id.as_str())
+            .with_target(target.id())
             .with_timeout(Some(timeout));
         let ran = session
             .control(
@@ -288,9 +288,9 @@ fn attributed(
                 rust_mutants::session::Observing::Nothing,
             )?
             .result;
-        if ran.target != target.id {
+        if ran.target != target.id() {
             return Err(RunInvariantError::ControlTargetMismatch {
-                requested: target.id.clone(),
+                requested: target.id().to_owned(),
                 observed: ran.target,
             }
             .into());

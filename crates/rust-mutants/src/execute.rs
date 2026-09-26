@@ -250,14 +250,10 @@ pub fn target_id(package: &str, kind: TargetKind, name: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TestTarget {
-    /// `package/kind/name`.
-    pub id: String,
-    /// The package that owns it.
-    pub package: String,
-    /// What kind of target it is.
-    pub kind: TargetKind,
-    /// The target's name.
-    pub name: String,
+    id: String,
+    package: String,
+    kind: TargetKind,
+    name: String,
     /// The binary cargo built.
     pub executable: PathBuf,
     /// The directory it runs in: the package's manifest directory, which is what cargo uses and what a test reading a relative path expects.
@@ -276,8 +272,7 @@ pub struct TestTarget {
 impl TestTarget {
     /// One built test binary, by everything cargo says about it that is not optional.
     ///
-    /// The identity is derived rather than given: it was a sixth argument that had to equal `target_id(package, kind, name)` and nothing checked it,
-    /// so a report could name a target that no run could route to.
+    /// The identity is derived rather than given: it was a sixth argument that had to equal `target_id(package, kind, name)` and nothing checked it, so a report could name a target that no run could route to.
     #[must_use]
     #[expect(
         clippy::too_many_arguments,
@@ -306,6 +301,30 @@ impl TestTarget {
             cargo_env: crate::vars::Variables::empty(),
             through: Vec::new(),
         }
+    }
+
+    /// The target's stable `package/kind/name` identity.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// The package that owns this target.
+    #[must_use]
+    pub fn package(&self) -> &str {
+        &self.package
+    }
+
+    /// The kind of target.
+    #[must_use]
+    pub const fn kind(&self) -> TargetKind {
+        self.kind
+    }
+
+    /// The target's name within its package.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// Whether the target is built with the libtest harness, which decides how its silence is read.

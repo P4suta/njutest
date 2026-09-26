@@ -125,7 +125,7 @@ fn rejected(session: &Session) -> BTreeSet<u32> {
 fn held_tests(session: &Session) -> Result<u64, crate::error::CliError> {
     session.targets().iter().try_fold(0u64, |total, target| {
         total
-            .checked_add(u64::from(session.tests_of(&target.id)))
+            .checked_add(u64::from(session.tests_of(target.id())))
             .ok_or(crate::error::CliError::ProjectionOverflow {
                 projection: "dry-run",
                 field: "the total tests in all targets",

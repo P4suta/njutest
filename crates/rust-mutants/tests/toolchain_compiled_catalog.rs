@@ -139,7 +139,7 @@ fn a_session_embeds_its_complete_catalog_in_the_binary_it_builds() {
     let target = session
         .targets()
         .iter()
-        .find(|target| target.id == "compiled-catalog-fixture/lib/compiled_catalog_fixture")
+        .find(|target| target.id() == "compiled-catalog-fixture/lib/compiled_catalog_fixture")
         .expect("the library test target");
     let embedded = capture(
         &target.executable,

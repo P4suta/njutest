@@ -121,12 +121,12 @@ impl Session {
         let mut planned = Vec::new();
         for target in self.selected(None)? {
             if let Chosen::Narrowed { only, .. } = &chosen
-                && !only.iter().any(|one| one == &target.id)
+                && !only.iter().any(|one| one == target.id())
             {
                 continue;
             }
             planned.push(Planned {
-                target: target.id.clone(),
+                target: target.id().to_owned(),
                 filter: self.filtering(target, &chosen, cancel)?,
             });
         }
