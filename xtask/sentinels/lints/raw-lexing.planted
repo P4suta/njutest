@@ -1,0 +1,22 @@
+=== parse-str source crates/app/src/lib.rs
+fn f(text: &str) -> bool { syn::parse_str::<syn::Expr>(text).is_ok() }
+=== parse-file-as-a-value source crates/app/src/lib.rs
+fn f(text: &str) -> bool { Some(text).map(syn::parse_file).is_some() }
+=== imported-and-renamed source crates/app/src/lib.rs
+use syn::parse_file as read;
+=== tokens-from-str source crates/app/src/lib.rs
+fn f(text: &str) -> bool { <proc_macro2::TokenStream as std::str::FromStr>::from_str(text).is_ok() }
+=== inferred-from-str source crates/app/src/lib.rs
+fn f(text: &str) -> Option<proc_macro2::TokenStream> { std::str::FromStr::from_str(text).ok() }
+=== typed-parse-of-tokens source crates/app/src/lib.rs
+fn f(text: &str) -> bool { text.parse::<proc_macro2::TokenStream>().is_ok() }
+=== literal-read-again source crates/app/src/lib.rs
+fn f(lit: &syn::LitStr) -> bool { lit.parse::<syn::Expr>().is_ok() }
+=== literal-read-with source crates/app/src/lib.rs
+fn f(lit: &syn::LitStr) -> bool { lit.parse_with(syn::Expr::parse).is_ok() }
+=== parser-method source crates/app/src/lib.rs
+fn f(text: &str) -> bool { syn::Ident::parse_any.parse_str(text).is_ok() }
+=== literal-constructed source crates/app/src/lib.rs
+fn f() -> syn::LitInt { syn::LitInt::new("1", proc_macro2::Span::call_site()) }
+=== quoted source crates/app/src/lib.rs
+fn f() -> proc_macro2::TokenStream { quote::quote!(1 + 2) }
