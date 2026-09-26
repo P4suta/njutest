@@ -91,6 +91,26 @@ impl Repository {
         )
         .expect("a scripted check");
         executable(&mise);
+        let cargo = bin.join("cargo");
+        std::fs::write(
+            &cargo,
+            "#!/usr/bin/env bash\nset -euo pipefail\n\
+             printf '%s\\n' \"$*\" >> \"$COLD_CALLS\"\n\
+             test \"$*\" = 'check --locked --workspace' || exit 99\n\
+             test \"$(git rev-parse HEAD)\" = \"$NJUTEST_COMMITTED_HEAD\" || exit 98\n\
+             test -f .git || exit 97\n\
+             test -d \"$CARGO_TARGET_DIR\" || exit 96\n\
+             test -z \"$(ls -A \"$CARGO_TARGET_DIR\")\" || exit 95\n\
+             test -z \"${RUSTC_WRAPPER:-}\" || exit 93\n\
+             test \"${CARGO_INCREMENTAL:-}\" = 0 || exit 92\n\
+             printf '%s\\n' \"$CARGO_TARGET_DIR\" >> \"$COLD_TARGETS\"\n\
+             printf used > \"$CARGO_TARGET_DIR/used\"\n\
+             if [ \"${COLD_EDIT:-0}\" = 1 ]; then printf 'after\\n' >> tracked; fi\n\
+             if [ \"${COLD_SLEEP:-0}\" = 1 ]; then sleep 30; fi\n\
+             test \"${COLD_FAIL:-0}\" != 1 || exit 94\n",
+        )
+        .expect("a scripted cold check");
+        executable(&cargo);
         let mut paths = vec![bin];
         paths.extend(std::env::split_paths(
             &std::env::var_os("PATH").unwrap_or_default(),
@@ -129,6 +149,18 @@ impl Repository {
             .expect("the scripted check's call log")
             .lines()
             .count()
+    }
+
+    fn cold_targets(&self) -> Vec<String> {
+        let log = self.scratch.path().join("cold-targets");
+        if !present(&log) {
+            return Vec::new();
+        }
+        std::fs::read_to_string(&log)
+            .expect("the cold check's target log")
+            .lines()
+            .map(str::to_owned)
+            .collect()
     }
 
     fn link(&self, name: &str) -> (PathBuf, String) {
@@ -223,6 +255,8 @@ impl Repository {
             .env("NJUTEST_SLOT_DIR", &self.slots)
             .env_remove("NJUTEST_SLOT_HELD")
             .env("CALLS", self.scratch.path().join("calls"))
+            .env("COLD_CALLS", self.scratch.path().join("cold-calls"))
+            .env("COLD_TARGETS", self.scratch.path().join("cold-targets"))
             .env("OWNED", self.scratch.path().join("owned"))
             .env("TURNS", &self.turns)
             .env("EXPECTED_HEAD", &self.head)
@@ -620,6 +654,118 @@ fn a_commit_that_passed_is_not_checked_again() {
         "a gate that did not run says so rather than looking like one that did: {}",
         stderr(&again)
     );
+}
+
+#[test]
+fn a_remembered_warm_pass_still_requires_a_new_cold_check() {
+    let repository = Repository::new(ACCEPTS_THE_CHECK);
+    let first = repository.push(&repository.head);
+    assert!(first.status.success(), "{}", stderr(&first));
+    let targets = repository.cold_targets();
+    assert_eq!(targets.len(), 1, "the first push skipped its cold check");
+    let again = repository.push(&repository.head);
+    assert!(again.status.success(), "{}", stderr(&again));
+    let targets = repository.cold_targets();
+    assert_eq!(repository.calls(), 1, "the warm check was not remembered");
+    assert_eq!(
+        targets.len(),
+        2,
+        "the remembered pass skipped its cold check"
+    );
+    assert_ne!(targets[0], targets[1], "the cold target was reused");
+    for target in targets {
+        assert!(
+            !present(Path::new(&target)),
+            "the cold target was not removed"
+        );
+    }
+}
+
+#[test]
+fn caller_build_cache_settings_cannot_seed_the_cold_check() {
+    let repository = Repository::new(ACCEPTS_THE_CHECK);
+    let stale = repository.scratch.path().join("stale-target");
+    std::fs::create_dir_all(&stale).expect("a target from a previous build");
+    std::fs::write(stale.join("used"), "old").expect("a prior artifact");
+    let output = repository.push_with(
+        repository.directory.path(),
+        &update(&repository.head, &"0".repeat(40), "\n"),
+        &[
+            ("CARGO_TARGET_DIR", stale.as_os_str()),
+            ("CARGO_INCREMENTAL", "1".as_ref()),
+            ("RUSTC_WRAPPER", "/bin/false".as_ref()),
+        ],
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    let targets = repository.cold_targets();
+    assert_eq!(targets.len(), 1);
+    assert_ne!(targets[0], stale.display().to_string());
+}
+
+#[test]
+fn a_remembered_warm_pass_cannot_hide_a_cold_failure() {
+    let repository = Repository::new(ACCEPTS_THE_CHECK);
+    let first = repository.push(&repository.head);
+    assert!(first.status.success(), "{}", stderr(&first));
+    let failed = repository.push_with(
+        repository.directory.path(),
+        &update(&repository.head, &"0".repeat(40), "\n"),
+        &[("COLD_FAIL", "1".as_ref())],
+    );
+    assert!(
+        !failed.status.success(),
+        "a failed cold check allowed the push"
+    );
+    assert!(stderr(&failed).contains("the check failed"));
+    assert_eq!(repository.calls(), 1, "the warm check was not remembered");
+    let targets = repository.cold_targets();
+    assert_eq!(targets.len(), 2);
+    for target in targets {
+        assert!(
+            !present(Path::new(&target)),
+            "the failed cold target was not removed"
+        );
+    }
+}
+
+#[test]
+fn a_failed_warm_check_does_not_start_the_cold_check() {
+    let repository = Repository::new("exit 93");
+    let failed = repository.push(&repository.head);
+    assert!(!failed.status.success());
+    assert!(stderr(&failed).contains("the check failed"));
+    assert!(repository.cold_targets().is_empty());
+}
+
+#[test]
+fn a_cold_check_that_changes_the_commit_tree_is_refused() {
+    let repository = Repository::new(ACCEPTS_THE_CHECK);
+    let failed = repository.push_with(
+        repository.directory.path(),
+        &update(&repository.head, &"0".repeat(40), "\n"),
+        &[("COLD_EDIT", "1".as_ref())],
+    );
+    assert!(!failed.status.success());
+    assert!(stderr(&failed).contains("isolated check changed the tree"));
+    assert_eq!(repository.cold_targets().len(), 1);
+}
+
+#[test]
+fn a_cold_check_that_goes_quiet_is_stopped() {
+    let repository = Repository::new(ACCEPTS_THE_CHECK);
+    let failed = repository.push_with(
+        repository.directory.path(),
+        &update(&repository.head, &"0".repeat(40), "\n"),
+        &[
+            ("COLD_SLEEP", "1".as_ref()),
+            ("NJUTEST_PUSH_QUIET_SECONDS", "2".as_ref()),
+        ],
+    );
+    assert_eq!(failed.status.code(), Some(124), "{}", stderr(&failed));
+    assert!(stderr(&failed).contains("said nothing"));
+    let targets = repository.cold_targets();
+    assert_eq!(targets.len(), 1);
+    assert!(!present(Path::new(&targets[0])));
 }
 
 #[test]

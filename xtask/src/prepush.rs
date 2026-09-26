@@ -35,9 +35,9 @@ pub struct Surroundings<'a> {
 /// How a push the gate let through was answered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Passed {
-    /// The check ran on this commit and passed.
+    /// The warm and cold checks ran on this commit and passed.
     Checked,
-    /// This commit against this base passed this same gate within the hour.
+    /// The warm check was remembered, and a new cold check passed on this commit.
     Remembered,
 }
 
@@ -374,16 +374,6 @@ fn decide(
         ],
     )?;
     let memory = place.memory(&head, base.as_deref(), &identity(surroundings)?);
-    let passed = || {
-        format!(
-            "pre-push: {head} against {} already passed this gate within the hour; it is not run again",
-            base.as_deref().unwrap_or("no base")
-        )
-    };
-    if remembered(&memory)? {
-        say(progress, &passed())?;
-        return Ok(Passed::Remembered);
-    }
     let stops = Stops::arm()?;
     let holder = Holder {
         worktree: here.to_path_buf(),
@@ -398,11 +388,18 @@ fn decide(
     };
     let (turn, tree) = take_lanes(&lanes, &place, asking, progress)?;
     let owner = place.own()?;
-    if remembered(&memory)? {
-        say(progress, &passed())?;
-        return Ok(Passed::Remembered);
+    let warm_remembered = remembered(&memory)?;
+    if warm_remembered {
+        say(
+            progress,
+            &format!(
+                "pre-push: {head} against {} already passed the warm check within the hour; the cold check still runs",
+                base.as_deref().unwrap_or("no base")
+            ),
+        )?;
+    } else {
+        serve_the_cache(&tools, &settings, progress)?;
     }
-    serve_the_cache(&tools, &settings, progress)?;
     place.prepare(&tools, here, &head)?;
     let run = Run {
         tools,
@@ -413,7 +410,7 @@ fn decide(
         stops: &stops,
         held: [&turn, &tree],
     };
-    let checked = check(&run, progress);
+    let checked = check(&run, warm_remembered, progress);
     let restored = tools.restore(&place.tree);
     checked?;
     if let Err(failure) = restored {
@@ -427,11 +424,17 @@ fn decide(
     if let Some(signal) = stops.raised() {
         return Err(PrePushError::Interrupted { signal });
     }
-    remember(&memory, &head)?;
+    if !warm_remembered {
+        remember(&memory, &head)?;
+    }
     drop(owner);
     drop(tree);
     drop(turn);
-    Ok(Passed::Checked)
+    Ok(if warm_remembered {
+        Passed::Remembered
+    } else {
+        Passed::Checked
+    })
 }
 
 /// Takes this machine's heavy lane, then this repository's tree lane, which is taken whatever the environment says is already held.
@@ -471,16 +474,20 @@ struct Run<'a> {
 }
 
 impl Run<'_> {
-    /// Runs the check once, its output passed on as it arrives, stopped when it goes quiet for too long or runs past the ceiling.
-    fn pass(&self, progress: &mut dyn Write) -> Result<Ended, PrePushError> {
-        let log = self.place.home.join("check.log");
-        let written = std::fs::File::create(&log).map_err(|source| io_error(&log, source))?;
+    /// Runs one stage, passing its output on as it arrives and stopping it at the remaining ceiling or quiet limit.
+    fn pass(
+        &self,
+        command: &mut Command,
+        log: &Path,
+        ceiling: Duration,
+        progress: &mut dyn Write,
+    ) -> Result<Ended, PrePushError> {
+        let written = std::fs::File::create(log).map_err(|source| io_error(log, source))?;
         let also = written
             .try_clone()
-            .map_err(|source| io_error(&log, source))?;
-        let mut command = self.place.check_command(&self.tools, self.head, self.lanes);
+            .map_err(|source| io_error(log, source))?;
         command.stdin(Stdio::null()).stdout(written).stderr(also);
-        let mut reading = std::fs::File::open(&log).map_err(|source| io_error(&log, source))?;
+        let mut reading = std::fs::File::open(log).map_err(|source| io_error(log, source))?;
         let mut heard = || -> std::io::Result<bool> {
             let mut said = Vec::new();
             std::io::Read::read_to_end(&mut reading, &mut said)?;
@@ -488,12 +495,12 @@ impl Run<'_> {
             Ok(!said.is_empty())
         };
         let mut bound = work::Bound {
-            ceiling: self.settings.budget,
+            ceiling,
             quiet: self.settings.quiet,
             heard: &mut heard,
         };
         let held = self.held;
-        let ran = work::run(&mut command, Some(&mut bound), self.stops, |leader| {
+        let ran = work::run(command, Some(&mut bound), self.stops, |leader| {
             held.iter().try_for_each(|lane| lane.working_on(leader))
         });
         if ran.is_err() {
@@ -505,10 +512,73 @@ impl Run<'_> {
     }
 }
 
-fn check(run: &Run<'_>, progress: &mut dyn Write) -> Result<(), PrePushError> {
+fn check(
+    run: &Run<'_>,
+    warm_remembered: bool,
+    progress: &mut dyn Write,
+) -> Result<(), PrePushError> {
     run.place.require_exact(&run.tools, run.head)?;
     let started = Instant::now();
-    match run.pass(progress)? {
+    if !warm_remembered {
+        let mut command = run.place.check_command(&run.tools, run.head, run.lanes);
+        let ended = run.pass(
+            &mut command,
+            &run.place.home.join("check.log"),
+            run.settings.budget,
+            progress,
+        )?;
+        check_ended(ended, run, started)?;
+        run.place.require_exact(&run.tools, run.head)?;
+    }
+    let cold = tempfile::Builder::new()
+        .prefix("cold-")
+        .tempdir_in(&run.place.home)
+        .map_err(|source| io_error(&run.place.home, source))?;
+    let mut command = run
+        .place
+        .cold_command(&run.tools, run.head, run.lanes, cold.path());
+    say(
+        progress,
+        "pre-push: checking the workspace in a fresh target directory",
+    )?;
+    let remaining = run
+        .settings
+        .budget
+        .checked_sub(started.elapsed())
+        .unwrap_or_default();
+    if remaining.is_zero() {
+        return Err(PrePushError::Budget {
+            budget: run.settings.budget.as_secs(),
+            elapsed: started.elapsed().as_secs(),
+        });
+    }
+    let ended = run.pass(
+        &mut command,
+        &run.place.home.join("cold.log"),
+        remaining,
+        progress,
+    );
+    let cold_path = cold.path().to_path_buf();
+    let removed = cold.close().map_err(|source| io_error(&cold_path, source));
+    check_ended(ended?, run, started)?;
+    removed?;
+    run.place.require_exact(&run.tools, run.head)?;
+    let elapsed = started.elapsed();
+    if elapsed >= run.settings.expected {
+        say(
+            progress,
+            &format!(
+                "pre-push: the gate passed in {}s, over its {}s expected time\npre-push: the cold workspace check runs on every push; inspect which stage stayed slow",
+                elapsed.as_secs(),
+                run.settings.expected.as_secs()
+            ),
+        )?;
+    }
+    Ok(())
+}
+
+fn check_ended(ended: Ended, run: &Run<'_>, started: Instant) -> Result<(), PrePushError> {
+    match ended {
         Ended::Exited(status) if status.success() => {}
         Ended::Exited(status) => {
             return Err(PrePushError::Failed {
@@ -524,23 +594,12 @@ fn check(run: &Run<'_>, progress: &mut dyn Write) -> Result<(), PrePushError> {
         Ended::OverBudget { elapsed } => {
             return Err(PrePushError::Budget {
                 budget: run.settings.budget.as_secs(),
-                elapsed: elapsed.as_secs(),
+                elapsed: started.elapsed().max(elapsed).as_secs(),
             });
         }
         Ended::Interrupted { signal } => return Err(PrePushError::Interrupted { signal }),
     }
-    let elapsed = started.elapsed();
-    if elapsed >= run.settings.expected {
-        say(
-            progress,
-            &format!(
-                "pre-push: the gate passed in {}s, over the {}s a warm run should beat\npre-push: a first run after a merge is expected here; a second one that is still slow means something stopped being cached",
-                elapsed.as_secs(),
-                run.settings.expected.as_secs()
-            ),
-        )?;
-    }
-    run.place.require_exact(&run.tools, run.head)
+    Ok(())
 }
 
 /// A command started in a process group of its own, so no signal meant for whoever started it reaches what it leaves running.
@@ -899,6 +958,23 @@ impl Place {
         if cfg!(not(unix)) {
             command.env("CARGO_TARGET_DIR", &self.target);
         }
+        command
+    }
+
+    fn cold_command(&self, tools: &Tools<'_>, head: &str, lanes: &Lanes, target: &Path) -> Command {
+        let mut command = tools.command("cargo");
+        command
+            .args(["check", "--locked", "--workspace"])
+            .current_dir(&self.tree)
+            .env("CARGO_TARGET_DIR", target)
+            .env("CARGO_BUILD_TARGET_DIR", target)
+            .env("CARGO_INCREMENTAL", "0")
+            .env("RUSTC_WRAPPER", "")
+            .env("RUSTC_WORKSPACE_WRAPPER", "")
+            .env("CARGO_BUILD_RUSTC_WRAPPER", "")
+            .env("CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", "")
+            .env("NJUTEST_COMMITTED_HEAD", head)
+            .env(lanes::HELD, lanes.held_with(Lane::Heavy));
         command
     }
 
