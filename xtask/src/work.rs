@@ -61,6 +61,13 @@ pub enum WorkError {
         /// Why.
         source: std::io::Error,
     },
+    /// The kernel refused the work's group whole, and a process besides its leader is still running or could not be seen.
+    #[cfg(unix)]
+    #[error(
+        "the work's process group refused the stop, and a process besides its leader is still \
+         running or could not be seen, so the work is not stopped"
+    )]
+    Outlived,
 }
 
 impl crate::error::Coded for WorkError {
@@ -69,6 +76,8 @@ impl crate::error::Coded for WorkError {
             Self::Start { .. } | Self::Watch { .. } | Self::Signals { .. } => {
                 crate::error::XtCode::WorkUnrun
             }
+            #[cfg(unix)]
+            Self::Outlived => crate::error::XtCode::WorkUnrun,
         }
     }
 }
@@ -332,12 +341,12 @@ fn signal(child: &mut Child, sent: Sent) -> Result<(), WorkError> {
             Sent::Kill => child.kill().map_err(|source| WorkError::Watch { source }),
         };
     };
-    signal_group(leader, sent).map_err(|source| WorkError::Watch { source })
+    signal_group(leader, sent)
 }
 
-/// Signals the group `leader` leads; a group the kernel will not let this process signal whole gets its leader signalled by name, and a group already gone is success.
+/// Signals the group `leader` leads, as [`decide_stop`] decides: a group the kernel will not let this process signal whole gets its leader signalled by name, and is stopped only if a look at it finds nobody else.
 #[cfg(unix)]
-pub(crate) fn signal_group(leader: rustix::process::Pid, sent: Sent) -> std::io::Result<()> {
+pub(crate) fn signal_group(leader: rustix::process::Pid, sent: Sent) -> Result<(), WorkError> {
     use rustix::io::Errno;
     use rustix::process::{Signal, kill_process, kill_process_group};
 
@@ -345,13 +354,163 @@ pub(crate) fn signal_group(leader: rustix::process::Pid, sent: Sent) -> std::io:
         Sent::Ask => Signal::TERM,
         Sent::Kill => Signal::KILL,
     };
-    match kill_process_group(leader, signal) {
-        Ok(()) | Err(Errno::SRCH) => Ok(()),
-        Err(Errno::PERM) => match kill_process(leader, signal) {
-            Ok(()) | Err(Errno::SRCH) => Ok(()),
-            Err(errno) => Err(std::io::Error::from(errno)),
+    let grouped = kill_process_group(leader, signal);
+    let (alone, others) = match grouped {
+        Err(Errno::PERM) => (
+            kill_process(leader, signal),
+            others_than(leader.as_raw_nonzero().get()),
+        ),
+        Ok(()) | Err(_) => (Ok(()), Others::Unseen),
+    };
+    match decide_stop(delivered(grouped), delivered(alone), others) {
+        StopDecision::Reached(Stopped::Group) => Ok(()),
+        StopDecision::Reached(Stopped::LeaderOnly) => Err(WorkError::Outlived),
+        StopDecision::Failed => Err(WorkError::Watch {
+            source: match (grouped, alone) {
+                (Err(Errno::PERM), Err(errno)) | (Err(errno), _) => std::io::Error::from(errno),
+                (Ok(()), Ok(()) | Err(_)) => {
+                    std::io::Error::other("a stop the kernel answered failed")
+                }
+            },
+        }),
+    }
+}
+
+/// What the kernel's answer to one signal comes to.
+#[cfg(unix)]
+const fn delivered(answer: rustix::io::Result<()>) -> Delivered {
+    match answer {
+        Ok(()) => Delivered::Sent,
+        Err(rustix::io::Errno::SRCH) => Delivered::Gone,
+        Err(rustix::io::Errno::PERM) => Delivered::Refused,
+        Err(_) => Delivered::Failed,
+    }
+}
+
+/// Who besides `leader` its group holds, as the machine's processes are listed.
+#[cfg(unix)]
+fn others_than(leader: i32) -> Others {
+    let Ok(leader) = u32::try_from(leader) else {
+        return Others::Unseen;
+    };
+    match listed() {
+        None => Others::Unseen,
+        Some(processes)
+            if processes
+                .iter()
+                .any(|one| one.pid != leader && one.group == leader && !one.ended) =>
+        {
+            Others::Somebody
+        }
+        Some(_) => Others::Nobody,
+    }
+}
+
+/// One process as the machine lists it: its id, the group it belongs to, and whether it has ended and waits only to be reaped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Listed {
+    /// Its id.
+    pub pid: u32,
+    /// Its group's id.
+    pub group: u32,
+    /// Whether it is a zombie.
+    pub ended: bool,
+}
+
+/// Every process of the machine with its group and whether it has ended, as `ps` lists them, or nothing when they could not be listed.
+#[must_use]
+pub fn listed() -> Option<Vec<Listed>> {
+    let output = match Command::new("ps")
+        .args(["-A", "-o", "pid=,pgid=,stat="])
+        .env("LC_ALL", "C")
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        Ok(_) | Err(_) => return None,
+    };
+    let Ok(text) = String::from_utf8(output.stdout) else {
+        return None;
+    };
+    let mut processes = Vec::new();
+    for line in text.lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        let [pid, group, state, ..] = fields.as_slice() else {
+            return None;
+        };
+        let (Ok(pid), Ok(group)) = (pid.parse::<u32>(), group.parse::<u32>()) else {
+            return None;
+        };
+        processes.push(Listed {
+            pid,
+            group,
+            ended: state.starts_with('Z'),
+        });
+    }
+    Some(processes)
+}
+
+/// What stopping a group reached.
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stopped {
+    /// Every process of the group was signalled, or none besides its unreaped leader was left.
+    Group,
+    /// The kernel refused the group whole and only its leader was signalled.
+    LeaderOnly,
+}
+
+/// What the kernel answered one signal with.
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum Delivered {
+    /// It was sent.
+    Sent,
+    /// Nothing by that id was left to send it to.
+    Gone,
+    /// Sending it is beyond this process's authority for some process it names.
+    Refused,
+    /// Any other failure.
+    Failed,
+}
+
+/// Who besides its leader a group was seen to hold.
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum Others {
+    /// Nobody.
+    Nobody,
+    /// Somebody still running.
+    Somebody,
+    /// The group could not be looked at.
+    Unseen,
+}
+
+/// What a group stop comes to.
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopDecision {
+    /// It reached this much.
+    Reached(Stopped),
+    /// It failed.
+    Failed,
+}
+
+/// What a group stop comes to, decided by the table the engine's runner is held to as well, `crates/rust-mutants/tests/testdata/group-stop.tsv`.
+#[cfg(unix)]
+#[must_use]
+pub const fn decide_stop(group: Delivered, leader: Delivered, others: Others) -> StopDecision {
+    match group {
+        Delivered::Sent | Delivered::Gone => StopDecision::Reached(Stopped::Group),
+        Delivered::Failed => StopDecision::Failed,
+        Delivered::Refused => match (leader, others) {
+            (Delivered::Refused | Delivered::Failed, _) => StopDecision::Failed,
+            (Delivered::Sent | Delivered::Gone, Others::Nobody) => {
+                StopDecision::Reached(Stopped::Group)
+            }
+            (Delivered::Sent | Delivered::Gone, Others::Somebody | Others::Unseen) => {
+                StopDecision::Reached(Stopped::LeaderOnly)
+            }
         },
-        Err(errno) => Err(std::io::Error::from(errno)),
     }
 }
 
