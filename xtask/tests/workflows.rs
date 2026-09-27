@@ -166,6 +166,48 @@ fn mutation_ci_runs_one_whole_workspace() {
 }
 
 #[test]
+fn dogfood_ci_builds_the_engine_it_runs_and_the_gate_it_invokes() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/workflows/dogfood.yml");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let Some((_, jobs_source)) = source.split_once("\njobs:\n") else {
+        panic!("{} has no jobs", path.display());
+    };
+    let workflow_jobs = jobs(jobs_source);
+    let [(name, body)] = workflow_jobs.as_slice() else {
+        panic!("dogfood CI has one job, found {}", workflow_jobs.len());
+    };
+    assert_eq!(name, "whole");
+    assert!(!body.contains("matrix:"), "dogfood CI has no matrix");
+    assert!(
+        body.contains("cargo build --locked --release --bin rust-mutants -p rust-mutants-cli"),
+        "the engine binary belongs to rust-mutants-cli"
+    );
+    assert!(
+        body.contains("cargo build --locked --release --bin xtask -p xtask"),
+        "the audit binary belongs to xtask"
+    );
+    assert!(
+        body.contains("xtask engine-audit") && body.contains("xtask report-diff"),
+        "both audit commands need the built xtask binary"
+    );
+    assert!(
+        body.contains("--sites --root . --ledger .rust-mutants.toml"),
+        "the carry audit needs the original source tree"
+    );
+    assert!(
+        !source.contains("inputs:") && !body.contains("--include") && !body.contains("--tier"),
+        "the workflow measures the ledger's whole catalog at its configured tier"
+    );
+    assert!(
+        source.contains("  actions: read\n"),
+        "comparison with an earlier run needs Actions read permission"
+    );
+}
+
+#[test]
 fn ci_and_mise_execute_one_coverage_ratchet() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mise_path = root.join("mise.toml");

@@ -79,6 +79,10 @@ fn the_engine_audit_task_checks_the_recording_before_re_deciding_it() {
         body.contains("--ledger .rust-mutants.toml"),
         "a survivor nobody accepted has to fail the gate: {body}"
     );
+    assert!(
+        body.contains("--sites --root . --ledger .rust-mutants.toml"),
+        "the carry audit needs the original source tree: {body}"
+    );
 }
 
 #[test]
