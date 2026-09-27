@@ -692,10 +692,9 @@ fn an_errored_mutant_says_which_check_of_the_step_protocol_stopped_it_or_that_no
     );
     let silent = detail(StepProtocolFailure::Publication {});
     assert!(
-        silent
-            .as_deref()
-            .is_some_and(|said| said.contains("stale build")),
-        "every runtime this release generates says why it stops, so silence names a runtime from \
-         another build: {silent:?}"
+        silent.as_deref().is_some_and(
+            |said| said.contains("no complete stop record") && !said.contains("stale build")
+        ),
+        "a missing stop record does not establish why the record is missing: {silent:?}"
     );
 }

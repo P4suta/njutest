@@ -584,9 +584,9 @@ pub enum StepProtocolFailure {
         /// The operating-system diagnostic.
         detail: String,
     },
-    /// The generated runtime exited for a failed protocol and said nothing this release can read.
+    /// The process exited with the step-protocol code but no readable stop record.
     Publication {},
-    /// The generated runtime exited for a failed protocol and named the check that failed.
+    /// The process exited with the step-protocol code and a recognized stop record.
     Stated {
         /// The check, as the runtime names it.
         check: String,
@@ -667,15 +667,13 @@ impl StepProtocolFailure {
             Self::MonitorInspect { path, detail } => {
                 format!("the notice path {path} could not be inspected: {detail}")
             }
-            Self::Publication {} => "the step protocol's status came with no word of which check \
-                                     failed, which only a runtime this release did not generate \
-                                     leaves: a stale build is linked into the tree"
+            Self::Publication {} => "the process exited with the step-protocol status but no complete stop record named which check failed"
                 .to_owned(),
             Self::Stated { check, os: 0 } => {
-                format!("the generated runtime stopped at its step-protocol check `{check}`")
+                format!("a step-protocol stop record named check `{check}`")
             }
             Self::Stated { check, os } => format!(
-                "the generated runtime stopped at its step-protocol check `{check}`, where the \
+                "a step-protocol stop record named check `{check}`, where the \
                  operating system answered {os}"
             ),
             Self::NoticeMissing {} => "the runtime stopped for its allowance and no complete \
@@ -3360,6 +3358,31 @@ mod tests {
                     os: 0,
                 },
             }
+        );
+        let unheard = Command::new(
+            directory
+                .path()
+                .join(format!("normal{}", std::env::consts::EXE_SUFFIX)),
+        )
+        .env(crate::instrument::STEPS_ENV, "1")
+        .env(crate::instrument::WATCHED_ENV, "/unwatched-step-stop")
+        .env_remove(STEP_STATE_ENV)
+        .stderr(std::process::Stdio::null())
+        .output()
+        .expect("run generated runtime without captured stderr");
+        assert_eq!(unheard.status.code(), Some(STEP_PROTOCOL_EXIT));
+        assert!(unheard.stderr.is_empty());
+        let mut unheard_result = result(Termination::Exited(ProcessExit::Code(STEP_PROTOCOL_EXIT)));
+        unheard_result.output = unheard.stderr;
+        assert_eq!(
+            observed_stop(&unheard_result, Some(&expected(directory.path()))),
+            Stopped::StepProtocolFailed {
+                reason: StepProtocolFailure::Publication {},
+            }
+        );
+        assert_eq!(
+            StepProtocolFailure::Publication {}.sentence(),
+            "the process exited with the step-protocol status but no complete stop record named which check failed"
         );
         let competing = expected(directory.path());
         publish(

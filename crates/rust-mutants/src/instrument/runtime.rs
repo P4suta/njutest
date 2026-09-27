@@ -1167,10 +1167,6 @@ mod {{MODULE}} {
         stop({{STEP_PROTOCOL_EXIT}}, error)
     }
 
-    // The one way this module ends the process: it says why first, as one
-    // line whose first field is the schema, then the status, the check that
-    // failed and the operating system's code, so a run that reads the
-    // status alone is never all there is.
     #[cold]
     fn stop(status: i32, error: Why) -> ! {
         let said = __rm_std::format!("{{STOP_SCHEMA}}\t{}\t{}\t{}\n", status, error.check, error.os);
