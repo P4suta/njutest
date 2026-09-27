@@ -23,7 +23,8 @@ pub use artifacts::{Artifacts, Identity};
 pub const NO_SUCH_FILE: &str = "the tree holds no file the mutation is in";
 
 /// The reason a build that did not succeed establishes nothing.
-pub const DID_NOT_BUILD: &str = "the tree with the mutation spliced in did not build";
+pub const DID_NOT_BUILD: &str =
+    "the original tree did not build, so there are not two programs to compare";
 
 /// The reason a mutation the compiler refuses establishes nothing about equivalence.
 pub const DOES_NOT_BUILD: &str =
@@ -50,7 +51,7 @@ pub struct ProveOptions {
 #[derive(Debug)]
 pub struct Prover {
     workspace: Workspace,
-    original: Artifacts,
+    original: Option<Artifacts>,
     settled: bool,
     withdrawn: bool,
     options: ProveOptions,
@@ -73,12 +74,12 @@ impl Prover {
         let workspace = Workspace::open(root, open, cancel)?;
         let mut prover = Self {
             workspace,
-            original: Artifacts::new(),
+            original: None,
             settled: false,
             withdrawn: false,
             options: options.clone(),
         };
-        prover.original = prover.build(cancel)?.unwrap_or_default();
+        prover.original = prover.build(cancel)?;
         Ok(prover)
     }
 
@@ -94,6 +95,9 @@ impl Prover {
         if self.withdrawn {
             return Ok(Identity::NotEstablished(CONTROL_DRIFTED));
         }
+        let Some(original) = self.original.as_ref() else {
+            return Ok(Identity::NotEstablished(DID_NOT_BUILD));
+        };
         let path = self.workspace.snapshot_root().join(&candidate.path);
         let Ok(source) = std::fs::read(&path) else {
             return Ok(Identity::NotEstablished(NO_SUCH_FILE));
@@ -121,14 +125,17 @@ impl Prover {
         let Some(mutated) = mutated? else {
             return Ok(Identity::NotEstablished(DOES_NOT_BUILD));
         };
-        let answer = artifacts::compare(&self.original, &mutated);
+        let answer = artifacts::compare(original, &mutated);
         if matches!(answer, Identity::NotEstablished(_))
             || (answer == Identity::Differs && self.settled)
         {
             return Ok(answer);
         }
-        let control = self.build(cancel)?.unwrap_or_default();
-        if control == self.original {
+        let Some(control) = self.build(cancel)? else {
+            self.withdrawn = true;
+            return Ok(Identity::NotEstablished(CONTROL_DRIFTED));
+        };
+        if &control == original {
             self.settled = true;
             Ok(answer)
         } else {

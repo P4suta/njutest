@@ -191,3 +191,33 @@ fn a_mutation_whose_tree_does_not_build_is_not_established_for_that_reason() {
     );
     prover.close().expect("close");
 }
+
+#[test]
+fn an_original_that_does_not_build_cannot_establish_a_mutation() {
+    let fixture = Fixture::copy("fixture-equivalent");
+    let path = fixture.root().join("src/lib.rs");
+    let mut source = std::fs::read(&path).expect("the original source");
+    let refusal = b"\ncompile_error!(\"the original does not build\");\n";
+    let start = u32::try_from(source.len()).expect("the source length fits a span");
+    let end = start
+        .checked_add(u32::try_from(refusal.len()).expect("the refusal length fits a span"))
+        .expect("the span fits u32");
+    source.extend_from_slice(refusal);
+    std::fs::write(&path, &source).expect("the original refuses to build");
+    let candidate = Candidate {
+        path: "src/lib.rs".to_owned(),
+        rule: REGISTRY.lookup("return-default").expect("a rule"),
+        span: rust_mutants::span::Span::new(start, end).expect("the refusal span"),
+        original: refusal.to_vec(),
+        replacement: Vec::new(),
+        source_digest: "0".repeat(64),
+    };
+    let cancel = Cancel::new();
+    let mut prover = prover(&fixture, &cancel);
+    assert_eq!(
+        prover.identical(&candidate, &cancel).expect("an answer"),
+        Identity::NotEstablished(rust_mutants::equivalence::DID_NOT_BUILD),
+        "a mutation that removes the compile failure cannot be compared with an original that never built"
+    );
+    prover.close().expect("close");
+}

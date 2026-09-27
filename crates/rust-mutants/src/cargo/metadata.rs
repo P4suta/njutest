@@ -330,6 +330,9 @@ impl Metadata {
         let mut spec = driver
             .toolchain
             .command(driver.dir, metadata_arguments(options, no_deps));
+        if let Some(env) = spec.env.as_mut() {
+            env.set("CARGO_CACHE_RUSTC_INFO", "0");
+        }
         spec.structured_stdout = Some(METADATA_OUTPUT_LIMIT);
         let result = run(&spec, driver.cancel);
         driver.trace.exec_result(ExecRecord::of(&spec, &result));

@@ -202,6 +202,44 @@ fn opening_copies_the_tree_and_asks_the_toolchain_in_the_copy() {
     );
 }
 
+#[test]
+fn metadata_disables_ambient_rustc_info_cache_without_changing_target_or_wrapper() {
+    let fixture = Fixture::copy("fixture-simple");
+    let ambient = fixture.temp().join("ambient-cargo-target");
+    let ambient_name = ambient.to_str().expect("the temporary path is UTF-8");
+    let mut document =
+        njutest_devkit::cargo_double::Document::of(fixture.root()).holding(demo(fixture.root()));
+    document.target_directory = ambient.clone();
+    let script = toolchain_answers().answering(
+        Invocation::new("cargo", &["metadata"])
+            .when("CARGO_CACHE_RUSTC_INFO", "0")
+            .when("CARGO_TARGET_DIR", ambient_name)
+            .when("RUSTC_WRAPPER", "callers-wrapper")
+            .printing(&document.json()),
+    );
+    let installed = install(&script);
+    let mut env: rust_mutants::vars::Variables = installed.env().into_iter().collect();
+    env.set("PATH", installed.bin());
+    env.set("CARGO_TARGET_DIR", ambient.as_os_str());
+    env.set("RUSTC_WRAPPER", "callers-wrapper");
+    let workspace = Workspace::open(
+        fixture.root(),
+        OpenOptions {
+            cargo: Some(installed.cargo()),
+            search_path: Some(OsString::from(installed.bin())),
+            temp_directory: fixture.temp().to_path_buf(),
+            env,
+            locked: true,
+            offline: true,
+            ..OpenOptions::default()
+        },
+        &Cancel::new(),
+    )
+    .expect("both metadata requests use the guarded environment");
+    assert_eq!(workspace.metadata().target_directory, ambient);
+    assert_eq!(installed.answered(), vec![0, 1, 2, 3, 0, 0, 3]);
+}
+
 #[cfg(unix)]
 #[derive(Debug, thiserror::Error)]
 enum TemporaryAliasFixtureError {
