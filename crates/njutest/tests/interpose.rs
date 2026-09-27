@@ -164,14 +164,18 @@ fn passing_baseline() -> Vec<njutest::wire::settle::Answered> {
 }
 
 fn ask(address: std::net::SocketAddr, path: &str) -> String {
-    let mut stream = TcpStream::connect(address).expect("the interposer is listening");
     let request = format!("GET {path} HTTP/1.1\r\nHost: test\r\n\r\n");
-    stream.write_all(request.as_bytes()).expect("the request");
+    String::from_utf8(ask_bytes(address, request.as_bytes())).expect("the answer is UTF-8")
+}
+
+fn ask_bytes(address: std::net::SocketAddr, request: &[u8]) -> Vec<u8> {
+    let mut stream = TcpStream::connect(address).expect("the interposer is listening");
+    stream.write_all(request).expect("the request");
     stream.flush().expect("the request");
-    let mut answer = String::new();
+    let mut answer = Vec::new();
     stream
-        .read_to_string(&mut answer)
-        .expect("the complete answer is readable");
+        .read_to_end(&mut answer)
+        .expect("the answer is readable");
     answer
 }
 
@@ -240,6 +244,70 @@ fn a_test_dials_the_interposer_and_gets_what_the_upstream_said() {
         "how much came back is what a derivation truncates, so it is recorded \
          even where nothing parsed the body"
     );
+}
+
+#[test]
+fn unreadable_http_is_forwarded_without_http_faults() {
+    let cases: [(&[u8], Answer); 9] = [
+        (
+            b"GET /orders HTTP/1.1\r\nHost: test\r\n\r\n",
+            Answer::Same("NOT HTTP", "payload"),
+        ),
+        (
+            b"GET /orders HTTP/1.1\r\nHost: test\r\n\r\n",
+            Answer::Same("GARBAGE 200 OK", "payload"),
+        ),
+        (
+            b"GET /orders HTTP/1.1\r\nHost: test\r\n\r\n",
+            Answer::Same("HTTP/123.456 200 OK", "payload"),
+        ),
+        (
+            b"GET /orders HTTP/1.1\r\nHost: test\r\n\r\n",
+            Answer::Same("HTTP/1.1 999 Invalid", "payload"),
+        ),
+        (
+            b"GET /orders HTTP/1.1\r\nHost: test\r\n\r\n",
+            Answer::Same("HTTP/1.1 200 OK\nBAD", "payload"),
+        ),
+        (b"\xff\r\n\r\n", Answer::Same(OK, "payload")),
+        (b"GET /orders GARBAGE\r\n\r\n", Answer::Same(OK, "payload")),
+        (b"GET /orders HTTP/1.1", Answer::Same(OK, "payload")),
+        (
+            b"GET /orders HTTP/1.1\nBAD\r\n\r\n",
+            Answer::Same(OK, "payload"),
+        ),
+    ];
+    for (request, answer) in cases {
+        let expected = answer.to(0).into_bytes();
+        let up = Upstream::answering(answer);
+        let interposer = Interposer::start(&Interposing {
+            capability: "api".to_owned(),
+            upstream: up.address(),
+            wire: Wire::Http,
+            injecting: None,
+            held_up: BRIEFLY,
+        })
+        .expect("an interposer");
+
+        let received = ask_bytes(interposer.address(), request);
+        assert_eq!(
+            received, expected,
+            "the upstream answer stays byte-for-byte intact"
+        );
+
+        let recorded = interposer.stop();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(
+            recorded[0].spoken,
+            Spoken::Raw {
+                request_bytes: u64::try_from(request.len()).expect("a bounded request"),
+                response_bytes: u64::try_from(received.len()).expect("a bounded answer"),
+            }
+        );
+        let faults = njutest::wire::derive::derive(&recorded).expect("fault identities");
+        let rules: Vec<_> = faults.iter().map(|fault| fault.rule).collect();
+        assert_eq!(rules, Rule::UNPARSED);
+    }
 }
 
 #[test]

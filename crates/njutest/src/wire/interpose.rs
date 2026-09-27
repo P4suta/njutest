@@ -654,26 +654,26 @@ fn first(downstream: &mut TcpStream) -> Option<Vec<u8>> {
 fn spoken(wire: Wire, asked: &[u8], answered: &[u8]) -> Spoken {
     let request_bytes = exact_byte_count(asked.len());
     let response_bytes = exact_byte_count(answered.len());
+    let raw = || Spoken::Raw {
+        request_bytes,
+        response_bytes,
+    };
     match wire {
-        Wire::Raw => Spoken::Raw {
-            request_bytes,
-            response_bytes,
-        },
+        Wire::Raw => raw(),
         Wire::Http => {
-            let Some((method, path)) = requested(asked) else {
-                return Spoken::Raw {
-                    request_bytes,
-                    response_bytes,
-                };
+            let (Some((method, path)), Some((status_line, status))) =
+                (requested(asked), response(answered))
+            else {
+                return raw();
             };
             Spoken::Http {
                 method,
                 path,
-                status: status(answered).unwrap_or_default(),
+                status,
                 request_bytes,
                 response_bytes,
                 body_bytes: exact_body_bytes(response_bytes, head_of(answered)),
-                status_line: opening(answered).unwrap_or_default(),
+                status_line,
             }
         }
     }
@@ -723,28 +723,53 @@ fn requested(asked: &[u8]) -> Option<(String, String)> {
     let mut words = line.split(' ');
     let method = words.next()?;
     let target = words.next()?;
-    if method.is_empty() || target.is_empty() {
+    let version = words.next()?;
+    if method.is_empty() || target.is_empty() || !http_version(version) || words.next().is_some() {
         return None;
     }
     let path = target.split('?').next().unwrap_or(target);
     Some((method.to_owned(), path.to_owned()))
 }
 
-/// The status an HTTP response opened with.
-fn status(answered: &[u8]) -> Option<u16> {
+fn response(answered: &[u8]) -> Option<(String, u16)> {
     let line = opening(answered)?;
-    match line.split(' ').nth(1)?.parse::<u16>() {
-        Ok(status) => Some(status),
-        Err(_) => None,
+    let mut words = line.splitn(3, ' ');
+    if !http_version(words.next()?) {
+        return None;
     }
+    let code = words.next()?;
+    let reason = words.next()?;
+    if reason
+        .bytes()
+        .any(|byte| byte != b'\t' && byte.is_ascii_control())
+    {
+        return None;
+    }
+    if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let status = match code.parse::<u16>() {
+        Ok(status) if (100..=599).contains(&status) => status,
+        Ok(_invalid_status) => return None,
+        Err(_invalid_code) => return None,
+    };
+    Some((line, status))
+}
+
+fn http_version(version: &str) -> bool {
+    version
+        .strip_prefix("HTTP/")
+        .is_some_and(|number| matches!(number.as_bytes(), [b'0'..=b'9', b'.', b'0'..=b'9']))
 }
 
 /// The first line of what went past, as text.
 fn opening(bytes: &[u8]) -> Option<String> {
     let end = bytes
         .iter()
-        .position(|byte| *byte == b'\r' || *byte == b'\n')
-        .unwrap_or(bytes.len());
+        .position(|byte| *byte == b'\r' || *byte == b'\n')?;
+    if !bytes.get(end..)?.starts_with(b"\r\n") {
+        return None;
+    }
     let line = bytes.get(..end)?;
     match std::str::from_utf8(line) {
         Ok(line) => Some(line.to_owned()),
