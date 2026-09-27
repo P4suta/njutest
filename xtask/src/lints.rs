@@ -9,6 +9,8 @@ use std::fmt;
 use syn::parse::Parser as _;
 use syn::visit::Visit;
 
+use super::cfg_conditions::{CfgScope, CfgTruth, CfgWorld, cfg_constant, item_attributes};
+
 const OWNED_TRAIT_OBJECT_REMEDY: &str = "use an enum for a closed set of implementations, or a \
     generic parameter for an open one; owning a vtable erases the set precisely where ownership \
     should make it explicit";
@@ -6421,219 +6423,6 @@ fn allow_attribute_spans(meta: &syn::Meta) -> Vec<proc_macro2::Span> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CfgTruth {
-    Always,
-    Never,
-    Variable,
-}
-
-struct CfgConstraint {
-    guards: Vec<syn::Meta>,
-    requirement: syn::Meta,
-}
-
-fn cfg_constant(meta: &syn::Meta) -> CfgTruth {
-    cfg_truth(meta, &BTreeMap::new())
-}
-
-fn cfg_atom(meta: &syn::Meta) -> String {
-    let path = meta
-        .path()
-        .segments
-        .iter()
-        .map(|segment| segment.ident.to_string())
-        .collect::<Vec<_>>()
-        .join("::");
-    match meta {
-        syn::Meta::Path(_) => format!("path:{path}"),
-        syn::Meta::NameValue(value) => {
-            let value = match &value.value {
-                syn::Expr::Lit(literal) => match &literal.lit {
-                    syn::Lit::Str(value) => value.value(),
-                    _ => format!("{:?}", literal.lit),
-                },
-                other => format!("{other:?}"),
-            };
-            format!("value:{path}={value:?}")
-        }
-        syn::Meta::List(list) => format!("list:{path}({})", list.tokens),
-    }
-}
-
-fn cfg_truth(meta: &syn::Meta, values: &BTreeMap<String, bool>) -> CfgTruth {
-    let syn::Meta::List(list) = meta else {
-        return cfg_atomic_truth(meta, values);
-    };
-    if !list.path.is_ident("all") && !list.path.is_ident("any") && !list.path.is_ident("not") {
-        return cfg_atomic_truth(meta, values);
-    }
-    let arguments = match list
-        .parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
-    {
-        Ok(arguments) => arguments,
-        Err(_opaque_condition) => return cfg_atomic_truth(meta, values),
-    };
-    if list.path.is_ident("all") {
-        let mut variable = false;
-        for argument in &arguments {
-            match cfg_truth(argument, values) {
-                CfgTruth::Never => return CfgTruth::Never,
-                CfgTruth::Variable => variable = true,
-                CfgTruth::Always => {}
-            }
-        }
-        return if variable {
-            CfgTruth::Variable
-        } else {
-            CfgTruth::Always
-        };
-    }
-    if list.path.is_ident("any") {
-        let mut variable = false;
-        for argument in &arguments {
-            match cfg_truth(argument, values) {
-                CfgTruth::Always => return CfgTruth::Always,
-                CfgTruth::Variable => variable = true,
-                CfgTruth::Never => {}
-            }
-        }
-        return if variable {
-            CfgTruth::Variable
-        } else {
-            CfgTruth::Never
-        };
-    }
-    if !list.path.is_ident("not") || arguments.len() != 1 {
-        return cfg_atomic_truth(meta, values);
-    }
-    match arguments.first().map(|one| cfg_truth(one, values)) {
-        Some(CfgTruth::Always) => CfgTruth::Never,
-        Some(CfgTruth::Never) => CfgTruth::Always,
-        Some(CfgTruth::Variable) | None => CfgTruth::Variable,
-    }
-}
-
-fn cfg_atomic_truth(meta: &syn::Meta, values: &BTreeMap<String, bool>) -> CfgTruth {
-    match values.get(&cfg_atom(meta)) {
-        Some(true) => CfgTruth::Always,
-        Some(false) => CfgTruth::Never,
-        None => CfgTruth::Variable,
-    }
-}
-
-fn cfg_atoms(meta: &syn::Meta, found: &mut BTreeSet<String>) {
-    if let syn::Meta::List(list) = meta
-        && (list.path.is_ident("all") || list.path.is_ident("any") || list.path.is_ident("not"))
-    {
-        match list.parse_args_with(
-            syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
-        ) {
-            Ok(arguments) if !list.path.is_ident("not") || arguments.len() == 1 => {
-                for argument in &arguments {
-                    cfg_atoms(argument, found);
-                }
-                return;
-            }
-            Ok(_) | Err(_) => {}
-        }
-    }
-    found.insert(cfg_atom(meta));
-}
-
-fn cfg_constraints(meta: &syn::Meta, guards: &[syn::Meta], found: &mut Vec<CfgConstraint>) {
-    let syn::Meta::List(list) = meta else {
-        return;
-    };
-    if list.path.is_ident("cfg") {
-        match list.parse_args::<syn::Meta>() {
-            Ok(requirement) => found.push(CfgConstraint {
-                guards: guards.to_vec(),
-                requirement,
-            }),
-            Err(_opaque_condition) => {}
-        }
-        return;
-    }
-    if !list.path.is_ident("cfg_attr") {
-        return;
-    }
-    let arguments = match list
-        .parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
-    {
-        Ok(arguments) => arguments,
-        Err(_opaque_attributes) => return,
-    };
-    let mut arguments = arguments.iter();
-    let Some(condition) = arguments.next() else {
-        return;
-    };
-    let mut nested_guards = guards.to_vec();
-    nested_guards.push(condition.clone());
-    for attribute in arguments {
-        cfg_constraints(attribute, &nested_guards, found);
-    }
-}
-
-fn cfg_constraint_truth(constraint: &CfgConstraint, values: &BTreeMap<String, bool>) -> CfgTruth {
-    let mut guard = CfgTruth::Always;
-    for condition in &constraint.guards {
-        match cfg_truth(condition, values) {
-            CfgTruth::Never => return CfgTruth::Always,
-            CfgTruth::Variable => guard = CfgTruth::Variable,
-            CfgTruth::Always => {}
-        }
-    }
-    match (guard, cfg_truth(&constraint.requirement, values)) {
-        (CfgTruth::Always, requirement) => requirement,
-        (CfgTruth::Variable, CfgTruth::Always) | (CfgTruth::Never, _) => CfgTruth::Always,
-        (CfgTruth::Variable, CfgTruth::Never | CfgTruth::Variable) => CfgTruth::Variable,
-    }
-}
-
-fn cfg_conjunction_possible(conditions: &[CfgConstraint]) -> bool {
-    let mut atoms = BTreeSet::new();
-    for condition in conditions {
-        for guard in &condition.guards {
-            cfg_atoms(guard, &mut atoms);
-        }
-        cfg_atoms(&condition.requirement, &mut atoms);
-    }
-    let atoms: Vec<String> = atoms.into_iter().collect();
-    cfg_assignment_possible(conditions, &atoms, 0, &mut BTreeMap::new())
-}
-
-fn cfg_assignment_possible(
-    conditions: &[CfgConstraint],
-    atoms: &[String],
-    next: usize,
-    values: &mut BTreeMap<String, bool>,
-) -> bool {
-    let mut unresolved = false;
-    for condition in conditions {
-        match cfg_constraint_truth(condition, values) {
-            CfgTruth::Never => return false,
-            CfgTruth::Variable => unresolved = true,
-            CfgTruth::Always => {}
-        }
-    }
-    if !unresolved {
-        return true;
-    }
-    let Some(atom) = atoms.get(next) else {
-        return false;
-    };
-    values.insert(atom.clone(), true);
-    if cfg_assignment_possible(conditions, atoms, next.saturating_add(1), values) {
-        values.remove(atom);
-        return true;
-    }
-    values.insert(atom.clone(), false);
-    let possible = cfg_assignment_possible(conditions, atoms, next.saturating_add(1), values);
-    values.remove(atom);
-    possible
-}
-
 /// Where an environment is read as pairs: the one type that holds it, and the tooling the engine cannot be a dependency of.
 const ENVIRONMENT_READERS: [&str; 3] = [
     "crates/rust-mutants/src/vars.rs",
@@ -7021,7 +6810,7 @@ fn implied_cfgs(parsed: &syn::File, file: &str) -> Vec<Finding> {
     let mut visitor = ImpliedCfg {
         file,
         held: Vec::new(),
-        conditions: Vec::new(),
+        conditions: CfgScope::new(CfgWorld::Any),
         found: Vec::new(),
     };
     visitor.visit_file(parsed);
@@ -7031,15 +6820,15 @@ fn implied_cfgs(parsed: &syn::File, file: &str) -> Vec<Finding> {
 struct ImpliedCfg<'a> {
     file: &'a str,
     held: Vec<String>,
-    conditions: Vec<CfgConstraint>,
+    conditions: CfgScope,
     found: Vec<Finding>,
 }
 
 impl ImpliedCfg<'_> {
     fn within(&mut self, attributes: &[syn::Attribute], walk: impl FnOnce(&mut Self)) {
         let depth = self.held.len();
-        let condition_depth = self.conditions.len();
-        let mut possible = cfg_conjunction_possible(&self.conditions);
+        let condition_depth = self.conditions.mark();
+        let mut possible = self.conditions.possible();
         for attribute in attributes {
             if let syn::Meta::List(list) = &attribute.meta
                 && list.path.is_ident("cfg")
@@ -7053,10 +6842,8 @@ impl ImpliedCfg<'_> {
                 }
                 self.held.extend(conjuncts(&list.tokens));
             }
-            let before = self.conditions.len();
-            cfg_constraints(&attribute.meta, &[], &mut self.conditions);
-            if self.conditions.len() > before {
-                let now = cfg_conjunction_possible(&self.conditions);
+            if self.conditions.push(attribute) {
+                let now = self.conditions.possible();
                 if possible && !now {
                     self.found.push(Finding {
                         kind: Kind::VacuousCfg,
@@ -7182,28 +6969,6 @@ impl Visit<'_> for ImpliedCfg<'_> {
 
     fn visit_local(&mut self, local: &syn::Local) {
         self.within(&local.attrs, |walk| syn::visit::visit_local(walk, local));
-    }
-}
-
-/// The attributes of any item, every kind named, so a kind this walk forgot is a compile error rather than a hole.
-fn item_attributes(item: &syn::Item) -> &[syn::Attribute] {
-    match item {
-        syn::Item::Const(one) => &one.attrs,
-        syn::Item::Enum(one) => &one.attrs,
-        syn::Item::ExternCrate(one) => &one.attrs,
-        syn::Item::Fn(one) => &one.attrs,
-        syn::Item::ForeignMod(one) => &one.attrs,
-        syn::Item::Impl(one) => &one.attrs,
-        syn::Item::Macro(one) => &one.attrs,
-        syn::Item::Mod(one) => &one.attrs,
-        syn::Item::Static(one) => &one.attrs,
-        syn::Item::Struct(one) => &one.attrs,
-        syn::Item::Trait(one) => &one.attrs,
-        syn::Item::TraitAlias(one) => &one.attrs,
-        syn::Item::Type(one) => &one.attrs,
-        syn::Item::Union(one) => &one.attrs,
-        syn::Item::Use(one) => &one.attrs,
-        _ => &[],
     }
 }
 

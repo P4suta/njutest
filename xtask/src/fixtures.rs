@@ -147,9 +147,9 @@ fn listing(dir: &Path) -> Result<Vec<String>, CheckError> {
 pub fn check_fixture(dir: &Path) -> Result<Vec<String>, CheckError> {
     let mut problems = Vec::new();
     let manifest_path = dir.join("Cargo.toml");
-    match std::fs::read_to_string(&manifest_path) {
-        Ok(text) => problems.extend(check_manifest(&text)),
-        Err(_) => problems.push("Cargo.toml is missing".to_owned()),
+    match read_if_present(&manifest_path)? {
+        Some(text) => problems.extend(check_manifest(&text)),
+        None => problems.push("Cargo.toml is missing".to_owned()),
     }
     check_lockfile(dir, &mut problems)?;
     problems.extend(check_readme(dir)?);
@@ -173,6 +173,17 @@ pub fn check_fixture(dir: &Path) -> Result<Vec<String>, CheckError> {
     }
     problems.sort();
     Ok(problems)
+}
+
+fn read_if_present(path: &Path) -> Result<Option<String>, CheckError> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(CheckError::Read {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
 }
 
 fn check_lockfile(dir: &Path, problems: &mut Vec<String>) -> Result<(), CheckError> {
@@ -200,7 +211,8 @@ fn check_lockfile(dir: &Path, problems: &mut Vec<String>) -> Result<(), CheckErr
 
 /// The README, and the ledgers of fates a fixture has to keep.
 fn check_readme(dir: &Path) -> Result<Vec<String>, CheckError> {
-    let Ok(readme) = std::fs::read_to_string(dir.join("README.md")) else {
+    let path = dir.join("README.md");
+    let Some(readme) = read_if_present(&path)? else {
         return Ok(vec![
             "README.md is missing (it is where a fixture says what it is for)".to_owned(),
         ]);

@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 pub mod adrs;
+mod cfg_conditions;
 pub mod claims;
 pub mod concurrency;
 pub mod confirm;

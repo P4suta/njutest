@@ -455,12 +455,95 @@ fn cfg_conjunction_excluding_testkit_does_not_prove_production_reach() -> Result
 }
 
 #[test]
+fn cfg_any_of_test_and_testkit_does_not_prove_production_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() {}\n#[cfg(any(test, feature = \"testkit\"))] fn test_only() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+    )?;
+    let failure = refused(
+        gates::reached(root.path()),
+        "test and testkit branches counted as production reach",
+    )?;
+    require(
+        failure.to_string().contains("x::capability"),
+        failure.to_string(),
+    )
+}
+
+#[test]
 fn cfg_any_with_a_production_branch_is_production_reach() -> Result<(), TestError> {
     let root = reach_tree(
         "pub fn capability() {}\n#[cfg(any(test, not(unix)))]\nfn production() { capability(); }\n#[cfg(test)] mod tests { #[test] fn test() { super::capability(); } }\n",
     )?;
     let report = gates::reached(root.path())?;
     require(report.contains("0 public function"), report)
+}
+
+#[test]
+fn contradictory_cfg_atoms_do_not_prove_production_reach() -> Result<(), TestError> {
+    for (case, source) in [
+        (
+            "item attributes",
+            "pub fn capability() {}\n#[cfg(unix)] #[cfg(not(unix))] fn production() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+        ),
+        (
+            "all predicate",
+            "pub fn capability() {}\n#[cfg(all(unix, not(unix)))] fn production() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+        ),
+        (
+            "parent and child",
+            "pub fn capability() {}\n#[cfg(unix)] mod platform { #[cfg(not(unix))] fn production() { super::capability(); } }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+        ),
+        (
+            "any predicate",
+            "pub fn capability() {}\n#[cfg(any(unix, windows))] #[cfg(not(any(unix, windows)))] fn production() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+        ),
+        (
+            "conditional cfg_attr",
+            "pub fn capability() {}\n#[cfg(unix)] #[cfg_attr(unix, cfg(not(unix)))] fn production() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+        ),
+        (
+            "nested cfg_attr",
+            "pub fn capability() {}\n#[cfg(unix)] #[cfg_attr(unix, cfg_attr(unix, cfg(not(unix))))] fn production() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+        ),
+        (
+            "conditional parent and child",
+            "pub fn capability() {}\n#[cfg(unix)] mod platform { #[cfg_attr(unix, cfg(not(unix)))] fn production() { super::capability(); } }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+        ),
+        (
+            "file inner attribute",
+            "#![cfg(unix)]\npub fn capability() {}\n#[cfg(not(unix))] fn production() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+        ),
+    ] {
+        let root = reach_tree(source)?;
+        let failure = refused(
+            gates::reached(root.path()),
+            "contradictory cfg atoms proved production reach",
+        )?;
+        require(failure.to_string().contains("x::capability"), case)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_possible_cfg_atom_still_proves_production_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() {}\n#[cfg(unix)] fn production() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+    )?;
+    let report = gates::reached(root.path())?;
+    require(report.contains("0 public function"), report)
+}
+
+#[test]
+fn a_possible_guarded_cfg_attr_still_proves_production_reach() -> Result<(), TestError> {
+    for source in [
+        "pub fn capability() {}\n#[cfg(not(unix))] #[cfg_attr(unix, cfg(not(unix)))] fn production() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+        "pub fn capability() {}\n#[cfg(unix)] #[cfg_attr(test, cfg(not(unix)))] fn production() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+    ] {
+        let root = reach_tree(source)?;
+        let report = gates::reached(root.path())?;
+        require(report.contains("0 public function"), report)?;
+    }
+    Ok(())
 }
 
 #[test]

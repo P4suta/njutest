@@ -6,122 +6,7 @@ use std::collections::BTreeSet;
 use syn::parse::Parser as _;
 use syn::visit::Visit;
 
-#[derive(Clone, Copy)]
-struct Possibility {
-    yes: bool,
-    no: bool,
-}
-
-impl Possibility {
-    const FALSE: Self = Self {
-        yes: false,
-        no: true,
-    };
-    const UNKNOWN: Self = Self {
-        yes: true,
-        no: true,
-    };
-}
-
-fn possible(meta: &syn::Meta) -> Possibility {
-    match meta {
-        syn::Meta::Path(path) if path.is_ident("test") => Possibility::FALSE,
-        syn::Meta::NameValue(value) if value.path.is_ident("feature") => {
-            if matches!(&value.value, syn::Expr::Lit(literal) if matches!(&literal.lit, syn::Lit::Str(feature) if feature.value() == "testkit"))
-            {
-                Possibility::FALSE
-            } else {
-                Possibility::UNKNOWN
-            }
-        }
-        syn::Meta::List(list) if list.path.is_ident("not") => {
-            let Ok(inside) = list.parse_args::<syn::Meta>() else {
-                return Possibility::UNKNOWN;
-            };
-            let inside = possible(&inside);
-            Possibility {
-                yes: inside.no,
-                no: inside.yes,
-            }
-        }
-        syn::Meta::List(list) if list.path.is_ident("all") || list.path.is_ident("any") => {
-            let Ok(inside) = list.parse_args_with(
-                syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
-            ) else {
-                return Possibility::UNKNOWN;
-            };
-            if list.path.is_ident("all") {
-                Possibility {
-                    yes: inside.iter().all(|one| possible(one).yes),
-                    no: inside.iter().any(|one| possible(one).no),
-                }
-            } else {
-                Possibility {
-                    yes: inside.iter().any(|one| possible(one).yes),
-                    no: inside.iter().all(|one| possible(one).no),
-                }
-            }
-        }
-        _ => Possibility::UNKNOWN,
-    }
-}
-
-fn cfg_restricts(meta: &syn::Meta) -> bool {
-    let syn::Meta::List(list) = meta else {
-        return false;
-    };
-    list.path.is_ident("cfg")
-        && list
-            .parse_args::<syn::Meta>()
-            .is_ok_and(|predicate| !possible(&predicate).yes)
-}
-
-fn attribute_restricts(attribute: &syn::Attribute) -> bool {
-    if cfg_restricts(&attribute.meta) {
-        return true;
-    }
-    let syn::Meta::List(list) = &attribute.meta else {
-        return false;
-    };
-    if !list.path.is_ident("cfg_attr") {
-        return false;
-    }
-    let Ok(arguments) = list.parse_args_with(
-        syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
-    ) else {
-        return false;
-    };
-    let mut arguments = arguments.iter();
-    let Some(condition) = arguments.next() else {
-        return false;
-    };
-    !possible(condition).no && arguments.any(cfg_restricts)
-}
-
-fn can_ship(attributes: &[syn::Attribute]) -> bool {
-    !attributes.iter().any(attribute_restricts)
-}
-
-fn item_attributes(item: &syn::Item) -> &[syn::Attribute] {
-    match item {
-        syn::Item::Const(one) => &one.attrs,
-        syn::Item::Enum(one) => &one.attrs,
-        syn::Item::ExternCrate(one) => &one.attrs,
-        syn::Item::Fn(one) => &one.attrs,
-        syn::Item::ForeignMod(one) => &one.attrs,
-        syn::Item::Impl(one) => &one.attrs,
-        syn::Item::Macro(one) => &one.attrs,
-        syn::Item::Mod(one) => &one.attrs,
-        syn::Item::Static(one) => &one.attrs,
-        syn::Item::Struct(one) => &one.attrs,
-        syn::Item::Trait(one) => &one.attrs,
-        syn::Item::TraitAlias(one) => &one.attrs,
-        syn::Item::Type(one) => &one.attrs,
-        syn::Item::Union(one) => &one.attrs,
-        syn::Item::Use(one) => &one.attrs,
-        _ => &[],
-    }
-}
+use super::super::cfg_conditions::{CfgScope, CfgWorld, item_attributes};
 
 fn expression_attributes(expression: &syn::Expr) -> &[syn::Attribute] {
     match expression {
@@ -177,13 +62,36 @@ pub(super) struct Facts {
 struct Scanner {
     production: bool,
     facts: Facts,
+    active_cfg: CfgScope,
+}
+
+impl Scanner {
+    fn visit_scoped(&mut self, attributes: &[syn::Attribute], visit: impl FnOnce(&mut Self)) {
+        if !self.production {
+            visit(self);
+            return;
+        }
+        let previous = self.active_cfg.mark();
+        let mut changed = false;
+        for attribute in attributes {
+            changed |= self.active_cfg.push(attribute);
+        }
+        if !changed || self.active_cfg.possible() {
+            visit(self);
+        }
+        self.active_cfg.truncate(previous);
+    }
 }
 
 impl<'ast> Visit<'ast> for Scanner {
+    fn visit_file(&mut self, file: &'ast syn::File) {
+        self.visit_scoped(&file.attrs, |this| syn::visit::visit_file(this, file));
+    }
+
     fn visit_item(&mut self, item: &'ast syn::Item) {
-        if !self.production || can_ship(item_attributes(item)) {
-            syn::visit::visit_item(self, item);
-        }
+        self.visit_scoped(item_attributes(item), |this| {
+            syn::visit::visit_item(this, item);
+        });
     }
 
     fn visit_impl_item(&mut self, item: &'ast syn::ImplItem) {
@@ -194,9 +102,7 @@ impl<'ast> Visit<'ast> for Scanner {
             syn::ImplItem::Macro(one) => &one.attrs,
             _ => return,
         };
-        if !self.production || can_ship(attributes) {
-            syn::visit::visit_impl_item(self, item);
-        }
+        self.visit_scoped(attributes, |this| syn::visit::visit_impl_item(this, item));
     }
 
     fn visit_trait_item(&mut self, item: &'ast syn::TraitItem) {
@@ -207,27 +113,44 @@ impl<'ast> Visit<'ast> for Scanner {
             syn::TraitItem::Macro(one) => &one.attrs,
             _ => return,
         };
-        if !self.production || can_ship(attributes) {
-            syn::visit::visit_trait_item(self, item);
-        }
+        self.visit_scoped(attributes, |this| syn::visit::visit_trait_item(this, item));
+    }
+
+    fn visit_foreign_item(&mut self, item: &'ast syn::ForeignItem) {
+        let attributes: &[syn::Attribute] = match item {
+            syn::ForeignItem::Fn(one) => &one.attrs,
+            syn::ForeignItem::Static(one) => &one.attrs,
+            syn::ForeignItem::Type(one) => &one.attrs,
+            syn::ForeignItem::Macro(one) => &one.attrs,
+            _ => &[],
+        };
+        self.visit_scoped(attributes, |this| {
+            syn::visit::visit_foreign_item(this, item);
+        });
+    }
+
+    fn visit_field(&mut self, field: &'ast syn::Field) {
+        self.visit_scoped(&field.attrs, |this| syn::visit::visit_field(this, field));
+    }
+
+    fn visit_variant(&mut self, variant: &'ast syn::Variant) {
+        self.visit_scoped(&variant.attrs, |this| {
+            syn::visit::visit_variant(this, variant);
+        });
     }
 
     fn visit_local(&mut self, local: &'ast syn::Local) {
-        if !self.production || can_ship(&local.attrs) {
-            syn::visit::visit_local(self, local);
-        }
+        self.visit_scoped(&local.attrs, |this| syn::visit::visit_local(this, local));
     }
 
     fn visit_expr(&mut self, expression: &'ast syn::Expr) {
-        if !self.production || can_ship(expression_attributes(expression)) {
-            syn::visit::visit_expr(self, expression);
-        }
+        self.visit_scoped(expression_attributes(expression), |this| {
+            syn::visit::visit_expr(this, expression);
+        });
     }
 
     fn visit_arm(&mut self, arm: &'ast syn::Arm) {
-        if !self.production || can_ship(&arm.attrs) {
-            syn::visit::visit_arm(self, arm);
-        }
+        self.visit_scoped(&arm.attrs, |this| syn::visit::visit_arm(this, arm));
     }
 
     fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
@@ -324,6 +247,7 @@ pub(super) fn facts(source: &str, production: bool) -> syn::Result<Facts> {
     let mut scanner = Scanner {
         production,
         facts: Facts::default(),
+        active_cfg: CfgScope::new(CfgWorld::Production),
     };
     scanner.visit_file(&parsed);
     Ok(scanner.facts)

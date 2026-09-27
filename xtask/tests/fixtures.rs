@@ -181,6 +181,22 @@ fn a_readme_that_states_no_fates_is_a_fixture_a_change_can_quietly_re_decide() {
 }
 
 #[test]
+fn an_unreadable_fixture_document_is_not_reported_as_missing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    xtask::repository::init(dir.path()).expect("a repository to read the tree as git lists it");
+    for name in ["README.md", "Cargo.toml"] {
+        good_fixture(dir.path());
+        let unreadable = dir.path().join(name);
+        fs::write(&unreadable, [0xff]).expect("non-UTF-8 document");
+        assert!(matches!(
+            check_fixture(dir.path()),
+            Err(xtask::fixtures::CheckError::Read { path, source })
+                if path == unreadable && source.kind() == std::io::ErrorKind::InvalidData
+        ));
+    }
+}
+
+#[test]
 fn an_interposer_requires_its_seam_ledger_and_an_unreadable_config_never_hides_it() {
     let dir = tempfile::tempdir().expect("tempdir");
     xtask::repository::init(dir.path()).expect("a repository to read the tree as git lists it");
