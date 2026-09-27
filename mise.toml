@@ -195,8 +195,7 @@ cargo clean
 cargo llvm-cov clean --workspace
 eval "$(cargo llvm-cov show-env --export-prefix)"
 cargo build --locked --examples --workspace --all-features --profile test
-cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E 'not binary(/^toolchain_/)'
-cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
+cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2
 cargo xtask coverage-ratchet
 """
 

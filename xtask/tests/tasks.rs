@@ -660,6 +660,33 @@ fn every_ci_platform_runs_the_same_complete_suite() {
 }
 
 #[test]
+fn coverage_runs_the_whole_suite_once_without_sharding() {
+    let workflow = repository(".github/workflows/ci.yml");
+    let steps = ci_run_steps(&workflow, "coverage");
+    let collect = steps
+        .iter()
+        .find(|(name, _)| name == "Collect coverage (run the suite once)")
+        .map(|(_, script)| script.as_str())
+        .expect("the coverage collection step");
+    let local = task("coverage");
+    for script in [collect, &local] {
+        assert_eq!(
+            script
+                .matches("cargo xtask tidy -- cargo nextest run")
+                .count(),
+            1,
+            "coverage runs its complete suite once: {script}"
+        );
+        assert!(
+            script.contains("--workspace --all-targets --all-features")
+                && !script.contains(" -E ")
+                && !script.contains("--exclude"),
+            "coverage does not filter the suite: {script}"
+        );
+    }
+}
+
+#[test]
 fn the_inner_loop_starts_no_toolchain_and_the_whole_suite_still_runs_everything() {
     let fast = task("\"test:fast\"");
     assert!(
@@ -1215,6 +1242,44 @@ fn a_nested_toolchain_run_shares_the_machine_with_the_ones_beside_it() {
              multiply the machine by their number"
         );
     }
+}
+
+#[test]
+fn claims_oracle_runs_without_competing_nested_cargos() {
+    let text = repository(".config/nextest.toml");
+    let config: toml::Value = toml::from_str(&text).expect("the nextest configuration parses");
+    let overrides = config
+        .get("profile")
+        .and_then(|profile| profile.get("default"))
+        .and_then(|default| default.get("overrides"))
+        .and_then(toml::Value::as_array)
+        .expect("the nextest default profile has overrides");
+    let filter = "binary(=toolchain_gates) & test(/^claims_oracle::/)";
+    let mut matching = overrides.iter().enumerate().filter(|(_, override_)| {
+        override_.get("filter").and_then(toml::Value::as_str) == Some(filter)
+    });
+    let (at, specific) = matching.next().expect("the claims oracle override exists");
+    assert!(
+        matching.next().is_none(),
+        "claims oracle has one exact override: {text}"
+    );
+    assert_eq!(
+        specific
+            .get("threads-required")
+            .and_then(toml::Value::as_str),
+        Some("num-test-threads"),
+        "the claims oracle reserves the entire test pool: {text}"
+    );
+    let broad = overrides
+        .iter()
+        .position(|override_| {
+            override_.get("filter").and_then(toml::Value::as_str) == Some("binary(/^toolchain_/)")
+        })
+        .expect("the toolchain override exists");
+    assert!(
+        at < broad,
+        "the narrower override precedes the broad toolchain override: {text}"
+    );
 }
 
 /// Every command in `place` that compiles the workspace in the dev profile for a build or a test.

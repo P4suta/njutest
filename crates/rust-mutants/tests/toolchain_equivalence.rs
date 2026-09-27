@@ -20,7 +20,13 @@ use rust_mutants::workspace::OpenOptions;
 static REGISTRY: rust_mutants::rule::Registry = rust_mutants::rule::Registry::canonical();
 
 fn prover(fixture: &Fixture, cancel: &Cancel) -> Prover {
-    prover_with_env(fixture, cancel, std::env::vars_os().collect())
+    prover_with_env(fixture, cancel, toolchain_env())
+}
+
+fn toolchain_env() -> rust_mutants::vars::Variables {
+    njutest_devkit::paths::environment_for_a_toolchain_run(&[])
+        .into_iter()
+        .collect()
 }
 
 fn prover_with_env(
@@ -54,8 +60,9 @@ fn equivalence_builds_leave_an_ambient_cargo_target_directory_untouched() {
     std::fs::create_dir_all(&ambient).expect("the ambient target directory");
     let marker = ambient.join("untouched");
     std::fs::write(&marker, b"outside the prover").expect("the marker");
-    let mut env = std::env::vars_os().collect::<rust_mutants::vars::Variables>();
+    let mut env = toolchain_env();
     env.set("CARGO_TARGET_DIR", ambient.as_os_str());
+    env.set("RUSTC_WRAPPER", "");
     let cancel = Cancel::new();
     let mut prover = prover_with_env(&fixture, &cancel, env);
     let source = std::fs::read(fixture.root().join("src/lib.rs")).expect("the library");
@@ -80,11 +87,13 @@ fn equivalence_builds_leave_an_ambient_cargo_target_directory_untouched() {
         "the prover built inside its own target directory"
     );
     prover.close().expect("the prover closes");
+    let entries: Vec<_> = std::fs::read_dir(&ambient)
+        .expect("the ambient directory remains")
+        .map(|entry| entry.expect("an ambient entry can be read").file_name())
+        .collect();
     assert_eq!(
-        std::fs::read_dir(&ambient)
-            .expect("the ambient directory remains")
-            .count(),
-        1,
+        entries,
+        [std::ffi::OsString::from("untouched")],
         "the ambient target directory holds only its original marker"
     );
     assert_eq!(

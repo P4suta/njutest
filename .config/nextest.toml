@@ -42,5 +42,9 @@ filter = 'not binary(/^toolchain_/)'
 slow-timeout = { period = "30s", terminate-after = 2 }
 
 [[profile.default.overrides]]
+filter = 'binary(=toolchain_gates) & test(/^claims_oracle::/)'
+threads-required = "num-test-threads"
+
+[[profile.default.overrides]]
 filter = 'binary(/^toolchain_/)'
 test-group = "toolchain"

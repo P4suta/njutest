@@ -106,8 +106,11 @@ fn listing(repository: &Path, workspace: &Path, temporary: &Path, flags: &[&str]
             "--root",
         ])
         .arg(workspace)
+        .arg("--cargo")
+        .arg(njutest_devkit::paths::cargo_binary())
         .args(flags)
         .current_dir(repository)
+        .env_clear()
         .envs(njutest_devkit::paths::environment_for_a_run())
         .envs(njutest_devkit::paths::temporary_directory(temporary))
         .output()

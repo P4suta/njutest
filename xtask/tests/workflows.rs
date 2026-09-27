@@ -149,6 +149,16 @@ fn mutation_ci_runs_one_whole_workspace() {
         body.contains("--workspace"),
         "mutation CI measures the whole workspace"
     );
+    assert_eq!(
+        body.matches("fetch-depth: 0").count(),
+        1,
+        "mutation CI fetches the comparison base for repository tests"
+    );
+    assert_eq!(
+        body.matches("--copy-vcs=true").count(),
+        1,
+        "mutation CI keeps Git in the copied tree for repository tests"
+    );
     assert!(
         !body.contains("--shard") && !body.contains("--package"),
         "mutation CI does not partition the catalog"
