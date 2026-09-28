@@ -3,6 +3,7 @@
 
 //! Starts one child process, supervises the platform's declared process set, and returns what happened.
 
+mod group;
 pub mod output;
 
 #[cfg(unix)]
@@ -22,6 +23,9 @@ use std::time::{Duration, Instant};
 
 use output::{OutputError, TailBuffer};
 
+pub use group::GroupChild;
+#[cfg(unix)]
+pub use group::Leader;
 pub use output::{DEFAULT_OUTPUT_LIMIT, HeadBuffer, MIN_OUTPUT_LIMIT, OUTPUT_TRUNCATED_PREFIX};
 
 /// The conventional stand-in used only by legacy report projections when there is no exit status to report.
@@ -1998,15 +2002,15 @@ fn checked_decide_stop(
     }
 }
 
-/// Stops every process of the group `leader` leads, a process started in a group of its own, and says how much of it the stop reached.
+/// Stops every process of the group `leader` leads, which a [`GroupChild`] started and has not reaped, and says how much of it the stop reached.
 ///
 /// A group already gone, or one whose members have all ended while its leader waits to be reaped, is reached whole: on macOS that group refuses a group signal with `EPERM`, and a look at the group finds nobody besides the leader.
 ///
 /// # Errors
-/// `leader` is no process id, or the kernel refuses the leader too, or fails for a reason other than its being gone.
+/// The kernel refuses the leader too, or fails for a reason other than its being gone.
 #[cfg(unix)]
-pub fn stop_group(leader: u32, how: GroupStop) -> io::Result<Stopped> {
-    unix::stop_group(leader, how)
+pub fn stop_group(leader: Leader<'_>, how: GroupStop) -> io::Result<Stopped> {
+    unix::stop_group(leader.pid(), how)
 }
 
 /// Ends the one process `pid` at once, where it is still there: a process a run started that left every group it supervised.

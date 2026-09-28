@@ -112,8 +112,10 @@ const UNOWNED_SPAWN_REMEDY: &str = "construct threads and child processes only i
     owner that must join, kill, or reap them on every path. Raw `thread::spawn`, \
     `Builder::spawn`, and `Command::spawn` make cleanup an optional convention; scoped work must \
     likewise pass through a typed scope helper whose lifetime proves the join";
-const RAW_GROUP_SIGNAL_REMEDY: &str = "stop a process group through \
-    `rust_mutants::runner::stop_group`. What the kernel answers a group signal is one question \
+const RAW_GROUP_SIGNAL_REMEDY: &str = "start the process as a \
+    `rust_mutants::runner::GroupChild` and stop its group through it, or through \
+    `rust_mutants::runner::stop_group` with the `Leader` it hands out until it has reaped. What \
+    the kernel answers a group signal is one question \
     wherever it is asked: on macOS a group whose members have all ended while its leader waits to \
     be reaped refuses it with EPERM, which is the group being gone, and a second place that sends \
     the signal itself decides that again, which is how the provider kept reporting a failed \

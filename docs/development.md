@@ -105,6 +105,7 @@ queues have a finite capacity and an explicit full/disconnect policy; and a pani
 Renamed imports,
 qualified calls, macro bodies, and code excluded by the host's `cfg` are subject to the same rules.
 `raw-group-signal` keeps the end of a process group in one place: code stops a group through `rust_mutants::runner::stop_group`, and only the runner's `unix.rs` and `windows.rs` and xtask's `work.rs` signal a process by its id.
+`stop_group` takes no id: it takes the `Leader` that only a `GroupChild` hands out, and only until it has reaped its child, so a group stop cannot be asked of an id the kernel may have given to somebody else.
 What the kernel answers a group signal is one question wherever it is asked.
 The rule reads what code does with a name rather than how the name is spelled, in every file the gate reads — build scripts, fuzz targets, examples, benchmarks, compiler surfaces and modules under `src/tests` included — except a crate's own suites and what is compiled only for tests.
 A module's signalling function, an import of one, a foreign declaration or `link_name`, a system call by its number, an assembly block, and a program started by any path (`/usr/bin/pkill`, `TASKKILL.EXE`), handed to a wrapper such as `sudo` or `timeout`, or written into a script a shell is given after `-c`, `/C` or `-Command`, are each the same signal.
