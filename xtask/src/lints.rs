@@ -3827,6 +3827,7 @@ fn manual_default_allowed(file: &str, item: &str) -> bool {
                 "Contract",
                 "Execution",
                 "Fuzz",
+                "Mutation",
                 "Reports",
             ],
         ),

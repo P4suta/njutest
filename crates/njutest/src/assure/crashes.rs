@@ -480,6 +480,7 @@ fn prepared(
     Ok(workspace.prepare(
         &rust_mutants::session::PrepareOptions {
             operators: vec![RULE.to_owned()],
+            sealing: rust_mutants::sealed::Sealing::Off,
             ..crate::assure::run::preparing(request)?
         },
         watch.cancel,

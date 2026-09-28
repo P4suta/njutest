@@ -11,8 +11,8 @@
 use njutest::app::plan::{Planned, line};
 use njutest::assure::baseline::{Baseline, Measured};
 use njutest::assure::run::{
-    Narrowing, Request, alone, first_line, kind_of, measurable, requested, resolve_acceptances,
-    resolved, reusable, selected, stated,
+    Narrowing, Request, alone, first_line, kind_of, measurable, preparing, requested,
+    resolve_acceptances, resolved, reusable, selected, stated,
 };
 use njutest::config::{Acceptance, Config};
 use njutest::report::{FindingKind, RunKind, TargetStatus};
@@ -509,6 +509,29 @@ fn a_run_that_looked_at_less_than_everything_neither_believes_nor_records() {
         "and a resource a run started is a fact about the world its tests ran in that no \
          behaviour key covers: the next run may start a different one, or none, and \
          nothing in the record would say so"
+    );
+}
+
+#[test]
+fn a_run_builds_the_sealed_tree_unless_its_configuration_turns_sealing_off() {
+    let sealing = |config: Config| {
+        preparing(&request(config, &[]))
+            .expect("the switches of a run over no narrowing")
+            .sealing
+    };
+    assert_eq!(
+        sealing(Config::default()),
+        rust_mutants::sealed::Sealing::On,
+        "a run decides each mutation from sealed executions unless it is told not to, since \
+         everything else it can say about one is a lead (ADR 0046)"
+    );
+    let mut unsealed = Config::default();
+    unsealed.mutation.seal = false;
+    assert_eq!(
+        sealing(unsealed),
+        rust_mutants::sealed::Sealing::Off,
+        "and `[mutation] seal = false`, which `--no-seal` writes for one run, builds nothing \
+         for the sealed target, so a run that will read none of it does not pay for it"
     );
 }
 

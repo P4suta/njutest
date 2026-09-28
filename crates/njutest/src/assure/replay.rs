@@ -116,7 +116,7 @@ pub fn replay(
             mutant_timeout: replaying.timeout.map_or(Timeout::Auto, Timeout::Fixed),
             mutant_steps: (replaying.steps > 0).then_some(replaying.steps),
             operators,
-            ..crate::assure::engine::switches()
+            ..crate::assure::engine::switches(rust_mutants::sealed::Sealing::Off)
         },
         watch.cancel,
     )?;

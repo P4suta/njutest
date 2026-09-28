@@ -177,7 +177,7 @@ pub fn measure(measuring: &Measuring<'_>, watch: Watch<'_>) -> Result<Measured, 
             build_timeout: config.execution.build_timeout,
             mutant_timeout: Timeout::Fixed(config.execution.timeout),
             mutant_steps: (config.execution.steps > 0).then_some(config.execution.steps),
-            ..crate::assure::engine::switches()
+            ..crate::assure::engine::switches(rust_mutants::sealed::Sealing::Off)
         },
         watch.cancel,
     )?;

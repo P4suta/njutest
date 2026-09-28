@@ -46,6 +46,7 @@ target = ""                     # target triple; empty = the host
 
 [mutation]
 equivalence = false             # ask the compiler whether it renders each survivor identically
+seal = true                     # decide each mutation from sealed executions; --no-seal turns it off
 
 [faults]
 inject = false                  # fail each call a `?` asks about and ask what noticed; --faults sets it

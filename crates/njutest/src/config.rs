@@ -386,12 +386,35 @@ impl Default for Execution {
 }
 
 /// How mutants are proved about before they are executed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Mutation {
     /// Ask the compiler whether it renders each surviving mutation identically to the code it mutates.
     /// It costs two builds of a tree of its own for every survivor whose premises hold, and it removes a finding only where no test could have noticed the mutation.
     pub equivalence: bool,
+    /// Build the tree for the sealed target too, and decide each mutation from its sealed executions; without it every answer is a native lead (ADR 0046).
+    pub seal: bool,
+}
+
+impl Default for Mutation {
+    fn default() -> Self {
+        Self {
+            equivalence: false,
+            seal: true,
+        }
+    }
+}
+
+impl Mutation {
+    /// Whether a preparation for this configuration builds the sealed modules.
+    #[must_use]
+    pub const fn sealing(self) -> rust_mutants::sealed::Sealing {
+        if self.seal {
+            rust_mutants::sealed::Sealing::On
+        } else {
+            rust_mutants::sealed::Sealing::Off
+        }
+    }
 }
 
 /// Whether a run fails, one at a time, every call a `?` asks about, and asks the suite what it noticed (ADR 0032).
@@ -1194,6 +1217,7 @@ contract = \"whole-v1\"           # \"whole-v1\" | \"standard-v1\" | \"deep-v1\"
 
 [mutation]
 # equivalence = false            # ask the compiler about every survivor
+# seal = true                    # decide each mutation from sealed executions; false leaves every answer a lead
 
 [verification]                   # verified-v1 only; both keys are mandatory and nonzero
 # unwind = 8                     # maximum loop unwind for every proof harness

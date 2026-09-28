@@ -1607,7 +1607,7 @@ pub fn preparing(request: &Request) -> Result<rust_mutants::session::PrepareOpti
             .then_some(request.config.execution.steps),
         skip_targets: request.config.execution.skip_targets.clone(),
         coverage: request.config.execution.coverage,
-        ..crate::assure::engine::switches()
+        ..crate::assure::engine::switches(request.config.mutation.sealing())
     })
 }
 

@@ -30,7 +30,7 @@ fn prepare(fixture: &Fixture) -> Session {
     .prepare(
         &PrepareOptions {
             failing: rust_mutants::session::Failing::Exclude,
-            ..njutest::assure::engine::switches()
+            ..njutest::assure::engine::switches(rust_mutants::sealed::Sealing::Off)
         },
         &Cancel::new(),
     )

@@ -1569,6 +1569,7 @@ fn load(arguments: &Verify, workspace: &reports::WorkspaceRoot) -> Result<Loaded
     let mut loaded = configured(arguments, workspace)?;
     loaded.config.faults.inject |= arguments.faults;
     loaded.config.durability.crash |= arguments.crashes;
+    loaded.config.mutation.seal &= !arguments.no_seal;
     Ok(loaded)
 }
 
