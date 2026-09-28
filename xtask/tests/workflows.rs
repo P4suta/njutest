@@ -298,6 +298,84 @@ fn every_step_runs_in_a_shell_that_stops_at_the_first_failure_even_inside_a_pipe
     );
 }
 
+/// The body of the job `name` of the workflow file `file`.
+fn job_of(file: &str, name: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/workflows")
+        .join(file);
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let Some((_, jobs_source)) = source.split_once("\njobs:\n") else {
+        panic!("{} has no jobs", path.display());
+    };
+    jobs(jobs_source)
+        .into_iter()
+        .find_map(|(job, body)| (job == name).then_some(body))
+        .unwrap_or_else(|| panic!("{file} has no job {name}"))
+}
+
+/// Every `os` and `target` a job's matrix pairs, in order.
+fn platforms(body: &str) -> Vec<(String, String)> {
+    let mut found: Vec<(String, String)> = Vec::new();
+    for line in body.lines().map(str::trim) {
+        if let Some(os) = line.strip_prefix("- os: ") {
+            found.push((os.to_owned(), String::new()));
+        } else if let Some(target) = line.strip_prefix("target: ")
+            && let Some(last) = found.last_mut()
+        {
+            target.clone_into(&mut last.1);
+        }
+    }
+    found
+}
+
+#[test]
+fn every_platform_the_release_archives_on_installs_from_its_archive_on_every_pull_request() {
+    let released = platforms(&job_of("release.yml", "artifacts"));
+    assert_eq!(
+        released.len(),
+        3,
+        "the release builds an archive on three platforms: {released:?}"
+    );
+    let installed = job_of("ci.yml", "package-install");
+    assert_eq!(
+        platforms(&installed),
+        released,
+        "package-install builds, unpacks and runs the archive for exactly the platforms and \
+         targets the release builds one for, so a release is never the first time an archive \
+         of a platform is made or run"
+    );
+    for held in [
+        "runs-on: ${{ matrix.os }}",
+        "fail-fast: false",
+        "NJUTEST_BUNDLE_TARGET: ${{ matrix.target }}",
+        "run: mise run package",
+    ] {
+        assert!(
+            installed.contains(held),
+            "package-install is a matrix whose every platform answers for itself, and each \
+             bundles its own target through the task a developer runs ({held:?}): {installed}"
+        );
+    }
+    let releasing: Vec<&str> = [
+        "gh release",
+        "git tag",
+        "git push",
+        "cargo publish",
+        "gh workflow",
+        "permissions:",
+    ]
+    .into_iter()
+    .filter(|operation| installed.contains(operation))
+    .collect();
+    assert!(
+        releasing.is_empty(),
+        "package-install checks what a release would publish and publishes nothing: it tags, \
+         pushes, dispatches and is granted nothing ({releasing:?})"
+    );
+}
+
 #[test]
 fn the_real_kani_job_installs_one_exact_locked_version() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))

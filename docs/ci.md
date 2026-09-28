@@ -40,7 +40,7 @@ To diagnose a run that only misbehaves on the runner, set `NJUTEST_TRACE: '1'` o
 
 | Workflow | Jobs | When |
 | --- | --- | --- |
-| `ci.yml` | the cross-platform test matrix, lint (fmt, clippy, rustdoc, the `cargo xtask` gates, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, the coverage ratchet which is also the Linux suite, the `book` build, `soundness`, `action-smoke`, `action-smoke-rust-mutants`, and `required` which gathers them | every pull request, weekly on `main`, and on request |
+| `ci.yml` | the cross-platform test matrix, lint (fmt, clippy, rustdoc, the `cargo xtask` gates, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, the coverage ratchet which is also the Linux suite, `package-install` on every platform the release builds an archive for, the `book` build, `soundness`, `action-smoke`, `action-smoke-rust-mutants`, and `required` which gathers them | every pull request, weekly on `main`, and on request |
 | `main.yml` | `tested-tree` proves that the tree a push to `main` brings is the tree a pull request head passed `required` with | every push to `main` |
 | `mutation.yml` | `whole` runs `cargo-mutants` over the workspace | weekly, and on request |
 | `dogfood.yml` | `whole` runs the engine over its own catalog in one job through the `rust-mutants` action, checks the recording, and re-decides the run against the ledger | weekly, and on request |
@@ -59,6 +59,11 @@ The whole of `ci.yml` still runs on `main` weekly, where a runner image can chan
 Within a pull request's run, each row answers for something no other row does.
 Linux runs the whole suite once, instrumented, in `coverage`, which has to run all of it to measure it; the uninstrumented Linux row it replaced asked the same questions again.
 `macos-15` is there for its kernel, where `proc_listpgrppids` reports an empty process group after a timeout, so on a pull request it runs the in-process suite and the suites that drive a real cargo and answer with a process group, a signal, a crash, a durable write or a schedule; weekly it runs everything.
+
+`package-install` runs `mise run package` on each platform and target `release.yml` builds an archive for, and `cargo test -p xtask --test suite workflows::` holds the two matrices equal.
+It packages every publishable member, builds the archive a release would publish with `cargo xtask bundle`, and installs both products with `cargo install` from that same build.
+Then it unpacks the archive with the platform's own `tar`, asks every binary in it its version, and runs the unpacked `rust-mutants run` and `njutest verify` over a copy of `fixture-assured`.
+It tags, publishes, and dispatches nothing, so a release is never the first time an archive of a platform is built, unpacked, or run.
 
 The `book` job builds `docs/` with mdbook, which refuses a summary that names a page the repository does not hold; `cargo test -p xtask --test suite docs::` refuses the other direction, a page the summary does not name.
 A page that neither side notices is one a reader of the book cannot reach.
@@ -207,4 +212,5 @@ A job that built the commit under test, restored a cached binary, or installed f
 That is also what makes the action testable here.
 `action-smoke` builds this workspace's own `njutest`, puts it on the path, and runs the action against `fixtures/fixture-assured` the way another repository would, checking that the `verdict` output is the one the run reached and that every other output names a file that exists, so an output added later is held to the same check.
 `action-smoke-rust-mutants` does the same for `.github/actions/rust-mutants`, over a tree whose tests notice every mutant, which must say `detected` and pass, and over one that leaves a finding, which must say `found` and fail the step.
-What it does not exercise is the install itself, which needs a published release; until there is one, that step is checked by reading.
+What it does not exercise is the download itself, which needs a published release.
+Everything the download would bring is exercised: `package-install` builds the archive on every platform, unpacks it, and runs what it holds, and `cargo xtask bundle` refuses an archive whose paths are not the ones binstall reads.

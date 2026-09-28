@@ -172,6 +172,9 @@ wasmtime = { version = "=48.0.3", default-features = false, features = [
   "std",
 ] }
 wasmparser = "=0.254.0"
+# The release archive, written by the tooling itself so every platform writes the same bytes.
+flate2 = "1.1"
+tar = { version = "0.4", default-features = false }
 
 # Test-only.
 tempfile = "3.27"

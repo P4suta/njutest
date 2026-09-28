@@ -208,7 +208,10 @@ fn expected_ci_steps(job: &str) -> Vec<(&'static str, CiCommand)> {
         ],
         "package-install" => vec![
             ("Fetch the locked dependency graph", fetch),
-            ("Package and install both CLIs", Task("package")),
+            (
+                "Package both CLIs, install them, and run them from the archive a release would publish",
+                Task("package"),
+            ),
         ],
         "book" => vec![(
             "build the book, which refuses a summary naming a page nobody holds",
@@ -402,13 +405,26 @@ fn package_install_deny_and_typos_are_exact_local_ci_pairs() {
         "cargo njutest --version",
         "cargo rust-mutants --version",
         "cargo xtask sbom",
+        "target=\"${NJUTEST_BUNDLE_TARGET:-$(rustc --print host-tuple)}\"",
+        "cargo xtask bundle --target \"${target}\" --out \"$install_root/dist\"",
+        "tar -xzf \"$install_root/dist/\"*.tar.gz -C \"$install_root/unpacked\"",
+        "\"$program\" --version",
+        "cp rust-toolchain.toml \"$install_root/assured/\"",
+        "\"$bundle/rust-mutants\" run --root \"$install_root/assured\" --offline --locked --no-cache",
+        "\"$bundle/njutest\" verify --directory \"$install_root/assured\" --offline --locked --no-cache --ui=plain",
     ] {
         assert!(
             package.contains(held),
             "the local package-install proof is missing {held:?}: {package}"
         );
     }
-    for forbidden in ["cargo publish", "gh release"] {
+    for forbidden in [
+        "cargo publish",
+        "gh release",
+        "git tag",
+        "git push",
+        "gh workflow",
+    ] {
         assert!(
             !package.contains(forbidden),
             "an ordinary package check performs a release operation {forbidden:?}: {package}"

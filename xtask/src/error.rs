@@ -152,6 +152,14 @@ pub enum XtCode {
     DiffUnreadable,
     /// The bill of materials could not be made.
     SbomMetadata,
+    /// The shipped manifests do not describe one archive binstall can read.
+    BundleManifest,
+    /// A shipped binary could not be described, built, or run.
+    BundleUnbuilt,
+    /// A shipped binary did not say the version its archive is named for.
+    BundleVersion,
+    /// The archive could not be written, or did not read back as planned.
+    BundleUnwritten,
 }
 
 impl XtCode {
@@ -545,6 +553,26 @@ impl XtCode {
                 "XT7002",
                 "`cargo metadata` could not be read into a bill of materials.",
                 "run `cargo metadata --locked` and fix what it says",
+            ),
+            Self::BundleManifest => (
+                "XT7003",
+                "The manifests of the packages that publish binaries do not describe one archive `cargo binstall` can read: a package names no `[package.metadata.binstall]`, a key, a format or a template variable `bundle` does not fill, an archive another package does not name, or puts a binary outside the archive, on another entry, or in a second directory.",
+                "fix the manifest the message names; the archive is what the manifests say, so no list elsewhere needs changing",
+            ),
+            Self::BundleUnbuilt => (
+                "XT7004",
+                "cargo could not describe the workspace or build a shipped binary for the target, did not report exactly the binaries the manifests declare, or a program `bundle` runs could not be started.",
+                "read cargo's own output above; a target this machine has no standard library for needs `rustup target add` first",
+            ),
+            Self::BundleVersion => (
+                "XT7005",
+                "A built binary did not name the version of its package when asked `--version`, so the archive would be named for a version its contents do not say.",
+                "make the binary report its package's version; nothing is written until every binary does",
+            ),
+            Self::BundleUnwritten => (
+                "XT7006",
+                "The archive or its checksum could not be written, a file it holds could not be read, or the archive read back is not exactly what was planned.",
+                "check the output directory is writable and read what the message names; nothing is written under the archive's name until it reads back as planned",
             ),
         }
     }

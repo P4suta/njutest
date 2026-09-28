@@ -39,7 +39,8 @@ jobs:
           ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
-      - name: The tag, the manifests, and the binaries must name one version
+      # Whether each binary says the version is asked where each binary is built: `cargo xtask bundle` refuses one that does not, on every platform.
+      - name: The tag and the manifests must name one version
         id: version
         env:
           TAG: ${{ inputs.tag || github.ref_name }}
@@ -51,14 +52,6 @@ jobs:
             echo "the tag ${TAG} does not name version ${version}" >&2
             exit 1
           fi
-          cargo build --locked --release --workspace
-          for binary in njutest cargo-njutest rust-mutants cargo-rust-mutants; do
-            said="$("target/release/${binary}" --version)"
-            case "${said}" in
-              *"${version}"*) ;;
-              *) echo "${binary} --version says ${said}, not ${version}" >&2; exit 1 ;;
-            esac
-          done
           echo "version=${version}" >>"$GITHUB_OUTPUT"
 
   artifacts:
@@ -82,28 +75,11 @@ jobs:
           ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
-      - name: Build the release binaries
-        shell: bash
-        run: cargo build --locked --release --workspace
-      - name: Bundle them
-        shell: bash
+      # Which binaries, where each goes, and what goes beside them are what the manifests say, read by the one command; this workflow names none of them.
+      - name: Build the binaries the manifests declare and bundle them where binstall reads them
         env:
           TARGET: ${{ matrix.target }}
-          VERSION: ${{ needs.check.outputs.version }}
-        run: |
-          set -euo pipefail
-          name="njutest-${VERSION}-${TARGET}"
-          mkdir -p "dist/${name}"
-          for binary in njutest cargo-njutest rust-mutants cargo-rust-mutants; do
-            if [ -f "target/release/${binary}.exe" ]; then
-              cp "target/release/${binary}.exe" "dist/${name}/"
-            else
-              cp "target/release/${binary}" "dist/${name}/"
-            fi
-          done
-          cp LICENSE-MIT LICENSE-APACHE README.md "dist/${name}/"
-          (cd dist && tar --create --gzip --file "${name}.tar.gz" "${name}")
-          (cd dist && shasum --algorithm 256 "${name}.tar.gz" > "${name}.tar.gz.sha256")
+        run: cargo xtask bundle --target "${TARGET}" --out dist
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist-${{ matrix.target }}

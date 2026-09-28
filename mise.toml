@@ -208,8 +208,11 @@ cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-f
 cargo xtask coverage-ratchet
 """
 
+# The archive is built for `NJUTEST_BUNDLE_TARGET`, which CI sets to the target its row of the matrix is, and for this machine's own target where nothing sets it.
+# `cargo install` takes the same target so it reuses the build the archive was made from, and each platform compiles both products once.
+# What runs from the archive runs in a copy of a fixture pinned to this repository's toolchain, with a temporary directory of its own, so the task leaves nothing behind.
 [tasks.package]
-description = "Package every publishable member, install both CLIs, and write what a release would say it is made of"
+description = "Package every publishable member, install both CLIs, build the release archive for this platform and run what it unpacks to, and write what a release would say it is made of"
 shell = "bash -c"
 run = """
 set -euo pipefail
@@ -217,13 +220,30 @@ install_root="$(mktemp -d "${TMPDIR:-/tmp}/njutest-package-install.XXXXXX")"
 cleanup() { rm -rf -- "$install_root"; }
 trap cleanup EXIT HUP INT TERM
 export CARGO_TARGET_DIR="$install_root/target"
+target="${NJUTEST_BUNDLE_TARGET:-$(rustc --print host-tuple)}"
 cargo package --locked --workspace --no-verify --allow-dirty --exclude-lockfile
-cargo install --locked --path crates/njutest --root "$install_root"
-cargo install --locked --path crates/rust-mutants-cli --root "$install_root"
+cargo xtask bundle --target "${target}" --out "$install_root/dist"
+cargo install --locked --path crates/njutest --root "$install_root" --target "${target}"
+cargo install --locked --path crates/rust-mutants-cli --root "$install_root" --target "${target}"
 "$install_root/bin/njutest" --version
 "$install_root/bin/rust-mutants" --version
 PATH="$install_root/bin:$PATH" cargo njutest --version
 PATH="$install_root/bin:$PATH" cargo rust-mutants --version
+mkdir "$install_root/unpacked"
+tar -xzf "$install_root/dist/"*.tar.gz -C "$install_root/unpacked"
+set -- "$install_root"/unpacked/*/
+[ "$#" -eq 1 ] || { echo "package: the archive unpacked into $# directories, not one" >&2; exit 1; }
+bundle="${1%/}"
+for program in "$bundle"/*; do
+  [ -x "$program" ] || continue
+  "$program" --version
+done
+cp -R fixtures/fixture-assured "$install_root/assured"
+cp rust-toolchain.toml "$install_root/assured/"
+mkdir "$install_root/tmp"
+export TMPDIR="$install_root/tmp" TMP="$install_root/tmp" TEMP="$install_root/tmp"
+"$bundle/rust-mutants" run --root "$install_root/assured" --offline --locked --no-cache
+"$bundle/njutest" verify --directory "$install_root/assured" --offline --locked --no-cache --ui=plain
 cargo xtask sbom --output "$install_root/njutest.cdx.json"
 """
 

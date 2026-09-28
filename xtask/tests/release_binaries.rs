@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The binaries the workspace declares, against the three places that decide what a person can install.
+//! The binaries the workspace declares, against what decides what a person can install: the one command that bundles them, and where binstall fetches the bundle.
 
 #![expect(
     clippy::panic,
@@ -64,51 +64,56 @@ fn declared() -> Vec<(String, BTreeSet<String>)> {
     found
 }
 
-/// The binaries one `for binary in ...; do` of the release workflow names.
-fn listed(after: &str) -> BTreeSet<String> {
+/// The body of the release workflow's job `name`, up to the next job.
+fn release_job(name: &str) -> String {
     let workflow = read(".github/workflows/release.yml");
+    let header = format!("\n  {name}:\n");
     let at = workflow
-        .find(after)
-        .unwrap_or_else(|| panic!("release.yml no longer holds {after:?}"));
-    let rest = workflow.get(at..).unwrap_or_default();
-    let start = rest
-        .find("for binary in ")
-        .unwrap_or_else(|| panic!("no binary list after {after:?}"));
-    let line = rest
-        .get(start..)
-        .and_then(|from| from.split('\n').next())
+        .find(&header)
+        .unwrap_or_else(|| panic!("release.yml has no job {name}"));
+    let body = workflow
+        .get(at.saturating_add(header.len())..)
         .unwrap_or_default();
-    line.trim_start_matches("for binary in ")
-        .trim_end_matches("; do")
-        .split_whitespace()
-        .map(ToOwned::to_owned)
-        .collect()
+    let end = body
+        .lines()
+        .take_while(|line| line.is_empty() || line.starts_with("   "))
+        .map(|line| line.len().saturating_add(1))
+        .sum::<usize>()
+        .min(body.len());
+    body.get(..end).unwrap_or_default().to_owned()
 }
 
 #[test]
-fn every_binary_the_workspace_declares_is_one_the_release_bundles_and_checks() {
-    let every: BTreeSet<String> = declared()
-        .into_iter()
-        .flat_map(|(_member, names)| names)
-        .collect();
+fn the_release_decides_what_it_holds_only_by_the_command_that_reads_the_manifests() {
+    let workflow = read(".github/workflows/release.yml");
+    let hand_kept: Vec<&str> = [
+        "for binary in",
+        "target/release",
+        "cargo build",
+        "cp LICENSE",
+        "tar --create",
+        "shasum",
+    ]
+    .into_iter()
+    .filter(|spelling| workflow.contains(spelling))
+    .collect();
     assert!(
-        every.len() >= 4,
-        "two products, each with its own name and the name cargo looks for: {every:?}"
+        hand_kept.is_empty(),
+        "release.yml decides by itself what the release holds ({hand_kept:?}): which \
+         binaries, where each goes, and what goes beside them are what the manifests \
+         declare and `cargo xtask bundle` reads, and a second list in the workflow is \
+         one that drifts from them"
     );
-
-    for (what, after) in [
-        (
-            "the version check",
-            "The tag, the manifests, and the binaries",
-        ),
-        ("the archive", "Bundle them"),
+    let artifacts = release_job("artifacts");
+    for held in [
+        "TARGET: ${{ matrix.target }}",
+        "run: cargo xtask bundle --target \"${TARGET}\" --out dist",
+        "path: dist/*.tar.gz*",
     ] {
-        assert_eq!(
-            listed(after),
-            every,
-            "{what} names a different set of binaries than the manifests declare: a \
-             binary that is built and not bundled is one `cargo binstall` looks for in \
-             an archive that does not carry it"
+        assert!(
+            artifacts.contains(held),
+            "the artifacts job bundles each target with the one command and uploads the \
+             archive and its checksum it wrote ({held:?}): {artifacts}"
         );
     }
 }
@@ -130,14 +135,17 @@ fn both_products_answer_to_the_name_cargo_looks_for() {
 }
 
 #[test]
-fn what_binstall_looks_in_is_the_archive_the_release_builds() {
-    let archive = {
-        let workflow = read(".github/workflows/release.yml");
-        let at = workflow
-            .find("name=\"njutest-${VERSION}-${TARGET}\"")
-            .map(|_found| "njutest-{ version }-{ target }");
-        at.unwrap_or_else(|| panic!("release.yml no longer names the archive it builds"))
-    };
+fn binstall_fetches_the_archive_from_the_release_its_tag_names() {
+    let check = release_job("check");
+    assert!(
+        check.contains("if [ \"v${version}\" != \"${TAG}\" ]; then"),
+        "the release refuses a tag that does not name the manifests' version: {check}"
+    );
+    let publish = release_job("publish");
+    assert!(
+        publish.contains("gh release create \"${TAG}\"") && publish.contains("dist/*"),
+        "and publishes what it built to the release that tag names: {publish}"
+    );
     for member in shipped() {
         let manifest = read(&format!("{member}/Cargo.toml"));
         let stanza = manifest
@@ -149,19 +157,15 @@ fn what_binstall_looks_in_is_the_archive_the_release_builds() {
                      compiles the workspace instead of taking what the release published"
                 )
             });
-        let directory = stanza
+        let url = stanza
             .lines()
-            .find_map(|line| line.strip_prefix("bin-dir = \""))
-            .and_then(|value| value.split('/').next())
-            .unwrap_or_else(|| panic!("{member} binstall stanza names no bin-dir"));
-        assert_eq!(
-            directory, archive,
-            "{member} tells binstall to look in a directory the release does not build, \
-             so the install fails on a URL nobody will think to check"
-        );
+            .find_map(|line| line.strip_prefix("pkg-url = \""))
+            .unwrap_or_else(|| panic!("{member} binstall stanza names no pkg-url"));
         assert!(
-            stanza.contains(&format!("/{archive}.tar.gz\"")),
-            "and at an archive it does build: {stanza}"
+            url.starts_with("{ repo }/releases/download/v{ version }/"),
+            "{member} tells binstall to fetch from somewhere other than the release its \
+             version's tag publishes, so the install fails on a URL nobody will think to \
+             check: {url}"
         );
     }
 }

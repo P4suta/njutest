@@ -167,7 +167,7 @@ The first digit names an area; `RS` and `XT` say what theirs are at the head of 
 
 `cargo xtask` prints a failure as its code, a colon, then what it says.
 A gate that refused because of another coded failure prints both: `XT0001` for the refusal, then the cause's code.
-The first digit names an area: 0 the gates, their ledgers, and what runs them (the pre-push gate, the lanes, the other machines), 1 fixtures, 2 `proofaudit`, 3 `engine-audit`, 4 Kani and the model evidence, 5 audit specimens and lint sentinels, 6 identities and recordings, 7 `report-diff` and the bill of materials.
+The first digit names an area: 0 the gates, their ledgers, and what runs them (the pre-push gate, the lanes, the other machines), 1 fixtures, 2 `proofaudit`, 3 `engine-audit`, 4 Kani and the model evidence, 5 audit specimens and lint sentinels, 6 identities and recordings, 7 `report-diff`, the bill of materials, and the release bundle.
 
 | Code | Meaning | Remedy |
 | --- | --- | --- |
@@ -244,6 +244,10 @@ The first digit names an area: 0 the gates, their ledgers, and what runs them (t
 | `XT6004` | A line of a recording passed its producer's schema and still lacks a field a reader of this audit reads, so the schema and the reader disagree. | report it; either the schema should require the field or the reader should not demand it |
 | `XT7001` | A report given to `report-diff` is not one this version understands. | give it two reports this release wrote |
 | `XT7002` | `cargo metadata` could not be read into a bill of materials. | run `cargo metadata --locked` and fix what it says |
+| `XT7003` | The manifests of the packages that publish binaries do not describe one archive `cargo binstall` can read: a package names no `[package.metadata.binstall]`, a key, a format or a template variable `bundle` does not fill, an archive another package does not name, or puts a binary outside the archive, on another entry, or in a second directory. | fix the manifest the message names; the archive is what the manifests say, so no list elsewhere needs changing |
+| `XT7004` | cargo could not describe the workspace or build a shipped binary for the target, did not report exactly the binaries the manifests declare, or a program `bundle` runs could not be started. | read cargo's own output above; a target this machine has no standard library for needs `rustup target add` first |
+| `XT7005` | A built binary did not name the version of its package when asked `--version`, so the archive would be named for a version its contents do not say. | make the binary report its package's version; nothing is written until every binary does |
+| `XT7006` | The archive or its checksum could not be written, a file it holds could not be read, or the archive read back is not exactly what was planned. | check the output directory is writable and read what the message names; nothing is written under the archive's name until it reads back as planned |
 
 ## rust-mutants-sealed
 

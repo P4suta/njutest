@@ -260,9 +260,25 @@ jobs:
         run: cargo test --locked --workspace --all-features --doc
 
   package-install:
-    name: package-install
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    name: package-install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Each row compiles both products once in release, which no other job does, and a hosted Windows runner is the slowest of the three at it.
+    timeout-minutes: 60
+    strategy:
+      # Each platform answers for itself, as in `test`.
+      fail-fast: false
+      # The platforms and targets `release.yml` builds an archive for, held equal by `cargo test -p xtask --test suite workflows::`.
+      # A release is then never the first time an archive of a platform is built, unpacked, or run.
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-26
+            target: aarch64-apple-darwin
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+    env:
+      NJUTEST_BUNDLE_TARGET: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -274,7 +290,7 @@ jobs:
         run: |
           cargo fetch --locked
           cargo fetch --locked --manifest-path fuzz/Cargo.toml
-      - name: Package and install both CLIs
+      - name: Package both CLIs, install them, and run them from the archive a release would publish
         run: mise run package
 
   book:
