@@ -693,10 +693,11 @@ fn backend_of(document: &Document) -> Backend {
 
 fn read(run: &Path, artifact: &Artifact) -> Result<Vec<u8>, ModelAuditError> {
     let relative = resolved_artifact(run, artifact)?;
-    let mut file = open_confined(run, &relative).map_err(|error| ModelAuditError::Artifact {
-        path: artifact.path.clone(),
-        detail: error.to_string(),
-    })?;
+    let mut file =
+        crate::confined::open(run, &relative).map_err(|error| ModelAuditError::Artifact {
+            path: artifact.path.clone(),
+            detail: error.to_string(),
+        })?;
     let before = file.metadata().map_err(|error| ModelAuditError::Artifact {
         path: artifact.path.clone(),
         detail: error.to_string(),
@@ -806,102 +807,6 @@ fn validate_read_artifact(
         });
     }
     Ok(())
-}
-
-#[cfg(unix)]
-fn open_confined(run: &Path, relative: &Path) -> std::io::Result<std::fs::File> {
-    use rustix::fs::{Mode, OFlags};
-
-    let mut directory = rustix::fs::open(
-        run,
-        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY | OFlags::NOFOLLOW,
-        Mode::empty(),
-    )?;
-    let mut components = relative.components().peekable();
-    while let Some(component) = components.next() {
-        let Component::Normal(name) = component else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "retained artifact path is not canonical",
-            ));
-        };
-        if components.peek().is_some() {
-            directory = rustix::fs::openat(
-                &directory,
-                name,
-                OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY | OFlags::NOFOLLOW,
-                Mode::empty(),
-            )?;
-            continue;
-        }
-        let descriptor = rustix::fs::openat(
-            &directory,
-            name,
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
-            Mode::empty(),
-        )?;
-        return Ok(std::fs::File::from(descriptor));
-    }
-    Err(std::io::Error::new(
-        std::io::ErrorKind::InvalidInput,
-        "retained artifact path is empty",
-    ))
-}
-
-#[cfg(windows)]
-fn open_confined(run: &Path, relative: &Path) -> std::io::Result<std::fs::File> {
-    use std::os::windows::fs::{MetadataExt as _, OpenOptionsExt as _};
-
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-
-    let mut path = run.to_path_buf();
-    let mut components = relative.components().peekable();
-    while let Some(component) = components.next() {
-        let Component::Normal(name) = component else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "retained artifact path is not canonical",
-            ));
-        };
-        path.push(name);
-        let metadata = std::fs::symlink_metadata(&path)?;
-        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-            || (components.peek().is_some() && !metadata.file_type().is_dir())
-            || (components.peek().is_none() && !metadata.file_type().is_file())
-        {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "retained artifact path crosses a reparse point or non-file entry",
-            ));
-        }
-    }
-    std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-        .open(path)
-}
-
-#[cfg(not(any(unix, windows)))]
-fn open_confined(run: &Path, relative: &Path) -> std::io::Result<std::fs::File> {
-    let mut path = run.to_path_buf();
-    for component in relative.components() {
-        let Component::Normal(name) = component else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "retained artifact path is not canonical",
-            ));
-        };
-        path.push(name);
-        let metadata = std::fs::symlink_metadata(&path)?;
-        if metadata.file_type().is_symlink() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "retained artifact path crosses a symlink",
-            ));
-        }
-    }
-    std::fs::File::open(path)
 }
 
 fn digest(bytes: &[u8]) -> String {

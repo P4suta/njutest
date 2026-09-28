@@ -2652,7 +2652,10 @@ fn assurance_document(path: &Path) -> Result<AssuranceDocument, proofaudit::Audi
     })
 }
 
-/// What the recording kept of each interpreter run in the runner's recording `text`, read from beside it in `directory` and held to the size and digest its exec record gives; a copy that is cut, missing, or unreadable is left out, which the audit says it could not re-derive.
+/// The most a kept output holds: the runner keeps the first mebibyte of what a command printed, and says when it cut it.
+const KEPT_OUTPUT_LIMIT: u64 = 1 << 20;
+
+/// What the recording kept of each interpreter run in the runner's recording `text`, by the path its exec record names, each read by [`kept_output`] or said to be unread and why.
 fn kept_outputs(directory: &Path, text: &str) -> Vec<(String, proofaudit::soundness::Kept)> {
     let mut kept = Vec::new();
     for line in text.lines() {
@@ -2670,22 +2673,54 @@ fn kept_outputs(directory: &Path, text: &str) -> Vec<(String, proofaudit::soundn
         {
             continue;
         }
-        if exec
-            .get("output_truncated")
-            .and_then(serde_json::Value::as_bool)
-            != Some(false)
-        {
-            continue;
-        }
-        let Some(relative) = exec.get("output_path").and_then(serde_json::Value::as_str) else {
+        let Some(named) = exec.get("output_path").and_then(serde_json::Value::as_str) else {
             continue;
         };
-        match std::fs::read(directory.join(relative)) {
-            Ok(bytes) => kept.push((relative.to_owned(), held_to(exec, bytes))),
-            Err(_not_kept) => {}
-        }
+        kept.push((named.to_owned(), kept_output(directory, &event, named)));
     }
     kept
+}
+
+/// The copy the recording in `directory` kept of what the exec `event` printed, read only where the runner writes one, `output/<its sequence number>.txt`, whole, bounded, without following a link, and held to the size and digest its record gives.
+fn kept_output(
+    directory: &Path,
+    event: &serde_json::Value,
+    named: &str,
+) -> proofaudit::soundness::Kept {
+    use proofaudit::soundness::Kept;
+
+    let Some(seq) = event.get("seq").and_then(serde_json::Value::as_u64) else {
+        return Kept::Unread {
+            why: "its event carries no sequence number to find the copy by".to_owned(),
+        };
+    };
+    let expected = format!("output/{seq}.txt");
+    if named != expected {
+        return Kept::Unread {
+            why: format!("the recording names it {named:?}, and the runner keeps it at {expected}"),
+        };
+    }
+    let Some(exec) = event.pointer("/payload/exec") else {
+        return Kept::Unread {
+            why: "its event is not an exec record".to_owned(),
+        };
+    };
+    if exec
+        .get("output_truncated")
+        .and_then(serde_json::Value::as_bool)
+        != Some(false)
+    {
+        return Kept::Unread {
+            why: format!("the runner kept only the head of it at {expected}"),
+        };
+    }
+    let relative = Path::new("output").join(format!("{seq}.txt"));
+    match crate::confined::read(directory, &relative, KEPT_OUTPUT_LIMIT) {
+        Ok(bytes) => held_to(exec, bytes),
+        Err(error) => Kept::Unread {
+            why: format!("{expected} could not be read whole: {error}"),
+        },
+    }
 }
 
 /// A kept output held to the size and digest `exec` gives it.

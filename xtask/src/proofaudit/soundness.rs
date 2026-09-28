@@ -52,6 +52,11 @@ pub enum Kept {
     Mismatched,
     /// The copy is the output the record describes, and it is not text.
     NotText,
+    /// There is no copy the audit may read: none was kept, it is not where the runner keeps one, it was cut, or it could not be read whole and in bounds.
+    Unread {
+        /// Which, in words.
+        why: String,
+    },
 }
 
 /// One recorded run of a program, and what it said where the recording kept it.
@@ -201,8 +206,7 @@ fn probed(asked: Said<'_>) -> Probed {
         Some(0) | None => Probed::Unsaid,
         Some(_) => match asked.output {
             Some(Kept::Whole(said)) => said_absent(said),
-            Some(Kept::Mismatched | Kept::NotText) => Probed::Unread,
-            None if asked.exec.get("output_path").is_some_and(Value::is_string) => Probed::Unread,
+            Some(Kept::Mismatched | Kept::NotText | Kept::Unread { .. }) => Probed::Unread,
             None => Probed::Unsaid,
         },
     }
@@ -414,12 +418,22 @@ pub(super) fn audited(
         );
         return notes.looked();
     };
-    let said = |exec: &Value| -> Option<&Kept> {
-        let kept = field(exec, "output_path")?;
-        outputs
-            .iter()
-            .find(|(path, _kept)| *path == kept)
-            .map(|(_path, kept)| kept)
+    let said = |exec: &Value| -> Kept {
+        let Some(named) = field(exec, "output_path") else {
+            return if exec.get("output_bytes").and_then(Value::as_u64) == Some(0) {
+                Kept::Whole(String::new())
+            } else {
+                Kept::Unread {
+                    why: "the recording kept no copy of what it printed".to_owned(),
+                }
+            };
+        };
+        match outputs.iter().find(|(path, _kept)| *path == named) {
+            Some((_path, kept)) => kept.clone(),
+            None => Kept::Unread {
+                why: format!("the recording kept no copy at {named}"),
+            },
+        }
     };
     let runs: Vec<&Value> = execs.iter().filter(|exec| interprets(exec)).collect();
     let probe = execs.iter().find(|exec| asks_for_the_interpreter(exec));
@@ -427,7 +441,7 @@ pub(super) fn audited(
         [] => never_ran(&reported, &mut notes),
         [one] => {
             let output = said(one);
-            if output == Some(&Kept::Mismatched) {
+            if output == Kept::Mismatched {
                 notes.violated(
                     "soundness",
                     "the output the recording kept of the interpreter's run is not the output its \
@@ -436,17 +450,22 @@ pub(super) fn audited(
                 );
                 return notes.looked();
             }
-            let asked = probe.map(|asked| Said {
+            let answered = probe.map(|asked| (asked, said(asked)));
+            let asked = answered.as_ref().map(|(asked, output)| Said {
                 exec: asked,
-                output: said(asked),
+                output: Some(output),
             });
-            match came(Said { exec: one, output }, asked) {
+            match came(
+                Said {
+                    exec: one,
+                    output: Some(&output),
+                },
+                asked,
+            ) {
                 Some(derived) => compared(&reported, derived, &mut notes),
                 None => notes.unaudited(
                     "soundness",
-                    "what the interpreter said was not kept whole, so what it came to cannot be \
-                     re-derived"
-                        .to_owned(),
+                    unread(&output, answered.as_ref().map(|(_asked, output)| output)),
                 ),
             }
         }
@@ -460,6 +479,25 @@ pub(super) fn audited(
         ),
     }
     notes.looked()
+}
+
+/// Why what the interpretation said, `run`, or the toolchain's answer to it, `probe`, could not be read to re-derive what it came to.
+fn unread(run: &Kept, probe: Option<&Kept>) -> String {
+    let (whose, kept) = match run {
+        Kept::Whole(_) => ("the toolchain's answer about its interpreter", probe),
+        Kept::Mismatched | Kept::NotText | Kept::Unread { .. } => {
+            ("what the interpreter said", Some(run))
+        }
+    };
+    let why = match kept {
+        Some(Kept::Unread { why }) => why.clone(),
+        Some(Kept::NotText) => "it is not text".to_owned(),
+        Some(Kept::Mismatched) => "it is not the output its exec record describes".to_owned(),
+        Some(Kept::Whole(_)) | None => "it was not kept whole".to_owned(),
+    };
+    format!(
+        "{whose} was not read, because {why}, so what the interpreter came to cannot be re-derived"
+    )
 }
 
 /// What a report says about whether the suite was interpreted.

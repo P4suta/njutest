@@ -3701,6 +3701,97 @@ fn every_layer_the_audit_re_decides_is_one_the_development_guide_names() {
     );
 }
 
+/// What an interpreter run printed where its one test failed.
+const FAILED_UNDER_MIRI: &str = "     Running unittests src/lib.rs (x)\n\nrunning 1 test\ntest t ... FAILED\n\nfailures:\n\n---- t stdout ----\nboom\n\nfailures:\n    t\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
+
+/// A recorded run of the interpreter, the hundredth event of its recording, that exited 101 having said `said`, with its copy named at `output_path`.
+fn failed_under_miri(said: &str, output_path: &str) -> serde_json::Value {
+    use sha2::Digest as _;
+    serde_json::json!({
+        "seq": 100,
+        "type": "exec",
+        "exec": {
+            "argv": ["cargo", "+nightly", "miri", "test", "--workspace"],
+            "dir": null, "env_names": [], "timeout_ms": null,
+            "stopped": { "kind": "exited", "exit": { "kind": "code", "value": 101 } },
+            "duration_ms": 1, "output_bytes": said.len(),
+            "output_sha256": hex::encode(sha2::Sha256::digest(said.as_bytes())),
+            "output_truncated": false, "output_path": output_path, "error": null
+        }
+    })
+}
+
+/// The soundness remarks an audit of a run whose report says a test failed under the interpreter makes, where the recording holds `exec` and `lay` puts its copy in place.
+fn soundness_remarks(
+    exec: serde_json::Value,
+    lay: impl FnOnce(&Path),
+) -> Vec<xtask::proofaudit::Remark> {
+    let mut events = routes();
+    events.push(exec);
+    let laid = sentinel::Perturbation {
+        name: "a test failing under the interpreter",
+        document: with(serde_json::json!({
+            "accounting": { "soundness": { "executed": true } },
+            "findings": [{}, {
+                "kind": "failing-test",
+                "subject": "soundness",
+                "detail": "a test fails under the interpreter that passes without it",
+                "position": null
+            }]
+        })),
+        events: Some(events),
+        ..sentinel::clean()
+    }
+    .lay()
+    .expect("the specimen is laid out");
+    lay(laid.trace().expect("the specimen keeps a recording"));
+    gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        .expect("the specimen is read")
+        .remarks
+        .into_iter()
+        .filter(|remark| remark.layer == Layer::Soundness)
+        .collect()
+}
+
+#[test]
+fn a_kept_output_named_outside_the_recording_is_not_read() {
+    let outside = tempfile::tempdir().expect("a directory outside the recording");
+    let said = outside.path().join("said.txt");
+    std::fs::write(&said, FAILED_UNDER_MIRI).expect("the copy outside the recording");
+    let remarks = soundness_remarks(
+        failed_under_miri(FAILED_UNDER_MIRI, said.to_str().expect("a UTF-8 path")),
+        |_trace| {},
+    );
+    assert!(
+        remarks
+            .iter()
+            .any(|remark| remark.standing == Standing::Unaudited
+                && remark.detail.contains("output/100.txt")),
+        "the runner keeps what a command printed at output/<its sequence number>.txt inside the \
+         recording, so a copy named anywhere else is not one the audit reads, and what it \
+         cannot read it does not re-derive: {remarks:#?}"
+    );
+}
+
+#[test]
+fn a_kept_output_larger_than_the_runner_keeps_is_not_read_whole() {
+    let mut said = String::from(FAILED_UNDER_MIRI);
+    said.push_str(&"\n".repeat(1 << 20));
+    let remarks = soundness_remarks(failed_under_miri(&said, "output/100.txt"), |trace| {
+        let output = trace.join("output");
+        std::fs::create_dir_all(&output).expect("the recording's output directory");
+        std::fs::write(output.join("100.txt"), &said).expect("the oversized copy");
+    });
+    assert!(
+        remarks.iter().any(
+            |remark| remark.standing == Standing::Unaudited && remark.detail.contains("larger")
+        ),
+        "the runner keeps the first mebibyte of what a command printed and says when it cut it, \
+         so a whole copy larger than that is not one it wrote, and it is not read unbounded: \
+         {remarks:#?}"
+    );
+}
+
 /// Every published schema, compiled.
 fn checkers() -> xtask::schemas::Checkers {
     xtask::schemas::Checkers::compiled().expect("the published schemas compile")
