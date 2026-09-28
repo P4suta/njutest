@@ -352,10 +352,13 @@ fn baseline_of(result: &MutantResult, home: execute::Home) -> Result<Baseline, S
         ),
         crate::decline::Declines::Unbelieved { .. } => (result.outcome(), Vec::new(), None),
     };
+    let completion = Completion::of(result);
+    let passes = passing(outcome) && completion.admits();
     Ok(Baseline {
         home,
         outcome,
         declined,
+        completion,
         duration: result.duration,
         tests: match result.tests_run() {
             Some(tests) => tests,
@@ -364,11 +367,21 @@ fn baseline_of(result: &MutantResult, home: execute::Home) -> Result<Baseline, S
         ignored: trace_count("ignored baseline tests", result.ignored_tests.len())?,
         output: match refused {
             Some(refused) => refused,
-            None if passing(outcome) => String::new(),
-            None => match std::str::from_utf8(&result.output) {
-                Ok(output) => output.to_owned(),
-                Err(_not_utf8) => crate::telling::LosslessBytes::new(&result.output).to_string(),
-            },
+            None if passes => String::new(),
+            None => {
+                let printed = match std::str::from_utf8(&result.output) {
+                    Ok(output) => output.to_owned(),
+                    Err(_not_utf8) => {
+                        crate::telling::LosslessBytes::new(&result.output).to_string()
+                    }
+                };
+                match completion {
+                    Completion::Unaccounted(why) => {
+                        format!("the harness did not account for the run: {why}\n{printed}")
+                    }
+                    Completion::Accounted | Completion::Unspoken => printed,
+                }
+            }
         },
     })
 }
@@ -471,7 +484,7 @@ const BASELINE_NOT_REMEMBERED: &str = "baseline-not-remembered";
 
 /// The recipe of a remembered baseline.
 /// The engine version is also in every key; this number makes a semantic invalidation explicit within one build.
-const BASELINE_ABI: u32 = 4;
+const BASELINE_ABI: u32 = 5;
 
 /// The on-disk shape of one passing baseline.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -496,6 +509,32 @@ struct RememberedBaseline {
     tests_run: Option<u32>,
     home: execute::Home,
     declined: Vec<crate::decline::Decline>,
+    completion: RememberedCompletion,
+}
+
+/// How a remembered baseline's harness accounted for its run, which is one of the two ways a passing one can.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum RememberedCompletion {
+    Accounted,
+    Unspoken,
+}
+
+impl RememberedCompletion {
+    const fn of(completion: Completion) -> Option<Self> {
+        match completion {
+            Completion::Accounted => Some(Self::Accounted),
+            Completion::Unspoken => Some(Self::Unspoken),
+            Completion::Unaccounted(_) => None,
+        }
+    }
+
+    const fn completion(self) -> Completion {
+        match self {
+            Self::Accounted => Completion::Accounted,
+            Self::Unspoken => Completion::Unspoken,
+        }
+    }
 }
 
 /// Where the passing answer to this exact baseline may be found.
@@ -872,6 +911,11 @@ impl Remembering {
                     target: target.id().to_owned(),
                 });
             };
+            let Some(completion) = RememberedCompletion::of(baseline.completion) else {
+                return Err(BaselineCacheError::MissingPassingBaseline {
+                    target: target.id().to_owned(),
+                });
+            };
             let previous = remembered_targets.insert(
                 target.id().to_owned(),
                 RememberedBaseline {
@@ -886,6 +930,7 @@ impl Remembering {
                     tests_run: *observed_tests_run,
                     home: baseline.home,
                     declined: baseline.declined.clone(),
+                    completion,
                 },
             );
             if previous.is_some() {
@@ -939,6 +984,7 @@ fn recalled(remembered: Remembered, path: &Path) -> Result<Recalled, BaselineCac
             output: String::new(),
             home: baseline.home,
             declined: baseline.declined,
+            completion: baseline.completion.completion(),
         };
         if !value.passed() {
             return Err(BaselineCacheError::Contradiction {
@@ -1451,6 +1497,40 @@ pub struct Baseline {
     pub home: execute::Home,
     /// Each test that declined to measure, in its words, which is the only decline a mutant execution of the target is excused (ADR 0043).
     pub declined: Vec<crate::decline::Decline>,
+    /// Whether the target's harness accounted for the run, which a baseline has to before any of it is believed.
+    pub completion: Completion,
+}
+
+/// Whether a baseline's harness accounted for its run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Completion {
+    /// The harness announced its tests, closed its report, and every count agreed.
+    Accounted,
+    /// The target answers by its exit status alone, so there is no report to account for.
+    Unspoken,
+    /// The harness's report did not account for the run, so it measured only part of the target, or said something else than it did.
+    Unaccounted(crate::libtest::Unaccounted),
+}
+
+impl Completion {
+    /// Whether a baseline may rest on this account of its run.
+    #[must_use]
+    pub const fn admits(self) -> bool {
+        match self {
+            Self::Accounted | Self::Unspoken => true,
+            Self::Unaccounted(_) => false,
+        }
+    }
+
+    /// How `result`'s harness accounted for a run of every test the target holds.
+    #[must_use]
+    pub fn of(result: &MutantResult) -> Self {
+        match result.account(crate::libtest::Asked::Whole) {
+            None => Self::Unspoken,
+            Some(Ok(_)) => Self::Accounted,
+            Some(Err(unaccounted)) => Self::Unaccounted(unaccounted),
+        }
+    }
 }
 
 /// Whether an outcome with nothing active is one a mutation can be put to.
@@ -1462,10 +1542,10 @@ const fn passing(outcome: crate::outcome::Outcome) -> bool {
 }
 
 impl Baseline {
-    /// Whether this target can be judged against.
+    /// Whether this target can be judged against: it passed, and its harness accounted for the run.
     #[must_use]
     pub const fn passed(&self) -> bool {
-        passing(self.outcome)
+        passing(self.outcome) && self.completion.admits()
     }
 }
 
@@ -1657,3 +1737,6 @@ fn slug(target: &str) -> String {
     let digest = crate::id::digest(target.as_bytes());
     format!("{readable}-{digest}")
 }
+
+#[cfg(test)]
+mod tests;

@@ -466,7 +466,7 @@ fn parse_summary_text(text: &str) -> Option<Summary> {
     text.lines().rev().find_map(parse_summary_line)
 }
 
-fn parse_summary_line(line: &str) -> Option<Summary> {
+pub(crate) fn parse_summary_line(line: &str) -> Option<Summary> {
     let rest = line.trim().strip_prefix("test result: ")?;
     let (verdict, counts) = rest.split_once('.')?;
     let mut summary = Summary {
@@ -2610,6 +2610,22 @@ impl MutantResult {
                 }
             }
             Protocol::Custom | Protocol::Unanswered => Reading::Unspoken,
+        }
+    }
+
+    /// What the harness's own report establishes about this run of `asked`, where the target answers in a report at all.
+    #[must_use]
+    pub fn account(
+        &self,
+        asked: crate::libtest::Asked<'_>,
+    ) -> Option<Result<crate::libtest::Account, crate::libtest::Unaccounted>> {
+        match self.protocol {
+            Protocol::Libtest => Some(crate::libtest::account(
+                &self.output,
+                asked,
+                self.signal.is_none().then_some(self.exit_code),
+            )),
+            Protocol::Custom | Protocol::Unanswered => None,
         }
     }
 

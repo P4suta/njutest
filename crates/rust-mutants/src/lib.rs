@@ -29,6 +29,7 @@ pub mod id;
 pub mod instrument;
 pub mod interval;
 pub mod killers;
+pub mod libtest;
 pub mod limitation;
 pub mod orphan;
 pub mod outcome;

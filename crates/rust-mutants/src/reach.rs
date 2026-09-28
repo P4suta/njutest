@@ -270,7 +270,20 @@ fn run_targets(
             .with_timeout(Workspace::timeout(options.build_timeout))
             .with_scratch(scratch);
         let ran = execute::exec(&request, &context, cancel, &workspace.trace);
-        drop(ran);
+        if !measured_whole(&ran) {
+            workspace.trace.note(
+                "coverage",
+                &format!(
+                    "{}: not measured: its run did not end on its own with its harness accounting for it",
+                    target.id()
+                ),
+            );
+            reached.limitations.push(Limited::for_target(
+                Limitation::CoverageNotMeasured,
+                TargetId::generated(target.id()),
+            ));
+            continue;
+        }
         match blocks_of(reading, target) {
             Some(measured) => {
                 reached.instrumented.extend(measured.instrumented);
@@ -285,6 +298,14 @@ fn run_targets(
         }
     }
     reached
+}
+
+/// Whether a coverage run measured the whole of its target: it ended on its own, and its harness, where it has one, accounted for the run.
+///
+/// A profile is written however a process exits, so a run that ended before its harness closed its report leaves the coverage of part of the target, which reads as reach nothing else had.
+fn measured_whole(ran: &execute::MutantResult) -> bool {
+    matches!(ran.stopped, execute::Stopped::Exited { .. })
+        && !matches!(ran.account(crate::libtest::Asked::Whole), Some(Err(_)))
 }
 
 /// Every executable the build produced, test harnesses and plain binaries alike.
@@ -501,3 +522,6 @@ pub mod remembered {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
