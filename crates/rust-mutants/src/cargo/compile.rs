@@ -24,6 +24,10 @@ pub enum CompileKind {
     Check,
     /// `cargo test --all-targets --no-run`: the binaries a run executes, and every refusal that only happens once code is generated.
     Tests,
+    /// `cargo build --all-targets --keep-going` under the test profile: the sealed build of every test harness but an example's, which builds each that can build for the sealed target whatever another refuses (ADR 0046).
+    SealedTests,
+    /// `cargo test --examples --no-run`: the sealed build of the examples, which only `cargo test` compiles as test harnesses.
+    SealedExamples,
 }
 
 impl CompileKind {
@@ -32,6 +36,8 @@ impl CompileKind {
         match self {
             Self::Check => ("check", &["--all-targets"]),
             Self::Tests => ("test", &["--all-targets", "--no-run"]),
+            Self::SealedTests => ("build", &["--all-targets", "--keep-going"]),
+            Self::SealedExamples => ("test", &["--examples", "--no-run"]),
         }
     }
 }
@@ -175,6 +181,10 @@ pub fn compile_arguments(options: &CompileOptions) -> Vec<OsString> {
     }
     args.push(OsString::from("--target-dir"));
     args.push(options.target_dir.path().as_os_str().to_owned());
+    if options.kind == CompileKind::SealedTests && options.build.profile.is_none() {
+        args.push(OsString::from("--profile"));
+        args.push(OsString::from("test"));
+    }
     args.extend(options.build.arguments().into_iter().map(OsString::from));
     args.extend(
         options

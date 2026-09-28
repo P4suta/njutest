@@ -152,6 +152,10 @@ name = "toolchain_sentinel"
 path = "tests/toolchain_sentinel.rs"
 
 [[test]]
+name = "toolchain_sealed_build"
+path = "tests/toolchain_sealed_build.rs"
+
+[[test]]
 name = "toolchain_session"
 path = "tests/toolchain_session.rs"
 

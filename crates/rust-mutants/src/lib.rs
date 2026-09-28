@@ -44,6 +44,7 @@ pub mod report;
 pub mod rule;
 pub mod run;
 pub mod runner;
+pub mod sealed;
 pub mod select;
 pub mod sentinel;
 pub mod session;
