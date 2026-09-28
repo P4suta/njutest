@@ -7,6 +7,8 @@
 
 #[path = "adrs.rs"]
 mod adrs;
+#[path = "bundle.rs"]
+mod bundle;
 #[path = "carry.rs"]
 mod carry;
 #[path = "concurrency.rs"]

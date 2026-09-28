@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 pub mod adrs;
+pub mod bundle;
 mod cfg_conditions;
 pub mod claims;
 pub mod concurrency;
@@ -165,6 +166,15 @@ enum ExecutionGate {
         #[arg(long, value_name = "FILE")]
         output: Option<std::path::PathBuf>,
     },
+    /// The release archive of one target, holding every shipped binary where `cargo binstall` reads it, and its SHA-256.
+    Bundle {
+        /// The target triple to build the binaries for.
+        #[arg(long, value_name = "TRIPLE")]
+        target: String,
+        /// The directory the archive and its checksum are written to.
+        #[arg(long, value_name = "DIR")]
+        out: std::path::PathBuf,
+    },
     /// Enforce the region-coverage floors recorded in this tree.
     CoverageRatchet,
     /// The whole suite of this commit on the other machines, before it is pushed.
@@ -298,6 +308,15 @@ fn run_execution(
         }
         ExecutionGate::ReportDiff { before, after } => gates::report_diff(&before, &after),
         ExecutionGate::Sbom { output } => gates::sbom(root, output.as_deref()),
+        ExecutionGate::Bundle { target, out } => bundle::bundle(&bundle::Request {
+            root,
+            cargo: process.cargo,
+            environment: process.environment,
+            target: &target,
+            out: &process.directory.join(out),
+        })
+        .map(|written| written.to_string())
+        .map_err(|error| gates::GateError(error.coded())),
         ExecutionGate::CoverageRatchet => coverage::ratchet(root, process.cargo),
         ExecutionGate::RemoteCheck { machines, worktree } => remote::check(worktree.as_deref().unwrap_or(root), &machines)
             .map_err(|error| gates::GateError(error.coded())),

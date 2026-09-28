@@ -163,6 +163,9 @@ globset = "0.4"
 walkdir = "2.5"
 cargo_metadata = "0.23"
 similar = { version = "3.2", default-features = false, features = ["text"] }
+# The release archive, written by the tooling itself so every platform writes the same bytes.
+flate2 = "1.1"
+tar = { version = "0.4", default-features = false }
 
 # Test-only.
 tempfile = "3.27"
