@@ -144,6 +144,23 @@ pub const fn row_of(found: Found) -> (Outcome, Option<NotRunReason>) {
 }
 
 impl Came {
+    /// The name a report spells it with.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Panicked => "panicked",
+            Self::Failed => "failed",
+            Self::Trapped => "trapped",
+            Self::FuelExceeded => "fuel-exceeded",
+            Self::MemoryExceeded => "memory-exceeded",
+            Self::ExitedEarly => "exited-early",
+            Self::StackOverflow => "stack-overflow",
+            Self::Refused => "refused",
+            Self::Unaccounted => "unaccounted",
+        }
+    }
+
     const fn sealed(self) -> Sealed {
         match self {
             Self::Passed => Sealed::Passed,
@@ -165,7 +182,9 @@ impl Came {
         }
     }
 
-    const fn of(sealed: Sealed) -> Self {
+    /// What a sealed execution that came to `sealed` is recorded as.
+    #[must_use]
+    pub const fn of(sealed: Sealed) -> Self {
         match sealed {
             Sealed::Passed => Self::Passed,
             Sealed::Detected(Detection::Panicked) => Self::Panicked,

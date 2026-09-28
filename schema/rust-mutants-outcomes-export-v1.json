@@ -70,11 +70,87 @@
         "target",
         "tests_run",
         "run_id",
-        "keyed"
+        "keyed",
+        "evidence"
       ],
       "properties": {
+        "evidence": {
+          "description": "What the verdict rests on: the sealed executions that established it, or no verdict and every reason why, in which case the outcome is a native lead (ADR 0046).",
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "executions"],
+              "properties": {
+                "kind": {
+                  "const": "sealed"
+                },
+                "executions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["target", "test", "came_to"],
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "test": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "came_to": {
+                        "enum": [
+                          "passed",
+                          "panicked",
+                          "failed",
+                          "trapped",
+                          "fuel-exceeded",
+                          "memory-exceeded",
+                          "exited-early",
+                          "stack-overflow",
+                          "refused",
+                          "unaccounted"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "reasons"],
+              "properties": {
+                "kind": {
+                  "const": "unproven"
+                },
+                "reasons": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "not-sealed",
+                      "native",
+                      "guard-absent",
+                      "test-absent",
+                      "reach-differs",
+                      "exited-early",
+                      "stack-overflow",
+                      "refused",
+                      "unaccounted"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
         "schema": {
-          "const": "rust-mutants-outcome-v3"
+          "const": "rust-mutants-outcome-v4"
         },
         "mutant": {
           "$ref": "#/$defs/digest"

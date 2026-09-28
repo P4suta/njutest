@@ -1655,30 +1655,65 @@ fn one_mutant(
     (options, bench): (&Options<'_>, Option<&crate::sealed::bench::Bench<'_>>),
     cancel: &Cancel,
 ) -> Result<Judged, EngineError> {
-    let sealed = match bench {
-        Some(bench) => match sealed_verdict(session, mutant, bench)? {
-            Sealing::Established(judged) => return Ok(*judged),
-            Sealing::Unproven(evidence) => Some(evidence),
-        },
-        None => None,
-    };
-    if let Some(mut one) = reuse(session, mutant, options, cancel)? {
-        if let Some(evidence) = sealed {
-            one.evidence = evidence;
+    let stored = reuse(session, mutant, options, cancel)?;
+    let unproven = match (bench, stored) {
+        (_, Some(one)) if one.evidence.class() == crate::sealed::record::Class::Sealed => {
+            return Ok(one);
         }
-        return Ok(one);
-    }
+        (None, Some(one)) => return Ok(one),
+        (None, None) => None,
+        (Some(bench), stored) => match sealed_verdict(session, mutant, bench)? {
+            Sealing::Established(judged) => {
+                keep(mutant, options, (&judged, &[]))?;
+                return Ok(*judged);
+            }
+            Sealing::Unproven(evidence) => match stored {
+                Some(mut one) => {
+                    one.evidence = evidence;
+                    return Ok(one);
+                }
+                None => Some(evidence),
+            },
+        },
+    };
     let (mut established, asked) = execute(session, mutant, options, cancel)?;
-    keep(mutant, options, (&established, &asked))?;
-    carry(session, mutant, (options, cancel), (&established, &asked))?;
-    if let Some(evidence) = sealed {
+    if let Some(evidence) = unproven {
         established.evidence = evidence;
     }
+    keep(mutant, options, (&established, &asked))?;
+    carry(session, mutant, (options, cancel), (&established, &asked))?;
     Ok(established)
 }
 
+/// What sealed executions establish about one mutant: a verdict, or the evidence of why there is none.
+#[derive(Debug)]
+pub enum Sealing {
+    /// The row the verdict gives the mutant.
+    Established(Box<Judged>),
+    /// No verdict, and every reason why.
+    Unproven(crate::sealed::record::Evidence),
+}
+
+/// What sealed executions establish about `mutant` now, alone: its row where they establish a verdict, and nothing where the session sealed nothing to put it to or they establish none.
+///
+/// # Errors
+/// A host that cannot start or run an execution, or a tree that cannot be read into one.
+pub fn sealed_now(session: &Session, mutant: &Mutant) -> Result<Option<Judged>, EngineError> {
+    let Some(runner) = sealed_runner(session)? else {
+        return Ok(None);
+    };
+    let bench = session.bench(&runner)?;
+    Ok(match sealed_verdict(session, mutant, &bench)? {
+        Sealing::Established(judged) => Some(*judged),
+        Sealing::Unproven(_) => None,
+    })
+}
+
 /// The host every sealed execution of `session` runs on, when it built a sealed module to run.
-fn sealed_runner(
+///
+/// # Errors
+/// A host that cannot start.
+pub fn sealed_runner(
     session: &Session,
 ) -> Result<Option<rust_mutants_sealed::SealedRunner>, EngineError> {
     if session.sealed().modules.is_empty() {
@@ -1690,14 +1725,11 @@ fn sealed_runner(
     }
 }
 
-/// What sealed executions establish about one mutant: a verdict, or the evidence of why there is none.
-enum Sealing {
-    Established(Box<Judged>),
-    Unproven(crate::sealed::record::Evidence),
-}
-
 /// Puts `mutant` to the sealed executions of every test whose control reached it, and judges it from them alone where they establish a verdict (ADR 0046).
-fn sealed_verdict(
+///
+/// # Errors
+/// A host that cannot run an execution, or an environment that is not text.
+pub fn sealed_verdict(
     session: &Session,
     mutant: &Mutant,
     bench: &crate::sealed::bench::Bench<'_>,
@@ -1712,6 +1744,17 @@ fn sealed_verdict(
     };
     if session.trace().is_enabled() {
         session.trace().route(route.record(mutant, Vec::new()));
+        for put in &answer.puts {
+            session.trace().sealed_exec(crate::trace::SealedExecRecord {
+                mutant: mutant.display_id.to_string(),
+                index: mutant.index,
+                target: put.target.clone(),
+                test: put.test.clone(),
+                came_to: crate::sealed::record::Came::of(put.came_to)
+                    .name()
+                    .to_owned(),
+            });
+        }
     }
     let (outcome, not_run_reason) = crate::sealed::record::row_of(verdict.found());
     let by = answer.puts.iter().find(|put| {
@@ -1727,7 +1770,7 @@ fn sealed_verdict(
         outcome,
         step_notice: None,
         target: by.map(|put| put.target.clone()).unwrap_or_default(),
-        exit_code: 0,
+        exit_code: -1,
         start_failure: None,
         protocol_failure: None,
         duration: started.elapsed(),
@@ -2399,6 +2442,7 @@ fn reuse(
             tests_run: record.tests_run,
             failed_tests: record.failed_tests,
             run_id: record.run_id,
+            evidence: record.evidence,
         },
     )))
 }
@@ -2427,6 +2471,7 @@ struct Remembered {
     tests_run: Option<u32>,
     failed_tests: Vec<String>,
     run_id: String,
+    evidence: crate::sealed::record::Evidence,
 }
 
 fn remembered(mutant: &Mutant, outcome: Outcome, record: Remembered) -> Judged {
@@ -2453,7 +2498,12 @@ fn remembered(mutant: &Mutant, outcome: Outcome, record: Remembered) -> Judged {
         identical: CodegenIdentity::NotMeasured,
         source_run_id: Some(record.run_id),
         declined: Vec::new(),
-        evidence: crate::sealed::record::Evidence::not_sealed(),
+        evidence: match record.evidence {
+            sealed @ crate::sealed::record::Evidence::Sealed { .. } => sealed,
+            crate::sealed::record::Evidence::Unproven { .. } => {
+                crate::sealed::record::Evidence::not_sealed()
+            }
+        },
     }
 }
 
@@ -2497,6 +2547,7 @@ fn carried(
             tests_run: record.tests_run,
             failed_tests: record.failed_tests,
             run_id: record.run_id,
+            evidence: crate::sealed::record::Evidence::not_sealed(),
         },
     )))
 }
@@ -2577,6 +2628,7 @@ fn keep(
         failed_tests: judged.failed_tests.clone(),
         run_id: reusing.run_id.to_owned(),
         keyed: reusing.keyed.clone(),
+        evidence: judged.evidence.clone(),
     })?;
     Ok(())
 }

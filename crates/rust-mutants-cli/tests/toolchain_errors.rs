@@ -100,7 +100,7 @@ fn a_target_left_out_by_a_name_that_is_not_one_lists_the_targets_there_are() {
     let complaint = njutest_devkit::process::strict_utf8(&output.stderr);
     assert_eq!(
         output.status.code(),
-        Some(2),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
         "a target nobody builds is not a target left out: the run measured everything \
          the reader meant to leave out and said nothing. {complaint}"
     );

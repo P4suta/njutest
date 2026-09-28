@@ -206,7 +206,13 @@ fn the_measurement_a_coverage_run_kept_validates_against_the_schema_it_answers_t
 fn a_run_nothing_stored_is_named_rather_than_bundled_empty() {
     let fixture = Fixture::copy("fixture-simple");
     let gathered = against(&fixture, &["diagnostics", "no-such-run"]);
-    assert_eq!(gathered.code, 2, "{}{}", gathered.out, gathered.err);
+    assert_eq!(
+        gathered.code,
+        rust_mutants::run::EXIT_FAILED,
+        "{}{}",
+        gathered.out,
+        gathered.err
+    );
     assert!(gathered.err.contains("no-such-run"), "{}", gathered.err);
 }
 

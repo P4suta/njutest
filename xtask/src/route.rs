@@ -220,6 +220,19 @@ impl Exec {
     }
 }
 
+/// One sealed execution a recording holds: one test of one module run with one mutant active, and what it came to (ADR 0046).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sealed {
+    /// The mutant, as a person types it.
+    pub mutant: String,
+    /// The target whose module ran.
+    pub target: String,
+    /// The test it ran.
+    pub test: String,
+    /// What it came to, as a report spells it.
+    pub came_to: String,
+}
+
 /// The routes and the executions of one recording, in the order they were written.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Routing {
@@ -227,6 +240,8 @@ pub struct Routing {
     pub routes: Vec<Route>,
     /// Every mutant execution.
     pub execs: Vec<Exec>,
+    /// Every sealed execution.
+    pub sealed: Vec<Sealed>,
     /// What the equivalence layer answered for each mutation it asked about, by display identity.
     pub equivalences: Vec<(String, String)>,
 }
@@ -287,6 +302,10 @@ pub(crate) fn from_events(events: &[Value]) -> Result<Routing, ReadError> {
             Some("mutant-exec") => {
                 let record = required(event, "mutant", Some).map_err(placed)?;
                 routing.execs.push(exec(record).map_err(placed)?);
+            }
+            Some("sealed-exec") => {
+                let record = required(event, "sealed", Some).map_err(placed)?;
+                routing.sealed.push(sealed(record).map_err(placed)?);
             }
             Some("note") => {
                 let noted = event.get("note");
@@ -402,6 +421,15 @@ fn route(record: &Value) -> Result<Route, ReadCauseError> {
 }
 
 /// One execution record, from whichever producer wrote it.
+fn sealed(record: &Value) -> Result<Sealed, ReadCauseError> {
+    Ok(Sealed {
+        mutant: required(record, "mutant", owned)?,
+        target: required(record, "target", owned)?,
+        test: required(record, "test", owned)?,
+        came_to: required(record, "came_to", owned)?,
+    })
+}
+
 fn exec(record: &Value) -> Result<Exec, ReadCauseError> {
     Ok(Exec {
         mutant: named(record)?,

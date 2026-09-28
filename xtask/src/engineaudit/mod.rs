@@ -769,6 +769,22 @@ enum Said {
 }
 
 impl Came {
+    /// The name a report and a recording spell it with.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Panicked => "panicked",
+            Self::Failed => "failed",
+            Self::Trapped => "trapped",
+            Self::FuelExceeded => "fuel-exceeded",
+            Self::MemoryExceeded => "memory-exceeded",
+            Self::ExitedEarly => "exited-early",
+            Self::StackOverflow => "stack-overflow",
+            Self::Refused => "refused",
+            Self::Unaccounted => "unaccounted",
+        }
+    }
+
     const fn said(self) -> Said {
         match self {
             Self::Passed => Said::Passed,

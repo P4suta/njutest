@@ -48,6 +48,7 @@ const fn relevant_payload(payload: &Payload) -> RelevantPayload<'_> {
         | Payload::Identical { .. }
         | Payload::Evidence { .. }
         | Payload::MutantExec { .. }
+        | Payload::SealedExec { .. }
         | Payload::Note { .. }
         | Payload::RunEnd { .. } => RelevantPayload::Other,
     }
@@ -64,6 +65,14 @@ fn prepared(fixture: &Fixture) -> Session {
 /// Which of the two answered would then be decided by the machine's load, and a test that asserts an outcome would pass or fail by it.
 /// A million takes fires in about thirty milliseconds (ADR 0023).
 fn prepared_within(fixture: &Fixture, timeout: Timeout, steps: u64) -> Session {
+    prepared_as(fixture, (timeout, steps), rust_mutants::sealed::Sealing::On)
+}
+
+fn prepared_as(
+    fixture: &Fixture,
+    (timeout, steps): (Timeout, u64),
+    sealing: rust_mutants::sealed::Sealing,
+) -> Session {
     let workspace = Workspace::open(
         fixture.root(),
         opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
@@ -76,6 +85,7 @@ fn prepared_within(fixture: &Fixture, timeout: Timeout, steps: u64) -> Session {
                 tier: Tier::All,
                 mutant_timeout: timeout,
                 mutant_steps: Some(steps),
+                sealing,
                 ..PrepareOptions::new(Tier::Balanced)
             },
             &Cancel::new(),
@@ -175,10 +185,10 @@ fn a_run_with_four_workers_judges_the_same_set_as_one_and_the_report_is_in_catal
 #[test]
 fn a_slow_mutant_does_not_delay_the_delivery_of_the_ones_that_finished() {
     let fixture = Fixture::copy("fixture-hang");
-    let session = prepared_within(
+    let session = prepared_as(
         &fixture,
-        Timeout::Fixed(std::time::Duration::from_secs(2)),
-        10,
+        (Timeout::Fixed(std::time::Duration::from_secs(2)), 10),
+        rust_mutants::sealed::Sealing::Off,
     );
     let mut delivered = Delivered::default();
     let finished = measured(&session, 4, &mut delivered);

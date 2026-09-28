@@ -35,6 +35,7 @@ fn record(byte: char) -> Record {
                 &rust_mutants::vars::Variables::empty(),
             ),
         },
+        evidence: rust_mutants::sealed::record::Evidence::not_sealed(),
     }
 }
 

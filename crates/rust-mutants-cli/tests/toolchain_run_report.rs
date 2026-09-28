@@ -92,7 +92,10 @@ fn a_whole_run_judges_every_mutant_scores_the_workspace_and_writes_the_report() 
 
     let document = stored(&fixture);
     assert_eq!(document["document_type"], "rust-mutants/run-report");
-    assert_eq!(document["schema_version"], 3);
+    assert_eq!(
+        document["schema_version"],
+        rust_mutants::report::run::SCHEMA_VERSION
+    );
     assert_eq!(document["run"]["exit_code"], 1);
     assert!(!document["run"]["interrupted"].as_bool().expect("a flag"));
     assert_eq!(document["selection"]["tier"], "all");
@@ -108,6 +111,7 @@ fn a_whole_run_judges_every_mutant_scores_the_workspace_and_writes_the_report() 
     assert_eq!(
         number("killed")
             + number("survived")
+            + number("unproven")
             + number("step_limit_reached")
             + number("waited")
             + number("inconclusive")
@@ -209,7 +213,10 @@ fn the_stored_report_is_read_back_by_the_report_command() {
     assert_eq!(document["document_type"], "rust-mutants/run-report");
 
     let missing = against(&fixture, &["report", "--run", "20200101T000000000Z"]);
-    assert_eq!(missing.status.code(), Some(2));
+    assert_eq!(
+        missing.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED))
+    );
     assert!(stderr(&missing).contains("RM0007"), "{}", stderr(&missing));
 }
 
@@ -292,7 +299,10 @@ fn a_process_with_an_incomplete_touch_mode_is_refused_before_anything_runs() {
         .env("RUST_MUTANTS_TOUCH", "not-a-run")
         .output()
         .expect("rust-mutants runs");
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED))
+    );
     let error_text = stderr(&output);
     assert!(error_text.contains("RM0006"), "{error_text}");
     assert!(error_text.contains("RUST_MUTANTS_TOUCH"), "{error_text}");
@@ -306,7 +316,10 @@ fn init_writes_a_configuration_that_changes_nothing_and_refuses_to_overwrite() {
     assert!(test_metadata(&path).is_file());
 
     let again = against(&fixture, &["init"]);
-    assert_eq!(again.status.code(), Some(2));
+    assert_eq!(
+        again.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED))
+    );
     assert!(stderr(&again).contains("RM0008"), "{}", stderr(&again));
     let forced = against(&fixture, &["init", "--force"]);
     assert_eq!(forced.status.code(), Some(0));
@@ -391,7 +404,7 @@ fn a_shard_is_not_a_shard_unless_it_names_a_part_of_something() {
         let output = against(&fixture, &["run", "--offline", "--locked", "--shard", bad]);
         assert_eq!(
             output.status.code(),
-            Some(2),
+            Some(i32::from(rust_mutants::run::EXIT_FAILED)),
             "{bad:?} is not a shard: {}",
             stdout(&output)
         );
@@ -501,7 +514,10 @@ fn reports_that_are_not_the_parts_of_one_whole_are_refused() {
 
     let named = njutest_devkit::paths::utf8(&one);
     let output = rootless(&fixture, &["merge", named, named]);
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED))
+    );
     assert!(
         stderr(&output).contains("more than one"),
         "the same part twice is not two parts: {}",
@@ -734,15 +750,26 @@ fn nothing_resting_on_a_decline_is_read_back(
 #[test]
 fn a_test_that_declines_to_measure_leaves_no_survivor_and_no_answer_to_keep() {
     let fixture = Fixture::copy("fixture-declines");
-    let first = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
-    assert_eq!(first.status.code(), Some(1), "{}", stderr(&first));
+    let asked = ["run", "--offline", "--locked", "--tier", "all", "--no-seal"];
+    let first = against(&fixture, &asked);
+    assert_eq!(
+        first.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
+        "the decline protocol of a native process answers with leads: {}",
+        stderr(&first)
+    );
     let report = stored(&fixture);
     let errors = against_schema("rust-mutants-run-report-v1.json", &report);
     assert!(errors.is_empty(), "{errors:#?}");
     measured_nothing_where_every_test_declined(&report);
     declined_only_under_the_mutation_is_a_kill(&report);
-    let again = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
-    assert_eq!(again.status.code(), Some(1), "{}", stderr(&again));
+    let again = against(&fixture, &asked);
+    assert_eq!(
+        again.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
+        "{}",
+        stderr(&again)
+    );
     nothing_resting_on_a_decline_is_read_back(&report, &stored(&fixture));
 }
 
@@ -853,7 +880,10 @@ fn every_mutant_row_carries_what_re_minting_its_id_needs() {
     let fixture = Fixture::copy("fixture-simple");
     let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
+        output
+            .status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "{}",
         stderr(&output)
     );
@@ -915,7 +945,10 @@ fn a_rejection_row_carries_its_catalog_index() {
         ],
     );
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
+        output
+            .status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "{}",
         stderr(&output)
     );
@@ -956,7 +989,10 @@ fn an_unreached_finding_is_a_finding_the_schema_knows() {
         ],
     );
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
+        output
+            .status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "{}",
         stderr(&output)
     );
@@ -991,7 +1027,10 @@ fn a_v1_reader_refuses_fields_outside_its_exact_schema() {
     let fixture = Fixture::copy("fixture-simple");
     let output = against(&fixture, &["run", "--offline", "--locked"]);
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
+        output
+            .status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "{}",
         stderr(&output)
     );
@@ -1013,7 +1052,7 @@ fn a_v1_reader_refuses_fields_outside_its_exact_schema() {
     let read = against(&fixture, &["report"]);
     assert_eq!(
         read.status.code(),
-        Some(2),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
         "one v1 identity cannot silently acquire a later shape: {}",
         stderr(&read)
     );
@@ -1038,7 +1077,10 @@ fn parts(fixture: &Fixture, shards: &[&str]) -> Vec<PathBuf> {
             ],
         );
         assert!(
-            output.status.code().is_some_and(|code| code < 2),
+            output
+                .status
+                .code()
+                .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
             "{part}: {}",
             stderr(&output)
         );
@@ -1060,7 +1102,10 @@ fn the_parts_of_a_catalog_over_two_packages_and_two_targets_are_the_whole_of_it(
         &["run", "--offline", "--locked", "--tier", "all"],
     );
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
+        output
+            .status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "{}",
         stderr(&output)
     );
@@ -1130,7 +1175,10 @@ fn evidence_of(extra: &[&str]) -> (PathBuf, Fixture) {
         &[&["run", "--offline", "--locked", "--tier", "all"], extra].concat(),
     );
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
+        output
+            .status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "{}",
         stderr(&output)
     );
@@ -1368,22 +1416,28 @@ fn unrun(document: &serde_json::Value) -> Vec<(String, String)> {
 
 #[test]
 fn a_proof_removing_a_mutation_and_nothing_reaching_it_are_two_answers() {
-    for (name, granularity, reason, finding) in [
+    for (name, sealing, granularity, (reason, column), finding) in [
         (
             "fixture-coverage",
+            &["--no-seal"][..],
             "discharged",
-            "discharged",
-            "discharged-mutant",
+            ("discharged", "unproven_discharged"),
+            "unproven-mutant",
         ),
         (
             "fixture-unreached",
+            &[][..],
             "unreached",
-            "unreached",
+            ("unreached", "unreached"),
             "unreached-mutant",
         ),
     ] {
         let fixture = Fixture::copy(name);
-        let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+        let asked: Vec<&str> = ["run", "--offline", "--locked", "--tier", "all"]
+            .into_iter()
+            .chain(sealing.iter().copied())
+            .collect();
+        let output = against(&fixture, &asked);
         let document = stored(&fixture);
         let rows = unrun(&document);
         let mine: Vec<&(String, String)> =
@@ -1403,9 +1457,10 @@ fn a_proof_removing_a_mutation_and_nothing_reaching_it_are_two_answers() {
         }
         let counted = u64::try_from(mine.len()).expect("the fixture count fits u64");
         assert_eq!(
-            document["accounting"][reason].as_u64(),
+            document["accounting"][column].as_u64(),
             Some(counted),
-            "and the column a reader counts them in is the one they answer to: {rows:?}"
+            "and the column a reader counts them in is the one they answer to, where a proof \
+             over a native run is a lead: {rows:?}"
         );
         let kinds: Vec<&str> = document["findings"]
             .as_array()
@@ -1481,7 +1536,9 @@ fn the_parts_of_a_catalog_can_be_named_by_a_glob_against_the_report_directory() 
     let fixture = Fixture::copy("fixture-simple");
     let ran = against(&fixture, &["run", "--offline", "--locked"]);
     assert!(
-        ran.status.code().is_some_and(|code| code <= 1),
+        ran.status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "{}",
         stderr(&ran)
     );
@@ -1495,7 +1552,9 @@ fn the_parts_of_a_catalog_can_be_named_by_a_glob_against_the_report_directory() 
 
     let one = against(&fixture, &["merge", "--runs", &stored_id]);
     assert!(
-        one.status.code().is_some_and(|code| code <= 1),
+        one.status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "a name that matches one stored run is that run: a person sharding by day names \
          the day: {}",
         stderr(&one)
@@ -1511,7 +1570,7 @@ fn the_parts_of_a_catalog_can_be_named_by_a_glob_against_the_report_directory() 
     let nothing = against(&fixture, &["merge", "--runs", "20240101*"]);
     assert_eq!(
         nothing.status.code(),
-        Some(2),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
         "a pattern that matches no stored run is not an empty merge: a report of nothing \
          reads as a catalog with nothing in it: {}",
         stdout(&nothing)
@@ -1529,7 +1588,7 @@ fn the_parts_of_a_catalog_can_be_named_by_a_glob_against_the_report_directory() 
     let malformed = against(&fixture, &["merge", "--runs", "/absolute"]);
     assert_eq!(
         malformed.status.code(),
-        Some(2),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
         "and a pattern that is not one is refused rather than matched literally: {}",
         stdout(&malformed)
     );
@@ -1545,7 +1604,9 @@ fn a_glob_that_names_the_same_part_twice_is_still_the_same_part_twice() {
     let fixture = Fixture::copy("fixture-simple");
     let ran = against(&fixture, &["run", "--offline", "--locked"]);
     assert!(
-        ran.status.code().is_some_and(|code| code <= 1),
+        ran.status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "{}",
         stderr(&ran)
     );
@@ -1560,7 +1621,7 @@ fn a_glob_that_names_the_same_part_twice_is_still_the_same_part_twice() {
     let merged = against(&fixture, &["merge", "--runs", "2026010*"]);
     assert_eq!(
         merged.status.code(),
-        Some(2),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
         "a glob is a way of naming parts and not a way of excusing one named twice: a \
          merge that took this would count every mutant of the shard twice and report a \
          catalog twice its size: {}",
@@ -1576,10 +1637,14 @@ fn a_glob_that_names_the_same_part_twice_is_still_the_same_part_twice() {
 #[test]
 fn a_test_that_fails_because_its_child_was_refused_noticed_the_mutation() {
     let fixture = Fixture::copy("fixture-child-refuses");
-    let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
-    assert!(
-        output.status.code() == Some(0) || output.status.code() == Some(1),
-        "{}",
+    let output = against(
+        &fixture,
+        &["run", "--offline", "--locked", "--tier", "all", "--no-seal"],
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
+        "what a native process's child makes of a refusal is a lead: {}",
         stderr(&output)
     );
     let report = stored(&fixture);
@@ -1622,7 +1687,10 @@ fn a_claim_on_several_mutations_split_across_shards_merges_to_what_the_whole_run
         arguments.extend(["--shard", part]);
         let output = against(&fixture, &arguments);
         assert!(
-            output.status.code().is_some_and(|code| code < 2),
+            output
+                .status
+                .code()
+                .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
             "{part}: {}",
             stderr(&output)
         );
@@ -1704,7 +1772,10 @@ fn claims_a_line_tells_apart_are_two_claims_and_a_mutant_two_claims_name_is_refu
     .expect("write the configuration");
     let output = against(&fixture, &narrowed);
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
+        output
+            .status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "two claims on one item that a line tells apart are two claims, not one written twice: {}",
         stderr(&output)
     );
@@ -1734,7 +1805,7 @@ fn claims_a_line_tells_apart_are_two_claims_and_a_mutant_two_claims_name_is_refu
     let overlapping = against(&fixture, &narrowed);
     assert_eq!(
         overlapping.status.code(),
-        Some(2),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
         "a mutation two claims both name has two reasons, which a report cannot audit: {}",
         stderr(&overlapping)
     );
@@ -1760,7 +1831,10 @@ fn a_claim_on_mutations_the_selection_left_out_is_unjudged_and_no_finding() {
         &["run", "--offline", "--locked", "--file", "src/lib.rs:55-58"],
     );
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
+        output
+            .status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "{}",
         stderr(&output)
     );
@@ -2072,10 +2146,18 @@ fn a_mutant_goes_first_to_the_target_that_killed_it_before() {
         let flag = format!("--trace={}", trace.display());
         let output = against(
             &fixture,
-            &["run", "--offline", "--locked", "--tier", "all", &flag],
+            &[
+                "run",
+                "--offline",
+                "--locked",
+                "--tier",
+                "all",
+                "--no-seal",
+                &flag,
+            ],
         );
         assert!(
-            output.status.code() == Some(0) || output.status.code() == Some(1),
+            output.status.code() == Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
             "{}",
             stderr(&output)
         );
@@ -2154,9 +2236,14 @@ fn item_named<'a>(skeletons: &'a serde_json::Value, name: &str) -> &'a serde_jso
 
 /// Runs fixture-carry as it stands and reads the skeletons the run kept.
 fn carried(fixture: &Fixture) -> serde_json::Value {
-    let ran = against(fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    let ran = against(
+        fixture,
+        &["run", "--offline", "--locked", "--tier", "all", "--no-seal"],
+    );
     assert!(
-        ran.status.code().is_some_and(|code| code < 2),
+        ran.status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "{}",
         stderr(&ran)
     );
@@ -2331,10 +2418,10 @@ fn disagreements(
 #[test]
 fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
     let fixture = Fixture::copy("fixture-two-bodies");
-    let asked = ["run", "--offline", "--locked", "--tier", "all"];
+    let asked = ["run", "--offline", "--locked", "--tier", "all", "--no-seal"];
     let first = against(&fixture, &asked);
     assert!(
-        first.status.code() == Some(0) || first.status.code() == Some(1),
+        first.status.code() == Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
         "{}",
         stderr(&first)
     );
@@ -2344,7 +2431,7 @@ fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
         .expect("edit inside the body of `total` alone");
     let carried = against(&fixture, &asked);
     assert!(
-        carried.status.code() == Some(0) || carried.status.code() == Some(1),
+        carried.status.code() == Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
         "{}",
         stderr(&carried)
     );
@@ -2366,11 +2453,12 @@ fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
             "--locked",
             "--tier",
             "all",
+            "--no-seal",
             "--no-cache",
         ],
     );
     assert!(
-        fresh.status.code() == Some(0) || fresh.status.code() == Some(1),
+        fresh.status.code() == Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
         "{}",
         stderr(&fresh)
     );
@@ -2405,10 +2493,10 @@ type Rows = std::collections::BTreeMap<(u64, String, String, String), serde_json
 
 /// Runs fixture-two-bodies, rewrites `from` as `to` in its library, runs it again with carrying and traced, and runs it once more without the store, holding every carried answer to the one running it gives; answers with what the carrying run stored and its trace.
 fn edited_pair(fixture: &Fixture, (from, to): (&str, &str)) -> (Rows, String) {
-    let asked = ["run", "--offline", "--locked", "--tier", "all"];
+    let asked = ["run", "--offline", "--locked", "--tier", "all", "--no-seal"];
     let first = against(fixture, &asked);
     assert!(
-        first.status.code() == Some(0) || first.status.code() == Some(1),
+        first.status.code() == Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
         "{}",
         stderr(&first)
     );
@@ -2418,10 +2506,18 @@ fn edited_pair(fixture: &Fixture, (from, to): (&str, &str)) -> (Rows, String) {
     std::fs::write(&source, text.replace(from, to)).expect("the edit");
     let carried = against(
         fixture,
-        &["run", "--offline", "--locked", "--tier", "all", "--trace"],
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-seal",
+            "--trace",
+        ],
     );
     assert!(
-        carried.status.code() == Some(0) || carried.status.code() == Some(1),
+        carried.status.code() == Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
         "{}",
         stderr(&carried)
     );
@@ -2441,11 +2537,12 @@ fn edited_pair(fixture: &Fixture, (from, to): (&str, &str)) -> (Rows, String) {
             "--locked",
             "--tier",
             "all",
+            "--no-seal",
             "--no-cache",
         ],
     );
     assert!(
-        fresh.status.code() == Some(0) || fresh.status.code() == Some(1),
+        fresh.status.code() == Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
         "{}",
         stderr(&fresh)
     );
@@ -2535,9 +2632,12 @@ fn a_line_added_above_a_body_an_execution_entered_refuses_its_answer_as_moved() 
 #[test]
 fn an_execution_a_silent_process_ran_inside_records_what_it_entered_as_cut() {
     let fixture = Fixture::copy("fixture-silent-kill");
-    let ran = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    let ran = against(
+        &fixture,
+        &["run", "--offline", "--locked", "--tier", "all", "--no-seal"],
+    );
     assert!(
-        ran.status.code() == Some(0) || ran.status.code() == Some(1),
+        ran.status.code() == Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
         "{}",
         stderr(&ran)
     );
@@ -2570,10 +2670,10 @@ fn an_execution_a_silent_process_ran_inside_records_what_it_entered_as_cut() {
 #[test]
 fn the_differential_names_an_answer_carried_on_a_record_that_hides_an_entered_item() {
     let fixture = Fixture::copy("fixture-two-bodies");
-    let asked = ["run", "--offline", "--locked", "--tier", "all"];
+    let asked = ["run", "--offline", "--locked", "--tier", "all", "--no-seal"];
     let first = against(&fixture, &asked);
     assert!(
-        first.status.code() == Some(0) || first.status.code() == Some(1),
+        first.status.code() == Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
         "{}",
         stderr(&first)
     );
@@ -2599,7 +2699,7 @@ fn the_differential_names_an_answer_carried_on_a_record_that_hides_an_entered_it
     .expect("an edit inside the test the record hides, which stops it noticing");
     let carried = against(&fixture, &asked);
     assert!(
-        carried.status.code() == Some(0) || carried.status.code() == Some(1),
+        carried.status.code() == Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
         "{}",
         stderr(&carried)
     );
@@ -2612,11 +2712,12 @@ fn the_differential_names_an_answer_carried_on_a_record_that_hides_an_entered_it
             "--locked",
             "--tier",
             "all",
+            "--no-seal",
             "--no-cache",
         ],
     );
     assert!(
-        fresh.status.code() == Some(0) || fresh.status.code() == Some(1),
+        fresh.status.code() == Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
         "{}",
         stderr(&fresh)
     );

@@ -29,6 +29,8 @@ EDIT      ">" => ">="
 RUN       <run>
 OUTCOME   survived
 TIMING    <duration>
+EVIDENCE  sealed
+          tests::max_picks_the_larger in fixture-simple/lib/fixture_simple: passed
 ROUTE     discharged reaching [] executed []
 PROVED    fixture-simple/lib/fixture_simple: never-infected
 REPRODUCE rust-mutants run --mutant src/lib.rs:max:gt-to-ge@11

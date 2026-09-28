@@ -152,7 +152,7 @@ fn a_run_that_is_interrupted_exits_130_and_releases_its_snapshot() {
 
     let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command
-        .args(["run", "--offline", "--locked", "--tier", "all"])
+        .args(["run", "--offline", "--locked", "--tier", "all", "--no-seal"])
         .args(["--root", njutest_devkit::paths::utf8(&root)])
         .env("NO_COLOR", "1")
         .envs(njutest_devkit::paths::temporary_directory(&temp))

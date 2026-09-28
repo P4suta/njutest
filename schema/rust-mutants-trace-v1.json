@@ -1950,6 +1950,63 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
+            "sealed",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "sealed-exec"
+            },
+            "sealed": {
+              "description": "One test of one sealed module run with one mutant active, alone in a fresh instance, and what it came to (ADR 0046).",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "mutant",
+                "index",
+                "target",
+                "test",
+                "came_to"
+              ],
+              "properties": {
+                "mutant": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "index": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "target": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "test": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "came_to": {
+                  "enum": [
+                    "passed",
+                    "panicked",
+                    "failed",
+                    "trapped",
+                    "fuel-exceeded",
+                    "memory-exceeded",
+                    "exited-early",
+                    "stack-overflow",
+                    "refused",
+                    "unaccounted"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
             "mutant",
             "type"
           ],

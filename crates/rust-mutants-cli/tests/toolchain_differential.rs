@@ -46,7 +46,7 @@ fn established(name: &str, extra: &[&str]) -> Established {
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
             .chain(["run", "--tier", "all", "--offline", "--locked"])
-            .chain(["--jobs", "1", "--ui", "quiet", "--no-cache"])
+            .chain(["--jobs", "1", "--ui", "quiet", "--no-cache", "--no-seal"])
             .chain(extra.iter().copied())
             .chain(["--root", root.as_str()])
             .map(OsString::from),
@@ -58,9 +58,10 @@ fn established(name: &str, extra: &[&str]) -> Established {
         },
     );
     let output = njutest_devkit::process::answered(code, out, err);
-    assert!(
-        output.status.code().is_some_and(|code| code <= 1),
-        "{name} {extra:?}: {}",
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
+        "the layers route native runs, whose answers are leads: {name} {extra:?}: {}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let directory = njutest_devkit::fixture::newest_run(

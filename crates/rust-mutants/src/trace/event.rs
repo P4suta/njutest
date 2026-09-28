@@ -14,7 +14,7 @@ use crate::id::RunId;
 pub const SCHEMA: &str = "rust-mutants-trace-v1";
 
 /// Every type a recording can hold, in the order [`Payload::type_name`] answers with.
-pub const EVERY_TYPE: [&str; 25] = [
+pub const EVERY_TYPE: [&str; 26] = [
     "run-start",
     "phase-start",
     "phase-end",
@@ -38,6 +38,7 @@ pub const EVERY_TYPE: [&str; 25] = [
     "evidence",
     "kept",
     "mutant-exec",
+    "sealed-exec",
     "note",
     "run-end",
 ];
@@ -183,6 +184,11 @@ pub enum Payload {
     MutantExec {
         /// The record.
         mutant: MutantExecRecord,
+    },
+    /// One test of one sealed module was run with one mutant active, alone in a fresh instance (ADR 0046).
+    SealedExec {
+        /// The record.
+        sealed: SealedExecRecord,
     },
     /// A free-form note: progress, a decision, a limitation.
     Note {
@@ -408,6 +414,7 @@ impl Payload {
             Self::Identical { .. } => "identical",
             Self::Evidence { .. } => "evidence",
             Self::MutantExec { .. } => "mutant-exec",
+            Self::SealedExec { .. } => "sealed-exec",
             Self::Note { .. } => "note",
             Self::RunEnd { .. } => "run-end",
         }
@@ -944,6 +951,22 @@ pub struct MutantExecRecord {
     pub lingered: bool,
     /// Each test of it that declined to measure, and its words, where its notice was believed (ADR 0043).
     pub declined: Vec<crate::decline::Decline>,
+}
+
+/// One sealed execution: one test of one module with one mutant active, and what it came to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SealedExecRecord {
+    /// The mutant's display identity.
+    pub mutant: String,
+    /// The mutant's dense catalog index.
+    pub index: u32,
+    /// The target whose module ran.
+    pub target: String,
+    /// The test it ran.
+    pub test: String,
+    /// What it came to, as a report spells it.
+    pub came_to: String,
 }
 
 /// What the outcome store was asked about one mutant.

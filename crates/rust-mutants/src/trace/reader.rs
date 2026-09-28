@@ -163,6 +163,7 @@ fn unbalanced_phases(events: &[Event]) -> Vec<Problem> {
             | Payload::Identical { .. }
             | Payload::Evidence { .. }
             | Payload::MutantExec { .. }
+            | Payload::SealedExec { .. }
             | Payload::Note { .. }
             | Payload::RunEnd { .. } => {}
         }

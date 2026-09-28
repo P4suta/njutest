@@ -284,7 +284,11 @@ fn a_source_the_report_names_and_the_root_does_not_hold_is_rm0012() {
     std::fs::remove_file(fixture.root().join("src/lib.rs")).expect("the source goes away");
     let output = against(&fixture, &["report", "--format", "stryker"]);
     let said = njutest_devkit::process::strict_utf8(&output.stderr).into_owned();
-    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
+        "{output:?}"
+    );
     assert!(said.contains("RM0012"), "{said}");
     assert!(said.contains("src/lib.rs"), "{said}");
 }
@@ -351,7 +355,12 @@ fn a_file_the_tests_noticed_every_mutation_in_is_counted_rather_than_printed() {
             "1",
         ],
     );
-    assert!(ran.status.code().is_some_and(|code| code <= 1), "{ran:?}");
+    assert!(
+        ran.status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
+        "{ran:?}"
+    );
     let report: serde_json::Value =
         njutest_devkit::strictjson::decode_str(&projected(&fixture, "json"))
             .expect("the stored report");

@@ -38,7 +38,7 @@ fn a_baseline_that_fails_its_own_test_refuses_the_session_with_rm5002() {
     let output = run(&fixture, &[]);
     assert_eq!(
         output.status.code(),
-        Some(2),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
         "a run that could not establish anything is not a run that found nothing"
     );
     let said = njutest_devkit::process::strict_utf8(&output.stderr);
@@ -69,18 +69,32 @@ fn a_baseline_that_fails_its_own_test_refuses_the_session_with_rm5002() {
 #[test]
 fn without_verification_the_same_test_kills_every_mutant_it_touches() {
     let fixture = Fixture::copy("fixture-verify-fails");
-    let output = run(&fixture, &["--no-verify"]);
+    let output = run(&fixture, &["--no-verify", "--no-seal"]);
     assert_eq!(
         output.status.code(),
-        Some(0),
+        Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
         "{}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let text = njutest_devkit::process::strict_utf8(&output.stdout);
     assert!(
-        text.contains("killed=4 survived=0"),
-        "a target that was already failing reports every mutation as killed, which is what \
-         verification exists to stop: {text}"
+        text.contains("unproven=4"),
+        "a target that was already failing reports every mutation as killed natively, which is \
+         what verification exists to stop, and a native kill is a lead: {text}"
+    );
+}
+
+#[test]
+fn a_sealed_control_that_fails_kills_nothing_whether_or_not_the_run_verified() {
+    let fixture = Fixture::copy("fixture-verify-fails");
+    let output = run(&fixture, &["--no-verify"]);
+    let text = njutest_devkit::process::strict_utf8(&output.stdout);
+    assert!(
+        text.contains("killed=0"),
+        "every sealed execution is judged against its own control, the same test with nothing \
+         active, and a test whose control fails is no test a mutation could be noticed by, so \
+         skipping the native baseline cannot turn its failures into kills: {text}{}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
 }
 

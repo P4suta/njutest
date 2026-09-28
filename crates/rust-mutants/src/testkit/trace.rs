@@ -89,6 +89,7 @@ pub const fn record_key(payload: &Payload) -> Option<&'static str> {
         Payload::Identical { .. } => Some("identical"),
         Payload::Evidence { .. } => Some("evidence"),
         Payload::MutantExec { .. } => Some("mutant"),
+        Payload::SealedExec { .. } => Some("sealed"),
         Payload::Note { .. } => Some("note"),
         Payload::RunEnd { .. } => Some("run"),
     }
@@ -111,8 +112,8 @@ pub fn every_payload() -> Vec<Payload> {
         AttributionRecord, BisectRecord, BuildRecord, CacheRecord, DischargeRecord,
         DiscoverFileRecord, EvidenceRecord, ExecRecord, IdenticalRecord, InstrumentRecord,
         KeptRecord, MutantExecRecord, NoteRecord, OpenRecord, PhaseRecord, RouteRecord, RunRecord,
-        SelectRecord, SiteRecord, SkipClaimRecord, SkipCount, SnapshotRecord, SweepRecord,
-        TargetRecord, TouchRecord, ValidateRoundRecord, VerifyRecord, WitnessRecord,
+        SealedExecRecord, SelectRecord, SiteRecord, SkipClaimRecord, SkipCount, SnapshotRecord,
+        SweepRecord, TargetRecord, TouchRecord, ValidateRoundRecord, VerifyRecord, WitnessRecord,
     };
 
     let phase = || PhaseRecord {
@@ -371,6 +372,15 @@ pub fn every_payload() -> Vec<Payload> {
                     test: "tests::shares".to_owned(),
                     why: "this machine cannot share blocks".to_owned(),
                 }],
+            },
+        },
+        Payload::SealedExec {
+            sealed: SealedExecRecord {
+                mutant: "abcdef".to_owned(),
+                index: 1,
+                target: "demo/lib/demo".to_owned(),
+                test: "tests::caught".to_owned(),
+                came_to: "panicked".to_owned(),
             },
         },
         Payload::Note {

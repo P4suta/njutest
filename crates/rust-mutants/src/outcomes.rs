@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 /// The name of the shape.
-pub const SCHEMA: &str = "rust-mutants-outcome-v3";
+pub const SCHEMA: &str = "rust-mutants-outcome-v4";
 
 /// The directory records live in, below the user's cache directory.
-pub const LAYOUT: &str = "rust-mutants/outcomes-v3";
+pub const LAYOUT: &str = "rust-mutants/outcomes-v4";
 
 /// Bumped when a rule changes what it writes, so a record about the old edit stops answering.
 pub const RULE_ABI: u32 = 1;
@@ -28,7 +28,7 @@ pub const INSTRUMENTATION_ABI: u32 = 3;
 pub const STEP_POLICY_ABI: u32 = 1;
 
 /// Bumped when a record changes what it holds, or when the recipe changes what a key is computed from.
-pub const CACHE_ABI: u32 = 9;
+pub const CACHE_ABI: u32 = 10;
 
 /// An outcome strong enough to answer a later identical run.
 ///
@@ -73,6 +73,8 @@ pub struct Record {
     pub run_id: String,
     /// Everything beyond the mutant the record is keyed on, so the name it is filed under can be recomputed wherever it is read.
     pub keyed: Keyed,
+    /// What the answer rests on: the sealed executions that established it, or nothing sealed, in which case it is a lead (ADR 0046).
+    pub evidence: crate::sealed::record::Evidence,
 }
 
 impl Record {

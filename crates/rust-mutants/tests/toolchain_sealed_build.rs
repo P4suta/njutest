@@ -262,7 +262,10 @@ fn a_prepared_session_that_does_not_ask_for_sealing_says_so_for_every_target() {
     )
     .expect("open")
     .prepare(
-        &rust_mutants::session::PrepareOptions::new(rust_mutants::rule::Tier::Balanced),
+        &rust_mutants::session::PrepareOptions {
+            sealing: Sealing::Off,
+            ..rust_mutants::session::PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
+        },
         &Cancel::new(),
     )
     .expect("prepare");

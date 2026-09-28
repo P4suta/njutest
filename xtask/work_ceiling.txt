@@ -20,8 +20,12 @@
 # The command is fixed so the numbers are: `run --tier all --offline --locked
 # --jobs 1`, with the configuration the fixture carries and nothing else.
 #
+# A mutant sealed executions decide starts no test process: its question is put
+# to instances of the sealed module, which this file does not count yet (ADR 0046).
+# What is left here is the native work a run still does, for its leads.
+#
 # fixture             whole  started  tests  tests_started
-fixture-simple           39       12     39             12
-fixture-coverage        114       35    266             40
-fixture-unreached        16        4     16              4
-fixture-baseline         63       17     63             17
+fixture-simple           39        0     39              0
+fixture-coverage        114        0    266              0
+fixture-unreached        16        0     16              0
+fixture-baseline         63        2     63              2

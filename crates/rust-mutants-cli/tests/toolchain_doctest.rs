@@ -104,7 +104,10 @@ fn a_documentation_target_reaches_every_mutation_of_its_own_library_under_covera
         &["--coverage", &format!("--trace={}", directory.display())],
     );
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
+        output
+            .status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "{}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
@@ -140,7 +143,10 @@ fn a_library_without_examples_costs_no_run() {
     let directory = fixture.temp().join("recording");
     let output = against(&fixture, &[&format!("--trace={}", directory.display())]);
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
+        output
+            .status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "{}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );

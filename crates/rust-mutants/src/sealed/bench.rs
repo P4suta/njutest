@@ -26,6 +26,9 @@ pub const RECORDS: &str = "/rust-mutants-sealed";
 /// The touch log a control's runtime writes.
 const TOUCH_LOG: &str = "/rust-mutants-sealed/touch.log";
 
+/// Where a test that cannot measure on the sealed host says so, as ADR 0043 lets it.
+const DECLINE_LOG: &str = "/rust-mutants-sealed/decline-notice";
+
 /// The fuel a control may spend: far past any test a person writes, and still a bound.
 pub const CONTROL_FUEL: u64 = 200_000_000_000;
 
@@ -180,9 +183,11 @@ pub struct Control {
 
 /// Why a listed test has no control a mutant can be judged against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Uncontrolled {
-    /// What its control came to.
-    pub came_to: Sealed,
+pub enum Uncontrolled {
+    /// Its control came to this rather than a pass.
+    Came(Sealed),
+    /// Its control declined to measure on the sealed host (ADR 0043), so it passed having measured nothing.
+    Declined,
 }
 
 /// One sealed module, ready: its tests and each one's control, or why it has none.
@@ -202,25 +207,27 @@ pub struct Bench<'runner> {
     /// Each target with no station, and why.
     pub unsealed: BTreeMap<String, Unsealed>,
     tree: Tree,
+    harness: Vec<String>,
     catalog: String,
     bounds: crate::touch::Bounds,
 }
 
 impl<'runner> Bench<'runner> {
-    /// Prepares every module of `sealed` on `runner`, lists its tests and runs each one's control inside `tree`.
+    /// Prepares every module of `sealed` on `runner`, lists its tests and runs each one's control inside `tree`, every invocation given the harness arguments `harness` as the native ones are.
     ///
     /// # Errors
     /// A module that cannot be read, an environment that is not text, or a host that cannot run what it is given.
     pub fn assemble(
         runner: &'runner SealedRunner,
         sealed: &SealedBuild,
-        tree: Tree,
+        (tree, harness): (Tree, &[String]),
         (catalog, bounds): (&str, crate::touch::Bounds),
     ) -> Result<Self, BenchError> {
         let mut bench = Self {
             stations: BTreeMap::new(),
             unsealed: sealed.unsealed.clone(),
             tree,
+            harness: harness.to_vec(),
             catalog: catalog.to_owned(),
             bounds,
         };
@@ -274,6 +281,11 @@ impl<'runner> Bench<'runner> {
             .saturating_add(FUEL_FLOOR);
         let invocation = self.invocation(station, one_test(test), (Some(mutant), budget))?;
         let transcript = invoke(station, &invocation)?;
+        if written(&transcript, DECLINE_LOG).is_some_and(|notice| !notice.is_empty()) {
+            return Ok(Some(Sealed::Doubted(
+                rust_mutants_decision::evidence::Doubt::Unaccounted,
+            )));
+        }
         Ok(Some(judged(observed(&transcript, test, Some(control)))))
     }
 
@@ -296,12 +308,15 @@ impl<'runner> Bench<'runner> {
         let transcript = invoke(station, &invocation)?;
         let came_to = judged(observed(&transcript, test, None));
         if came_to != Sealed::Passed {
-            return Ok(Err(Uncontrolled { came_to }));
+            return Ok(Err(Uncontrolled::Came(came_to)));
         }
-        let unread = Uncontrolled {
-            came_to: Sealed::Doubted(rust_mutants_decision::evidence::Doubt::Unaccounted),
-        };
-        let reached = match touched(&transcript).map(std::str::from_utf8) {
+        if written(&transcript, DECLINE_LOG).is_some_and(|notice| !notice.is_empty()) {
+            return Ok(Err(Uncontrolled::Declined));
+        }
+        let unread = Uncontrolled::Came(Sealed::Doubted(
+            rust_mutants_decision::evidence::Doubt::Unaccounted,
+        ));
+        let reached = match written(&transcript, TOUCH_LOG).map(std::str::from_utf8) {
             None => BTreeSet::new(),
             Some(Err(_not_text)) => return Ok(Err(unread)),
             Some(Ok(log)) => match crate::touch::read(log, &self.catalog, self.bounds) {
@@ -335,6 +350,7 @@ impl<'runner> Bench<'runner> {
         };
         let mut arguments = vec![program];
         arguments.extend(harness);
+        arguments.extend(self.harness.iter().cloned());
         let mut variables = Vec::new();
         for (name, value) in station.target.cargo_env.for_process() {
             let (Some(name), Some(value)) = (name.to_str(), value.to_str()) else {
@@ -348,6 +364,10 @@ impl<'runner> Bench<'runner> {
         variables.push((
             crate::instrument::CATALOG_ENV.to_owned(),
             self.catalog.clone(),
+        ));
+        variables.push((
+            crate::decline::DECLINE_NOTICE_ENV.to_owned(),
+            DECLINE_LOG.to_owned(),
         ));
         let asked = match mutant {
             Some(mutant) => (crate::instrument::ACTIVE_ENV, mutant),
@@ -499,10 +519,13 @@ fn sandbox(transcript: &Transcript) -> BTreeSet<&'static str> {
         .collect()
 }
 
-/// The bytes of the touch log the control's runtime wrote, where it wrote one.
-fn touched(transcript: &Transcript) -> Option<&[u8]> {
+/// The bytes an instance left at `path` of the records it was given, where it wrote any.
+fn written<'transcript>(
+    transcript: &'transcript Transcript,
+    path: &str,
+) -> Option<&'transcript [u8]> {
     transcript.overlay().iter().find_map(|entry| {
-        if entry.path != TOUCH_LOG {
+        if entry.path != path {
             return None;
         }
         match &entry.state {

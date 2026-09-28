@@ -60,21 +60,21 @@ fn a_filtered_out_mutant_is_not_run_for_the_stated_reason_and_is_not_a_finding()
         "only what the rule names ran: {text}"
     );
     assert!(
-        text.contains("not_run=13"),
-        "and the rest are accounted for rather than left out: {text}"
+        text.contains("not_run=12"),
+        "and the other twelve are accounted for rather than left out: {text}"
     );
     assert!(
         !text.contains("not-run-mutant"),
         "a mutant nobody selected is not a hole in the tests: {text}"
     );
     assert!(
-        text.contains("discharged-mutant"),
-        "a mutant nobody ran because a proof said running it establishes nothing is: {text}"
+        text.contains("surviving-mutant"),
+        "the one that was selected survived every sealed execution that reached it: {text}"
     );
     assert_eq!(
         output.status.code(),
-        Some(1),
-        "the one that was selected is a gap in the tests, proved rather than measured: {text}"
+        Some(i32::from(rust_mutants::run::EXIT_FOUND)),
+        "and it is a gap in the tests, measured rather than proved: {text}"
     );
 }
 
@@ -94,7 +94,11 @@ fn a_family_a_file_and_an_identity_each_narrow_the_same_way() {
     ));
     assert_eq!(judged(&skipped).len(), 10, "{skipped}");
     let bad = run(&fixture, &["--file", "src/lib.rs:nine"]);
-    assert_eq!(bad.status.code(), Some(2), "{bad:?}");
+    assert_eq!(
+        bad.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
+        "{bad:?}"
+    );
     assert!(
         njutest_devkit::process::strict_utf8(&bad.stderr).contains("--file"),
         "a value a flag cannot take names the flag: {bad:?}"
@@ -209,9 +213,14 @@ fn from_report_reruns_what_the_last_run_left() {
 
 #[test]
 fn from_report_that_names_nothing_measures_nothing_rather_than_everything() {
-    let fixture = Fixture::copy("fixture-simple");
+    let fixture = Fixture::copy("fixture-assured");
     let first = run(&fixture, &["--ui", "quiet"]);
-    assert_eq!(first.status.code(), Some(1), "{first:?}");
+    assert_eq!(
+        first.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_DETECTED)),
+        "a sealed execution detected every mutant of this fixture, so it leaves no survivor: \
+         {first:?}"
+    );
     let again = run(&fixture, &["--ui", "plain", "--from-report", "--no-cache"]);
     let text = said(&again);
     assert_eq!(
@@ -221,10 +230,14 @@ fn from_report_that_names_nothing_measures_nothing_rather_than_everything() {
          again, not a run of the whole catalog: {text}"
     );
     assert!(
-        text.contains("not_run=13"),
+        text.contains("not_run=7"),
         "and every mutant says why it was not measured: {text}"
     );
-    assert_eq!(again.status.code(), Some(0), "{text}");
+    assert_eq!(
+        again.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_DETECTED)),
+        "{text}"
+    );
 }
 
 fn environment(fixture: &Fixture) -> Environment {

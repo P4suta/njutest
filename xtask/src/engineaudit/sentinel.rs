@@ -168,9 +168,14 @@ pub fn recording() -> Vec<Value> {
     ];
     events.extend(judged((8, 9), 0, KILLED, "killed"));
     events.extend(judged((10, 11), 1, SURVIVED, "survived"));
-    events.push(json!({"seq":12,"timestamp":"2026-09-06T10:15:02Z",
+    for (seq, test) in [(12, "larger_works"), (13, "smaller_works")] {
+        events.push(json!({"seq":seq,"timestamp":"2026-09-06T10:15:02Z",
+            "elapsed_ms":65,"type":"sealed-exec","sealed":{"mutant":short(SURVIVED),
+            "index":1,"target":TARGET,"test":test,"came_to":"passed"}}));
+    }
+    events.push(json!({"seq":14,"timestamp":"2026-09-06T10:15:02Z",
         "elapsed_ms":70,"type":"run-end","run":{"outcome":"detected","error":null,
-        "events_emitted":12,"events_dropped":0}}));
+        "events_emitted":14,"events_dropped":0}}));
     events
 }
 
@@ -891,7 +896,7 @@ fn killed_by_a_stranger() -> Vec<Value> {
         );
     }
     if let Some(end) = events.last_mut() {
-        merge(end, json!({ "run": { "events_emitted": 13 } }));
+        merge(end, json!({ "run": { "events_emitted": 15 } }));
     }
     events
 }
@@ -1231,6 +1236,7 @@ impl Layer {
                 document: with(json!({
                     "mutants": [{}, { "evidence": { "executions": [{ "came_to": "panicked" }] } }]
                 })),
+                events: amended(11, json!({ "sealed": { "came_to": "panicked" } })),
                 ..clean
             }],
         }

@@ -756,14 +756,21 @@ pub(super) fn sealed(report: &Report, audit: &mut Audit) -> Decided {
             notes.violated(
                 row.label(),
                 format!(
-                    "the row says {}{} and its sealed executions establish {outcome}{}; a \
-                     verdict is what the sealed executions observed",
-                    row.outcome,
-                    said.map_or_else(String::new, |why| format!(" ({why})")),
-                    reason.map_or_else(String::new, |why| format!(" ({why})")),
+                    "the row says {} and its sealed executions establish {}; a verdict is what \
+                     the sealed executions observed",
+                    spelled(row.outcome.as_str(), said),
+                    spelled(outcome, reason),
                 ),
             );
         }
     }
     notes.looked()
+}
+
+/// An outcome as a finding spells it, with why it was not run where it was not.
+fn spelled(outcome: &str, reason: Option<&str>) -> String {
+    match reason {
+        Some(reason) => format!("{outcome} ({reason})"),
+        None => outcome.to_owned(),
+    }
 }

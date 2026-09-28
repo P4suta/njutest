@@ -379,6 +379,7 @@ fn emptying_what_earlier_runs_established_says_how_much_was_in_it() {
                     &rust_mutants::vars::Variables::empty(),
                 ),
             },
+            evidence: rust_mutants::sealed::record::Evidence::not_sealed(),
         })
         .expect("the cache record is stored");
 

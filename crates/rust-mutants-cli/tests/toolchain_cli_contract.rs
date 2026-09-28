@@ -200,7 +200,10 @@ fn run_exits_by_what_the_tests_said() {
     assert!(stdout(&survived).contains("survived"));
 
     let unknown = against(&fixture, &["run", "--mutant", "ffffffff"]);
-    assert_eq!(unknown.status.code(), Some(2));
+    assert_eq!(
+        unknown.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED))
+    );
     let said = njutest_devkit::process::strict_utf8(&unknown.stderr);
     assert!(said.contains("RM5003"), "{said}");
 }
@@ -221,13 +224,16 @@ fn instrument_prints_one_file_as_the_engine_rewrites_it() {
         text.contains(&format!("{module}::active(")) && text.contains(&format!("mod {module} {{")),
         "{text}"
     );
-    assert!(
-        text.contains(&format!(
-            "{allow}\nmod {module} {{",
-            allow = rust_mutants::instrument::GENERATED_MODULE_ALLOW_ATTRIBUTE
-        )),
-        "only the private generated module owns the exact lint exception: {text}"
-    );
+    for built_for in ["not(target_os = \"wasi\")", "target_os = \"wasi\""] {
+        assert!(
+            text.contains(&format!(
+                "{allow}\n#[cfg({built_for})]\nmod {module} {{",
+                allow = rust_mutants::instrument::GENERATED_MODULE_ALLOW_ATTRIBUTE
+            )),
+            "only the private generated module owns the exact lint exception, native and sealed \
+             alike ({built_for}): {text}"
+        );
+    }
     assert!(
         !text.contains("#[allow(warnings") && !text.contains("#[allow(unused) pub fn max"),
         "instrumentation must not suppress a diagnostic in user code: {text}"
@@ -240,7 +246,10 @@ fn instrument_prints_one_file_as_the_engine_rewrites_it() {
     );
 
     let missing = against(&fixture, &["instrument", "--file", "src/nope.rs"]);
-    assert_eq!(missing.status.code(), Some(2));
+    assert_eq!(
+        missing.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED))
+    );
     let refusal = njutest_devkit::process::strict_utf8(&missing.stderr).into_owned();
     assert!(
         refusal.contains("RM0004") && refusal.contains("src/nope.rs"),
@@ -687,7 +696,7 @@ fn a_process_that_holds_a_refused_runs_output_ends_with_it() {
     } = started.expect("the test says what it started");
     assert_eq!(
         output.status.code(),
-        Some(2),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
         "a daemon that keeps the test's output open leaves the execution unreadable to its end, \
          and the baseline that cannot be read refuses the run: {output:?}"
     );
@@ -737,6 +746,7 @@ fn a_write_a_test_makes_under_its_home_lands_in_its_execution() {
             "--tier",
             "all",
             "--no-coverage",
+            "--no-seal",
             "--ui",
             "quiet",
             "--root",
@@ -751,9 +761,10 @@ fn a_write_a_test_makes_under_its_home_lands_in_its_execution() {
         },
     );
     let output = njutest_devkit::process::answered(code, out, err);
-    assert!(
-        output.status.code().is_some_and(|code| code < 2),
-        "the run reaches a verdict: {output:?}"
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
+        "the run answers, and what a native run with the given home says is a lead: {output:?}"
     );
     assert_eq!(
         std::fs::read_to_string(&setting).expect("the given home's setting"),
@@ -799,6 +810,7 @@ fn run_given(fixture: &Fixture, given: &Environment) -> Output {
             "--tier",
             "all",
             "--no-coverage",
+            "--no-seal",
             "--ui",
             "quiet",
             "--trace",
@@ -867,9 +879,10 @@ fn a_remembered_baseline_that_needed_the_given_home_answers_only_for_that_home()
     std::fs::write(&setting, "already there").expect("a setting the given home holds");
     let mut given = given_home(&fixture, &home);
     let first = run_given(&fixture, &given);
-    assert!(
-        first.status.code().is_some_and(|code| code < 2),
-        "the run reaches a verdict: {first:?}"
+    assert_eq!(
+        first.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
+        "the run answers, and what a native run with the given home says is a lead: {first:?}"
     );
     let second = run_given(&fixture, &given);
     let trace = newest_trace(&fixture);
@@ -920,7 +933,8 @@ fn a_home_the_run_cannot_make_refuses_the_run_with_its_code() {
         .expect("the identity readable again");
     let said = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(
-        output.status.code() == Some(2) && said.contains("RM5012"),
+        output.status.code() == Some(i32::from(rust_mutants::run::EXIT_FAILED))
+            && said.contains("RM5012"),
         "a home the engine cannot make for an execution is the engine's failure, refused with its \
          code and the file that stopped it, never a baseline that fails and so passes with the \
          given home instead: {output:?}"
@@ -978,8 +992,8 @@ fn a_shim_that_answers_only_in_the_given_home_is_asked_as_a_confined_test_asks_i
     let output = run_given(&fixture, &given);
     assert_eq!(
         output.status.code(),
-        Some(0),
-        "the run reaches a clean verdict: {output:?}"
+        Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
+        "the run answers, and what a native run with the given home says is a lead: {output:?}"
     );
     assert_eq!(
         unconfined_targets(&fixture),

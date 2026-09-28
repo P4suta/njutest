@@ -419,7 +419,6 @@
           "required": [
             "cataloged",
             "declined",
-            "discharged",
             "errored",
             "executed",
             "expected",
@@ -430,6 +429,11 @@
             "skipped",
             "step_limit_reached",
             "survived",
+            "unproven",
+            "unproven_discharged",
+            "unproven_killed",
+            "unproven_survived",
+            "unproven_unreached",
             "unreached",
             "waited"
           ],
@@ -445,10 +449,14 @@
             "inconclusive": { "type": "integer", "minimum": 0 },
             "errored": { "type": "integer", "minimum": 0 },
             "not_run": { "type": "integer", "minimum": 0 },
+            "unproven": { "type": "integer", "minimum": 0 },
             "unreached": { "type": "integer", "minimum": 0 },
-            "discharged": { "type": "integer", "minimum": 0 },
             "declined": { "type": "integer", "minimum": 0 },
-            "expected": { "type": "integer", "minimum": 0 }
+            "expected": { "type": "integer", "minimum": 0 },
+            "unproven_killed": { "type": "integer", "minimum": 0 },
+            "unproven_survived": { "type": "integer", "minimum": 0 },
+            "unproven_unreached": { "type": "integer", "minimum": 0 },
+            "unproven_discharged": { "type": "integer", "minimum": 0 }
           }
         },
         "score": {

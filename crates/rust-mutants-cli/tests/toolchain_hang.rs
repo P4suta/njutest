@@ -27,7 +27,7 @@ fn run(fixture: &Fixture, env: &[(&str, String)]) -> Output {
     }
     command.arg("run");
     command.args(["--root", njutest_devkit::paths::utf8(fixture.root())]);
-    command.args(["--tier", "all", "--offline", "--locked"]);
+    command.args(["--tier", "all", "--offline", "--locked", "--no-seal"]);
     command.output().expect("rust-mutants runs")
 }
 

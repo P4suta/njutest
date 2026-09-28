@@ -180,6 +180,7 @@ fn counted(
         | Payload::Select { .. }
         | Payload::Identical { .. }
         | Payload::Evidence { .. }
+        | Payload::SealedExec { .. }
         | Payload::Note { .. } => {}
     }
     Ok(())

@@ -325,7 +325,10 @@ fn trace_diff_between_two_runs_reports_the_moved_columns() {
         ],
     );
     assert!(
-        first.status.code().is_some_and(|code| code < 2),
+        first
+            .status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "{}",
         stderr(&first)
     );
@@ -380,7 +383,12 @@ fn an_explicit_trace_directory_that_cannot_be_created_refuses_before_the_command
         &fixture,
         &["list", &format!("--trace={}", blocked.display())],
     );
-    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
+        "{}",
+        stderr(&output)
+    );
     let said = stderr(&output);
     assert_eq!(
         said.lines().count(),
@@ -468,7 +476,15 @@ fn a_mutation_a_run_leaves_out_records_why_it_was_left_out() {
     let fixture = Fixture::copy("fixture-coverage");
     let output = against(
         &fixture,
-        &["run", "--trace", "--rule", "le-to-lt", "--tier", "all"],
+        &[
+            "run",
+            "--trace",
+            "--rule",
+            "le-to-lt",
+            "--tier",
+            "all",
+            "--no-seal",
+        ],
     );
     let run = only_run(&reports(&fixture));
     let events = recorded(&run.join("trace"));
@@ -623,14 +639,15 @@ fn a_mutation_a_run_puts_to_the_tests_leaves_the_execution_that_ran_it() {
     for index in executed {
         assert!(
             events.iter().any(|event| {
-                event
+                let kind = event
                     .pointer("/payload/type")
-                    .and_then(serde_json::Value::as_str)
-                    == Some("mutant-exec")
-                    && event
-                        .pointer("/payload/mutant/index")
-                        .and_then(serde_json::Value::as_u64)
-                        == Some(index)
+                    .and_then(serde_json::Value::as_str);
+                let ran = match kind {
+                    Some("mutant-exec") => event.pointer("/payload/mutant/index"),
+                    Some("sealed-exec") => event.pointer("/payload/sealed/index"),
+                    _ => None,
+                };
+                ran.and_then(serde_json::Value::as_u64) == Some(index)
             }),
             "a mutation that ran leaves the execution that ran it, or a recording says a run \
              removed work it did: {index}"

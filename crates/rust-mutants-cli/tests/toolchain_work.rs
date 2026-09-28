@@ -73,7 +73,10 @@ fn measured(name: &str) -> Work {
     );
     let output = njutest_devkit::process::answered(code, out, err);
     assert!(
-        output.status.code().is_some_and(|code| code <= 1),
+        output
+            .status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "{name}: {output:?}"
     );
     let directory = njutest_devkit::fixture::newest_run(
@@ -162,8 +165,8 @@ fn every_removal_a_whole_run_still_answers_for_is_a_proof_a_reader_can_name() {
     }
 }
 
-/// How many times a run may start cargo before somebody has to say why.
-const CARGO_CEILING: u64 = 6;
+/// How many times a run may start cargo before somebody has to say why: six for the native tree, and one more that builds the same tree for the sealed target (ADR 0046).
+const CARGO_CEILING: u64 = 7;
 
 /// How many times a run started each program, read back from its own recording.
 fn programs(name: &str, extra: &[&str]) -> std::collections::BTreeMap<String, u64> {

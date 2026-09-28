@@ -367,6 +367,7 @@ fn routed(report: &Report, recorded: &CheckedRecording, notes: &mut Notes<'_>) {
         declined(row, &execs, &excused, notes);
         reached(row, route, &execs, notes);
         discharged(row, route, &execs, notes);
+        sealed_recorded(row, routing, notes);
     }
 }
 
@@ -773,6 +774,33 @@ fn retried(row: &Row, execs: &[&crate::route::Exec], notes: &mut Notes<'_>) {
     }
 }
 
+/// Every sealed execution a row rests on, against the sealed executions the recording holds for its mutant: the same target, test and ending, and no other (ADR 0046).
+fn sealed_recorded(row: &Row, routing: &crate::route::Routing, notes: &mut Notes<'_>) {
+    let super::Resting::Sealed { executions } = &row.evidence else {
+        return;
+    };
+    let recorded: Vec<(&str, &str, &str)> = routing
+        .sealed
+        .iter()
+        .filter(|one| one.mutant == row.display_id || one.mutant == row.id)
+        .map(|one| (one.target.as_str(), one.test.as_str(), one.came_to.as_str()))
+        .collect();
+    let rests_on: Vec<(&str, &str, &str)> = executions
+        .iter()
+        .map(|run| (run.target.as_str(), run.test.as_str(), run.came_to.name()))
+        .collect();
+    if recorded != rests_on {
+        notes.violated(
+            row.label(),
+            format!(
+                "the row rests on the sealed executions {rests_on:?} and the recording holds \
+                 {recorded:?}; a verdict resting on an execution nobody recorded is one nobody \
+                 can check"
+            ),
+        );
+    }
+}
+
 /// The route's granularity, against whether anything ran.
 fn reached(
     row: &Row,
@@ -787,7 +815,7 @@ fn reached(
              runs one against it; a claim its own run contradicts is not a claim"
                 .to_owned(),
         ),
-        ("all" | "block", true) if row.outcome != NOT_RUN => notes.violated(
+        ("all" | "block", true) if row.outcome != NOT_RUN && !row.sealed() => notes.violated(
             row.label(),
             format!(
                 "the route says {} targets could notice this mutation and nothing ran; an \

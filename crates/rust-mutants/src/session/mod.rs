@@ -1021,7 +1021,7 @@ impl Session {
         Ok(crate::sealed::bench::Bench::assemble(
             runner,
             &self.sealed,
-            tree,
+            (tree, &self.harness_args),
             (self.catalog.digest(), bounds),
         )?)
     }

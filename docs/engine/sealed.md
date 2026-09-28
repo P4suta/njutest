@@ -5,10 +5,11 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Sealed execution
 
-**Status: specified, and implemented in part.** This page is the contract [ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md) decided.
-What exists: [the standing of a mutant](#the-standing-of-a-mutant), decided by `rust_mutants_decision::evidence::standing`, [the judgement of one execution](#judging-one-execution), decided by `rust_mutants_decision::judgement::judged`, both held to their rules by exhaustive comparisons and Kani, and [the sealed build](#a-sealed-run), which a preparation makes when `PrepareOptions::sealing` asks for it.
-What does not exist yet, and so what no run does yet: the host, the sealed executions, and the reports and exit codes that read them.
-Until those land, every run's standing is native and so unproven, whatever this page says a sealed run would conclude.
+**Status: implemented, with the gaps below.** This page is the contract [ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md) decided.
+A run seals by default: it builds the instrumented tree for `wasm32-wasip1`, lists each module's tests and runs each one's control on the host, puts every mutant to the tests whose controls reached it, and writes the verdict they establish, with its `evidence`, into the report.
+[The standing of a mutant](#the-standing-of-a-mutant) is `rust_mutants_decision::evidence::standing` and [the judgement of one execution](#judging-one-execution) is `rust_mutants_decision::judgement::judged`, both held to their rules by exhaustive comparisons and Kani.
+`--no-seal`, or `[mutation] seal = false`, builds nothing for the sealed target, and then every answer is a lead.
+Not yet: doctests are not sealed, so what only a doctest reaches is unproven; a sealed verdict is kept in the outcome store and read back under its key, but `verify` does not yet run a stored report's sealed executions again; a mutant that makes a test decline where its control did not is a doubt rather than the detection ADR 0043 makes it; an interrupt waits for the instance it lands in.
 
 A verdict is what a sealed run observed.
 A sealed run is the instrumented snapshot, built for `wasm32-wasip1`, with each test run alone in a fresh WebAssembly instance on a host that answers every question the same way every time.

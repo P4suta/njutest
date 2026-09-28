@@ -114,7 +114,11 @@ fn a_tree_git_cannot_be_asked_about_ends_the_command_rather_than_reading_as_noth
     let fixture = Fixture::copy("fixture-workspace");
     let output = against(&fixture, &["list", "--changed"]);
     let complaint = njutest_devkit::process::strict_utf8(&output.stderr).into_owned();
-    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
+        "{output:?}"
+    );
     assert!(complaint.contains("RM0010"), "{complaint}");
 }
 
@@ -124,7 +128,11 @@ fn a_revision_git_does_not_know_ends_the_command() {
     njutest_devkit::repo::commit_tree(fixture.root());
     let output = against(&fixture, &["list", "--changed-from", "no-such-revision"]);
     let complaint = njutest_devkit::process::strict_utf8(&output.stderr).into_owned();
-    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
+        "{output:?}"
+    );
     assert!(complaint.contains("no-such-revision"), "{complaint}");
 }
 
@@ -158,11 +166,19 @@ fn routing_loses_no_kill_and_names_the_code_no_test_runs() {
             "--offline",
             "--locked",
             "--no-cache",
+            "--no-seal",
         ],
     ));
     let routed = against(
         &fixture,
-        &["run", "--coverage", "--offline", "--locked", "--no-cache"],
+        &[
+            "run",
+            "--coverage",
+            "--offline",
+            "--locked",
+            "--no-cache",
+            "--no-seal",
+        ],
     );
     let said = stdout(&routed);
 
@@ -194,13 +210,14 @@ fn routing_loses_no_kill_and_names_the_code_no_test_runs() {
         );
     }
     assert!(
-        said.contains("unreached-mutant"),
-        "a mutant no measured test reaches is said to be one: {said}"
+        said.contains("unproven-mutant") && said.contains("unreached"),
+        "a mutant no measured test reaches is said to be one, as the lead a native run gives: \
+         {said}"
     );
     assert_eq!(
         routed.status.code(),
-        Some(1),
-        "code the tests never execute is a finding about the tests, not a broken run: {routed:?}"
+        Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
+        "a native run's routing answers with leads, and a run of leads is unproven: {routed:?}"
     );
 }
 
@@ -225,7 +242,10 @@ fn a_claim_on_a_file_the_change_set_left_out_is_unjudged_and_one_in_it_is_still_
 
     let output = against(&fixture, &["run", "--changed", "--offline", "--locked"]);
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
+        output
+            .status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "{}{}",
         stdout(&output),
         njutest_devkit::process::strict_utf8(&output.stderr)

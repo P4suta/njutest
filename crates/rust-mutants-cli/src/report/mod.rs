@@ -364,6 +364,51 @@ fn accepting(accept: &str, say: &mut impl FnMut(&str, &str)) {
     }
 }
 
+/// Which targets could have noticed one mutant, which ran, which tests each was asked, and what a proof removed.
+fn routed(route: &run::RouteDocument, say: &mut impl FnMut(&str, &str)) {
+    say(
+        "ROUTE",
+        &format!(
+            "{} reaching [{}] executed [{}]",
+            route.granularity,
+            route.reaching.join(", "),
+            route.executed.join(", ")
+        ),
+    );
+    for (target, tests) in &route.tests {
+        say("TESTS", &format!("{target}: {}", tests.join(", ")));
+    }
+    for one in &route.discharged {
+        say("PROVED", &format!("{}: {}", one.target, one.proof));
+    }
+}
+
+/// What an outcome rests on, under one label: each sealed execution, or every reason it is a lead.
+fn resting(evidence: &rust_mutants::sealed::record::Evidence, say: &mut impl FnMut(&str, &str)) {
+    match evidence {
+        rust_mutants::sealed::record::Evidence::Sealed { executions } => {
+            say("EVIDENCE", "sealed");
+            for execution in executions {
+                say(
+                    "",
+                    &format!(
+                        "{} in {}: {}",
+                        execution.test,
+                        execution.target,
+                        execution.came_to.name()
+                    ),
+                );
+            }
+        }
+        rust_mutants::sealed::record::Evidence::Unproven { reasons } => {
+            say("EVIDENCE", "unproven, so the outcome is a lead");
+            for reason in reasons {
+                say("", reason.said());
+            }
+        }
+    }
+}
+
 /// Everything one run established about one mutant, as the lines a person reads.
 #[must_use]
 pub fn explained(document: &rust_mutants::report::explain::ExplainDocument) -> String {
@@ -415,25 +460,14 @@ pub fn explained(document: &rust_mutants::report::explain::ExplainDocument) -> S
                     ),
                 );
             }
+            if let Some(evidence) = &document.evidence {
+                resting(evidence, &mut say);
+            }
         }
         (None, None) => say("OUTCOME", "no stored run answers for it"),
     }
     if let Some(route) = &document.route {
-        say(
-            "ROUTE",
-            &format!(
-                "{} reaching [{}] executed [{}]",
-                route.granularity,
-                route.reaching.join(", "),
-                route.executed.join(", ")
-            ),
-        );
-        for (target, tests) in &route.tests {
-            say("TESTS", &format!("{target}: {}", tests.join(", ")));
-        }
-        for one in &route.discharged {
-            say("PROVED", &format!("{}: {}", one.target, one.proof));
-        }
+        routed(route, &mut say);
     }
     say("REPRODUCE", &document.reproduce);
     accepting(&document.accept, &mut say);
@@ -477,18 +511,44 @@ pub fn outcome(result: &MutantResult, mutant: &Mutant) -> String {
     text
 }
 
-/// The exit code an outcome earns: zero when the tests noticed the mutant, one when they did not, and two when nothing was established.
+/// What sealed executions established about one mutant, a line per execution.
 #[must_use]
-pub const fn exit_code(outcome: rust_mutants::outcome::Outcome) -> u8 {
+pub fn sealed(judged: &rust_mutants::run::Judged, mutant: &Mutant) -> String {
+    let said = judged.not_run_reason.map_or_else(
+        || judged.outcome.name(),
+        rust_mutants::run::NotRunReason::name,
+    );
+    let mut text = format!(
+        "{} {}  {}  {}\n",
+        mutant.display_id, mutant.candidate.rule, said, judged.target
+    );
+    if let rust_mutants::sealed::record::Evidence::Sealed { executions } = &judged.evidence {
+        for execution in executions {
+            let written = writeln!(
+                text,
+                "sealed {} in {}: {}",
+                execution.test,
+                execution.target,
+                execution.came_to.name()
+            );
+            debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        }
+    }
+    text
+}
+
+/// The exit code a sealed verdict earns: zero when a sealed execution detected the mutant, one when none did.
+#[must_use]
+pub const fn sealed_exit_code(outcome: rust_mutants::outcome::Outcome) -> u8 {
     use rust_mutants::outcome::Outcome;
     match outcome {
-        Outcome::Killed => 0,
-        Outcome::Survived => 1,
-        Outcome::NotRun
+        Outcome::Killed => rust_mutants::run::EXIT_DETECTED,
+        Outcome::Survived
+        | Outcome::NotRun
         | Outcome::StepLimitReached
         | Outcome::Waited
         | Outcome::Inconclusive
-        | Outcome::Errored => crate::EXIT_USAGE,
+        | Outcome::Errored => rust_mutants::run::EXIT_FOUND,
     }
 }
 

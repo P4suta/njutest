@@ -58,6 +58,7 @@ const fn relevant_payload(payload: &Payload) -> RelevantPayload<'_> {
         | Payload::Select { .. }
         | Payload::Identical { .. }
         | Payload::Evidence { .. }
+        | Payload::SealedExec { .. }
         | Payload::Note { .. }
         | Payload::RunEnd { .. } => RelevantPayload::Other,
     }

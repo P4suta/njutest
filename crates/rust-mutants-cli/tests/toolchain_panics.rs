@@ -22,11 +22,12 @@ fn rows(fixture: &Fixture) -> serde_json::Value {
     command.env("XDG_CACHE_HOME", fixture.cache());
     command.arg("run");
     command.args(["--root", njutest_devkit::paths::utf8(fixture.root())]);
-    command.args(["--tier", "all", "--offline", "--locked"]);
+    command.args(["--tier", "all", "--offline", "--locked", "--no-seal"]);
     let output = command.output().expect("rust-mutants runs");
-    assert!(
-        output.status.code().is_some_and(|code| code < 2),
-        "{}",
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
+        "what a native process makes of a panic or an abort is a lead: {}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let newest = njutest_devkit::fixture::newest_run(
@@ -110,13 +111,13 @@ fn every_mutation_but_the_one_no_test_in_this_process_can_reach_is_noticed() {
     let document = rows(&fixture);
     let accounting = &document["accounting"];
     assert_eq!(
-        accounting["killed"].as_u64(),
+        accounting["unproven_killed"].as_u64(),
         Some(12),
         "a process that ends without failing an assertion is a kill, whichever way it \
-         ends: {accounting}"
+         ends, and a native kill is a lead: {accounting}"
     );
     assert_eq!(
-        accounting["survived"].as_u64(),
+        accounting["unproven_survived"].as_u64(),
         Some(1),
         "and one is not, by construction. `capacity(0)` aborts, so the only test that \
          could notice `if n == 0` being made false is one that calls it, and a test that \

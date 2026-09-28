@@ -64,6 +64,7 @@ const fn relevant_payload(payload: &Payload) -> RelevantPayload<'_> {
         | Payload::Identical { .. }
         | Payload::Evidence { .. }
         | Payload::MutantExec { .. }
+        | Payload::SealedExec { .. }
         | Payload::Note { .. }
         | Payload::RunEnd { .. } => RelevantPayload::Other,
     }
@@ -1035,6 +1036,13 @@ fn one_of_each_execution(recorder: &Recorder) {
         lingered: false,
         step_notice: None,
         declined: Vec::new(),
+    });
+    recorder.sealed_exec(rust_mutants::trace::SealedExecRecord {
+        mutant: "b".repeat(20),
+        index: 1,
+        target: "demo/lib/demo".to_owned(),
+        test: "demo::tests::le_bound".to_owned(),
+        came_to: "panicked".to_owned(),
     });
     recorder.cache(rust_mutants::trace::CacheRecord {
         mutant: "b".repeat(20),

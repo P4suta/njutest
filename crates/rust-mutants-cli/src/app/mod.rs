@@ -1021,9 +1021,16 @@ fn one(
     stdout: &mut dyn Write,
 ) -> Result<u8, CliError> {
     let found = session.resolve(&request.mutant)?.clone();
+    if request.target.is_none()
+        && request.test.is_none()
+        && let Some(judged) = run::sealed_now(session, &found)?
+    {
+        write(stdout, &report::sealed(&judged, &found))?;
+        return Ok(report::sealed_exit_code(judged.outcome));
+    }
     let result = session.exec(request, cancel)?;
     write(stdout, &report::outcome(&result, &found))?;
-    Ok(report::exit_code(result.outcome()))
+    Ok(run::EXIT_UNESTABLISHED)
 }
 
 /// Every accepted mutant, with the expectations verified and a report written.
@@ -1512,17 +1519,32 @@ fn replay(
             request = request.test(Some(test.clone()));
         }
     }
+    if let Some(judged) = run::sealed_now(session, &found)? {
+        let now = judged
+            .not_run_reason
+            .map_or_else(|| judged.outcome.name(), run::NotRunReason::name);
+        write(
+            stdout,
+            &format!(
+                "REPLAY    {} {}\n",
+                found.display_id,
+                verdict(stored.as_ref(), now)
+            ),
+        )?;
+        write(stdout, &report::sealed(&judged, &found))?;
+        return Ok(report::sealed_exit_code(judged.outcome));
+    }
     let result = session.exec(&request, cancel)?;
     write(
         stdout,
         &format!(
-            "REPLAY    {} {}\n",
+            "REPLAY    {} {}, which is a lead: nothing sealed decided it\n",
             found.display_id,
             verdict(stored.as_ref(), result.outcome().name())
         ),
     )?;
     write(stdout, &report::outcome(&result, &found))?;
-    Ok(report::exit_code(result.outcome()))
+    Ok(run::EXIT_UNESTABLISHED)
 }
 
 /// What the replay establishes about the stored answer.

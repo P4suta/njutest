@@ -78,8 +78,8 @@ fn normalized(path: &Path) -> PathBuf {
     parts.iter().collect()
 }
 
-/// What a run of one fixture establishes, in the order a block states it.
-fn recorded(fixture: &Fixture, args: &[String]) -> Vec<Fate> {
+/// What a run of one fixture establishes, in the order a block states it, and what it said on its error stream.
+fn recorded(fixture: &Fixture, args: &[String]) -> (Vec<Fate>, String) {
     let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
@@ -98,7 +98,7 @@ fn recorded(fixture: &Fixture, args: &[String]) -> Vec<Fate> {
     );
     let output = njutest_devkit::process::answered(code, out, err);
     let code = output.status.code();
-    let said = njutest_devkit::process::strict_utf8(&output.stderr);
+    let said = njutest_devkit::process::strict_utf8(&output.stderr).into_owned();
     let directory = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     if !test_directory(&directory) {
         assert_eq!(
@@ -107,13 +107,13 @@ fn recorded(fixture: &Fixture, args: &[String]) -> Vec<Fate> {
             "a run that wrote no report at all is a run that was refused, and nothing else: \
              {said}"
         );
-        return Vec::new();
+        return (Vec::new(), said);
     }
     assert!(
         code.is_some_and(|code| code <= 2),
         "the run itself failed: {said}"
     );
-    rows(&newest(&directory))
+    (rows(&newest(&directory)), said)
 }
 
 fn newest(directory: &Path) -> PathBuf {
@@ -228,7 +228,7 @@ fn holds(name: &str) {
         "{name}: the README states no fates, which `cargo xtask fixtures` refuses"
     );
     let fixture = Fixture::copy_with_siblings(name, &siblings(&stated.args));
-    let found = recorded(&fixture, &resolved(&fixture, &stated.args));
+    let (found, stderr) = recorded(&fixture, &resolved(&fixture, &stated.args));
     if std::env::var_os(UPDATE).is_some() {
         rewrite(&readme(name), &found);
         return;
@@ -239,7 +239,7 @@ fn holds(name: &str) {
         found == stated.rows,
         "{name}: the README and a run of it disagree; read the difference, then rewrite this \
          fixture's block with {UPDATE}=1 if the run is right\n  the README says:\n    {}\n  the run \
-         establishes:\n    {}",
+         establishes:\n    {}\n  and said:\n{stderr}",
         said.join("\n    "),
         is.join("\n    ")
     );
