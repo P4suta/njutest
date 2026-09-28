@@ -665,6 +665,8 @@ pub struct PrepareOptions {
     pub skip_targets: Vec<String>,
     /// Which mutants to place in the compiled tree when a later run is already known to ask about only part of the catalog.
     pub validation_filter: Option<crate::run::Filter>,
+    /// Whether the instrumented tree is also built for the sealed target (ADR 0046).
+    pub sealing: crate::sealed::Sealing,
 }
 
 impl PrepareOptions {
@@ -695,6 +697,7 @@ impl PrepareOptions {
             build: crate::cargo::BuildConfig::default(),
             skip_targets: Vec::new(),
             validation_filter: None,
+            sealing: crate::sealed::Sealing::Off,
         }
     }
 
@@ -897,6 +900,8 @@ pub struct Session {
     inputs: crate::select::Inputs,
     /// The digest of the manifests, the lock file, and the cargo configuration the build read.
     manifests: String,
+    /// The instrumented tree built for the sealed target, or why it was not (ADR 0046).
+    sealed: crate::sealed::SealedBuild,
 }
 
 /// What the carry rule has taken of a session so far: its tree, once, and each target's reach as it is first asked about.
@@ -988,6 +993,12 @@ impl Session {
     #[must_use]
     pub fn targets(&self) -> &[TestTarget] {
         &self.targets
+    }
+
+    /// The instrumented tree built for the sealed target: each target's module, or why it has none (ADR 0046).
+    #[must_use]
+    pub const fn sealed(&self) -> &crate::sealed::SealedBuild {
+        &self.sealed
     }
 
     /// What bounds every index a touch log of this session may name: the catalog's mutants and its items.

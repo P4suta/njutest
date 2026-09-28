@@ -16,7 +16,7 @@ use rust_mutants::cargo::{
     MetadataOptions, Toolchain, compile,
 };
 use rust_mutants::runner::Cancel;
-use rust_mutants::sealed::{SealedBuild, TARGET, Unsealed, installed};
+use rust_mutants::sealed::{SealedBuild, Sealing, TARGET, Unsealed, installed};
 use rust_mutants::trace::Recorder;
 
 fn toolchain(dir: &Path) -> Toolchain {
@@ -188,5 +188,91 @@ fn a_target_that_does_not_build_for_wasm_is_unsealed_and_the_rest_still_seal() {
         native.len() - 1,
         "every other target still seals: {:?}",
         sealed.modules.keys().collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_prepared_session_that_asks_for_sealing_holds_the_instrumented_trees_sealed_modules() {
+    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-simple");
+    let session = rust_mutants::workspace::Workspace::open(
+        fixture.root(),
+        rust_mutants::testkit::opening::opening(
+            &njutest_devkit::paths::cargo_binary(),
+            fixture.temp(),
+        ),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(
+        &rust_mutants::session::PrepareOptions {
+            sealing: Sealing::On,
+            ..rust_mutants::session::PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
+        },
+        &Cancel::new(),
+    )
+    .expect("prepare");
+    let sealed = session.sealed();
+    for target in session.targets() {
+        match target.kind() {
+            rust_mutants::execute::TargetKind::Doc => assert_eq!(
+                sealed.unsealed.get(target.id()),
+                Some(&Unsealed::Doctest),
+                "a doctest is unsealed as one"
+            ),
+            rust_mutants::execute::TargetKind::ProcMacro => assert_eq!(
+                sealed.unsealed.get(target.id()),
+                Some(&Unsealed::ProcMacro),
+                "a procedural macro's tests are unsealed as one"
+            ),
+            rust_mutants::execute::TargetKind::Lib
+            | rust_mutants::execute::TargetKind::Bin
+            | rust_mutants::execute::TargetKind::Test
+            | rust_mutants::execute::TargetKind::Example => {
+                let module = sealed.modules.get(target.id()).unwrap_or_else(|| {
+                    panic!(
+                        "{} of the instrumented tree builds for {TARGET}: {:?}",
+                        target.id(),
+                        sealed.unsealed
+                    )
+                });
+                let metadata =
+                    std::fs::metadata(&module.target.executable).unwrap_or_else(|error| {
+                        panic!("{} is on disk: {error}", module.target.executable.display())
+                    });
+                assert!(
+                    metadata.is_file(),
+                    "{} is a file",
+                    module.target.executable.display()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_prepared_session_that_does_not_ask_for_sealing_says_so_for_every_target() {
+    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-simple");
+    let session = rust_mutants::workspace::Workspace::open(
+        fixture.root(),
+        rust_mutants::testkit::opening::opening(
+            &njutest_devkit::paths::cargo_binary(),
+            fixture.temp(),
+        ),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(
+        &rust_mutants::session::PrepareOptions::new(rust_mutants::rule::Tier::Balanced),
+        &Cancel::new(),
+    )
+    .expect("prepare");
+    assert!(session.sealed().modules.is_empty());
+    assert!(
+        session
+            .targets()
+            .iter()
+            .all(|target| session.sealed().unsealed.get(target.id()) == Some(&Unsealed::NotAsked)),
+        "{:?}",
+        session.sealed().unsealed
     );
 }

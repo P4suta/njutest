@@ -22,10 +22,16 @@ pub const BUILDS: [crate::cargo::CompileKind; 2] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Unsealed {
+    /// The run was not asked to seal anything.
+    NotAsked,
     /// The toolchain holds no standard library for the sealed target.
     TargetMissing,
     /// The sealed build produced no module for the target: it does not build for the sealed target.
     NotBuilt,
+    /// The target is a library's documented examples, which rustdoc runs and no test module holds.
+    Doctest,
+    /// The target is a procedural macro's tests, which cargo builds for the host whatever target it is given.
+    ProcMacro,
 }
 
 impl Unsealed {
@@ -33,13 +39,30 @@ impl Unsealed {
     #[must_use]
     pub const fn remedy(self) -> &'static str {
         match self {
+            Self::NotAsked => "ask the run to seal what it measures",
             Self::TargetMissing => "rustup target add wasm32-wasip1",
             Self::NotBuilt => {
                 "make the target's tests build for wasm32-wasip1, which the sealed build's own \
                  error names, or put what cannot build behind cfg(not(target_family = \"wasm\"))"
             }
+            Self::Doctest => {
+                "nothing seals a doctest yet, so what only a doctest reaches rests on its native lead"
+            }
+            Self::ProcMacro => {
+                "a procedural macro runs in the compiler, so what only its own tests reach rests on \
+                 their native lead"
+            }
         }
     }
+}
+
+/// Whether a preparation builds the sealed modules beside the native build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sealing {
+    /// It builds none, so every standing rests on native executions, which are leads.
+    Off,
+    /// It builds them.
+    On,
 }
 
 /// Whether the toolchain whose sysroot is `sysroot` holds the sealed target's standard library.
@@ -112,6 +135,9 @@ impl SealedBuild {
         let mut modules = BTreeMap::new();
         for build in compiled {
             for target in crate::execute::targets_of(&build.messages, packages, target_dir)? {
+                if target.kind() == crate::execute::TargetKind::ProcMacro {
+                    continue;
+                }
                 let sources = sources_of(&target, &build.units, packages);
                 modules.insert(target.id().to_owned(), Module { target, sources });
             }
@@ -119,7 +145,17 @@ impl SealedBuild {
         let unsealed = native
             .iter()
             .filter(|target| !modules.contains_key(target.id()))
-            .map(|target| (target.id().to_owned(), Unsealed::NotBuilt))
+            .map(|target| {
+                let why = match target.kind() {
+                    crate::execute::TargetKind::Doc => Unsealed::Doctest,
+                    crate::execute::TargetKind::ProcMacro => Unsealed::ProcMacro,
+                    crate::execute::TargetKind::Lib
+                    | crate::execute::TargetKind::Bin
+                    | crate::execute::TargetKind::Test
+                    | crate::execute::TargetKind::Example => Unsealed::NotBuilt,
+                };
+                (target.id().to_owned(), why)
+            })
             .collect();
         modules.retain(|id, _| native.iter().any(|target| target.id() == id));
         Ok(Self { modules, unsealed })

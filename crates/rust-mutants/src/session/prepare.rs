@@ -464,7 +464,14 @@ pub(super) struct Building<'a> {
     pub(super) options: &'a PrepareOptions,
 }
 
-fn built(building: &Building<'_>) -> Result<(Built, crate::apparatus::Apparatus), EngineError> {
+/// The test binaries of the instrumented tree, what the build left beside them, and the tree's sealed build.
+type Assembled = (
+    Built,
+    crate::apparatus::Apparatus,
+    crate::sealed::SealedBuild,
+);
+
+fn built(building: &Building<'_>) -> Result<Assembled, EngineError> {
     let phase = building.trace.phase("build");
     let built = built_untraced(building)?;
     phase.end();
@@ -472,7 +479,8 @@ fn built(building: &Building<'_>) -> Result<(Built, crate::apparatus::Apparatus)
         built.0.iter().map(|target| target.executable.as_path()),
         building.workspace.target_dir(),
     );
-    Ok((built, apparatus))
+    let sealed = sealed_build(building, &built.0)?;
+    Ok((built, apparatus, sealed))
 }
 
 /// The test binaries the instrumented build produced, and what running them once established.
@@ -928,7 +936,7 @@ fn target_facts(
 /// # Errors
 /// Every failure of the phases it runs.
 pub fn prepare(
-    workspace: Workspace,
+    mut workspace: Workspace,
     options: &PrepareOptions,
     cancel: &Cancel,
 ) -> Result<Session, EngineError> {
@@ -959,9 +967,8 @@ pub fn prepare(
         &trace,
     )?;
 
-    let mut workspace = workspace;
     let written_by_a_test = resealed(&mut workspace, &sources)?;
-    let ((targets, scratch, verified), apparatus) = built(&Building {
+    let ((targets, scratch, verified), apparatus, sealed) = built(&Building {
         workspace: &workspace,
         cancel,
         trace: &trace,
@@ -1012,8 +1019,97 @@ pub fn prepare(
         mutant_steps: options.mutant_steps,
         harness_args: options.harness_args.clone(),
         scratch_working_directory: options.scratch_working_directory,
+        sealed,
         workspace,
     })
+}
+
+/// The sealed build of the instrumented tree, where the run asked for one (ADR 0046).
+///
+/// # Errors
+/// A cargo that could not run or whose answer could not be read, and a sealed build whose targets could not be read.
+fn sealed_build(
+    building: &Building<'_>,
+    targets: &[TestTarget],
+) -> Result<crate::sealed::SealedBuild, EngineError> {
+    use crate::sealed::{BUILDS, SealedBuild, Sealing, TARGET, Unsealed, installed};
+    let Building {
+        workspace,
+        cancel,
+        trace,
+        catalog,
+        options,
+        ..
+    } = *building;
+    match options.sealing {
+        Sealing::Off => return Ok(SealedBuild::none(targets, Unsealed::NotAsked)),
+        Sealing::On => {}
+    }
+    let held = match workspace.toolchain.sysroot().map(installed) {
+        Some(Ok(held)) => held,
+        Some(Err(error)) => {
+            trace.note(
+                "sealed-build",
+                &format!(
+                    "the sysroot could not be listed, so {TARGET} is not known to be there: {error}"
+                ),
+            );
+            false
+        }
+        None => {
+            trace.note(
+                "sealed-build",
+                "the toolchain names no sysroot to find the target in",
+            );
+            false
+        }
+    };
+    if !held {
+        return Ok(SealedBuild::none(targets, Unsealed::TargetMissing));
+    }
+    let dir = workspace.build_dir().nested("sealed");
+    let examples = targets
+        .iter()
+        .any(|target| target.kind() == execute::TargetKind::Example);
+    let mut compiled = Vec::new();
+    for kind in BUILDS {
+        if kind == CompileKind::SealedExamples && !examples {
+            continue;
+        }
+        compiled.push(compile(
+            &workspace.driver(cancel),
+            &CompileOptions {
+                kind,
+                packages: options.packages.clone(),
+                target_dir: dir.clone(),
+                locked: workspace.locked,
+                offline: workspace.offline,
+                timeout: options.build_timeout,
+                env: crate::vars::Variables::of([(
+                    std::ffi::OsString::from(crate::instrument::COMPILED_CATALOG_ENV),
+                    std::ffi::OsString::from(catalog.digest()),
+                )]),
+                build: crate::cargo::BuildConfig {
+                    target: Some(TARGET.to_owned()),
+                    ..options.build.clone()
+                },
+            },
+        )?);
+    }
+    let sealed = SealedBuild::of(
+        targets,
+        &compiled,
+        (&workspace.metadata.packages, dir.path()),
+    )?;
+    trace.note(
+        "sealed-build",
+        &format!(
+            "{} of {} test targets built for {TARGET}",
+            sealed.modules.len(),
+            targets.len()
+        ),
+    );
+    Ok(sealed)
 }
 
 /// Turns the mutable-file snapshot into the text a prepared session exposes.

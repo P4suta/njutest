@@ -739,6 +739,7 @@ pub fn routing(options: &PrepareOptions) -> PrepareOptions {
         harness_args: _,
         skip_targets: _,
         validation_filter: _,
+        sealing: _,
     } = options;
     let BuildConfig {
         features: _,
@@ -781,6 +782,7 @@ pub fn routing(options: &PrepareOptions) -> PrepareOptions {
         harness_args: Vec::new(),
         skip_targets: Vec::new(),
         validation_filter: None,
+        sealing: crate::sealed::Sealing::Off,
     }
 }
 

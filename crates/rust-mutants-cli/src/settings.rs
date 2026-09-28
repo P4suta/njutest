@@ -153,6 +153,7 @@ impl Settings {
             failing: rust_mutants::session::Failing::Refuse,
             max_rounds: rust_mutants::validate::DEFAULT_MAX_ROUNDS,
             validation_filter: None,
+            sealing: rust_mutants::sealed::Sealing::Off,
         })
     }
 
