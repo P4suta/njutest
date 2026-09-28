@@ -37,15 +37,18 @@ impl fmt::Display for Edge {
 
 /// The rule, for the failure message.
 pub const RULE: &str = "The allowed direction is: njutest -> rust-mutants, \
-    rust-mutants-cli -> rust-mutants; xtask and njutest-devkit share only the pure fixture-tree \
-    classifier; every crate may use the dependency-free compiler declarations in njutest-macros \
-    and may dev-depend on njutest-devkit. compiler-surfaces may depend on the engine and fixture \
-    classifier only to compile the incidental tools as private modules. Nothing else, in particular nothing \
-    from the engine towards the runner.";
+    rust-mutants-cli -> rust-mutants, rust-mutants -> rust-mutants-sealed, which depends on no \
+    crate of the workspace but njutest-macros; xtask and njutest-devkit share only the pure \
+    fixture-tree classifier; every crate may use the dependency-free compiler declarations in \
+    njutest-macros and may dev-depend on njutest-devkit. compiler-surfaces may depend on the engine \
+    and fixture classifier only to compile the incidental tools as private modules. Nothing else, \
+    in particular nothing from the engine towards the runner, and nothing into the sealed host \
+    but from the engine.";
 
-const ALLOWED_NORMAL: [(&str, &str); 6] = [
+const ALLOWED_NORMAL: [(&str, &str); 7] = [
     ("njutest", "rust-mutants"),
     ("rust-mutants-cli", "rust-mutants"),
+    ("rust-mutants", "rust-mutants-sealed"),
     ("compiler-surfaces", "rust-mutants"),
     ("xtask", "njutest-fixture-tree"),
     ("njutest-devkit", "njutest-fixture-tree"),

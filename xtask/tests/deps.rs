@@ -54,6 +54,32 @@ fn the_runner_may_depend_on_the_engine_but_not_the_reverse() {
 }
 
 #[test]
+fn the_engine_alone_may_depend_on_the_sealed_host_and_the_host_on_nothing_of_the_workspace() {
+    let allowed = [
+        edge("rust-mutants", "rust-mutants-sealed", EdgeKind::Normal),
+        edge("rust-mutants", "rust-mutants-sealed", EdgeKind::Dev),
+        edge("rust-mutants-sealed", "njutest-macros", EdgeKind::Normal),
+        edge("rust-mutants-sealed", "njutest-devkit", EdgeKind::Dev),
+    ];
+    assert!(check(&allowed).is_empty(), "{:?}", check(&allowed));
+    let refused = [
+        edge("rust-mutants-sealed", "rust-mutants", EdgeKind::Normal),
+        edge("rust-mutants-sealed", "rust-mutants", EdgeKind::Dev),
+        edge("rust-mutants-sealed", "njutest", EdgeKind::Normal),
+        edge(
+            "rust-mutants-sealed",
+            "njutest-fixture-tree",
+            EdgeKind::Normal,
+        ),
+        edge("njutest", "rust-mutants-sealed", EdgeKind::Normal),
+        edge("rust-mutants-cli", "rust-mutants-sealed", EdgeKind::Normal),
+        edge("compiler-surfaces", "rust-mutants-sealed", EdgeKind::Normal),
+        edge("xtask", "rust-mutants-sealed", EdgeKind::Normal),
+    ];
+    assert_eq!(check(&refused), refused);
+}
+
+#[test]
 fn the_devkit_is_a_dev_dependency_of_anybody_and_a_dependency_of_nobody() {
     assert!(check(&[edge("rust-mutants", "njutest-devkit", EdgeKind::Dev)]).is_empty());
     assert!(check(&[edge("njutest", "njutest-devkit", EdgeKind::Dev)]).is_empty());
