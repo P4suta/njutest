@@ -115,6 +115,7 @@ manual_let_else = "allow"
 njutest = { version = "0.1.0", path = "crates/njutest" }
 rust-mutants = { version = "0.1.0", path = "crates/rust-mutants" }
 rust-mutants-sealed = { version = "0.1.0", path = "crates/rust-mutants-sealed" }
+rust-mutants-decision = { version = "0.1.0", path = "crates/rust-mutants-decision" }
 njutest-macros = { version = "0.1.0", path = "crates/njutest-macros" }
 njutest-devkit = { version = "0.1.0", path = "crates/njutest-devkit" }
 njutest-fixture-tree = { version = "0.1.0", path = "crates/njutest-fixture-tree" }

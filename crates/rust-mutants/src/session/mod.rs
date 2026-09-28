@@ -1001,6 +1001,31 @@ impl Session {
         &self.sealed
     }
 
+    /// Every sealed module of this session prepared on `runner`, listed, and each test's control run in the instrumented tree (ADR 0046).
+    ///
+    /// # Errors
+    /// A file of the tree or a module that cannot be read, an environment that is not text, or a host that cannot run what it is given.
+    pub fn bench<'runner>(
+        &self,
+        runner: &'runner rust_mutants_sealed::SealedRunner,
+    ) -> Result<crate::sealed::bench::Bench<'runner>, EngineError> {
+        let tree = crate::sealed::bench::Tree::read(
+            self.workspace.snapshot_root(),
+            self.workspace
+                .snapshot
+                .manifest()
+                .iter()
+                .map(|entry| entry.rel_path.as_str()),
+        )?;
+        let bounds = self.touch_bounds()?;
+        Ok(crate::sealed::bench::Bench::assemble(
+            runner,
+            &self.sealed,
+            tree,
+            (self.catalog.digest(), bounds),
+        )?)
+    }
+
     /// What bounds every index a touch log of this session may name: the catalog's mutants and its items.
     fn touch_bounds(&self) -> Result<crate::touch::Bounds, EngineError> {
         let mutants = self.catalog.mutants().len();

@@ -106,6 +106,10 @@ The first digit names an area; `RS` and `XT` say what theirs are at the head of 
 | `RM6003` | `llvm-profdata` or `llvm-cov` failed. | `rustup component add llvm-tools-preview`, and check the versions match the toolchain in use |
 | `RM6004` | A test process wrote no coverage profile at all: the build was not instrumented, or the process did not exit normally. | the test process wrote no profile: check nothing in the suite sets LLVM_PROFILE_FILE for itself |
 | `RM7001` | An executable a successful build named could not be read back for equivalence comparison. | run again after checking nothing removes or rewrites target files while the build is being measured |
+| `RM8001` | A sealed module the sealed build named could not be read. | run again after checking nothing removes or rewrites the sealed build's target directory while it is read |
+| `RM8002` | The sealed host could not run an invocation it was given. | the message carries the host's own code (RS...), which docs/errors.md says what to do about |
+| `RM8003` | A target's environment holds a name or a value that is not text. | a sealed instance reads its environment as text: move the package where its path is UTF-8, or leave the target out of sealing |
+| `RM8004` | A file of the instrumented tree could not be read into the sealed snapshot. | run again after checking nothing removes or rewrites the run's snapshot while it is read |
 | `RM9001` | A rule name the canonical registry does not know. | `rust-mutants rules` lists every rule this release knows |
 | `RM9002` | A pattern the caller gave is not a pattern. | a pattern is workspace-relative with forward slashes: `src/**/*.rs`, never a leading or trailing slash |
 | `RM9003` | A duration the caller gave is not a duration: an empty text, a number without a unit, a unit without a number, an unknown unit, or a number no duration can hold. | write a duration as 30s, 5m, or 1h30m |

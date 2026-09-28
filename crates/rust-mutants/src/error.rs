@@ -186,6 +186,14 @@ mod table {
         CoverageNothingWritten,
         /// An executable a successful build named could not be read back for equivalence comparison.
         EquivalenceArtifactUnreadable,
+        /// A sealed module the sealed build named could not be read.
+        SealedModuleUnreadable,
+        /// The sealed host could not run an invocation it was given.
+        SealedHostFailed,
+        /// A target's environment holds a name or a value that is not text, which a sealed instance cannot be given.
+        SealedEnvironmentNotText,
+        /// A file of the instrumented tree could not be read into the snapshot a sealed instance is given.
+        SealedTreeUnreadable,
         /// A rule name the canonical registry does not know.
         RuleUnknown,
         /// A pattern that is not a pattern.
@@ -827,6 +835,38 @@ mod table {
                     ),
                     sealed: Sealed,
                 },
+                Self::SealedModuleUnreadable => ErrorCode {
+                    code: "RM8001",
+                    summary: "a sealed module the sealed build named could not be read",
+                    remedy: Some(
+                        "run again after checking nothing removes or rewrites the sealed build's target directory while it is read",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::SealedHostFailed => ErrorCode {
+                    code: "RM8002",
+                    summary: "the sealed host could not run an invocation it was given",
+                    remedy: Some(
+                        "the message carries the host's own code (RS...), which docs/errors.md says what to do about",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::SealedEnvironmentNotText => ErrorCode {
+                    code: "RM8003",
+                    summary: "a target's environment holds a name or a value that is not text",
+                    remedy: Some(
+                        "a sealed instance reads its environment as text: move the package where its path is UTF-8, or leave the target out of sealing",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::SealedTreeUnreadable => ErrorCode {
+                    code: "RM8004",
+                    summary: "a file of the instrumented tree could not be read into the sealed snapshot",
+                    remedy: Some(
+                        "run again after checking nothing removes or rewrites the run's snapshot while it is read",
+                    ),
+                    sealed: Sealed,
+                },
                 Self::RuleUnknown => ErrorCode {
                     code: "RM9001",
                     summary: "a rule name the canonical registry does not know",
@@ -906,6 +946,14 @@ pub const COVERAGE_NOTHING_WRITTEN: ErrorCode = RmCode::CoverageNothingWritten.e
 /// An executable a successful build named could not be read back for equivalence comparison.
 pub const EQUIVALENCE_ARTIFACT_UNREADABLE: ErrorCode =
     RmCode::EquivalenceArtifactUnreadable.error_code();
+/// A sealed module could not be read.
+pub const SEALED_MODULE_UNREADABLE: ErrorCode = RmCode::SealedModuleUnreadable.error_code();
+/// The sealed host could not run an invocation.
+pub const SEALED_HOST_FAILED: ErrorCode = RmCode::SealedHostFailed.error_code();
+/// A target's environment is not text.
+pub const SEALED_ENVIRONMENT_NOT_TEXT: ErrorCode = RmCode::SealedEnvironmentNotText.error_code();
+/// A file of the instrumented tree could not be read into the sealed snapshot.
+pub const SEALED_TREE_UNREADABLE: ErrorCode = RmCode::SealedTreeUnreadable.error_code();
 
 /// A change set that git could not be asked for.
 pub const CHANGE_SET_UNAVAILABLE: ErrorCode = RmCode::ChangeSetUnavailable.error_code();
@@ -1055,6 +1103,9 @@ pub enum EngineError {
     /// The crate planted for the routing layers could not be put where a session can open it.
     #[error(transparent)]
     Sentinel(#[from] crate::sentinel::SentinelError),
+    /// A sealed execution could not be set up or run.
+    #[error(transparent)]
+    Sealed(#[from] crate::sealed::bench::BenchError),
 }
 
 impl EngineError {
@@ -1078,6 +1129,7 @@ impl EngineError {
                 CACHE_UNREADABLE
             }
             Self::Sentinel(error) => error.code(),
+            Self::Sealed(error) => error.code(),
         }
     }
 }

@@ -32,6 +32,8 @@ pub enum Unsealed {
     Doctest,
     /// The target is a procedural macro's tests, which cargo builds for the host whatever target it is given.
     ProcMacro,
+    /// The module's harness did not list its tests on the sealed host.
+    NotListed,
 }
 
 impl Unsealed {
@@ -51,6 +53,9 @@ impl Unsealed {
             Self::ProcMacro => {
                 "a procedural macro runs in the compiler, so what only its own tests reach rests on \
                  their native lead"
+            }
+            Self::NotListed => {
+                "run the module with --list on wasmtime to see why its harness did not list its tests"
             }
         }
     }
@@ -183,6 +188,8 @@ fn sources_of(target: &TestTarget, units: &[Unit], packages: &[Package]) -> BTre
         .flat_map(|unit| unit.sources.iter().cloned())
         .collect()
 }
+
+pub mod bench;
 
 #[cfg(test)]
 mod tests;

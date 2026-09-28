@@ -2321,6 +2321,8 @@ dependencies = [
  "proc-macro2",
  "proptest",
  "rust-mutants",
+ "rust-mutants-decision",
+ "rust-mutants-sealed",
  "rustix",
  "serde",
  "serde_json",

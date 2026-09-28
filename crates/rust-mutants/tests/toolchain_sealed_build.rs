@@ -276,3 +276,67 @@ fn a_prepared_session_that_does_not_ask_for_sealing_says_so_for_every_target() {
         session.sealed().unsealed
     );
 }
+
+#[test]
+fn every_mutant_a_fixture_kills_natively_is_detected_by_a_sealed_execution_of_a_test_that_reaches_it()
+ {
+    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-simple");
+    let session = rust_mutants::workspace::Workspace::open(
+        fixture.root(),
+        rust_mutants::testkit::opening::opening(
+            &njutest_devkit::paths::cargo_binary(),
+            fixture.temp(),
+        ),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(
+        &rust_mutants::session::PrepareOptions {
+            sealing: Sealing::On,
+            ..rust_mutants::session::PrepareOptions::new(rust_mutants::rule::Tier::All)
+        },
+        &Cancel::new(),
+    )
+    .expect("prepare");
+    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
+        .expect("the sealed runner starts");
+    let bench = session.bench(&runner).expect("the bench is assembled");
+    for (target, station) in &bench.stations {
+        for (test, control) in &station.controls {
+            assert!(
+                control.is_ok(),
+                "{target} {test}: a control of a passing fixture passes sealed: {control:?}"
+            );
+        }
+    }
+    let mut detected = 0_usize;
+    let mut undetected = Vec::new();
+    for mutant in session.catalog().mutants() {
+        let mut standing = None;
+        for (target, station) in &bench.stations {
+            for (test, control) in &station.controls {
+                let Ok(control) = control else { continue };
+                if !control.reached.contains(&mutant.index) {
+                    continue;
+                }
+                let said = bench
+                    .put(target, test, mutant.id.as_str())
+                    .expect("the host runs the execution");
+                if matches!(
+                    said,
+                    Some(rust_mutants_decision::evidence::Sealed::Detected(_))
+                ) {
+                    standing = said;
+                }
+            }
+        }
+        match standing {
+            Some(_) => detected += 1,
+            None => undetected.push(mutant.display_id.to_string()),
+        }
+    }
+    assert_eq!(
+        detected, 12,
+        "the fixture's README names twelve kills; sealed executions detected {detected}, and not {undetected:?}"
+    );
+}
