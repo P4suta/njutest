@@ -112,7 +112,7 @@ The first digit names an area; `RS` and `XT` say what theirs are at the head of 
 | `RM8004` | A file of the instrumented tree could not be read into the sealed snapshot. | run again after checking nothing removes or rewrites the run's snapshot while it is read |
 | `RM9001` | A rule name the canonical registry does not know. | `rust-mutants rules` lists every rule this release knows |
 | `RM9002` | A pattern the caller gave is not a pattern. | a pattern is workspace-relative with forward slashes: `src/**/*.rs`, never a leading or trailing slash |
-| `RM9003` | A duration the caller gave is not a duration: an empty text, a number without a unit, a unit without a number, an unknown unit, or a number no duration can hold. | write a duration as 30s, 5m, or 1h30m |
+| `RM9003` | A duration the caller gave is not a duration: an empty text, a number without a unit, a unit without a number, an unknown unit, or a sum longer than any duration can be. | write a duration as 30s, 5m, or 1h30m |
 
 ## njutest
 
@@ -140,7 +140,7 @@ The first digit names an area; `RS` and `XT` say what theirs are at the head of 
 | `NJ5004` | A provider said it could not do what it was asked. | the provider refused and said why; nothing here can answer for it |
 | `NJ5005` | A provider offered an environment variable a run composes itself, which would decide what every test process measures. | a provider may not set a variable a run composes; remove it from what the provider offers |
 | `NJ5006` | A generation provider said something this version does not understand: another protocol version, an unknown field, more candidates than are read, content that is not base64. | this is a defect in the provider, not in this tool: what it printed is not the document the contract asks for |
-| `NJ5007` | A generation provider would write where it may not: outside the allowed paths, out of the tree, or a path that is absolute. | a generated candidate is stored beside the tree and never written into it; the provider named a path outside what it may write |
+| `NJ5007` | A generation provider would write where it may not: outside the allowed paths, out of the tree, a path that is absolute, or one another platform reads another way, with a backslash, a colon, or a control character in it. | a generated candidate is stored beside the tree and never written into it; the provider named a path outside what it may write |
 | `NJ5008` | The file a candidate patches is not the file the provider saw, so applying it would overwrite something nobody read. | the file changed after the provider read it; run again on a tree nothing else is writing |
 | `NJ5009` | A routing layer did not route the mutant planted for it before the baseline: the reach measurement, `branch-never-taken`, or `never-infected` left a planted mutant where that layer must not, so nothing the layer would remove from the run is believed and the run ends in `ERROR`. | this is a defect in the engine, not in the code under test; no setting skips a sentinel, because a layer that fails one would be deciding which of your mutants never run |
 | `NJ6001` | The report could not be written as JSON, which is an invariant failure rather than anything about the code under test. | this is a defect in this tool: a report it built could not be written as JSON |

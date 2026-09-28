@@ -14,15 +14,16 @@ fuzz_target!(|data: &[u8]| {
     };
     for package in &metadata.packages {
         assert!(!package.name.is_empty(), "a package with no name");
+        let manifest = package.manifest_path.as_path();
         assert!(
-            !package.manifest_path.as_os_str().is_empty(),
+            !manifest.as_os_str().is_empty(),
             "a package with no manifest: {:?}",
             package.name
         );
         assert!(
-            package.manifest_dir().as_os_str().len() < package.manifest_path.as_os_str().len(),
+            package.manifest_dir().as_os_str().len() < manifest.as_os_str().len(),
             "the directory of a manifest is shorter than the manifest: {}",
-            package.manifest_path.display()
+            manifest.display()
         );
         for target in &package.targets {
             assert!(

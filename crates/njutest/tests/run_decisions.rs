@@ -403,15 +403,32 @@ fn the_packages_an_inventory_walks_are_the_ones_in_scope_that_have_somewhere_to_
     );
 
     for named in ["Cargo.toml", ""] {
-        assert_eq!(
-            selected(&Narrowing::Whole, &metadata(&[("nowhere", named)])),
-            Vec::new(),
-            "while a package whose manifest names no directory is left out rather than \
-             entered under one nobody has: an inventory is the files under a directory, \
-             and this one would be walked from wherever the process happens to stand, \
-             which is the whole machine as readily as the package. A bare name has a \
-             parent and it is the empty path, so the two ways of naming no directory \
-             are two guards and not one: {named:?}"
+        let read = serde_json::from_value::<rust_mutants::cargo::Metadata>(serde_json::json!({
+            "version": 1,
+            "workspace_root": "/w",
+            "target_directory": "/w/target",
+            "workspace_members": [],
+            "packages": [{
+                "id": njutest_devkit::cargo_double::package_id(
+                    std::path::Path::new("/w/nowhere"),
+                    "nowhere",
+                    "0.1.0",
+                ),
+                "name": "nowhere",
+                "version": "0.1.0",
+                "manifest_path": named,
+            }],
+        }));
+        let Err(refused) = read else {
+            panic!(
+                "a package whose manifest names no directory has nowhere for an inventory to \
+                 walk from, so the metadata that names one is refused where it is read, before \
+                 any walk could start from wherever the process stands: {named:?}"
+            );
+        };
+        assert!(
+            refused.to_string().contains("names no file inside a directory"),
+            "{refused}"
         );
     }
 }

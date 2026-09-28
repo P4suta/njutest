@@ -601,7 +601,9 @@ pub fn refusal(written: &[witness::WitnessFile], messages: &[crate::cargo::Messa
             .find(|file| crate::cargo::names_file(&span.file_name, &file.path))
             .into_iter()
             .flat_map(|file| &file.sites)
-            .filter(|site| site.span.start <= span.byte_start && span.byte_start < site.span.end)
+            .filter(|site| {
+                site.span.start <= span.byte_start() && span.byte_start() < site.span.end
+            })
             .fold(false, |_, site| {
                 match site.placed {
                     witness::Placed::Witnesses => {

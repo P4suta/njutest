@@ -595,10 +595,24 @@ fn environment_of(toolchain: &rust_mutants::cargo::Toolchain) -> rust_mutants::v
 
 /// Keeps one crashing input as a candidate for the corpus.
 fn kept(report: &mut BuildReport, request: &Request, crash: &super::fuzz::Crash) {
+    let path = match crate::repair::TreePath::parse(&crash.corpus) {
+        Ok(path) => path,
+        Err(refusal) => {
+            report.limitations.push(Limitation::new(
+                crate::limitation::Limitation::CargoFuzzUnavailable,
+                &format!(
+                    "the input that crashed {} has no place in the corpus, so it cannot be \
+                     promoted: {refusal}",
+                    crash.target
+                ),
+            ));
+            return;
+        }
+    };
     let proposal = crate::repair::Proposal {
         kind: crate::repair::Kind::Corpus,
-        path: crash.corpus.clone(),
-        preimage: crate::repair::preimage_of(&request.root, &crash.corpus),
+        preimage: crate::repair::preimage_of(&request.root, &path),
+        path,
         digest: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&crash.content)),
         content: crash.content.clone(),
     };
@@ -616,7 +630,7 @@ fn kept(report: &mut BuildReport, request: &Request, crash: &super::fuzz::Crash)
         finding: format!("fuzz:{}", crash.target),
         mutant: String::new(),
         kind: crate::repair::Kind::Corpus.name().to_owned(),
-        path: proposal.path,
+        path: proposal.path.to_string(),
         digest: proposal.digest,
         preimage: proposal.preimage,
         stability_runs: 0,
@@ -777,7 +791,7 @@ fn considered(
         finding: mutant.to_owned(),
         mutant: mutant.to_owned(),
         kind: proposal.kind.name().to_owned(),
-        path: proposal.path.clone(),
+        path: proposal.path.to_string(),
         digest: proposal.digest.clone(),
         preimage: proposal.preimage.clone(),
         stability_runs: verdict.stable,
@@ -1148,13 +1162,7 @@ pub fn selected(narrowing: &Narrowing, metadata: &Metadata) -> Vec<(String, Path
         .packages
         .iter()
         .filter(|package| narrowing.holds(&package.name))
-        .filter_map(|package| {
-            let directory = package.manifest_path.parent()?;
-            if directory.as_os_str().is_empty() {
-                return None;
-            }
-            Some((package.name.clone(), directory.to_path_buf()))
-        })
+        .map(|package| (package.name.clone(), package.manifest_dir().to_path_buf()))
         .collect()
 }
 

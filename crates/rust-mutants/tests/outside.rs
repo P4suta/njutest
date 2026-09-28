@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use njutest_devkit::cargo_double::{Document, Package, PathDependency};
 use rust_mutants::cargo::manifest::Patch;
-use rust_mutants::cargo::{Metadata, reaching_outside};
+use rust_mutants::cargo::{ManifestPath, Metadata, reaching_outside};
 
 /// A leading slash spelled the way this platform spells an absolute path.
 ///
@@ -100,7 +100,8 @@ fn a_package_outside_the_tree_is_not_asked_what_it_depends_on() {
     let root = root.as_path();
     let mut metadata = document(root, &[("outside", "/elsewhere")]);
     for package in &mut metadata.packages {
-        package.manifest_path = absolute("/registry/a-0.1.0/Cargo.toml");
+        package.manifest_path = ManifestPath::new(absolute("/registry/a-0.1.0/Cargo.toml"))
+            .expect("a manifest in a directory");
     }
     assert!(
         reaching_outside(&metadata, root, &[]).is_empty(),

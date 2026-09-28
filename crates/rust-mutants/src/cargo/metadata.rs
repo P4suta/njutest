@@ -117,7 +117,7 @@ pub struct Package {
     /// The package version.
     pub version: String,
     /// The absolute path of its `Cargo.toml`.
-    pub manifest_path: PathBuf,
+    pub manifest_path: ManifestPath,
     /// The edition.
     #[serde(default)]
     pub edition: String,
@@ -185,7 +185,66 @@ impl Package {
     /// The directory holding the manifest.
     #[must_use]
     pub fn manifest_dir(&self) -> &Path {
-        self.manifest_path.parent().unwrap_or(&self.manifest_path)
+        self.manifest_path.directory()
+    }
+}
+
+/// Where a package's manifest is: a file, inside a directory that is the package's root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManifestPath {
+    path: PathBuf,
+    directory: PathBuf,
+}
+
+/// Why a path is not where a manifest can be.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ManifestPathError {
+    /// The path is a root, nothing, a bare name, or ends by climbing, so no directory holds a file it names.
+    #[error("{} names no file inside a directory, so no manifest can be there", path.display())]
+    NoFileInADirectory {
+        /// The path as given.
+        path: PathBuf,
+    },
+}
+
+impl ManifestPath {
+    /// The manifest at `path`.
+    ///
+    /// # Errors
+    /// [`ManifestPathError::NoFileInADirectory`] for a root, an empty path, a bare file name, and a path that ends in `..`.
+    pub fn new(path: PathBuf) -> Result<Self, ManifestPathError> {
+        let directory = match path.parent() {
+            Some(directory) if path.file_name().is_some() && !directory.as_os_str().is_empty() => {
+                directory.to_path_buf()
+            }
+            Some(_) | None => return Err(ManifestPathError::NoFileInADirectory { path }),
+        };
+        Ok(Self { path, directory })
+    }
+
+    /// The manifest's own path.
+    #[must_use]
+    pub fn as_path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The directory holding it.
+    #[must_use]
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+}
+
+impl Serialize for ManifestPath {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.path.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ManifestPath {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::new(PathBuf::deserialize(deserializer)?).map_err(serde::de::Error::custom)
     }
 }
 

@@ -191,7 +191,7 @@ fn put(
 
 /// Writes one candidate into a snapshot, which is a copy nobody is working in.
 fn write(root: &Path, proposal: &Proposal) -> Result<(), WriteError> {
-    let path = root.join(&proposal.path);
+    let path = root.join(proposal.path.as_str());
     rust_mutants::replace::file(&path, &proposal.content).map_err(|failure| WriteError {
         path: failure.path,
         source: failure.source,

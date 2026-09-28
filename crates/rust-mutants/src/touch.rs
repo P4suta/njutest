@@ -241,13 +241,32 @@ fn record(
         }
     };
     let reported = sites(indices, within, number)?;
-    let into = if name == UNATTRIBUTED {
-        &mut seen.loose
-    } else {
-        seen.tests.entry(name.to_owned()).or_default()
+    let into = match Reporter::named(name) {
+        Reporter::Nobody => &mut seen.loose,
+        Reporter::Test(test) => seen.tests.entry(test.to_owned()).or_default(),
     };
     into.extend(reported);
     Ok(())
+}
+
+/// Who the thread field of a record says made it: the one place a record is attributed.
+#[derive(Debug, Clone, Copy)]
+enum Reporter<'a> {
+    /// The thread a test ran on, by that test's name, which is never empty.
+    Test(&'a str),
+    /// A thread no test answers for: one the runtime wrote as unattributed, or one named nothing at all.
+    Nobody,
+}
+
+impl<'a> Reporter<'a> {
+    /// Who a record's thread field names.
+    fn named(name: &'a str) -> Self {
+        if name.is_empty() || name == UNATTRIBUTED {
+            Self::Nobody
+        } else {
+            Self::Test(name)
+        }
+    }
 }
 
 /// Which catalog a record's indices are about, and how many it holds.

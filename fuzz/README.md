@@ -30,6 +30,14 @@ explored before. Writing these found two of mine that did exactly that.
 
 A target whose input is bytes rather than a document needs none.
 
+## Regressions
+
+A crash a run found is kept under `fuzz/regressions/<target>/`, byte for byte and under the name libFuzzer gave it, in the change that answers it.
+`scripts/seed-fuzz-corpus.sh` copies it into the corpus beside the seeds, and libFuzzer runs its whole starting corpus before it mutates anything, so every later run asks first whether the crash came back.
+Unlike a seed, it need not be a document the reader accepts: a reader that was wrong to take it refuses it once it is fixed, and that refusal is what the file is kept to go on asking for.
+The weekly run gates nothing, so a kept crash is also the input of an ordinary test, which reads it with `include_bytes!` and states what the reader now does with it.
+`xtask/tests/fuzz_ledger.rs` refuses a kept crash of a target that no longer exists and one that no test reads.
+
 The runner's targets are here for a particular reason: three of the four
 read something a *test suite* can influence. A suite that printed its own
 `test result:` line, an `llvm-cov` export from a version nobody expected, a
@@ -70,6 +78,5 @@ cargo +nightly fuzz run flatten         # one target, until interrupted
 cargo +nightly fuzz run flatten -- -runs=100000
 ```
 
-The crate is standalone (not a workspace member) because fuzzing needs
-nightly and a sanitizer. Corpora and artifacts are ignored by git; a
-reproducer worth keeping becomes a regular test.
+The crate is standalone (not a workspace member) because fuzzing needs nightly and a sanitizer.
+Corpora and artifacts are ignored by git; a reproducer worth keeping goes under `fuzz/regressions/` and becomes a regular test.

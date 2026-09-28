@@ -221,8 +221,8 @@ fn message_lines_are_typed_and_a_line_that_is_not_one_is_refused() {
     assert_eq!(
         (
             primary.file_name.as_str(),
-            primary.byte_start,
-            primary.byte_end
+            primary.byte_start(),
+            primary.byte_end()
         ),
         ("src/lib.rs", 69, 70)
     );
@@ -251,6 +251,45 @@ fn other_message_kinds_are_typed_and_a_line_that_is_not_one_is_refused() {
     let Err(error) = error else { return };
     assert_eq!(error.kind(), CargoErrorKind::MessageUnparsable);
     assert!(error.to_string().contains("line 2"), "{error}");
+}
+
+/// A compiler message whose one span runs from byte `start` to byte `end`, in the shape cargo writes.
+fn one_span(start: u32, end: u32, primary: bool) -> String {
+    format!(
+        r#"{{"reason":"compiler-message","package_id":"demo","target":{{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"/w/src/lib.rs"}},"message":{{"message":"mismatched types","code":null,"level":"error","spans":[{{"file_name":"src/lib.rs","byte_start":{start},"byte_end":{end},"line_start":3,"line_end":3,"column_start":5,"column_end":5,"is_primary":{primary},"label":null}}],"children":[],"rendered":null}}}}"#
+    )
+}
+
+#[test]
+fn a_span_that_ends_before_it_starts_is_no_span_and_a_stream_that_holds_one_is_refused() {
+    let crash = include_bytes!(
+        "../../../fuzz/regressions/cargo_messages/crash-697342bdd609a52c2e601eeaebd3718399efe4fe"
+    );
+    for (stream, what) in [
+        (
+            crash.to_vec(),
+            "what a scheduled fuzz run found: a primary span from byte 84 back to byte 47",
+        ),
+        (
+            one_span(84, 47, false).into_bytes(),
+            "a span that is not the primary one says no more",
+        ),
+    ] {
+        let parsed = parse_messages(&stream);
+        let Err(error) = parsed else {
+            panic!("{what}: {parsed:?}");
+        };
+        assert_eq!(error.kind(), CargoErrorKind::MessageUnparsable, "{what}");
+    }
+    let empty = parse_messages(one_span(84, 84, true).as_bytes());
+    let Ok(messages) = empty else {
+        panic!("a span of no bytes is one rustc writes where something is missing: {empty:?}");
+    };
+    assert_eq!(
+        option_state(diagnostic_of(&messages[0]).primary_span()),
+        Present,
+        "and it is the whole of the span the diagnostic is about"
+    );
 }
 
 #[test]
@@ -487,6 +526,69 @@ fn a_build_is_read_from_one_final_record_its_exit_code_agrees_with() {
                 .is_err_and(|error| error.kind() == CargoErrorKind::MessageUnparsable),
             "{why} is not the record of one finished build: {compiled:?}"
         );
+    }
+}
+
+#[test]
+fn a_backslash_before_a_line_end_is_read_once_as_what_its_run_of_backslashes_makes_it() {
+    let crash = include_bytes!(
+        "../../../fuzz/regressions/depinfo/crash-fb1f5a260a2c553243ecefcb34bcbf428c9bc75e"
+    );
+    let text = std::str::from_utf8(crash).unwrap_or_else(|error| panic!("the crash: {error}"));
+    let read = parse_dep_info(text);
+    let Ok(read) = read else {
+        panic!("the crash has a rule: {read:?}");
+    };
+    assert_eq!(
+        read,
+        [format!("\\Z\\{}{}", "\0".repeat(21), "\\".repeat(6))],
+        "what a scheduled fuzz run found: twelve backslashes before a line end are six escaped \
+         ones, so the line ends the rule, and no name holds a space nothing escaped"
+    );
+    for (text, names, why) in [
+        (
+            "out.d: a\\\\\nb\n",
+            &["a\\"][..],
+            "an escaped backslash leaves the line end unescaped",
+        ),
+        (
+            "out.d: a\\\\\\\nb\n",
+            &["a\\", "b"][..],
+            "and one more backslash escapes it",
+        ),
+        (
+            "out.d: a\\\r\nb\r\n",
+            &["a", "b"][..],
+            "whichever way the line ends",
+        ),
+    ] {
+        let read = parse_dep_info(text);
+        let Ok(read) = read else {
+            panic!("{why}: {read:?}");
+        };
+        assert_eq!(read, names, "{why}");
+    }
+}
+
+proptest::proptest! {
+    /// Names written the way rustc writes them, spaces escaped, read back as themselves wherever a line was continued between them.
+    #[test]
+    fn every_name_written_as_rustc_writes_it_reads_back_as_itself(
+        names in proptest::collection::vec("[a-zA-Z0-9_./ -]{1,12}", 1..6),
+        continued in proptest::collection::vec(proptest::bool::ANY, 6),
+    ) {
+        let written: Vec<String> = names.iter().map(|name| name.replace(' ', "\\ ")).collect();
+        let mut rule = String::from("/t/deps/demo-abc.d:");
+        for (name, carried) in written.iter().zip(continued) {
+            rule.push_str(if carried { " \\\n  " } else { " " });
+            rule.push_str(name);
+        }
+        let text = format!("{rule}\n\n/t/deps/libdemo-abc.rmeta: src/lib.rs\n");
+        let read = parse_dep_info(&text);
+        let Ok(read) = read else {
+            return Err(proptest::test_runner::TestCaseError::fail(format!("{text:?}: {read:?}")));
+        };
+        proptest::prop_assert_eq!(read, names, "{:?}", text);
     }
 }
 

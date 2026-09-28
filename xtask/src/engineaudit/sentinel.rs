@@ -1164,11 +1164,22 @@ impl Layer {
                     ..clean
                 },
             ],
-            Self::Ledger => vec![Perturbation {
-                name: "an acceptance the run does not hold",
-                ledger: Some(ledger(&[SURVIVED, &"d".repeat(64)])),
-                ..clean
-            }],
+            Self::Ledger => vec![
+                Perturbation {
+                    name: "an acceptance the run does not hold",
+                    ledger: Some(ledger(&[SURVIVED, &"d".repeat(64)])),
+                    ..clean.clone()
+                },
+                Perturbation {
+                    name: "an acceptance the run does not hold, named by where it is",
+                    ledger: Some(format!(
+                        "{}\n[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"larger\"\n\
+                         rule = \"gt-to-ge\"\noriginal = \">\"\nline = 11\nreason = \"gone\"\n",
+                        ledger(&[SURVIVED])
+                    )),
+                    ..clean
+                },
+            ],
             Self::Work => vec![Perturbation {
                 name: "a row that ran a target its route never reached",
                 document: with(json!({

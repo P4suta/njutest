@@ -230,6 +230,12 @@ pub(crate) enum CandidateError {
         crate::repair::STORE
     )]
     ContentMissing { path: String },
+    /// The recorded path is not a path inside the tree, however the report came to hold it.
+    #[error("skipped {path}: {refusal}")]
+    PathRefused {
+        path: String,
+        refusal: crate::repair::RepairError,
+    },
     /// This release cannot interpret the candidate kind.
     #[error(
         "{}: {path} is a candidate of a kind this release does not write",
@@ -278,20 +284,26 @@ pub(crate) fn one(
         crate::repair::Kind::parse(&candidate.kind).ok_or_else(|| CandidateError::UnknownKind {
             path: candidate.path.clone(),
         })?;
+    let path = crate::repair::TreePath::parse(&candidate.path).map_err(|refusal| {
+        CandidateError::PathRefused {
+            path: candidate.path.clone(),
+            refusal,
+        }
+    })?;
     let proposal = crate::repair::Proposal {
         kind,
-        path: candidate.path.clone(),
+        path,
         preimage: candidate.preimage.clone(),
         digest: candidate.digest.clone(),
         content,
     };
     let on_disk = crate::repair::preimage_of(checking.root, &proposal.path);
     if on_disk.as_deref() == Some(proposal.digest.as_str()) {
-        return Ok(Taken::Already(proposal.path));
+        return Ok(Taken::Already(proposal.path.to_string()));
     }
     if on_disk != proposal.preimage {
         return Err(CandidateError::PreimageMoved {
-            path: proposal.path,
+            path: proposal.path.to_string(),
         });
     }
     if proposal.kind == crate::repair::Kind::Corpus {
@@ -300,7 +312,7 @@ pub(crate) fn one(
     match crate::assure::repair::check(checking, &proposal, &candidate.mutant, watch) {
         Ok(Verdict { accepted: true, .. }) => Ok(Taken::Written(proposal)),
         Ok(verdict) => Err(CandidateError::Rejected {
-            path: proposal.path,
+            path: proposal.path.to_string(),
             reason: verdict.why.unwrap_or_else(|| "no reason given".to_owned()),
         }),
         Err(error) => Err(CandidateError::Check(Box::new(error))),
@@ -309,7 +321,7 @@ pub(crate) fn one(
 
 /// Writes one candidate into the tree a person is working in.
 pub(crate) fn write(root: &Path, proposal: &crate::repair::Proposal) -> Result<(), CandidateError> {
-    let path = root.join(&proposal.path);
+    let path = root.join(proposal.path.as_str());
     rust_mutants::replace::file(&path, &proposal.content).map_err(|failure| CandidateError::Write {
         path: failure.path,
         source: failure.source,

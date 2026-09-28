@@ -624,6 +624,242 @@ fn a_ledger_that_explains_every_survivor_is_silent() {
 }
 
 #[test]
+fn a_met_claim_the_ledger_writes_as_a_locator_is_one_the_audit_finds() {
+    let ledger = tempfile::tempdir().expect("a temporary directory");
+    let path = ledger.path().join(".rust-mutants.toml");
+    std::fs::write(
+        &path,
+        "[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"larger\"\nrule = \
+         \"return-default\"\noriginal = \"if a > b { a } else { b }\"\nreason = \"equivalent\"\n",
+    )
+    .expect("the ledger");
+    let run = run_directory(&with(serde_json::json!({
+        "expectations": [{
+            "id": "src/lib.rs larger return-default \"if a > b { a } else { b }\"",
+            "locator": {
+                "path": "src/lib.rs", "item": "larger", "rule": "return-default",
+                "original": "if a > b { a } else { b }", "line": null, "count": null
+            }
+        }]
+    })));
+    let audit = gates::engine_audit(&checkers(), &asked(run.path(), None, Some(&path)))
+        .expect("a report this audit can read");
+    assert_eq!(
+        violations(&audit, Layer::Ledger),
+        Vec::<String>::new(),
+        "every claim this repository's own ledger accepts is written this way: {audit}"
+    );
+}
+
+/// Every form the engine's own `Expect` accepts a survivor in: by identity, or by locator with or without its line and its count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+enum Form {
+    Identity,
+    Locator,
+    LocatorOnALine,
+    LocatorOfACount,
+    LocatorOnALineOfACount,
+}
+
+impl Form {
+    /// The line and the count this form states, which an identity has neither of.
+    const fn hints(self) -> (Option<u64>, Option<u64>) {
+        match self {
+            Self::Identity | Self::Locator => (None, None),
+            Self::LocatorOnALine => (Some(20), None),
+            Self::LocatorOfACount => (None, Some(1)),
+            Self::LocatorOnALineOfACount => (Some(20), Some(1)),
+        }
+    }
+
+    /// The `[[mutation.expect]]` entry that accepts the specimen's survivor in this form.
+    fn entry(self) -> String {
+        let (line, count) = self.hints();
+        let named = match self {
+            Self::Identity => format!("id = \"{SURVIVED}\"\n"),
+            Self::Locator
+            | Self::LocatorOnALine
+            | Self::LocatorOfACount
+            | Self::LocatorOnALineOfACount => format!(
+                "path = \"src/lib.rs\"\nitem = \"larger\"\nrule = \"return-default\"\n\
+                 original = \"if a > b {{ a }} else {{ b }}\"\n{}{}",
+                line.map_or_else(String::new, |line| format!("line = {line}\n")),
+                count.map_or_else(String::new, |count| format!("count = {count}\n")),
+            ),
+        };
+        format!("[[mutation.expect]]\n{named}reason = \"equivalent\"\n")
+    }
+
+    /// The claim a run held to that entry writes back, which is the form the entry was written in.
+    fn claim(self) -> serde_json::Value {
+        let (line, count) = self.hints();
+        match self {
+            Self::Identity => serde_json::json!({ "id": SURVIVED, "locator": null }),
+            Self::Locator
+            | Self::LocatorOnALine
+            | Self::LocatorOfACount
+            | Self::LocatorOnALineOfACount => serde_json::json!({
+                "id": format!(
+                    "src/lib.rs larger return-default \"if a > b {{ a }} else {{ b }}\"{}",
+                    line.map_or_else(String::new, |line| format!(" @{line}"))
+                ),
+                "locator": {
+                    "path": "src/lib.rs", "item": "larger", "rule": "return-default",
+                    "original": "if a > b { a } else { b }", "line": line, "count": count
+                }
+            }),
+        }
+    }
+}
+
+/// What the ledger layer says of the specimen whose one claim is written in `claimed`, against a ledger of `entries`.
+fn ledger_violations(claimed: Form, entries: &str) -> Vec<String> {
+    let ledger = tempfile::tempdir().expect("a temporary directory");
+    let path = ledger.path().join(".rust-mutants.toml");
+    std::fs::write(&path, entries).expect("the ledger");
+    let run = run_directory(&with(
+        serde_json::json!({ "expectations": [claimed.claim()] }),
+    ));
+    let audit = gates::engine_audit(&checkers(), &asked(run.path(), None, Some(&path)))
+        .expect("a report this audit can read");
+    violations(&audit, Layer::Ledger)
+}
+
+#[test]
+fn a_claim_in_every_form_the_engine_accepts_is_one_the_ledger_audit_finds() {
+    for form in Form::ALL {
+        assert_eq!(
+            ledger_violations(form, &form.entry()),
+            Vec::<String>::new(),
+            "{form:?}"
+        );
+    }
+}
+
+#[test]
+fn a_claim_is_carried_only_by_an_acceptance_in_the_form_it_was_made_in() {
+    for claimed in Form::ALL {
+        for accepted in Form::ALL
+            .into_iter()
+            .filter(|accepted| *accepted != claimed)
+        {
+            let found = ledger_violations(claimed, &accepted.entry());
+            assert_eq!(
+                found.len(),
+                2,
+                "{claimed:?} against {accepted:?}: {found:?}"
+            );
+            assert!(
+                found
+                    .iter()
+                    .any(|remark| remark.contains("the run does not hold it"))
+                    && found
+                        .iter()
+                        .any(|remark| remark.contains("the ledger does not carry")),
+                "a run held to one ledger writes back what that ledger said, so a claim in \
+                 another form is one the run was not held to: {claimed:?} against \
+                 {accepted:?}: {found:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_acceptance_the_engine_would_refuse_is_a_ledger_this_audit_cannot_read() {
+    let run = run_directory(&base());
+    let ledger = tempfile::tempdir().expect("a temporary directory");
+    for (text, why) in [
+        (
+            format!(
+                "[[mutation.expect]]\nid = \"{SURVIVED}\"\npath = \"src/lib.rs\"\nreason = \"r\"\n"
+            ),
+            "one that names its mutant twice",
+        ),
+        (
+            "[[mutation.expect]]\nreason = \"r\"\n".to_owned(),
+            "one that names none",
+        ),
+        (
+            "[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"larger\"\nrule = \"x\"\n\
+             reason = \"r\"\n"
+                .to_owned(),
+            "a locator without the bytes it replaces",
+        ),
+        (
+            format!("[[mutation.expect]]\nid = \"{SURVIVED}\"\nspan = 3\nreason = \"r\"\n"),
+            "one in a form this audit has not been taught",
+        ),
+        (
+            format!("[[mutation.expect]]\nid = \"{SURVIVED}\"\nline = 20\nreason = \"r\"\n"),
+            "an identity with a line, which the engine reads as naming it twice",
+        ),
+        ("mutation = 1\n".to_owned(), "a mutation that is no table"),
+        (
+            "[mutation]\nexpect = 1\n".to_owned(),
+            "acceptances that are no list",
+        ),
+    ] {
+        let path = ledger.path().join("ledger.toml");
+        std::fs::write(&path, &text).expect("the ledger");
+        let refused =
+            gates::engine_audit(&checkers(), &asked(run.path(), None, Some(&path))).expect_err(why);
+        assert!(
+            matches!(refused, AuditError::MalformedLedger { .. }),
+            "{why}: {refused}"
+        );
+    }
+}
+
+#[test]
+fn every_acceptance_this_repository_writes_is_one_the_audit_reads() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../.rust-mutants.toml");
+    let text = std::fs::read_to_string(&path).expect("this repository's ledger");
+    let document = text.parse::<toml::Table>().expect("the ledger is TOML");
+    let written = document
+        .get("mutation")
+        .and_then(|mutation| mutation.get("expect"))
+        .and_then(toml::Value::as_array)
+        .map_or(0, Vec::len);
+    assert!(
+        written > 0,
+        "the repository accepts survivors, and says why"
+    );
+    let run = run_directory(&base());
+    let audit = gates::engine_audit(&checkers(), &asked(run.path(), None, Some(&path)))
+        .expect("the audit reads this repository's own ledger");
+    let unheld = violations(&audit, Layer::Ledger)
+        .into_iter()
+        .filter(|remark| remark.contains("the run does not hold it"))
+        .count();
+    assert_eq!(
+        unheld, written,
+        "the specimen holds none of this repository's acceptances, so every one the audit read \
+         is one it says the run does not hold, and one it dropped is one it could not have \
+         held a dogfood run to: {audit}"
+    );
+}
+
+#[test]
+fn the_ledger_audit_reads_an_acceptance_by_every_field_the_engine_reads_it_by() {
+    let fields = |relative: &str, name: &str| -> std::collections::BTreeSet<String> {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(relative);
+        let text = std::fs::read_to_string(&path).expect(relative);
+        njutest_devkit::rust_source::serde_field_names(&text, name)
+            .expect(name)
+            .into_iter()
+            .collect()
+    };
+    assert_eq!(
+        fields("xtask/src/engineaudit/ledger.rs", "Entry"),
+        fields("crates/rust-mutants-cli/src/config.rs", "Expect"),
+        "an entry the engine reads by a field the audit does not know is refused by the audit, \
+         and a form the audit does not know is one a dogfood run cannot be held to"
+    );
+}
+
+#[test]
 fn the_exit_code_follows_the_violations() {
     let clean = audited_with(&base(), &recording());
     assert_eq!(clean.exit_code(), undecided(&clean), "{clean}");
