@@ -75,6 +75,7 @@ Pure computation that does not open or mutate a report store remains available.
   A target the fuzzer could not drive — no cargo-fuzz on a nightly toolchain, a fuzz crate that will not build, a sanitizer the toolchain has no runtime for — carries `cargo-fuzz-unavailable` and a `not-measured` finding instead, and is never counted among the targets that were driven.
   libFuzzer exits non-zero when it finds something, and something is an input it keeps, so a status with nothing kept is a target that never started.
   A run stopped by its own bound *was* driven, for less time than it was asked, and says that instead.
+  A run somebody stopped is an interrupted run, never a target nothing could drive.
 - `standard-v1` does not execute anything about `unsafe` code; it inventories it and says so (`soundness-not-executed`).
   `deep-v1` interprets the suite under Miri and refuses to run at all without it (`NJ7001`), and what Miri will not interpret is `miri-unsupported` rather than a pass.
   A sanitizer the configuration asks for and the toolchain will not run is `sanitizer-unavailable`; every sanitizer run also carries `sanitizer-standard-library-not-instrumented`.

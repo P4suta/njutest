@@ -131,6 +131,47 @@ mod driving {
     }
 
     #[test]
+    fn a_fuzzer_the_run_asked_to_stop_is_an_interrupted_run_and_not_an_undriven_target() {
+        for before in [true, false] {
+            let dir = tree(&["parse"]);
+            let mut env = saying("Done 1 runs", 0, None);
+            env.set("FAKE_CARGO_SLEEP", "5");
+            let cancel = Cancel::new();
+            if before {
+                cancel.cancel();
+            }
+            let trace = Recorder::disabled();
+            let cargo = cargo();
+            let stopped = std::thread::scope(|scope| {
+                let stopping = njutest_devkit::thread::ScopedThread::launch(scope, || {
+                    std::thread::sleep(Duration::from_millis(200));
+                    cancel.cancel();
+                });
+                let stopped = fuzz(
+                    &Fuzzing {
+                        root: dir.path(),
+                        cargo: rust_mutants::cargo::Selecting::named(&cargo),
+                        env,
+                        targets: &[],
+                        max_total_time: Duration::from_secs(1),
+                        timeout: Some(Duration::from_secs(30)),
+                    },
+                    Watch::new(&cancel, &trace),
+                );
+                stopping.join().expect("the thread that stops the run");
+                stopped
+            });
+            assert!(
+                matches!(stopped, Err(njutest::error::RunnerError::Interrupted)),
+                "a stop the run asked for, {} the fuzzer started, is the run being interrupted, \
+                 and neither a target nothing could drive nor a phase that quietly drove \
+                 nothing: {stopped:?}",
+                if before { "before" } else { "after" }
+            );
+        }
+    }
+
+    #[test]
     fn a_target_stopped_before_its_time_was_up_was_driven_for_less_than_it_was_asked() {
         let dir = tree(&["parse"]);
         let mut env = saying("Done 1 runs", 0, None);

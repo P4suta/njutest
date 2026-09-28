@@ -10,6 +10,8 @@ use std::time::Duration;
 
 use rust_mutants::runner::{Spec, run};
 
+use super::ended::ProcessEnd;
+
 use crate::error::RunnerError;
 use crate::report::{Finding, FindingKind, Limitation};
 use crate::trace::ExecRecord;
@@ -143,7 +145,7 @@ pub fn fuzz(fuzzing: &Fuzzing<'_>, watch: Watch<'_>) -> Result<Fuzzed, RunnerErr
     };
     for target in &selected {
         if watch.cancel.is_cancelled() {
-            break;
+            return Err(RunnerError::Interrupted);
         }
         one(&mut done, fuzzing, target, watch)?;
     }
@@ -170,6 +172,10 @@ fn one(
 
     let ran = run(&spec, watch.cancel);
     watch.trace.exec_result(ExecRecord::of(&spec, &ran));
+    let ended = ProcessEnd::of(&ran.termination);
+    if ended == ProcessEnd::Interrupted {
+        return Err(RunnerError::Interrupted);
+    }
     let said = std::str::from_utf8(&ran.output).map_err(|source| RunnerError::PhaseOutput {
         phase: "cargo-fuzz",
         source,
@@ -185,9 +191,12 @@ fn one(
         .into_iter()
         .filter(|artifact| !before.contains(artifact))
         .collect();
-    let undriven = ran.error().is_some()
-        || ABSENT.iter().any(|marker| said.contains(marker))
-        || (!ran.timed_out() && ran.conventional_exit_code() != 0 && left.is_empty());
+    let undriven = ABSENT.iter().any(|marker| said.contains(marker))
+        || match ended {
+            ProcessEnd::Unlaunched { .. } => true,
+            ProcessEnd::Failed | ProcessEnd::Unanswered { .. } => left.is_empty(),
+            ProcessEnd::Passed | ProcessEnd::TimedOut | ProcessEnd::Interrupted => false,
+        };
     if undriven {
         done.limitations.push(Limitation::new(
             crate::limitation::Limitation::CargoFuzzUnavailable,
@@ -204,7 +213,7 @@ fn one(
         return Ok(());
     }
     done.ran.push(target.to_owned());
-    if ran.timed_out() {
+    if ended == ProcessEnd::TimedOut {
         done.limitations.push(Limitation::new(
             crate::limitation::Limitation::CargoFuzzUnavailable,
             &format!("{target} ran out of time before it was driven for as long as it was asked"),
