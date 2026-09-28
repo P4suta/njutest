@@ -132,7 +132,8 @@
                 "opaque-type",
                 "const-block",
                 "unlocated",
-                "unread"
+                "unread",
+                "unit-file-unread"
               ]
             }
           }

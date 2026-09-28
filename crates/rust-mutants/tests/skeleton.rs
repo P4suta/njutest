@@ -239,6 +239,117 @@ fn a_unit_that_can_rename_a_listed_macro_seals_none_of_its_bodies() {
 }
 
 #[test]
+fn no_body_is_sealed_beside_a_file_its_unit_read_and_the_skeleton_could_not() {
+    let past = rust_mutants::parsing::NESTING.saturating_add(1);
+    let deep = format!(
+        "macro_rules! format {{ () => {{}} }}\nfn g() -> u8 {{ {}1{} }}\n",
+        "(".repeat(past),
+        ")".repeat(past)
+    );
+    let cataloged = [("src/lib.rs", "mod deep;\nfn f() -> i32 { 1 }\n")];
+    let files = [cataloged[0], ("src/deep.rs", deep.as_str())];
+    let skeletons = evidence_of(&unit(&files), &cataloged);
+    let f = item(&skeletons, "f");
+    assert!(
+        !f.sealed,
+        "a file of the unit that could not be read may declare a listed macro `f` expands, as \
+         this one does, so it is no file that declares nothing: {:?}",
+        f.unsealed
+    );
+    assert_eq!(
+        f.unsealed,
+        Some(Unsealing::UnitFileUnread),
+        "the reason names the file that could not be read, not a macro or a glob nobody saw"
+    );
+    let data = [cataloged[0], ("src/deep.rs", "not rust at all {")];
+    let skeletons = evidence_of(&unit(&data), &cataloged);
+    assert_eq!(
+        item(&skeletons, "f").unsealed,
+        None,
+        "text that is read and is not a Rust file, a data file or an included expression, \
+         declares nothing another file sees, which is not the same as text nobody could read"
+    );
+}
+
+#[test]
+fn a_body_whose_own_file_could_not_be_read_is_unit_file_unread() {
+    let past = rust_mutants::parsing::NESTING.saturating_add(1);
+    let cataloged = [("src/lib.rs", "fn f() -> i32 { 1 }\n")];
+    let deep = format!(
+        "fn f() -> i32 {{ {}1{} }}\n",
+        "(".repeat(past),
+        ")".repeat(past)
+    );
+    let skeletons = evidence_of(&unit(&[("src/lib.rs", deep.as_str())]), &cataloged);
+    assert_eq!(
+        item(&skeletons, "f").unsealed,
+        Some(Unsealing::UnitFileUnread),
+        "a body of a file the unit read and nothing could read is judged by no rule the page \
+         reads of a body, so it says why none could be: {skeletons:?}"
+    );
+}
+
+/// The sample of every reason a body can be unsealed, one each, so a reason added without its word on the page and in the schema fails to compile here first.
+fn every_reason() -> Vec<Unsealing> {
+    let name = || "x".to_owned();
+    let reasons = vec![
+        Unsealing::Evaluated,
+        Unsealing::CompileTime,
+        Unsealing::OpaqueType,
+        Unsealing::Macro { name: name() },
+        Unsealing::Attribute { name: name() },
+        Unsealing::DeclaresItem { kind: name() },
+        Unsealing::ConstBlock,
+        Unsealing::Shadowed { name: name() },
+        Unsealing::ForeignGlob { path: name() },
+        Unsealing::Unlocated,
+        Unsealing::Unread,
+        Unsealing::UnitFileUnread,
+    ];
+    for reason in &reasons {
+        match reason {
+            Unsealing::Evaluated
+            | Unsealing::CompileTime
+            | Unsealing::OpaqueType
+            | Unsealing::Macro { .. }
+            | Unsealing::Attribute { .. }
+            | Unsealing::DeclaresItem { .. }
+            | Unsealing::ConstBlock
+            | Unsealing::Shadowed { .. }
+            | Unsealing::ForeignGlob { .. }
+            | Unsealing::Unlocated
+            | Unsealing::Unread
+            | Unsealing::UnitFileUnread => {}
+        }
+    }
+    reasons
+}
+
+#[test]
+fn every_reason_a_body_is_unsealed_is_a_word_of_the_page_and_the_schema() {
+    let root = njutest_devkit::paths::workspace_root();
+    let page = std::fs::read_to_string(root.join("docs/engine/carry.md")).expect("the carry page");
+    let schema = std::fs::read_to_string(root.join("schema/rust-mutants-skeletons-v1.json"))
+        .expect("the skeletons schema");
+    for reason in every_reason() {
+        let written = serde_json::to_value(&reason).expect("a reason serializes");
+        let word = written
+            .get("why")
+            .and_then(serde_json::Value::as_str)
+            .expect("a reason names itself under `why`");
+        assert!(
+            page.contains(&format!("`{word}`")),
+            "docs/engine/carry.md says when a body is `{word}`, since a reader meets the word in \
+             the evidence and looks for it there"
+        );
+        assert!(
+            schema.contains(&format!("\"{word}\"")),
+            "the skeletons schema admits `{word}`, since the engine writes it"
+        );
+    }
+}
+
+#[test]
 fn an_edit_inside_a_sealed_body_changes_its_digest_and_no_skeleton() {
     let before = [(
         "src/lib.rs",
