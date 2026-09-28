@@ -603,9 +603,14 @@ fn a_group_is_the_work_s_while_its_leader_runs_or_a_member_shares_its_session() 
     );
 }
 
+/// The groups `record` names under the holder that wrote it, as the next run reads them in `this_boot`.
+fn groups_of(record: &str, this_boot: Option<&str>) -> Vec<xtask::lanes::Recorded> {
+    xtask::lanes::Record::read(record.as_bytes()).unreleased(this_boot)
+}
+
 #[test]
 fn a_record_from_another_boot_names_no_group_and_one_without_a_boot_still_does() {
-    use xtask::lanes::{Recorded, groups_of};
+    use xtask::lanes::Recorded;
 
     let group = Recorded {
         pid: 40,
@@ -647,6 +652,83 @@ fn a_record_from_another_boot_names_no_group_and_one_without_a_boot_still_does()
             session: None
         }],
         "a line from before sessions were recorded still names its group"
+    );
+}
+
+#[test]
+fn a_line_a_writer_was_killed_in_does_not_swallow_the_next_one() {
+    use std::ffi::OsString;
+
+    let machine = Machine::new();
+    let environment = xtask::environment::Environment::of([
+        (
+            OsString::from("NJUTEST_SLOT_DIR"),
+            machine.slots.path().as_os_str().to_owned(),
+        ),
+        (OsString::from("NJUTEST_SLOT_HELD"), OsString::from("heavy")),
+    ]);
+    let lanes = xtask::lanes::Lanes::from_environment(&environment).expect("the lanes");
+    let held = lanes
+        .inside(xtask::lanes::Lane::Heavy)
+        .expect("the lane the run is inside");
+    let boot = xtask::lanes::boot();
+    let record = machine.slots.path().join("heavy.holder");
+    std::fs::write(
+        &record,
+        format!(
+            "pid=1\nboot={}\ngroup=40 holder=1 sess",
+            boot.clone().unwrap_or_default()
+        ),
+    )
+    .expect("a record a writer was killed in");
+    held.working_on(std::process::id())
+        .expect("the next group is recorded");
+    let text = std::fs::read_to_string(&record).expect("the record");
+    let groups = groups_of(&text, boot.as_deref());
+    assert!(
+        groups.iter().any(|group| group.pid == std::process::id()),
+        "a line a writer was killed in the middle of took the next writer's line with it, and \
+         the group that line named would be left running by the next run: {text:?}"
+    );
+    assert_eq!(
+        xtask::lanes::Record::read(text.as_bytes()).unread(),
+        ["group=40 holder=1 sess"],
+        "the line nobody finished is named as one, rather than read or lost: {text:?}"
+    );
+}
+
+#[test]
+fn a_record_is_read_only_as_far_as_its_writers_finished_it() {
+    use xtask::lanes::Record;
+
+    let written = Record::read(
+        b"pid=1\ngroup=40 holder=1 session=7 born=th\0\ngroup=41 holder=1 session=7 born=then\n\
+          \xff\xfe\ngroup=42 hol",
+    );
+    assert_eq!(
+        written
+            .unreleased(None)
+            .iter()
+            .map(|group| group.pid)
+            .collect::<Vec<u32>>(),
+        [41],
+        "a line the next writer ended with the torn mark, one that is not text, and the one \
+         still being written are no lines, so only the group a finished line names is read"
+    );
+    assert_eq!(
+        written.unread(),
+        [
+            "group=40 holder=1 session=7 born=th",
+            "\\xff\\xfe",
+            "group=42 hol"
+        ],
+        "each is named as it stands"
+    );
+    assert_eq!(written.field("pid"), Some("1"));
+    assert!(
+        Record::read(b"pid=1\n\0\n").unread().is_empty(),
+        "two writers that each found the same unfinished line end it twice, which leaves an \
+         empty torn line and nothing to name"
     );
 }
 

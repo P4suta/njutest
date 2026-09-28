@@ -527,23 +527,29 @@ impl Place<'_> {
     /// Ends every group the last holder's work ran in, when that holder died before its work did: each is asked to stop, then killed, and the lane is taken only once every one is seen gone.
     #[cfg(unix)]
     fn outlast(&self, request: &Request<'_>, progress: &mut dyn Write) -> Result<(), LaneError> {
-        let text = match std::fs::read_to_string(self.record) {
-            Ok(text) => text,
-            Err(_no_record) => return Ok(()),
+        let bytes = match std::fs::read(self.record) {
+            Ok(bytes) => bytes,
+            Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(source) => return Err(io(self.record, source)),
         };
-        let Some((pid, born)) = text
-            .lines()
-            .find_map(|line| line.strip_prefix("pid="))
+        let written = Record::read(&bytes);
+        for unread in written.unread() {
+            say(
+                progress,
+                &format!(
+                    "slot: the {} lane's record holds `{unread}`, which is no line its writer finished, so nothing it named is ended",
+                    request.lane.name()
+                ),
+            )?;
+        }
+        let Some((pid, born)) = written
+            .field("pid")
             .and_then(number)
-            .zip(
-                text.lines()
-                    .find_map(|line| line.strip_prefix("holder_born="))
-                    .filter(|born| !born.is_empty()),
-            )
+            .zip(written.field("holder_born").filter(|born| !born.is_empty()))
         else {
             return Ok(());
         };
-        let groups = groups_of(&text, boot().as_deref());
+        let groups = written.unreleased(boot().as_deref());
         if groups.is_empty() {
             return Ok(());
         }
@@ -827,32 +833,91 @@ fn liveness(recorded: &Recorded) -> Liveness {
     )
 }
 
-/// Every group a lane's record names under the holder that wrote it, or none when that holder let the lane go itself or the record was written in another boot; a line the record ends in without its newline is one still being written, and is not read.
-#[cfg(unix)]
-#[must_use]
-pub fn groups_of(record: &str, this_boot: Option<&str>) -> Vec<Recorded> {
-    let written_in = record
-        .lines()
-        .find_map(|line| line.strip_prefix("boot="))
-        .filter(|then| !then.is_empty());
-    if let (Some(then), Some(now)) = (written_in, this_boot)
-        && then != now
-    {
-        return Vec::new();
+/// The byte the next writer ends a line with that a writer was killed before finishing, which no finished line holds.
+const TORN: u8 = 0;
+
+/// A lane's record as its writers finished it: every line that ends in a newline, holds no torn mark and is text, and every piece that is not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Record<'a> {
+    lines: Vec<&'a str>,
+    unread: Vec<&'a [u8]>,
+}
+
+impl<'a> Record<'a> {
+    /// `bytes` as the writers of a lane's record finished them.
+    #[must_use]
+    pub fn read(bytes: &'a [u8]) -> Self {
+        let mut record = Self {
+            lines: Vec::new(),
+            unread: Vec::new(),
+        };
+        for piece in bytes.split_inclusive(|byte| *byte == b'\n') {
+            match piece.strip_suffix(b"\n") {
+                Some(line) if !line.contains(&TORN) => match std::str::from_utf8(line) {
+                    Ok(text) => record.lines.push(text),
+                    Err(_not_text) => record.unread.push(line),
+                },
+                Some(torn) => {
+                    let mut unfinished = torn;
+                    while let Some(before) = unfinished.strip_suffix(&[TORN]) {
+                        unfinished = before;
+                    }
+                    if !unfinished.is_empty() {
+                        record.unread.push(unfinished);
+                    }
+                }
+                None => record.unread.push(piece),
+            }
+        }
+        record
     }
-    if record.lines().any(|line| line == "released") {
-        return Vec::new();
+
+    /// Every piece that is no finished line: one a writer was killed before finishing, one still being written, or one that is not text, each as a person can read it.
+    #[must_use]
+    pub fn unread(&self) -> Vec<String> {
+        self.unread
+            .iter()
+            .map(|piece| piece.escape_ascii().to_string())
+            .collect()
     }
-    let holder = record.lines().find_map(|line| line.strip_prefix("pid="));
-    record
-        .split_inclusive('\n')
-        .filter_map(|line| line.strip_suffix('\n'))
-        .filter_map(|line| {
-            line.strip_prefix("group=")
-                .or_else(|| line.strip_prefix("leader="))
-        })
-        .filter_map(|group| recorded(group, holder))
-        .collect()
+
+    /// The value the first finished line that says `name=` gives it.
+    #[must_use]
+    pub fn field(&self, name: &str) -> Option<&'a str> {
+        self.lines
+            .iter()
+            .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
+    }
+
+    /// Every group a finished line names under the holder the record says wrote it, whether or not that holder has let the lane go.
+    #[cfg(unix)]
+    fn groups(&self) -> Vec<Recorded> {
+        let holder = self.field("pid");
+        self.lines
+            .iter()
+            .filter_map(|line| {
+                line.strip_prefix("group=")
+                    .or_else(|| line.strip_prefix("leader="))
+            })
+            .filter_map(|group| recorded(group, holder))
+            .collect()
+    }
+
+    /// Every group a finished line names under the holder that wrote it, or none when that holder let the lane go itself or wrote the record in a boot other than `this_boot`.
+    #[cfg(unix)]
+    #[must_use]
+    pub fn unreleased(&self, this_boot: Option<&str>) -> Vec<Recorded> {
+        let written_in = self.field("boot").filter(|then| !then.is_empty());
+        if let (Some(then), Some(now)) = (written_in, this_boot)
+            && then != now
+        {
+            return Vec::new();
+        }
+        if self.lines.contains(&"released") {
+            return Vec::new();
+        }
+        self.groups()
+    }
 }
 
 /// One group line, written as `pid holder=H session=S born=B` or, before sessions were recorded, as `pid B`, or nothing when it names another holder.
@@ -940,11 +1005,7 @@ impl Drop for Held {
             && !self.unended.get()
             && let Some(record) = &self.record
         {
-            match OpenOptions::new()
-                .append(true)
-                .open(record)
-                .and_then(|mut appending| appending.write_all(b"released\n"))
-            {
+            match append(record, "released") {
                 Ok(()) | Err(_) => {}
             }
         }
@@ -975,18 +1036,14 @@ impl Held {
                 Ok(())
             };
         };
-        let holder = match std::fs::read_to_string(record) {
-            Ok(text) => text
-                .lines()
-                .find_map(|line| line.strip_prefix("pid="))
-                .unwrap_or("")
-                .to_owned(),
+        let holder = match std::fs::read(record) {
+            Ok(bytes) => Record::read(&bytes).field("pid").unwrap_or("").to_owned(),
             Err(_no_record_yet) => String::new(),
         };
         let session = session_text(leader);
-        let mut appending = OpenOptions::new().create(true).append(true).open(record)?;
-        appending.write_all(
-            format!("group={leader} holder={holder} session={session} born={born}\n").as_bytes(),
+        append(
+            record,
+            &format!("group={leader} holder={holder} session={session} born={born}"),
         )
     }
 }
@@ -1177,16 +1234,12 @@ fn record_of(holder: &Holder) -> String {
 }
 
 fn describe(record: &Path) -> String {
-    let text = match std::fs::read_to_string(record) {
-        Ok(text) => text,
+    let bytes = match std::fs::read(record) {
+        Ok(bytes) => bytes,
         Err(_unwritten) => return "a run that has not written its record yet".to_owned(),
     };
-    let field = |name: &str| {
-        text.lines()
-            .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
-            .unwrap_or("?")
-            .to_owned()
-    };
+    let written = Record::read(&bytes);
+    let field = |name: &str| written.field(name).unwrap_or("?").to_owned();
     let held_for = match field("since").parse::<u64>() {
         Ok(since) => span(now().saturating_sub(since)),
         Err(_unreadable) => "?".to_owned(),
@@ -1235,6 +1288,33 @@ fn replace(path: &Path, text: &str) -> std::io::Result<()> {
     let written = path.with_extension("next");
     std::fs::write(&written, text)?;
     std::fs::rename(&written, path)
+}
+
+/// Appends `line` to the record at `path` in one write under the record's lock, first ending with the torn mark any line a writer was killed before finishing, so the two are never read as one.
+fn append(path: &Path, line: &str) -> std::io::Result<()> {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+
+    let mut record = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .append(true)
+        .open(path)?;
+    record.lock()?;
+    let unfinished = if record.metadata()?.len() == 0 {
+        false
+    } else {
+        record.seek(SeekFrom::End(-1))?;
+        let mut last = [0_u8; 1];
+        record.read_exact(&mut last)?;
+        last != *b"\n"
+    };
+    let mut entry = Vec::with_capacity(line.len().saturating_add(3));
+    if unfinished {
+        entry.extend_from_slice(&[TORN, b'\n']);
+    }
+    entry.extend_from_slice(line.as_bytes());
+    entry.push(b'\n');
+    record.write_all(&entry)
 }
 
 fn say(progress: &mut dyn Write, line: &str) -> Result<(), LaneError> {
