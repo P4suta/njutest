@@ -21,15 +21,15 @@ src/lib.rs  sign
         fixture-baseline/lib/fixture_baseline notices it
   what is left free
     - `>` => `>=`  njutest explain src/lib.rs:sign:gt-to-ge@8
-        never-infected removed every target that reaches it
-          (fixture-baseline/lib/fixture_baseline), so nothing ran it; check the proof, not the tests
-    - `n < 0` => `true`  njutest explain src/lib.rs:sign:condition-to-true@10
         fixture-baseline/lib/fixture_baseline ran it and did not notice
     - `<` => `<=`  njutest explain src/lib.rs:sign:lt-to-le@10
-        never-infected removed every target that reaches it
-          (fixture-baseline/lib/fixture_baseline), so nothing ran it; check the proof, not the tests
+        fixture-baseline/lib/fixture_baseline ran it and did not notice
     - `"zero"` => `Default::default()`  njutest explain src/lib.rs:sign:return-default@13
         nothing the suite runs executes it
+  what the run could not tell
+    - `n < 0` => `true`  njutest explain src/lib.rs:sign:condition-to-true@10
+        no sealed execution decided it (a test that reaches it ran only natively; a test that
+          reaches it natively is not in the sealed build), so the native run's survived is a lead
 
 src/lib.rs  double
   what is pinned

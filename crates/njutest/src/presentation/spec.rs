@@ -342,6 +342,10 @@ fn every_removed(removed: &[Discharged]) -> String {
 /// Why a build established nothing about a change.
 fn unknown(unsettled: &Unsettled) -> String {
     match unsettled {
+        Unsettled::Unproven { lead, reasons } => format!(
+            "no sealed execution decided it ({}), so the native run's {lead} is a lead",
+            reasons.join("; ")
+        ),
         Unsettled::StepLimit { on, observed } => {
             format!("{on} crossed its step allowance at {observed} without a verdict")
         }

@@ -254,6 +254,7 @@ On a project that leaves it at the default the layer proves almost nothing, and 
 
 This removes findings and never executions.
 Every test that reaches the mutation has already run by the time the layer does, and turning the layer off leaves the finding in place.
+An equivalence found among survivors rests on what their survival rests on, so one found of a survivor only a native run said survived is a lead, as that survival is ([What a verdict rests on](#what-a-verdict-rests-on)).
 
 ### A run stands on its sentinels
 
@@ -291,9 +292,26 @@ Routing by coverage alone is what a run falls back to where the guards recorded 
 `[mutation] equivalence` costs builds of a tree of its own, so its pair is planted only in a run that asked for the layer: a second small crate, built at `opt-level = 2` in its test profile, where the layer must call `n + 0` made `n - 0` identical and must not call `n + 1` made `n - 1` so.
 A layer a control withdrew calls nothing identical and so removes nothing, which neither half counts against; a layer still in service that renders the first, or calls the second identical, ends the run with `NJ5009` like any other.
 
+## What a verdict rests on
+
+A verdict is what a sealed run observed ([ADR 0046](adr/0046-a-verdict-is-what-a-sealed-run-observed.md)).
+Where the build's session sealed anything — which it does unless `[mutation] seal = false` or `--no-seal` says otherwise — the mutation phase first puts each mutation to the sealed executions of the tests whose sealed controls reached it ([sealed execution](engine/sealed.md)), and decides it from them alone: `killed` by the first that detected it, `survived` where every one passed, and `unreached` where no sealed control reaches it.
+Nothing native runs for a mutation they decided, no confirmation pair among it, since one sealed execution is the same every time it runs.
+A stored answer is read back where sealed executions established it; one a native run established is read back only once sealing is tried and decides nothing, and where sealing decides it the stored answer is `superseded`.
+
+Where the sealed executions establish nothing — a test that reaches the mutation natively is not in the sealed build or reaches it natively and not sealed, a test ran only natively, the sealed build does not hold its guard, or one of them established nothing — the native pipeline below runs, and what it says is a lead.
+The row carries every reason there is no verdict as its `evidence` ([report v1](report-v1.md#what-a-decision-rests-on)), raises one `unproven-mutant` finding, answers nothing, can be accepted by nobody, and leaves the run `INSUFFICIENT`.
+`compile-rejected` rests on no execution, and the model checker's answers on its own proof, so neither waits for a sealed run; every other outcome is a hole whatever it rests on.
+A run with `--no-seal` builds nothing for the sealed target, so every answer it gives is a lead and it concludes `INSUFFICIENT`: it is for looking at what a native run says, never for assuring anything.
+
+A redo of what rested on a moved reach ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)) runs again only what a native run said, since a native execution never stands in for a sealed one; a checkpoint keeps only the kills sealed executions established, with those executions.
+
+The fault, crash and knob phases, `measure`, `fix` and `replay` build nothing sealed and answer from native executions as before; sealing them is not done by this release.
+
 ## Mutation confirmation
 
-A mutant is `killed` only after:
+A native run is what a lead comes from, and it confirms what it says before the lead is reported.
+A native kill is one only after:
 
 1. an initial mutant execution fails;
 2. the original-code control for that request passes; and
@@ -485,6 +503,8 @@ It runs nothing and establishes nothing: every line is a projection of the repor
 | what is the same program | every build found the change to be the same program | `equivalent`, `model-proved` |
 | what the run could not tell | some build established nothing about it | `step-limit-reached`, `waited`, `unconfirmed`, `errored`, `declined` |
 
+A change some build decided only natively is in the last section too, whatever its outcome, since a lead is not a verdict ([What a verdict rests on](#what-a-verdict-rests-on)); its line says every reason no sealed execution decided it.
+
 A change is listed under the section its builds decided together, which is the same lattice minimum the verdict reads, so a change one build noticed and another did not is free, and a change that waited in any build is in the last section.
 What each build established is on the lines beneath it.
 An attempt that established nothing is in neither of the first two sections: it is not a chance the tests were given and did not take.
@@ -530,7 +550,7 @@ It reads the latest run's report once, and again only when the store points at a
 ## DEFECT, INSUFFICIENT, and ERROR
 
 `DEFECT` means user code violated a baseline, soundness, build, or test contract.
-`INSUFFICIENT` means execution completed but a survivor, flaky or inconclusive outcome, unpersisted fuzz kill, excluded boundary, unsupported Miri operation, or other evidence gap remains.
+`INSUFFICIENT` means execution completed but a survivor, a lead no sealed execution decided, a flaky or inconclusive outcome, unpersisted fuzz kill, excluded boundary, unsupported Miri operation, or other evidence gap remains.
 `ERROR` covers incomplete accounting and toolchain, provider, filesystem, protocol, or workspace failures.
 
 Whatever a run holds, exactly one verdict is the one it supports:

@@ -93,6 +93,7 @@ fn survivors(count: u32) -> (Vec<Judged>, Vec<Decided>) {
             source_run_id: None,
             observed: Vec::new(),
             routing: None,
+            evidence: njutest::testkit::reports::sealed_as(&njutest::report::Decided::Survived),
         })
         .collect();
     let decided = (0..count)

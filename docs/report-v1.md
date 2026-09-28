@@ -43,19 +43,34 @@ Historical v1 `runaway` records have no matched control and are never reinterpre
 
 Every mutation row also carries an explicit `accepted` boolean.
 This makes the durable `accounting.mutants.accepted` column independently derivable;
-`true` is valid only for `survived`, `unreached`, or `equivalent` rows.
+`true` is valid only for `survived`, `unreached`, or `equivalent` rows that rest on sealed executions.
 
-`blind_in` names each build in which a mutation remains a hole, using exactly `unnoticed`, `unreached`, `step-limit-reached`, `waited`, or `errored`.
+`blind_in` names each build in which a mutation remains a hole, using exactly `unnoticed`, `unreached`, `unproven`, `step-limit-reached`, `waited`, or `errored`.
 Answered builds cannot be represented in that field.
+
+### What a decision rests on
+
+A verdict is what a sealed run observed ([ADR 0046](adr/0046-a-verdict-is-what-a-sealed-run-observed.md)), so every mutation row carries `evidence` beside its `decision`, in the engine's own shape ([sealed execution](engine/sealed.md)).
+`{ "kind": "sealed", "executions": [...] }` lists the sealed executions that established the decision, each with its `target`, its `test`, and what it `came_to`.
+`{ "kind": "unproven", "reasons": [...] }` says no sealed execution established a verdict, and gives every reason why: `not-sealed`, `native`, `guard-absent`, `test-absent`, `reach-differs`, `exited-early`, `stack-overflow`, `refused`, or `unaccounted`.
+`evidence` is `null` exactly where `routing` is, a mutation the compiler refused, which no execution was asked about.
+
+A `killed`, `survived`, `unreached` or `equivalent` row answers only where its evidence is sealed.
+Where it is unproven, the decision is what a native run said, which is a lead: the row is decided by nobody (`observers.unproven`), is `unproven` in `blind_in`, answers nothing, can be accepted by nobody, and raises one `unproven-mutant` finding in place of the finding its outcome would raise, so a report holding one concludes `INSUFFICIENT`.
+`compile-rejected` rests on no execution, and `model-noticed` and `model-proved` rest on the model checker's own proof, so neither is held to a sealed execution; `step-limit-reached`, `waited`, `unconfirmed`, `errored` and `declined` are holes whatever they rest on, and keep their own findings.
+
+A sealed row is held to its executions, decided again from them: a `killed` row names the target whose sealed execution detected it first, a `survived` or `equivalent` row rests on executions that all passed, and an `unreached` row on none.
+A sealed row this run established answers, in `routing.answered`, exactly what its executions did, one answer per target in the order each first ran: `killed` where one of its executions detected the mutation, `errored` where one established nothing, and `survived` where every one passed.
+A report is refused, when it is written and when it is read, if a row's evidence is not the one its decision can rest on.
 
 ## Findings
 
 A **finding** is an actionable defect or an explicit gap in what the run established.
 A finding is one of four derivations, by its kind (`FindingKind::derivation`).
-A mutation row decides the surviving, waited and step-limit ones; the part's own records decide the ones they are raised from — `hollow-target`, `unstable-baseline`, `unnoticed-fault`, `corrupt-after-crash`, `environment-dependent`, `environment-dependent-reach`, `schedule-dependent`, `dimension-not-measured`; `not-measured` is raised both from records and by phases; and the rest a phase observed.
+A mutation row decides the surviving, waited, step-limit and unproven ones; the part's own records decide the ones they are raised from — `hollow-target`, `unstable-baseline`, `unnoticed-fault`, `corrupt-after-crash`, `environment-dependent`, `environment-dependent-reach`, `schedule-dependent`, `dimension-not-measured`; `not-measured` is raised both from records and by phases; and the rest a phase observed.
 A report is refused, when it is written and when it is read, if the findings its records decide are not exactly the ones it holds: one no record raises, or one they raise that it dropped, is a report saying something its records contradict.
 
-There are twenty kinds, and every report carries the stable name:
+There are twenty-one kinds, and every report carries the stable name:
 
 | `kind` | what it says | a defect |
 | --- | --- | --- |
@@ -69,6 +84,7 @@ There are twenty kinds, and every report carries the stable name:
 | `timeout` | a non-mutation phase exhausted its time bound | no |
 | `waited-mutant` | a mutation execution exhausted its wall-clock bound | no |
 | `step-limit-reached-mutant` | a verified finite step boundary was crossed without a matched control verdict | no |
+| `unproven-mutant` | no sealed execution established a verdict about a mutation, so what a native run said of it is a lead | no |
 | `not-measured` | the run could not make the stated measurement | no |
 | `unmatched-acceptance` | an active acceptance names other than exactly one catalog entry | no |
 | `hollow-target` | a target was put to mutations and noticed none | no |
@@ -86,7 +102,7 @@ A report with a defect concludes `DEFECT`; a report with only gaps concludes `IN
 ## Who decided each mutation
 
 `accounting.mutants.observers` partitions the catalog.
-There are ten columns,
+There are eleven columns,
 in the same closed order as `Decision::ALL`:
 
 | column | what decided it | the outcome it comes from |
@@ -98,10 +114,12 @@ in the same closed order as `Decision::ALL`:
 | `proved` | no observer could distinguish the programs | `equivalent` |
 | `unnoticed` | every reaching test ran and none noticed | `survived` |
 | `unreached` | no measured target reached the mutation | `unreached` |
+| `unproven` | no sealed execution decided it, so what a native run said of it is a lead | `killed`, `survived`, `unreached`, `equivalent` |
 | `step-limit-reached` | a verified execution boundary was crossed, without a verdict | `step-limit-reached` |
 | `waited` | the wall-clock bound expired before completion | `waited` |
 | `errored` | no verdict could be established | `unconfirmed`, `errored`, `declined` |
 
+A row counts in `unproven` rather than in the column its outcome names wherever its evidence is unproven; the outcome columns beside them still count every row by its outcome, sealed or a lead.
 The accounting is re-derived exactly from the ID-level records.
 Mutation and target identities are unique, target rows are in canonical order, every target status column is reproduced from the rows, and every mutation outcome,
 reuse, and acceptance column equals the row-derived count.
@@ -116,7 +134,7 @@ reused_survived <= survived
 observers.total() = cataloged
 ```
 
-Only killed and survived mutation evidence is reusable.
+Only killed and survived mutation evidence is reusable, and a stored answer carries what it rests on: a sealed one is read back as it is, and a lead only once this run's sealing is tried and decides nothing.
 Model answers retain their generated source, raw export, process termination, hashes, pinned tool and backend identity so an independent audit can re-derive the affirmative answer rather than trusting a summary.
 
 Every model identity also carries one closed `crate_input` object.
@@ -164,7 +182,7 @@ A row read back from another run, or inherited from a checkpoint without a route
 For a kill this run established, `by` is therefore a second copy of the last answer's target; the rule keeps the two in step until a later schema stops storing both.
 
 Evidence consultation records either the source run it reused or one closed refusal: `nothing-recorded`, `unreadable`, `target-unknown`, `not-routed`,
-`key-changed`, `not-passing`, `target-entered`, or `nothing-routed`.
+`key-changed`, `not-passing`, `target-entered`, `nothing-routed`, or `superseded`, which a lead an earlier run kept gets where this run's sealed executions decided the mutation.
 
 ## Drift
 
@@ -262,7 +280,7 @@ A tree with no call that writes in a measured file states `crash-no-site`, and o
 A report is read along six dimensions, `mutation`, `repeatable`, `fault`, `schedule`, `wire` and `durable` ([ADR 0033](adr/0033-every-dimension-or-a-hole.md)).
 The matrix is derived from the records above and never stored: a stored column would be a second copy of them a reader could find disagreeing.
 Each column is `measured` with `catalogued`, `answered`, `holes` (which add up) and what it `speaks_not_about`, or `unmeasured` with why, `not-asked`, or `nothing-to-ask` with why.
-Mutation holes are the waited, step-limited, unconfirmed, errored and declined mutations; knob holes the uncompared and unsettled records, and knobs not put are what it does not speak about; fault holes the waited and undecided sites, and sites not put are what it does not speak about; wire holes the questions not reached and the seams not watched, and it never speaks about a seam the configuration does not name.
+Mutation holes are the waited, step-limited, unconfirmed, errored and declined mutations and every lead; knob holes the uncompared and unsettled records, and knobs not put are what it does not speak about; fault holes the waited and undecided sites, and sites not put are what it does not speak about; wire holes the questions not reached and the seams not watched, and it never speaks about a seam the configuration does not name.
 The record stream carries one `DIMENSION` record per column.
 Under `whole-v1`, every column that is not `measured` without a hole or `nothing-to-ask` is a `dimension-not-measured` finding whose subject is the dimension's name; a run of the whole catalog raises them, a shard raises none, and a merge raises them over every part.
 

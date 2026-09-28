@@ -108,7 +108,16 @@ impl SealedRun {
 }
 
 /// What one sealed execution came to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    njutest_macros::AllVariants,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum Came {
     /// The test passed.

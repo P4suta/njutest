@@ -139,12 +139,12 @@ impl<'a> Evidence<'a> {
         let holes = report
             .mutants
             .iter()
-            .filter(|mutant| unsettled(mutant.outcome.outcome()))
+            .filter(|mutant| mutant.verdict().unsettled())
             .count();
         let answered = report
             .mutants
             .iter()
-            .filter(|mutant| !unsettled(mutant.outcome.outcome()))
+            .filter(|mutant| !mutant.verdict().unsettled())
             .count();
         Self {
             mutations: (answered, holes),
@@ -160,7 +160,7 @@ impl<'a> Evidence<'a> {
     }
 }
 
-/// Whether a mutation's outcome is one the run put and could not decide.
+/// Whether a mutation's outcome is one the run put and could not decide, whatever it rests on; [`super::RowVerdict::unsettled`] is what a reader asks, since a lead is unsettled too.
 #[must_use]
 pub const fn unsettled(outcome: super::Outcome) -> bool {
     match outcome {

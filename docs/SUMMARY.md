@@ -16,6 +16,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [Development](development.md)
 - [Releasing](release.md)
 - [Roadmap](roadmap.md)
+- [Upgrading](upgrading.md)
 
 # Formats
 

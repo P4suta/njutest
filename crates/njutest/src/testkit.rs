@@ -290,6 +290,7 @@ pub fn every_refusal() -> Vec<crate::evidence::store::Refusal> {
             target: "core/lib/core".to_owned(),
         },
         Refusal::NothingRouted,
+        Refusal::Superseded,
     ];
     for one in &refusals {
         match one {
@@ -300,7 +301,8 @@ pub fn every_refusal() -> Vec<crate::evidence::store::Refusal> {
             | Refusal::KeyChanged { .. }
             | Refusal::NotPassing { .. }
             | Refusal::TargetEntered { .. }
-            | Refusal::NothingRouted => {}
+            | Refusal::NothingRouted
+            | Refusal::Superseded => {}
         }
     }
     refusals
@@ -1234,6 +1236,7 @@ pub mod reports {
             item: item.to_owned(),
             original: was.to_owned(),
             replacement: now.to_owned(),
+            evidence: sealed_as(&outcome),
             outcome,
             accepted: false,
             blind_in: Vec::new(),
@@ -1241,6 +1244,50 @@ pub mod reports {
             reuse: Reuse(Established::Here),
         }
     }
+
+    /// What a row decided `decided` rests on where a sealed run decided it: the sealed execution that establishes it, nothing for a mutation the compiler refused, and every reason none did for an outcome no sealed execution establishes.
+    #[must_use]
+    pub fn sealed_as(decided: &Decided) -> Option<rust_mutants::sealed::record::Evidence> {
+        use rust_mutants::sealed::record::{Came, Evidence, SealedRun};
+        let ran = |target: &str, came_to: Came| Evidence::Sealed {
+            executions: vec![SealedRun {
+                target: target.to_owned(),
+                test: "tests::one".to_owned(),
+                came_to,
+            }],
+        };
+        match decided {
+            Decided::CompileRejected => None,
+            Decided::Killed { by } => Some(ran(by, Came::Panicked)),
+            Decided::Survived
+            | Decided::Equivalent
+            | Decided::ModelNoticed
+            | Decided::ModelProved => Some(ran(SEALED_TARGET, Came::Passed)),
+            Decided::Unreached => Some(Evidence::Sealed {
+                executions: Vec::new(),
+            }),
+            Decided::StepLimitReached { .. }
+            | Decided::Waited { .. }
+            | Decided::Unconfirmed { .. }
+            | Decided::Errored { .. }
+            | Decided::Declined { .. } => Some(Evidence::not_sealed()),
+        }
+    }
+
+    /// The sealed execution a kill by `by` rests on, which is what a checkpoint or a stored kill carries.
+    #[must_use]
+    pub fn sealed_kill(by: &str) -> rust_mutants::sealed::record::Evidence {
+        rust_mutants::sealed::record::Evidence::Sealed {
+            executions: vec![rust_mutants::sealed::record::SealedRun {
+                target: by.to_owned(),
+                test: "tests::one".to_owned(),
+                came_to: rust_mutants::sealed::record::Came::Panicked,
+            }],
+        }
+    }
+
+    /// The target a hand-built row's sealed survival names, which is the one target [`measured`] reports.
+    pub const SEALED_TARGET: &str = "pkg/lib/pkg";
 
     /// A route this run decided and asked by: reaching `reaching`, removing `removed` by never-infected, and asking `answered` in order.
     #[must_use]
@@ -1265,6 +1312,84 @@ pub mod reports {
                 .map(|(target, outcome)| Answered {
                     target: (*target).to_owned(),
                     outcome: *outcome,
+                })
+                .collect(),
+        }
+    }
+
+    /// Routes `row` by `routing`, resting it on what a run that asked by it rests on, unless it is a lead a test made one on purpose.
+    pub fn asked(row: &mut MutantRecord, routing: Routing) {
+        if !row.verdict().lead() {
+            row.evidence = rested(&row.outcome, &routing.answered);
+        }
+        row.routing = Some(routing);
+    }
+
+    /// Decides `row` as `outcome`, resting on what a sealed run that decided it and gave its route's answers rests on.
+    pub fn decide(row: &mut MutantRecord, outcome: Decided) {
+        let answered: &[Answered] = match row.routing.as_ref() {
+            Some(routing) => &routing.answered,
+            None => &[],
+        };
+        row.evidence = rested(&outcome, answered);
+        row.outcome = outcome;
+    }
+
+    /// What a row decided `decided`, whose route gave `answered`, rests on where a sealed run decided it: the sealed executions that gave those answers, or the ones [`sealed_as`] names where there are none.
+    #[must_use]
+    pub fn rested(
+        decided: &Decided,
+        answered: &[Answered],
+    ) -> Option<rust_mutants::sealed::record::Evidence> {
+        match decided {
+            Decided::Killed { .. }
+            | Decided::Survived
+            | Decided::Equivalent
+            | Decided::ModelNoticed
+            | Decided::ModelProved
+                if !answered.is_empty() =>
+            {
+                Some(sealed_from(answered))
+            }
+            Decided::CompileRejected
+            | Decided::Killed { .. }
+            | Decided::Survived
+            | Decided::Equivalent
+            | Decided::ModelNoticed
+            | Decided::ModelProved
+            | Decided::Unreached
+            | Decided::StepLimitReached { .. }
+            | Decided::Waited { .. }
+            | Decided::Unconfirmed { .. }
+            | Decided::Errored { .. }
+            | Decided::Declined { .. } => sealed_as(decided),
+        }
+    }
+
+    /// The sealed executions that give `answered`, one of each target in the order it answered.
+    #[must_use]
+    pub fn sealed_from(answered: &[Answered]) -> rust_mutants::sealed::record::Evidence {
+        use rust_mutants::sealed::record::{Came, Evidence, SealedRun};
+        Evidence::Sealed {
+            executions: answered
+                .iter()
+                .map(|one| SealedRun {
+                    target: one.target.clone(),
+                    test: "tests::one".to_owned(),
+                    came_to: match one.outcome {
+                        Outcome::Killed => Came::Panicked,
+                        Outcome::Survived => Came::Passed,
+                        Outcome::CompileRejected
+                        | Outcome::ModelNoticed
+                        | Outcome::ModelProved
+                        | Outcome::StepLimitReached
+                        | Outcome::Waited
+                        | Outcome::Unreached
+                        | Outcome::Equivalent
+                        | Outcome::Unconfirmed
+                        | Outcome::Errored
+                        | Outcome::Declined => Came::Unaccounted,
+                    },
                 })
                 .collect(),
         }
@@ -1299,9 +1424,8 @@ pub mod reports {
         report.findings = rows
             .iter()
             .filter_map(|row| {
-                row.outcome
-                    .outcome()
-                    .required_finding(row.accepted)
+                row.verdict()
+                    .required_finding()
                     .map(|kind| Finding::new(kind, &row.display_id, "a finding its row requires"))
             })
             .collect();

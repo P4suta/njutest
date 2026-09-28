@@ -142,6 +142,8 @@ pub struct SavedMutant {
     pub id: String,
     /// The closed fact a successor may inherit.
     pub disposition: SavedDisposition,
+    /// The sealed executions the kill rests on, since no other kill is one a successor may inherit (ADR 0046).
+    pub evidence: rust_mutants::sealed::record::Evidence,
     /// How long it took.
     pub duration_ms: u64,
 }
@@ -270,6 +272,16 @@ pub enum CheckpointViolationError {
         mutant: String,
         /// The target said to have noticed first.
         target: String,
+    },
+    /// A kill no sealed execution of `by` established, which is a native lead a successor may not inherit (ADR 0046).
+    #[error(
+        "mutant {mutant:?} records a kill by {by:?} that its sealed executions do not establish"
+    )]
+    NotSealed {
+        /// The affected mutant.
+        mutant: String,
+        /// The target the kill names.
+        by: String,
     },
 }
 
@@ -483,7 +495,7 @@ fn validate_mutants(mutants: &[SavedMutant]) -> Result<(), CheckpointViolationEr
                     target: by.clone(),
                 });
             }
-            SavedDisposition::Killed { before, .. } => {
+            SavedDisposition::Killed { before, by } => {
                 if let Some(noticed) = before
                     .iter()
                     .find(|answer| answer.outcome == crate::report::Outcome::Killed)
@@ -491,6 +503,12 @@ fn validate_mutants(mutants: &[SavedMutant]) -> Result<(), CheckpointViolationEr
                     return Err(CheckpointViolationError::NoticedBefore {
                         mutant: mutant.id.clone(),
                         target: noticed.target.clone(),
+                    });
+                }
+                if crate::report::sealed_killer(&mutant.evidence) != Some(by.as_str()) {
+                    return Err(CheckpointViolationError::NotSealed {
+                        mutant: mutant.id.clone(),
+                        by: by.clone(),
                     });
                 }
             }

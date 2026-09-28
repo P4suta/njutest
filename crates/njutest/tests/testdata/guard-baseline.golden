@@ -9,7 +9,7 @@ src/lib.rs as run <run> measured it, 1 build, default
    7  pub fn sign(n: i32) -> &'static str {
 o  8      if n > 0 {
 *  9          "positive"
-o 10      } else if n < 0 {
+? 10      } else if n < 0 {
 * 11          "negative"
   12      } else {
 o 13          "zero"

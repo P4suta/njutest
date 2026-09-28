@@ -368,6 +368,11 @@ const fn about(kind: FindingKind, unreached: bool) -> (Severity, &'static str, &
             "NJ-STEP-LIMIT",
             "the step boundary was reached without a matched control verdict",
         ),
+        FindingKind::UnprovenMutant => (
+            Severity::Limitation,
+            "NJ-UNPROVEN",
+            "no sealed execution decided this change, so what a native run said of it is a lead",
+        ),
         FindingKind::NotMeasured => (
             Severity::Limitation,
             "NJ-NOT-MEASURED",

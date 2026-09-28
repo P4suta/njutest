@@ -601,6 +601,7 @@ fn validate_flat(report: &BuildReport) -> Vec<Violation> {
     check_provenance(report, &mut violations);
     check_sources(report, &mut violations);
     check_answers(report, &mut violations);
+    check_evidence(report, &mut violations);
     violations
 }
 
@@ -701,6 +702,19 @@ fn check_answers(report: &BuildReport, violations: &mut Vec<Violation>) {
         let (super::Established::Here, Some(routing)) = (&row.reuse.0, &row.routing) else {
             continue;
         };
+        if let Some(evidence) = row.evidence.as_ref()
+            && evidence.class() == rust_mutants::sealed::record::Class::Sealed
+        {
+            if routing.answered != super::sealed_answers(evidence) {
+                violations.push(Violation::MutantRowIncoherent {
+                    id: row.id.clone(),
+                    because: "its answers are not, target by target, the sealed executions it \
+                              rests on"
+                        .to_owned(),
+                });
+            }
+            continue;
+        }
         match &row.outcome {
             super::Decided::Killed { by } => {
                 let stopped = routing
@@ -738,6 +752,78 @@ fn check_answers(report: &BuildReport, violations: &mut Vec<Violation>) {
             | super::Decided::Unconfirmed { .. }
             | super::Decided::Errored { .. } => {}
         }
+    }
+}
+
+/// Whether every row rests on what its outcome can rest on: nothing for a mutation the compiler refused and something for every other, sealed executions only under a verdict they establish, naming the target that killed first, and every reason there is none under a lead (ADR 0046).
+fn check_evidence(report: &BuildReport, violations: &mut Vec<Violation>) {
+    for row in &report.mutants {
+        if let Some(because) = misplaced(row) {
+            violations.push(Violation::MutantRowIncoherent {
+                id: row.id.clone(),
+                because,
+            });
+        }
+    }
+}
+
+/// Why what `row` rests on cannot be what its outcome rests on, or nothing where it can.
+fn misplaced(row: &super::MutantRecord) -> Option<String> {
+    let outcome = row.outcome.outcome();
+    let evidence = match (&row.evidence, outcome) {
+        (None, Outcome::CompileRejected) => return None,
+        (Some(_), Outcome::CompileRejected) => {
+            return Some(
+                "a mutation the compiler refused carries evidence, and no execution was asked \
+                 about it"
+                    .to_owned(),
+            );
+        }
+        (None, _) => {
+            return Some(format!(
+                "outcome {} rests on executions and the row carries no evidence",
+                outcome.name()
+            ));
+        }
+        (Some(evidence), _) => evidence,
+    };
+    if let rust_mutants::sealed::record::Evidence::Unproven { reasons } = evidence {
+        return reasons
+            .is_empty()
+            .then(|| "an unproven row names no reason it has no verdict".to_owned());
+    }
+    let established = super::sealed_standing(evidence);
+    let agrees = match outcome {
+        Outcome::Killed => established == Some(Outcome::Killed),
+        Outcome::Survived | Outcome::Equivalent => established == Some(Outcome::Survived),
+        Outcome::Unreached => established == Some(Outcome::Unreached),
+        Outcome::CompileRejected
+        | Outcome::ModelNoticed
+        | Outcome::ModelProved
+        | Outcome::StepLimitReached
+        | Outcome::Waited
+        | Outcome::Unconfirmed
+        | Outcome::Errored
+        | Outcome::Declined => false,
+    };
+    if !agrees {
+        return Some(format!(
+            "outcome {} rests on sealed executions that establish {}",
+            outcome.name(),
+            established.map_or("no verdict", Outcome::name)
+        ));
+    }
+    let super::Decided::Killed { by } = &row.outcome else {
+        return None;
+    };
+    match super::sealed_killer(evidence) {
+        Some(first) if first == by.as_str() => None,
+        Some(first) => Some(format!(
+            "the kill names {by} and its sealed executions detected it first in {first}"
+        )),
+        None => Some(format!(
+            "the kill names {by} and none of its sealed executions detected it"
+        )),
     }
 }
 
@@ -1091,12 +1177,17 @@ fn derive_mutant_accounting(
             violations.push(Violation::DuplicateMutant { id: row.id.clone() });
         }
         let outcome = row.outcome.outcome();
-        if row.accepted && !outcome.review_answerable() {
+        if row.accepted && !row.verdict().acceptable() {
             violations.push(Violation::MutantRowIncoherent {
                 id: row.id.clone(),
                 because: format!(
-                    "outcome {} cannot be answered by a review acceptance",
-                    outcome.name()
+                    "outcome {} cannot be answered by a review acceptance{}",
+                    outcome.name(),
+                    if row.verdict().lead() {
+                        " where no sealed execution established it"
+                    } else {
+                        ""
+                    }
                 ),
             });
         }
@@ -1245,21 +1336,27 @@ fn fmt_mutant_finding(f: &mut fmt::Formatter<'_>, id: &str, because: &str) -> fm
     )
 }
 
-/// Whether `kind` is one some outcome of a mutation row requires, read from the outcomes rather than listed beside them, so an outcome added later brings its finding here.
+/// Whether `kind` is one some mutation row requires, read from every row verdict rather than listed beside them, so an outcome or a resting added later brings its finding here.
 fn a_mutation_finding(kind: FindingKind) -> bool {
     Outcome::ALL.into_iter().any(|outcome| {
-        [
-            outcome.required_finding(false),
-            outcome.required_finding(true),
-        ]
-        .contains(&Some(kind))
+        super::Resting::ALL.into_iter().any(|resting| {
+            [false, true].into_iter().any(|accepted| {
+                super::RowVerdict {
+                    outcome,
+                    accepted,
+                    resting,
+                }
+                .required_finding()
+                    == Some(kind)
+            })
+        })
     })
 }
 
-/// Every mutation row is tied to exactly the finding its outcome requires.
+/// Every mutation row is tied to exactly the finding its verdict requires.
 fn check_findings(report: &BuildReport, violations: &mut Vec<Violation>) {
     for row in &report.mutants {
-        let expected = row.outcome.outcome().required_finding(row.accepted);
+        let expected = row.verdict().required_finding();
         let tied: Vec<_> = report
             .findings
             .iter()
@@ -1480,7 +1577,7 @@ impl Grounds {
             unanswered: report
                 .mutants
                 .iter()
-                .filter_map(|row| unanswered(&row.id, row.outcome.outcome(), row.accepted))
+                .filter_map(|row| unanswered(&row.id, row.verdict()))
                 .collect(),
             unsettled: super::moved(&report.drift) || super::knobs::shaken(&report.knobs),
         }
@@ -1529,9 +1626,10 @@ impl Grounds {
                     )
                 })
                 .flat_map(|mutant| {
-                    mutant.by_build.iter().filter_map(|fact| {
-                        unanswered(&mutant.id, fact.decision.outcome(), fact.accepted)
-                    })
+                    mutant
+                        .by_build
+                        .iter()
+                        .filter_map(|fact| unanswered(&mutant.id, fact.verdict()))
                 })
                 .collect(),
             unsettled: false,
@@ -1572,7 +1670,7 @@ impl Grounds {
                 .builds
                 .iter()
                 .flat_map(|build| build.source.mutants.iter())
-                .filter_map(|row| unanswered(&row.id, row.outcome.outcome(), row.accepted))
+                .filter_map(|row| unanswered(&row.id, row.verdict()))
                 .collect(),
             unsettled: report.builds.iter().any(|build| {
                 super::moved(&build.source.drift) || super::knobs::shaken(&build.source.knobs)
@@ -1581,13 +1679,15 @@ impl Grounds {
     }
 }
 
-/// Why a row that ended as `outcome` is not an answer, or nothing when it is one.
-fn unanswered(id: &str, outcome: Outcome, accepted: bool) -> Option<String> {
-    (!outcome.answered(accepted)).then(|| {
+/// Why a row judged by `verdict` is not an answer, or nothing when it is one.
+fn unanswered(id: &str, verdict: super::RowVerdict) -> Option<String> {
+    (!verdict.answered()).then(|| {
         format!(
             "mutation {id} ended as {}{}; that row is not an answer",
-            outcome.name(),
-            if outcome.review_answerable() {
+            verdict.outcome.name(),
+            if verdict.lead() {
+                " and no sealed execution established it"
+            } else if verdict.acceptable() {
                 " without its own review acceptance"
             } else {
                 ""

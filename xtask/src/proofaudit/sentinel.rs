@@ -28,7 +28,7 @@ pub const ASKED: &str = "f714f108a1ce93e4cae5d149115f5f2efc4d4ceb620ccecc762f1c4
 pub fn base() -> Value {
     json!({
         "schema": "njutest-assurance-report-v1",
-        "schema_version": 2,
+        "schema_version": 3,
         "run_id": RUN,
         "run_kind": "scoped",
         "contract": "standard-v1",
@@ -68,32 +68,7 @@ pub fn base() -> Value {
                 "message": null
             }
         ],
-        "mutants": [
-            {
-                "id": "a".repeat(64),
-                "display_id": KILLED,
-                "path": "src/lib.rs",
-                "position": { "line": 7, "column": 9, "character_column": 9 },
-                "rule": "negate-condition@1",
-                "decision": {
-                    "outcome": "killed", "killed_by": TARGET, "step_boundary": null
-                },
-                "accepted": false,
-                "reuse": { "reused": false, "source_run_id": null }
-            },
-            {
-                "id": "b".repeat(64),
-                "display_id": SURVIVED,
-                "path": "src/lib.rs",
-                "position": { "line": 11, "column": 5, "character_column": 5 },
-                "rule": "return-ok-default@1",
-                "decision": {
-                    "outcome": "survived", "killed_by": null, "step_boundary": null
-                },
-                "accepted": false,
-                "reuse": { "reused": false, "source_run_id": null }
-            }
-        ],
+        "mutants": mutated(),
         "models": [],
         "findings": [
             {
@@ -105,6 +80,44 @@ pub fn base() -> Value {
         ],
         "limitations": []
     })
+}
+
+/// The specimen's two mutation rows: the kill a sealed execution of [`TARGET`]'s one test detected, and the survivor it passed.
+fn mutated() -> Value {
+    json!([
+        {
+            "id": "a".repeat(64),
+            "display_id": KILLED,
+            "path": "src/lib.rs",
+            "position": { "line": 7, "column": 9, "character_column": 9 },
+            "rule": "negate-condition@1",
+            "decision": {
+                "outcome": "killed", "killed_by": TARGET, "step_boundary": null
+            },
+            "evidence": {
+                "kind": "sealed",
+                "executions": [{ "target": TARGET, "test": "tests::one", "came_to": "panicked" }]
+            },
+            "accepted": false,
+            "reuse": { "reused": false, "source_run_id": null }
+        },
+        {
+            "id": "b".repeat(64),
+            "display_id": SURVIVED,
+            "path": "src/lib.rs",
+            "position": { "line": 11, "column": 5, "character_column": 5 },
+            "rule": "return-ok-default@1",
+            "decision": {
+                "outcome": "survived", "killed_by": null, "step_boundary": null
+            },
+            "evidence": {
+                "kind": "sealed",
+                "executions": [{ "target": TARGET, "test": "tests::one", "came_to": "passed" }]
+            },
+            "accepted": false,
+            "reuse": { "reused": false, "source_run_id": null }
+        }
+    ])
 }
 
 /// The display identity of the crash the crashes layer's planted defects put.

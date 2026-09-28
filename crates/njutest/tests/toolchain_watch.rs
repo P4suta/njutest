@@ -1910,7 +1910,7 @@ fn a_mutation_that_never_returns_is_stopped_measured_alone_and_reported_as_a_wai
     let (code, complained, root) = verified_in_process(
         "fixture-hang",
         dir.path(),
-        &["--trace", "--ui=plain"],
+        &["--trace", "--ui=plain", "--no-seal"],
         &[
             ("FIXTURE_HANG_MARKER", &paused.display().to_string()),
             ("FIXTURE_HANG_PAUSE_MS", "8000"),
@@ -1919,7 +1919,8 @@ fn a_mutation_that_never_returns_is_stopped_measured_alone_and_reported_as_a_wai
     assert_eq!(
         code, 2,
         "this fixture is slow once per mutation and bounded at a second, so every \
-         measurement of it runs out of time and every one is asked again: {complained}"
+         measurement of it runs out of time and every one is asked again, natively, which \
+         makes what each says a lead: {complained}"
     );
 
     let report = report_of(&root);

@@ -32,6 +32,7 @@ fn judged(display_id: &str, disposition: Disposition, reused: bool) -> Judged {
         original: ">".to_owned(),
         replacement: String::new(),
         position: None,
+        evidence: njutest::testkit::reports::sealed_as(&(disposition).decided()),
         disposition,
         source_run_id: reused.then(|| "20260905T081500Z-000000".to_owned()),
         observed: Vec::new(),

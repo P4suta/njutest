@@ -129,6 +129,7 @@ fn judged_from(dispositions: Vec<Disposition>) -> Mutation {
                 original: ">".to_owned(),
                 replacement: String::new(),
                 position: None,
+                evidence: njutest::testkit::reports::sealed_as(&(disposition).decided()),
                 disposition,
                 source_run_id: None,
                 observed: Vec::new(),

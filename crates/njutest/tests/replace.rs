@@ -74,7 +74,10 @@ fn put_record(root: &Path, round: u64) -> Option<String> {
     let record = njutest::evidence::store::record(
         digest(1),
         &format!("run-{round}"),
-        njutest::evidence::store::Outcome::Survived { targets },
+        (
+            njutest::evidence::store::Outcome::Survived { targets },
+            rust_mutants::sealed::record::Evidence::not_sealed(),
+        ),
     );
     match njutest::evidence::store::write(root, &record) {
         Ok(_written) => None,
@@ -101,6 +104,9 @@ fn put_checkpoint(root: &Path, round: u64) -> Option<String> {
                 by: format!("demo/lib/demo tests::round_{round}"),
                 before: Vec::new(),
             },
+            evidence: njutest::testkit::reports::sealed_kill(&format!(
+                "demo/lib/demo tests::round_{round}"
+            )),
             duration_ms: 3,
         })
         .collect();

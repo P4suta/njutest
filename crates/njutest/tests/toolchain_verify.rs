@@ -228,7 +228,7 @@ fn findings_of(fixture: &Fixture, kind: &str) -> Vec<serde_json::Value> {
 #[test]
 fn a_target_whose_reach_moved_has_every_disposition_resting_on_it_run_again() {
     let fixture = fixture("fixture-drifts");
-    let output = verify(&fixture, &[]);
+    let output = verify(&fixture, &["--no-seal"]);
     let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
     let document = document(&fixture);
     let target = "fixture-drifts/lib/fixture_drifts";
@@ -273,8 +273,8 @@ fn a_target_whose_reach_moved_has_every_disposition_resting_on_it_run_again() {
     assert_eq!(
         output.status.code(),
         Some(2),
-        "`return_visit` is called but not asserted on, so its mutations survive the run \
-         against the target, and a survivor is a gap: {stderr}"
+        "a run that seals nothing establishes nothing, so each disposition run again is a lead: \
+         {stderr}"
     );
 }
 
@@ -1401,7 +1401,7 @@ fn what_changed_outside_a_package_does_not_make_its_own_evidence_stale() {
 #[test]
 fn a_kill_njutest_measures_ends_at_the_first_failing_test_rather_than_at_the_clock() {
     let fixture = fixture("fixture-balanced-fails-then-hangs");
-    let output = verify(&fixture, &["--trace"]);
+    let output = verify(&fixture, &["--trace", "--no-seal"]);
     let said = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(
         matches!(output.status.code(), Some(0..=2)),
@@ -1557,7 +1557,7 @@ fn a_library_that_documents_no_example_is_not_a_target_that_ran_nothing() {
 #[test]
 fn a_mutation_only_another_process_reaches_is_settled_by_the_suite_that_reaches_it() {
     let fixture = fixture("fixture-subprocess");
-    verify(&fixture, &[]);
+    verify(&fixture, &["--no-seal"]);
     let report = document(&fixture);
 
     let mutants = report["builds"][0]["parts"][0]["mutants"]
@@ -1581,8 +1581,7 @@ fn a_mutation_only_another_process_reaches_is_settled_by_the_suite_that_reaches_
     assert_eq!(
         parsed(&fixture).verdict(),
         Verdict::Insufficient,
-        "one mutation nothing noticed is a gap in the suite, and neither of the other \
-         two is a test that fails on the original code"
+        "what a native run says is a lead, and a lead establishes nothing"
     );
 
     let killers: Vec<&str> = mutants
@@ -2144,11 +2143,11 @@ fn a_catalog_measured_in_shards_and_merged_concludes_what_it_concludes_measured_
 #[test]
 fn every_kill_a_run_reports_rests_on_a_confirmation_it_recorded() {
     let fixture = fixture("fixture-assured");
-    let output = verify(&fixture, &["--no-cache", "--trace"]);
+    let output = verify(&fixture, &["--no-cache", "--trace", "--no-seal"]);
     assert_eq!(
         output.status.code(),
-        Some(0),
-        "{}",
+        Some(i32::from(njutest::cli::EXIT_INSUFFICIENT)),
+        "a native kill is a lead, and a lead establishes nothing: {}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let recording = std::fs::read_dir(fixture.root.join(".njutest/trace"))
@@ -2298,7 +2297,7 @@ fn concluded_json(
     render(&conclusion).as_array().cloned().unwrap_or_default()
 }
 
-/// Leaves the state a run interrupted after its kills would leave, carrying every kill `established` recorded.
+/// Leaves the state a run interrupted after its kills would leave, carrying every kill `established` recorded on sealed executions, which is every kill a checkpoint holds.
 #[cfg(unix)]
 fn interrupted_after_its_kills(fixture: &Fixture, established: &serde_json::Value) {
     let identity = established["provenance"]["identity"]
@@ -2310,7 +2309,7 @@ fn interrupted_after_its_kills(fixture: &Fixture, established: &serde_json::Valu
         .as_array()
         .expect("mutants")
         .iter()
-        .filter(|row| row["decision"]["outcome"] == "killed")
+        .filter(|row| row["decision"]["outcome"] == "killed" && row["evidence"]["kind"] == "sealed")
         .map(|row| {
             serde_json::json!({
                 "id": row["id"],
@@ -2324,6 +2323,7 @@ fn interrupted_after_its_kills(fixture: &Fixture, established: &serde_json::Valu
                         .take_while(|one| one["target"] != row["decision"]["killed_by"])
                         .collect::<Vec<_>>(),
                 },
+                "evidence": row["evidence"],
                 "duration_ms": 1,
             })
         })
@@ -2498,7 +2498,7 @@ fn rows_by_place(report: &serde_json::Value) -> BTreeMap<Place, serde_json::Valu
 #[test]
 fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
     let fixture = fixture("fixture-two-bodies");
-    let first = verify(&fixture, &[]);
+    let first = verify(&fixture, &["--no-seal"]);
     assert!(
         first.status.code().is_some_and(|code| code < 3),
         "{}",
@@ -2508,7 +2508,7 @@ fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
     let text = std::fs::read_to_string(&source).expect("the library");
     std::fs::write(&source, text.replace("left + right", "right + left"))
         .expect("edit inside the body of `total` alone");
-    let carried = verify(&fixture, &[]);
+    let carried = verify(&fixture, &["--no-seal"]);
     assert!(
         carried.status.code().is_some_and(|code| code < 3),
         "{}",
@@ -2522,7 +2522,7 @@ fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
         "the mutations of `over` were answered by executions that never entered `total`, so an \
          edit inside `total` alone leaves those answers standing: {with_carry:#?}"
     );
-    let fresh = verify(&fixture, &["--no-cache"]);
+    let fresh = verify(&fixture, &["--no-cache", "--no-seal"]);
     assert!(fresh.status.code().is_some_and(|code| code < 3));
     let without = rows_by_place(&document(&fixture));
     for (place, row) in &with_carry {
@@ -2565,7 +2565,7 @@ fn answers_by_place(report: &serde_json::Value) -> BTreeMap<Place, Vec<(String, 
 #[test]
 fn a_run_asks_first_the_target_that_killed_the_mutant_last_time() {
     let fixture = fixture("fixture-killer-last");
-    let first = verify(&fixture, &[]);
+    let first = verify(&fixture, &["--no-seal"]);
     assert!(
         first.status.code().is_some_and(|code| code < 3),
         "{}",
@@ -2594,7 +2594,7 @@ fn a_run_asks_first_the_target_that_killed_the_mutant_last_time() {
         format!("{text}\n/// One more item.\npub const MORE: u32 = 1;\n"),
     )
     .expect("an edit no mutant of `double` is in");
-    let second = verify(&fixture, &[]);
+    let second = verify(&fixture, &["--no-seal"]);
     assert!(
         second.status.code().is_some_and(|code| code < 3),
         "{}",
