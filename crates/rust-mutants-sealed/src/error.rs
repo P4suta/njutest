@@ -353,7 +353,7 @@ impl SealedError {
 }
 
 /// What makes an environment variable one a guest cannot be given.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 pub enum EnvironmentFault {
     /// The name is empty.
     EmptyName,
@@ -377,7 +377,7 @@ impl fmt::Display for EnvironmentFault {
 }
 
 /// What makes a snapshot path one a snapshot cannot hold.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 pub enum SnapshotFault {
     /// The path is empty, absolute, or has an empty, `.`, `..` or NUL-bearing component.
     NotRelative,
@@ -398,7 +398,7 @@ impl fmt::Display for SnapshotFault {
 }
 
 /// What makes a guest path one that cannot be preopened.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 pub enum PreopenFault {
     /// The path is empty.
     Empty,
@@ -454,7 +454,7 @@ impl fmt::Display for MemoryFault {
 }
 
 /// What makes an import one sealed execution does not satisfy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 pub enum ImportFault {
     /// The import names a module other than `wasi_snapshot_preview1`.
     OtherModule,
@@ -478,7 +478,7 @@ impl fmt::Display for ImportFault {
 }
 
 /// What makes a module something other than a WASI command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 pub enum EntryFault {
     /// No `_start` export of type () -> ().
     NoStart,
@@ -499,7 +499,7 @@ impl fmt::Display for EntryFault {
 }
 
 /// What the host was doing when the runtime failed outside the guest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 pub enum RuntimeStep {
     /// Setting or reading the fuel account.
     Fuel,
@@ -523,7 +523,7 @@ impl fmt::Display for RuntimeStep {
 }
 
 /// An invariant of the host that did not hold.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 pub enum Invariant {
     /// A host function was called with parameters of other types than the table declares.
     Signature,

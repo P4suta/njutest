@@ -9,8 +9,14 @@
 )]
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 
-use rust_mutants_sealed::{ErrorCode, SealedCode, error_codes};
+use rust_mutants_sealed::{
+    EntryFault, EnvironmentFault, ErrorCode, ImportFault, Invariant, MemoryFault, PreopenFault,
+    RuntimeStep, SealedCode, SealedError, SnapshotFault, error_codes,
+};
+
+use crate::common::runner;
 
 /// The rows of `docs/errors.md` whose code starts `RS`, by code, as their meaning and remedy.
 fn documented() -> BTreeMap<String, (String, String)> {
@@ -90,6 +96,169 @@ fn every_code_says_what_to_do_about_it() {
     for code in error_codes() {
         assert!(!code.remedy().is_empty(), "{} names no remedy", code.code());
     }
+}
+
+/// Every way a module's memory is refused, the total match beside the list failing to compile once the set gains a way.
+fn memory_faults() -> [MemoryFault; 5] {
+    let faults = [
+        MemoryFault::Memory64,
+        MemoryFault::Shared,
+        MemoryFault::CustomPageSize,
+        MemoryFault::Imported,
+        MemoryFault::Count { count: 2 },
+    ];
+    for fault in faults {
+        match fault {
+            MemoryFault::Memory64
+            | MemoryFault::Shared
+            | MemoryFault::CustomPageSize
+            | MemoryFault::Imported
+            | MemoryFault::Count { .. } => {}
+        }
+    }
+    faults
+}
+
+/// An error wasmtime could have given, naming `what`.
+fn planted(what: &str) -> wasmtime::Error {
+    wasmtime::Error::msg(format!("planted {what}"))
+}
+
+/// One failure of every variant that carries no fault, each beside the detail its message must carry for its remedy to be followed.
+fn unfaulted_failures() -> Vec<(SealedError, String)> {
+    let malformed = runner()
+        .prepare(b"not webassembly")
+        .expect_err("text is not WebAssembly");
+    vec![
+        (
+            SealedError::ArgumentHoldsNul { index: 3 },
+            "argument 3".to_owned(),
+        ),
+        (malformed, "not a WebAssembly binary".to_owned()),
+        (SealedError::ModuleComponent, "component".to_owned()),
+        (
+            SealedError::Engine {
+                source: planted("engine"),
+            },
+            "planted engine".to_owned(),
+        ),
+        (
+            SealedError::Compile {
+                source: planted("compile"),
+            },
+            "planted compile".to_owned(),
+        ),
+        (
+            SealedError::Link {
+                source: planted("link"),
+            },
+            "planted link".to_owned(),
+        ),
+        (
+            SealedError::WatchdogUnavailable {
+                source: std::io::Error::other("planted thread"),
+            },
+            "planted thread".to_owned(),
+        ),
+        (
+            SealedError::WatchdogExpired {
+                limit: Duration::from_millis(250),
+            },
+            "250ms".to_owned(),
+        ),
+        (
+            SealedError::TrapUnclassified {
+                trap: "planted trap".to_owned(),
+            },
+            "planted trap".to_owned(),
+        ),
+    ]
+}
+
+/// One failure of every fault of every variant that carries one, each beside the detail its message must carry.
+fn faulted_failures() -> Vec<(SealedError, String)> {
+    let mut failures = Vec::new();
+    for fault in EnvironmentFault::ALL {
+        let name = "NAME".to_owned();
+        failures.push((
+            SealedError::EnvironmentVariable { name, fault },
+            format!("\"NAME\" cannot be given to a WASI guest: {fault}"),
+        ));
+    }
+    for fault in SnapshotFault::ALL {
+        let path = "a/b".to_owned();
+        failures.push((
+            SealedError::SnapshotPath { path, fault },
+            format!("\"a/b\" cannot be held: {fault}"),
+        ));
+    }
+    for fault in PreopenFault::ALL {
+        let path = "/guest".to_owned();
+        failures.push((
+            SealedError::Preopen { path, fault },
+            format!("\"/guest\" cannot be preopened: {fault}"),
+        ));
+    }
+    for fault in memory_faults() {
+        failures.push((SealedError::ModuleMemory { fault }, fault.to_string()));
+    }
+    for fault in ImportFault::ALL {
+        let (module, name) = ("env".to_owned(), "f".to_owned());
+        failures.push((
+            SealedError::ModuleImport {
+                module,
+                name,
+                fault,
+            },
+            format!("env::f, which {fault}"),
+        ));
+    }
+    for fault in EntryFault::ALL {
+        failures.push((SealedError::ModuleEntry { fault }, fault.to_string()));
+    }
+    for during in RuntimeStep::ALL {
+        failures.push((
+            SealedError::Runtime {
+                during,
+                source: planted("runtime"),
+            },
+            format!("while {during}: planted runtime"),
+        ));
+    }
+    for invariant in Invariant::ALL {
+        failures.push((
+            SealedError::HostInvariant { invariant },
+            invariant.to_string(),
+        ));
+    }
+    failures
+}
+
+#[test]
+fn every_failure_reports_its_own_code_and_says_what_went_wrong() {
+    let mut failures = unfaulted_failures();
+    failures.extend(faulted_failures());
+    let mut reported = BTreeSet::new();
+    let mut messages = BTreeSet::new();
+    for (failure, detail) in &failures {
+        let message = failure.to_string();
+        assert!(
+            message.contains(detail.as_str()),
+            "{message:?} does not say {detail:?}"
+        );
+        reported.insert(failure.code().code());
+        messages.insert(message);
+    }
+    let declared: BTreeSet<&str> = error_codes().iter().map(ErrorCode::code).collect();
+    assert_eq!(
+        reported, declared,
+        "every code is some failure's, and every failure's code is declared"
+    );
+    assert_eq!(
+        messages.len(),
+        failures.len(),
+        "two different failures read the same, so a reader cannot tell which happened"
+    );
 }
 
 /// `summary` as a sentence: its first letter capitalised and a full stop after it.

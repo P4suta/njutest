@@ -12,11 +12,11 @@ use std::num::NonZeroU64;
 use std::time::Duration;
 
 use rust_mutants_sealed::{
-    OverlayState, Refusal, RefusalReason, SealedError, SealedRunner, SealedStop, TrapKind,
-    WasiFunction,
+    OverlayState, Preopens, Refusal, RefusalReason, SealedError, SealedRunner, SealedStop,
+    TrapKind, WasiFunction,
 };
 
-use crate::common::{command, emitted, invocation, run};
+use crate::common::{command, emitted, invocation, run, snapshot};
 
 #[test]
 fn a_socket_call_is_answered_notsup_and_recorded_as_a_refusal() {
@@ -408,6 +408,164 @@ fn descriptors_renumber_close_advise_allocate_sync_and_narrow_their_rights() {
     assert!(transcript.refusals().is_empty());
 }
 
+/// Misuses of the filesystem and of memory, each as a case name, the functions it imports, its data, and calls checked by `$expect`.
+const MISUSES: [(&str, &[&str], &str, &str); 14] = [
+    (
+        "a directory made where one is: exist",
+        &["path_create_directory"],
+        "(data (i32.const 100) \"empty\")",
+        "(call $expect (call $path_create_directory (i32.const 3) (i32.const 100) (i32.const 5)) (i32.const 20))",
+    ),
+    (
+        "a file made exclusively where one is: exist",
+        &["path_open"],
+        "(data (i32.const 100) \"seen.txt\")",
+        "(call $expect (call $path_open (i32.const 3) (i32.const 0) (i32.const 100) (i32.const 8) (i32.const 5) (i64.const -1) (i64.const -1) (i32.const 0) (i32.const 64)) (i32.const 20))",
+    ),
+    (
+        "a path through a file: notdir",
+        &["path_filestat_get"],
+        "(data (i32.const 100) \"seen.txt/x\")",
+        "(call $expect (call $path_filestat_get (i32.const 3) (i32.const 0) (i32.const 100) (i32.const 10) (i32.const 200)) (i32.const 54))",
+    ),
+    (
+        "a directory opened where a file is: notdir",
+        &["path_open"],
+        "(data (i32.const 100) \"seen.txt\")",
+        "(call $expect (call $path_open (i32.const 3) (i32.const 0) (i32.const 100) (i32.const 8) (i32.const 2) (i64.const -1) (i64.const -1) (i32.const 0) (i32.const 64)) (i32.const 54))",
+    ),
+    (
+        "a directory unlinked as a file: isdir",
+        &["path_unlink_file"],
+        "(data (i32.const 100) \"empty\")",
+        "(call $expect (call $path_unlink_file (i32.const 3) (i32.const 100) (i32.const 5)) (i32.const 31))",
+    ),
+    (
+        "a directory removed while it holds an entry: notempty",
+        &["path_create_directory", "path_open", "path_remove_directory"],
+        "(data (i32.const 100) \"full\") (data (i32.const 120) \"full/entry\")",
+        "(call $expect (call $path_create_directory (i32.const 3) (i32.const 100) (i32.const 4)) (i32.const 0))
+         (call $expect (call $path_open (i32.const 3) (i32.const 0) (i32.const 120) (i32.const 10) (i32.const 1) (i64.const -1) (i64.const -1) (i32.const 0) (i32.const 64)) (i32.const 0))
+         (call $expect (call $path_remove_directory (i32.const 3) (i32.const 100) (i32.const 4)) (i32.const 55))",
+    ),
+    (
+        "a position asked of a stream: spipe",
+        &["fd_seek", "fd_tell"],
+        "",
+        "(call $expect (call $fd_seek (i32.const 1) (i64.const 0) (i32.const 0) (i32.const 64)) (i32.const 70))
+         (call $expect (call $fd_tell (i32.const 0) (i32.const 64)) (i32.const 70))",
+    ),
+    (
+        "a write that would end past the last offset: fbig",
+        &["path_open", "fd_pwrite"],
+        "(data (i32.const 100) \"seen.txt\")",
+        "(call $expect (call $path_open (i32.const 3) (i32.const 0) (i32.const 100) (i32.const 8) (i32.const 0) (i64.const -1) (i64.const -1) (i32.const 0) (i32.const 64)) (i32.const 0))
+         (i32.store (i32.const 72) (i32.const 100))
+         (i32.store (i32.const 76) (i32.const 1))
+         (call $expect (call $fd_pwrite (i32.load (i32.const 64)) (i32.const 72) (i32.const 1) (i64.const -1) (i32.const 80)) (i32.const 22))",
+    ),
+    (
+        "a pointer past the end of memory: fault",
+        &["args_sizes_get"],
+        "",
+        "(call $expect (call $args_sizes_get (i32.const 65536) (i32.const 0)) (i32.const 21))",
+    ),
+    (
+        "a path that is not UTF-8: ilseq",
+        &["path_filestat_get"],
+        "(data (i32.const 100) \"\\ff\")",
+        "(call $expect (call $path_filestat_get (i32.const 3) (i32.const 0) (i32.const 100) (i32.const 1) (i32.const 200)) (i32.const 25))",
+    ),
+    (
+        "a file renamed onto a directory: isdir",
+        &["path_rename"],
+        "(data (i32.const 100) \"seen.txt\") (data (i32.const 120) \"empty\")",
+        "(call $expect (call $path_rename (i32.const 3) (i32.const 100) (i32.const 8) (i32.const 3) (i32.const 120) (i32.const 5)) (i32.const 31))",
+    ),
+    (
+        "a directory renamed onto a file: notdir",
+        &["path_rename"],
+        "(data (i32.const 100) \"seen.txt\") (data (i32.const 120) \"empty\")",
+        "(call $expect (call $path_rename (i32.const 3) (i32.const 120) (i32.const 5) (i32.const 3) (i32.const 100) (i32.const 8)) (i32.const 54))",
+    ),
+    (
+        "a directory renamed into itself: inval",
+        &["path_rename"],
+        "(data (i32.const 100) \"empty\") (data (i32.const 120) \"empty/inner\")",
+        "(call $expect (call $path_rename (i32.const 3) (i32.const 100) (i32.const 5) (i32.const 3) (i32.const 120) (i32.const 11)) (i32.const 28))",
+    ),
+    (
+        "a directory renamed onto one that holds an entry: notempty",
+        &["path_create_directory", "path_open", "path_rename"],
+        "(data (i32.const 100) \"full\") (data (i32.const 120) \"full/entry\") (data (i32.const 140) \"empty\")",
+        "(call $expect (call $path_create_directory (i32.const 3) (i32.const 100) (i32.const 4)) (i32.const 0))
+         (call $expect (call $path_open (i32.const 3) (i32.const 0) (i32.const 120) (i32.const 10) (i32.const 1) (i64.const -1) (i64.const -1) (i32.const 0) (i32.const 64)) (i32.const 0))
+         (call $expect (call $path_rename (i32.const 3) (i32.const 140) (i32.const 5) (i32.const 3) (i32.const 100) (i32.const 4)) (i32.const 55))",
+    ),
+];
+
+#[test]
+fn a_misuse_is_answered_with_the_error_number_posix_gives_it() {
+    for (case, imports, data, body) in MISUSES {
+        let transcript = run(&command(imports, data, body), &invocation());
+        assert_eq!(
+            transcript.stop(),
+            SealedStop::Returned,
+            "{case}: the guest exits 1000 plus the error number it was given instead"
+        );
+        assert!(
+            transcript.refusals().is_empty(),
+            "{case}: nothing is refused"
+        );
+    }
+}
+
+#[test]
+fn a_rename_from_one_preopen_into_another_is_answered_xdev() {
+    let bytes = command(
+        &["path_rename"],
+        "(data (i32.const 100) \"seen.txt\")",
+        "(call $expect (call $path_rename (i32.const 3) (i32.const 100) (i32.const 8) (i32.const 4) (i32.const 100) (i32.const 8)) (i32.const 75))",
+    );
+    let mut two = invocation();
+    two.preopens = Preopens::new(vec![
+        ("/one".to_owned(), snapshot()),
+        ("/two".to_owned(), snapshot()),
+    ])
+    .expect("two preopens");
+    let transcript = run(&bytes, &two);
+    assert_eq!(transcript.stop(), SealedStop::Returned);
+    assert!(
+        transcript.overlay().is_empty(),
+        "the refused rename moved nothing"
+    );
+}
+
+#[test]
+fn descriptors_run_out_at_one_count_whatever_the_machine_allows() {
+    let bytes = command(
+        &["path_open"],
+        "(data (i32.const 100) \"seen.txt\")",
+        "(local $opened i32) (local $answer i32)
+         (block $out
+           (loop $again
+             (local.set $answer (call $path_open (i32.const 3) (i32.const 0) (i32.const 100) (i32.const 8) (i32.const 0) (i64.const -1) (i64.const -1) (i32.const 0) (i32.const 64)))
+             (br_if $out (local.get $answer))
+             (local.set $opened (i32.add (local.get $opened) (i32.const 1)))
+             (br $again)))
+         (call $expect (local.get $answer) (i32.const 33))
+         (i64.store (i32.const 200) (i64.extend_i32_u (local.get $opened)))
+         (call $emit (i32.const 200) (i32.const 8))",
+    );
+    let transcript = run(&bytes, &invocation());
+    assert_eq!(transcript.stop(), SealedStop::Returned);
+    assert_eq!(
+        emitted(&transcript),
+        [4092],
+        "4096 descriptors in all, three standard streams and the preopen among them"
+    );
+}
+
 #[test]
 fn the_preopen_is_named_to_the_guest_and_no_path_is_a_symbolic_link() {
     let bytes = command(
@@ -525,6 +683,32 @@ fn a_module_whose_first_memory_is_past_the_limit_is_memory_exhausted() {
     let transcript = run(&bytes, &invocation());
     assert_eq!(transcript.stop(), SealedStop::MemoryExhausted);
     assert_eq!(transcript.fuel_spent(), 0);
+}
+
+#[test]
+fn a_growth_past_the_modules_own_maximum_is_no_denial_and_a_table_past_the_cap_is_one() {
+    let bytes = wat::parse_str(
+        "(module
+           (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))
+           (memory (export \"memory\") 1 2)
+           (table 1 funcref)
+           (func (export \"_start\")
+             (if (i32.ne (memory.grow (i32.const 5)) (i32.const -1)) (then (call $proc_exit (i32.const 1))))
+             (if (i32.ne (table.grow (ref.null func) (i32.const 2000000)) (i32.const -1)) (then (call $proc_exit (i32.const 2))))
+             (drop (i32.load (i32.const 70000)))))",
+    )
+    .expect("valid WAT");
+    let transcript = run(&bytes, &invocation());
+    assert_eq!(
+        transcript.stop(),
+        SealedStop::Trapped {
+            kind: TrapKind::MemoryOutOfBounds
+        },
+        "exit 1 is a memory grown past the module's maximum, exit 2 a table grown past the cap, \
+         and MemoryExhausted the module's own maximum read as the host's limit"
+    );
+    assert_eq!(transcript.denials().memory(), 0);
+    assert_eq!(transcript.denials().table(), 1);
 }
 
 /// A command whose memory starts with a data segment of `bytes` bytes, and whose `_start` does nothing.

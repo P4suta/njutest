@@ -659,3 +659,54 @@ fn stop_into(encoder: &mut Encoder, stop: SealedStop) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::{TrapClass, TrapKind, classify};
+
+    #[test]
+    fn every_trap_of_the_pinned_wasmtime_is_a_kind_of_its_own_but_fuel_and_interruption() {
+        let traps: Vec<wasmtime::Trap> =
+            (0..=u8::MAX).filter_map(wasmtime::Trap::from_u8).collect();
+        let unclassified: Vec<&wasmtime::Trap> = traps
+            .iter()
+            .filter(|trap| classify(**trap).is_none())
+            .collect();
+        assert!(
+            unclassified.is_empty(),
+            "traps the pinned wasmtime raises and TrapKind cannot name: {unclassified:?}"
+        );
+        let classes: Vec<TrapClass> = traps.iter().filter_map(|trap| classify(*trap)).collect();
+        let kinds: Vec<TrapKind> = classes
+            .iter()
+            .filter_map(|class| match class {
+                TrapClass::Kind(kind) => Some(*kind),
+                TrapClass::OutOfFuel | TrapClass::Interrupt => None,
+            })
+            .collect();
+        let distinct: BTreeSet<TrapKind> = kinds.iter().copied().collect();
+        assert_eq!(
+            distinct.len(),
+            kinds.len(),
+            "two traps share a kind: {kinds:?}"
+        );
+        assert_eq!(
+            distinct,
+            TrapKind::ALL.into_iter().collect::<BTreeSet<TrapKind>>(),
+            "a kind no trap of the pinned wasmtime is"
+        );
+        let stops: Vec<TrapClass> = classes
+            .into_iter()
+            .filter(|class| !matches!(class, TrapClass::Kind(_)))
+            .collect();
+        assert_eq!(stops, [TrapClass::Interrupt, TrapClass::OutOfFuel]);
+        let names: BTreeSet<&str> = TrapKind::ALL.iter().map(|kind| kind.name()).collect();
+        assert_eq!(
+            names.len(),
+            TrapKind::ALL.len(),
+            "two kinds share a name, and so a transcript digest"
+        );
+    }
+}
