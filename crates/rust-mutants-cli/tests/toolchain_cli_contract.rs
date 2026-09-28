@@ -703,21 +703,14 @@ fn a_process_that_holds_a_refused_runs_output_ends_with_it() {
 /// A test that reads a setting only the home the run was given holds, which a confined execution cannot see.
 const READS_THE_GIVEN_HOME: &str = "// SPDX-FileCopyrightText: 2026 njutest contributors\n// SPDX-License-Identifier: MIT OR Apache-2.0\n\n//! Reads a setting only the given home holds.\n\n#[test]\nfn the_setting_the_home_already_holds_is_the_one_recalled() {\n    assert_eq!(fixture_home::recall().expect(\"the home holds a setting\"), \"already there\");\n}\n";
 
-/// The environment every run gets, with `home` as the home directory and the toolchain's own homes still where they are.
+/// The environment every run gets, changed as the devkit changes a run given `home` as its home.
 fn given_home(fixture: &Fixture, home: &std::path::Path) -> Environment {
     let mut given = environment(fixture);
-    let real = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .map(std::path::PathBuf::from);
-    for (name, beside) in [("CARGO_HOME", ".cargo"), ("RUSTUP_HOME", ".rustup")] {
-        let pinned = std::env::var_os(name)
-            .or_else(|| real.as_ref().map(|home| home.join(beside).into_os_string()));
-        match pinned {
-            Some(pinned) => given.vars.set(name, pinned),
-            None => given.vars.remove(name),
+    for change in njutest_devkit::paths::given_home(home) {
+        match change {
+            njutest_devkit::paths::Given::Set(name, value) => given.vars.set(name, value),
+            njutest_devkit::paths::Given::Removed(name) => given.vars.remove(name),
         }
-    }
-    for name in ["HOME", "USERPROFILE"] {
-        given.vars.set(name, home.as_os_str().to_owned());
     }
     given
 }
