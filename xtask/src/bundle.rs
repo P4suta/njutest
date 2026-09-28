@@ -4,7 +4,7 @@
 //! The release archive of one target: exactly the binaries the shipped manifests declare, at exactly the paths `cargo binstall` reads them from.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::fmt;
 use std::io::{Read as _, Seek as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -709,7 +709,7 @@ pub struct Request<'a> {
     /// The cargo that describes and builds them.
     pub cargo: &'a OsStr,
     /// The environment every program it starts is given.
-    pub environment: &'a [(OsString, OsString)],
+    pub environment: &'a crate::environment::Environment,
     /// The target triple the archive is for.
     pub target: &'a str,
     /// The directory the archive and its checksum are written to.
@@ -797,12 +797,16 @@ fn shown(program: &OsStr) -> String {
 }
 
 /// `program` started in `directory` with exactly `environment`, reading nothing.
-fn command(program: &OsStr, directory: &Path, environment: &[(OsString, OsString)]) -> Command {
+fn command(
+    program: &OsStr,
+    directory: &Path,
+    environment: &crate::environment::Environment,
+) -> Command {
     let mut command = Command::new(program);
     command
         .current_dir(directory)
         .env_clear()
-        .envs(environment.iter().cloned())
+        .envs(environment.pairs())
         .stdin(Stdio::null());
     command
 }
@@ -822,7 +826,7 @@ fn text<'a>(program: &OsStr, bytes: &'a [u8]) -> Result<&'a str, BundleError> {
 pub fn packages(
     root: &Path,
     cargo: &OsStr,
-    environment: &[(OsString, OsString)],
+    environment: &crate::environment::Environment,
 ) -> Result<Vec<Package>, BundleError> {
     let output = command(cargo, root, environment)
         .args(["metadata", "--format-version", "1", "--no-deps", "--locked"])

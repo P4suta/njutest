@@ -232,7 +232,7 @@ impl Repository {
     ) -> Command {
         let mut command = isolated(&self.binary);
         for (name, _value) in std::env::vars_os() {
-            if xtask::prepush::shapes_the_build(&name) {
+            if xtask::prepush::shapes_the_build(xtask::environment::Spelling::HOST, &name) {
                 command.env_remove(name);
             }
         }

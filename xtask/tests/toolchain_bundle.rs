@@ -10,7 +10,6 @@
 )]
 
 use std::collections::BTreeSet;
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -30,14 +29,16 @@ const ANSWERS: &str = "fn main() {\n    println!(\"{} {}\", env!(\"CARGO_BIN_NAM
 /// A workspace with one package that ships two binaries and one that ships nothing, and a cargo to build it with.
 struct Workspace {
     project: Project,
-    environment: Vec<(OsString, OsString)>,
+    environment: xtask::environment::Environment,
 }
 
 impl Workspace {
     fn new() -> Self {
         let workspace = Self {
             project: Project::fresh(),
-            environment: environment_for_a_toolchain_run(&["RUSTUP_TOOLCHAIN"]),
+            environment: xtask::environment::Environment::of(environment_for_a_toolchain_run(&[
+                "RUSTUP_TOOLCHAIN",
+            ])),
         };
         workspace.write(
             "Cargo.toml",
@@ -73,7 +74,7 @@ impl Workspace {
             .args(["generate-lockfile", "--offline"])
             .current_dir(workspace.root())
             .env_clear()
-            .envs(workspace.environment.iter().cloned())
+            .envs(workspace.environment.pairs())
             .status()
             .expect("cargo writes the lockfile of a workspace with no dependencies");
         assert!(locked.success(), "cargo generate-lockfile: {locked}");

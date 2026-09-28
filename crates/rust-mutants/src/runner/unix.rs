@@ -394,24 +394,13 @@ pub(super) fn stop_process(pid: u32) -> io::Result<()> {
     }
 }
 
-/// Stops the group a process started in a group of its own leads, as [`super::stop_group`] describes.
-pub(super) fn stop_group(leader: u32, how: super::GroupStop) -> io::Result<super::Stopped> {
-    let unled = || {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{leader} is not a process id a group can be led by"),
-        )
-    };
-    let raw = match i32::try_from(leader) {
-        Ok(raw) => raw,
-        Err(_wider_than_a_pid) => return Err(unled()),
-    };
-    let pid = Pid::from_raw(raw).ok_or_else(unled)?;
+/// Stops the group `leader` leads, as [`super::stop_group`] describes.
+pub(super) fn stop_group(leader: Pid, how: super::GroupStop) -> io::Result<super::Stopped> {
     let signal = match how {
         super::GroupStop::Ask => Signal::TERM,
         super::GroupStop::Kill => Signal::KILL,
     };
-    signal_group(pid, signal)
+    signal_group(leader, signal)
 }
 
 /// Observes leader exit without reaping it, so its PID continues to pin the process-group id until the supervisor has forcefully signalled that group.

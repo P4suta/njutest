@@ -2501,6 +2501,7 @@ fn an_environment_held_as_raw_pairs_is_refused_wherever_it_is_named() {
     }
     for held in [
         "crates/rust-mutants/src/vars.rs",
+        "xtask/src/environment.rs",
         "crates/njutest-devkit/src/paths.rs",
     ] {
         let found = scan_source(
@@ -2513,16 +2514,34 @@ fn an_environment_held_as_raw_pairs_is_refused_wherever_it_is_named() {
              dependency of"
         );
     }
+    for reader in [
+        "xtask/src/lanes.rs",
+        "xtask/src/prepush.rs",
+        "xtask/tests/slot.rs",
+    ] {
+        let found = scan_source(
+            reader,
+            "fn given() -> Vec<(OsString, OsString)> { Vec::new() }",
+        );
+        assert!(
+            found.is_ok_and(|found| found.iter().any(|one| one.kind == Kind::RawEnvironment)),
+            "xtask reads its environment through `xtask::environment` alone, whose rule is the \
+             engine's, so pairs anywhere else in it are a reader comparing names by bytes: \
+             {reader}"
+        );
+    }
+}
+
+fn signals(file: &str, source: &str) -> bool {
+    scan_source(file, source)
+        .expect("the source parses")
+        .into_iter()
+        .any(|finding| finding.kind == Kind::RawGroupSignal)
 }
 
 #[test]
 fn only_the_runner_signals_a_process_group_in_shipped_code() {
-    let shipped = |file: &str, source: &str| {
-        scan_source(file, source)
-            .expect("the source parses")
-            .into_iter()
-            .any(|finding| finding.kind == Kind::RawGroupSignal)
-    };
+    let shipped = signals;
     let group_kill = "fn stop(pid: rustix::process::Pid) { let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL); }";
     assert!(
         shipped("crates/njutest/src/provider.rs", group_kill),
@@ -2577,5 +2596,116 @@ fn only_one_module_of_the_phases_reads_how_a_process_ended() {
             "fn ended(status: std::process::ExitStatus) -> bool { status.success() }"
         ),
         "a standard exit status says `success`, which is not a supervised run's end"
+    );
+}
+
+#[test]
+fn a_signal_spelled_as_a_path_a_script_a_number_or_a_method_is_still_a_signal() {
+    for source in [
+        "fn s() { let _ = std::process::Command::new(\"/usr/bin/pkill\"); }",
+        "fn s() { let _ = std::process::Command::new(\"C:\\\\Windows\\\\System32\\\\TASKKILL.EXE\"); }",
+        "fn s() { let _ = std::process::Command::new(std::path::Path::new(\"/bin/kill\")); }",
+        "const PROGRAM: &str = \"pkill\";\nfn s() { let _ = std::process::Command::new(PROGRAM); }",
+        "fn s() { let program = \"killall\"; let _ = std::process::Command::new(program); }",
+        "fn s() -> [&'static str; 3] { [\"kill\", \"-9\", \"42\"] }",
+        "fn s() -> Vec<&'static str> { vec![\"/usr/bin/pkill\", \"-f\", \"runner\"] }",
+        "fn s() { let _ = std::process::Command::new(\"sh\").args([\"-c\", \"kill -9 -1\"]); }",
+        "fn s() { let _ = std::process::Command::new(\"bash\").arg(\"-c\").arg(\"sleep 1; pkill -f runner\"); }",
+        "fn s(pid: u32) { let _ = std::process::Command::new(\"sh\").arg(\"-c\").arg(format!(\"exec kill -TERM {pid}\")); }",
+        "fn s() { let mut shell = std::process::Command::new(\"sh\"); shell.arg(\"-c\"); shell.arg(\"killall runner\"); }",
+        "fn s() { let _ = std::process::Command::new(\"powershell\").args([\"-Command\", \"Stop-Process -Id 42\"]); }",
+        "fn s() { let _ = std::process::Command::new(\"cmd\").args([\"/C\", \"taskkill /PID 42 /F\"]); }",
+        "fn s() { let _ = std::process::Command::new(\"sudo\").args([\"-n\", \"kill\", \"42\"]); }",
+        "fn s() { let _ = std::process::Command::new(\"timeout\").args([\"5\", \"kill\", \"42\"]); }",
+        "fn s(p: i64) { unsafe { libc::syscall(62, p, 9); } }",
+        "fn s(number: i64, p: i64) { unsafe { libc::syscall(number, p, 9); } }",
+        "fn s() { unsafe { core::arch::asm!(\"syscall\"); } }",
+        "unsafe extern \"C\" { fn kill(pid: i32, sig: i32) -> i32; }",
+        "unsafe extern \"C\" { #[link_name = \"kill\"] fn end(pid: i32, sig: i32) -> i32; }",
+        "fn s(process: &sysinfo::Process) { process.kill(); }",
+        "fn s(group: &mut command_group::GroupChild) { let _ = group.kill(); }",
+        "fn s(process: &sysinfo::Process) { let same = process; same.kill(); }",
+        "fn s() { let _ = lookup(42).kill(); }",
+        "fn s(pid: Pid) { let _ = pid.killpg(); }",
+        "fn s(process: &sysinfo::Process) { sysinfo::Process::kill(process); }",
+        "fn s(pid: u32) { assert!(nix::sys::signal::kill(pid, None).is_ok()); }",
+    ] {
+        assert!(
+            signals("crates/njutest/src/provider.rs", source),
+            "a program named by its path, a script a shell is handed, a system call by its \
+             number, a foreign declaration, and a method of a type that is not a child this \
+             process owns each signal a process by its id: {source}"
+        );
+    }
+}
+
+#[test]
+fn a_name_that_only_looks_like_a_signal_is_none() {
+    for source in [
+        "struct Reaper;\nimpl Reaper { fn kill(&self) {} }\nfn f(r: &Reaper) { Reaper::kill(r); r.kill(); }",
+        "fn f() -> bool { let kill = true; kill }",
+        "struct S { kill: bool }\nfn f(kill: bool) -> S { S { kill } }",
+        "fn f(verb: &str) -> bool { verb == \"kill\" }",
+        "fn f(outcome: Result<(), String>) { outcome.expect(\"kill\"); }",
+        "fn f(word: &str) -> u8 { match word { \"kill\" => 1, _ => 0 } }",
+        "fn f() { assert_eq!(label(), \"kill\"); }",
+        "fn s(c: &mut std::process::Child) -> std::io::Result<()> { <std::process::Child>::kill(c) }",
+        "fn s(c: &mut std::process::Child) -> std::io::Result<()> { std::process::Child::kill(c) }",
+        "struct Owner { child: std::process::Child }\nimpl Owner { fn end(&mut self) -> std::io::Result<()> { self.child.kill() } }",
+        "struct Owner { child: Option<std::process::Child> }\nimpl Owner { fn end(&mut self) -> std::io::Result<()> { let Some(child) = self.child.as_mut() else { return Ok(()); }; child.kill() } }",
+        "fn s(command: &mut std::process::Command) -> std::io::Result<()> { command.spawn()?.kill() }",
+        "fn s() { let _ = std::process::Command::new(\"git\").args([\"log\", \"--grep\", \"kill\"]); }",
+        "fn s() { let _ = std::process::Command::new(\"git\").args([\"commit\", \"-m\", \"kill the flake\"]); }",
+        "fn s() { let _ = std::process::Command::new(\"sh\").args([\"-c\", \"echo kill\"]); }",
+        "fn s() { unsafe { libc::syscall(libc::SYS_getpid); } }",
+        "fn s() { println!(\"kill {}\", 1); }",
+    ] {
+        assert!(
+            !signals("crates/njutest/src/provider.rs", source),
+            "a method of a type this file writes, a child's own `kill`, a binding, a field and a \
+             word that is only text signal nothing: {source}"
+        );
+    }
+}
+
+#[test]
+fn every_place_code_runs_from_is_held_to_the_one_signaller() {
+    let signalling = "fn s() { unsafe { libc::kill(1, 9); } }";
+    for held in [
+        "crates/njutest/build.rs",
+        "compiler-surfaces/build.rs",
+        "compiler-surfaces/src/bin/xtask.rs",
+        "fuzz/fuzz_targets/cargo_metadata.rs",
+        "crates/rust-mutants/examples/fake_provider.rs",
+        "crates/rust-mutants/benches/pipeline.rs",
+        "crates/njutest/src/tests/helper.rs",
+        "xtask/src/lanes.rs",
+    ] {
+        assert!(
+            signals(held, signalling),
+            "a build script, a fuzz target, an example, a benchmark, a compiler surface and a \
+             module under src/tests all run somewhere, and a signal from there is one more place \
+             that decides what the kernel's answer means: {held}"
+        );
+    }
+    for exempt in [
+        "crates/njutest/tests/toolchain_interrupt.rs",
+        "xtask/tests/slot.rs",
+        "crates/rust-mutants/src/runner/unix.rs",
+        "crates/rust-mutants/src/runner/windows.rs",
+        "xtask/src/work.rs",
+    ] {
+        assert!(
+            !signals(exempt, signalling),
+            "a suite interrupts what it started the way a person would, and the one signaller of \
+             each platform is where the question is answered: {exempt}"
+        );
+    }
+    assert!(
+        !signals(
+            "crates/njutest/src/tests/helper.rs",
+            &format!("#![cfg(test)]\n{signalling}")
+        ),
+        "a module that says it is compiled only for tests is test code wherever it sits"
     );
 }

@@ -258,7 +258,11 @@ fn a_pkg_url_that_does_not_end_in_a_gzipped_tar_is_refused() {
 #[test]
 fn a_cargo_that_cannot_be_started_is_refused_by_name() {
     let missing = std::ffi::OsStr::new("/no/cargo/here");
-    match xtask::bundle::packages(&root(), missing, &[]) {
+    match xtask::bundle::packages(
+        &root(),
+        missing,
+        &xtask::environment::Environment::of(Vec::new()),
+    ) {
         Ok(packages) => panic!("a cargo that is not there described {packages:?}"),
         Err(error) => {
             assert_eq!(error.code(), XtCode::BundleUnbuilt);
@@ -514,7 +518,7 @@ fn filled(template: &str, version: &str, target: &str, bin: &str) -> String {
 #[test]
 fn for_every_target_the_release_builds_this_workspace_bundles_what_its_manifests_declare() {
     let root = root();
-    let environment: Vec<_> = std::env::vars_os().collect();
+    let environment = xtask::environment::Environment::of(std::env::vars_os());
     let packages = match xtask::bundle::packages(
         &root,
         njutest_devkit::paths::cargo_binary().as_os_str(),
