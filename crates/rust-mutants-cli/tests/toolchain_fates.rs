@@ -331,6 +331,16 @@ fn fixture_doctest() {
 }
 
 #[test]
+fn fixture_doctest_alone() {
+    holds("fixture-doctest-alone");
+}
+
+#[test]
+fn fixture_doctest_host_only() {
+    holds("fixture-doctest-host-only");
+}
+
+#[test]
 fn fixture_drifts() {
     holds("fixture-drifts");
 }

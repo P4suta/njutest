@@ -199,6 +199,15 @@ fn events(directory: &std::path::Path) -> Vec<serde_json::Value> {
         .collect()
 }
 
+fn mutants_at(document: &serde_json::Value, line: u64) -> Vec<&serde_json::Value> {
+    document["mutants"]
+        .as_array()
+        .expect("the mutants")
+        .iter()
+        .filter(|mutant| mutant["line"].as_u64() == Some(line))
+        .collect()
+}
+
 #[test]
 fn running_the_documentation_again_rebuilds_nothing() {
     let fixture = Fixture::copy("fixture-doctest");
@@ -248,6 +257,73 @@ fn running_the_documentation_again_rebuilds_nothing() {
             "a documentation run after the first that compiles the library again is a build the \
              tests did not run against, and it rewrites the files a test running beside it \
              reads:\n{printed}"
+        );
+    }
+}
+
+#[test]
+fn a_mutation_that_stops_a_doctest_from_panicking_is_detected_sealed() {
+    let fixture = Fixture::copy("fixture-doctest-alone");
+    let output = against(&fixture, &[]);
+    assert!(
+        output
+            .status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
+        "{}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let document = report(&fixture);
+    let condition = mutants_at(&document, 29);
+    let stopped: Vec<&&serde_json::Value> = condition
+        .iter()
+        .filter(|mutant| mutant["rule"].as_str() == Some("condition-to-false"))
+        .collect();
+    assert_eq!(stopped.len(), 1, "{condition:?}");
+    let evidence = &stopped[0]["evidence"];
+    assert_eq!(evidence["kind"].as_str(), Some("sealed"), "{evidence}");
+    assert_eq!(
+        evidence["executions"][0]["test"].as_str(),
+        Some("src/lib.rs - divide (line 25)"),
+        "{evidence}"
+    );
+    assert_eq!(
+        evidence["executions"][0]["came_to"].as_str(),
+        Some("failed"),
+        "an example that should panic and returned is a test that failed: {evidence}"
+    );
+    let always: Vec<&&serde_json::Value> = condition
+        .iter()
+        .filter(|mutant| mutant["rule"].as_str() == Some("condition-to-true"))
+        .collect();
+    assert_eq!(
+        always.first().and_then(|mutant| mutant["outcome"].as_str()),
+        Some("survived"),
+        "a mutation that panics for every divisor still panics where the example asks it to: \
+         {always:?}"
+    );
+}
+
+#[test]
+fn what_only_an_example_the_sealed_target_ignores_reaches_is_unproven() {
+    let fixture = Fixture::copy("fixture-doctest-host-only");
+    let output = against(&fixture, &[]);
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
+        "{}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let document = report(&fixture);
+    for mutant in mutants_at(&document, 12) {
+        let evidence = &mutant["evidence"];
+        assert_eq!(evidence["kind"].as_str(), Some("unproven"), "{mutant}");
+        assert!(
+            evidence["reasons"].as_array().is_some_and(|reasons| reasons
+                .iter()
+                .any(|one| one.as_str() == Some("test-absent"))),
+            "the example that reaches it runs only natively, and the sealed build holds it only as \
+             an example it ignores: {mutant}"
         );
     }
 }

@@ -30,6 +30,11 @@ const JUDGED_UNDECIDABLE_COVERS: &[&str] = &[
     "njutest-law-branch:decidable",
     REACHED_COVER,
 ];
+const JUDGED_SHOULD_PANIC_COVERS: &[&str] = &[
+    "njutest-law-branch:detected",
+    "njutest-law-branch:undetected",
+    REACHED_COVER,
+];
 const NATIVE_ALONE_COVERS: &[&str] = &[
     "njutest-law-branch:answerable",
     "njutest-law-branch:guard-absent",
@@ -57,9 +62,7 @@ const ORDER_INDEPENDENT_COVERS: &[&str] = &[
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, njutest_macros::AllVariants,
 )]
 pub(crate) enum Harness {
-    #[serde(
-        rename = "judgement::kani_laws::a_pass_is_only_a_returned_instance_its_harness_accounted_for"
-    )]
+    #[serde(rename = "judgement::kani_laws::a_pass_is_only_the_ending_its_harness_passes_by")]
     JudgedPass,
     #[serde(rename = "judgement::kani_laws::a_refusal_beyond_the_control_is_never_a_verdict")]
     JudgedRefusal,
@@ -67,6 +70,10 @@ pub(crate) enum Harness {
         rename = "judgement::kani_laws::an_ending_no_two_hosts_decide_alike_is_never_a_verdict"
     )]
     JudgedUndecidable,
+    #[serde(
+        rename = "judgement::kani_laws::a_doctest_that_should_panic_is_detected_only_by_not_failing"
+    )]
+    JudgedShouldPanic,
     #[serde(rename = "evidence::kani_laws::native_executions_alone_never_establish_a_verdict")]
     NativeAlone,
     #[serde(rename = "evidence::kani_laws::a_sealed_detection_establishes_the_first_kill")]
@@ -126,7 +133,7 @@ impl Harness {
     const fn ceiling(self) -> u64 {
         match self {
             Self::JudgedPass => 2_800,
-            Self::JudgedRefusal | Self::JudgedUndecidable => 2_600,
+            Self::JudgedRefusal | Self::JudgedUndecidable | Self::JudgedShouldPanic => 2_600,
             Self::NativeAlone => 13_000,
             Self::FirstKill => 34_000,
             Self::UniversalSurvival => 30_000,
@@ -154,13 +161,16 @@ impl Harness {
     pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::JudgedPass => {
-                "judgement::kani_laws::a_pass_is_only_a_returned_instance_its_harness_accounted_for"
+                "judgement::kani_laws::a_pass_is_only_the_ending_its_harness_passes_by"
             }
             Self::JudgedRefusal => {
                 "judgement::kani_laws::a_refusal_beyond_the_control_is_never_a_verdict"
             }
             Self::JudgedUndecidable => {
                 "judgement::kani_laws::an_ending_no_two_hosts_decide_alike_is_never_a_verdict"
+            }
+            Self::JudgedShouldPanic => {
+                "judgement::kani_laws::a_doctest_that_should_panic_is_detected_only_by_not_failing"
             }
             Self::NativeAlone => {
                 "evidence::kani_laws::native_executions_alone_never_establish_a_verdict"
@@ -223,6 +233,7 @@ impl Harness {
             Self::JudgedPass
             | Self::JudgedRefusal
             | Self::JudgedUndecidable
+            | Self::JudgedShouldPanic
             | Self::NativeAlone
             | Self::FirstKill
             | Self::UniversalSurvival
@@ -251,9 +262,10 @@ impl Harness {
 
     const fn source(self) -> &'static str {
         match self {
-            Self::JudgedPass | Self::JudgedRefusal | Self::JudgedUndecidable => {
-                "crates/rust-mutants-decision/src/judgement/kani_laws.rs"
-            }
+            Self::JudgedPass
+            | Self::JudgedRefusal
+            | Self::JudgedUndecidable
+            | Self::JudgedShouldPanic => "crates/rust-mutants-decision/src/judgement/kani_laws.rs",
             Self::NativeAlone
             | Self::FirstKill
             | Self::UniversalSurvival
@@ -284,6 +296,7 @@ impl Harness {
         match self {
             Self::JudgedPass => JUDGED_PASS_COVERS,
             Self::JudgedUndecidable => JUDGED_UNDECIDABLE_COVERS,
+            Self::JudgedShouldPanic => JUDGED_SHOULD_PANIC_COVERS,
             Self::NativeAlone => NATIVE_ALONE_COVERS,
             Self::FirstKill => FIRST_KILL_COVERS,
             Self::UniversalSurvival => UNIVERSAL_SURVIVAL_COVERS,
@@ -342,9 +355,12 @@ impl Harness {
 
     const fn expected_assertions(self) -> &'static [&'static str] {
         match self {
-            Self::JudgedPass => &["njutest-law-assertion:pass-iff-returned-and-accounted"],
+            Self::JudgedPass => &["njutest-law-assertion:pass-iff-its-harness-passes"],
             Self::JudgedRefusal => &["njutest-law-assertion:beyond-control-refused"],
             Self::JudgedUndecidable => &["njutest-law-assertion:undecidable-ending-doubted"],
+            Self::JudgedShouldPanic => {
+                &["njutest-law-assertion:should-panic-detected-iff-not-failing"]
+            }
             Self::NativeAlone => &["njutest-law-assertion:native-alone-unproven"],
             Self::FirstKill => &[
                 "njutest-law-assertion:first-sealed-detection-kills",

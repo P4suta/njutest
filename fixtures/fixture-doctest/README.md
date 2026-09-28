@@ -9,27 +9,17 @@ A library whose documentation runs, and is routed to.
 
 | Function | Documented | Fate |
 | --- | --- | --- |
-| `double` | with an example, and unit-tested | killed by `doubling_two_is_four`, which is the cheaper of the two tests that reach it and therefore the one that runs first |
+| `double` | with an example, and unit-tested | killed, by whichever of the two tests that reach it runs first sealed |
 | `half` | with an example only | **killed by the documentation**, which is the only test that exercises it at all |
-| `third` | without an example | survived: the documentation reaches the file it is in and does not notice this mutation |
+| `third` | with an example that must not compile, which rustdoc compiles alone and never runs | unreached: no test's sealed control reaches it |
 
-The middle row is why this milestone exists. A mutation only a documented
-example can notice used to be reported as surviving, which is a finding that
-is not a gap in the tests.
+The middle row is why this fixture exists.
+A mutation only a documented example can notice used to be reported as surviving, which is a finding that is not a gap in the tests, and then as unproven, because nothing sealed a doctest.
 
-The coarseness is in the third row and is stated as
-`doctests-routed-by-file`. rustdoc compiles a documented example into a binary
-this run never sees, so there is no coverage map to read and no profile to
-merge: what is known is which files the library is made of, so the
-documentation reaches every mutation in them and narrows none of them.
-
-The documentation is one target for the whole library rather than one per
-example, and that is not a simplification. On an edition where rustdoc merges
-a file's examples into one compilation, asking the harness for one of them by
-name runs every example in that file — a filter that matches nothing filters
-everything out, and a filter that matches one example runs all of them. So a
-kill the documentation finds names the documentation, and `--test-runtool`
-is what would name the example.
+rustdoc on edition 2024 merges a library's examples into one binary, and a sealed run gets it by handing rustdoc a runner that keeps each binary it is given.
+The merged binary names its examples when it runs them all in one instance, and runs one of them alone when it is given that one's index, so each example is a test of its own with a control of its own, as a test of any other target is.
+The route still reaches every mutation of the library through the documentation, as `doctests-routed-by-file` says, because a native run cannot tell which example reached what; the sealed controls can, so the third row is unreached rather than survived.
+The third row's example is why rustdoc prints two reports here, the merged binary's and its own for the example it compiles alone, and a native run of the documentation is one run that accounts for both.
 
 ## Fates
 
@@ -44,12 +34,12 @@ src/lib.rs:12:5 return-default killed
 src/lib.rs:12:7 mul-to-div killed
 src/lib.rs:12:9 int-decrement killed
 src/lib.rs:12:9 int-increment killed
-src/lib.rs:21:5 return-default unproven
-src/lib.rs:21:7 div-to-mul unproven
-src/lib.rs:21:9 int-decrement unproven
-src/lib.rs:21:9 int-increment unproven
-src/lib.rs:26:5 return-default unproven
-src/lib.rs:26:7 div-to-mul unproven
-src/lib.rs:26:9 int-decrement unproven
-src/lib.rs:26:9 int-increment unproven
+src/lib.rs:21:5 return-default killed
+src/lib.rs:21:7 div-to-mul killed
+src/lib.rs:21:9 int-decrement killed
+src/lib.rs:21:9 int-increment killed
+src/lib.rs:30:5 return-default unreached
+src/lib.rs:30:7 div-to-mul unreached
+src/lib.rs:30:9 int-decrement unreached
+src/lib.rs:30:9 int-increment unreached
 ```

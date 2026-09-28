@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use super::{Account, Ending, Observed, judged};
+use super::{Account, Ending, Harness, Observed, judged};
 use crate::evidence::{Doubt, Sealed};
 
 fn symbolic_ending() -> Ending {
@@ -31,24 +31,41 @@ fn symbolic_account() -> Account {
     }
 }
 
+fn symbolic_harness() -> Harness {
+    let index = kani::any::<u8>();
+    kani::assume(index < 3);
+    match index {
+        0 => Harness::Libtest(symbolic_account()),
+        1 => Harness::Doctest,
+        _ => Harness::ShouldPanic,
+    }
+}
+
 fn symbolic_observed() -> Observed {
     Observed {
         ending: symbolic_ending(),
-        account: symbolic_account(),
+        harness: symbolic_harness(),
         beyond_control: kani::any(),
     }
 }
 
 #[kani::proof]
-fn a_pass_is_only_a_returned_instance_its_harness_accounted_for() {
+fn a_pass_is_only_the_ending_its_harness_passes_by() {
     let observed = symbolic_observed();
     let passed = judged(observed) == Sealed::Passed;
+    let passing = match observed.harness {
+        Harness::Libtest(account) => {
+            observed.ending == Ending::Returned && account == Account::Passed
+        }
+        Harness::Doctest => observed.ending == Ending::Returned,
+        Harness::ShouldPanic => matches!(
+            observed.ending,
+            Ending::ExitedFailure | Ending::Panicked | Ending::Aborted | Ending::Trapped
+        ),
+    };
     kani::assert(
-        passed
-            == (observed.ending == Ending::Returned
-                && observed.account == Account::Passed
-                && !observed.beyond_control),
-        "njutest-law-assertion:pass-iff-returned-and-accounted",
+        passed == (passing && !observed.beyond_control),
+        "njutest-law-assertion:pass-iff-its-harness-passes",
     );
     kani::cover!(passed, "njutest-law-branch:passed");
     kani::cover!(!passed, "njutest-law-branch:not-passed");
@@ -83,5 +100,22 @@ fn an_ending_no_two_hosts_decide_alike_is_never_a_verdict() {
     }
     kani::cover!(undecidable, "njutest-law-branch:undecidable");
     kani::cover!(!undecidable, "njutest-law-branch:decidable");
+    kani::cover!(true, "njutest-law-reached");
+}
+
+#[kani::proof]
+fn a_doctest_that_should_panic_is_detected_only_by_not_failing() {
+    let observed = Observed {
+        ending: symbolic_ending(),
+        harness: Harness::ShouldPanic,
+        beyond_control: false,
+    };
+    let detected = matches!(judged(observed), Sealed::Detected(_));
+    kani::assert(
+        detected == matches!(observed.ending, Ending::Returned | Ending::FuelExhausted),
+        "njutest-law-assertion:should-panic-detected-iff-not-failing",
+    );
+    kani::cover!(detected, "njutest-law-branch:detected");
+    kani::cover!(!detected, "njutest-law-branch:undetected");
     kani::cover!(true, "njutest-law-reached");
 }

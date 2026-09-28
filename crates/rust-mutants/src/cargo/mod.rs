@@ -8,6 +8,7 @@ mod built;
 mod compile;
 pub mod config;
 mod depinfo;
+mod doctests;
 mod locate;
 pub mod manifest;
 mod messages;
@@ -31,6 +32,9 @@ pub use compile::{
 pub use depinfo::{
     Emitted, Unit, compile_time_inputs, dep_info_path, emitted_of, env_deps, every_unit_of,
     parse_dep_info, units_of,
+};
+pub use doctests::{
+    DoctestCapture, build_capture, capture_arguments, capture_doctests, empty_capture,
 };
 
 pub use locate::{

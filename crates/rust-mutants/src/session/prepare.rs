@@ -1046,7 +1046,6 @@ fn sealed_build(
         workspace,
         cancel,
         trace,
-        catalog,
         options,
         ..
     } = *building;
@@ -1087,38 +1086,110 @@ fn sealed_build(
         }
         compiled.push(compile(
             &workspace.driver(cancel),
-            &CompileOptions {
-                kind,
-                packages: options.packages.clone(),
-                target_dir: dir.clone(),
-                locked: workspace.locked,
-                offline: workspace.offline,
-                timeout: options.build_timeout,
-                env: crate::vars::Variables::of([(
-                    std::ffi::OsString::from(crate::instrument::COMPILED_CATALOG_ENV),
-                    std::ffi::OsString::from(catalog.digest()),
-                )]),
-                build: crate::cargo::BuildConfig {
-                    target: Some(TARGET.to_owned()),
-                    ..options.build.clone()
-                },
-            },
+            &sealed_compile(building, &dir, kind),
         )?);
     }
+    let captured = sealed_doctests(
+        building,
+        targets,
+        &sealed_compile(building, &dir, CompileKind::SealedTests),
+    )?;
     let sealed = SealedBuild::of(
         targets,
-        &compiled,
+        (&compiled, captured),
         (&workspace.metadata.packages, dir.path()),
     )?;
     trace.note(
         "sealed-build",
         &format!(
-            "{} of {} test targets built for {TARGET}",
+            "{} of {} test targets built for {TARGET}, and the doctests of {} libraries",
             sealed.modules.len(),
-            targets.len()
+            targets.len(),
+            sealed.doctests.len()
         ),
     );
     Ok(sealed)
+}
+
+/// How the sealed build compiles `kind` into `dir`: for the sealed target, with the features and profile the run asked for and the catalog its instrumentation reads.
+fn sealed_compile(
+    building: &Building<'_>,
+    dir: &crate::cargo::BuildDir,
+    kind: CompileKind,
+) -> CompileOptions {
+    CompileOptions {
+        kind,
+        packages: building.options.packages.clone(),
+        target_dir: dir.clone(),
+        locked: building.workspace.locked,
+        offline: building.workspace.offline,
+        timeout: building.options.build_timeout,
+        env: crate::vars::Variables::of([(
+            std::ffi::OsString::from(crate::instrument::COMPILED_CATALOG_ENV),
+            std::ffi::OsString::from(building.catalog.digest()),
+        )]),
+        build: crate::cargo::BuildConfig {
+            target: Some(crate::sealed::TARGET.to_owned()),
+            ..building.options.build.clone()
+        },
+    }
+}
+
+/// Each documentation target's doctests, built for the sealed target the way `compile` built its tests and handed to a capture, or why they were not.
+///
+/// # Errors
+/// A capture that could not be built or emptied, and a cargo that could not run or was cancelled.
+fn sealed_doctests(
+    building: &Building<'_>,
+    targets: &[TestTarget],
+    compile: &CompileOptions,
+) -> Result<
+    BTreeMap<String, Result<crate::sealed::doctest::Captured, crate::sealed::Unsealed>>,
+    EngineError,
+> {
+    use crate::sealed::Unsealed;
+    use crate::sealed::doctest::{Held, Uncaptured, captured};
+    let documented: Vec<&TestTarget> = targets
+        .iter()
+        .filter(|target| target.kind() == execute::TargetKind::Doc)
+        .collect();
+    let mut answers = BTreeMap::new();
+    if documented.is_empty() {
+        return Ok(answers);
+    }
+    let driver = building.workspace.driver(building.cancel);
+    let root = compile.target_dir.path().join("doctests");
+    let program = crate::cargo::build_capture(&driver, &root.join("capture"))?;
+    for target in documented {
+        let directory = root.join("kept").join(target.package());
+        crate::cargo::empty_capture(&directory)?;
+        let stdout = crate::cargo::capture_doctests(
+            &driver,
+            &crate::cargo::DoctestCapture {
+                package: target.package(),
+                capture: (&program, &directory),
+                compile,
+            },
+        )?;
+        let held = Held::read(&directory).map_err(|error| {
+            crate::cargo::CargoError::new(
+                crate::cargo::CargoErrorKind::BuildLedger,
+                format!("{}: {error}", directory.display()),
+            )
+        })?;
+        let answer = match captured(&stdout, &held) {
+            Ok(captured) => Ok(captured),
+            Err(Uncaptured::Unreported) => Err(Unsealed::NotBuilt),
+            Err(uncaptured) => {
+                building
+                    .trace
+                    .note("sealed-doctests", &format!("{}: {uncaptured}", target.id()));
+                Err(Unsealed::DoctestsUnaccounted)
+            }
+        };
+        answers.insert(target.id().to_owned(), answer);
+    }
+    Ok(answers)
 }
 
 /// Turns the mutable-file snapshot into the text a prepared session exposes.

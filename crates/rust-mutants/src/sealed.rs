@@ -28,8 +28,12 @@ pub enum Unsealed {
     TargetMissing,
     /// The sealed build produced no module for the target: it does not build for the sealed target.
     NotBuilt,
-    /// The target is a library's documented examples, which rustdoc runs and no test module holds.
-    Doctest,
+    /// rustdoc's report of the doctests it built for the sealed target did not account for every binary it handed on, or a merged binary did not name the doctests it holds.
+    DoctestsUnaccounted,
+    /// No native baseline ran the target, so which of its tests the suite runs is not known.
+    NotVerified,
+    /// The target's native baseline did not name every test it ran, so which of its tests the suite runs is not known.
+    NativeUnnamed,
     /// The target is a procedural macro's tests, which cargo builds for the host whatever target it is given.
     ProcMacro,
     /// The module's harness did not list its tests on the sealed host.
@@ -49,8 +53,14 @@ impl Unsealed {
                 "make the target's tests build for wasm32-wasip1, which the sealed build's own \
                  error names, or put what cannot build behind cfg(not(target_family = \"wasm\"))"
             }
-            Self::Doctest => {
-                "nothing seals a doctest yet, so what only a doctest reaches rests on its native lead"
+            Self::NotVerified => "let the run verify its baselines, which --no-verify skips",
+            Self::NativeUnnamed => {
+                "keep libtest's own report of the target whole: a test that prints over it, or a \
+                 harness that reports another way, leaves its tests unnamed"
+            }
+            Self::DoctestsUnaccounted => {
+                "run `cargo test --doc --target wasm32-wasip1` to see what rustdoc reported of the \
+                 doctests, or which doctest stops a merged binary that runs them all"
             }
             Self::ProcMacro => {
                 "a procedural macro runs in the compiler, so what only its own tests reach rests on \
@@ -112,11 +122,24 @@ pub struct Module {
     pub sources: BTreeSet<PathBuf>,
 }
 
+/// One library's doctests, as the sealed build captured them.
+#[derive(Debug, Clone)]
+pub struct Doctests {
+    /// The native documentation target they are the sealed build of.
+    pub target: TestTarget,
+    /// Every binary rustdoc handed on, and which doctest each holds.
+    pub captured: doctest::Captured,
+    /// Every source file compiled into the library they link, absolute.
+    pub sources: BTreeSet<PathBuf>,
+}
+
 /// What the sealed build produced for each native test target, and why it produced nothing for the rest.
 #[derive(Debug, Clone, Default)]
 pub struct SealedBuild {
     /// Each native target's sealed module, by target identity.
     pub modules: BTreeMap<String, Module>,
+    /// Each native documentation target's captured doctests, by target identity.
+    pub doctests: BTreeMap<String, Doctests>,
     /// Each native target with no sealed module, by target identity, and why.
     pub unsealed: BTreeMap<String, Unsealed>,
 }
@@ -127,6 +150,7 @@ impl SealedBuild {
     pub fn none(native: &[TestTarget], why: Unsealed) -> Self {
         Self {
             modules: BTreeMap::new(),
+            doctests: BTreeMap::new(),
             unsealed: native
                 .iter()
                 .map(|target| (target.id().to_owned(), why))
@@ -134,13 +158,16 @@ impl SealedBuild {
         }
     }
 
-    /// What the sealed builds, each of [`BUILDS`] as `compiled` into `target_dir`, answer for each of `native`.
+    /// What the sealed builds, each of [`BUILDS`] as `compiled` into `target_dir`, and each documentation target's captured doctests or why there are none, answer for each of `native`.
     ///
     /// # Errors
     /// What reading the sealed build's targets refuses: a manifest that cannot be read.
     pub fn of(
         native: &[TestTarget],
-        compiled: &[Compiled],
+        (compiled, mut captured): (
+            &[Compiled],
+            BTreeMap<String, Result<doctest::Captured, Unsealed>>,
+        ),
         (packages, target_dir): (&[Package], &Path),
     ) -> Result<Self, CargoError> {
         let mut modules = BTreeMap::new();
@@ -153,9 +180,38 @@ impl SealedBuild {
                 modules.insert(target.id().to_owned(), Module { target, sources });
             }
         }
-        let unsealed = native
+        let mut doctests = BTreeMap::new();
+        let mut refused = BTreeMap::new();
+        for target in native
             .iter()
-            .filter(|target| !modules.contains_key(target.id()))
+            .filter(|target| target.kind() == crate::execute::TargetKind::Doc)
+        {
+            match captured.remove(target.id()) {
+                Some(Ok(captured)) => {
+                    let sources = compiled
+                        .iter()
+                        .flat_map(|build| library_sources(target, &build.units, packages))
+                        .collect();
+                    doctests.insert(
+                        target.id().to_owned(),
+                        Doctests {
+                            target: target.clone(),
+                            captured,
+                            sources,
+                        },
+                    );
+                }
+                Some(Err(why)) => {
+                    refused.insert(target.id().to_owned(), why);
+                }
+                None => {}
+            }
+        }
+        let mut unsealed: BTreeMap<String, Unsealed> = native
+            .iter()
+            .filter(|target| {
+                !modules.contains_key(target.id()) && !doctests.contains_key(target.id())
+            })
             .map(|target| {
                 let why = match target.kind() {
                     crate::execute::TargetKind::Lib
@@ -166,9 +222,9 @@ impl SealedBuild {
                     {
                         Unsealed::NoHarness
                     }
-                    crate::execute::TargetKind::Doc => Unsealed::Doctest,
                     crate::execute::TargetKind::ProcMacro => Unsealed::ProcMacro,
-                    crate::execute::TargetKind::Lib
+                    crate::execute::TargetKind::Doc
+                    | crate::execute::TargetKind::Lib
                     | crate::execute::TargetKind::Bin
                     | crate::execute::TargetKind::Test
                     | crate::execute::TargetKind::Example => Unsealed::NotBuilt,
@@ -176,8 +232,25 @@ impl SealedBuild {
                 (target.id().to_owned(), why)
             })
             .collect();
+        unsealed.extend(refused);
         modules.retain(|id, _| native.iter().any(|target| target.id() == id));
-        Ok(Self { modules, unsealed })
+        Ok(Self {
+            modules,
+            doctests,
+            unsealed,
+        })
+    }
+
+    /// Whether any module or doctest of the sealed build compiled `source`.
+    #[must_use]
+    pub fn holds(&self, source: &Path) -> bool {
+        self.modules
+            .values()
+            .any(|module| module.sources.contains(source))
+            || self
+                .doctests
+                .values()
+                .any(|doctests| doctests.sources.contains(source))
     }
 
     /// Whether the sealed build compiled `source` into the module of `target`.
@@ -187,6 +260,20 @@ impl SealedBuild {
             .get(target)
             .is_some_and(|module| module.sources.contains(source))
     }
+}
+
+/// Every source file the compiler read for the library the documentation target `target` documents, which every doctest links.
+fn library_sources(target: &TestTarget, units: &[Unit], packages: &[Package]) -> BTreeSet<PathBuf> {
+    units
+        .iter()
+        .filter(|unit| !unit.test && unit.target.is_lib() && unit.target.name == target.name())
+        .filter(|unit| {
+            packages
+                .iter()
+                .any(|package| package.id == unit.package_id && package.name == target.package())
+        })
+        .flat_map(|unit| unit.sources.iter().cloned())
+        .collect()
 }
 
 /// Every source file the compiler read for the test unit `target` is the module of.
@@ -204,6 +291,7 @@ fn sources_of(target: &TestTarget, units: &[Unit], packages: &[Package]) -> BTre
 }
 
 pub mod bench;
+pub mod doctest;
 pub mod record;
 pub mod standing;
 

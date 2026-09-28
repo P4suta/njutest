@@ -1018,9 +1018,24 @@ impl Session {
                 .map(|entry| entry.rel_path.as_str()),
         )?;
         let bounds = self.touch_bounds()?;
+        let natives = self
+            .verified
+            .targets
+            .iter()
+            .map(|(id, measured)| {
+                let baseline = measured.baseline();
+                let named = usize::try_from(baseline.tests)
+                    .is_ok_and(|counted| counted == baseline.ran.len());
+                let ran = crate::sealed::bench::Ran {
+                    tests: baseline.ran.clone(),
+                    whole: named,
+                };
+                (id.clone(), ran)
+            })
+            .collect();
         Ok(crate::sealed::bench::Bench::assemble(
             runner,
-            &self.sealed,
+            (&self.sealed, &natives),
             (tree, &self.harness_args),
             (self.catalog.digest(), bounds),
         )?)

@@ -5,17 +5,24 @@ extern crate std;
 
 use std::vec::Vec;
 
-use super::{Account, Ending, Observed, judged};
+use super::{Account, Ending, Harness, Observed, judged};
 use crate::evidence::{Detection, Doubt, Sealed};
+
+fn every_harness() -> Vec<Harness> {
+    let mut every: Vec<Harness> = Account::ALL.into_iter().map(Harness::Libtest).collect();
+    every.push(Harness::Doctest);
+    every.push(Harness::ShouldPanic);
+    every
+}
 
 fn every_observation() -> Vec<Observed> {
     let mut every = Vec::new();
     for ending in Ending::ALL {
-        for account in Account::ALL {
+        for harness in every_harness() {
             for beyond_control in [false, true] {
                 every.push(Observed {
                     ending,
-                    account,
+                    harness,
                     beyond_control,
                 });
             }
@@ -28,18 +35,30 @@ fn by_the_table(observed: Observed) -> Sealed {
     if observed.beyond_control {
         return Sealed::Doubted(Doubt::Refused);
     }
-    match (observed.ending, observed.account) {
-        (Ending::Returned, Account::Passed) => Sealed::Passed,
-        (Ending::Panicked, _) => Sealed::Detected(Detection::Panicked),
-        (Ending::ExitedFailure, Account::Failed) => Sealed::Detected(Detection::Failed),
-        (Ending::Aborted | Ending::Trapped, _) => Sealed::Detected(Detection::Trapped),
-        (Ending::FuelExhausted, _) => Sealed::Detected(Detection::FuelExceeded),
-        (Ending::MemoryExhausted, _) => Sealed::Detected(Detection::MemoryExceeded),
-        (Ending::ExitedZero, _) => Sealed::Doubted(Doubt::ExitedEarly),
-        (Ending::StackOverflow, _) => Sealed::Doubted(Doubt::StackOverflow),
-        (Ending::Returned, Account::Failed | Account::Other)
-        | (Ending::ExitedFailure, Account::Passed | Account::Other)
-        | (Ending::ExitedOther, _) => Sealed::Doubted(Doubt::Unaccounted),
+    match (observed.harness, observed.ending) {
+        (Harness::Libtest(Account::Passed) | Harness::Doctest, Ending::Returned)
+        | (
+            Harness::ShouldPanic,
+            Ending::ExitedFailure | Ending::Panicked | Ending::Aborted | Ending::Trapped,
+        ) => Sealed::Passed,
+        (Harness::Libtest(_) | Harness::Doctest, Ending::Panicked) => {
+            Sealed::Detected(Detection::Panicked)
+        }
+        (Harness::Libtest(Account::Failed) | Harness::Doctest, Ending::ExitedFailure)
+        | (Harness::ShouldPanic, Ending::Returned) => Sealed::Detected(Detection::Failed),
+        (Harness::Libtest(_) | Harness::Doctest, Ending::Aborted | Ending::Trapped) => {
+            Sealed::Detected(Detection::Trapped)
+        }
+        (_, Ending::FuelExhausted) => Sealed::Detected(Detection::FuelExceeded),
+        (Harness::Libtest(_) | Harness::Doctest, Ending::MemoryExhausted) => {
+            Sealed::Detected(Detection::MemoryExceeded)
+        }
+        (Harness::ShouldPanic, Ending::MemoryExhausted) => Sealed::Doubted(Doubt::Refused),
+        (_, Ending::ExitedZero) => Sealed::Doubted(Doubt::ExitedEarly),
+        (_, Ending::StackOverflow) => Sealed::Doubted(Doubt::StackOverflow),
+        (Harness::Libtest(Account::Failed | Account::Other), Ending::Returned)
+        | (Harness::Libtest(Account::Passed | Account::Other), Ending::ExitedFailure)
+        | (_, Ending::ExitedOther) => Sealed::Doubted(Doubt::Unaccounted),
     }
 }
 
@@ -60,14 +79,20 @@ fn every_observation_is_judged_as_the_table_in_sealed_md_says() {
 }
 
 #[test]
-fn only_a_returned_instance_its_harness_accounted_for_passes() {
+fn only_the_ending_its_harness_passes_by_passes() {
     for observed in every_observation() {
         if judged(observed) == Sealed::Passed {
-            assert_eq!(
-                (observed.ending, observed.account, observed.beyond_control),
-                (Ending::Returned, Account::Passed, false),
-                "{observed:?} passed"
-            );
+            let passing = match observed.harness {
+                Harness::Libtest(account) => {
+                    observed.ending == Ending::Returned && account == Account::Passed
+                }
+                Harness::Doctest => observed.ending == Ending::Returned,
+                Harness::ShouldPanic => matches!(
+                    observed.ending,
+                    Ending::ExitedFailure | Ending::Panicked | Ending::Aborted | Ending::Trapped
+                ),
+            };
+            assert!(passing && !observed.beyond_control, "{observed:?} passed");
         }
     }
 }
@@ -91,5 +116,22 @@ fn a_judgement_that_reads_an_early_exit_as_a_pass_is_caught_by_the_table() {
             .into_iter()
             .any(|observed| planted(observed) != by_the_table(observed)),
         "the table did not catch an early exit read as a pass"
+    );
+}
+
+#[test]
+fn a_judgement_that_reads_a_should_panic_doctest_as_any_other_is_caught_by_the_table() {
+    let planted = |observed: Observed| match observed.harness {
+        Harness::ShouldPanic => judged(Observed {
+            harness: Harness::Doctest,
+            ..observed
+        }),
+        Harness::Libtest(_) | Harness::Doctest => judged(observed),
+    };
+    assert!(
+        every_observation()
+            .into_iter()
+            .any(|observed| planted(observed) != by_the_table(observed)),
+        "the table did not catch a doctest that should panic read as one that should return"
     );
 }

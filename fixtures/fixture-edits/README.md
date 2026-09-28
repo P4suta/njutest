@@ -77,10 +77,10 @@ src/child.rs:8:36 string-to-empty unproven
 src/data.rs:8:5 int-decrement unproven
 src/data.rs:8:5 int-increment unproven
 src/data.rs:8:5 return-default unproven
-src/documented.rs:12:5 return-default unproven
-src/documented.rs:12:7 mul-to-div unproven
-src/documented.rs:12:9 int-decrement unproven
-src/documented.rs:12:9 int-increment unproven
+src/documented.rs:12:5 return-default killed
+src/documented.rs:12:7 mul-to-div killed
+src/documented.rs:12:9 int-decrement killed
+src/documented.rs:12:9 int-increment killed
 src/generated.rs:8:5 int-decrement killed
 src/generated.rs:8:5 int-increment killed
 src/generated.rs:8:5 return-default killed

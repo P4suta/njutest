@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Three functions: one the tests and the documentation both exercise, one only the documentation does, and one neither does.
+//! Three functions: one the tests and the documentation both exercise, one only the documentation does, and one neither does, whose example only has to fail to compile.
 
 /// Twice `n`.
 ///
@@ -21,7 +21,11 @@ pub fn half(n: i32) -> i32 {
     n / 2
 }
 
-/// A third of `n`, documented without an example, so nothing runs it.
+/// A third of `n`, documented without an example that runs, so nothing runs it; the one it has must not compile, which rustdoc checks alone, outside the merged binary.
+///
+/// ```compile_fail
+/// let third: u8 = fixture_doctest::third(3);
+/// ```
 pub fn third(n: i32) -> i32 {
     n / 3
 }

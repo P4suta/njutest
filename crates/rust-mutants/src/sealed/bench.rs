@@ -9,13 +9,14 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use rust_mutants_decision::evidence::Sealed;
-use rust_mutants_decision::judgement::{Account, Ending, Observed, judged};
+use rust_mutants_decision::judgement::{Account, Ending, Harness, Observed, judged};
 use rust_mutants_sealed::{
     Arguments, ClockPolicy, Environment, Invocation, Limits, OverlayState, Preopens, RefusalReason,
     SealedError, SealedModule, SealedRunner, SealedStop, Snapshot, Transcript, TrapKind,
     WasiFunction,
 };
 
+use super::doctest::{Expects, Listed, NO_SUCH_INDEX, RUN_ONE, listed};
 use super::{SealedBuild, Unsealed};
 use crate::execute::TestTarget;
 use crate::libtest::{Asked, account};
@@ -188,15 +189,111 @@ pub enum Uncontrolled {
     Came(Sealed),
     /// Its control declined to measure on the sealed host (ADR 0043), so it passed having measured nothing.
     Declined,
+    /// It runs natively and did not build for the sealed target.
+    Unbuilt,
+    /// It runs natively and the sealed build does not hold it.
+    Unsealed,
 }
 
-/// One sealed module, ready: its tests and each one's control, or why it has none.
+/// What one target's native baseline ran, which its station has to hold.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Ran {
+    /// Every test it passed, as its harness named them.
+    pub tests: Vec<String>,
+    /// Whether those are every test it ran: the names come to the count its summaries said.
+    pub whole: bool,
+}
+
+/// How one test of a station runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Run {
+    /// libtest runs it by name.
+    Libtest,
+    /// rustdoc's `main` runs one doctest: the one at `index` of a merged binary, or the only one its binary holds.
+    Doctest {
+        /// Its index, where its binary is merged.
+        index: Option<usize>,
+        /// What it passes by.
+        expects: Expects,
+    },
+}
+
+/// What one invocation asks of a module.
+struct Asking {
+    arguments: Vec<String>,
+    index: Option<usize>,
+}
+
+impl Run {
+    /// What running it as `name` asks, libtest's run given `harness` as the native one is.
+    fn asking(self, name: &str, harness: &[String]) -> Asking {
+        match self {
+            Self::Libtest => Asking {
+                arguments: [one_test(name), harness.to_vec()].concat(),
+                index: None,
+            },
+            Self::Doctest { index, .. } => Asking {
+                arguments: Vec::new(),
+                index,
+            },
+        }
+    }
+}
+
+/// One module of a station, and how each test it holds runs.
+#[derive(Debug)]
+struct Holding<'runner> {
+    module: SealedModule<'runner>,
+    tests: BTreeMap<String, Run>,
+}
+
+/// One sealed target, ready: the modules that hold its tests, each test and its control, or why it has none.
 #[derive(Debug)]
 pub struct Station<'runner> {
-    module: SealedModule<'runner>,
+    holdings: Vec<Holding<'runner>>,
     target: TestTarget,
-    /// Each test its harness lists, and its control.
+    program: String,
+    /// Each test the native baseline ran, and its control, or why it has none.
     pub controls: BTreeMap<String, Result<Control, Uncontrolled>>,
+}
+
+impl Station<'_> {
+    /// Holds this station to exactly the tests `ran` says its native baseline ran, each named as `named` spells it for the station or not at all where it never runs: a test the native run does not run is no test of the suite's, and one the sealed build does not hold is uncontrolled.
+    ///
+    /// # Errors
+    /// The reason there is no station, where no baseline ran or its account does not name every test it ran.
+    fn owes<F>(&mut self, ran: Option<&Ran>, named: F) -> Result<(), Unsealed>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        let ran = match ran {
+            None => return Err(Unsealed::NotVerified),
+            Some(ran) if !ran.whole => return Err(Unsealed::NativeUnnamed),
+            Some(ran) => ran,
+        };
+        let owed: BTreeSet<String> = ran.tests.iter().filter_map(|test| named(test)).collect();
+        self.controls.retain(|test, _| owed.contains(test));
+        for test in owed {
+            self.controls
+                .entry(test)
+                .or_insert(Err(Uncontrolled::Unsealed));
+        }
+        Ok(())
+    }
+
+    /// The module that holds `test`, and how it runs.
+    fn holding(&self, test: &str) -> Option<(&SealedModule<'_>, Run)> {
+        self.holdings
+            .iter()
+            .find_map(|holding| holding.tests.get(test).map(|run| (&holding.module, *run)))
+    }
+
+    /// Whether any of its modules holds a test named `test`.
+    fn names(&self, test: &str) -> bool {
+        self.holdings
+            .iter()
+            .any(|holding| holding.tests.contains_key(test))
+    }
 }
 
 /// Every sealed module of a session, prepared, listed and controlled.
@@ -212,14 +309,30 @@ pub struct Bench<'runner> {
     bounds: crate::touch::Bounds,
 }
 
+/// `path`, read and prepared on `runner` as a module of `target`.
+fn prepared<'runner>(
+    runner: &'runner SealedRunner,
+    path: &Path,
+    target: &str,
+) -> Result<SealedModule<'runner>, BenchError> {
+    let bytes = std::fs::read(path).map_err(|source| BenchError::ModuleUnreadable {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    runner.prepare(&bytes).map_err(|source| BenchError::Host {
+        target: target.to_owned(),
+        source,
+    })
+}
+
 impl<'runner> Bench<'runner> {
-    /// Prepares every module of `sealed` on `runner`, lists its tests and runs each one's control inside `tree`, every invocation given the harness arguments `harness` as the native ones are.
+    /// Prepares every module of `sealed` on `runner`, lists its tests and runs each one's control inside `tree`, every libtest invocation given the harness arguments `harness` as the native ones are, and holds each station to every test its target's native baseline in `natives` ran.
     ///
     /// # Errors
     /// A module that cannot be read, an environment that is not text, or a host that cannot run what it is given.
     pub fn assemble(
         runner: &'runner SealedRunner,
-        sealed: &SealedBuild,
+        (sealed, natives): (&SealedBuild, &BTreeMap<String, Ran>),
         (tree, harness): (Tree, &[String]),
         (catalog, bounds): (&str, crate::touch::Bounds),
     ) -> Result<Self, BenchError> {
@@ -232,31 +345,165 @@ impl<'runner> Bench<'runner> {
             bounds,
         };
         for (id, module) in &sealed.modules {
-            let path = &module.target.executable;
-            let bytes = std::fs::read(path).map_err(|source| BenchError::ModuleUnreadable {
-                path: path.clone(),
-                source,
-            })?;
-            let prepared = runner.prepare(&bytes).map_err(|source| BenchError::Host {
-                target: id.clone(),
-                source,
-            })?;
+            let program = match module
+                .target
+                .executable
+                .file_name()
+                .and_then(|name| name.to_str())
+            {
+                Some(program) => program.to_owned(),
+                None => "test".to_owned(),
+            };
+            let module_of = prepared(runner, &module.target.executable, id)?;
             let mut station = Station {
-                module: prepared,
+                holdings: Vec::new(),
                 target: module.target.clone(),
+                program,
                 controls: BTreeMap::new(),
             };
-            let Some(tests) = bench.listed(&station)? else {
+            let Some(tests) = bench.listed(&station, &module_of)? else {
                 bench.unsealed.insert(id.clone(), Unsealed::NotListed);
                 continue;
             };
-            for test in tests {
-                let control = bench.control(&station, &test)?;
-                station.controls.insert(test, control);
+            let mut controls = BTreeMap::new();
+            for test in &tests {
+                let control = bench.control(&station, &module_of, (test, Run::Libtest))?;
+                controls.insert(test.clone(), control);
             }
-            bench.stations.insert(id.clone(), station);
+            station.holdings.push(Holding {
+                module: module_of,
+                tests: tests.into_iter().map(|test| (test, Run::Libtest)).collect(),
+            });
+            station.controls = controls;
+            match station.owes(natives.get(id), |test| Some(test.to_owned())) {
+                Ok(()) => {
+                    bench.stations.insert(id.clone(), station);
+                }
+                Err(why) => {
+                    bench.unsealed.insert(id.clone(), why);
+                }
+            }
+        }
+        for (id, doctests) in &sealed.doctests {
+            let Some(mut station) = bench.documented(runner, doctests)? else {
+                bench
+                    .unsealed
+                    .insert(id.clone(), Unsealed::DoctestsUnaccounted);
+                continue;
+            };
+            match station.owes(natives.get(id), super::doctest::natively_run) {
+                Ok(()) => {
+                    bench.stations.insert(id.clone(), station);
+                }
+                Err(why) => {
+                    bench.unsealed.insert(id.clone(), why);
+                }
+            }
         }
         Ok(bench)
+    }
+
+    /// The station of one library's captured doctests, or nothing where a merged binary did not name the doctests it holds.
+    fn documented(
+        &self,
+        runner: &'runner SealedRunner,
+        doctests: &super::Doctests,
+    ) -> Result<Option<Station<'runner>>, BenchError> {
+        let id = doctests.target.id();
+        let mut station = Station {
+            holdings: Vec::new(),
+            target: doctests.target.clone(),
+            program: "rust_out.wasm".to_owned(),
+            controls: BTreeMap::new(),
+        };
+        let mut held = Vec::new();
+        for binary in &doctests.captured.merged {
+            let module = prepared(runner, binary, id)?;
+            let Some(listed) = self.merged(&station, &module)? else {
+                return Ok(None);
+            };
+            let tests = listed
+                .into_iter()
+                .enumerate()
+                .filter(|(_, doctest)| !doctest.ignored || doctest.expects == Expects::Panic)
+                .map(|(index, doctest)| {
+                    let run = Run::Doctest {
+                        index: Some(index),
+                        expects: doctest.expects,
+                    };
+                    (doctest.name, run)
+                })
+                .collect();
+            held.push(Holding { module, tests });
+        }
+        for alone in &doctests.captured.alone {
+            let module = prepared(runner, &alone.binary, id)?;
+            let run = Run::Doctest {
+                index: None,
+                expects: alone.expects,
+            };
+            let tests = BTreeMap::from([(alone.name.clone(), run)]);
+            held.push(Holding { module, tests });
+        }
+        for holding in held {
+            let shared = holding.tests.keys().any(|name| station.names(name));
+            let listed_twice =
+                holding.tests.len() != holding.tests.keys().collect::<BTreeSet<_>>().len();
+            if shared || listed_twice {
+                return Ok(None);
+            }
+            for (name, run) in &holding.tests {
+                let control = self.control(&station, &holding.module, (name, *run))?;
+                station.controls.insert(name.clone(), control);
+            }
+            station.holdings.push(holding);
+        }
+        for name in &doctests.captured.unbuilt {
+            station
+                .controls
+                .insert(name.clone(), Err(Uncontrolled::Unbuilt));
+        }
+        Ok(Some(station))
+    }
+
+    /// The doctests the merged binary `module` of `station` holds, in index order, where it named them all when it ran them in one instance and holds no doctest past the last it named.
+    fn merged(
+        &self,
+        station: &Station<'_>,
+        module: &SealedModule<'_>,
+    ) -> Result<Option<Vec<Listed>>, BenchError> {
+        let all = Asking {
+            arguments: Vec::new(),
+            index: None,
+        };
+        let transcript = invoke(
+            station,
+            module,
+            &self.invocation(station, all, (None, CONTROL_FUEL))?,
+        )?;
+        let ended = matches!(
+            transcript.stop(),
+            SealedStop::Returned | SealedStop::Exited { code: 101 }
+        );
+        let Some(listed) = listed(transcript.stdout().bytes()).filter(|_| ended) else {
+            return Ok(None);
+        };
+        let past = Asking {
+            arguments: Vec::new(),
+            index: Some(listed.len()),
+        };
+        let beyond = invoke(
+            station,
+            module,
+            &self.invocation(station, past, (None, CONTROL_FUEL))?,
+        )?;
+        let refused = matches!(
+            beyond.stop(),
+            SealedStop::Trapped {
+                kind: TrapKind::Unreachable
+            }
+        ) && holds(beyond.stderr().bytes(), NO_SUCH_INDEX);
+        Ok(refused.then_some(listed))
     }
 
     /// What `test` of `target` comes to with `mutant` active, judged against its control, or nothing where there is no control to judge it against.
@@ -272,27 +519,41 @@ impl<'runner> Bench<'runner> {
         let Some(station) = self.stations.get(target) else {
             return Ok(None);
         };
-        let Some(Ok(control)) = station.controls.get(test) else {
+        let (Some(Ok(control)), Some((module, run))) =
+            (station.controls.get(test), station.holding(test))
+        else {
             return Ok(None);
         };
         let budget = control
             .fuel
             .saturating_mul(FUEL_FACTOR)
             .saturating_add(FUEL_FLOOR);
-        let invocation = self.invocation(station, one_test(test), (Some(mutant), budget))?;
-        let transcript = invoke(station, &invocation)?;
+        let asking = run.asking(test, &self.harness);
+        let invocation = self.invocation(station, asking, (Some(mutant), budget))?;
+        let transcript = invoke(station, module, &invocation)?;
         if written(&transcript, DECLINE_LOG).is_some_and(|notice| !notice.is_empty()) {
             return Ok(Some(Sealed::Doubted(
                 rust_mutants_decision::evidence::Doubt::Unaccounted,
             )));
         }
-        Ok(Some(judged(observed(&transcript, test, Some(control)))))
+        Ok(Some(judged(observed(
+            &transcript,
+            (test, run),
+            Some(control),
+        ))))
     }
 
-    fn listed(&self, station: &Station<'_>) -> Result<Option<Vec<String>>, BenchError> {
-        let invocation =
-            self.invocation(station, vec!["--list".to_owned()], (None, CONTROL_FUEL))?;
-        let transcript = invoke(station, &invocation)?;
+    fn listed(
+        &self,
+        station: &Station<'_>,
+        module: &SealedModule<'_>,
+    ) -> Result<Option<Vec<String>>, BenchError> {
+        let asking = Asking {
+            arguments: [vec!["--list".to_owned()], self.harness.clone()].concat(),
+            index: None,
+        };
+        let invocation = self.invocation(station, asking, (None, CONTROL_FUEL))?;
+        let transcript = invoke(station, module, &invocation)?;
         if transcript.stop() != SealedStop::Returned {
             return Ok(None);
         }
@@ -302,20 +563,28 @@ impl<'runner> Bench<'runner> {
     fn control(
         &self,
         station: &Station<'_>,
-        test: &str,
+        module: &SealedModule<'_>,
+        (name, run): (&str, Run),
     ) -> Result<Result<Control, Uncontrolled>, BenchError> {
-        let invocation = self.invocation(station, one_test(test), (None, CONTROL_FUEL))?;
-        let transcript = invoke(station, &invocation)?;
-        let came_to = judged(observed(&transcript, test, None));
+        let invocation = self.invocation(
+            station,
+            run.asking(name, &self.harness),
+            (None, CONTROL_FUEL),
+        )?;
+        let transcript = invoke(station, module, &invocation)?;
+        let came_to = judged(observed(&transcript, (name, run), None));
+        let unread = Uncontrolled::Came(Sealed::Doubted(
+            rust_mutants_decision::evidence::Doubt::Unaccounted,
+        ));
+        if holds(transcript.stderr().bytes(), NO_SUCH_INDEX) {
+            return Ok(Err(unread));
+        }
         if came_to != Sealed::Passed {
             return Ok(Err(Uncontrolled::Came(came_to)));
         }
         if written(&transcript, DECLINE_LOG).is_some_and(|notice| !notice.is_empty()) {
             return Ok(Err(Uncontrolled::Declined));
         }
-        let unread = Uncontrolled::Came(Sealed::Doubted(
-            rust_mutants_decision::evidence::Doubt::Unaccounted,
-        ));
         let reached = match written(&transcript, TOUCH_LOG).map(std::str::from_utf8) {
             None => BTreeSet::new(),
             Some(Err(_not_text)) => return Ok(Err(unread)),
@@ -335,22 +604,12 @@ impl<'runner> Bench<'runner> {
     fn invocation(
         &self,
         station: &Station<'_>,
-        harness: Vec<String>,
+        asking: Asking,
         (mutant, fuel): (Option<&str>, u64),
     ) -> Result<Invocation, BenchError> {
         let id = station.target.id().to_owned();
-        let program = match station
-            .target
-            .executable
-            .file_name()
-            .and_then(|name| name.to_str())
-        {
-            Some(program) => program.to_owned(),
-            None => "test".to_owned(),
-        };
-        let mut arguments = vec![program];
-        arguments.extend(harness);
-        arguments.extend(self.harness.iter().cloned());
+        let mut arguments = vec![station.program.clone()];
+        arguments.extend(asking.arguments);
         let mut variables = Vec::new();
         for (name, value) in station.target.cargo_env.for_process() {
             let (Some(name), Some(value)) = (name.to_str(), value.to_str()) else {
@@ -374,6 +633,9 @@ impl<'runner> Bench<'runner> {
             None => (crate::instrument::TOUCH_ENV, TOUCH_LOG),
         };
         variables.push((asked.0.to_owned(), asked.1.to_owned()));
+        if let Some(index) = asking.index {
+            variables.push((RUN_ONE.to_owned(), index.to_string()));
+        }
         let host = |source| BenchError::Host {
             target: id.clone(),
             source,
@@ -404,10 +666,13 @@ impl<'runner> Bench<'runner> {
     }
 }
 
-/// What `station`'s module did under `invocation`.
-fn invoke(station: &Station<'_>, invocation: &Invocation) -> Result<Transcript, BenchError> {
-    station
-        .module
+/// What `module` of `station` did under `invocation`.
+fn invoke(
+    station: &Station<'_>,
+    module: &SealedModule<'_>,
+    invocation: &Invocation,
+) -> Result<Transcript, BenchError> {
+    module
         .invoke(invocation)
         .map_err(|source| BenchError::Host {
             target: station.target.id().to_owned(),
@@ -442,15 +707,21 @@ fn holds(bytes: &[u8], words: &str) -> bool {
     !words.is_empty() && bytes.windows(words.len()).any(|window| window == words)
 }
 
-/// What the host observed of one execution of `test`, against `control` where there is one.
-fn observed(transcript: &Transcript, test: &str, control: Option<&Control>) -> Observed {
+/// What the host observed of one execution of `test`, run as `run`, against `control` where there is one.
+fn observed(
+    transcript: &Transcript,
+    (test, run): (&str, Run),
+    control: Option<&Control>,
+) -> Observed {
     let stderr = transcript.stderr().bytes();
+    let failure = match run {
+        Run::Libtest => crate::libtest::FAILURE_STATUS,
+        Run::Doctest { .. } => super::doctest::FAILURE_STATUS,
+    };
     let ending = match transcript.stop() {
         SealedStop::Returned => Ending::Returned,
         SealedStop::Exited { code: 0 } => Ending::ExitedZero,
-        SealedStop::Exited { code }
-            if i32::try_from(code).is_ok_and(|code| code == crate::libtest::FAILURE_STATUS) =>
-        {
+        SealedStop::Exited { code } if i32::try_from(code).is_ok_and(|code| code == failure) => {
             Ending::ExitedFailure
         }
         SealedStop::Exited { .. } => Ending::ExitedOther,
@@ -467,6 +738,26 @@ fn observed(transcript: &Transcript, test: &str, control: Option<&Control>) -> O
         SealedStop::FuelExhausted => Ending::FuelExhausted,
         SealedStop::MemoryExhausted => Ending::MemoryExhausted,
     };
+    let harness = match run {
+        Run::Libtest => Harness::Libtest(accounted(transcript, test)),
+        Run::Doctest { expects, .. } => expects.harness(),
+    };
+    let beyond_control = match control {
+        None => false,
+        Some(control) => {
+            !refusals(transcript).is_subset(&control.refusals)
+                || !sandbox(transcript).is_subset(&control.sandbox)
+        }
+    };
+    Observed {
+        ending,
+        harness,
+        beyond_control,
+    }
+}
+
+/// What libtest's account in `transcript` says of the one test `test` it was asked to run.
+fn accounted(transcript: &Transcript, test: &str) -> Account {
     let exit = match transcript.stop() {
         SealedStop::Returned => Some(0),
         SealedStop::Exited { code } => match i32::try_from(code) {
@@ -478,7 +769,7 @@ fn observed(transcript: &Transcript, test: &str, control: Option<&Control>) -> O
         }
     };
     let asked = [test.to_owned()];
-    let account = match account(transcript.stdout().bytes(), Asked::Exact(&asked), exit) {
+    match account(transcript.stdout().bytes(), Asked::Exact(&asked), exit) {
         Ok(accounted) if accounted.summary.passed == 1 && accounted.summary.failed == 0 => {
             Account::Passed
         }
@@ -486,18 +777,6 @@ fn observed(transcript: &Transcript, test: &str, control: Option<&Control>) -> O
             Account::Failed
         }
         Ok(_) | Err(_) => Account::Other,
-    };
-    let beyond_control = match control {
-        None => false,
-        Some(control) => {
-            !refusals(transcript).is_subset(&control.refusals)
-                || !sandbox(transcript).is_subset(&control.sandbox)
-        }
-    };
-    Observed {
-        ending,
-        account,
-        beyond_control,
     }
 }
 

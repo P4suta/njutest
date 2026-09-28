@@ -83,8 +83,12 @@ fn built(root: &Path) -> (Vec<rust_mutants::execute::TestTarget>, SealedBuild) {
         .into_iter()
         .map(|kind| build(root, kind, Some(TARGET), &sealed_dir))
         .collect();
-    let sealed = SealedBuild::of(&native_targets, &sealed, (&packages, &sealed_dir))
-        .expect("the sealed build is read");
+    let sealed = SealedBuild::of(
+        &native_targets,
+        (&sealed, std::collections::BTreeMap::new()),
+        (&packages, &sealed_dir),
+    )
+    .expect("the sealed build is read");
     (native_targets, sealed)
 }
 
@@ -214,10 +218,10 @@ fn a_prepared_session_that_asks_for_sealing_holds_the_instrumented_trees_sealed_
     let sealed = session.sealed();
     for target in session.targets() {
         match target.kind() {
-            rust_mutants::execute::TargetKind::Doc => assert_eq!(
-                sealed.unsealed.get(target.id()),
-                Some(&Unsealed::Doctest),
-                "a doctest is unsealed as one"
+            rust_mutants::execute::TargetKind::Doc => assert!(
+                sealed.doctests.contains_key(target.id()),
+                "a library's doctests are built for {TARGET} and captured: {:?}",
+                sealed.unsealed
             ),
             rust_mutants::execute::TargetKind::ProcMacro => assert_eq!(
                 sealed.unsealed.get(target.id()),

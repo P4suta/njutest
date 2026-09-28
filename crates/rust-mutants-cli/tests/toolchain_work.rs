@@ -165,8 +165,8 @@ fn every_removal_a_whole_run_still_answers_for_is_a_proof_a_reader_can_name() {
     }
 }
 
-/// How many times a run may start cargo before somebody has to say why: six for the native tree, and one more that builds the same tree for the sealed target (ADR 0046).
-const CARGO_CEILING: u64 = 7;
+/// How many times a run may start cargo before somebody has to say why: six for the native tree, one that builds the same tree for the sealed target, and one that builds its library's doctests for it (ADR 0046).
+const CARGO_CEILING: u64 = 8;
 
 /// How many times a run started each program, read back from its own recording.
 fn programs(name: &str, extra: &[&str]) -> std::collections::BTreeMap<String, u64> {

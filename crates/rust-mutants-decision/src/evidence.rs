@@ -8,7 +8,7 @@
 pub enum Detection {
     /// The test panicked, which traps an instance that aborts on a panic.
     Panicked,
-    /// The harness reported the test failed and exited with its failure status.
+    /// The test failed: its harness reported it failed and exited with its failure status, or a doctest that should panic returned.
     Failed,
     /// The instance trapped deterministically, for a reason other than a panic.
     Trapped,
@@ -34,7 +34,7 @@ pub enum Doubt {
 /// What a sealed execution of one test, with the mutant active, came to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sealed {
-    /// The test's `_start` returned and its harness accounted for exactly that test as passed.
+    /// The test passed as its harness decides a pass: libtest accounted for exactly that test as passed, a doctest returned, or a doctest that should panic failed.
     Passed,
     /// The test detected the mutant.
     Detected(Detection),

@@ -9,7 +9,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 A run seals by default: it builds the instrumented tree for `wasm32-wasip1`, lists each module's tests and runs each one's control on the host, puts every mutant to the tests whose controls reached it, and writes the verdict they establish, with its `evidence`, into the report.
 [The standing of a mutant](#the-standing-of-a-mutant) is `rust_mutants_decision::evidence::standing` and [the judgement of one execution](#judging-one-execution) is `rust_mutants_decision::judgement::judged`, both held to their rules by exhaustive comparisons and Kani.
 `--no-seal`, or `[mutation] seal = false`, builds nothing for the sealed target, and then every answer is a lead.
-Not yet: doctests are not sealed, so what only a doctest reaches is unproven; a sealed verdict is kept in the outcome store and read back under its key, but `verify` does not yet run a stored report's sealed executions again; a mutant that makes a test decline where its control did not is a doubt rather than the detection ADR 0043 makes it; an interrupt waits for the instance it lands in.
+Not yet: a sealed verdict is kept in the outcome store and read back under its key, but `verify` does not yet run a stored report's sealed executions again; a mutant that makes a test decline where its control did not is a doubt rather than the detection ADR 0043 makes it; an interrupt waits for the instance it lands in.
 
 A verdict is what a sealed run observed.
 A sealed run is the instrumented snapshot, built for `wasm32-wasip1`, with each test run alone in a fresh WebAssembly instance on a host that answers every question the same way every time.
@@ -24,6 +24,13 @@ Its tests are the ones `--list` names inside the host.
 Each test of each module runs in its own instance, as `<module> --exact <name> --test-threads 1 --nocapture`.
 The instance is new, the memory is the module's initial memory, the filesystem is the snapshot with nothing written, and the clock reads zero.
 `--nocapture` keeps a panic's message on the stream the host records, where libtest's capture would hold it in memory the abort discards.
+
+A library's doctests seal too, as [Doctests](#doctests) says.
+
+A target's sealed tests are exactly the ones its native baseline ran.
+A test the native run does not run is no test of the suite's, so the sealed build's copy of it is left out, and a kill by it would be no kill of the suite's.
+A test the native run ran that the sealed build does not hold, or holds only as one it ignores, is uncontrolled, and a route to it meets a test the sealed build cannot answer for.
+A target whose baseline did not run, or whose harness's account does not name every test it ran, has no sealed tests at all.
 
 The first execution of every test is its control: the test with no mutant active.
 The control records what the test did — how it ended, the fuel it spent, the memory it held at most, the guards it touched, and every refusal the host made — and a mutant's execution of the same test is judged against it.
@@ -86,6 +93,37 @@ Both are read, and they must agree.
 
 A panic's trap with the standard library's message for a failed allocation is a memory bound, not a panic.
 
+A doctest has no libtest account to ask: rustdoc's `main` runs it, and returns only where it returned, so the ending alone decides.
+Its failure status is `ExitCode::FAILURE`, which `main` reports a doctest's error with.
+
+| The instance | The doctest | It is |
+| --- | --- | --- |
+| `_start` returned | passes by returning | passed |
+| exited with the failure status | passes by returning | detected: failed |
+| trapped `unreachable` after a panic's message | passes by returning | detected: panicked |
+| trapped deterministically for another reason, or was refused memory | passes by returning | detected, as the table above says |
+| exited with the failure status, panicked, or trapped | should panic | passed |
+| `_start` returned | should panic | detected: failed |
+| was refused memory | should panic | doubted: refused, since the failure rests on the sandbox |
+| spent its fuel | either | detected: fuel exceeded |
+| exited with status zero, overflowed its stack, or exited with any other status | either | doubted, as the table above says |
+
+## Doctests
+
+rustdoc builds a library's doctests for the sealed target with `cargo test --doc --target wasm32-wasip1 -- --test-threads=1`, and runs every binary it built through the target's runner, which the engine sets to a capture of its own.
+The capture keeps each binary under the next free claim, prints the claim, and fails, so that rustdoc's own report says which doctest each claim holds:
+
+- A doctest compiled alone that fails with a claim printed is one that passes by returning, and the claim is its binary.
+- A doctest compiled alone that passes although the capture failed it is one that should panic; its claim is the next in the order rustdoc ran them in, which the printed claims around it confirm.
+- A doctest that fails with no claim did not build for the sealed target: it runs natively and has no sealed execution.
+- A claim printed before rustdoc announces its own tests is a merged binary, which edition 2024 compiles every mergeable doctest into.
+- A doctest rustdoc only compiles, `no_run` or `compile_fail`, or ignores, is not run natively, and has no binary.
+
+A merged binary names its doctests when it runs them all in one instance, sorted by name as rustdoc indexes them, and runs one alone when `RUSTDOC_DOCTEST_RUN_NB_TEST` gives its index.
+Before any of them counts, the index one past the last it named must be refused as naming no doctest, so a listing that left one out is caught.
+Each doctest is then a test like any other: its control records what it reached and spent, and a mutant is put to it alone.
+A report that does not account for every claim the capture gave out, or a merged binary that does not name its doctests, leaves the documentation target unsealed.
+
 ## The standing of a mutant
 
 `standing` reads whether the sealed build can answer for the mutant and the one execution of each test that reaches it, and decides:
@@ -112,7 +150,11 @@ Each is found, not listed: from the build, from the module's imports, and from t
 | The target has no libtest harness | `harness = false` in the build's own record of the target | give it libtest's harness, so that each of its tests says how it ended |
 | The module's harness does not list its tests | `--list` does not close with libtest's count, or the count and the names disagree | the listing's own output, run on wasmtime |
 | A `#[should_panic]` test | libtest reports it ignored | nothing seals it; its mutants rest on the other tests |
-| A doctest | not a test module | nothing seals it yet |
+| A test the native run ran that the sealed build does not hold | the native baseline names it and the sealed listing does not, or lists it as ignored | build it for the target, or put the difference behind the same `cfg` on both sides |
+| A target whose baseline did not run | `--no-verify` | let the run verify its baselines |
+| A target whose baseline did not name every test it ran | its passed tests do not come to its summary's count | keep libtest's own report whole: a test that prints over it leaves its tests unnamed |
+| A doctest that does not build for the target | rustdoc's report fails it with no claim printed | put what cannot build behind `cfg(not(target_family = "wasm"))`, or mark the example `ignore-wasm32` |
+| rustdoc's report does not account for the capture | a claim the report does not name, one out of order, or a merged binary that does not name its doctests | run `cargo test --doc --target wasm32-wasip1` to see what rustdoc reported |
 
 A mutant that no sealed test can answer for is unproven, and its native lead is still reported.
 

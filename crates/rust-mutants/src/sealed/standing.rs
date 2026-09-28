@@ -42,11 +42,7 @@ pub fn answer(
     file: &Path,
     route: &Route,
 ) -> Result<Answer, BenchError> {
-    if !sealed
-        .modules
-        .values()
-        .any(|module| module.sources.contains(file))
-    {
+    if !sealed.holds(file) {
         return Ok(Answer {
             standing: standing(Sealability::GuardAbsent, &[]),
             puts: Vec::new(),
