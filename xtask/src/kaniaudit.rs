@@ -20,11 +20,53 @@ const REACHED_COVER: &str = "njutest-law-reached";
 const BRANCH_COVER_PREFIX: &str = "njutest-law-branch:";
 const ASSERTION_PREFIX: &str = "njutest-law-assertion:";
 const TARGETS: [&str; 2] = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"];
+const JUDGED_PASS_COVERS: &[&str] = &[
+    "njutest-law-branch:passed",
+    "njutest-law-branch:not-passed",
+    REACHED_COVER,
+];
+const JUDGED_UNDECIDABLE_COVERS: &[&str] = &[
+    "njutest-law-branch:undecidable",
+    "njutest-law-branch:decidable",
+    REACHED_COVER,
+];
+const NATIVE_ALONE_COVERS: &[&str] = &[
+    "njutest-law-branch:answerable",
+    "njutest-law-branch:guard-absent",
+    "njutest-law-branch:test-absent",
+    "njutest-law-branch:reach-differs",
+    REACHED_COVER,
+];
+const FIRST_KILL_COVERS: &[&str] = &[
+    "njutest-law-branch:detected",
+    "njutest-law-branch:undetected",
+    REACHED_COVER,
+];
+const UNIVERSAL_SURVIVAL_COVERS: &[&str] = &[
+    "njutest-law-branch:survived",
+    "njutest-law-branch:unreached",
+    REACHED_COVER,
+];
+const ORDER_INDEPENDENT_COVERS: &[&str] = &[
+    "njutest-law-branch:two",
+    "njutest-law-branch:three",
+    REACHED_COVER,
+];
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, njutest_macros::AllVariants,
 )]
 pub(crate) enum Harness {
+    #[serde(
+        rename = "judgement::kani_laws::a_pass_is_only_a_returned_instance_its_harness_accounted_for"
+    )]
+    JudgedPass,
+    #[serde(rename = "judgement::kani_laws::a_refusal_beyond_the_control_is_never_a_verdict")]
+    JudgedRefusal,
+    #[serde(
+        rename = "judgement::kani_laws::an_ending_no_two_hosts_decide_alike_is_never_a_verdict"
+    )]
+    JudgedUndecidable,
     #[serde(rename = "evidence::kani_laws::native_executions_alone_never_establish_a_verdict")]
     NativeAlone,
     #[serde(rename = "evidence::kani_laws::a_sealed_detection_establishes_the_first_kill")]
@@ -83,6 +125,8 @@ impl Harness {
     /// The most program steps CBMC may unfold this harness into on either target: a count no load moves, so a law that starts paying for a payload fails here and not on a runner that runs out of memory.
     const fn ceiling(self) -> u64 {
         match self {
+            Self::JudgedPass => 2_800,
+            Self::JudgedRefusal | Self::JudgedUndecidable => 2_600,
             Self::NativeAlone => 13_000,
             Self::FirstKill => 34_000,
             Self::UniversalSurvival => 30_000,
@@ -109,6 +153,15 @@ impl Harness {
 
     pub(crate) const fn name(self) -> &'static str {
         match self {
+            Self::JudgedPass => {
+                "judgement::kani_laws::a_pass_is_only_a_returned_instance_its_harness_accounted_for"
+            }
+            Self::JudgedRefusal => {
+                "judgement::kani_laws::a_refusal_beyond_the_control_is_never_a_verdict"
+            }
+            Self::JudgedUndecidable => {
+                "judgement::kani_laws::an_ending_no_two_hosts_decide_alike_is_never_a_verdict"
+            }
             Self::NativeAlone => {
                 "evidence::kani_laws::native_executions_alone_never_establish_a_verdict"
             }
@@ -167,7 +220,10 @@ impl Harness {
 
     const fn identity(self) -> (&'static str, &'static str) {
         match self {
-            Self::NativeAlone
+            Self::JudgedPass
+            | Self::JudgedRefusal
+            | Self::JudgedUndecidable
+            | Self::NativeAlone
             | Self::FirstKill
             | Self::UniversalSurvival
             | Self::UnprovenReason
@@ -195,6 +251,9 @@ impl Harness {
 
     const fn source(self) -> &'static str {
         match self {
+            Self::JudgedPass | Self::JudgedRefusal | Self::JudgedUndecidable => {
+                "crates/rust-mutants-decision/src/judgement/kani_laws.rs"
+            }
             Self::NativeAlone
             | Self::FirstKill
             | Self::UniversalSurvival
@@ -223,28 +282,13 @@ impl Harness {
 
     const fn expected_covers(self) -> &'static [&'static str] {
         match self {
-            Self::NativeAlone => &[
-                "njutest-law-branch:answerable",
-                "njutest-law-branch:guard-absent",
-                "njutest-law-branch:test-absent",
-                REACHED_COVER,
-            ],
-            Self::FirstKill => &[
-                "njutest-law-branch:detected",
-                "njutest-law-branch:undetected",
-                REACHED_COVER,
-            ],
-            Self::UniversalSurvival => &[
-                "njutest-law-branch:survived",
-                "njutest-law-branch:unreached",
-                REACHED_COVER,
-            ],
+            Self::JudgedPass => JUDGED_PASS_COVERS,
+            Self::JudgedUndecidable => JUDGED_UNDECIDABLE_COVERS,
+            Self::NativeAlone => NATIVE_ALONE_COVERS,
+            Self::FirstKill => FIRST_KILL_COVERS,
+            Self::UniversalSurvival => UNIVERSAL_SURVIVAL_COVERS,
             Self::UnprovenReason => &["njutest-law-branch:unproven", REACHED_COVER],
-            Self::OrderIndependent => &[
-                "njutest-law-branch:two",
-                "njutest-law-branch:three",
-                REACHED_COVER,
-            ],
+            Self::OrderIndependent => ORDER_INDEPENDENT_COVERS,
             Self::ActiveCheckpoint => &[
                 "njutest-law-branch:advance",
                 "njutest-law-branch:boundary",
@@ -291,12 +335,16 @@ impl Harness {
             | Self::EqualOutcomes
             | Self::Killed
             | Self::Associative
-            | Self::Commutative => &[REACHED_COVER],
+            | Self::Commutative
+            | Self::JudgedRefusal => &[REACHED_COVER],
         }
     }
 
     const fn expected_assertions(self) -> &'static [&'static str] {
         match self {
+            Self::JudgedPass => &["njutest-law-assertion:pass-iff-returned-and-accounted"],
+            Self::JudgedRefusal => &["njutest-law-assertion:beyond-control-refused"],
+            Self::JudgedUndecidable => &["njutest-law-assertion:undecidable-ending-doubted"],
             Self::NativeAlone => &["njutest-law-assertion:native-alone-unproven"],
             Self::FirstKill => &[
                 "njutest-law-assertion:first-sealed-detection-kills",

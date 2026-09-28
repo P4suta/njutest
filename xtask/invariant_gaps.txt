@@ -21,3 +21,5 @@ repository-claims mutation njutest-14
 test-decline mutation phase-0a-0b-baseline-controls
 sealed-verdict self-check njutest-65
 sealed-verdict mutation njutest-65
+sealed-judgement self-check njutest-65
+sealed-judgement mutation njutest-65

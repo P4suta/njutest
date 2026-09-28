@@ -7,11 +7,12 @@ const LONGEST: usize = 3;
 
 fn symbolic_sealability() -> Sealability {
     let index = kani::any::<u8>();
-    kani::assume(index < 3);
+    kani::assume(index < 4);
     match index {
         0 => Sealability::Answerable,
         1 => Sealability::GuardAbsent,
-        _ => Sealability::TestAbsent,
+        2 => Sealability::TestAbsent,
+        _ => Sealability::ReachDiffers,
     }
 }
 
@@ -86,6 +87,10 @@ fn native_executions_alone_never_establish_a_verdict() {
     kani::cover!(
         sealability == Sealability::TestAbsent,
         "njutest-law-branch:test-absent"
+    );
+    kani::cover!(
+        sealability == Sealability::ReachDiffers,
+        "njutest-law-branch:reach-differs"
     );
     kani::cover!(true, "njutest-law-reached");
 }

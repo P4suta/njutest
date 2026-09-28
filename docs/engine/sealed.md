@@ -6,8 +6,8 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 # Sealed execution
 
 **Status: specified, and implemented in part.** This page is the contract [ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md) decided.
-What exists: [the standing of a mutant](#the-standing-of-a-mutant), decided by `rust_mutants_decision::evidence::standing` and held to every row below by an exhaustive comparison and Kani.
-What does not exist yet, and so what no run does yet: the host, the sealed build, the sealed executions, and the reports and exit codes that read them.
+What exists: [the standing of a mutant](#the-standing-of-a-mutant), decided by `rust_mutants_decision::evidence::standing`, [the judgement of one execution](#judging-one-execution), decided by `rust_mutants_decision::judgement::judged`, both held to their rules by exhaustive comparisons and Kani, and [the sealed build](#a-sealed-run), which a preparation makes when `PrepareOptions::sealing` asks for it.
+What does not exist yet, and so what no run does yet: the host, the sealed executions, and the reports and exit codes that read them.
 Until those land, every run's standing is native and so unproven, whatever this page says a sealed run would conclude.
 
 A verdict is what a sealed run observed.
@@ -68,6 +68,7 @@ A wall-clock watchdog stands behind every instance in case the host itself stops
 
 The host observes how the instance ended; the harness says what it thought happened.
 Both are read, and they must agree.
+`rust_mutants_decision::judgement::judged` is this table, held to every row by an exhaustive comparison and by Kani.
 
 | The instance | The harness | The control | It is |
 | --- | --- | --- | --- |
@@ -90,7 +91,7 @@ A panic's trap with the standard library's message for a failed allocation is a 
 
 1. If the sealed build does not hold the mutant's guard, it is unproven.
 2. If any sealed execution detected it, it is killed, by the first that did.
-3. Otherwise, every reason there is none is collected: a test that ran only natively, a test that reaches the mutant natively and is not in the sealed build, and every doubted execution.
+3. Otherwise, every reason there is none is collected: a test that ran only natively, a test that reaches the mutant natively and is not in the sealed build, a test that reaches it natively whose sealed control does not reach its guard, and every doubted execution.
    If there is any, it is unproven, and it says all of them.
 4. Otherwise, with no test reaching it, it is unreached; with every test that reaches it passed, it survived.
 

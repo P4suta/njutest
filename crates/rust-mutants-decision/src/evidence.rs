@@ -60,6 +60,8 @@ pub enum Sealability {
     GuardAbsent,
     /// A test that reaches the mutant natively is not in the sealed build.
     TestAbsent,
+    /// A test reaches the mutant natively and its sealed control does not reach the mutant's guard.
+    ReachDiffers,
 }
 
 /// A reason a mutant has no verdict.
@@ -79,6 +81,8 @@ pub enum Reason {
     Refused,
     /// A harness's account of its one test disagreed with what the host observed.
     Unaccounted,
+    /// A test reaches the mutant natively and its sealed control does not reach the mutant's guard.
+    ReachDiffers,
 }
 
 impl Reason {
@@ -102,6 +106,7 @@ impl Reason {
             Self::StackOverflow => 0b001_0000,
             Self::Refused => 0b010_0000,
             Self::Unaccounted => 0b100_0000,
+            Self::ReachDiffers => 0b1000_0000,
         }
     }
 }
@@ -176,6 +181,7 @@ impl Pass {
             Sealability::Answerable => None,
             Sealability::GuardAbsent => Some(Doubts::of(Reason::GuardAbsent)),
             Sealability::TestAbsent => Some(Doubts::of(Reason::TestAbsent)),
+            Sealability::ReachDiffers => Some(Doubts::of(Reason::ReachDiffers)),
         };
         Self {
             killed: None,

@@ -78,6 +78,9 @@ fn read_by_the_rules(sealability: Sealability, executions: &[Execution]) -> Read
     if sealability == Sealability::TestAbsent {
         reasons.push(Reason::TestAbsent);
     }
+    if sealability == Sealability::ReachDiffers {
+        reasons.push(Reason::ReachDiffers);
+    }
     for execution in executions {
         let reason = match execution {
             Execution::Native => Some(Reason::Native),
