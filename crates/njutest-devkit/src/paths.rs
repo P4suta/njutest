@@ -559,3 +559,166 @@ pub const NOT_INHERITED: [&str; 3] = ["LLVM_PROFILE_FILE", "RUSTFLAGS", "CARGO_E
 fn remove_environment(command: &mut std::process::Command, name: &str) {
     command.env_remove(name);
 }
+
+/// The target a sealed host runs a suite as, which `rust-toolchain.toml` installs beside the pinned toolchain.
+pub const SEALED_TARGET: &str = "wasm32-wasip1";
+
+/// Where `rustc` keeps the standard library of `target`, a missing one refused in words that say how to install it.
+///
+/// # Panics
+/// `rustc` cannot say where the target's libraries are, or no standard library for the target is there.
+#[must_use]
+#[track_caller]
+#[expect(
+    clippy::panic,
+    reason = "a test without the target it builds for cannot say anything about its subject, and saying how to install it is its only honest answer"
+)]
+pub fn target_libdir(rustc: &Path, target: &str) -> PathBuf {
+    let asked = command(rustc)
+        .args(["--print", "target-libdir", "--target", target])
+        .output();
+    let printed = match asked {
+        Ok(printed) if printed.status.success() => printed.stdout,
+        Ok(printed) => panic!(
+            "`{} --print target-libdir --target {target}` failed: {}",
+            rustc.display(),
+            crate::process::strict_utf8(&printed.stderr)
+        ),
+        Err(error) => panic!("`{}` could not be started: {error}", rustc.display()),
+    };
+    let libdir = PathBuf::from(crate::process::strict_utf8(&printed).trim_end());
+    match holds_a_standard_library(&libdir) {
+        Ok(true) => libdir,
+        Ok(false) => panic!(
+            "{}",
+            missing_target(target, &libdir, pinned_toolchain().as_deref())
+        ),
+        Err(error) => panic!("{} could not be read: {error}", libdir.display()),
+    }
+}
+
+/// Whether `libdir` holds a compiled standard library, where a directory that is not there holds none.
+fn holds_a_standard_library(libdir: &Path) -> std_io::Result<bool> {
+    let entries = match fs::read_dir(libdir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std_io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let name = entry?.file_name();
+        let library = Path::new(&name);
+        let std = library
+            .file_stem()
+            .and_then(std::ffi::OsStr::to_str)
+            .is_some_and(|stem| stem.starts_with("libstd-"));
+        let compiled = library
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("rlib"));
+        if std && compiled {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The toolchain `rust-toolchain.toml` pins, which is the one a missing target is installed for.
+fn pinned_toolchain() -> Option<String> {
+    let channel = toolchain_setting("channel")?;
+    Some(channel.strip_prefix('"')?.strip_suffix('"')?.to_owned())
+}
+
+/// What `rust-toolchain.toml` writes after `key =`, or nothing where it cannot be read or says nothing of `key`.
+fn toolchain_setting(key: &str) -> Option<String> {
+    let text = match fs::read_to_string(workspace_root().join("rust-toolchain.toml")) {
+        Ok(text) => text,
+        Err(_unreadable) => return None,
+    };
+    text.lines().find_map(|line| {
+        let value = line
+            .trim()
+            .strip_prefix(key)?
+            .trim_start()
+            .strip_prefix('=')?
+            .trim();
+        Some(value.to_owned())
+    })
+}
+
+/// The missing-target diagnostic, naming the command that installs it.
+fn missing_target(target: &str, libdir: &Path, toolchain: Option<&str>) -> String {
+    let install = match toolchain {
+        Some(toolchain) => format!("rustup target add {target} --toolchain {toolchain}"),
+        None => format!("rustup target add {target}"),
+    };
+    format!(
+        "this test builds for `{target}`, and the toolchain that builds this workspace has no \
+         standard library for it in {}: install it with `{install}`",
+        libdir.display()
+    )
+}
+
+#[cfg(test)]
+mod target_tests {
+    use std::fs;
+    use std::io;
+
+    use super::{
+        SEALED_TARGET, holds_a_standard_library, missing_target, pinned_toolchain,
+        toolchain_setting,
+    };
+
+    #[test]
+    fn a_standard_library_is_held_only_where_one_was_compiled() -> io::Result<()> {
+        let scratch = tempfile::tempdir()?;
+        let libdir = scratch.path().join("lib");
+        let absent = holds_a_standard_library(&libdir)?;
+        fs::create_dir_all(&libdir)?;
+        fs::write(libdir.join("libcore-0123.rlib"), "")?;
+        let without = holds_a_standard_library(&libdir)?;
+        fs::write(libdir.join("libstd-0123.rlib"), "")?;
+        let with = holds_a_standard_library(&libdir)?;
+        if (absent, without, with) == (false, false, true) {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!(
+                "a missing directory, one without std, and one with it read as {absent}, \
+                 {without}, {with}"
+            )))
+        }
+    }
+
+    #[test]
+    fn a_missing_target_names_the_command_that_installs_it_for_the_pinned_toolchain()
+    -> io::Result<()> {
+        let pinned = pinned_toolchain().ok_or_else(|| {
+            io::Error::other("rust-toolchain.toml names no channel this helper can read")
+        })?;
+        let message = missing_target(
+            SEALED_TARGET,
+            std::path::Path::new("/nowhere"),
+            Some(&pinned),
+        );
+        let command = format!("`rustup target add {SEALED_TARGET} --toolchain {pinned}`");
+        if message.contains(&command) && pinned.starts_with(|first: char| first.is_ascii_digit()) {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!(
+                "the refusal does not say {command}, or {pinned:?} is not a pinned release: \
+                 {message}"
+            )))
+        }
+    }
+
+    #[test]
+    fn the_pinned_toolchain_installs_the_target_a_sealed_host_runs() -> io::Result<()> {
+        let targets = toolchain_setting("targets").unwrap_or_default();
+        if targets.contains(&format!("\"{SEALED_TARGET}\"")) {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!(
+                "the suite builds for {SEALED_TARGET}, so rust-toolchain.toml installs its \
+                 standard library wherever the pinned toolchain is installed: targets = {targets}"
+            )))
+        }
+    }
+}

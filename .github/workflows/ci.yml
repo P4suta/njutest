@@ -61,6 +61,7 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           components: llvm-tools, clippy
+          targets: wasm32-wasip1
           tools: cargo-nextest@0.9.140
       - name: Fetch the locked dependency graph
         env:
@@ -202,6 +203,7 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           components: llvm-tools
+          targets: wasm32-wasip1
           tools: cargo-llvm-cov@0.9.0, cargo-nextest@0.9.140
       - name: Fetch the locked dependency graph
         env:
