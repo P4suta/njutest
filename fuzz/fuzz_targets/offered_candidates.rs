@@ -28,29 +28,27 @@ fuzz_target!(|said: &str| {
         return;
     };
     for proposal in &offered {
+        let path = proposal.path.as_str();
         assert!(
-            !proposal.path.is_empty(),
+            !path.is_empty(),
             "a candidate with no path is one nothing could apply"
         );
         assert!(
-            !proposal.path.starts_with('/') && !proposal.path.starts_with('\\'),
+            !path.starts_with('/') && !path.starts_with('\\'),
             "a candidate that came back absolute would be written wherever it said, and \
-             not under the workspace: {}",
-            proposal.path
+             not under the workspace: {path}"
         );
         assert!(
-            !proposal.path.split(['/', '\\']).any(|part| part == ".."),
-            "and one that walks upward leaves the tree whatever the prefix looked like: {}",
-            proposal.path
+            !path.split(['/', '\\']).any(|part| part == ".."),
+            "and one that walks upward leaves the tree whatever the prefix looked like: {path}"
         );
         assert!(
             allowed
                 .iter()
                 .filter_map(|pattern| compiled(pattern))
-                .any(|pattern| pattern.matches(&proposal.path)),
+                .any(|pattern| pattern.matches(path)),
             "and every one that comes back is somewhere the configuration allowed, \
-             because what comes back is what `fix --apply` writes: {}",
-            proposal.path
+             because what comes back is what `fix --apply` writes: {path}"
         );
         assert_eq!(
             proposal.digest.len(),

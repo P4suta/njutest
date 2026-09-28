@@ -14,8 +14,13 @@
 use std::path::Path;
 
 use njutest::repair::{
-    CANDIDATE_LIMIT, DEFAULT_ALLOWED, Kind, RepairErrorKind, allowed, preimage_of, take,
+    CANDIDATE_LIMIT, DEFAULT_ALLOWED, Kind, RepairErrorKind, TreePath, allowed, preimage_of, take,
 };
+
+/// The path inside the tree `text` spells, which every one this suite names is.
+fn inside(text: &str) -> TreePath {
+    TreePath::parse(text).expect("a path inside the tree")
+}
 
 #[test]
 fn a_recorded_repair_is_rechecked_with_the_documented_five_minute_bound() {
@@ -83,7 +88,7 @@ fn a_candidate_that_creates_a_test_file_is_read_whole() {
     assert_eq!(taken.len(), 1);
     let one = taken.first().expect("one");
     assert_eq!(one.kind, Kind::Patch);
-    assert_eq!(one.path, "tests/closes.rs");
+    assert_eq!(one.path.as_str(), "tests/closes.rs");
     assert_eq!(one.preimage, None);
     assert_eq!(one.content, b"#[test]\nfn t() {}\n");
     assert_eq!(one.digest.len(), 64);
@@ -119,11 +124,70 @@ fn a_candidate_may_not_be_written_outside_the_allowed_paths() {
 }
 
 #[test]
+fn a_path_one_platform_reads_as_leaving_the_tree_is_refused_on_every_platform() {
+    let dir = tree();
+    let crash = include_bytes!(
+        "../../../fuzz/regressions/offered_candidates/crash-2e66b4ebb52aa2987fe19dbc011f7b330c6ab6e4"
+    );
+    let said = std::str::from_utf8(crash).expect("the crash is text");
+    let refused = take(said, dir.path(), &patterns()).expect_err(
+        "what a scheduled fuzz run found: a path whose backslashes climb out of the tree \
+         wherever a backslash separates",
+    );
+    assert_eq!(refused.kind(), RepairErrorKind::PathRefused);
+    for (path, why) in [
+        (
+            "tests/a\\..\\..\\..\\escape.rs",
+            "Windows reads a backslash as a separator",
+        ),
+        (
+            "C:/tests/escape.rs",
+            "and a leading drive as the root of another tree",
+        ),
+        (
+            "tests//escape.rs",
+            "and the path a run records is the one written, with no name left out",
+        ),
+    ] {
+        let said = answer(&patch(path, None, "anything"));
+        let refused = take(&said, dir.path(), &patterns()).expect_err(why);
+        assert_eq!(
+            refused.kind(),
+            RepairErrorKind::PathRefused,
+            "{path}: {why}"
+        );
+    }
+}
+
+#[test]
+fn a_path_inside_the_tree_is_spelled_one_way_on_every_platform() {
+    for text in ["tests/zero.rs", "fuzz/corpus/parse/seed-1", "a b/c-d.rs"] {
+        assert_eq!(inside(text).as_str(), text, "{text} is its own spelling");
+    }
+    for text in [
+        "",
+        "/tests/x.rs",
+        "\\tests\\x.rs",
+        "tests/../x.rs",
+        "./tests/x.rs",
+        "tests/x.rs/",
+        "tests\\x.rs",
+        "C:tests/x.rs",
+        "tests/x.rs:stream",
+        "tests/x\n.rs",
+    ] {
+        let refused = TreePath::parse(text).expect_err(text);
+        assert_eq!(refused.kind(), RepairErrorKind::PathRefused, "{text:?}");
+        assert_eq!(refused.code().code, "NJ5007", "{text:?}");
+    }
+}
+
+#[test]
 fn a_candidate_that_patches_a_file_must_have_seen_the_file_that_is_there() {
     let dir = tree();
     let path = dir.path().join("tests/existing.rs");
     std::fs::write(&path, "#[test]\nfn old() {}\n").expect("write");
-    let real = preimage_of(dir.path(), "tests/existing.rs").expect("a preimage");
+    let real = preimage_of(dir.path(), &inside("tests/existing.rs")).expect("a preimage");
 
     let ok = answer(&patch(
         "tests/existing.rs",
@@ -221,6 +285,6 @@ fn where_a_provider_may_write_when_it_is_told_nothing_is_fixed() {
 #[test]
 fn the_preimage_of_a_file_that_is_not_there_is_nothing() {
     let dir = tree();
-    assert_eq!(preimage_of(dir.path(), "tests/nothing.rs"), None);
-    assert_eq!(preimage_of(Path::new("/nonexistent"), "x"), None);
+    assert_eq!(preimage_of(dir.path(), &inside("tests/nothing.rs")), None);
+    assert_eq!(preimage_of(Path::new("/nonexistent"), &inside("x")), None);
 }
