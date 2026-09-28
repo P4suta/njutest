@@ -137,10 +137,11 @@ pub fn extension_is(path: &str, wanted: &str) -> bool {
         .is_some_and(|extension| extension == wanted)
 }
 
-/// Makes `dir` a repository of its own, so a tree laid for a check is read as the repository is: through what git lists.
+/// Makes `dir` a repository of its own, so a tree a test lays for a check is read as the repository is: through what git lists.
 ///
 /// # Errors
 /// git could not be run, or refused.
+#[cfg(feature = "testkit")]
 pub fn init(dir: &Path) -> std::io::Result<()> {
     let mut git = std::process::Command::new("git");
     git.arg("-C").arg(dir).args(["init", "--quiet"]);

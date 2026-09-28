@@ -130,6 +130,42 @@ fn lint_tree(app_source: &str) -> Result<tempfile::TempDir, TestError> {
     Ok(root)
 }
 
+include!("support/asked.rs");
+
+#[test]
+fn the_lint_scan_lists_the_tree_once_and_reads_each_graph_once() -> Result<(), TestError> {
+    let root = lint_tree("")?;
+    let asked = Asked::new();
+    let report = gates::lints_scanned_with(root.path(), &asked)?;
+    require(report.starts_with("lints: "), report)?;
+    let questions = asked.questions();
+    let tree = asked::canonical(root.path());
+    let listings = questions
+        .iter()
+        .filter(|question| matches!(question, Question::Listed(at) if *at == tree))
+        .count();
+    let readings = |manifest: &str| {
+        let manifest = tree.join(manifest);
+        questions
+            .iter()
+            .filter(|question| matches!(question, Question::Read(at, _depth) if *at == manifest))
+            .count()
+    };
+    let counted = [
+        listings,
+        readings("Cargo.toml"),
+        readings("fuzz/Cargo.toml"),
+    ];
+    require(
+        counted == [1, 1, 1] && questions.len() == 3,
+        format!(
+            "the scan lists the tree once and asks cargo once about each of its two graphs, and \
+             every check after that decides from what those answered; [listings, root readings, \
+             fuzz readings] were {counted:?}: {questions:#?}"
+        ),
+    )
+}
+
 #[test]
 fn only_a_scanned_support_rs_file_may_be_included() -> Result<(), TestError> {
     let root = lint_tree("include!(\"support/ok.rs\");\n")?;

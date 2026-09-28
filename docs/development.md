@@ -273,8 +273,18 @@ A planted file holds one or more shapes, each one form of the kind:
 ```
 
 A `source` shape is one file read by the per-file scan under the path it names, because some rules switch on the path.
-A `tree` shape is laid over the smallest repository the gates accept (`xtask::sentinel::skeleton`) and read by the whole gate, which is how the rules that look across files see it.
+A `tree` shape is laid over the smallest repository the gates accept (`xtask::sentinel::lay`) and read by the whole gate, which is how the rules that look across files see it.
 Each shape is read on its own, so one cannot make another's finding appear.
+
+The whole gate decides from a `Tree` (`xtask::gates::tree`): the repository's facts, read once and handed to every check that decides from them.
+Reading one is one listing by git and one question to cargo for each graph, the root and the fuzz workspace, and one more for a graph that only a path dependency reaches.
+The questions go through an `Ask` the reading is handed, which is how a test counts them.
+Each check used to ask for itself, so one scan listed the tree four times and asked cargo about each graph twice, and the lint sentinel, which scans every `tree` shape, started 182 processes and ran past its minute on a loaded machine.
+A planted tree is the files it plants, so git is asked nothing about it.
+Cargo's reading of the skeleton is taken once and stands for every shape whose files leave what cargo reads as it was: a file cargo already reads as a target's source, or a Rust module below a `src` directory that is no target's root.
+A shape that plants anything else, such as a test target, is read by cargo again.
+`xtask/tests/sentinel.rs` pins the count: the lint sentinel asks git nothing and cargo four times, and a shape that makes it ask more changes that test.
+It also holds every planted tree's reading to the one cargo gives when asked afresh, since a reused reading that dropped a target would leave every finding standing and still be a tree no repository has.
 When a rule learns a new form, the form gets a shape of its own beside the test that taught it.
 A shape proves that its form is found, not which reader found it.
 With the guard reader removed, a guarded arm over a typed parameter was still found, because the parameter's type named the set; only a scrutinee with no typed binding leaves the guarded arm as the one thing naming the set, and that is the shape that went red.
