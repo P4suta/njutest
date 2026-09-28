@@ -18,18 +18,18 @@ The run is `rust-mutants run --tier all --offline --locked`;
 `cargo test -p rust-mutants-cli --test toolchain_fates` does it again and refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates
-src/lib.rs:11:5 return-default killed
-src/lib.rs:11:5 return-some-default killed
-src/lib.rs:11:30 question-to-unwrap survived
-src/lib.rs:11:37 string-to-empty survived
-src/lib.rs:11:59 string-to-empty killed
+src/lib.rs:11:5 return-default unproven
+src/lib.rs:11:5 return-some-default unproven
+src/lib.rs:11:30 question-to-unwrap unproven
+src/lib.rs:11:37 string-to-empty unproven
+src/lib.rs:11:59 string-to-empty unproven
 src/lib.rs:19:67 string-to-empty unreached
-src/lib.rs:19:78 question-to-unwrap survived
-src/lib.rs:21:9 delete-call-statement killed
-src/lib.rs:21:37 ignore-question-statement survived
-src/lib.rs:21:37 question-to-unwrap survived
-src/lib.rs:23:5 return-ok-default killed
+src/lib.rs:19:78 question-to-unwrap unproven
+src/lib.rs:21:9 delete-call-statement unproven
+src/lib.rs:21:37 ignore-question-statement unproven
+src/lib.rs:21:37 question-to-unwrap unproven
+src/lib.rs:23:5 return-ok-default unproven
 src/lib.rs:31:67 string-to-empty unreached
-src/lib.rs:31:78 question-to-unwrap survived
-src/lib.rs:32:5 return-ok-default killed
+src/lib.rs:31:78 question-to-unwrap unproven
+src/lib.rs:32:5 return-ok-default unproven
 ```

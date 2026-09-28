@@ -19,9 +19,9 @@ Each test reads the count its previous run left under the temporary directory, a
 | `src/lib.rs` | lib | one `crash-after-write` at each of the five writing calls |
 
 ```fates --operator crash-after-write
-src/lib.rs:31:20 crash-after-write killed
-src/lib.rs:32:5 crash-after-write killed
-src/lib.rs:33:5 crash-after-write killed
-src/lib.rs:43:5 crash-after-write killed
-src/lib.rs:44:5 crash-after-write killed
+src/lib.rs:31:20 crash-after-write unproven
+src/lib.rs:32:5 crash-after-write unproven
+src/lib.rs:33:5 crash-after-write unproven
+src/lib.rs:43:5 crash-after-write unproven
+src/lib.rs:44:5 crash-after-write unproven
 ```

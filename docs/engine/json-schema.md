@@ -67,7 +67,7 @@ Written by `rust-mutants run` to `<reports.directory>/<run id>/run-report-v1.jso
 ```jsonc
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 3,
+  "schema_version": 4,
   "tool_version": "0.1.0",
   "run": { "id": "20260905T132650666Z", "started_at": "…", "finished_at": "…",
            "duration_ms": 812, "interrupted": false, "exit_code": 1 },
@@ -75,14 +75,18 @@ Written by `rust-mutants run` to `<reports.directory>/<run id>/run-report-v1.jso
   "selection": { "tier": "all", "operators": [], "include": [], "exclude": [], "packages": [],
                  "build": ["--features", "extra"], "mutant_steps": 50000000 },
   "accounting": { "cataloged": 6, "refused": 0, "skipped": 5, "executed": 6,
-                  "killed": 5, "survived": 1, "step_limit_reached": 0, "waited": 0,
-                  "inconclusive": 0,
-                  "errored": 0, "not_run": 0, "unreached": 0, "expected": 0 },
+                  "killed": 5, "survived": 1, "unproven": 0, "step_limit_reached": 0,
+                  "waited": 0, "inconclusive": 0, "errored": 0, "not_run": 0,
+                  "unreached": 0, "declined": 0, "expected": 0,
+                  "unproven_killed": 0, "unproven_survived": 0, "unproven_unreached": 0,
+                  "unproven_discharged": 0 },
   "score": { "detected": 5, "decided": 6, "value": 0.8333333333333334 },
   "mutants": [{ "…": "as in the catalog document, plus:",
                 "outcome": "survived", "target": "a/lib/a", "exit_code": 0,
                 "duration_ms": 41, "tests_run": 1, "killed_by": ["a::tests::bound"],
-                "signal": null, "retried": false, "expected": false, "unreached": false }],
+                "signal": null, "retried": false, "expected": false, "unreached": false,
+                "evidence": { "kind": "sealed", "executions": [
+                  { "target": "a/lib/a", "test": "a::tests::bound", "came_to": "passed" }] } }],
   "rejections": [], "skips": [],
   "expectations": [{ "id": "…", "reason": "…", "outcome": "survived", "mutant": "<64 hex>",
                      "standing": "met", "actual": null, "why": null }],
@@ -90,10 +94,12 @@ Written by `rust-mutants run` to `<reports.directory>/<run id>/run-report-v1.jso
 }
 ```
 
-The outcome columns add up: `killed + survived + step_limit_reached + waited + inconclusive + errored == executed`, and `executed + not_run == cataloged`.
-`unreached` counts the `not_run` mutants a coverage measurement proved no target reaches,
-so it is never larger than `not_run` and is zero in a run that measured none.
-`score` is `detected / decided` where `detected = killed` and `decided = killed + survived`; it is **absent** when the run decided nothing, which is not the same as a score of zero.
+The outcome columns add up: `killed + survived + unproven + step_limit_reached + waited + inconclusive + errored == executed`, and `executed + not_run == cataloged`.
+`killed`, `survived` and `unreached` count only what sealed executions established.
+`unproven` counts the mutants whose finding is `unproven-mutant`: no sealed execution decided them, and a native run said something of them, which is a lead.
+`unproven_killed`, `unproven_survived`, `unproven_unreached` and `unproven_discharged` say what the native run said of them, and add up to `unproven`.
+`unreached` counts the `not_run` mutants no sealed control reaches, so it is never larger than `not_run`.
+`score` is `detected / decided` where `detected = killed` and `decided = killed + survived`, so it is made of sealed verdicts alone; it is **absent** when the run decided nothing, which is not the same as a score of zero.
 `step_limit_reached` carries `step_notice`, whose nonce,
 catalog, mutant, allowance and observed `N + 1` count were verified against that execution.
 It is an execution bound, not a verdict, so it contributes to neither half of the score and is not reusable from the outcome cache.
@@ -105,19 +111,21 @@ Here `cataloged` is the number of candidate rows in `mutants`, not a blanket cla
 In a filtered run, a row with `outcome: "not_run"` and `not_run_reason: "unselected"` may deliberately have skipped instrumentation and compiler validation.
 Every other outcome is about a compiler-accepted guard present in that run's build.
 
-`exit_code` is the one the process returned: `0` every mutant was noticed,
-`1` something was not, `2` the run itself failed, `130` it was interrupted, `143` it was terminated.
+`exit_code` is the one the process returned: `0` a sealed execution detected every mutant the run decided, `1` there is a finding and nothing is unproven, `2` something is unproven or the run itself failed, `130` it was interrupted, `143` it was terminated.
 
 A row's `exit_code` is the code its test process returned, or `-1` where no code the process chose decides anything: the run stopped it, at a bound or at the first test its harness said failed.
 A process stopped at its first failing test holds `-1` whether it exited before the stop reached it or not, since which of the two came first is the machine's timing, and a row has to read the same from two runs of one catalogue.
 
-A `finding` is one of `surviving-mutant`, `step-limit-reached-mutant`, `inconclusive-mutant`,
-`waited-mutant`, `errored-mutant`, `not-run-mutant`, `unreached-mutant`,
-`discharged-mutant`, `stale-expectation`, `unmatched-expectation`, or `unmatched-skip`.
+A `finding` is one of `surviving-mutant`, `step-limit-reached-mutant`, `inconclusive-mutant`, `waited-mutant`, `errored-mutant`, `not-run-mutant`, `unreached-mutant`, `unproven-mutant`, `stale-expectation`, `unmatched-expectation`, or `unmatched-skip`.
+An `unproven-mutant` is one no sealed execution decided: its outcome is what a native run said, which is a lead, and its `evidence` says every reason there is no verdict.
 A `waited-mutant` is one this machine stopped waiting for twice: a bound expiring is a fact about the machine that watched, so the run established nothing about the mutation and says so rather than counting it.
 A mutant no measured target reaches is an `unreached-mutant` finding rather than a `not-run-mutant` one: it says the tests have a gap where the mutant is, not that the run failed to get to it.
-A `discharged-mutant` says the same thing about a mutation the tests do run and cannot observe: every target that could have noticed it was removed by a proof.
+A mutation every target of which a proof removed is a lead, since the proof reads what a native run recorded: its finding is `unproven-mutant`, and `accounting.unproven_discharged` counts it.
 An `unmatched-skip` is a `rust-mutants: skip` marker that hid nothing, which is a claim about code that has moved or gone.
+
+A mutant's `evidence` says what its verdict rests on ([ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md)).
+`sealed` lists the sealed executions that established it, in the order they ran, each with its target, its test, and what it came to; a reader decides the verdict again from them, and refuses a report whose outcome is not that verdict.
+`unproven` lists every reason there is no verdict, and the outcome beside it is a lead.
 
 A mutant's `not_run_reason` says which of six things left it unexecuted, or left its execution measuring nothing:
 `unreached` and `discharged` are proofs and are findings, `interrupted` is a run that was killed, and `unselected` and `stopped-early` are the run doing what it was asked to — a filter took the mutant out, or `--fail-fast` stopped before reaching it.

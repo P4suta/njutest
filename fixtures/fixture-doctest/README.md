@@ -44,12 +44,12 @@ src/lib.rs:12:5 return-default killed
 src/lib.rs:12:7 mul-to-div killed
 src/lib.rs:12:9 int-decrement killed
 src/lib.rs:12:9 int-increment killed
-src/lib.rs:21:5 return-default killed
-src/lib.rs:21:7 div-to-mul killed
-src/lib.rs:21:9 int-decrement killed
-src/lib.rs:21:9 int-increment killed
-src/lib.rs:26:5 return-default survived
-src/lib.rs:26:7 div-to-mul survived
-src/lib.rs:26:9 int-decrement survived
-src/lib.rs:26:9 int-increment survived
+src/lib.rs:21:5 return-default unproven
+src/lib.rs:21:7 div-to-mul unproven
+src/lib.rs:21:9 int-decrement unproven
+src/lib.rs:21:9 int-increment unproven
+src/lib.rs:26:5 return-default unproven
+src/lib.rs:26:7 div-to-mul unproven
+src/lib.rs:26:9 int-decrement unproven
+src/lib.rs:26:9 int-increment unproven
 ```

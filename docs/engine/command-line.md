@@ -109,9 +109,9 @@ On GitLab CI, and with `--host plain`, it writes the lines `report` writes.
 
 | Code | What it means |
 | --- | --- |
-| 0 | every mutant the run decided, the tests noticed |
-| 1 | there is a finding about the tests: a survivor, a mutation no test reached or a proof removed, a mutation the run could not decide either way, or a stale or unmatched claim |
-| 2 | the run could not measure a mutation it ran — it waited, reached its step limit, errored or was not run — or the run itself failed, or the command was used wrongly |
+| 0 | a sealed execution detected every mutant the run decided, or a claim about it held |
+| 1 | there is a finding about the tests, and nothing is unproven: a sealed survivor, a mutation no sealed test reached, or a stale or unmatched claim |
+| 2 | something is unproven: no sealed execution decided a mutation, so what a native run said of it is a lead; or the run could not measure a mutation it ran — it waited, reached its step limit, errored, decided nothing either way, or was not run; or the run itself failed, or the command was used wrongly |
 | 130 | it was interrupted |
 | 143 | it was terminated, which is what a cancelled job sends |
 

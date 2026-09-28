@@ -108,6 +108,8 @@ Each is found, not listed: from the build, from the module's imports, and from t
 | The crate does not build for the target | the build's own error, per target with `--keep-going` | build its dependencies for `wasm32-wasip1`, or put what cannot build behind `cfg(not(target_family = "wasm"))` |
 | The module imports what the host does not provide | the import section | the named import, which is not part of `wasi_snapshot_preview1` |
 | A control does not pass sealed | the control | the control's own failure, which names the thread, process, socket or file it needed |
+| The target has no libtest harness | `harness = false` in the build's own record of the target | give it libtest's harness, so that each of its tests says how it ended |
+| The module's harness does not list its tests | `--list` does not close with libtest's count, or the count and the names disagree | the listing's own output, run on wasmtime |
 | A `#[should_panic]` test | libtest reports it ignored | nothing seals it; its mutants rest on the other tests |
 | A doctest | not a test module | nothing seals it yet |
 

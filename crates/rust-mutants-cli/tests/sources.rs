@@ -53,13 +53,18 @@ fn mutant(path: &str, digest: &str) -> RunMutantDocument {
         unreached: false,
         source_run_id: None,
         step_notice: None,
+        evidence: rust_mutants::testkit::evidence::sealed_as(
+            Outcome::Killed,
+            None,
+            "demo/lib/demo",
+        ),
     }
 }
 
 fn document(mutants: Vec<RunMutantDocument>) -> RunDocument {
     RunDocument {
         document_type: "rust-mutants/run-report".to_owned(),
-        schema_version: 3,
+        schema_version: rust_mutants::report::run::SCHEMA_VERSION,
         tool_version: "0.1.0".to_owned(),
         run: RunMeta {
             id: "20260905T120000000Z".to_owned(),
@@ -108,7 +113,11 @@ fn document(mutants: Vec<RunMutantDocument>) -> RunDocument {
             inconclusive: 0_u32.into(),
             errored: 0_u32.into(),
             unreached: 0_u32.into(),
-            discharged: 0_u32.into(),
+            unproven: 0_u32.into(),
+            unproven_killed: 0_u32.into(),
+            unproven_survived: 0_u32.into(),
+            unproven_unreached: 0_u32.into(),
+            unproven_discharged: 0_u32.into(),
             declined: 0_u32.into(),
             not_run: 0_u32.into(),
             expected: 0_u32.into(),

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use super::{Asked, FAILURE_STATUS, Unaccounted, account};
+use super::{Asked, FAILURE_STATUS, Unaccounted, account, listing};
 
 const PASSED: &str = "\nrunning 2 tests\ntest a ... ok\ntest b ... ok\n\n\
     test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n";
@@ -181,4 +181,60 @@ fn a_should_panic_test_libtest_ignores_on_wasm_is_accounted_for_as_ignored() {
         matches!(&said, Ok(accounted) if accounted.summary.ignored == 1 && accounted.summary.passed == 0),
         "{said:?}"
     );
+}
+
+#[test]
+fn a_listing_is_the_names_its_closing_count_accounts_for() {
+    let listed = "tests::a: test\ntests::b: test\nbench::c: benchmark\n\n2 tests, 1 benchmark\n";
+    assert_eq!(
+        listing(listed.as_bytes()),
+        Some(names(&["tests::a", "tests::b"])),
+        "every test the harness listed, and nothing it listed that is not a test"
+    );
+    assert_eq!(
+        listing(b"\n0 tests, 0 benchmarks\n"),
+        Some(Vec::new()),
+        "a harness that says it holds no test has listed nothing, which is an answer"
+    );
+    assert_eq!(
+        listing(b"only: test\n\n1 test, 0 benchmarks\n"),
+        Some(names(&["only"])),
+        "libtest says one test in the singular"
+    );
+}
+
+#[test]
+fn a_listing_its_harness_did_not_close_lists_nothing() {
+    for (unclosed, why) in [
+        (
+            "",
+            "a harness that printed nothing, as one without libtest does, listed nothing",
+        ),
+        (
+            "all the checks passed\n",
+            "a harness that ignored --list and ran lists nothing",
+        ),
+        (
+            "tests::a: test\ntests::b: test\n",
+            "names with no closing count may be the head of a listing cut short",
+        ),
+        (
+            "tests::a: test\n\n2 tests, 0 benchmarks\n",
+            "a count the names do not come to is a listing that lost one",
+        ),
+        (
+            "tests::a: test\nsomething else\n\n1 test, 0 benchmarks\n",
+            "a line that is neither a test nor a benchmark is not libtest's",
+        ),
+        (
+            "tests::a: test\n\n1 tests, 0 benchmarks\n",
+            "libtest never writes one in the plural",
+        ),
+        (
+            "tests::a: test\n\n1 testsuite, 0 benchmarks\n",
+            "a word that only begins with the noun is another word",
+        ),
+    ] {
+        assert_eq!(listing(unclosed.as_bytes()), None, "{why}: {unclosed:?}");
+    }
 }

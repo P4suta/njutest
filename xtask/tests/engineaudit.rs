@@ -193,7 +193,7 @@ fn a_step_limit_is_accounted_for_but_never_counted_as_detected() {
         "selection": { "mutant_steps": 10 },
         "accounting": {
             "killed": 0, "survived": 1, "step_limit_reached": 1, "waited": 0,
-            "inconclusive": 0, "errored": 0
+            "inconclusive": 0, "errored": 0, "unproven": 0, "unproven_killed": 0
         },
         "score": { "detected": 0, "decided": 1, "value": 0.0 },
         "mutants": [{
@@ -222,7 +222,7 @@ fn a_step_limit_notice_must_bind_the_selected_allowance_catalog_and_mutant() {
         "selection": { "mutant_steps": 10 },
         "accounting": {
             "killed": 0, "survived": 1, "step_limit_reached": 1, "waited": 0,
-            "inconclusive": 0, "errored": 0
+            "inconclusive": 0, "errored": 0, "unproven": 0, "unproven_killed": 0
         },
         "score": { "detected": 0, "decided": 1, "value": 0.0 },
         "mutants": [{
@@ -251,7 +251,7 @@ fn a_waited_mutant_is_an_infrastructure_finding_not_a_detection() {
         "run": { "exit_code": 2 },
         "accounting": {
             "killed": 0, "survived": 1, "step_limit_reached": 0, "waited": 1,
-            "inconclusive": 0, "errored": 0
+            "inconclusive": 0, "errored": 0, "unproven": 0, "unproven_killed": 0
         },
         "score": { "detected": 0, "decided": 1, "value": 0.0 },
         "mutants": [
@@ -1058,7 +1058,8 @@ fn a_run_the_interruption_stopped_is_not_a_run_that_lost_its_routes() {
             "duration_ms": 0, "tests_run": null, "killed_by": [], "signal": null,
             "step_notice": null, "retried": false, "lingered": false, "not_run_reason": "interrupted", "declined": [],
             "route": null, "identical": "not-measured",
-            "expected": false, "unreached": false, "source_run_id": null
+            "expected": false, "unreached": false, "source_run_id": null,
+            "evidence": { "kind": "unproven", "reasons": ["not-sealed"] }
         }]
     }));
     let audit = audited_with(&document, &recording());
@@ -1078,11 +1079,19 @@ fn a_run_the_interruption_stopped_is_not_a_run_that_lost_its_routes() {
     );
 }
 
+/// `document` with the row at `at` resting on nothing sealed, which is what a row a native proof or run decided rests on.
+fn native_lead(mut document: serde_json::Value, at: usize) -> serde_json::Value {
+    document["mutants"][at]["evidence"] =
+        serde_json::json!({ "kind": "unproven", "reasons": ["test-absent"] });
+    document
+}
+
 /// One run whose measurement discharged a target from one mutant.
 fn discharging() -> (serde_json::Value, serde_json::Value, serde_json::Value) {
     let report = with(serde_json::json!({
-        "accounting": { "killed": 1, "survived": 0, "not_run": 1, "executed": 1, "discharged": 1 },
-        "score": { "detected": 1, "decided": 1, "value": 1.0 },
+        "accounting": { "killed": 0, "survived": 0, "unproven": 2, "not_run": 0, "executed": 2,
+                        "expected": 0, "unproven_discharged": 1 },
+        "score": null,
         "mutants": [
             {},
             {
@@ -1098,9 +1107,10 @@ fn discharging() -> (serde_json::Value, serde_json::Value, serde_json::Value) {
                 }
             }
         ],
-        "findings": [{ "kind": "discharged-mutant", "mutant": SURVIVED, "detail": "d" }],
+        "findings": [{}, { "kind": "unproven-mutant", "mutant": SURVIVED, "detail": "d" }],
         "expectations": []
     }));
+    let report = native_lead(report, 1);
     let reached = serde_json::json!({
         "targets": { TARGET: [{ "file": "src/lib.rs", "start": { "line": 3, "column": 1 },
                                 "end": { "line": 3, "column": 9 } }] },
@@ -1185,7 +1195,7 @@ fn a_branch_discharge_without_the_evidence_it_rests_on_is_unaudited() {
 fn the_discharged_column_equals_the_records() {
     let (report, reached, catalog) = discharging();
     let mut miscounted = report;
-    miscounted["accounting"]["discharged"] = serde_json::json!(3);
+    miscounted["accounting"]["unproven_discharged"] = serde_json::json!(3);
     let audit = audited_with_evidence(&miscounted, &reached, &catalog);
     assert!(
         violations(&audit, Layer::Proofs)
@@ -1544,9 +1554,10 @@ fn a_run_that_narrowed_by_nothing_the_guards_said_has_nothing_of_theirs_to_re_de
 
 /// A run whose guards discharged the second mutant from the target, by the proof named.
 fn discharged_by_the_guards(proof: &str) -> serde_json::Value {
-    with(serde_json::json!({
-        "accounting": { "killed": 1, "survived": 0, "not_run": 1, "executed": 1, "discharged": 1 },
-        "score": { "detected": 1, "decided": 1, "value": 1.0 },
+    let document = with(serde_json::json!({
+        "accounting": { "killed": 0, "survived": 0, "unproven": 2, "not_run": 0, "executed": 2,
+                        "expected": 0, "unproven_discharged": 1 },
+        "score": null,
         "mutants": [
             {},
             {
@@ -1562,9 +1573,10 @@ fn discharged_by_the_guards(proof: &str) -> serde_json::Value {
                 }
             }
         ],
-        "findings": [{ "kind": "discharged-mutant", "mutant": SURVIVED, "detail": "d" }],
+        "findings": [{}, { "kind": "unproven-mutant", "mutant": SURVIVED, "detail": "d" }],
         "expectations": []
-    }))
+    }));
+    native_lead(document, 1)
 }
 
 /// The record those guards left: one test reached both mutations and saw only the first one's branches part.
@@ -1745,7 +1757,7 @@ fn a_target_every_test_of_which_reached_a_mutation_is_asked_whole_rather_than_na
 }
 
 #[test]
-fn a_mutant_a_proof_removed_is_a_finding_of_its_own_and_not_one_nobody_ran() {
+fn a_mutant_a_native_proof_removed_is_a_lead_and_not_one_nobody_ran() {
     let audit = with_record(
         &discharged_by_the_guards("never-infected"),
         &record_of_a_comparison(&[0]),
@@ -1757,12 +1769,13 @@ fn a_mutant_a_proof_removed_is_a_finding_of_its_own_and_not_one_nobody_ran() {
     );
 
     let mut document = discharged_by_the_guards("never-infected");
-    document["findings"][0]["kind"] = serde_json::json!("not-run-mutant");
+    document["findings"][1]["kind"] = serde_json::json!("not-run-mutant");
     let audit = with_record(&document, &record_of_a_comparison(&[0]));
     let said = violations(&audit, Layer::Findings);
     assert!(
-        said.iter().any(|one| one.contains("discharged-mutant")),
-        "a proof that removed it is not the same hole as a mutant nothing ran: {said:?}"
+        said.iter().any(|one| one.contains("unproven-mutant")),
+        "a proof over what a native run recorded is a lead, not the same hole as a mutant \
+         nothing ran: {said:?}"
     );
     assert!(
         said.iter().any(|one| one.contains("not-run-mutant")),
@@ -1773,13 +1786,17 @@ fn a_mutant_a_proof_removed_is_a_finding_of_its_own_and_not_one_nobody_ran() {
 #[test]
 fn a_mutant_a_filter_left_out_is_accounted_for_rather_than_reported_as_a_hole() {
     let mut document = discharged_by_the_guards("never-infected");
-    document["accounting"]["discharged"] = serde_json::json!(0);
+    document["accounting"]["unproven"] = serde_json::json!(1);
+    document["accounting"]["unproven_discharged"] = serde_json::json!(0);
+    document["accounting"]["not_run"] = serde_json::json!(1);
+    document["accounting"]["executed"] = serde_json::json!(1);
     document["mutants"][1]["not_run_reason"] = serde_json::json!("unselected");
     document["mutants"][1]["route"] = serde_json::json!({
         "granularity": "all", "fallback": null, "reaching": [], "discharged": [],
         "executed": [], "tests": {}
     });
-    document["findings"] = serde_json::json!([]);
+    document["findings"] = serde_json::json!([{ "kind": "unproven-mutant", "mutant": KILLED,
+                                                  "detail": "d" }]);
     let audit = with_record(&document, &record_of_a_comparison(&[0]));
     assert!(
         violations(&audit, Layer::Findings).is_empty(),
@@ -1793,11 +1810,14 @@ fn a_filter_decision_needs_a_select_record_and_no_route_for_an_unvalidated_mutan
     let mut document = base();
     document["accounting"] = serde_json::json!({
         "cataloged": 2, "refused": 1, "skipped": 0, "executed": 1,
-        "killed": 1, "survived": 0, "step_limit_reached": 0, "waited": 0,
-        "inconclusive": 0, "errored": 0, "not_run": 1, "unreached": 0, "discharged": 0, "declined": 0,
-        "expected": 0
+        "killed": 0, "survived": 0, "unproven": 1, "step_limit_reached": 0, "waited": 0,
+        "inconclusive": 0, "errored": 0, "not_run": 1, "unreached": 0, "declined": 0,
+        "expected": 0, "unproven_killed": 1, "unproven_survived": 0, "unproven_unreached": 0,
+        "unproven_discharged": 0
     });
-    document["score"] = serde_json::json!({"detected": 1, "decided": 1, "value": 1.0});
+    document["score"] = serde_json::Value::Null;
+    document["mutants"][1]["evidence"] =
+        serde_json::json!({ "kind": "unproven", "reasons": ["not-sealed"] });
     document["mutants"][1]["outcome"] = serde_json::json!("not_run");
     document["mutants"][1]["target"] = serde_json::json!("");
     document["mutants"][1]["exit_code"] = serde_json::json!(0);

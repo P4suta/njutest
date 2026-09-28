@@ -58,9 +58,9 @@ src/lib.rs:11:11 negate-loop-condition killed
 src/lib.rs:11:16 lt-to-le killed
 src/lib.rs:12:9 delete-compound-assignment killed
 src/lib.rs:12:15 add-assign-to-sub-assign killed
-src/lib.rs:13:9 delete-compound-assignment step_limit_reached
+src/lib.rs:13:9 delete-compound-assignment killed
 src/lib.rs:13:14 add-assign-to-sub-assign killed
-src/lib.rs:13:17 int-decrement step_limit_reached
+src/lib.rs:13:17 int-decrement killed
 src/lib.rs:13:17 int-increment killed
 src/lib.rs:15:5 return-default killed
 src/lib.rs:25:5 return-default killed
@@ -71,7 +71,7 @@ src/lib.rs:25:10 gt-to-ge survived
 src/lib.rs:25:12 int-increment survived
 src/lib.rs:25:16 return-default killed
 src/lib.rs:25:27 int-increment killed
-src/lib.rs:33:18 int-decrement step_limit_reached
+src/lib.rs:33:18 int-decrement killed
 src/lib.rs:33:18 int-increment killed
 src/lib.rs:34:5 return-default killed
 ```

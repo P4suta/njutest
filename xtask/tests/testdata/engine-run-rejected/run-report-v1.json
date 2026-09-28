@@ -1,12 +1,12 @@
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 3,
+  "schema_version": 4,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260926t132045608z",
-    "started_at": "2026-09-26T13:20:45.60871Z",
-    "finished_at": "2026-09-26T13:20:49.115481Z",
-    "duration_ms": 195,
+    "id": "20260928t194726370z",
+    "started_at": "2026-09-28T19:47:26.370279Z",
+    "finished_at": "2026-09-28T19:47:29.549643Z",
+    "duration_ms": 499,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -18,7 +18,7 @@
   "workspace": {
     "root_name": "fixture-rejectable",
     "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "ab9da6f256382f1ae77c2bf1b82dd841274d20c9cd97e8a8172c1d689ace60e8",
+    "workspace_digest": "dab7d2f3200cb7db4c327439bb8d917a5fc186abfacce4963dc9ab86d9c946c2",
     "catalog_digest": "05ce4412ca26140ff556abf263fc400e9b1fa58b1d5908a3e491bfb14ae71d4d",
     "platform": {
       "os": "darwin",
@@ -42,15 +42,19 @@
     "executed": 0,
     "killed": 0,
     "survived": 0,
+    "unproven": 0,
     "step_limit_reached": 0,
     "waited": 0,
     "inconclusive": 0,
     "errored": 0,
     "not_run": 16,
     "unreached": 16,
-    "discharged": 0,
     "declined": 0,
-    "expected": 0
+    "expected": 0,
+    "unproven_killed": 0,
+    "unproven_survived": 0,
+    "unproven_unreached": 0,
+    "unproven_discharged": 0
   },
   "score": null,
   "targets": [
@@ -94,9 +98,9 @@
       "outcome": "not_run",
       "step_notice": null,
       "target": "",
-      "exit_code": -1,
+      "exit_code": 0,
       "duration_ms": 0,
-      "tests_run": null,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -114,7 +118,11 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     },
     {
       "index": 2,
@@ -136,9 +144,9 @@
       "outcome": "not_run",
       "step_notice": null,
       "target": "",
-      "exit_code": -1,
+      "exit_code": 0,
       "duration_ms": 0,
-      "tests_run": null,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -156,7 +164,11 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     },
     {
       "index": 3,
@@ -178,9 +190,9 @@
       "outcome": "not_run",
       "step_notice": null,
       "target": "",
-      "exit_code": -1,
+      "exit_code": 0,
       "duration_ms": 0,
-      "tests_run": null,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -198,7 +210,11 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     },
     {
       "index": 4,
@@ -220,9 +236,9 @@
       "outcome": "not_run",
       "step_notice": null,
       "target": "",
-      "exit_code": -1,
+      "exit_code": 0,
       "duration_ms": 0,
-      "tests_run": null,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -240,7 +256,11 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     },
     {
       "index": 6,
@@ -262,9 +282,9 @@
       "outcome": "not_run",
       "step_notice": null,
       "target": "",
-      "exit_code": -1,
+      "exit_code": 0,
       "duration_ms": 0,
-      "tests_run": null,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -282,7 +302,11 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     },
     {
       "index": 8,
@@ -304,9 +328,9 @@
       "outcome": "not_run",
       "step_notice": null,
       "target": "",
-      "exit_code": -1,
+      "exit_code": 0,
       "duration_ms": 0,
-      "tests_run": null,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -324,7 +348,11 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     },
     {
       "index": 10,
@@ -346,9 +374,9 @@
       "outcome": "not_run",
       "step_notice": null,
       "target": "",
-      "exit_code": -1,
+      "exit_code": 0,
       "duration_ms": 0,
-      "tests_run": null,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -366,7 +394,11 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     },
     {
       "index": 11,
@@ -388,9 +420,9 @@
       "outcome": "not_run",
       "step_notice": null,
       "target": "",
-      "exit_code": -1,
+      "exit_code": 0,
       "duration_ms": 0,
-      "tests_run": null,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -408,7 +440,11 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     },
     {
       "index": 12,
@@ -430,9 +466,9 @@
       "outcome": "not_run",
       "step_notice": null,
       "target": "",
-      "exit_code": -1,
+      "exit_code": 0,
       "duration_ms": 0,
-      "tests_run": null,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -450,7 +486,11 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     },
     {
       "index": 13,
@@ -472,9 +512,9 @@
       "outcome": "not_run",
       "step_notice": null,
       "target": "",
-      "exit_code": -1,
+      "exit_code": 0,
       "duration_ms": 0,
-      "tests_run": null,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -492,7 +532,11 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     },
     {
       "index": 14,
@@ -514,9 +558,9 @@
       "outcome": "not_run",
       "step_notice": null,
       "target": "",
-      "exit_code": -1,
+      "exit_code": 0,
       "duration_ms": 0,
-      "tests_run": null,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -534,7 +578,11 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     },
     {
       "index": 15,
@@ -556,9 +604,9 @@
       "outcome": "not_run",
       "step_notice": null,
       "target": "",
-      "exit_code": -1,
+      "exit_code": 0,
       "duration_ms": 0,
-      "tests_run": null,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -576,7 +624,11 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     },
     {
       "index": 16,
@@ -598,9 +650,9 @@
       "outcome": "not_run",
       "step_notice": null,
       "target": "",
-      "exit_code": -1,
+      "exit_code": 0,
       "duration_ms": 0,
-      "tests_run": null,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -618,7 +670,11 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     },
     {
       "index": 17,
@@ -640,9 +696,9 @@
       "outcome": "not_run",
       "step_notice": null,
       "target": "",
-      "exit_code": -1,
+      "exit_code": 0,
       "duration_ms": 0,
-      "tests_run": null,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -660,7 +716,11 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     },
     {
       "index": 18,
@@ -682,9 +742,9 @@
       "outcome": "not_run",
       "step_notice": null,
       "target": "",
-      "exit_code": -1,
+      "exit_code": 0,
       "duration_ms": 0,
-      "tests_run": null,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -702,7 +762,11 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     },
     {
       "index": 19,
@@ -724,9 +788,9 @@
       "outcome": "not_run",
       "step_notice": null,
       "target": "",
-      "exit_code": -1,
+      "exit_code": 0,
       "duration_ms": 0,
-      "tests_run": null,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -744,7 +808,11 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     }
   ],
   "rejections": [
@@ -795,82 +863,82 @@
     {
       "kind": "unreached-mutant",
       "mutant": "e2dffed807b7c3ecff9e19b213bdcce518894d6113c94af71244e1eb821fd727",
-      "detail": "no measured test reaches e2dffed807b7c3ecff9e: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches e2dffed807b7c3ecff9e: the mutation lives in code the tests never execute"
     },
     {
       "kind": "unreached-mutant",
       "mutant": "0c930c96cec567a5aecddd77e5d4a3b9b0d3f00e5d33461febdfd151b6bfcfb1",
-      "detail": "no measured test reaches 0c930c96cec567a5aecd: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches 0c930c96cec567a5aecd: the mutation lives in code the tests never execute"
     },
     {
       "kind": "unreached-mutant",
       "mutant": "74dff543292f738bf4f8ddb329326927bf9fe67b9988fa0029691c312ac16143",
-      "detail": "no measured test reaches 74dff543292f738bf4f8: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches 74dff543292f738bf4f8: the mutation lives in code the tests never execute"
     },
     {
       "kind": "unreached-mutant",
       "mutant": "2b447674c18cfec8cb80571cb775d6b7f0fbe2298cb30e9cc72da7cc66cf4a83",
-      "detail": "no measured test reaches 2b447674c18cfec8cb80: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches 2b447674c18cfec8cb80: the mutation lives in code the tests never execute"
     },
     {
       "kind": "unreached-mutant",
       "mutant": "c91b019c3096d3da67e47db0305fe6c0dd9c51ea8d1868183b671d8cb6dc014e",
-      "detail": "no measured test reaches c91b019c3096d3da67e4: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches c91b019c3096d3da67e4: the mutation lives in code the tests never execute"
     },
     {
       "kind": "unreached-mutant",
       "mutant": "101660c82f32da889e733c002c6ee135830d8b96dc43941c09245747ac6b7c5b",
-      "detail": "no measured test reaches 101660c82f32da889e73: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches 101660c82f32da889e73: the mutation lives in code the tests never execute"
     },
     {
       "kind": "unreached-mutant",
       "mutant": "147a882edea25df5f399c6dc1d1f6be09f3527a4de9ca73810460fb3134667f9",
-      "detail": "no measured test reaches 147a882edea25df5f399: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches 147a882edea25df5f399: the mutation lives in code the tests never execute"
     },
     {
       "kind": "unreached-mutant",
       "mutant": "f132e49a90d7f91bcbb2eb27642dd37d01b4f6557f026b6a7fdb0c846be238ce",
-      "detail": "no measured test reaches f132e49a90d7f91bcbb2: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches f132e49a90d7f91bcbb2: the mutation lives in code the tests never execute"
     },
     {
       "kind": "unreached-mutant",
       "mutant": "b83c3f68ace51ef21bd253133f1510a93f8974fff37a77008494ed625f31da7a",
-      "detail": "no measured test reaches b83c3f68ace51ef21bd2: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches b83c3f68ace51ef21bd2: the mutation lives in code the tests never execute"
     },
     {
       "kind": "unreached-mutant",
       "mutant": "53ae38317981d0442f77f979466db1d6a811aae89fbf66efa0a06c473dc5f944",
-      "detail": "no measured test reaches 53ae38317981d0442f77: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches 53ae38317981d0442f77: the mutation lives in code the tests never execute"
     },
     {
       "kind": "unreached-mutant",
       "mutant": "fa15cb617f196aa4ee58ccdf7109a4db305dc78f4fb23d38a069abd69878d307",
-      "detail": "no measured test reaches fa15cb617f196aa4ee58: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches fa15cb617f196aa4ee58: the mutation lives in code the tests never execute"
     },
     {
       "kind": "unreached-mutant",
       "mutant": "5a5004389478a3b39b3cdbc7aef5acf800a710013b1564fb25e79a6b29abee06",
-      "detail": "no measured test reaches 5a5004389478a3b39b3c: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches 5a5004389478a3b39b3c: the mutation lives in code the tests never execute"
     },
     {
       "kind": "unreached-mutant",
       "mutant": "b78b561e6154a158a820ee68697bd9710209b911a6c50d4837bcf0871401569e",
-      "detail": "no measured test reaches b78b561e6154a158a820: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches b78b561e6154a158a820: the mutation lives in code the tests never execute"
     },
     {
       "kind": "unreached-mutant",
       "mutant": "164baa2b358ffc89771ffac24efca3be885da4aa04838ef39428771fc93d66c8",
-      "detail": "no measured test reaches 164baa2b358ffc89771f: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches 164baa2b358ffc89771f: the mutation lives in code the tests never execute"
     },
     {
       "kind": "unreached-mutant",
       "mutant": "2435d01ca907fa92f4b2ad6efb2ef6f3d1a5b9986efce1e705031fc20ce2c420",
-      "detail": "no measured test reaches 2435d01ca907fa92f4b2: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches 2435d01ca907fa92f4b2: the mutation lives in code the tests never execute"
     },
     {
       "kind": "unreached-mutant",
       "mutant": "8a5af3ac89db2e59cee2f37029e04801ab8a41b7fff6f6a17e2deefa785b841b",
-      "detail": "no measured test reaches 8a5af3ac89db2e59cee2: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches 8a5af3ac89db2e59cee2: the mutation lives in code the tests never execute"
     }
   ],
   "facts": [

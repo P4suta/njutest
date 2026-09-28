@@ -32,8 +32,8 @@ use std::path::{Path, PathBuf};
 
 use rust_mutants::runner::Cancel;
 
-/// The exit code of a usage error or an infrastructure failure.
-pub const EXIT_USAGE: u8 = run::Exit::Unestablished.code();
+/// The exit code of a usage error or of a command that failed rather than answered.
+pub const EXIT_USAGE: u8 = run::Exit::Failed.code();
 
 /// Everything the command line needs from the process it runs in.
 #[derive(Debug, Clone)]

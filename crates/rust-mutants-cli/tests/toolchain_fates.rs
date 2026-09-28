@@ -103,7 +103,7 @@ fn recorded(fixture: &Fixture, args: &[String]) -> Vec<Fate> {
     if !test_directory(&directory) {
         assert_eq!(
             code,
-            Some(2),
+            Some(i32::from(rust_mutants::run::EXIT_FAILED)),
             "a run that wrote no report at all is a run that was refused, and nothing else: \
              {said}"
         );
@@ -157,7 +157,9 @@ fn rows(report: &Path) -> Vec<Fate> {
             line: number(row, "line"),
             column: number(row, "column"),
             rule: text(row, "rule"),
-            outcome: if row["unreached"].as_bool().unwrap_or(false) {
+            outcome: if row["evidence"]["kind"] == "unproven" {
+                "unproven".to_owned()
+            } else if row["unreached"].as_bool().unwrap_or(false) {
                 "unreached".to_owned()
             } else {
                 text(row, "outcome")

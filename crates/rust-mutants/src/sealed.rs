@@ -34,6 +34,8 @@ pub enum Unsealed {
     ProcMacro,
     /// The module's harness did not list its tests on the sealed host.
     NotListed,
+    /// The target has no libtest harness: it answers by its exit code alone, which no sealed execution can tell from a test that exited early.
+    NoHarness,
 }
 
 impl Unsealed {
@@ -56,6 +58,10 @@ impl Unsealed {
             }
             Self::NotListed => {
                 "run the module with --list on wasmtime to see why its harness did not list its tests"
+            }
+            Self::NoHarness => {
+                "give the target libtest's harness, which `harness = false` takes away, so that each \
+                 of its tests says how it ended"
             }
         }
     }
@@ -140,7 +146,7 @@ impl SealedBuild {
         let mut modules = BTreeMap::new();
         for build in compiled {
             for target in crate::execute::targets_of(&build.messages, packages, target_dir)? {
-                if target.kind() == crate::execute::TargetKind::ProcMacro {
+                if target.kind() == crate::execute::TargetKind::ProcMacro || !target.harness {
                     continue;
                 }
                 let sources = sources_of(&target, &build.units, packages);
@@ -152,6 +158,14 @@ impl SealedBuild {
             .filter(|target| !modules.contains_key(target.id()))
             .map(|target| {
                 let why = match target.kind() {
+                    crate::execute::TargetKind::Lib
+                    | crate::execute::TargetKind::Bin
+                    | crate::execute::TargetKind::Test
+                    | crate::execute::TargetKind::Example
+                        if !target.harness =>
+                    {
+                        Unsealed::NoHarness
+                    }
                     crate::execute::TargetKind::Doc => Unsealed::Doctest,
                     crate::execute::TargetKind::ProcMacro => Unsealed::ProcMacro,
                     crate::execute::TargetKind::Lib
@@ -190,6 +204,7 @@ fn sources_of(target: &TestTarget, units: &[Unit], packages: &[Package]) -> BTre
 }
 
 pub mod bench;
+pub mod record;
 pub mod standing;
 
 #[cfg(test)]

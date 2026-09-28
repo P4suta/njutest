@@ -9,7 +9,8 @@ use serde_json::Value;
 
 use super::{
     Audit, BRANCH_NEVER_TAKEN, CheckedEvidence, DISCHARGED, Decided, Granularity, KILLED, Layer,
-    NEVER_INFECTED, NOT_RUN, Notes, Report, RouteDecision, Row, count, number, plural, string,
+    NEVER_INFECTED, NOT_RUN, Notes, Report, RouteDecision, Row, UNPROVEN_DISCHARGED, count, number,
+    plural, string,
 };
 
 /// Every place a rule targets, against the decision the walk took about it.
@@ -682,7 +683,7 @@ pub(super) fn proofs(
         .iter()
         .filter(|row| row.not_run(DISCHARGED))
         .count();
-    let Some(counted) = report.column(DISCHARGED) else {
+    let Some(counted) = report.column(UNPROVEN_DISCHARGED) else {
         notes.unaudited(
             DISCHARGED,
             "the report carries no discharged accounting column".to_owned(),

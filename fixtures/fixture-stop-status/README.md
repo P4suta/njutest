@@ -15,5 +15,5 @@ The engine's own score reads any non-zero exit as a kill, which is what the fate
 | `src/lib.rs` | lib | one `crash-after-write` at the call that writes |
 
 ```fates --operator crash-after-write
-src/lib.rs:16:5 crash-after-write killed
+src/lib.rs:16:5 crash-after-write unproven
 ```

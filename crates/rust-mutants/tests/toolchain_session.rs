@@ -20,6 +20,7 @@ use rust_mutants::rule::Tier;
 use rust_mutants::run::Filter;
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::{Observing, PrepareOptions, Request, Session};
+use rust_mutants::testkit::evidence::sealed_as;
 use rust_mutants::testkit::opening::opening;
 use rust_mutants::trace::{MutantExecRecord, Payload, PhaseRecord, ValidateRoundRecord};
 use rust_mutants::workspace::{OpenOptions, Workspace};
@@ -1103,6 +1104,7 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
             source_run_id: None,
             declined: Vec::new(),
             step_notice: None,
+            evidence: sealed_as(outcome, None, "fixture-simple/lib/fixture_simple"),
         }
     };
 
@@ -1142,6 +1144,8 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
         one.expected = false;
     }
     one_killed[indices.len() - 1].outcome = Outcome::Killed;
+    one_killed[indices.len() - 1].evidence =
+        sealed_as(Outcome::Killed, None, "fixture-simple/lib/fixture_simple");
     let broken = rust_mutants::run::verify(
         &session,
         std::slice::from_ref(&expectation),
@@ -1228,7 +1232,20 @@ fn a_claim_on_a_mutation_the_run_measured_nothing_about_is_unjudged_rather_than_
         outcome: Outcome::Killed,
         under: rust_mutants::run::Where::default(),
     };
-    for reason in NotRunReason::ALL {
+    for (reason, evidence) in NotRunReason::ALL.into_iter().flat_map(|reason| {
+        [
+            (
+                reason,
+                sealed_as(
+                    Outcome::NotRun,
+                    Some(reason),
+                    "fixture-simple/lib/fixture_simple",
+                ),
+            ),
+            (reason, rust_mutants::sealed::record::Evidence::not_sealed()),
+        ]
+    }) {
+        let class = evidence.class();
         let mut rows = [rust_mutants::run::Judged {
             index: mutant.index,
             id: mutant.id.to_string(),
@@ -1252,6 +1269,7 @@ fn a_claim_on_a_mutation_the_run_measured_nothing_about_is_unjudged_rather_than_
             source_run_id: None,
             declined: Vec::new(),
             step_notice: None,
+            evidence,
         }];
         let verified = rust_mutants::run::verify(
             &session,
@@ -1265,10 +1283,18 @@ fn a_claim_on_a_mutation_the_run_measured_nothing_about_is_unjudged_rather_than_
                 outcome: Outcome::NotRun,
                 not_run_reason: Some(reason),
                 expected: false,
+                evidence: class,
             },
             false,
         );
         match raises {
+            Some(rust_mutants::run::FindingKind::UnprovenMutant) => assert_eq!(
+                verified[0].standing,
+                Standing::Unjudged,
+                "a mutation not run because it was {} with nothing sealed is a lead, and a lead \
+                 neither meets a claim nor contradicts one",
+                reason.name()
+            ),
             None => assert_eq!(
                 verified[0].standing,
                 Standing::Unjudged,

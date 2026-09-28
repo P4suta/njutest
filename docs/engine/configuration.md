@@ -36,6 +36,7 @@ timeout = "auto"               # auto = 5x the target's own baseline, never belo
 steps = 50_000_000             # guard takes one mutant may spend; 0 = no step limit
 build_timeout = ""             # empty = no bound
 verify = true                  # run the instrumented baseline first
+seal = true                    # decide each mutant from its sealed executions; false makes every answer a lead
 coverage = false               # build once with LLVM coverage and route by its regions as well
 touch = true                   # ask the guards which tests reached them, and run only those
 

@@ -40,6 +40,6 @@ pub const fn switches() -> PrepareOptions {
         },
         skip_targets: Vec::new(),
         validation_filter: None,
-        sealing: rust_mutants::sealed::Sealing::Off,
+        sealing: rust_mutants::sealed::Sealing::On,
     }
 }

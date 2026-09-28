@@ -13,6 +13,31 @@ use std::time::Duration;
 use njutest_devkit::result::{ResultState::Returned, result_state};
 use rust_mutants::outcome::Outcome;
 use rust_mutants::run::{CodegenIdentity, Finding, FindingKind, Judged, Run, Standing, Verified};
+use rust_mutants::sealed::record::{Came, Evidence, SealedRun};
+
+fn sealed(came_to: &[Came]) -> Evidence {
+    Evidence::Sealed {
+        executions: came_to
+            .iter()
+            .map(|came_to| SealedRun {
+                target: "demo/lib/demo".to_owned(),
+                test: "tests::one".to_owned(),
+                came_to: *came_to,
+            })
+            .collect(),
+    }
+}
+
+fn evidence_of(outcome: Outcome) -> Evidence {
+    match outcome {
+        Outcome::Killed => sealed(&[Came::Panicked]),
+        Outcome::Survived => sealed(&[Came::Passed]),
+        Outcome::NotRun => sealed(&[]),
+        Outcome::StepLimitReached | Outcome::Waited | Outcome::Inconclusive | Outcome::Errored => {
+            Evidence::not_sealed()
+        }
+    }
+}
 
 fn judged(index: u32, outcome: Outcome) -> Judged {
     Judged {
@@ -38,6 +63,7 @@ fn judged(index: u32, outcome: Outcome) -> Judged {
         source_run_id: None,
         declined: Vec::new(),
         step_notice: None,
+        evidence: evidence_of(outcome),
     }
 }
 
@@ -269,8 +295,8 @@ fn the_exit_code_says_what_the_run_established_and_nothing_more() {
     );
     assert_eq!(
         of(vec![judged(0, Outcome::Inconclusive)]).exit_code(),
-        1,
-        "a run that could not decide has not established detection"
+        2,
+        "a run that could not decide either way established nothing, which is what unproven is"
     );
     assert_eq!(
         of(vec![judged(0, Outcome::Errored)]).exit_code(),
@@ -292,6 +318,42 @@ fn the_exit_code_says_what_the_run_established_and_nothing_more() {
             .all(|finding| finding.kind != FindingKind::NotRunMutant),
         "what the interruption stopped is the interruption, not a hole"
     );
+}
+
+#[test]
+fn what_only_a_native_run_said_is_a_lead_and_the_run_ends_unproven_whatever_it_said() {
+    for outcome in [Outcome::Killed, Outcome::Survived] {
+        let mut lead = judged(0, outcome);
+        lead.evidence = Evidence::not_sealed();
+        let run = of(vec![lead, judged(1, Outcome::Killed)]);
+        let kinds: Vec<FindingKind> = run.findings().iter().map(|finding| finding.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![FindingKind::UnprovenMutant],
+            "a native {} is a lead: it raises the one finding that says so, and the sealed kill \
+             beside it raises none",
+            outcome.name()
+        );
+        assert_eq!(
+            run.exit_code(),
+            2,
+            "a native {} leaves the run unproven, which a sealed kill elsewhere does not mend",
+            outcome.name()
+        );
+    }
+    let mut unreached = judged(0, Outcome::NotRun);
+    unreached.not_run_reason = Some(rust_mutants::run::NotRunReason::Unreached);
+    unreached.evidence = Evidence::not_sealed();
+    let run = of(vec![unreached]);
+    assert_eq!(
+        run.findings()
+            .iter()
+            .map(|finding| finding.kind)
+            .collect::<Vec<_>>(),
+        vec![FindingKind::UnprovenMutant],
+        "a mutation no native test reached is a lead too: only a sealed control says what reaches it"
+    );
+    assert_eq!(run.exit_code(), 2);
 }
 
 #[test]
@@ -426,7 +488,7 @@ fn a_shard_nobody_could_have_meant_is_refused_by_the_text_it_was_given() {
 }
 
 #[test]
-fn a_proof_removing_a_mutation_and_nothing_reaching_it_are_counted_and_named_apart() {
+fn nothing_sealed_reaching_a_mutation_and_a_native_proof_removing_it_are_counted_and_named_apart() {
     use rust_mutants::run::NotRunReason;
 
     let unrun = |index: u32, why: NotRunReason| {
@@ -434,9 +496,11 @@ fn a_proof_removing_a_mutation_and_nothing_reaching_it_are_counted_and_named_apa
         one.not_run_reason = Some(why);
         one
     };
+    let mut discharged = unrun(2, NotRunReason::Discharged);
+    discharged.evidence = Evidence::not_sealed();
     let run = of(vec![
         unrun(1, NotRunReason::Unreached),
-        unrun(2, NotRunReason::Discharged),
+        discharged,
         judged(3, Outcome::Killed),
     ]);
 
@@ -448,28 +512,34 @@ fn a_proof_removing_a_mutation_and_nothing_reaching_it_are_counted_and_named_apa
     );
     let Ok(tally) = tally else { return };
     assert_eq!(
-        (tally.unreached, tally.discharged, tally.not_run),
-        (1, 1, 2),
-        "each reason is counted in its own column, or a reader is told a proof removed what \
-         nothing reached: {tally:?}"
+        (
+            tally.unreached,
+            tally.not_run,
+            tally.unproven_discharged,
+            tally.unproven
+        ),
+        (1, 1, 1, 1),
+        "nothing sealed reaching a mutation is a verdict counted where the mutants that never ran \
+         are, and a proof over what a native run recorded is a lead counted with the unproven: \
+         {tally:?}"
     );
     let found = run.findings();
     let kinds: Vec<FindingKind> = found.iter().map(|one| one.kind).collect();
     assert_eq!(
         kinds,
-        [FindingKind::UnreachedMutant, FindingKind::DischargedMutant],
+        [FindingKind::UnreachedMutant, FindingKind::UnprovenMutant],
         "and the finding says the same, in the order the rows are in: a reader told the wrong \
-         one checks the proof when they should write a test, or the other way about"
+         one writes a test where they should seal one, or the other way about"
     );
     assert!(
-        found[0].detail.contains("no measured test reaches")
+        found[0].detail.contains("no sealed test reaches")
             && found[0].detail.contains("never execute"),
         "and the sentence the reader acts on says that nothing ran the code: {:?}",
         found[0].detail
     );
     assert!(
-        found[1].detail.contains("removed by a proof") && found[1].detail.contains("never observe"),
-        "and that a proof removed every target that could have noticed: {:?}",
+        found[1].detail.contains("discharged is a lead"),
+        "and that what a native proof said is a lead: {:?}",
         found[1].detail
     );
     for (at, one) in found.iter().enumerate() {

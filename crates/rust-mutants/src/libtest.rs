@@ -224,5 +224,55 @@ pub fn account(output: &[u8], asked: Asked<'_>, exit: Option<i32>) -> Result<Acc
     })
 }
 
+/// The tests a harness listed with `--list`, where the listing closed with the count libtest ends one with and every name it listed comes to that count; nothing where the harness did not account for its listing so.
+#[must_use]
+pub fn listing(output: &[u8]) -> Option<Vec<String>> {
+    let Ok(text) = std::str::from_utf8(output) else {
+        return None;
+    };
+    let mut lines: Vec<&str> = text.lines().filter(|line| !line.is_empty()).collect();
+    let (tests, benchmarks) = closing(lines.pop()?)?;
+    let mut names = Vec::new();
+    let mut benched = 0_u32;
+    for line in lines {
+        if let Some(name) = line.strip_suffix(": test") {
+            names.push(name.to_owned());
+        } else if line.strip_suffix(": benchmark").is_some() {
+            benched = benched.checked_add(1)?;
+        } else {
+            return None;
+        }
+    }
+    let listed = match u32::try_from(names.len()) {
+        Ok(listed) => listed,
+        Err(_too_many) => return None,
+    };
+    (listed == tests && benched == benchmarks).then_some(names)
+}
+
+/// The counts a listing's closing line states: `2 tests, 1 benchmark`.
+fn closing(line: &str) -> Option<(u32, u32)> {
+    let (tests, benchmarks) = line.split_once(", ")?;
+    Some((counted(tests, "test")?, counted(benchmarks, "benchmark")?))
+}
+
+/// The number `said` counts of `noun`, in the singular exactly where it is one.
+fn counted(said: &str, noun: &str) -> Option<u32> {
+    let (number, word) = said.split_once(' ')?;
+    let Ok(number) = number.parse::<u32>() else {
+        return None;
+    };
+    let plural = match word.strip_prefix(noun) {
+        Some("") => Some(false),
+        Some("s") => Some(true),
+        Some(_) | None => None,
+    };
+    match (number, plural) {
+        (1, Some(false)) => Some(1),
+        (1, Some(true) | None) | (_, None | Some(false)) => None,
+        (_, Some(true)) => Some(number),
+    }
+}
+
 #[cfg(test)]
 mod tests;

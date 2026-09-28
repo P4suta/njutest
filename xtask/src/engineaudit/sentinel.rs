@@ -46,7 +46,8 @@ fn killed() -> Value {
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
         "identical": "not-measured", "expected": false, "unreached": false,
-        "source_run_id": null
+        "source_run_id": null,
+        "evidence": { "kind": "unproven", "reasons": ["test-absent"] }
     })
 }
 
@@ -67,11 +68,15 @@ fn survived() -> Value {
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
         "identical": "not-measured", "expected": true, "unreached": false,
-        "source_run_id": null
+        "source_run_id": null,
+        "evidence": { "kind": "sealed", "executions": [
+            { "target": TARGET, "test": "larger_works", "came_to": "passed" },
+            { "target": TARGET, "test": "smaller_works", "came_to": "passed" }
+        ] }
     })
 }
 
-/// A run of three candidates: one killed, one accepted survivor, one the compiler refused.
+/// A run of three candidates: one a native run killed and nothing sealed decided, one sealed survivor a reviewer accepted, one the compiler refused.
 #[must_use]
 pub fn base() -> Value {
     json!({
@@ -84,7 +89,7 @@ pub fn base() -> Value {
             "finished_at": "2026-09-06T10:15:02Z",
             "duration_ms": 2000,
             "interrupted": false,
-            "exit_code": 0,
+            "exit_code": 2,
             "shard": null,
             "jobs": {"asked": "auto", "used": 1}
         },
@@ -105,11 +110,12 @@ pub fn base() -> Value {
         "established_tests": 0,
         "accounting": {
             "cataloged": 2, "refused": 1, "skipped": 0, "executed": 2,
-            "killed": 1, "survived": 1, "step_limit_reached": 0, "waited": 0,
+            "killed": 0, "survived": 1, "unproven": 1, "step_limit_reached": 0, "waited": 0,
             "inconclusive": 0, "errored": 0, "not_run": 0, "unreached": 0,
-            "discharged": 0, "declined": 0, "expected": 1
+            "declined": 0, "expected": 1, "unproven_killed": 1, "unproven_survived": 0,
+            "unproven_unreached": 0, "unproven_discharged": 0
         },
-        "score": { "detected": 1, "decided": 2, "value": 0.5 },
+        "score": { "detected": 0, "decided": 1, "value": 0.0 },
         "mutants": [killed(), survived()],
         "rejections": [
             {
@@ -128,7 +134,8 @@ pub fn base() -> Value {
                 "standing": "met", "actual": "survived", "why": null, "where": null
             }
         ],
-        "findings": [],
+        "findings": [{ "kind": "unproven-mutant", "mutant": KILLED,
+                       "detail": "no sealed execution established a verdict about it" }],
         "facts": ["panic=\"unwind\"", "target_os=\"linux\"", "unix"]
     })
 }
@@ -899,12 +906,12 @@ fn inserted(at: usize, event: Value) -> Vec<Value> {
     events
 }
 
-/// A report whose second mutant a measurement discharged from the one target.
+/// A report whose second mutant a measurement discharged from the one target, which is a lead.
 fn discharged() -> Value {
-    with(json!({
-        "accounting": { "killed": 1, "survived": 0, "not_run": 1, "executed": 1, "discharged": 1,
-                        "expected": 0 },
-        "score": { "detected": 1, "decided": 1, "value": 1.0 },
+    let mut document = with(json!({
+        "accounting": { "killed": 0, "survived": 0, "unproven": 2, "not_run": 0, "executed": 2,
+                        "expected": 0, "unproven_discharged": 1 },
+        "score": null,
         "mutants": [
             {},
             {
@@ -920,10 +927,13 @@ fn discharged() -> Value {
                 }
             }
         ],
-        "findings": [{ "kind": "discharged-mutant", "mutant": SURVIVED, "detail": "d" }],
-        "expectations": [],
-        "run": { "exit_code": 1 }
-    }))
+        "findings": [{}, { "kind": "unproven-mutant", "mutant": SURVIVED, "detail": "d" }],
+        "expectations": []
+    }));
+    if let Some(evidence) = document.pointer_mut("/mutants/1/evidence") {
+        *evidence = json!({ "kind": "unproven", "reasons": ["test-absent"] });
+    }
+    document
 }
 
 /// The recording of [`discharged`]: the second mutant's route removed its one target, and nothing ran it.
@@ -1047,9 +1057,8 @@ impl Layer {
                 document: with(json!({
                     "accounting": { "expected": 0 },
                     "mutants": [{}, { "expected": false }],
-                    "findings": [{ "kind": "surviving-mutant", "mutant": short(SURVIVED),
-                                   "detail": "no test noticed it" }],
-                    "run": { "exit_code": 1 }
+                    "findings": [{}, { "kind": "surviving-mutant", "mutant": short(SURVIVED),
+                                       "detail": "no test noticed it" }]
                 })),
                 ..clean
             }],
@@ -1206,6 +1215,13 @@ impl Layer {
                 },
             ],
             Self::Carry => carry_plants(),
+            Self::Sealed => vec![Perturbation {
+                name: "a sealed survivor whose execution detected the mutation",
+                document: with(json!({
+                    "mutants": [{}, { "evidence": { "executions": [{ "came_to": "panicked" }] } }]
+                })),
+                ..clean
+            }],
         }
     }
 }

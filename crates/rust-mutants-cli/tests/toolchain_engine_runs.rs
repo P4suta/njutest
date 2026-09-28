@@ -69,7 +69,7 @@ fn recorded(fixture: &Fixture) -> PathBuf {
     let output = command.output().expect("rust-mutants runs");
     let answered = match output.status.code().and_then(Exit::read) {
         Some(Exit::Detected | Exit::Found | Exit::Unestablished) => true,
-        Some(Exit::Interrupted | Exit::Terminated) | None => false,
+        Some(Exit::Failed | Exit::Interrupted | Exit::Terminated) | None => false,
     };
     assert!(
         answered,

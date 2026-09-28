@@ -17,7 +17,7 @@ use rust_mutants::work::{Removal, Work};
 fn document(targets: &[&str], rows: &[serde_json::Value]) -> RunDocument {
     let value = serde_json::json!({
         "document_type": "rust-mutants/run-report",
-        "schema_version": 3,
+        "schema_version": 4,
         "tool_version": "0.1.0",
         "run": {
             "id": "20260907T000000000Z",
@@ -48,8 +48,10 @@ fn document(targets: &[&str], rows: &[serde_json::Value]) -> RunDocument {
             .collect::<Vec<_>>(),
         "accounting": {
             "cataloged": rows.len(), "refused": 0, "skipped": 0, "executed": 0,
-            "killed": 0, "survived": 0, "step_limit_reached": 0, "waited": 0, "inconclusive": 0, "errored": 0,
-            "not_run": 0, "unreached": 0, "discharged": 0, "declined": 0, "expected": 0
+            "killed": 0, "survived": 0, "unproven": 0, "step_limit_reached": 0, "waited": 0,
+            "inconclusive": 0, "errored": 0, "not_run": 0, "unreached": 0, "declined": 0,
+            "expected": 0, "unproven_killed": 0, "unproven_survived": 0, "unproven_unreached": 0,
+            "unproven_discharged": 0
         },
         "score": null,
         "established_tests": 0,
@@ -98,7 +100,8 @@ fn row(index: u32, extra: &serde_json::Value) -> serde_json::Value {
         "identical": "not-measured",
         "expected": false,
         "unreached": false,
-        "source_run_id": null
+        "source_run_id": null,
+        "evidence": {"kind": "unproven", "reasons": ["not-sealed"]}
     });
     let (Some(object), Some(more)) = (value.as_object_mut(), extra.as_object()) else {
         panic!("both are objects");

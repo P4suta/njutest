@@ -18,10 +18,10 @@ The run now sees the child say it lost the environment, names `cleared` with `un
 | `src/lib.rs` | lib | `answer`: its return and its arithmetic |
 
 ```fates
-src/lib.rs:8:5 int-decrement inconclusive
-src/lib.rs:8:5 int-increment inconclusive
-src/lib.rs:8:5 return-default inconclusive
-src/lib.rs:8:8 add-to-sub inconclusive
-src/lib.rs:8:10 int-decrement inconclusive
-src/lib.rs:8:10 int-increment inconclusive
+src/lib.rs:8:5 int-decrement unproven
+src/lib.rs:8:5 int-increment unproven
+src/lib.rs:8:5 return-default unproven
+src/lib.rs:8:8 add-to-sub unproven
+src/lib.rs:8:10 int-decrement unproven
+src/lib.rs:8:10 int-increment unproven
 ```

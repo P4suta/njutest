@@ -210,15 +210,19 @@ struct Accounting {
     executed: u64,
     killed: u64,
     survived: u64,
+    unproven: u64,
     step_limit_reached: u64,
     waited: u64,
     inconclusive: u64,
     errored: u64,
     not_run: u64,
     unreached: u64,
-    discharged: u64,
     declined: u64,
     expected: u64,
+    unproven_killed: u64,
+    unproven_survived: u64,
+    unproven_unreached: u64,
+    unproven_discharged: u64,
 }
 
 impl Accounting {
@@ -230,15 +234,19 @@ impl Accounting {
             ("executed".to_owned(), self.executed),
             ("killed".to_owned(), self.killed),
             ("survived".to_owned(), self.survived),
+            ("unproven".to_owned(), self.unproven),
             ("step_limit_reached".to_owned(), self.step_limit_reached),
             ("waited".to_owned(), self.waited),
             ("inconclusive".to_owned(), self.inconclusive),
             ("errored".to_owned(), self.errored),
             ("not_run".to_owned(), self.not_run),
             ("unreached".to_owned(), self.unreached),
-            ("discharged".to_owned(), self.discharged),
             ("declined".to_owned(), self.declined),
             ("expected".to_owned(), self.expected),
+            ("unproven_killed".to_owned(), self.unproven_killed),
+            ("unproven_survived".to_owned(), self.unproven_survived),
+            ("unproven_unreached".to_owned(), self.unproven_unreached),
+            ("unproven_discharged".to_owned(), self.unproven_discharged),
         ])
     }
 }
@@ -331,6 +339,7 @@ struct Mutant {
     unreached: bool,
     #[serde(deserialize_with = "required_option")]
     source_run_id: Option<String>,
+    evidence: super::Resting,
 }
 
 /// What the engine's compiler-artifact comparison established about one mutant, as the published run report spells it.
@@ -383,6 +392,7 @@ impl Mutant {
             expected,
             unreached,
             source_run_id,
+            evidence,
         } = self;
         let route = route.map(Route::decision);
         let step_notice = step_notice.map(StepNoticeWire::notice);
@@ -412,6 +422,7 @@ impl Mutant {
             not_run_reason,
             source_run_id,
             declined,
+            evidence,
         }
     }
 }

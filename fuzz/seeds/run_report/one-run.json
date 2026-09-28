@@ -1,6 +1,6 @@
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 3,
+  "schema_version": 4,
   "tool_version": "0.1.0",
   "run": {
     "id": "current-v1",
@@ -8,8 +8,12 @@
     "finished_at": "2026-09-19T17:35:53.601717Z",
     "duration_ms": 130,
     "interrupted": false,
-    "exit_code": 1,
-    "shard": null, "jobs": {"asked": "auto", "used": 1}
+    "exit_code": 2,
+    "shard": null,
+    "jobs": {
+      "asked": "auto",
+      "used": 1
+    }
   },
   "workspace": {
     "root_name": "fixture-simple",
@@ -35,18 +39,22 @@
     "cataloged": 13,
     "refused": 0,
     "skipped": 23,
-    "executed": 12,
+    "executed": 13,
     "killed": 12,
     "survived": 0,
+    "unproven": 1,
     "step_limit_reached": 0,
     "waited": 0,
     "inconclusive": 0,
     "errored": 0,
-    "not_run": 1,
+    "not_run": 0,
     "unreached": 0,
-    "discharged": 1,
     "declined": 0,
-    "expected": 0
+    "expected": 0,
+    "unproven_killed": 0,
+    "unproven_survived": 0,
+    "unproven_unreached": 0,
+    "unproven_discharged": 1
   },
   "score": {
     "detected": 12,
@@ -127,7 +135,17 @@
       "signal": null,
       "not_run_reason": null,
       "declined": [],
-      "identical": "not-measured"
+      "identical": "not-measured",
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-simple/lib/fixture_simple",
+            "test": "tests::max_picks_the_larger",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 1,
@@ -175,7 +193,17 @@
       "signal": null,
       "not_run_reason": null,
       "declined": [],
-      "identical": "not-measured"
+      "identical": "not-measured",
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-simple/lib/fixture_simple",
+            "test": "tests::max_picks_the_larger",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 2,
@@ -223,7 +251,17 @@
       "signal": null,
       "not_run_reason": null,
       "declined": [],
-      "identical": "not-measured"
+      "identical": "not-measured",
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-simple/lib/fixture_simple",
+            "test": "tests::max_picks_the_larger",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 3,
@@ -271,7 +309,17 @@
       "signal": null,
       "not_run_reason": null,
       "declined": [],
-      "identical": "not-measured"
+      "identical": "not-measured",
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-simple/lib/fixture_simple",
+            "test": "tests::max_picks_the_larger",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 4,
@@ -318,7 +366,13 @@
       "step_notice": null,
       "signal": null,
       "identical": "not-measured",
-      "killed_by": []
+      "killed_by": [],
+      "evidence": {
+        "kind": "unproven",
+        "reasons": [
+          "not-sealed"
+        ]
+      }
     },
     {
       "index": 5,
@@ -366,7 +420,17 @@
       "signal": null,
       "not_run_reason": null,
       "declined": [],
-      "identical": "not-measured"
+      "identical": "not-measured",
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-simple/lib/fixture_simple",
+            "test": "tests::max_picks_the_larger",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 6,
@@ -414,7 +478,17 @@
       "signal": null,
       "not_run_reason": null,
       "declined": [],
-      "identical": "not-measured"
+      "identical": "not-measured",
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-simple/lib/fixture_simple",
+            "test": "tests::max_picks_the_larger",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 7,
@@ -462,7 +536,17 @@
       "signal": null,
       "not_run_reason": null,
       "declined": [],
-      "identical": "not-measured"
+      "identical": "not-measured",
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-simple/test/parity",
+            "test": "even_numbers_are_even",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 8,
@@ -510,7 +594,17 @@
       "signal": null,
       "not_run_reason": null,
       "declined": [],
-      "identical": "not-measured"
+      "identical": "not-measured",
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-simple/test/parity",
+            "test": "even_numbers_are_even",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 9,
@@ -558,7 +652,17 @@
       "signal": null,
       "not_run_reason": null,
       "declined": [],
-      "identical": "not-measured"
+      "identical": "not-measured",
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-simple/test/parity",
+            "test": "even_numbers_are_even",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 10,
@@ -606,7 +710,17 @@
       "signal": null,
       "not_run_reason": null,
       "declined": [],
-      "identical": "not-measured"
+      "identical": "not-measured",
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-simple/test/parity",
+            "test": "even_numbers_are_even",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 11,
@@ -654,7 +768,17 @@
       "signal": null,
       "not_run_reason": null,
       "declined": [],
-      "identical": "not-measured"
+      "identical": "not-measured",
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-simple/test/parity",
+            "test": "even_numbers_are_even",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 12,
@@ -702,7 +826,17 @@
       "signal": null,
       "not_run_reason": null,
       "declined": [],
-      "identical": "not-measured"
+      "identical": "not-measured",
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-simple/test/parity",
+            "test": "even_numbers_are_even",
+            "came_to": "panicked"
+          }
+        ]
+      }
     }
   ],
   "rejections": [],
@@ -723,9 +857,9 @@
   "expectations": [],
   "findings": [
     {
-      "kind": "discharged-mutant",
+      "kind": "unproven-mutant",
       "mutant": "16b0cd40508fc0785477d495daa14695fcff4d61ada9eb35a8c2c995eb1f881f",
-      "detail": "every target that could have noticed 16b0cd40508fc0785477 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
+      "detail": "no sealed execution established a verdict about 16b0cd40508fc0785477 (nothing was sealed to put it to), so the native run's discharged is a lead and not a verdict"
     }
   ],
   "facts": [

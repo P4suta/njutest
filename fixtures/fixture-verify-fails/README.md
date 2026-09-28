@@ -27,8 +27,8 @@ refuses this tree rather than reaching a fate at all;
 refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates --no-verify
-src/lib.rs:9:5 return-default killed
-src/lib.rs:9:7 mul-to-div killed
-src/lib.rs:9:9 int-decrement killed
-src/lib.rs:9:9 int-increment killed
+src/lib.rs:9:5 return-default unproven
+src/lib.rs:9:7 mul-to-div unproven
+src/lib.rs:9:9 int-decrement unproven
+src/lib.rs:9:9 int-increment unproven
 ```

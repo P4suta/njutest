@@ -44,8 +44,8 @@ src/lib.rs:37:5 return-default killed
 src/lib.rs:37:7 mul-to-div killed
 src/lib.rs:37:9 int-decrement killed
 src/lib.rs:37:9 int-increment killed
-src/lib.rs:42:5 return-default killed
-src/lib.rs:42:7 mul-to-div killed
-src/lib.rs:42:9 int-decrement killed
-src/lib.rs:42:9 int-increment killed
+src/lib.rs:42:5 return-default unproven
+src/lib.rs:42:7 mul-to-div unproven
+src/lib.rs:42:9 int-decrement unproven
+src/lib.rs:42:9 int-increment unproven
 ```

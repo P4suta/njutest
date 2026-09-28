@@ -51,6 +51,7 @@ impl Settings {
             locked,
             keep_temp: _read_when_the_workspace_is_opened,
             no_verify,
+            no_seal,
             coverage,
             no_coverage,
             no_touch,
@@ -76,6 +77,7 @@ impl Settings {
         config.execution.offline |= offline;
         config.execution.locked |= locked;
         config.mutation.verify &= !no_verify;
+        config.mutation.seal &= !no_seal;
         config.mutation.coverage |= coverage;
         config.mutation.coverage &= !no_coverage;
         config.mutation.touch &= !no_touch;
@@ -153,7 +155,11 @@ impl Settings {
             failing: rust_mutants::session::Failing::Refuse,
             max_rounds: rust_mutants::validate::DEFAULT_MAX_ROUNDS,
             validation_filter: None,
-            sealing: rust_mutants::sealed::Sealing::Off,
+            sealing: if self.config.mutation.seal {
+                rust_mutants::sealed::Sealing::On
+            } else {
+                rust_mutants::sealed::Sealing::Off
+            },
         })
     }
 

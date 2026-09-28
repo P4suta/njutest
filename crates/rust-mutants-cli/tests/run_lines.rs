@@ -103,6 +103,7 @@ fn mutant(index: u32, outcome: Outcome, expected: bool) -> RunMutantDocument {
         unreached: false,
         source_run_id: None,
         step_notice: None,
+        evidence: rust_mutants::testkit::evidence::sealed_as(outcome, None, "demo/lib/demo"),
     }
 }
 
@@ -130,7 +131,7 @@ fn document() -> RunDocument {
     let mutants = vec![killed, expected, survivor];
     RunDocument {
         document_type: "rust-mutants/run-report".to_owned(),
-        schema_version: 3,
+        schema_version: rust_mutants::report::run::SCHEMA_VERSION,
         tool_version: "0.1.0".to_owned(),
         run: RunMeta {
             id: "20260905T120000000Z".to_owned(),
@@ -210,10 +211,67 @@ fn fixture_accounting() -> Accounting {
         inconclusive: 0_u32.into(),
         errored: 0_u32.into(),
         unreached: 0_u32.into(),
-        discharged: 0_u32.into(),
+        unproven: 0_u32.into(),
+        unproven_killed: 0_u32.into(),
+        unproven_survived: 0_u32.into(),
+        unproven_unreached: 0_u32.into(),
+        unproven_discharged: 0_u32.into(),
         declined: 0_u32.into(),
         not_run: 0_u32.into(),
         expected: 1_u32.into(),
+    }
+}
+
+/// Counts `one` in the column a sealed verdict or a native lead puts it in, and in every count inside that column.
+fn count(accounting: &mut Accounting, one: &RunMutantDocument) {
+    let unproven = one.evidence.class() == rust_mutants::sealed::record::Class::Unproven;
+    let lead = match (one.outcome, one.not_run_reason) {
+        (Outcome::Killed, _) if unproven => Some(&mut accounting.unproven_killed),
+        (Outcome::Survived, _) if unproven => Some(&mut accounting.unproven_survived),
+        (Outcome::NotRun, Some(NotRunReason::Unreached)) if unproven => {
+            Some(&mut accounting.unproven_unreached)
+        }
+        (Outcome::NotRun, Some(NotRunReason::Discharged)) => {
+            Some(&mut accounting.unproven_discharged)
+        }
+        _ => None,
+    };
+    if let Some(lead) = lead {
+        lead.raise()
+            .expect("the finite fixture accounting fits u32");
+        accounting
+            .unproven
+            .raise()
+            .expect("the finite fixture accounting fits u32");
+        return;
+    }
+    match one.outcome {
+        Outcome::Killed => accounting.killed.raise(),
+        Outcome::Survived => accounting.survived.raise(),
+        Outcome::StepLimitReached => accounting.step_limit_reached.raise(),
+        Outcome::Waited => accounting.waited.raise(),
+        Outcome::Inconclusive => accounting.inconclusive.raise(),
+        Outcome::Errored => accounting.errored.raise(),
+        Outcome::NotRun => accounting.not_run.raise(),
+    }
+    .expect("the finite fixture accounting fits u32");
+    if one.not_run_reason == Some(NotRunReason::Unreached) {
+        accounting
+            .unreached
+            .raise()
+            .expect("the finite fixture accounting fits u32");
+    }
+    if one.not_run_reason == Some(NotRunReason::Declined) {
+        accounting
+            .declined
+            .raise()
+            .expect("the finite fixture accounting fits u32");
+    }
+    if one.expected {
+        accounting
+            .expected
+            .raise()
+            .expect("the finite fixture accounting fits u32");
     }
 }
 
@@ -233,40 +291,7 @@ fn cohere(document: &mut RunDocument) {
         ..Accounting::default()
     };
     for one in &document.mutants {
-        match one.outcome {
-            Outcome::Killed => accounting.killed.raise(),
-            Outcome::Survived => accounting.survived.raise(),
-            Outcome::StepLimitReached => accounting.step_limit_reached.raise(),
-            Outcome::Waited => accounting.waited.raise(),
-            Outcome::Inconclusive => accounting.inconclusive.raise(),
-            Outcome::Errored => accounting.errored.raise(),
-            Outcome::NotRun => accounting.not_run.raise(),
-        }
-        .expect("the finite fixture accounting fits u32");
-        if one.not_run_reason == Some(NotRunReason::Unreached) {
-            accounting
-                .unreached
-                .raise()
-                .expect("the finite fixture accounting fits u32");
-        }
-        if one.not_run_reason == Some(NotRunReason::Discharged) {
-            accounting
-                .discharged
-                .raise()
-                .expect("the finite fixture accounting fits u32");
-        }
-        if one.not_run_reason == Some(NotRunReason::Declined) {
-            accounting
-                .declined
-                .raise()
-                .expect("the finite fixture accounting fits u32");
-        }
-        if one.expected {
-            accounting
-                .expected
-                .raise()
-                .expect("the finite fixture accounting fits u32");
-        }
+        count(&mut accounting, one);
     }
     accounting.executed = accounting
         .cataloged
@@ -313,6 +338,7 @@ fn step_document() -> RunDocument {
     document.selection.mutant_steps = Some(10);
     if let Some(first) = document.mutants.first_mut() {
         first.outcome = Outcome::StepLimitReached;
+        first.evidence = rust_mutants::sealed::record::Evidence::not_sealed();
         first.step_notice = step_notice(&document.workspace.catalog_digest, &first.id, 10);
         assert!(
             first.step_notice.is_some(),
@@ -607,6 +633,11 @@ fn merging_the_parts_of_a_run_earns_the_code_the_whole_would_have_earned() {
         let mut one = mutant(index, Outcome::NotRun, false);
         one.unreached = true;
         one.not_run_reason = Some(NotRunReason::Unreached);
+        one.evidence = rust_mutants::testkit::evidence::sealed_as(
+            Outcome::NotRun,
+            one.not_run_reason,
+            "demo/lib/demo",
+        );
         one
     };
     let part = |index: u32, shard: &str| {
@@ -822,7 +853,14 @@ fn part(rows: Vec<RunMutantDocument>, milliseconds: u64, shard: &str) -> RunDocu
     document.findings = rows
         .iter()
         .filter_map(|row| {
+            let unproven = row.evidence.class() == rust_mutants::sealed::record::Class::Unproven;
             let kind = match (row.outcome, row.not_run_reason) {
+                (Outcome::Killed | Outcome::Survived, _)
+                | (Outcome::NotRun, Some(NotRunReason::Unreached))
+                    if unproven =>
+                {
+                    FindingKind::UnprovenMutant
+                }
                 (Outcome::Killed, _) => return None,
                 (Outcome::Survived, _) if row.expected => return None,
                 (Outcome::Survived, _) => FindingKind::SurvivingMutant,
@@ -831,7 +869,7 @@ fn part(rows: Vec<RunMutantDocument>, milliseconds: u64, shard: &str) -> RunDocu
                 (Outcome::Inconclusive, _) => FindingKind::InconclusiveMutant,
                 (Outcome::Errored, _) => FindingKind::ErroredMutant,
                 (Outcome::NotRun, Some(NotRunReason::Unreached)) => FindingKind::UnreachedMutant,
-                (Outcome::NotRun, Some(NotRunReason::Discharged)) => FindingKind::DischargedMutant,
+                (Outcome::NotRun, Some(NotRunReason::Discharged)) => FindingKind::UnprovenMutant,
                 (Outcome::NotRun, _) => FindingKind::NotRunMutant,
             };
             Some(FindingDocument {
@@ -851,6 +889,8 @@ fn not_run(index: u32, reason: NotRunReason) -> RunMutantDocument {
     let mut one = mutant(index, Outcome::NotRun, false);
     one.unreached = reason == NotRunReason::Unreached;
     one.not_run_reason = Some(reason);
+    one.evidence =
+        rust_mutants::testkit::evidence::sealed_as(Outcome::NotRun, Some(reason), "demo/lib/demo");
     one
 }
 
@@ -1011,10 +1051,11 @@ fn a_whole_run_is_what_its_parts_come_to_and_not_what_the_first_of_them_said() {
     assert_eq!(
         (
             whole.accounting.unreached.count(),
-            whole.accounting.discharged.count()
+            whole.accounting.unproven_discharged.count(),
+            whole.accounting.unproven.count()
         ),
-        (1, 1),
-        "including the column each reason is counted in: {:?}",
+        (1, 1, 1),
+        "including the column each reason is counted in, where a native proof is a lead: {:?}",
         whole.accounting
     );
     assert_eq!(
@@ -1022,8 +1063,8 @@ fn a_whole_run_is_what_its_parts_come_to_and_not_what_the_first_of_them_said() {
             whole.accounting.not_run.count(),
             whole.accounting.executed.count()
         ),
-        (2, 2),
-        "and what it did not run is not what it ran: {:?}",
+        (1, 3),
+        "and what it did not run is not what it ran or had a lead on: {:?}",
         whole.accounting
     );
     assert_eq!(
@@ -1038,8 +1079,9 @@ fn a_whole_run_is_what_its_parts_come_to_and_not_what_the_first_of_them_said() {
         "a whole took as long as its parts together"
     );
     assert_eq!(
-        whole.run.exit_code, 1,
-        "and earns what the whole earns, not what the part that ran first did"
+        whole.run.exit_code, 2,
+        "and earns what the whole earns, not what the part that ran first did: a native proof in \
+         the later part leaves the whole unproven"
     );
     assert!(
         whole

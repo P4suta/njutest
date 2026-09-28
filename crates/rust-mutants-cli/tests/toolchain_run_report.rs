@@ -1829,9 +1829,12 @@ fn answered(output: &Output) -> bool {
             | rust_mutants::run::Exit::Found
             | rust_mutants::run::Exit::Unestablished,
         ) => true,
-        Some(rust_mutants::run::Exit::Interrupted | rust_mutants::run::Exit::Terminated) | None => {
-            false
-        }
+        Some(
+            rust_mutants::run::Exit::Failed
+            | rust_mutants::run::Exit::Interrupted
+            | rust_mutants::run::Exit::Terminated,
+        )
+        | None => false,
     }
 }
 

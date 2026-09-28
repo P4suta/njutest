@@ -27,24 +27,24 @@ What one run of this fixture establishes for every mutation of it, and for every
 The run is `rust-mutants run --tier all --offline --locked`; `cargo test -p rust-mutants-cli --test toolchain_fates` does it again and refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates
-src/lib.rs:10:5 return-default survived
-src/lib.rs:10:19 string-to-empty survived
-src/lib.rs:10:44 string-to-empty survived
-src/lib.rs:15:5 return-default survived
-src/lib.rs:15:19 string-to-empty survived
-src/lib.rs:16:36 string-to-empty survived
-src/lib.rs:17:29 string-to-empty survived
-src/lib.rs:22:5 return-default killed
-src/lib.rs:27:39 string-to-empty killed
-src/lib.rs:28:16 false-to-true survived
-src/lib.rs:30:5 return-true survived
-src/lib.rs:31:28 return-true survived
-src/lib.rs:31:43 is-some-to-is-none killed
-src/lib.rs:32:19 false-to-true survived
+src/lib.rs:10:5 return-default unproven
+src/lib.rs:10:19 string-to-empty unproven
+src/lib.rs:10:44 string-to-empty unproven
+src/lib.rs:15:5 return-default unproven
+src/lib.rs:15:19 string-to-empty unproven
+src/lib.rs:16:36 string-to-empty unproven
+src/lib.rs:17:29 string-to-empty unproven
+src/lib.rs:22:5 return-default unproven
+src/lib.rs:27:39 string-to-empty unproven
+src/lib.rs:28:16 false-to-true unproven
+src/lib.rs:30:5 return-true unproven
+src/lib.rs:31:28 return-true unproven
+src/lib.rs:31:43 is-some-to-is-none unproven
+src/lib.rs:32:19 false-to-true unproven
 src/lib.rs:38:5 return-default killed
-src/lib.rs:38:19 string-to-empty survived
-src/lib.rs:41:20 int-decrement survived
-src/lib.rs:41:20 int-increment survived
+src/lib.rs:38:19 string-to-empty unproven
+src/lib.rs:41:20 int-decrement unproven
+src/lib.rs:41:20 int-increment unproven
 src/lib.rs:50:5 return-default killed
 src/lib.rs:50:7 mul-to-div killed
 src/lib.rs:50:9 int-decrement killed

@@ -511,6 +511,9 @@ pub struct Switches {
     /// Skip the run of every target with nothing active.
     #[arg(long)]
     pub no_verify: bool,
+    /// Build nothing for the sealed target, so that every answer is a native lead and the run is unproven.
+    #[arg(long)]
+    pub no_seal: bool,
     /// Measure once which target reached what, and run a mutant only against the targets that reached it.
     #[arg(long)]
     pub coverage: bool,

@@ -112,6 +112,9 @@ pub const ANSWERED: &str = "answered";
 /// An outcome an earlier run of the same tree established.
 pub const REUSED: &str = "reused";
 
+/// A target no native process was started for because sealed executions decided the mutation (ADR 0046).
+pub const SEALED: &str = "sealed";
+
 /// What kind of thing removed a pair, which is what says whether the answer is still the whole answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -139,7 +142,7 @@ impl Removal {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Removed {
-    /// What removed them: a proof's own name, or one of [`UNREACHED`], [`ANSWERED`], [`REUSED`], or a not-run reason.
+    /// What removed them: a proof's own name, or one of [`UNREACHED`], [`ANSWERED`], [`REUSED`], [`SEALED`], or a not-run reason.
     pub reason: String,
     /// What kind of removal it is.
     pub removal: Removal,
@@ -398,10 +401,13 @@ fn per_mutant(
         });
     };
     if unasked > 0 {
-        let reason = mutant
-            .not_run_reason
-            .map_or(ANSWERED, crate::run::NotRunReason::name)
-            .to_owned();
+        let reason = match mutant.evidence.class() {
+            crate::sealed::record::Class::Sealed => SEALED,
+            crate::sealed::record::Class::Unproven => mutant
+                .not_run_reason
+                .map_or(ANSWERED, crate::run::NotRunReason::name),
+        }
+        .to_owned();
         removed.push((reason.clone(), kind_of(&reason), unasked));
     }
     Ok(removed)
@@ -429,7 +435,7 @@ fn checked_mul(left: u64, right: u64, quantity: WorkQuantity) -> Result<u64, Wor
 fn kind_of(reason: &str) -> Removal {
     match reason {
         UNREACHED | "discharged" => Removal::Proof,
-        ANSWERED => Removal::Sufficiency,
+        ANSWERED | SEALED => Removal::Sufficiency,
         REUSED => Removal::Memory,
         _ => Removal::Selection,
     }

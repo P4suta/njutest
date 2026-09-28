@@ -23,13 +23,13 @@ The run is `rust-mutants run --tier all --offline --locked --skip-rule negate-co
 `cargo test -p rust-mutants-cli --test toolchain_fates` does it again and refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates --skip-rule negate-condition --skip-rule condition-to-true --skip-rule string-to-empty
-src/lib.rs:10:23 int-increment survived
-src/lib.rs:12:12 condition-to-false survived
-src/lib.rs:12:12 condition-to-true not_run
-src/lib.rs:12:12 negate-condition not_run
-src/lib.rs:12:60 string-to-empty not_run
+src/lib.rs:10:23 int-increment unproven
+src/lib.rs:12:12 condition-to-false unproven
+src/lib.rs:12:12 condition-to-true unproven
+src/lib.rs:12:12 negate-condition unproven
+src/lib.rs:12:60 string-to-empty unproven
 src/lib.rs:13:13 delete-compound-assignment unreached
 src/lib.rs:13:21 add-assign-to-sub-assign unreached
 src/lib.rs:13:71 is-ok-to-is-err unreached
-src/lib.rs:16:5 return-default not_run
+src/lib.rs:16:5 return-default unreached
 ```

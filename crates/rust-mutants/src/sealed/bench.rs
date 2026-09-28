@@ -69,6 +69,12 @@ pub enum BenchError {
         /// Why.
         source: std::io::Error,
     },
+    /// The host could not start.
+    #[error("{}: the host could not start: {source}", crate::error::SEALED_HOST_FAILED.code)]
+    Runner {
+        /// What the host said.
+        source: SealedError,
+    },
     /// The host could not run an invocation.
     #[error("{}: {target}: {source}", crate::error::SEALED_HOST_FAILED.code)]
     Host {
@@ -107,7 +113,7 @@ impl BenchError {
     pub const fn code(&self) -> crate::error::ErrorCode {
         match self {
             Self::ModuleUnreadable { .. } => crate::error::SEALED_MODULE_UNREADABLE,
-            Self::Host { .. } => crate::error::SEALED_HOST_FAILED,
+            Self::Runner { .. } | Self::Host { .. } => crate::error::SEALED_HOST_FAILED,
             Self::EnvironmentNotText { .. } => crate::error::SEALED_ENVIRONMENT_NOT_TEXT,
             Self::TreeUnreadable { .. } | Self::Snapshot { .. } => {
                 crate::error::SEALED_TREE_UNREADABLE
@@ -272,28 +278,13 @@ impl<'runner> Bench<'runner> {
     }
 
     fn listed(&self, station: &Station<'_>) -> Result<Option<Vec<String>>, BenchError> {
-        let invocation = self.invocation(
-            station,
-            vec![
-                "--list".to_owned(),
-                "--format".to_owned(),
-                "terse".to_owned(),
-            ],
-            (None, CONTROL_FUEL),
-        )?;
+        let invocation =
+            self.invocation(station, vec!["--list".to_owned()], (None, CONTROL_FUEL))?;
         let transcript = invoke(station, &invocation)?;
         if transcript.stop() != SealedStop::Returned {
             return Ok(None);
         }
-        let Ok(text) = std::str::from_utf8(transcript.stdout().bytes()) else {
-            return Ok(None);
-        };
-        Ok(Some(
-            text.lines()
-                .filter_map(|line| line.strip_suffix(": test"))
-                .map(str::to_owned)
-                .collect(),
-        ))
+        Ok(crate::libtest::listing(transcript.stdout().bytes()))
     }
 
     fn control(

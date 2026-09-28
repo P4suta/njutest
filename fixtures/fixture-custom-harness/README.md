@@ -26,8 +26,8 @@ for every candidate the compiler refused. The run is `rust-mutants run
 refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates
-src/lib.rs:9:5 return-true killed
-src/lib.rs:9:7 gt-to-ge killed
-src/lib.rs:9:9 int-decrement killed
-src/lib.rs:9:9 int-increment killed
+src/lib.rs:9:5 return-true unproven
+src/lib.rs:9:7 gt-to-ge unproven
+src/lib.rs:9:9 int-decrement unproven
+src/lib.rs:9:9 int-increment unproven
 ```

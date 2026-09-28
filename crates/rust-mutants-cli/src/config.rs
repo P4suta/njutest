@@ -167,6 +167,8 @@ pub struct Mutation {
     pub build_timeout: Option<Duration>,
     /// Run every test target once with nothing active before believing anything a mutant does.
     pub verify: bool,
+    /// Build the tree for the sealed target too and decide each mutant from its sealed executions; without it, every answer is a native lead (ADR 0046).
+    pub seal: bool,
     /// Build once with LLVM coverage instrumentation and route by the regions it exported.
     pub coverage: bool,
     /// Ask the guards, on the run that verifies the baseline, which of each target's tests reached them, and put a mutation only to those tests.
@@ -340,6 +342,7 @@ impl Default for Mutation {
             steps: rust_mutants::session::DEFAULT_MUTANT_STEPS,
             build_timeout: None,
             verify: true,
+            seal: true,
             coverage: false,
             touch: true,
             equivalence: false,

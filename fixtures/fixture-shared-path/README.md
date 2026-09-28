@@ -36,13 +36,13 @@ for every candidate the compiler refused. The run is `rust-mutants run
 refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates
-shared/util.rs:8:5 return-true killed
-shared/util.rs:8:7 le-to-lt killed
-shared/util.rs:13:5 return-default killed
-shared/util.rs:13:8 condition-to-false killed
-shared/util.rs:13:8 condition-to-true killed
-shared/util.rs:13:8 negate-condition killed
-shared/util.rs:13:10 lt-to-le not_run
-shared/util.rs:13:20 return-default killed
-shared/util.rs:13:35 return-default killed
+shared/util.rs:8:5 return-true unproven
+shared/util.rs:8:7 le-to-lt unproven
+shared/util.rs:13:5 return-default unproven
+shared/util.rs:13:8 condition-to-false unproven
+shared/util.rs:13:8 condition-to-true unproven
+shared/util.rs:13:8 negate-condition unproven
+shared/util.rs:13:10 lt-to-le unproven
+shared/util.rs:13:20 return-default unproven
+shared/util.rs:13:35 return-default unproven
 ```

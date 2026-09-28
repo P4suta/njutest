@@ -24,8 +24,8 @@ pub enum Verdict {
     Detected,
     /// The run found something a reader has to act on.
     Found,
-    /// The run itself failed rather than answered.
-    Failed,
+    /// Something is unproven, or the run could not measure something it ran.
+    Unproven,
     /// The run was interrupted.
     Interrupted,
 }
@@ -43,7 +43,7 @@ impl Verdict {
         match self {
             Self::Detected => run::EXIT_DETECTED,
             Self::Found => run::EXIT_FOUND,
-            Self::Failed => run::EXIT_FAILED,
+            Self::Unproven => run::EXIT_UNESTABLISHED,
             Self::Interrupted => run::EXIT_INTERRUPTED,
         }
     }
@@ -54,7 +54,7 @@ impl Verdict {
         match self {
             Self::Detected => "detected",
             Self::Found => "found",
-            Self::Failed => "failed",
+            Self::Unproven => "unproven",
             Self::Interrupted => "interrupted",
         }
     }

@@ -10,6 +10,14 @@ A change that needs nothing is not listed.
 
 ## Unreleased
 
+**A verdict is what a sealed run observed.** The engine builds the instrumented tree a second time for `wasm32-wasip1` and runs each test alone in a fresh WebAssembly instance on a deterministic host; only those executions decide a mutant ([ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md), [sealed execution](sealed.md)).
+What a native run says is a lead: such a mutant's finding is `unproven-mutant`, its row's `evidence` says every reason there is no verdict, and the run exits 2.
+Install the target with `rustup target add wasm32-wasip1`; a toolchain without it leaves every mutant unproven.
+The run report is `schema_version` 4: each mutant carries `evidence`, the accounting gains `unproven` and the four counts of what the native run said of them, and `killed`, `survived` and `unreached` count only sealed verdicts, so the score does too.
+A report of version 3 is refused rather than read as sealed.
+`discharged-mutant` is gone: a discharge is a proof over what a native run recorded, so it is a lead, counted in `unproven_discharged`.
+`inconclusive-mutant` exits 2 rather than 1, since a mutation the run could not decide either way is unproven.
+
 **A variable a claim's `where.env` names keys every stored answer.** The configuration declares with it that an answer may depend on the variable, so an answer measured under one value is never read back where the tests are given another ([ADR 0042](../adr/0042-a-claim-holds-where-its-facts-do.md)).
 Records move to `rust-mutants-outcome-v3` under `rust-mutants/outcomes-v3`, each carrying the declared names beside one digest of their values; the old store is not read, so the first run after upgrading starts cold, and `cache --clear-outcomes` of the release before removes what it left.
 

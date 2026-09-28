@@ -128,8 +128,11 @@ pub const EXIT_FOUND: u8 = Exit::Found.code();
 /// The exit code of a run that was interrupted.
 pub const EXIT_INTERRUPTED: u8 = Exit::Interrupted.code();
 
-/// The exit code of a run that established nothing: it failed rather than answered.
-pub const EXIT_FAILED: u8 = Exit::Unestablished.code();
+/// The exit code of a run that left something unproven or unmeasured.
+pub const EXIT_UNESTABLISHED: u8 = Exit::Unestablished.code();
+
+/// The exit code of a command that failed rather than answered, or was used wrongly.
+pub const EXIT_FAILED: u8 = Exit::Failed.code();
 
 /// What the optional compiler-artifact comparison established.
 ///
@@ -208,6 +211,8 @@ pub struct Judged {
     pub identical: CodegenIdentity,
     /// Each test that declined to measure in any execution of it, in its words, which is also why its answer is never kept (ADR 0043).
     pub declined: Vec<crate::decline::Decline>,
+    /// What the verdict rests on: sealed executions, or nothing and every reason why (ADR 0046).
+    pub evidence: crate::sealed::record::Evidence,
 }
 
 /// Whether a reviewer's claim about one mutant held.
@@ -293,14 +298,14 @@ pub enum FindingKind {
     NotRunMutant,
     /// No measured target reaches the mutant, so no test could have noticed it.
     UnreachedMutant,
-    /// A proof removed every target that could have noticed the mutant, so no test could have.
-    DischargedMutant,
     /// A reviewer's claim the run contradicted.
     StaleExpectation,
     /// A reviewer's claim that names no mutant of this catalog.
     UnmatchedExpectation,
     /// A `rust-mutants: skip` marker that hid nothing, which is a claim about code that has moved or gone.
     UnmatchedSkip,
+    /// No sealed execution established a verdict, so what a native run said about the mutant is a lead (ADR 0046).
+    UnprovenMutant,
 }
 
 impl FindingKind {
@@ -315,10 +320,10 @@ impl FindingKind {
             Self::ErroredMutant => "errored-mutant",
             Self::NotRunMutant => "not-run-mutant",
             Self::UnreachedMutant => "unreached-mutant",
-            Self::DischargedMutant => "discharged-mutant",
             Self::StaleExpectation => "stale-expectation",
             Self::UnmatchedExpectation => "unmatched-expectation",
             Self::UnmatchedSkip => "unmatched-skip",
+            Self::UnprovenMutant => "unproven-mutant",
         }
     }
 
@@ -339,16 +344,16 @@ impl FindingKind {
     pub const fn exit(self) -> Exit {
         match self {
             Self::SurvivingMutant
-            | Self::InconclusiveMutant
             | Self::UnreachedMutant
-            | Self::DischargedMutant
             | Self::StaleExpectation
             | Self::UnmatchedExpectation
             | Self::UnmatchedSkip => Exit::Found,
             Self::StepLimitReachedMutant
             | Self::WaitedMutant
+            | Self::InconclusiveMutant
             | Self::ErroredMutant
-            | Self::NotRunMutant => Exit::Unestablished,
+            | Self::NotRunMutant
+            | Self::UnprovenMutant => Exit::Unestablished,
         }
     }
 
@@ -366,8 +371,10 @@ pub enum Exit {
     Detected,
     /// There is a finding about the tests.
     Found,
-    /// The run could not measure something it ran, or failed, or was used wrongly.
+    /// Something is unproven, or the run could not measure something it ran.
     Unestablished,
+    /// The command failed rather than answered, or was used wrongly.
+    Failed,
     /// The run was interrupted.
     Interrupted,
     /// The run was terminated.
@@ -390,6 +397,7 @@ impl Exit {
             Self::Detected => 0,
             Self::Found => 1,
             Self::Unestablished => 2,
+            Self::Failed => 3,
             Self::Interrupted => 130,
             Self::Terminated => 143,
         }
@@ -399,16 +407,20 @@ impl Exit {
     #[must_use]
     pub const fn meaning(self) -> &'static str {
         match self {
-            Self::Detected => "every mutant the run decided, the tests noticed",
+            Self::Detected => {
+                "a sealed execution detected every mutant the run decided, or a claim about it held"
+            }
             Self::Found => {
-                "there is a finding about the tests: a survivor, a mutation no test reached or a \
-                 proof removed, a mutation the run could not decide either way, or a stale or \
-                 unmatched claim"
+                "there is a finding about the tests, and nothing is unproven: a sealed survivor, a \
+                 mutation no sealed test reached, or a stale or unmatched claim"
             }
             Self::Unestablished => {
-                "the run could not measure a mutation it ran — it waited, reached its step limit, \
-                 errored or was not run — or the run itself failed, or the command was used wrongly"
+                "something is unproven: no sealed execution decided a mutation, so what a native \
+                 run said of it is a lead; or the run could not measure a mutation it ran — it \
+                 waited, reached its step limit, errored, decided nothing either way, or was not \
+                 run"
             }
+            Self::Failed => "the command failed rather than answered, or was used wrongly",
             Self::Interrupted => "it was interrupted",
             Self::Terminated => "it was terminated, which is what a cancelled job sends",
         }
@@ -448,12 +460,14 @@ pub struct Tally {
     pub refused: u32,
     /// How many places discovery passed over.
     pub skipped: u32,
-    /// How many mutants an execution reached a verdict on.
+    /// How many mutants an execution reached a verdict or a lead on.
     pub executed: u32,
-    /// How many a test failed on.
+    /// How many a sealed execution detected.
     pub killed: u32,
-    /// How many every test passed on.
+    /// How many every sealed execution that reached them passed on.
     pub survived: u32,
+    /// How many no sealed execution decided, where a native run said something of them, which is a lead (ADR 0046).
+    pub unproven: u32,
     /// How many reached the per-process guard-take limit without deciding the mutation.
     pub step_limit_reached: u32,
     /// How many this machine stopped waiting for, twice over.
@@ -465,22 +479,155 @@ pub struct Tally {
     pub errored: u32,
     /// How many never ran.
     pub not_run: u32,
-    /// How many of those never ran because no measured target reaches them.
+    /// How many of those never ran because no sealed control reaches them.
     pub unreached: u32,
-    /// How many of those never ran because a proof removed every target that could have noticed them.
-    pub discharged: u32,
     /// How many of those measured nothing because every test that reached them declined to measure on this machine (ADR 0043).
     pub declined: u32,
     /// How many survivors a reviewer had declared, and the run confirmed.
     pub expected: u32,
+    /// How many of the unproven a native run killed.
+    pub unproven_killed: u32,
+    /// How many of the unproven every native test passed on.
+    pub unproven_survived: u32,
+    /// How many of the unproven no native test reached.
+    pub unproven_unreached: u32,
+    /// How many of the unproven a proof from a native run removed every target of.
+    pub unproven_discharged: u32,
 }
 
-/// The share of decided mutants the tests noticed.
+impl Tally {
+    /// What a run whose rows are `rows`, beside `refused` candidates the compiler refused and `skipped` places discovery passed over, counted: the one fold a run and a reader of its report both make.
+    ///
+    /// # Errors
+    /// Refuses a count past the durable `u32` report representation.
+    pub fn of(
+        (refused, skipped): (u32, u32),
+        rows: impl ExactSizeIterator<Item = RowVerdict>,
+    ) -> Result<Self, SessionError> {
+        let mut tally = Self {
+            cataloged: count(rows.len())?,
+            refused,
+            skipped,
+            ..Self::default()
+        };
+        for row in rows {
+            tally.count(row)?;
+        }
+        tally.executed = tally
+            .cataloged
+            .checked_sub(tally.not_run)
+            .ok_or(SessionError::RunCountOverflow)?;
+        Ok(tally)
+    }
+
+    fn count(&mut self, row: RowVerdict) -> Result<(), SessionError> {
+        let column = Column::of(row);
+        let unproven = column == Column::Unproven;
+        raise(match column {
+            Column::Killed => &mut self.killed,
+            Column::Survived => &mut self.survived,
+            Column::Unproven => &mut self.unproven,
+            Column::StepLimitReached => &mut self.step_limit_reached,
+            Column::Waited => &mut self.waited,
+            Column::Inconclusive => &mut self.inconclusive,
+            Column::Errored => &mut self.errored,
+            Column::NotRun => &mut self.not_run,
+        })?;
+        let inside = match (row.outcome, row.not_run_reason) {
+            (Outcome::Killed, _) if unproven => Some(&mut self.unproven_killed),
+            (Outcome::Survived, _) if unproven => Some(&mut self.unproven_survived),
+            (Outcome::NotRun, Some(NotRunReason::Unreached)) if unproven => {
+                Some(&mut self.unproven_unreached)
+            }
+            (Outcome::NotRun, Some(NotRunReason::Discharged)) if unproven => {
+                Some(&mut self.unproven_discharged)
+            }
+            (Outcome::NotRun, Some(NotRunReason::Unreached)) => Some(&mut self.unreached),
+            (Outcome::NotRun, Some(NotRunReason::Declined)) => Some(&mut self.declined),
+            (
+                Outcome::Killed
+                | Outcome::Survived
+                | Outcome::StepLimitReached
+                | Outcome::Waited
+                | Outcome::Inconclusive
+                | Outcome::Errored,
+                _,
+            )
+            | (
+                Outcome::NotRun,
+                None
+                | Some(
+                    NotRunReason::Discharged
+                    | NotRunReason::Interrupted
+                    | NotRunReason::Unselected
+                    | NotRunReason::StoppedEarly,
+                ),
+            ) => None,
+        };
+        if let Some(inside) = inside {
+            raise(inside)?;
+        }
+        if row.expected {
+            raise(&mut self.expected)?;
+        }
+        Ok(())
+    }
+}
+
+/// The one column of a run's accounting a row is counted in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Column {
+    /// A sealed execution detected it.
+    Killed,
+    /// Every sealed execution that reached it passed.
+    Survived,
+    /// No sealed execution decided it, and a native run said something of it, which is a lead.
+    Unproven,
+    /// It reached the per-process guard-take limit.
+    StepLimitReached,
+    /// This machine stopped waiting for it, twice over.
+    Waited,
+    /// The run could not decide it.
+    Inconclusive,
+    /// The harness failed on it.
+    Errored,
+    /// It never ran.
+    NotRun,
+}
+
+impl Column {
+    /// The column `row` is counted in: unproven exactly where its finding is, and its outcome's otherwise.
+    #[must_use]
+    pub const fn of(row: RowVerdict) -> Self {
+        let unproven = matches!(
+            verdict_finding(row, false),
+            Some(FindingKind::UnprovenMutant)
+        );
+        match row.outcome {
+            Outcome::Killed | Outcome::Survived | Outcome::NotRun if unproven => Self::Unproven,
+            Outcome::Killed => Self::Killed,
+            Outcome::Survived => Self::Survived,
+            Outcome::StepLimitReached => Self::StepLimitReached,
+            Outcome::Waited => Self::Waited,
+            Outcome::Inconclusive => Self::Inconclusive,
+            Outcome::Errored => Self::Errored,
+            Outcome::NotRun => Self::NotRun,
+        }
+    }
+}
+
+/// One more of a count.
+fn raise(count: &mut u32) -> Result<(), SessionError> {
+    *count = count.checked_add(1).ok_or(SessionError::RunCountOverflow)?;
+    Ok(())
+}
+
+/// The share of the mutants sealed executions decided that they detected.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Score {
-    /// Mutants a test killed.
+    /// Mutants a sealed execution detected.
     pub detected: u32,
-    /// Detected plus survived: the mutants the run has an answer for.
+    /// Detected plus survived: the mutants sealed executions gave a verdict.
     pub decided: u32,
     /// `detected / decided`, between zero and one.
     pub value: f64,
@@ -525,53 +672,15 @@ impl Run {
     /// # Errors
     /// Refuses when the number of rows or any exact folded counter exceeds the durable `u32` report representation.
     pub fn tally(&self) -> Result<Tally, SessionError> {
-        let mut tally = Tally {
-            cataloged: count(self.judged.len())?,
-            refused: self.refused,
-            skipped: self.skipped,
-            ..Tally::default()
-        };
-        for one in &self.judged {
-            let slot = match one.outcome {
-                Outcome::Killed => &mut tally.killed,
-                Outcome::Survived => &mut tally.survived,
-                Outcome::StepLimitReached => &mut tally.step_limit_reached,
-                Outcome::Waited => &mut tally.waited,
-                Outcome::Inconclusive => &mut tally.inconclusive,
-                Outcome::NotRun => &mut tally.not_run,
-                Outcome::Errored => &mut tally.errored,
-            };
-            *slot = slot.checked_add(1).ok_or(SessionError::RunCountOverflow)?;
-            if one.not_run_reason == Some(NotRunReason::Unreached) {
-                tally.unreached = tally
-                    .unreached
-                    .checked_add(1)
-                    .ok_or(SessionError::RunCountOverflow)?;
-            }
-            if one.not_run_reason == Some(NotRunReason::Discharged) {
-                tally.discharged = tally
-                    .discharged
-                    .checked_add(1)
-                    .ok_or(SessionError::RunCountOverflow)?;
-            }
-            if one.not_run_reason == Some(NotRunReason::Declined) {
-                tally.declined = tally
-                    .declined
-                    .checked_add(1)
-                    .ok_or(SessionError::RunCountOverflow)?;
-            }
-            if one.expected {
-                tally.expected = tally
-                    .expected
-                    .checked_add(1)
-                    .ok_or(SessionError::RunCountOverflow)?;
-            }
-        }
-        tally.executed = tally
-            .cataloged
-            .checked_sub(tally.not_run)
-            .ok_or(SessionError::RunCountOverflow)?;
-        Ok(tally)
+        Tally::of(
+            (self.refused, self.skipped),
+            self.judged.iter().map(|one| RowVerdict {
+                outcome: one.outcome,
+                not_run_reason: one.not_run_reason,
+                expected: one.expected,
+                evidence: one.evidence.class(),
+            }),
+        )
     }
 
     /// The share of decided mutants the tests noticed, or `None` when the run decided nothing.
@@ -602,6 +711,7 @@ impl Run {
                     outcome: one.outcome,
                     not_run_reason: one.not_run_reason,
                     expected: one.expected,
+                    evidence: one.evidence.class(),
                 },
                 self.interrupted,
             ) else {
@@ -763,12 +873,7 @@ fn detail(kind: FindingKind, one: &Judged) -> String {
             ),
         },
         FindingKind::UnreachedMutant => format!(
-            "no measured test reaches {}: the mutation lives in code the tests never execute",
-            one.display_id
-        ),
-        FindingKind::DischargedMutant => format!(
-            "every target that could have noticed {} was removed by a proof, so no test could \
-             have: the mutation is in code the tests run and never observe",
+            "no sealed test reaches {}: the mutation lives in code the tests never execute",
             one.display_id
         ),
         FindingKind::NotRunMutant
@@ -778,7 +883,28 @@ fn detail(kind: FindingKind, one: &Judged) -> String {
             "{} was never executed and nothing cancelled the run",
             one.display_id
         ),
+        FindingKind::UnprovenMutant => unproven_detail(one),
     }
+}
+
+/// Why no sealed execution established a verdict about `one`, and what the native run said, which is a lead.
+fn unproven_detail(one: &Judged) -> String {
+    let reasons = match &one.evidence {
+        crate::sealed::record::Evidence::Unproven { reasons } => reasons
+            .iter()
+            .map(|reason| reason.said())
+            .collect::<Vec<_>>()
+            .join("; "),
+        crate::sealed::record::Evidence::Sealed { .. } => String::new(),
+    };
+    let lead = match one.not_run_reason {
+        Some(reason) => reason.name(),
+        None => one.outcome.name(),
+    };
+    format!(
+        "no sealed execution established a verdict about {} ({reasons}), so the native run's {lead} is a lead and not a verdict",
+        one.display_id,
+    )
 }
 
 /// One length as a count.
@@ -1098,11 +1224,26 @@ pub fn run<O: Observer>(
         asked: options.jobs,
         used: options.jobs.resolve(),
     };
+    let runner = sealed_runner(session)?;
+    let bench = match &runner {
+        Some(runner) => Some(session.bench(runner)?),
+        None => None,
+    };
     observer.starting(count(places.len())?, width);
     let judged = if width.used == 1 {
-        serially(session, &places, options, (cancel, observer))?
+        serially(
+            session,
+            &places,
+            (options, bench.as_ref()),
+            (cancel, observer),
+        )?
     } else {
-        pool::judge(session, &places, options, (cancel, observer, width.used))?
+        pool::judge(
+            session,
+            &places,
+            (options, bench.as_ref()),
+            (cancel, observer, width.used),
+        )?
     };
     observer.finished(started.elapsed());
     let mut judged = judged;
@@ -1239,16 +1380,17 @@ fn scanned(session: &Session, expectation: &Expectation) -> bool {
     })
 }
 
-/// Whether this run decided the mutation `id`: a row it established something about, rather than one it left out, stopped short of, never got to, or measured nothing of because every test declined.
+/// Whether this run decided the mutation `id`: a row sealed executions established something about, rather than one only a native run spoke to, or one the run left out, stopped short of, never got to, or measured nothing of because every test declined.
 fn decided_here(judged: &[Judged], id: &str) -> bool {
     judged.iter().find(|one| one.id == id).is_none_or(|one| {
-        one.outcome != Outcome::NotRun
-            || one
-                .not_run_reason
-                .is_none_or(|reason| match reason.established() {
-                    Unexecuted::Established(_) => true,
-                    Unexecuted::Unmeasured => false,
-                })
+        one.evidence.class() == crate::sealed::record::Class::Sealed
+            && (one.outcome != Outcome::NotRun
+                || one
+                    .not_run_reason
+                    .is_none_or(|reason| match reason.established() {
+                        Unexecuted::Established(_) => true,
+                        Unexecuted::Lead | Unexecuted::Unmeasured => false,
+                    }))
     })
 }
 
@@ -1477,7 +1619,7 @@ pub const DEFAULT_JOBS: usize = 4;
 fn serially<O: Observer>(
     session: &Session,
     places: &[&Mutant],
-    options: &Options<'_>,
+    (options, bench): (&Options<'_>, Option<&crate::sealed::bench::Bench<'_>>),
     watching: (&Cancel, &mut O),
 ) -> Result<Vec<Judged>, EngineError> {
     let (cancel, observer) = watching;
@@ -1494,7 +1636,7 @@ fn serially<O: Observer>(
             continue;
         }
         observer.started(mutant);
-        let mut one = one_mutant(session, mutant, options, cancel)?;
+        let mut one = one_mutant(session, mutant, (options, bench), cancel)?;
         route(session, mutant, &mut one);
         let completed = count(position)?
             .checked_add(1)
@@ -1510,16 +1652,99 @@ fn serially<O: Observer>(
 fn one_mutant(
     session: &Session,
     mutant: &Mutant,
-    options: &Options<'_>,
+    (options, bench): (&Options<'_>, Option<&crate::sealed::bench::Bench<'_>>),
     cancel: &Cancel,
 ) -> Result<Judged, EngineError> {
-    if let Some(one) = reuse(session, mutant, options, cancel)? {
+    let sealed = match bench {
+        Some(bench) => match sealed_verdict(session, mutant, bench)? {
+            Sealing::Established(judged) => return Ok(*judged),
+            Sealing::Unproven(evidence) => Some(evidence),
+        },
+        None => None,
+    };
+    if let Some(mut one) = reuse(session, mutant, options, cancel)? {
+        if let Some(evidence) = sealed {
+            one.evidence = evidence;
+        }
         return Ok(one);
     }
-    let (established, asked) = execute(session, mutant, options, cancel)?;
+    let (mut established, asked) = execute(session, mutant, options, cancel)?;
     keep(mutant, options, (&established, &asked))?;
     carry(session, mutant, (options, cancel), (&established, &asked))?;
+    if let Some(evidence) = sealed {
+        established.evidence = evidence;
+    }
     Ok(established)
+}
+
+/// The host every sealed execution of `session` runs on, when it built a sealed module to run.
+fn sealed_runner(
+    session: &Session,
+) -> Result<Option<rust_mutants_sealed::SealedRunner>, EngineError> {
+    if session.sealed().modules.is_empty() {
+        return Ok(None);
+    }
+    match rust_mutants_sealed::SealedRunner::new(crate::sealed::bench::WATCHDOG) {
+        Ok(runner) => Ok(Some(runner)),
+        Err(source) => Err(crate::sealed::bench::BenchError::Runner { source }.into()),
+    }
+}
+
+/// What sealed executions establish about one mutant: a verdict, or the evidence of why there is none.
+enum Sealing {
+    Established(Box<Judged>),
+    Unproven(crate::sealed::record::Evidence),
+}
+
+/// Puts `mutant` to the sealed executions of every test whose control reached it, and judges it from them alone where they establish a verdict (ADR 0046).
+fn sealed_verdict(
+    session: &Session,
+    mutant: &Mutant,
+    bench: &crate::sealed::bench::Bench<'_>,
+) -> Result<Sealing, EngineError> {
+    let started = Instant::now();
+    let route = session.route(mutant);
+    let file = session.snapshot_root().join(&mutant.candidate.path);
+    let answer = crate::sealed::standing::answer((bench, session.sealed()), mutant, &file, &route)?;
+    let evidence = crate::sealed::record::Evidence::of(&answer);
+    let rust_mutants_decision::evidence::Standing::Established(verdict) = answer.standing else {
+        return Ok(Sealing::Unproven(evidence));
+    };
+    if session.trace().is_enabled() {
+        session.trace().route(route.record(mutant, Vec::new()));
+    }
+    let (outcome, not_run_reason) = crate::sealed::record::row_of(verdict.found());
+    let by = answer.puts.iter().find(|put| {
+        matches!(
+            put.came_to,
+            rust_mutants_decision::evidence::Sealed::Detected(_)
+        )
+    });
+    Ok(Sealing::Established(Box::new(Judged {
+        index: mutant.index,
+        id: mutant.id.to_string(),
+        display_id: mutant.display_id.to_string(),
+        outcome,
+        step_notice: None,
+        target: by.map(|put| put.target.clone()).unwrap_or_default(),
+        exit_code: 0,
+        start_failure: None,
+        protocol_failure: None,
+        duration: started.elapsed(),
+        tests_run: Some(count(answer.puts.len())?),
+        failed_tests: by.map(|put| vec![put.test.clone()]).unwrap_or_default(),
+        signal: None,
+        retried: false,
+        lingered: false,
+        source_run_id: None,
+        expected: false,
+        not_run_reason,
+        route: Some(crate::report::run::route_document(&route, Vec::new())),
+        measured: true,
+        identical: CodegenIdentity::NotMeasured,
+        declined: Vec::new(),
+        evidence,
+    })))
 }
 
 /// Measuring several mutants at once, and delivering each as it finishes.
@@ -1613,6 +1838,7 @@ mod pool {
         session: &'a Session,
         places: &'a [&'a Mutant],
         options: &'a Options<'a>,
+        bench: Option<&'a crate::sealed::bench::Bench<'a>>,
         cancel: &'a Cancel,
         state: Arc<Mutex<WorkState>>,
     }
@@ -1637,14 +1863,18 @@ mod pool {
             if context.cancel.is_cancelled() || !deliver(sender, Delivery::Started(at)) {
                 return;
             }
-            let delivery =
-                match one_mutant(context.session, mutant, context.options, context.cancel) {
-                    Ok(mut one) => {
-                        route(context.session, mutant, &mut one);
-                        Delivery::Judged(at, Box::new(one))
-                    }
-                    Err(error) => Delivery::Failed(Box::new(error)),
-                };
+            let delivery = match one_mutant(
+                context.session,
+                mutant,
+                (context.options, context.bench),
+                context.cancel,
+            ) {
+                Ok(mut one) => {
+                    route(context.session, mutant, &mut one);
+                    Delivery::Judged(at, Box::new(one))
+                }
+                Err(error) => Delivery::Failed(Box::new(error)),
+            };
             if !deliver(sender, delivery) {
                 return;
             }
@@ -1735,7 +1965,7 @@ mod pool {
     pub(super) fn judge<O: Observer>(
         session: &Session,
         places: &[&Mutant],
-        options: &Options<'_>,
+        (options, bench): (&Options<'_>, Option<&crate::sealed::bench::Bench<'_>>),
         watching: (&Cancel, &mut O, usize),
     ) -> Result<Vec<Judged>, EngineError> {
         let (asked, observer, workers) = watching;
@@ -1780,6 +2010,7 @@ mod pool {
                     session,
                     places,
                     options,
+                    bench,
                     cancel,
                     state: Arc::clone(&work),
                 };
@@ -1911,7 +2142,7 @@ impl NotRunReason {
     pub const fn established(self) -> Unexecuted {
         match self {
             Self::Unreached => Unexecuted::Established(FindingKind::UnreachedMutant),
-            Self::Discharged => Unexecuted::Established(FindingKind::DischargedMutant),
+            Self::Discharged => Unexecuted::Lead,
             Self::Interrupted | Self::Unselected | Self::StoppedEarly | Self::Declined => {
                 Unexecuted::Unmeasured
             }
@@ -1924,6 +2155,8 @@ impl NotRunReason {
 pub enum Unexecuted {
     /// Why it was not run is a fact about the mutation, raised as this finding, and a claim about it is held to that fact.
     Established(FindingKind),
+    /// Why it was not run is what a proof from a native run said of the mutation, which is a lead: it is unproven, and holds no claim (ADR 0046).
+    Lead,
     /// The run measured nothing about it, so it raises no finding and a claim about it is neither met nor contradicted.
     Unmeasured,
 }
@@ -2008,6 +2241,7 @@ fn execute(
         identical: CodegenIdentity::NotMeasured,
         source_run_id: None,
         declined,
+        evidence: crate::sealed::record::Evidence::not_sealed(),
     };
     Ok((judged, asked))
 }
@@ -2021,6 +2255,8 @@ pub struct RowVerdict {
     pub not_run_reason: Option<NotRunReason>,
     /// Whether a reviewer declared this outcome in advance and the run confirmed the claim.
     pub expected: bool,
+    /// Whether sealed executions established it, which a finding is decided from before anything else (ADR 0046).
+    pub evidence: crate::sealed::record::Class,
 }
 
 /// The finding `row` raises in a run that was or was not `interrupted`, when it raises one: the one place that says which verdicts keep a run from being clean, for the run and for every reader of its report.
@@ -2030,8 +2266,11 @@ pub const fn verdict_finding(row: RowVerdict, interrupted: bool) -> Option<Findi
         outcome,
         not_run_reason: reason,
         expected,
+        evidence,
     } = row;
+    let unproven = matches!(evidence, crate::sealed::record::Class::Unproven);
     match outcome {
+        Outcome::Killed | Outcome::Survived if unproven => Some(FindingKind::UnprovenMutant),
         Outcome::Killed => None,
         Outcome::Survived if expected => None,
         Outcome::Survived => Some(FindingKind::SurvivingMutant),
@@ -2041,7 +2280,9 @@ pub const fn verdict_finding(row: RowVerdict, interrupted: bool) -> Option<Findi
         Outcome::Errored => Some(FindingKind::ErroredMutant),
         Outcome::NotRun => match reason {
             Some(reason) => match reason.established() {
+                Unexecuted::Established(_) if unproven => Some(FindingKind::UnprovenMutant),
                 Unexecuted::Established(kind) => Some(kind),
+                Unexecuted::Lead => Some(FindingKind::UnprovenMutant),
                 Unexecuted::Unmeasured => None,
             },
             None if interrupted => None,
@@ -2070,22 +2311,18 @@ fn not_run_because(
     }
 }
 
-/// Whether this outcome is the one a run asked to stop at the first finding stops at.
+/// Whether `one` raises a finding, which is what a run asked to stop at the first finding stops at; a row with no reason it was not run is what a stop leaves, not what makes one.
 const fn stops(one: &Judged) -> bool {
-    match one.outcome {
-        Outcome::Killed => false,
-        Outcome::Survived => !one.expected,
-        Outcome::NotRun => match one.not_run_reason {
-            Some(reason) => match reason.established() {
-                Unexecuted::Established(_) => true,
-                Unexecuted::Unmeasured => false,
-            },
-            None => false,
+    verdict_finding(
+        RowVerdict {
+            outcome: one.outcome,
+            not_run_reason: one.not_run_reason,
+            expected: one.expected,
+            evidence: one.evidence.class(),
         },
-        Outcome::StepLimitReached | Outcome::Waited | Outcome::Inconclusive | Outcome::Errored => {
-            true
-        }
-    }
+        true,
+    )
+    .is_some()
 }
 
 /// What a filter leaves of a catalog, and what it took out.
@@ -2216,6 +2453,7 @@ fn remembered(mutant: &Mutant, outcome: Outcome, record: Remembered) -> Judged {
         identical: CodegenIdentity::NotMeasured,
         source_run_id: Some(record.run_id),
         declined: Vec::new(),
+        evidence: crate::sealed::record::Evidence::not_sealed(),
     }
 }
 
@@ -2367,6 +2605,7 @@ fn unexecuted(mutant: &Mutant, reason: NotRunReason) -> Judged {
         identical: CodegenIdentity::NotMeasured,
         source_run_id: None,
         declined: Vec::new(),
+        evidence: crate::sealed::record::Evidence::not_sealed(),
     }
 }
 

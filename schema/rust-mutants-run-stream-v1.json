@@ -362,7 +362,7 @@
                 "errored-mutant",
                 "not-run-mutant",
                 "unreached-mutant",
-                "discharged-mutant",
+                "unproven-mutant",
                 "stale-expectation",
                 "unmatched-expectation",
                 "unmatched-skip"

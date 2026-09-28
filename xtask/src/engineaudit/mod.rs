@@ -17,7 +17,7 @@ mod recording;
 pub mod sentinel;
 mod wire;
 
-use arithmetic::{accounting, exit, expectations, findings, identity, score};
+use arithmetic::{accounting, exit, expectations, findings, identity, score, sealed};
 use evidence::{entry, merge, proofs, sites, touch};
 use ledger::ledger;
 use recording::{trace, work};
@@ -31,7 +31,7 @@ pub const REPORT_FILE: &str = "run-report-v1.json";
 pub const DOCUMENT_TYPE: &str = "rust-mutants/run-report";
 
 /// The current report shape this audit independently re-decides.
-pub const SCHEMA_VERSION: u64 = 3;
+pub const SCHEMA_VERSION: u64 = 4;
 
 /// The current engine recording shape paired with [`SCHEMA_VERSION`].
 pub const TRACE_SCHEMA: &str = "rust-mutants-trace-v1";
@@ -63,7 +63,9 @@ const SURVIVING_MUTANT: &str = "surviving-mutant";
 const STEP_LIMIT_REACHED_MUTANT: &str = "step-limit-reached-mutant";
 const WAITED_MUTANT: &str = "waited-mutant";
 const UNREACHED_MUTANT: &str = "unreached-mutant";
-const DISCHARGED_MUTANT: &str = "discharged-mutant";
+const UNPROVEN_MUTANT: &str = "unproven-mutant";
+const UNPROVEN: &str = "unproven";
+const UNPROVEN_DISCHARGED: &str = "unproven_discharged";
 const INCONCLUSIVE_MUTANT: &str = "inconclusive-mutant";
 const ERRORED_MUTANT: &str = "errored-mutant";
 const NOT_RUN_MUTANT: &str = "not-run-mutant";
@@ -236,6 +238,8 @@ pub enum Layer {
     Entry,
     /// Every body the run calls sealed and every body digest it kept, read again from the tree under `docs/engine/carry.md`.
     Carry,
+    /// Every verdict a row says sealed executions established, decided again from the executions it records (ADR 0046).
+    Sealed,
 }
 
 impl Layer {
@@ -258,6 +262,7 @@ impl Layer {
             Self::Touch => "touch",
             Self::Entry => "entry",
             Self::Carry => "carry",
+            Self::Sealed => "sealed",
         }
     }
 }
@@ -675,6 +680,7 @@ pub fn audit(
             Layer::Touch => touch(&report, evidence.touched.as_ref(), &mut audit),
             Layer::Entry => entry(&report, evidence.touched.as_ref(), &mut audit),
             Layer::Carry => carry::layer(&report, &evidence, &mut audit),
+            Layer::Sealed => sealed(&report, &mut audit),
         };
     }
     audit.remarks.sort();
@@ -714,6 +720,66 @@ struct Row {
     not_run_reason: Option<NotRunReason>,
     source_run_id: Option<String>,
     declined: Vec<Decline>,
+    evidence: Resting,
+}
+
+/// What a row's verdict rests on, as the report records it (ADR 0046).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+enum Resting {
+    /// Sealed executions, in the order they ran.
+    Sealed { executions: Vec<SealedRun> },
+    /// No verdict, and every reason why.
+    Unproven { reasons: Vec<String> },
+}
+
+/// One sealed execution a row records.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SealedRun {
+    target: String,
+    test: String,
+    came_to: Came,
+}
+
+/// What one sealed execution came to, as the report spells it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum Came {
+    Passed,
+    Panicked,
+    Failed,
+    Trapped,
+    FuelExceeded,
+    MemoryExceeded,
+    ExitedEarly,
+    StackOverflow,
+    Refused,
+    Unaccounted,
+}
+
+/// What one sealed execution says about a verdict: it passed, it detected the mutant, or it established neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Said {
+    Passed,
+    Detected,
+    Doubted,
+}
+
+impl Came {
+    const fn said(self) -> Said {
+        match self {
+            Self::Passed => Said::Passed,
+            Self::Panicked
+            | Self::Failed
+            | Self::Trapped
+            | Self::FuelExceeded
+            | Self::MemoryExceeded => Said::Detected,
+            Self::ExitedEarly | Self::StackOverflow | Self::Refused | Self::Unaccounted => {
+                Said::Doubted
+            }
+        }
+    }
 }
 
 /// One test a row or a recorded execution says declined to measure, and its words (ADR 0043).
@@ -866,6 +932,20 @@ impl Row {
         self.not_run_reason.is_some_and(|held| held == reason)
     }
 
+    /// Whether sealed executions established this row's verdict.
+    const fn sealed(&self) -> bool {
+        matches!(self.evidence, Resting::Sealed { .. })
+    }
+
+    /// Whether this row is a lead: what a native run said, where no sealed execution decided the mutant, which is what an unproven finding names.
+    fn lead(&self) -> bool {
+        self.not_run(DISCHARGED)
+            || (!self.sealed()
+                && (self.outcome == KILLED
+                    || self.outcome == SURVIVED
+                    || (self.outcome == NOT_RUN && self.not_run(UNREACHED))))
+    }
+
     const fn complete(&self) -> bool {
         !self.source_digest.is_empty() && !self.path.is_empty() && !self.rule.is_empty()
     }
@@ -936,7 +1016,7 @@ enum FindingKind {
     ErroredMutant,
     NotRunMutant,
     UnreachedMutant,
-    DischargedMutant,
+    UnprovenMutant,
     StaleExpectation,
     UnmatchedExpectation,
     UnmatchedSkip,
@@ -952,7 +1032,7 @@ impl FindingKind {
             Self::ErroredMutant => ERRORED_MUTANT,
             Self::NotRunMutant => NOT_RUN_MUTANT,
             Self::UnreachedMutant => UNREACHED_MUTANT,
-            Self::DischargedMutant => DISCHARGED_MUTANT,
+            Self::UnprovenMutant => UNPROVEN_MUTANT,
             Self::StaleExpectation => STALE_EXPECTATION,
             Self::UnmatchedExpectation => UNMATCHED_EXPECTATION,
             Self::UnmatchedSkip => "unmatched-skip",

@@ -697,7 +697,7 @@ impl PrepareOptions {
             build: crate::cargo::BuildConfig::default(),
             skip_targets: Vec::new(),
             validation_filter: None,
-            sealing: crate::sealed::Sealing::Off,
+            sealing: crate::sealed::Sealing::On,
         }
     }
 
