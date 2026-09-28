@@ -505,6 +505,38 @@ fn compilation_cache() -> Option<std::ffi::OsString> {
         .filter(|value| names_a_cache(value))
 }
 
+/// One variable of a nested run given a home of its own, beside the run it was copied from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Given {
+    /// Set to this value.
+    Set(&'static str, std::ffi::OsString),
+    /// Removed.
+    Removed(&'static str),
+}
+
+/// What a nested run given `home` as its home changes: the home under both names a platform reads it by, the toolchain's own homes kept where they were, and no compilation cache, whose own configuration it would look for under the home it no longer has.
+#[must_use]
+pub fn given_home(home: &Path) -> Vec<Given> {
+    let real =
+        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
+    let mut given = Vec::new();
+    for (name, beside) in [("CARGO_HOME", ".cargo"), ("RUSTUP_HOME", ".rustup")] {
+        let kept = std::env::var_os(name)
+            .or_else(|| real.as_ref().map(|real| real.join(beside).into_os_string()));
+        given.push(match kept {
+            Some(kept) => Given::Set(name, kept),
+            None => Given::Removed(name),
+        });
+    }
+    for name in ["HOME", "USERPROFILE"] {
+        given.push(Given::Set(name, home.as_os_str().to_owned()));
+    }
+    if compilation_cache().is_some() {
+        given.push(Given::Removed(WRAPPER));
+    }
+    given
+}
+
 /// Whether a compiler wrapper is the compilation cache rather than something else wearing the variable.
 #[must_use]
 pub fn names_a_cache(wrapper: &std::ffi::OsStr) -> bool {

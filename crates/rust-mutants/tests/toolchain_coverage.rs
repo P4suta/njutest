@@ -237,16 +237,11 @@ fn a_target_that_runs_with_the_given_home_is_routed_as_one_nothing_measured() {
         &njutest_devkit::paths::cargo_binary(),
         fixture.temp(),
     );
-    let real = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .map(PathBuf::from)
-        .expect("a real home");
-    for (name, beside) in [("CARGO_HOME", ".cargo"), ("RUSTUP_HOME", ".rustup")] {
-        if !options.env.holds(name) {
-            options.env.set(name, real.join(beside).into_os_string());
+    for change in njutest_devkit::paths::given_home(&home) {
+        match change {
+            njutest_devkit::paths::Given::Set(name, value) => options.env.set(name, value),
+            njutest_devkit::paths::Given::Removed(name) => options.env.remove(name),
         }
-    }
-    for name in ["HOME", "USERPROFILE"] {
-        options.env.set(name, home.clone().into_os_string());
     }
     let session = rust_mutants::workspace::Workspace::open(
         fixture.root(),

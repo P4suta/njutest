@@ -130,6 +130,42 @@ fn lint_tree(app_source: &str) -> Result<tempfile::TempDir, TestError> {
     Ok(root)
 }
 
+include!("support/asked.rs");
+
+#[test]
+fn the_lint_scan_lists_the_tree_once_and_reads_each_graph_once() -> Result<(), TestError> {
+    let root = lint_tree("")?;
+    let asked = Asked::new();
+    let report = gates::lints_scanned_with(root.path(), &asked)?;
+    require(report.starts_with("lints: "), report)?;
+    let questions = asked.questions();
+    let tree = asked::canonical(root.path());
+    let listings = questions
+        .iter()
+        .filter(|question| matches!(question, Question::Listed(at) if *at == tree))
+        .count();
+    let readings = |manifest: &str| {
+        let manifest = tree.join(manifest);
+        questions
+            .iter()
+            .filter(|question| matches!(question, Question::Read(at, _depth) if *at == manifest))
+            .count()
+    };
+    let counted = [
+        listings,
+        readings("Cargo.toml"),
+        readings("fuzz/Cargo.toml"),
+    ];
+    require(
+        counted == [1, 1, 1] && questions.len() == 3,
+        format!(
+            "the scan lists the tree once and asks cargo once about each of its two graphs, and \
+             every check after that decides from what those answered; [listings, root readings, \
+             fuzz readings] were {counted:?}: {questions:#?}"
+        ),
+    )
+}
+
 #[test]
 fn only_a_scanned_support_rs_file_may_be_included() -> Result<(), TestError> {
     let root = lint_tree("include!(\"support/ok.rs\");\n")?;
@@ -724,4 +760,51 @@ fn a_gate_reads_what_the_repository_holds_and_never_what_a_build_left_in_it()
             .any(|path| path.ends_with("crates/app/src/lib.rs")),
         format!("the committed source is read: {production:?}"),
     )
+}
+
+#[cfg(unix)]
+#[test]
+fn a_gate_lists_the_tree_itself_rather_than_asking_a_file_system_monitor() -> Result<(), TestError>
+{
+    use std::os::unix::fs::PermissionsExt as _;
+    let root = tempfile::tempdir()?;
+    xtask::repository::init(root.path())?;
+    let asked = root.path().join(".git/monitor-asked");
+    let monitor = root.path().join(".git/monitor");
+    std::fs::write(
+        &monitor,
+        format!(
+            "#!{}\nprintf '%s\\n' \"$*\" >> '{}'\nexit 1\n",
+            njutest_devkit::paths::posix_sh().display(),
+            asked.display()
+        ),
+    )?;
+    std::fs::set_permissions(&monitor, std::fs::Permissions::from_mode(0o755))?;
+    let configured = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root.path())
+        .args(["config", "core.fsmonitor"])
+        .arg(&monitor)
+        .status()?;
+    require(configured.success(), "git config core.fsmonitor")?;
+    std::fs::create_dir_all(root.path().join("crates/app/src"))?;
+    std::fs::write(root.path().join("crates/app/src/lib.rs"), "pub fn f() {}\n")?;
+
+    let listed = xtask::repository::files(root.path()).map_err(gates::GateError::from)?;
+    require(
+        listed == ["crates/app/src/lib.rs"],
+        format!("the listing reads the tree: {listed:?}"),
+    )?;
+    let tracked = gates::tracked(root.path())?;
+    require(tracked.starts_with("tracked: "), tracked)?;
+    match std::fs::read_to_string(&asked) {
+        Err(absent) if absent.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(said) => Err(TestError::Contract(format!(
+            "a gate's listing asked the file-system monitor the repository names, which answers \
+             nothing a listing needs, is a daemon each fresh repository starts and leaves running \
+             when it is git's own, and on this machine made each listing wait a second; it was \
+             asked: {said}"
+        ))),
+        Err(unread) => Err(unread.into()),
+    }
 }

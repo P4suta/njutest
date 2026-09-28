@@ -137,17 +137,13 @@ pub fn extension_is(path: &str, wanted: &str) -> bool {
         .is_some_and(|extension| extension == wanted)
 }
 
-/// Makes `dir` a repository of its own, so a tree laid for a check is read as the repository is: through what git lists.
+/// Makes `dir` a repository of its own, so a tree a test lays for a check is read as the repository is: through what git lists.
 ///
 /// # Errors
 /// git could not be run, or refused.
+#[cfg(feature = "testkit")]
 pub fn init(dir: &Path) -> std::io::Result<()> {
-    let mut git = std::process::Command::new("git");
-    git.arg("-C").arg(dir).args(["init", "--quiet"]);
-    for variable in REDIRECTING_GIT {
-        git.env_remove(variable);
-    }
-    let status = git.status()?;
+    let status = git(dir).args(["init", "--quiet"]).status()?;
     if status.success() {
         Ok(())
     } else {
@@ -199,17 +195,26 @@ pub fn entries(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
     Ok(found)
 }
 
-/// What `git -C dir <arguments>` lists, one NUL-terminated path at a time.
-fn listed(dir: &Path, arguments: &[&str]) -> Result<Vec<String>, ListingError> {
+/// Git as a gate runs it in `dir`: in that directory's own repository whatever a hook or a wrapper set, reading the tree itself rather than asking a file-system monitor.
+#[must_use]
+pub fn git(dir: &Path) -> std::process::Command {
     let mut git = std::process::Command::new("git");
-    git.arg("-C").arg(dir).args(arguments);
+    git.args(["-c", "core.fsmonitor=false"]).arg("-C").arg(dir);
     for variable in REDIRECTING_GIT {
         git.env_remove(variable);
     }
-    let output = git.output().map_err(|error| ListingError::Unlisted {
-        dir: dir.to_path_buf(),
-        said: error.to_string(),
-    })?;
+    git
+}
+
+/// What `git -C dir <arguments>` lists, one NUL-terminated path at a time.
+fn listed(dir: &Path, arguments: &[&str]) -> Result<Vec<String>, ListingError> {
+    let output = git(dir)
+        .args(arguments)
+        .output()
+        .map_err(|error| ListingError::Unlisted {
+            dir: dir.to_path_buf(),
+            said: error.to_string(),
+        })?;
     if !output.status.success() {
         let said = match String::from_utf8(output.stderr) {
             Ok(said) => said.trim().to_owned(),
