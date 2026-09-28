@@ -968,3 +968,65 @@ fn a_run_that_found_the_lock_free_waits_while_the_recorded_holder_still_runs() {
         "once the holder ended, the next run went in: {late:?}"
     );
 }
+
+#[test]
+fn a_run_behind_a_holder_whose_work_shows_nothing_stops_waiting() {
+    let machine = Machine::new();
+    let mut holder = machine.run("mkdir \"$TURNS/inside\"; exec sleep 60");
+    assert!(
+        until(Duration::from_secs(60), || machine.marker("inside")),
+        "the holder never started"
+    );
+    let told = machine.turns.path().join("stalled.log");
+    let mut behind = machine.command("true");
+    behind
+        .env("NJUTEST_SLOT_QUIET_SECONDS", "3")
+        .stderr(Stdio::from(
+            std::fs::File::create(&told).expect("the waiting run's progress"),
+        ));
+    let mut behind = SupervisedChild::launch(&mut behind).expect("a run behind the holder");
+    let ended = finished_within(Duration::from_secs(20), &mut behind);
+    let asked = Command::new("kill")
+        .args(["-TERM", &holder.id().expect("a live holder").to_string()])
+        .status()
+        .expect("kill");
+    assert!(asked.success(), "the holder could not be asked to stop");
+    holder.wait().expect("the holder is reaped");
+    let said = std::fs::read_to_string(&told).expect("the waiting run's progress");
+    assert!(
+        ended.is_some_and(|status| !status.success()),
+        "a holder whose work neither used the processor nor started a process held every run \
+         behind it for as long as it liked: {ended:?}: {said}"
+    );
+    assert!(
+        said.contains("XT0203") && said.contains("NJUTEST_SLOT_QUIET_SECONDS"),
+        "the run that stopped waiting says why, and what bounds it: {said}"
+    );
+}
+
+#[test]
+fn a_run_behind_a_holder_whose_work_keeps_moving_waits_for_it() {
+    let machine = Machine::new();
+    let holder = machine.run(&holds_until_go());
+    assert!(
+        until(Duration::from_secs(60), || machine.marker("inside")),
+        "the holder never started"
+    );
+    let mut behind = machine.command("true");
+    behind.env("NJUTEST_SLOT_QUIET_SECONDS", "3");
+    let mut behind = SupervisedChild::launch(&mut behind).expect("a run behind the holder");
+    let early = finished_within(Duration::from_secs(9), &mut behind);
+    machine.release();
+    let late = finished_within(Duration::from_secs(60), &mut behind);
+    let holder = holder.wait_with_output().expect("the holder's answer");
+    assert!(holder.status.success(), "{}", text(&holder.stderr));
+    assert!(
+        early.is_none(),
+        "work that keeps starting processes is moving however long it takes, and the run behind \
+         it waited rather than give up by the clock: {early:?}"
+    );
+    assert!(
+        late.is_some_and(|status| status.success()),
+        "once the holder let go, the run behind it went in: {late:?}"
+    );
+}

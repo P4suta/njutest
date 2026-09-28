@@ -40,6 +40,8 @@ pub enum XtCode {
     LaneUnavailable,
     /// A run was stopped while it waited for its lane.
     LaneInterrupted,
+    /// A run stopped waiting behind a holder whose work showed nothing new.
+    LaneStalled,
     /// A gate's program could not be run.
     WorkUnrun,
     /// The other machines could not be asked.
@@ -258,13 +260,18 @@ impl XtCode {
             ),
             Self::LaneUnavailable => (
                 "XT0201",
-                "The lane a whole-workspace run waits in could not be found, written, locked, or reported on.",
-                "set `NJUTEST_SLOT_DIR` to a writable directory, or fix the one the message names",
+                "The lane a whole-workspace run waits in could not be found, written, locked, read, or reported on, or a setting of it is not a whole number of seconds.",
+                "set `NJUTEST_SLOT_DIR` to a writable directory, or fix the one or the setting the message names",
             ),
             Self::LaneInterrupted => (
                 "XT0202",
                 "The run was asked to stop while it waited for its lane.",
                 "nothing is wrong with the tree; run it again",
+            ),
+            Self::LaneStalled => (
+                "XT0203",
+                "The run stopped waiting for its lane because the run holding it showed nothing new of its work — no change to its record, no process of its groups started, ended, or using the processor — for as long as `NJUTEST_SLOT_QUIET_SECONDS` allows.",
+                "look at the holder the message names: end it if it hangs, or run again once it has finished; a holder that is merely slow keeps showing something new and is waited for",
             ),
             Self::WorkUnrun => (
                 "XT0301",

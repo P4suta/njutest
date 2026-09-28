@@ -452,7 +452,7 @@ fn take_lanes(
         },
         progress,
     )?;
-    let tree = Lanes::at(place.home.clone()).hold(
+    let tree = Lanes::at(place.home.clone(), lanes.quiet()).hold(
         &Request {
             lane: Lane::Tree,
             ..asking

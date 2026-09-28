@@ -18,6 +18,12 @@ use crate::work::Stops;
 /// The variable that names the lanes a process already holds, so a run inside one never waits for itself.
 pub const HELD: &str = "NJUTEST_SLOT_HELD";
 
+/// The variable that says, in seconds, how long a run waits behind a holder whose work shows nothing new.
+pub const QUIET: &str = "NJUTEST_SLOT_QUIET_SECONDS";
+
+/// How long a run waits behind a holder whose work shows nothing new, where [`QUIET`] does not say.
+const DEFAULT_QUIET: Duration = Duration::from_secs(600);
+
 /// How often a waiting run looks at the lock again.
 const POLL: Duration = Duration::from_millis(200);
 
@@ -171,6 +177,32 @@ pub enum LaneError {
         /// The signal.
         signal: i32,
     },
+    /// A setting of the lanes is not a whole number of seconds.
+    #[error("{name} is {value:?}, which is not a whole number of seconds")]
+    Setting {
+        /// The variable.
+        name: &'static str,
+        /// What it holds.
+        value: String,
+    },
+    /// The holder showed nothing new of its work for longer than the quiet window allows.
+    #[cfg(unix)]
+    #[error(
+        "the {lane} lane's holder, {holder}, has shown nothing new of its work for {silent}: its \
+         record and every process of the groups it names have neither changed nor used the \
+         processor for as long as {QUIET} allows ({quiet}), so this run stops waiting rather than \
+         wait for it forever"
+    )]
+    Stalled {
+        /// The lane.
+        lane: &'static str,
+        /// The holder, as its record describes it.
+        holder: String,
+        /// How long it showed nothing new.
+        silent: String,
+        /// The window.
+        quiet: String,
+    },
 }
 
 impl crate::error::Coded for LaneError {
@@ -180,12 +212,15 @@ impl crate::error::Coded for LaneError {
             | Self::Nowhere
             | Self::Io { .. }
             | Self::Lock { .. }
-            | Self::Progress { .. } => crate::error::XtCode::LaneUnavailable,
+            | Self::Progress { .. }
+            | Self::Setting { .. } => crate::error::XtCode::LaneUnavailable,
             #[cfg(unix)]
             Self::Unended { .. }
             | Self::Unseen { .. }
             | Self::HolderUnseen { .. }
             | Self::WaiterUnseen { .. } => crate::error::XtCode::LaneUnavailable,
+            #[cfg(unix)]
+            Self::Stalled { .. } => crate::error::XtCode::LaneStalled,
             Self::Interrupted { .. } => crate::error::XtCode::LaneInterrupted,
         }
     }
@@ -201,28 +236,31 @@ impl LaneError {
             | Self::Nowhere
             | Self::Io { .. }
             | Self::Lock { .. }
-            | Self::Progress { .. } => None,
+            | Self::Progress { .. }
+            | Self::Setting { .. } => None,
             #[cfg(unix)]
             Self::Unended { .. }
             | Self::Unseen { .. }
             | Self::HolderUnseen { .. }
-            | Self::WaiterUnseen { .. } => None,
+            | Self::WaiterUnseen { .. }
+            | Self::Stalled { .. } => None,
         }
     }
 }
 
-/// Where lanes are kept, and which of them the running process already holds.
+/// Where lanes are kept, which of them the running process already holds, and how long a run waits behind a holder whose work shows nothing new.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lanes {
     directory: PathBuf,
     held: Vec<String>,
+    quiet: Duration,
 }
 
 impl Lanes {
-    /// The machine's lanes as the environment names them: `NJUTEST_SLOT_DIR`, else under the state directory, with [`HELD`] saying which are already held.
+    /// The machine's lanes as the environment names them: `NJUTEST_SLOT_DIR`, else under the state directory, with [`HELD`] saying which are already held and [`QUIET`] how long a waiting run bears a holder that shows nothing new.
     ///
     /// # Errors
-    /// Returns [`LaneError::Nowhere`] when the environment names no directory for them.
+    /// Returns [`LaneError::Nowhere`] when the environment names no directory for them, and [`LaneError::Setting`] when [`QUIET`] is not a whole number of seconds.
     pub fn from_environment(environment: &Environment) -> Result<Self, LaneError> {
         let directory = match environment.value("NJUTEST_SLOT_DIR") {
             Some(named) => PathBuf::from(named),
@@ -241,16 +279,42 @@ impl Lanes {
                 .collect(),
             None => Vec::new(),
         };
-        Ok(Self { directory, held })
+        let quiet = match environment.value(QUIET) {
+            Some(value) => {
+                let text = value.to_str().ok_or(LaneError::NotText { name: QUIET })?;
+                match text.trim().parse::<u64>() {
+                    Ok(seconds) => Duration::from_secs(seconds),
+                    Err(_not_seconds) => {
+                        return Err(LaneError::Setting {
+                            name: QUIET,
+                            value: text.to_owned(),
+                        });
+                    }
+                }
+            }
+            None => DEFAULT_QUIET,
+        };
+        Ok(Self {
+            directory,
+            held,
+            quiet,
+        })
     }
 
-    /// Lanes kept in `directory` that nothing already holds, such as one repository's gate tree.
+    /// Lanes kept in `directory` that nothing already holds, such as one repository's gate tree, waited for as long as their holder shows something new within `quiet`.
     #[must_use]
-    pub const fn at(directory: PathBuf) -> Self {
+    pub const fn at(directory: PathBuf, quiet: Duration) -> Self {
         Self {
             directory,
             held: Vec::new(),
+            quiet,
         }
+    }
+
+    /// How long a run waits behind a holder whose work shows nothing new.
+    #[must_use]
+    pub const fn quiet(&self) -> Duration {
+        self.quiet
     }
 
     /// The lane this process is already inside, to record the work it starts there, or nothing when it holds none.
@@ -279,7 +343,7 @@ impl Lanes {
     /// Waits until the lane is free and the work its last holder left behind has ended, telling `progress` whom it waits for, and holds the lane until the answer is dropped.
     ///
     /// # Errors
-    /// Returns a [`LaneError`] when the lane's files cannot be written, its lock cannot be taken, or a signal ends the wait.
+    /// Returns a [`LaneError`] when the lane's files cannot be written, its lock cannot be taken, a signal ends the wait, or its holder shows nothing new of its work for as long as the quiet window.
     pub fn hold(&self, request: &Request<'_>, progress: &mut dyn Write) -> Result<Held, LaneError> {
         let lane = request.lane;
         if self.held.iter().any(|name| name == lane.name()) {
@@ -298,6 +362,7 @@ impl Lanes {
             directory: &self.directory,
             lock: &lock_path,
             record: &record,
+            quiet: self.quiet,
         };
         let lock = place.take(request, progress)?;
         place.outlast(request, progress)?;
@@ -310,12 +375,13 @@ impl Lanes {
     }
 }
 
-/// The files one lane lives in.
+/// The files one lane lives in, and how long a run waits there behind a holder that shows nothing new.
 #[derive(Debug, Clone, Copy)]
 struct Place<'a> {
     directory: &'a Path,
     lock: &'a Path,
     record: &'a Path,
+    quiet: Duration,
 }
 
 impl Place<'_> {
@@ -339,6 +405,8 @@ impl Place<'_> {
         let mut announced = false;
         let started = Instant::now();
         let mut reported = started;
+        #[cfg(unix)]
+        let mut watch = Watch::new(self.quiet);
         loop {
             if self.first_in_line(request.lane, ticket)? {
                 let lock = self.open()?;
@@ -373,6 +441,11 @@ impl Place<'_> {
                     lane: request.lane.name(),
                     signal,
                 });
+            }
+            #[cfg(unix)]
+            if let Some(silent) = watch.stalled(self.record) {
+                std::fs::remove_file(&marker).map_err(|source| io(&marker, source))?;
+                return Err(self.stalled(request, silent));
             }
             if reported.elapsed() >= REPORT {
                 reported = Instant::now();
@@ -553,7 +626,7 @@ impl Place<'_> {
         if groups.is_empty() {
             return Ok(());
         }
-        Self::outwait_holder(request, progress, pid, born)?;
+        self.outwait_holder(request, progress, (pid, born))?;
         for group in groups {
             self.end_group(request, progress, &group)?;
         }
@@ -575,16 +648,17 @@ impl Place<'_> {
         Ok(())
     }
 
-    /// Waits while the holder the record names still runs, which a lock taken over a removed lock file cannot tell from one that died.
+    /// Waits while the holder the record names still runs, which a lock taken over a removed lock file cannot tell from one that died, and for as long as its work shows something new.
     #[cfg(unix)]
     fn outwait_holder(
+        &self,
         request: &Request<'_>,
         progress: &mut dyn Write,
-        pid: u32,
-        born: &str,
+        (pid, born): (u32, &str),
     ) -> Result<(), LaneError> {
         let lane = request.lane.name();
         let mut reported: Option<Instant> = None;
+        let mut watch = Watch::new(self.quiet);
         loop {
             match holder_state(&start_of(pid), born) {
                 HolderState::Dead => return Ok(()),
@@ -593,6 +667,9 @@ impl Place<'_> {
             }
             if let Some(signal) = request.stops.raised() {
                 return Err(LaneError::Interrupted { lane, signal });
+            }
+            if let Some(silent) = watch.stalled(self.record) {
+                return Err(self.stalled(request, silent));
             }
             if reported.is_none_or(|last| last.elapsed() >= REPORT) {
                 reported = Some(Instant::now());
@@ -604,6 +681,17 @@ impl Place<'_> {
                 )?;
             }
             std::thread::sleep(POLL);
+        }
+    }
+
+    /// The refusal a run waiting behind this lane's holder gives once the holder has shown nothing new for `silent`.
+    #[cfg(unix)]
+    fn stalled(&self, request: &Request<'_>, silent: Duration) -> LaneError {
+        LaneError::Stalled {
+            lane: request.lane.name(),
+            holder: describe(self.record),
+            silent: span(silent.as_secs()),
+            quiet: span(self.quiet.as_secs()),
         }
     }
 
@@ -648,6 +736,80 @@ impl Place<'_> {
             Liveness::Unseen => Err(LaneError::Unseen { lane, pid }),
         }
     }
+}
+
+/// What a run waiting behind a holder has seen of the holder's work, and since when it has seen nothing new (ADR 0026).
+#[cfg(unix)]
+#[derive(Debug)]
+struct Watch {
+    quiet: Duration,
+    look: Duration,
+    seen: Option<Vec<u8>>,
+    moved: Instant,
+    looked: Option<Instant>,
+}
+
+#[cfg(unix)]
+impl Watch {
+    /// A watch that calls a holder stalled once its work has shown nothing new for `quiet`, looking four times within it.
+    fn new(quiet: Duration) -> Self {
+        Self {
+            quiet,
+            look: quiet.checked_div(4).unwrap_or(POLL).max(POLL),
+            seen: None,
+            moved: Instant::now(),
+            looked: None,
+        }
+    }
+
+    /// How long the holder whose record is at `record` has shown nothing new of its work, once that is as long as the window; a look that fails shows nothing.
+    fn stalled(&mut self, record: &Path) -> Option<Duration> {
+        if self.looked.is_none_or(|last| last.elapsed() >= self.look) {
+            self.looked = Some(Instant::now());
+            if let Some(shown) = shown(record)
+                && self.seen.as_ref() != Some(&shown)
+            {
+                self.seen = Some(shown);
+                self.moved = Instant::now();
+            }
+        }
+        let silent = self.moved.elapsed();
+        (silent >= self.quiet).then_some(silent)
+    }
+}
+
+/// What the holder whose record is at `record` shows of its work: the record, and every process of each group the record names with the processor time it has used, as `ps` lists them; nothing where either cannot be read.
+#[cfg(unix)]
+fn shown(record: &Path) -> Option<Vec<u8>> {
+    let mut shown = match std::fs::read(record) {
+        Ok(bytes) => bytes,
+        Err(_unread) => return None,
+    };
+    let groups: Vec<u32> = Record::read(&shown)
+        .groups()
+        .iter()
+        .map(|group| group.pid)
+        .collect();
+    let listing = answer(
+        Command::new("ps")
+            .args(["-A", "-o", "pid=,pgid=,time="])
+            .env("LC_ALL", "C"),
+    )?;
+    let mut rows: Vec<&str> = listing
+        .lines()
+        .filter(|row| {
+            row.split_whitespace()
+                .nth(1)
+                .and_then(number)
+                .is_some_and(|group| groups.contains(&group))
+        })
+        .collect();
+    rows.sort_unstable();
+    for row in rows {
+        shown.push(b'\n');
+        shown.extend_from_slice(row.as_bytes());
+    }
+    Some(shown)
 }
 
 /// Whether a group a lane's work ran in still holds a process that has not ended.
