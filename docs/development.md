@@ -224,7 +224,7 @@ It reads that run's `run-report-v1.json` and re-decides it in fourteen layers, n
 | `merge` | the parts of one catalog: every `K/N` exactly once, same digests/scope/tool versions, disjoint indices, and the whole they come to |
 | `proofs` | every discharge against the measurement and the catalog the run kept: a target that covered the body it was discharged from, a discharge whose premises are missing, a discharged pair that then ran, the `discharged` column, and a mutant that never ran and whose reason the recording does not give |
 | `trace` | every row against the recording of what actually ran: the target it names ran, its outcome is that execution's, a believed timeout repeated and a step-limit stop carried the notice that established it, instrumenting moved no line, every refusal was condemned by a round, a discharged target did not then run, an unreached route ran nothing, and every target the build produced was verified |
-| `ledger` | every survivor as one the ledger accepts with a reason, and every acceptance as one the run still holds |
+| `ledger` | every survivor as one the ledger accepts with a reason, and every acceptance, by identity or by locator with or without its line and count, as one the run still holds in the form it was written in; an entry in a form the engine does not read refuses the ledger |
 | `entry` | every site a test reached and every mutation a test noticed as lying in an item that test entered, by the item catalog and `entered` of `touched-v1.json`; every mutation as sitting in a measurable item whose name is the row's `item` |
 
 Its output and exit codes are `proofaudit`'s: one line per remark, one `layer:` line per layer, a summary line, and 0, 1, or 2.

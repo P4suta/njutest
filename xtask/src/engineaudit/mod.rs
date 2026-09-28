@@ -19,7 +19,7 @@ mod wire;
 
 use arithmetic::{accounting, exit, expectations, findings, identity, score};
 use evidence::{entry, merge, proofs, sites, touch};
-use ledger::ledger;
+use ledger::{Ledger, Named, ledger};
 use recording::{trace, work};
 
 use serde_json::Value;
@@ -415,7 +415,7 @@ pub struct Evidence<'a> {
 struct CheckedEvidence<'a> {
     recorded: Option<CheckedRecording>,
     shards: Vec<(&'a str, Report)>,
-    ledger: Option<toml::Table>,
+    ledger: Option<Ledger>,
     sites: bool,
     reached: Option<Value>,
     catalog: Option<Value>,
@@ -475,17 +475,19 @@ impl<'a> Evidence<'a> {
             .iter()
             .map(|source| parse_report_evidence(*source).map(|report| (source.path, report)))
             .collect::<Result<Vec<_>, _>>()?;
-        let ledger =
-            self.ledger
-                .map(|source| {
-                    source.text.parse::<toml::Table>().map_err(|error| {
-                        AuditError::MalformedLedger {
-                            path: source.path.to_owned(),
-                            source: error,
-                        }
+        let ledger = self
+            .ledger
+            .map(|source| {
+                source
+                    .text
+                    .parse::<toml::Table>()
+                    .and_then(|document| Ledger::read(&document))
+                    .map_err(|error| AuditError::MalformedLedger {
+                        path: source.path.to_owned(),
+                        source: error,
                     })
-                })
-                .transpose()?;
+            })
+            .transpose()?;
         Ok(CheckedEvidence {
             recorded,
             shards,
@@ -882,6 +884,7 @@ struct Refusal {
 #[derive(Debug, Clone)]
 struct Claim {
     id: String,
+    named: Named,
     mutant: Option<String>,
     standing: ClaimStanding,
     why: Option<String>,

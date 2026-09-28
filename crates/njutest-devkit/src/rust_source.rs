@@ -33,6 +33,20 @@ pub enum RustSourceError {
         /// What every element was asked to be.
         wanted: &'static str,
     },
+    /// No top-level struct with named fields has the name asked for.
+    #[error("the source declares no top-level struct {name} with named fields")]
+    NoStruct {
+        /// The struct asked for.
+        name: String,
+    },
+    /// A `serde` attribute of a field is not one this reader can follow.
+    #[error("a serde attribute of {name} cannot be read: {message}")]
+    UnreadAttribute {
+        /// The struct asked for.
+        name: String,
+        /// What the parser said.
+        message: String,
+    },
 }
 
 /// Every top-level constant of `text`.
@@ -100,6 +114,62 @@ pub fn names_listed(text: &str, name: &str) -> Result<Vec<String>, RustSourceErr
             })
         })
         .collect()
+}
+
+/// The name every field of the top-level struct `name` of `text` is deserialized under, a `serde(rename)` applied, in declaration order.
+///
+/// # Errors
+/// A [`RustSourceError`] when `text` is not Rust, declares no such struct with named fields, or holds a `serde` attribute this reader cannot follow.
+pub fn serde_field_names(text: &str, name: &str) -> Result<Vec<String>, RustSourceError> {
+    let file = syn::parse_file(text).map_err(|error| RustSourceError::Unparsed {
+        message: error.to_string(),
+    })?;
+    let fields = file
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Struct(declared) if declared.ident == name => match &declared.fields {
+                syn::Fields::Named(fields) => Some(fields),
+                syn::Fields::Unnamed(_) | syn::Fields::Unit => None,
+            },
+            _ => None,
+        })
+        .ok_or_else(|| RustSourceError::NoStruct {
+            name: name.to_owned(),
+        })?;
+    fields
+        .named
+        .iter()
+        .filter_map(|field| field.ident.as_ref().map(|ident| (field, ident)))
+        .map(|(field, ident)| {
+            serde_name(field, ident).map_err(|error| RustSourceError::UnreadAttribute {
+                name: name.to_owned(),
+                message: error.to_string(),
+            })
+        })
+        .collect()
+}
+
+/// The name one field is deserialized under: its `serde(rename)` where it has one, and `ident` otherwise.
+fn serde_name(field: &syn::Field, ident: &syn::Ident) -> syn::Result<String> {
+    let mut renamed = None;
+    for attribute in field
+        .attrs
+        .iter()
+        .filter(|attribute| attribute.path().is_ident("serde"))
+    {
+        attribute.parse_nested_meta(|meta| {
+            if meta.path.is_ident("rename") {
+                let value = meta.value()?.parse::<syn::LitStr>()?;
+                renamed = Some(value.value());
+            } else if meta.input.peek(syn::Token![=]) {
+                let passed_over = meta.value()?.parse::<syn::Expr>()?;
+                drop(passed_over);
+            }
+            Ok(())
+        })?;
+    }
+    Ok(renamed.unwrap_or_else(|| ident.to_string()))
 }
 
 /// The string literals the top-level array constant `name` of `text` lists, in order.

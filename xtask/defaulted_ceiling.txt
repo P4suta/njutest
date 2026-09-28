@@ -5,7 +5,7 @@
 # Each count may only fall, and the gate holds it to exactly what the file does.
 2 xtask/src/engineaudit/arithmetic.rs
 12 xtask/src/engineaudit/evidence.rs
-2 xtask/src/engineaudit/ledger.rs
+1 xtask/src/engineaudit/ledger.rs
 1 xtask/src/engineaudit/mod.rs
 3 xtask/src/engineaudit/recording.rs
 2 xtask/src/engineaudit/sentinel.rs

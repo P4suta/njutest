@@ -10,7 +10,7 @@ use serde::de::Error as _;
 use serde_json::Value;
 
 use super::{
-    Claim, ClaimStanding, Decline, Finding, FindingKind, Granularity, NotRunReason, Outcome,
+    Claim, ClaimStanding, Decline, Finding, FindingKind, Granularity, Named, NotRunReason, Outcome,
     Refusal, Report, RouteDecision, Row, StepNotice,
 };
 
@@ -548,9 +548,8 @@ impl Skip {
 #[serde(deny_unknown_fields)]
 struct Expectation {
     id: String,
-    #[serde(rename = "locator")]
     #[serde(deserialize_with = "required_option")]
-    _locator: Option<Locator>,
+    locator: Option<Locator>,
     #[serde(rename = "reason")]
     _reason: String,
     #[serde(rename = "outcome")]
@@ -583,7 +582,7 @@ impl Expectation {
     fn claim(self) -> Claim {
         let Self {
             id,
-            _locator: _,
+            locator,
             _reason: _,
             _outcome: _,
             mutant,
@@ -597,8 +596,27 @@ impl Expectation {
             Some(Holds { cfg, env }) => (cfg, !env.is_empty()),
             None => (None, false),
         };
+        let named = match locator {
+            None => Named::Identity(id.clone()),
+            Some(Locator {
+                path,
+                item,
+                rule,
+                original,
+                line,
+                count,
+            }) => Named::Place {
+                path,
+                item,
+                rule,
+                original,
+                line,
+                count,
+            },
+        };
         Claim {
             id,
+            named,
             mutant,
             standing,
             why,
@@ -611,20 +629,14 @@ impl Expectation {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Locator {
-    #[serde(rename = "path")]
-    _path: String,
-    #[serde(rename = "item")]
-    _item: String,
-    #[serde(rename = "rule")]
-    _rule: String,
-    #[serde(rename = "original")]
-    _original: String,
-    #[serde(rename = "line")]
+    path: String,
+    item: String,
+    rule: String,
+    original: String,
     #[serde(deserialize_with = "required_option")]
-    _line: Option<u64>,
-    #[serde(rename = "count")]
+    line: Option<u64>,
     #[serde(deserialize_with = "required_option")]
-    _count: Option<u64>,
+    count: Option<u64>,
 }
 
 #[derive(Deserialize)]
