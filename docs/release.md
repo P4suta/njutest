@@ -56,6 +56,9 @@ It is the same command on a developer's machine:
 cargo xtask bundle --target aarch64-apple-darwin --out dist
 ```
 
+`mise run package` does that for this machine and then unpacks the archive and runs what it holds, and CI's `package-install` does the same on every platform the release builds for, on every pull request.
+A release is never the first time an archive is made.
+
 ## Before merging the release pull request
 
 Merging it is the human gate; there is no other.
