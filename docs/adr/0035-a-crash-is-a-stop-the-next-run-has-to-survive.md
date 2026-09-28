@@ -9,6 +9,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Proposed, 2026-09-24.
 The dimension `durable` of the assurance matrix ([ADR 0033](0033-every-dimension-or-a-hole.md)).
+Amended by [ADR 0046](0046-a-verdict-is-what-a-sealed-run-observed.md): a sealed crash is confirmed in one round, the next instance starting from the crashed one's overlay.
 
 ## Context
 

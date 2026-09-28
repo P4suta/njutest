@@ -9,6 +9,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Accepted, 2026-09-05, inherited from goatest ADR 0007 (accepted 2026-09-04).
 Implemented by the evidence store and the mutation-evidence rules of `assure` as the milestones deliver them.
+Amended by [ADR 0046](0046-a-verdict-is-what-a-sealed-run-observed.md): a survival is universal over sealed executions, and a native one is a lead.
 
 ## Context
 

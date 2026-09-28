@@ -10,6 +10,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 Accepted, 2026-09-24.
 Implemented by `concurrency::scan`, `concurrency::proof` and `concurrency::explore`, by the runtime's delayed guard, by the `concurrency` record of every report part, the `schedule-dependent` finding, and the `schedule-not-explored` and `schedule-sampled` limitations.
 The first slice of dimension C, `concurrent-v1`: the proof layer, before any schedule is explored.
+Amended by [ADR 0046](0046-a-verdict-is-what-a-sealed-run-observed.md): a sealed test binary runs one thread by construction.
 
 ## Context
 
