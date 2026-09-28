@@ -211,7 +211,8 @@ const RAW_LEXING_REMEDY: &str = "read Rust text through `rust_mutants::parsing`:
     past 4 GiB on one thread every location wraps; a reading thread ends with its map. A \
     `.parse::<T>()` of a type that is not Rust text goes on `PARSED_TYPES`";
 const RAW_ENVIRONMENT_REMEDY: &str = "hold an environment as `rust_mutants::vars::Variables`, \
-    which reads, changes, selects and digests a name only as the platform takes it. Pairs of \
+    or in xtask, which cannot depend on the engine, as `xtask::environment::Environment`; each \
+    reads, changes, selects and digests a name only as the platform takes it. Pairs of \
     `OsString` let each reader compare names its own way, and four did it by bytes where Windows \
     takes any case: a declared variable hashed as unset, a composed one inherited beside its \
     replacement, a reserved one let through, and a home the tests were never given";
@@ -6430,11 +6431,11 @@ fn allow_attribute_spans(meta: &syn::Meta) -> Vec<proc_macro2::Span> {
     }
 }
 
-/// Where an environment is read as pairs: the one type that holds it, and the tooling the engine cannot be a dependency of.
+/// Where an environment is read as pairs: the engine's one type that holds it, xtask's, which cannot depend on the engine, and the test support the engine cannot be a dependency of.
 const ENVIRONMENT_READERS: [&str; 3] = [
     "crates/rust-mutants/src/vars.rs",
+    "xtask/src/environment.rs",
     "crates/njutest-devkit/",
-    "xtask/",
 ];
 
 /// Every type that holds an environment variable as a pair of `OsString`s.

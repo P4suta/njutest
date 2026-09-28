@@ -2501,6 +2501,7 @@ fn an_environment_held_as_raw_pairs_is_refused_wherever_it_is_named() {
     }
     for held in [
         "crates/rust-mutants/src/vars.rs",
+        "xtask/src/environment.rs",
         "crates/njutest-devkit/src/paths.rs",
     ] {
         let found = scan_source(
@@ -2511,6 +2512,22 @@ fn an_environment_held_as_raw_pairs_is_refused_wherever_it_is_named() {
             found.is_ok_and(|found| found.iter().all(|one| one.kind != Kind::RawEnvironment)),
             "{held} is where the pairs are read, or test support the engine cannot be a \
              dependency of"
+        );
+    }
+    for reader in [
+        "xtask/src/lanes.rs",
+        "xtask/src/prepush.rs",
+        "xtask/tests/slot.rs",
+    ] {
+        let found = scan_source(
+            reader,
+            "fn given() -> Vec<(OsString, OsString)> { Vec::new() }",
+        );
+        assert!(
+            found.is_ok_and(|found| found.iter().any(|one| one.kind == Kind::RawEnvironment)),
+            "xtask reads its environment through `xtask::environment` alone, whose rule is the \
+             engine's, so pairs anywhere else in it are a reader comparing names by bytes: \
+             {reader}"
         );
     }
 }

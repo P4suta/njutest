@@ -20,6 +20,7 @@ pub mod devgates;
 pub mod docflows;
 pub mod drift;
 pub mod engineaudit;
+pub mod environment;
 pub mod error;
 pub mod faults;
 pub mod fixtures;
@@ -184,7 +185,7 @@ pub struct Process<'a> {
     /// The exact cargo the composition root selected.
     pub cargo: &'a OsStr,
     /// The environment the process was started with.
-    pub environment: &'a [(OsString, OsString)],
+    pub environment: &'a environment::Environment,
     /// The directory the process was started in.
     pub directory: &'a Path,
     /// The program that is running.
@@ -513,7 +514,7 @@ fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> 
     };
     let parent = TEMPORARY_READ_FROM
         .iter()
-        .find_map(|name| lanes::variable(process.environment, name))
+        .find_map(|name| process.environment.value(name))
         .map_or_else(
             || std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from,

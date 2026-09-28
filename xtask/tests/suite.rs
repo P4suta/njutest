@@ -74,6 +74,8 @@ mod shapes;
 mod slot;
 #[path = "specimen_reach.rs"]
 mod specimen_reach;
+#[path = "spelling.rs"]
+mod spelling;
 #[path = "suites.rs"]
 mod suites;
 #[path = "surface.rs"]

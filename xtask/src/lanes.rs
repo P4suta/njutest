@@ -3,7 +3,7 @@
 
 //! Machine-wide lanes that admit one whole-workspace run at a time, and say who holds each.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -12,6 +12,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 
+use crate::environment::Environment;
 use crate::work::Stops;
 
 /// The variable that names the lanes a process already holds, so a run inside one never waits for itself.
@@ -222,15 +223,15 @@ impl Lanes {
     ///
     /// # Errors
     /// Returns [`LaneError::Nowhere`] when the environment names no directory for them.
-    pub fn from_environment(environment: &[(OsString, OsString)]) -> Result<Self, LaneError> {
-        let directory = match variable(environment, "NJUTEST_SLOT_DIR") {
+    pub fn from_environment(environment: &Environment) -> Result<Self, LaneError> {
+        let directory = match environment.value("NJUTEST_SLOT_DIR") {
             Some(named) => PathBuf::from(named),
             None => state_directory(environment)
                 .ok_or(LaneError::Nowhere)?
                 .join("njutest")
                 .join("slots"),
         };
-        let held = match variable(environment, HELD) {
+        let held = match environment.value(HELD) {
             Some(value) => value
                 .to_str()
                 .ok_or(LaneError::NotText { name: HELD })?
@@ -990,24 +991,13 @@ impl Held {
     }
 }
 
-/// The value of `name` in `environment`, when it is set to something.
-#[must_use]
-pub fn variable<'a>(environment: &'a [(OsString, OsString)], name: &str) -> Option<&'a OsStr> {
-    environment
-        .iter()
-        .find(|(key, value)| key == name && !value.is_empty())
-        .map(|(_key, value)| value.as_os_str())
-}
-
 /// The branch and short commit of the checkout at `directory`, or a dash for each that cannot be read; no `GIT_*` variable of `environment` reaches the git it asks.
 #[must_use]
-pub fn revision_of(directory: &Path, environment: &[(OsString, OsString)]) -> String {
+pub fn revision_of(directory: &Path, environment: &Environment) -> String {
     let ask = |arguments: &[&str]| {
         let mut git = Command::new("git");
-        for (name, _value) in environment {
-            if name.as_encoded_bytes().starts_with(b"GIT_") {
-                git.env_remove(name);
-            }
+        for name in environment.beginning("GIT_") {
+            git.env_remove(name);
         }
         answer(git.args(arguments).current_dir(directory)).unwrap_or_else(|| "-".to_owned())
     };
@@ -1162,14 +1152,14 @@ fn answer(command: &mut Command) -> Option<String> {
     }
 }
 
-fn state_directory(environment: &[(OsString, OsString)]) -> Option<PathBuf> {
-    if let Some(state) = variable(environment, "XDG_STATE_HOME") {
+fn state_directory(environment: &Environment) -> Option<PathBuf> {
+    if let Some(state) = environment.value("XDG_STATE_HOME") {
         return Some(PathBuf::from(state));
     }
-    if let Some(home) = variable(environment, "HOME") {
+    if let Some(home) = environment.value("HOME") {
         return Some(Path::new(home).join(".local").join("state"));
     }
-    variable(environment, "LOCALAPPDATA").map(PathBuf::from)
+    environment.value("LOCALAPPDATA").map(PathBuf::from)
 }
 
 fn record_of(holder: &Holder) -> String {

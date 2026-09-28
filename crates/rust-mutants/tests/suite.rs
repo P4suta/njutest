@@ -113,6 +113,8 @@ mod snapshot;
 mod snapshot_layout;
 #[path = "span.rs"]
 mod span;
+#[path = "spelling.rs"]
+mod spelling;
 #[path = "splice.rs"]
 mod splice;
 #[path = "syntax.rs"]

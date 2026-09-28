@@ -13,7 +13,7 @@ pub(crate) fn main() -> ExitCode {
         Some(configured) => configured,
         None => std::ffi::OsString::from("cargo"),
     };
-    let environment: Vec<_> = std::env::vars_os().collect();
+    let environment = xtask::environment::Environment::of(std::env::vars_os());
     let directory = match std::env::current_dir() {
         Ok(directory) => directory,
         Err(error) => return unreadable("the current directory", &error),
