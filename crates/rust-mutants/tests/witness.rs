@@ -129,7 +129,7 @@ fn only_the_private_witness_module_carries_the_exact_lint_exception() {
         "the user's function inherits no generated-code exception: {}",
         written.text
     );
-    let parsed = syn::parse_file(&written.text).expect("witnessed source parses");
+    let parsed = njutest_devkit::lexed::file(&written.text).expect("witnessed source parses");
     let module = parsed
         .items
         .iter()
@@ -502,7 +502,7 @@ fn a_witnessed_file_is_still_a_program() {
         "the cast's operand is what the compiler is asked about: {}",
         written.text
     );
-    let parsed = syn::parse_file(&written.text);
+    let parsed = njutest_devkit::lexed::file(&written.text);
     assert!(
         parsed.is_ok(),
         "an operand spelled over two lines is written on one, and what separates two tokens \

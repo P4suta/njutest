@@ -943,10 +943,10 @@ fn canonical_workspace_path(path: &str) -> bool {
 /// Re-derives the mutation identity and the differential wiring from the generated Rust itself.
 /// This intentionally does not call the producer's eligibility or rendering code.
 fn validate_generated(rendered: &str, identity: &Identity) -> Result<(), ModelAuditError> {
-    syn::parse_file(rendered)
+    crate::lexed::file(rendered)
         .map_err(|_error| ModelAuditError::Evidence("generated source is not parseable Rust"))?;
     let parts = generated_parts(rendered, identity)?;
-    let parsed = syn::parse_file(&parts.pristine).map_err(|_error| {
+    let parsed = crate::lexed::file(&parts.pristine).map_err(|_error| {
         ModelAuditError::Evidence("the retained pristine source is not parseable Rust")
     })?;
     let subject = subject(&parts.pristine, &parsed, parts.start, parts.end)?;
@@ -982,10 +982,10 @@ fn validate_generated(rendered: &str, identity: &Identity) -> Result<(), ModelAu
         subject.name,
         &format!("__njutest_mutant_{}", identity.mutant),
     )?;
-    let original_item = syn::parse_str::<syn::ItemFn>(&original_clone).map_err(|_error| {
+    let original_item = crate::lexed::parse::<syn::ItemFn>(&original_clone).map_err(|_error| {
         ModelAuditError::Evidence("the independently derived original clone is invalid")
     })?;
-    let mutant_item = syn::parse_str::<syn::ItemFn>(&mutant_clone).map_err(|_error| {
+    let mutant_item = crate::lexed::parse::<syn::ItemFn>(&mutant_clone).map_err(|_error| {
         ModelAuditError::Evidence("the independently derived mutant clone is invalid")
     })?;
 
@@ -2746,7 +2746,7 @@ mod tests {
         let replacement = mutation.replacement;
         let rule = mutation.rule;
         let start = pristine.rfind(original).expect("the mutation token");
-        let parsed = syn::parse_file(pristine).expect("pristine fixture parses");
+        let parsed = crate::lexed::file(pristine).expect("pristine fixture parses");
         let mut functions = parsed.items.iter().filter_map(|item| match item {
             syn::Item::Fn(function) => Some(function),
             _other => None,

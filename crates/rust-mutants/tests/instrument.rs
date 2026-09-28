@@ -509,7 +509,7 @@ fn only_the_private_generated_module_carries_the_exact_lint_exception() {
         1,
         "user functions never inherit a generated-code exception: {text}"
     );
-    let parsed = syn::parse_file(&text).expect("instrumented source parses");
+    let parsed = njutest_devkit::lexed::file(&text).expect("instrumented source parses");
     let module = parsed
         .items
         .iter()
@@ -1051,7 +1051,7 @@ fn instrumented(path: &str, source: &str) -> Option<(String, Catalog)> {
 fn read_share(files: &[(String, String)]) -> (usize, Vec<String>) {
     let parsing: Vec<&(String, String)> = files
         .iter()
-        .filter(|(_, source)| syn::parse_file(source).is_ok())
+        .filter(|(_, source)| njutest_devkit::lexed::file(source).is_ok())
         .collect();
     let apart: Vec<String> = parsing
         .iter()
@@ -1416,7 +1416,7 @@ fn a_guard_that_breaks_inside_an_identity_macro_is_seen_where_a_plain_parse_is_b
     ];
     for text in planted {
         assert!(
-            syn::parse_file(text).is_ok(),
+            njutest_devkit::lexed::file(text).is_ok(),
             "a plain parse never opens the identity macro, which is how a broken guard inside one \
              went unseen: {text}"
         );

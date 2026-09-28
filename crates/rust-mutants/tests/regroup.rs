@@ -362,7 +362,7 @@ proptest! {
                     String::from_utf8(one.candidate.replacement.clone()).expect("UTF-8"),
                     &source[end..]
                 );
-                let file: syn::File = syn::parse_str(&written).expect("a swap writes a file that parses");
+                let file: syn::File = njutest_devkit::lexed::parse(&written).expect("a swap writes a file that parses");
                 let read_back = read(&probe(&file));
                 prop_assert_eq!(
                     read_back,
@@ -444,7 +444,7 @@ fn a_planted_wrong_grouping_is_caught_by_the_tree_oracle() {
             String::from_utf8(candidate.candidate.replacement.clone()).expect("UTF-8"),
             &source[end..]
         );
-        let file: syn::File = syn::parse_str(&written).expect("the swap writes Rust");
+        let file: syn::File = njutest_devkit::lexed::parse(&written).expect("the swap writes Rust");
         read(&probe(&file))
     };
     let held = read_candidate(
@@ -571,7 +571,7 @@ fn a_swap_where_tokens_touch_reads_back_as_the_swap_it_names() {
         "fn f() { let probe = v0||v1|v2; }\n",
         "fn f() { let probe = v0?||v1?; }\n",
     ] {
-        let original = shape(syn::parse_file(source).expect("the source parses"));
+        let original = shape(njutest_devkit::lexed::file(source).expect("the source parses"));
         let discovered = discover_file("src/lib.rs", source.as_bytes(), &selection)
             .expect("the source discovers");
         for found in &discovered.candidates {
@@ -591,9 +591,11 @@ fn a_swap_where_tokens_touch_reads_back_as_the_swap_it_names() {
                 String::from_utf8(found.candidate.replacement.clone()).expect("UTF-8"),
                 &source[end..]
             );
-            let read = shape(syn::parse_file(&written).unwrap_or_else(|error| {
-                panic!("{rule} writes a file that parses: {written:?}: {error}")
-            }));
+            let read = shape(
+                njutest_devkit::lexed::file(&written).unwrap_or_else(|error| {
+                    panic!("{rule} writes a file that parses: {written:?}: {error}")
+                }),
+            );
             let changed: Vec<(&str, &str)> = original
                 .0
                 .iter()

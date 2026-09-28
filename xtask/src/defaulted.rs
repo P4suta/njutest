@@ -47,7 +47,7 @@ pub fn reads_for_an_audit(file: &str) -> bool {
 /// # Errors
 /// A source this version of `syn` cannot parse.
 pub fn defaulted_in(source: &str) -> Result<usize, syn::Error> {
-    let file = syn::parse_file(source)?;
+    let file = crate::lexed::file(source)?;
     let mut counted = Counted(0);
     counted.visit_file(&file);
     Ok(counted.0)

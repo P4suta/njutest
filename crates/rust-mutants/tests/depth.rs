@@ -569,7 +569,7 @@ fn a_file_is_read_as_syn_reads_one_whatever_starts_it() {
     ] {
         let text = format!("{prefix}fn f() {{}}\n");
         let agreed = rust_mutants::parsing::apart(|parsing| {
-            match (parsing.file(&text), syn::parse_file(&text)) {
+            match (parsing.file(&text), njutest_devkit::lexed::file(&text)) {
                 (Ok(ours), Ok(theirs)) => ours == theirs,
                 (Err(_), Err(_)) => true,
                 (Ok(_) | Err(_), Ok(_) | Err(_)) => false,

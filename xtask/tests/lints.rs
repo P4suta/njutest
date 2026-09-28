@@ -2454,6 +2454,18 @@ fn text_read_by_the_reader_or_for_a_test_or_as_no_rust_is_no_raw_lexing() {
         ),
         (
             "crates/app/src/lib.rs",
+            "fn count(text: &str) -> bool { str::parse::<u32>(text).is_ok() }",
+        ),
+        (
+            "crates/app/src/lib.rs",
+            "fn count(text: &str) -> String { format!(\"{}\", text.parse::<u32>().is_ok()) }",
+        ),
+        (
+            "crates/app/src/lib.rs",
+            "fn named() -> String { format!(\"{}\", stringify!(syn::parse::Parser)) }",
+        ),
+        (
+            "crates/app/src/lib.rs",
             "fn table(text: &str) -> bool { toml::from_str::<toml::Table>(text).is_ok() }",
         ),
         (

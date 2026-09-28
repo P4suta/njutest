@@ -1610,7 +1610,8 @@ mod tests {
             harness.rendered_digest(),
             rust_mutants::id::digest(harness.source().as_bytes())
         );
-        syn::parse_file(harness.source()).expect("generated source remains Rust syntax");
+        njutest_devkit::lexed::file(harness.source())
+            .expect("generated source remains Rust syntax");
     }
 
     #[test]

@@ -37,7 +37,7 @@ pub enum RustSourceError {
 
 /// Every top-level constant of `text`.
 fn constants(text: &str) -> Result<Vec<syn::ItemConst>, RustSourceError> {
-    let file = syn::parse_file(text).map_err(|error| RustSourceError::Unparsed {
+    let file = crate::lexed::file(text).map_err(|error| RustSourceError::Unparsed {
         message: error.to_string(),
     })?;
     Ok(file

@@ -94,6 +94,7 @@ string_add = "deny"
 assertions_on_result_states = "deny"
 exit = "deny"
 disallowed_methods = "deny"
+disallowed_macros = "deny"
 disallowed_types = "deny"
 
 # Allowed: the fix would rename well-named types, or is outside our control

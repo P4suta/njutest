@@ -243,7 +243,7 @@ impl<'ast> Visit<'ast> for Scanner {
 }
 
 pub(super) fn facts(source: &str, production: bool) -> syn::Result<Facts> {
-    let parsed = syn::parse_file(source)?;
+    let parsed = crate::lexed::file(source)?;
     let mut scanner = Scanner {
         production,
         facts: Facts::default(),

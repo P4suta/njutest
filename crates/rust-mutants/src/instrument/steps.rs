@@ -523,7 +523,7 @@ mod tests {
             planted.contains("|x| { __rm::item(0); __rm::checkpoint(); x }"),
             "{planted}"
         );
-        let parsed = syn::parse_file(&planted);
+        let parsed = njutest_devkit::lexed::file(&planted);
         assert_eq!(result_state(&parsed), Returned, "parse: {parsed:?}");
     }
 
@@ -539,7 +539,7 @@ mod tests {
             ),
             "{planted}"
         );
-        let parsed = syn::parse_file(&planted);
+        let parsed = njutest_devkit::lexed::file(&planted);
         assert_eq!(result_state(&parsed), Returned, "parse: {parsed:?}");
     }
 
@@ -596,7 +596,7 @@ mod tests {
             planted.contains("#![allow(unused)] __rm::item(0); __rm::checkpoint(); loop"),
             "{planted}"
         );
-        let parsed = syn::parse_file(&planted);
+        let parsed = njutest_devkit::lexed::file(&planted);
         assert_eq!(result_state(&parsed), Returned, "parse: {parsed:?}");
     }
 

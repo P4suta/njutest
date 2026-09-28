@@ -426,14 +426,14 @@ struct Checked {
 
 /// Instruments `source` and says what taking every guard back out of it leaves, beside what the source holds.
 fn undone(source: &str) -> Checked {
-    let written = syn::parse_file(source)
+    let written = njutest_devkit::lexed::file(source)
         .unwrap_or_else(|error| panic!("the generated source parses: {error}\n{source}"));
     let Instrumented {
         text,
         sites,
         guards,
     } = instrumented(source);
-    let instrumented = syn::parse_file(&text)
+    let instrumented = njutest_devkit::lexed::file(&text)
         .unwrap_or_else(|error| panic!("the instrumented file parses: {error}\n{source}\n{text}"));
     Checked {
         written: tree(written),

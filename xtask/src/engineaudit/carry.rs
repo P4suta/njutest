@@ -294,7 +294,7 @@ fn invoked_only_listed(tokens: &TokenStream, lists: Lists<'_>) -> bool {
 
 /// Whether `word` is a keyword, which a `!` after it does not make an invocation.
 fn keyword(word: &str) -> bool {
-    syn::parse_str::<syn::Ident>(word).is_err()
+    crate::lexed::parse::<syn::Ident>(word).is_err()
 }
 
 /// Whether `path` is an attribute path on the list: one listed segment, or a first segment naming a tool.
@@ -1006,8 +1006,10 @@ fn bodies(
         );
         return;
     }
-    let (Ok(file), Some(start)) = (syn::parse_file(&text), line_column(&text, item.body.start))
-    else {
+    let (Ok(file), Some(start)) = (
+        crate::lexed::file(&text),
+        line_column(&text, item.body.start),
+    ) else {
         notes.violated(
             &subject,
             format!(
@@ -1093,7 +1095,7 @@ fn unit_files(path: &str, skeletons: &Skeletons, tree: &mut Tree<'_>) -> Option<
             }
             let file = entry.strip_prefix("$root/")?;
             let (text, _) = tree.text(file)?;
-            let Ok(parsed) = syn::parse_file(&text) else {
+            let Ok(parsed) = crate::lexed::file(&text) else {
                 continue;
             };
             files.push(parsed);
@@ -1207,7 +1209,7 @@ const POSITIONS: &str = "$positions/";
 
 /// Where the page says the compiler reads a position in the file at `path`, one line each in byte order: every body that is not sealed by its ordinal, and outside every cataloged body each item-level macro invocation but a `macro_rules!` definition, each documentation attribute holding a line rustdoc may test, each other attribute off the list, and each array length, enum discriminant, const parameter default and const generic argument that holds a macro invocation or a call; `None` where the file does not parse.
 fn positions_read(path: &str, text: &str, items: &[Cataloged], lists: Lists<'_>) -> Option<String> {
-    let file = match syn::parse_file(text) {
+    let file = match crate::lexed::file(text) {
         Ok(file) => file,
         Err(_not_rust) => return None,
     };

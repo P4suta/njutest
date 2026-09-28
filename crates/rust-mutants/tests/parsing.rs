@@ -36,7 +36,7 @@ const SOURCE: &str = "fn f(a: bool, b: bool, c: bool) -> bool { a || b && c }\n"
 #[test]
 fn the_probe_sees_a_text_read_on_this_thread() {
     let before = texts_on_this_thread();
-    let read = syn::parse_file(SOURCE);
+    let read = njutest_devkit::lexed::file(SOURCE);
     assert!(read.is_ok(), "the source parses");
     assert_eq!(
         texts_on_this_thread(),
@@ -127,7 +127,7 @@ fn syn_reads_a_negative_number_back_no_more_often_than_a_reading_charges_it() {
         let sites = text.matches('-').count();
         let counted = rust_mutants::parsing::apart(|_| {
             let before = texts_on_this_thread();
-            let read = syn::parse_file(text);
+            let read = njutest_devkit::lexed::file(text);
             let after = texts_on_this_thread();
             (read.is_ok(), after - before - 2)
         });
@@ -143,7 +143,7 @@ fn syn_reads_a_negative_number_back_no_more_often_than_a_reading_charges_it() {
     }
     let most = rust_mutants::parsing::apart(|_| {
         let before = texts_on_this_thread();
-        let read = syn::parse_file("type T = F<-1>;");
+        let read = njutest_devkit::lexed::file("type T = F<-1>;");
         (read.is_ok(), texts_on_this_thread() - before - 2)
     });
     assert!(
