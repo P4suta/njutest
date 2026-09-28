@@ -108,6 +108,9 @@ qualified calls, macro bodies, and code excluded by the host's `cfg` are subject
 What the kernel answers a group signal is one question wherever it is asked.
 On macOS `EPERM` can mean a group whose members have ended while its leader waits to be reaped, or one with a protected descendant the runner cannot signal; the runner distinguishes these by checking the other members and classifies the stop as whole-group or leader-only reach accordingly.
 
+`raw-process-end` keeps the reading of how a process ended in one place for the assurance phases: code under `crates/njutest/src/assure/` asks `assure::ended::ProcessEnd`, never a run's `succeeded`, `timed_out` or `conventional_exit_code`, whether by method, by path, or inside a macro.
+Each of those answers one question and leaves every other ending to whoever forgot it, which is how a cancelled interpreter run was reported as a toolchain with no interpreter; `ProcessEnd` sorts every ending at once, so a stop is the run interrupted and a clock or a signal is no answer about the suite.
+
 The `tri-state-bool` lint rejects `Option<bool>` and the aliases or macro constructors that can hide it.
 Three semantic states are a closed enum with three named variants, so every match is exhaustive and no caller has to guess whether `None` means unknown, unrecorded, inherited, or not applicable.
 
