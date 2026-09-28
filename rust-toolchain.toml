@@ -6,4 +6,6 @@ channel = "1.98.0"
 # llvm-tools: `llvm-profdata` and `llvm-cov` are how njutest reads coverage,
 # and how CI measures its own.
 components = ["rustfmt", "clippy", "llvm-tools"]
+# wasm32-wasip1: the sealed host's toolchain tests compile their guests for it with this very toolchain, and refuse to start without it.
+targets = ["wasm32-wasip1"]
 profile = "minimal"

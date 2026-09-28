@@ -7,8 +7,8 @@ The code is the searchable name of the failure: grep this file, the issue tracke
 and a trace for it.
 A test in each crate keeps this table and the code's own list equal in both directions, so a code is either here or it does not exist.
 
-Codes are `RM` (rust-mutants), `NJ` (njutest), or `XT` (xtask, the repository's gates and audits) followed by four digits.
-The first digit names an area:
+Codes are `RM` (rust-mutants), `RS` (rust-mutants-sealed, the deterministic host a sealed guest runs in), `NJ` (njutest), or `XT` (xtask, the repository's gates and audits) followed by four digits.
+The first digit names an area; `RS` and `XT` say what theirs are at the head of their own sections:
 
 | Digit | rust-mutants | njutest |
 | ---: | --- | --- |
@@ -240,3 +240,29 @@ The first digit names an area: 0 the gates, their ledgers, and what runs them (t
 | `XT6004` | A line of a recording passed its producer's schema and still lacks a field a reader of this audit reads, so the schema and the reader disagree. | report it; either the schema should require the field or the reader should not demand it |
 | `XT7001` | A report given to `report-diff` is not one this version understands. | give it two reports this release wrote |
 | `XT7002` | `cargo metadata` could not be read into a bill of materials. | run `cargo metadata --locked` and fix what it says |
+
+## rust-mutants-sealed
+
+The sealed host runs a WebAssembly guest in a fresh instance for every invocation, so that what the guest did is a function of content-addressed inputs; [the sealed host](engine/sealed-host.md) says what each WASI call does there.
+Its codes are `RS` followed by four digits, and the first digit names an area: 0 the inputs of an invocation, 1 the module, 2 the engine and the host it links, 3 a run that is no answer about the guest, 9 internal invariants.
+A guest that exits, traps, runs out of fuel or out of memory is not an error: those are the stops a transcript records.
+
+| Code | Meaning | Remedy |
+| --- | --- | --- |
+| `RS0001` | An argument holds a NUL byte, which a WASI argument cannot carry. | pass the argument without the NUL byte: WASI hands every argument to the guest as a C string |
+| `RS0002` | An environment variable a WASI guest cannot be given: an empty name, a name holding `=` or NUL, a value holding NUL, or a name given twice. | name each variable once, without `=` or NUL in its name or NUL in its value |
+| `RS0003` | A snapshot path that is not a relative path of named components, or a path the snapshot would hold twice or as both a file and a directory. | give each file once, by a relative path of `/`-separated names with no `.`, `..`, empty or NUL-bearing component |
+| `RS0004` | A preopened guest path that is empty, holds a NUL byte, or is preopened twice. | preopen each snapshot once, at a nonempty guest path without NUL bytes |
+| `RS1001` | The bytes are not a WebAssembly binary the parser can read. | give the bytes of a `.wasm` file a WebAssembly toolchain wrote; the message says where the parser stopped |
+| `RS1002` | The bytes are a WebAssembly component, and only a core module runs sealed. | build the guest for `wasm32-wasip1`, which writes a core module, rather than for a component target |
+| `RS1003` | The module's memory is not one sealed execution runs: 64-bit, shared, imported, of a custom page size, or not exactly one. | build the guest for `wasm32-wasip1` without the memory64, threads, or multi-memory features |
+| `RS1004` | The module imports something outside the WASI preview1 table, or a table function with another signature. | a sealed guest may import only functions of `wasi_snapshot_preview1`; the message names the import to remove |
+| `RS1005` | The module is not a WASI command: no `_start` function of type () -> (), no exported memory, or a start section. | build a binary crate or a test harness for `wasm32-wasip1`, which exports `_start` and `memory` |
+| `RS2001` | Wasmtime could not be configured with the deterministic settings on this host. | this host cannot run sealed guests; the message says which setting wasmtime refused |
+| `RS2002` | Wasmtime refused to compile the module under the deterministic feature set. | the module uses a WebAssembly feature sealed execution leaves off, such as relaxed SIMD; the message names it |
+| `RS2003` | The WASI host functions could not be linked to the module. | this is a defect in this tool: every import the validator lets through is one the host links |
+| `RS3001` | The thread that advances the watchdog's epochs could not be started. | the operating system refused a thread; check the process and memory limits of this user, and run again |
+| `RS3002` | The wall-clock watchdog stopped the guest; nothing about the guest follows from it. | the fuel budget, not the watchdog, bounds a guest: run it again on a machine less loaded, or with a longer watchdog |
+| `RS3003` | The runtime failed outside the guest: an instantiation, a fuel account, or a memory reservation the host could not complete. | this machine could not give the guest what its limits allow; the message says which, and nothing about the guest follows from it |
+| `RS3004` | The guest stopped with a trap this version cannot classify. | this is a defect in this tool: every trap of the pinned wasmtime has a kind, so report the message |
+| `RS9001` | The host broke an invariant of its own. | this is a defect in this tool; the message says which invariant, so report it |

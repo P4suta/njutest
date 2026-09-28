@@ -114,6 +114,7 @@ manual_let_else = "allow"
 # Internal crates. Version and path together so a member can be published.
 njutest = { version = "0.1.0", path = "crates/njutest" }
 rust-mutants = { version = "0.1.0", path = "crates/rust-mutants" }
+rust-mutants-sealed = { version = "0.1.0", path = "crates/rust-mutants-sealed" }
 njutest-macros = { version = "0.1.0", path = "crates/njutest-macros" }
 njutest-devkit = { version = "0.1.0", path = "crates/njutest-devkit" }
 njutest-fixture-tree = { version = "0.1.0", path = "crates/njutest-fixture-tree" }
@@ -163,6 +164,13 @@ globset = "0.4"
 walkdir = "2.5"
 cargo_metadata = "0.23"
 similar = { version = "3.2", default-features = false, features = ["text"] }
+# The sealed host: exact pins, because the compiled code, the fuel each operator costs, and the traps it raises are part of every transcript digest.
+wasmtime = { version = "=48.0.3", default-features = false, features = [
+  "cranelift",
+  "runtime",
+  "std",
+] }
+wasmparser = "=0.254.0"
 
 # Test-only.
 tempfile = "3.27"
@@ -170,6 +178,7 @@ proptest = "1.11"
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 jsonschema = { version = "0.56", default-features = false }
 trybuild = "1.0"
+wat = "=1.259.0"
 
 [profile.release]
 lto = "thin"
