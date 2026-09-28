@@ -33,6 +33,8 @@ mod count;
 mod coverage;
 #[path = "decline.rs"]
 mod decline;
+#[path = "depth.rs"]
+mod depth;
 #[path = "devkit_environment.rs"]
 mod devkit_environment;
 #[path = "docs_ledger.rs"]

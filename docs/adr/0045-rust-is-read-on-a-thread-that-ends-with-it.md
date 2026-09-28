@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 ## Status
 
 Accepted, 2026-09-26.
-Implemented by `rust_mutants::parsing::{apart, Parsing, ReadingError}`, every reading of Rust text in the engine and the runner, the `raw-lexing` lint, and the laws in `crates/rust-mutants/tests/parsing.rs` and `crates/njutest/tests/soundness.rs`.
+Implemented by `rust_mutants::parsing::{apart, Parsing, ReadingError, Depth}`, every reading of Rust text in the engine and the runner, the `raw-lexing` lint, and the laws in `crates/rust-mutants/tests/parsing.rs`, `crates/rust-mutants/tests/depth.rs` and `crates/njutest/tests/soundness.rs`.
 
 ## Context
 
@@ -32,7 +32,14 @@ Every entry point that reads — discovery, instrumentation and its parts, the c
 `syn::Error` is `Send` and keeps its location only on the thread that made it, so no reading returns one: `ReadingError` is converted on the reading thread, and carries a line and column rather than a span.
 
 **A thread's reading is budgeted before a byte is lexed.** `Parsing` carries what its thread has spent and may spend; each read is charged three times its length plus one, covering the literals `syn` lexes a second time and the gap left between texts, and past half of the 32-bit space it is refused as `ReadingError::Exhausted` (RM0018), never wrapped.
-A reading that fails for that reason, or because its thread could not start (RM0019), is not an answer about the text: discovery fails the file by name, instrumentation says why, and a check that already answers conservatively for a file that does not parse — the skeleton seals nothing, the scan assumes an include, the selection shadows every name — takes that same answer.
+**A reading measures how deep its text runs before anything recurses through it.** The lexer builds its tokens without recursing, and every consumer after it does recurse: the parser, `syn`'s token buffer, the walks, the clone and the drop go one frame deeper for every group, and for every link of a chain the parser nests one tree inside the last.
+So `Parsing` walks the lexed tokens once with a stack of its own and refuses, as `ReadingError::TooDeep` (RM0020), a text whose groups nest past `NESTING` (1,000), and, where the reading builds a tree, one where a path through its trees passes more than `CHAIN` (12,288) tokens.
+The chain a path passes is, at each group it enters, every token of the run that group sits in; a run ends at `;`, `,` and `=>`, and at a closing brace that no `as`, `else`, punctuation or group goes on from, which is where a list the parser keeps flat — items, statements, arms — moves on to its next element, and an attribute counts apart from the run it sits in, since the parser keeps attributes in a list of their own.
+A brace that something goes on from does not end the run, so `x + if {c} {1} else {2} + …` is one chain however many braces it passes, and each of its links is counted.
+The bounds were measured, not guessed: in a debug build, where frames are largest, a reading thread's 64 MiB overflowed at 12,300 nested blocks, the costliest group, and at 25,000 chained `return`s and 8,400 nested generic arguments, the costliest links, about 5.3 KiB a group and 2.7 KiB a token; both bounds at once take about 38 MiB.
+Laws read a text at each bound and at both at once, through discovery, item numbering and the skeleton, and refuse one a group or a token past each; a text a reading only lexes is refused only for its nesting, since no tree is built from it.
+
+A reading that fails for any of those reasons, or because its thread could not start (RM0019), is not an answer about the text: discovery fails the file by name, instrumentation says why, and a check that already answers conservatively for a file that does not parse — the skeleton seals nothing, the scan assumes an include, the selection shadows every name — takes that same answer.
 
 **A lint holds every reading there.** `raw-lexing` refuses, in shipped code outside `parsing.rs`, `parse_str` and `parse_file` however they are named, called or passed, a `TokenStream` or `Literal` `from_str` and an inferred `FromStr::from_str`, a `.parse::<T>()` of a type not on a list of types that are not Rust text, `parse_with` and a parser's `parse_str`, `LitInt::new` and `LitFloat::new`, and `quote!` and its kin, which lex every literal they quote.
 The macros crate, which is handed the compiler's own tokens, the devkit, which only measuring code links, and code compiled only for tests are outside it.
@@ -43,6 +50,7 @@ The macros crate, which is handed the compiler's own tokens, the devkit, which o
 - A watch session holds no round's sources after the round.
 - A file that would take its reading past the budget is refused by name, where it used to be read to wrong places or, before that, to panic.
 - A long chain of operators reads on the reading thread's stack, which is larger than a main thread's; a 6000-term chain that aborts on 8 MiB reads.
+- A text nested or chained past the bounds is refused by name as RM0020, where it used to overflow the reading thread's stack and abort the process with nothing to say which file did it; the scan of the runner reads the same measure, so it refuses at the engine's nesting rather than the 128 it kept for itself.
 - A panic in a reading is raised again in the thread that asked for it, so under the test profile it unwinds there as any panic would, and in a release build, which aborts on a panic, it ends the process; no value ever stands in for one.
 - Each reading starts a thread: a few hundred per run, against the build of the tree it reads.
 - A reading inside a reading is a thread and a budget of its own, since the budget travels with the right to read rather than living in the thread; nothing does that on a hot path.

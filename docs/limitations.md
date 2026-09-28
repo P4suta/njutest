@@ -485,6 +485,9 @@ Two are what a person wrote, and are the two to read first:
 - `skipped-configured` — a `[[mutation.skip]]` entry in the engine's configuration.
   A marker or an entry that hid nothing is an `unmatched-skip` finding rather than a line nobody notices.
 
+One file is not passed over but refused: one whose groups nest past 1,000, or one of whose trees chains past 12,288 tokens, is `RM0020` by name rather than read.
+Every group and every link of such a chain is a frame of the parser, the walks and the drop, and past what a reading thread's 64 MiB stack holds the process would abort without saying which file did it; `[project] exclude` passes the file over.
+
 ## Survivors a suite cannot close
 
 A survivor is a test to write, and three kinds of them are not.

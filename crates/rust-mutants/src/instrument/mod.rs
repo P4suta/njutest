@@ -326,6 +326,8 @@ pub enum InstrumentErrorKind {
     ReadingExhausted,
     /// The thread the file is read on could not be started or did not finish.
     ReadingThread,
+    /// The file runs deeper than its reading thread's stack holds.
+    ReadingTooDeep,
 }
 
 impl InstrumentErrorKind {
@@ -343,6 +345,7 @@ impl InstrumentErrorKind {
             Self::Unparsable => error::INSTRUMENT_UNPARSABLE,
             Self::ReadingExhausted => error::READING_EXHAUSTED,
             Self::ReadingThread => error::READING_THREAD,
+            Self::ReadingTooDeep => error::READING_TOO_DEEP,
         }
     }
 }
@@ -368,6 +371,7 @@ impl InstrumentError {
             crate::parsing::ReadingError::ThreadUnavailable { .. } => {
                 InstrumentErrorKind::ReadingThread
             }
+            crate::parsing::ReadingError::TooDeep { .. } => InstrumentErrorKind::ReadingTooDeep,
         };
         Self::new(kind, path, unread.to_string())
     }
@@ -897,7 +901,8 @@ impl File<'_> {
                 ),
             ),
             crate::parsing::ReadingError::Exhausted { .. }
-            | crate::parsing::ReadingError::ThreadUnavailable { .. } => {
+            | crate::parsing::ReadingError::ThreadUnavailable { .. }
+            | crate::parsing::ReadingError::TooDeep { .. } => {
                 InstrumentError::unread(InstrumentErrorKind::Unparsable, self.path, error)
             }
         }

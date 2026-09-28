@@ -125,9 +125,9 @@ pub(crate) fn flatten_with(parsing: &Parsing, src: &str) -> Result<String, Flatt
 fn lex(parsing: &Parsing, src: &str) -> Result<TokenStream, FlattenError> {
     parsing.tokens(src).map_err(|unread| match unread {
         ReadingError::Syntax { message, .. } => FlattenError::Untokenizable { message },
-        other @ (ReadingError::Exhausted { .. } | ReadingError::ThreadUnavailable { .. }) => {
-            FlattenError::unread(&other)
-        }
+        other @ (ReadingError::Exhausted { .. }
+        | ReadingError::ThreadUnavailable { .. }
+        | ReadingError::TooDeep { .. }) => FlattenError::unread(&other),
     })
 }
 
@@ -220,7 +220,11 @@ fn respell(parsing: &Parsing, literal: &Literal) -> Result<String, FlattenError>
     let parsed: syn::Lit = match parsing.read(&spelled) {
         Ok(parsed) => parsed,
         Err(ReadingError::Syntax { .. }) => return Err(refuse()),
-        Err(unread @ (ReadingError::Exhausted { .. } | ReadingError::ThreadUnavailable { .. })) => {
+        Err(
+            unread @ (ReadingError::Exhausted { .. }
+            | ReadingError::ThreadUnavailable { .. }
+            | ReadingError::TooDeep { .. }),
+        ) => {
             return Err(FlattenError::unread(&unread));
         }
     };

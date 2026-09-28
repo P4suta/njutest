@@ -125,6 +125,14 @@ fn a_raw_identifier_is_read_as_the_name_it_spells() {
     );
 }
 
+/// Whether the scan refused `source` as nested deeper than a reading's stack holds.
+fn refused_too_deep(source: &str) -> bool {
+    matches!(
+        scanned("src/deep.rs", source),
+        Err(ScanError::Unread { source, .. }) if source.code().code == "RM0020"
+    )
+}
+
 #[test]
 fn a_file_nested_deeper_than_the_scan_reads_is_refused_on_any_stack() {
     let source = format!(
@@ -135,19 +143,14 @@ fn a_file_nested_deeper_than_the_scan_reads_is_refused_on_any_stack() {
     let refused = std::thread::scope(|scope| {
         std::thread::Builder::new()
             .stack_size(256 * 1024)
-            .spawn_scoped(scope, || {
-                matches!(
-                    scanned("src/deep.rs", &source),
-                    Err(ScanError::TooDeep { .. })
-                )
-            })
+            .spawn_scoped(scope, || refused_too_deep(&source))
             .expect("a thread")
             .join()
             .expect("the scan returns rather than overflowing the stack")
     });
     assert!(
         refused,
-        "a nesting the parser would recurse through is refused before it is parsed"
+        "a nesting the scan would recurse through is refused by the reading before it is walked"
     );
 }
 
@@ -192,57 +195,14 @@ fn a_chain_the_parser_would_recurse_through_without_a_bracket_is_read_on_a_small
 
 #[test]
 fn a_letter_beyond_ascii_before_a_prefix_is_part_of_a_name_as_the_lexer_reads_it() {
+    let past = rust_mutants::parsing::NESTING.saturating_add(1);
     let source = format!(
         "fn f() {{ ér#\" \" {}std::thread::spawn(|| {{}}){} \"# \" }}\n",
-        "(".repeat(200),
-        ")".repeat(200)
+        "(".repeat(past),
+        ")".repeat(past)
     );
     assert!(
-        matches!(
-            scanned("src/lib.rs", &source),
-            Err(ScanError::TooDeep { .. })
-        ),
+        refused_too_deep(&source),
         "`ér` is a name, so what follows `#` is an ordinary string and the brackets after it nest"
     );
-}
-
-fn lexed_depth(stream: proc_macro2::TokenStream) -> usize {
-    stream
-        .into_iter()
-        .map(|tree| match tree {
-            proc_macro2::TokenTree::Group(group) => lexed_depth(group.stream()).saturating_add(1),
-            proc_macro2::TokenTree::Ident(_)
-            | proc_macro2::TokenTree::Punct(_)
-            | proc_macro2::TokenTree::Literal(_) => 0,
-        })
-        .max()
-        .unwrap_or_default()
-}
-
-proptest::proptest! {
-    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(4096))]
-    #[test]
-    fn the_nesting_counted_is_the_nesting_the_lexer_builds(
-        fragments in proptest::collection::vec(
-            proptest::sample::select(vec![
-                "(", ")", "[", "]", "{", "}", "\"(\"", "\")\\\"(\"", "r#\"(\"#", "br##\")\"##",
-                "c\"(\"", "b\"(\"", "'('", "b'('", "'\\''", "'a", "// ( \n", "/* ( /* ) */ ( */",
-                "é", "ér", "r", "b", "c", "#", " ", "a", "_", "1", "\\", "'", "\"", "\n", "π",
-                "'r", "'é", "'ab", "r#", "br", "cr", "1r", "r##", "cr#\"(\"#", "b'\\x28'",
-                "'\\u{28}'", "\"\\\\\"", "/**/", "//!(\n", "0x1", "1.0", "*/", "/*", "!", "///(\n", "////\n", "/*!(*/", "/**(*/", "/***/",
-            ]),
-            0..40,
-        )
-    ) {
-        let source: String = fragments.concat();
-        match <proc_macro2::TokenStream as std::str::FromStr>::from_str(&source) {
-            Ok(stream) => proptest::prop_assert_eq!(
-                njutest::concurrency::scan::nesting(&source),
-                lexed_depth(stream),
-                "{:?}",
-                source
-            ),
-            Err(_not_lexed) => {}
-        }
-    }
 }

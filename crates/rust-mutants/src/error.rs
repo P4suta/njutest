@@ -66,6 +66,8 @@ mod table {
         ReadingExhausted,
         /// The thread Rust text is read on could not be started.
         ReadingThread,
+        /// Rust text that runs deeper than its reading thread's stack holds.
+        ReadingTooDeep,
         /// Snapshot options that cannot be honoured, such as an escaping report directory.
         SnapshotInvalidOptions,
         /// A source root that is relative, cannot be read, or is not a directory.
@@ -348,6 +350,14 @@ mod table {
                     summary: "the thread Rust text is read on could not be started",
                     remedy: Some(
                         "the operating system refused a thread; check the process and memory limits of this user, and run again",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::ReadingTooDeep => ErrorCode {
+                    code: "RM0020",
+                    summary: "Rust text that runs deeper than its reading thread's stack holds",
+                    remedy: Some(
+                        "a file whose groups nest past 1000 or whose trees chain past 12288 tokens is refused rather than read into a stack overflow; split the expression, or skip the file with an exclude pattern",
                     ),
                     sealed: Sealed,
                 },
@@ -930,6 +940,7 @@ pub const CI_SINK_UNWRITABLE: ErrorCode = RmCode::CiSinkUnwritable.error_code();
 pub(crate) const READING_SYNTAX: ErrorCode = RmCode::ReadingSyntax.error_code();
 pub(crate) const READING_EXHAUSTED: ErrorCode = RmCode::ReadingExhausted.error_code();
 pub(crate) const READING_THREAD: ErrorCode = RmCode::ReadingThread.error_code();
+pub(crate) const READING_TOO_DEEP: ErrorCode = RmCode::ReadingTooDeep.error_code();
 
 pub(crate) const SNAPSHOT_INVALID_OPTIONS: ErrorCode = RmCode::SnapshotInvalidOptions.error_code();
 pub(crate) const SNAPSHOT_SOURCE_ROOT: ErrorCode = RmCode::SnapshotSourceRoot.error_code();
