@@ -330,6 +330,69 @@ fn dep_info_lists_the_prerequisites_of_the_first_rule_with_escapes_undone() {
 }
 
 #[test]
+fn a_backslash_before_a_line_end_is_read_once_as_what_its_run_of_backslashes_makes_it() {
+    let crash = include_bytes!(
+        "../../../fuzz/regressions/depinfo/crash-fb1f5a260a2c553243ecefcb34bcbf428c9bc75e"
+    );
+    let text = std::str::from_utf8(crash).unwrap_or_else(|error| panic!("the crash: {error}"));
+    let read = parse_dep_info(text);
+    let Ok(read) = read else {
+        panic!("the crash has a rule: {read:?}");
+    };
+    assert_eq!(
+        read,
+        [format!("\\Z\\{}{}", "\0".repeat(21), "\\".repeat(6))],
+        "what a scheduled fuzz run found: twelve backslashes before a line end are six escaped \
+         ones, so the line ends the rule, and no name holds a space nothing escaped"
+    );
+    for (text, names, why) in [
+        (
+            "out.d: a\\\\\nb\n",
+            &["a\\"][..],
+            "an escaped backslash leaves the line end unescaped",
+        ),
+        (
+            "out.d: a\\\\\\\nb\n",
+            &["a\\", "b"][..],
+            "and one more backslash escapes it",
+        ),
+        (
+            "out.d: a\\\r\nb\r\n",
+            &["a", "b"][..],
+            "whichever way the line ends",
+        ),
+    ] {
+        let read = parse_dep_info(text);
+        let Ok(read) = read else {
+            panic!("{why}: {read:?}");
+        };
+        assert_eq!(read, names, "{why}");
+    }
+}
+
+proptest::proptest! {
+    /// Names written the way rustc writes them, spaces escaped, read back as themselves wherever a line was continued between them.
+    #[test]
+    fn every_name_written_as_rustc_writes_it_reads_back_as_itself(
+        names in proptest::collection::vec("[a-zA-Z0-9_./ -]{1,12}", 1..6),
+        continued in proptest::collection::vec(proptest::bool::ANY, 6),
+    ) {
+        let written: Vec<String> = names.iter().map(|name| name.replace(' ', "\\ ")).collect();
+        let mut rule = String::from("/t/deps/demo-abc.d:");
+        for (name, carried) in written.iter().zip(continued) {
+            rule.push_str(if carried { " \\\n  " } else { " " });
+            rule.push_str(name);
+        }
+        let text = format!("{rule}\n\n/t/deps/libdemo-abc.rmeta: src/lib.rs\n");
+        let read = parse_dep_info(&text);
+        let Ok(read) = read else {
+            return Err(proptest::test_runner::TestCaseError::fail(format!("{text:?}: {read:?}")));
+        };
+        proptest::prop_assert_eq!(read, names, "{:?}", text);
+    }
+}
+
+#[test]
 fn the_dep_info_file_sits_beside_the_artifact_without_the_lib_prefix() {
     assert_eq!(
         dep_info_path(Path::new("/t/debug/deps/libdemo-abc.rmeta")),

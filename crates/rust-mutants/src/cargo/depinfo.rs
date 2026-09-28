@@ -41,47 +41,120 @@ pub fn dep_info_path(artifact: &Path) -> Option<PathBuf> {
     Some(artifact.with_file_name(format!("{stem}.d")))
 }
 
-/// The prerequisites of the first rule of a dep-info file, with `\ ` escapes undone and line continuations joined.
+/// The prerequisites of the first rule of a dep-info file, with `\ ` and `\\` escapes undone and line continuations joined.
 ///
 /// # Errors
 /// [`CargoErrorKind::DepInfoUnreadable`] when there is no rule.
 pub fn parse_dep_info(text: &str) -> Result<Vec<String>, CargoError> {
-    let joined = text.replace("\\\n", " ").replace("\\\r\n", " ");
-    let rule = joined
-        .lines()
-        .find(|line| !line.trim().is_empty())
+    let rule = first_rule(text)
         .ok_or_else(|| CargoError::new(CargoErrorKind::DepInfoUnreadable, "dep-info is empty"))?;
-    let colon = rule
-        .char_indices()
-        .find(|&(index, ch)| {
-            let Some(after_colon) = index.checked_add(1) else {
-                return false;
+    let prerequisites = after_separator(&rule).ok_or_else(|| {
+        CargoError::new(
+            CargoErrorKind::DepInfoUnreadable,
+            format!("dep-info has no rule: {:?}", spelled(&rule)),
+        )
+    })?;
+    Ok(prerequisites
+        .split(|read| *read == Read::Gap)
+        .filter(|name| !name.is_empty())
+        .map(spelled)
+        .collect())
+}
+
+/// What follows the first colon that ends a word, which is where a rule's targets end: a colon inside one, as in `C:\`, is part of its name.
+fn after_separator(rule: &[Read]) -> Option<&[Read]> {
+    let mut rest = rule;
+    while let Some((first, after)) = rest.split_first() {
+        if *first == Read::Char(':') && after.first().is_none_or(|next| *next == Read::Gap) {
+            return Some(after);
+        }
+        rest = after;
+    }
+    None
+}
+
+/// One character of a dep-info rule as its escapes read it, or the break between two names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Read {
+    /// A character of a name, whether it was written as itself or escaped.
+    Char(char),
+    /// Whitespace nothing escaped, or a line continuation, which is where one name ends.
+    Gap,
+}
+
+/// What a spelling that does not stand for itself means.
+#[derive(Debug, Clone, Copy)]
+enum Meaning {
+    /// A backslash before a line end, which carries the line on.
+    Continuation,
+    /// The end of a line nothing carried on.
+    LineEnd,
+    /// A backslash before a character that would otherwise break or escape a name, which keeps that character.
+    Escaped(char),
+}
+
+/// Every spelling that does not stand for itself, each tried before a backslash can be read as itself: this is the one place a backslash is given a meaning, so no backslash is read twice.
+const SPELLINGS: [(&str, Meaning); 6] = [
+    ("\\\r\n", Meaning::Continuation),
+    ("\\\n", Meaning::Continuation),
+    ("\r\n", Meaning::LineEnd),
+    ("\n", Meaning::LineEnd),
+    ("\\ ", Meaning::Escaped(' ')),
+    ("\\\\", Meaning::Escaped('\\')),
+];
+
+/// The first line of `text` that is not blank, joined across its continuations and read by [`SPELLINGS`].
+fn first_rule(text: &str) -> Option<Vec<Read>> {
+    let mut rest = text;
+    while !rest.is_empty() {
+        let mut line = Vec::new();
+        let mut blank = true;
+        loop {
+            let spelled = SPELLINGS.iter().find_map(|(spelling, meaning)| {
+                rest.strip_prefix(spelling).map(|after| (*meaning, after))
+            });
+            let (read, after) = match spelled {
+                Some((Meaning::LineEnd, after)) => {
+                    rest = after;
+                    break;
+                }
+                Some((Meaning::Continuation, after)) => (Read::Gap, after),
+                Some((Meaning::Escaped(kept), after)) => {
+                    blank = false;
+                    (Read::Char(kept), after)
+                }
+                None => {
+                    let mut chars = rest.chars();
+                    let Some(ch) = chars.next() else {
+                        break;
+                    };
+                    blank = blank && ch.is_whitespace();
+                    let read = match ch {
+                        ' ' | '\t' => Read::Gap,
+                        other => Read::Char(other),
+                    };
+                    (read, chars.as_str())
+                }
             };
-            ch == ':'
-                && rule
-                    .get(after_colon..)
-                    .is_none_or(|rest| rest.is_empty() || rest.starts_with([' ', '\t']))
+            line.push(read);
+            rest = after;
+        }
+        if !blank {
+            return Some(line);
+        }
+    }
+    None
+}
+
+/// The text a run of read characters spells, with a break between names written as a space.
+fn spelled(reads: &[Read]) -> String {
+    reads
+        .iter()
+        .map(|read| match read {
+            Read::Char(ch) => *ch,
+            Read::Gap => ' ',
         })
-        .map(|(index, _)| index)
-        .ok_or_else(|| {
-            CargoError::new(
-                CargoErrorKind::DepInfoUnreadable,
-                format!("dep-info has no rule: {rule:?}"),
-            )
-        })?;
-    let after_colon = colon.checked_add(1).ok_or_else(|| {
-        CargoError::new(
-            CargoErrorKind::DepInfoUnreadable,
-            "dep-info rule separator position overflowed",
-        )
-    })?;
-    let prerequisites = rule.get(after_colon..).ok_or_else(|| {
-        CargoError::new(
-            CargoErrorKind::DepInfoUnreadable,
-            "dep-info rule separator was not on a UTF-8 boundary",
-        )
-    })?;
-    Ok(split_escaped(prerequisites))
+        .collect()
 }
 
 /// The environment variables a dep-info file says the compiler read, each with the value it read or nothing where it was unset.
@@ -113,36 +186,6 @@ fn unescaped(value: &str) -> String {
         }
     }
     out
-}
-
-/// Splits on unescaped whitespace, undoing `\ ` and `\\`.
-fn split_escaped(text: &str) -> Vec<String> {
-    let mut items = Vec::new();
-    let mut current = String::new();
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
-        match ch {
-            '\\' => match chars.peek() {
-                Some(' ' | '\\') => {
-                    if let Some(escaped) = chars.next() {
-                        current.push(escaped);
-                    }
-                }
-                _ => current.push('\\'),
-            },
-            ' ' | '\t' => {
-                if !current.is_empty() {
-                    items.push(current);
-                    current = String::new();
-                }
-            }
-            other => current.push(other),
-        }
-    }
-    if !current.is_empty() {
-        items.push(current);
-    }
-    items
 }
 
 /// Whether the file is one this engine reads as Rust.
