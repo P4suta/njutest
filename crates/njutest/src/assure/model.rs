@@ -466,7 +466,9 @@ struct FunctionBytes {
 #[derive(Debug)]
 enum Generation {
     Ineligible(Ineligible),
-    Unread(rust_mutants::parsing::ReadingError),
+    Unread {
+        source: rust_mutants::parsing::ReadingError,
+    },
 }
 
 impl From<Ineligible> for Generation {
@@ -480,7 +482,7 @@ impl Generation {
     fn read(unread: rust_mutants::parsing::ReadingError, syntax: Ineligible) -> Self {
         match unread.syntax() {
             Ok(_not_rust) => Self::Ineligible(syntax),
-            Err(unreadable) => Self::Unread(unreadable),
+            Err(unreadable) => Self::Unread { source: unreadable },
         }
     }
 }
@@ -498,7 +500,7 @@ pub(crate) fn generate(
     {
         Ok(harness) => Ok(Ok(harness)),
         Err(Generation::Ineligible(why)) => Ok(Err(why)),
-        Err(Generation::Unread(unread)) => Err(unread),
+        Err(Generation::Unread { source }) => Err(source),
     }
 }
 

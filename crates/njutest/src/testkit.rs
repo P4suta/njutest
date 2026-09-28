@@ -186,6 +186,19 @@ pub fn every_failure() -> Vec<RunnerError> {
         RunnerError::Model {
             message: "model artifact could not be retained".to_owned(),
         },
+        RunnerError::Unread {
+            doing: "reading a catalogued source to generate its harness",
+            source: failure(
+                rust_mutants::parsing::apart(|parsing| {
+                    let past = rust_mutants::parsing::NESTING.saturating_add(1);
+                    parsing
+                        .tokens(&format!("{}{}", "(".repeat(past), ")".repeat(past)))
+                        .map(|_tokens| ())
+                })
+                .and_then(|read| read),
+                "a nesting past the bound is refused",
+            ),
+        },
         RunnerError::Schedule(crate::assure::schedule::ScheduleError::WorkerPanicked {
             worker: "njutest-measure-0".to_owned(),
             item: "mutation abcdef".to_owned(),
@@ -247,6 +260,7 @@ pub fn every_failure() -> Vec<RunnerError> {
             | RunnerError::MiriMissing { .. }
             | RunnerError::PhaseOutput { .. }
             | RunnerError::Model { .. }
+            | RunnerError::Unread { .. }
             | RunnerError::Schedule(_)
             | RunnerError::Sources(_)
             | RunnerError::Equivalence { .. }

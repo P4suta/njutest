@@ -18,11 +18,19 @@ use super::ItemBody;
 #[derive(Debug, thiserror::Error)]
 pub(super) enum StepError {
     /// A byte-order mark or shebang prefix did not fit the source-span schema.
-    #[error("the source prefix is out of range: {0}")]
-    Prefix(#[from] crate::syntax::PrefixError),
+    #[error("the source prefix is out of range: {source}")]
+    Prefix {
+        /// How far the prefix ran.
+        #[from]
+        source: crate::syntax::PrefixError,
+    },
     /// The source was not a Rust file, or could not be read at all.
-    #[error("the source token stream is invalid: {0}")]
-    Parse(#[from] crate::parsing::ReadingError),
+    #[error("the source token stream is invalid: {source}")]
+    Unread {
+        /// Why the reading failed.
+        #[from]
+        source: crate::parsing::ReadingError,
+    },
     /// A parser byte offset, an inline-module depth, or an item index did not fit the engine's representations.
     #[error("a checkpoint source offset, inline-module depth, or item index is out of range")]
     OutOfRange,

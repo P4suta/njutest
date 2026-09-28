@@ -543,7 +543,7 @@ impl SyntaxError {
             walk::WalkError::Bounds => Self::TooLarge {
                 path: path.to_owned(),
             },
-            walk::WalkError::Unread(unread) => Self::unread(path, unread),
+            walk::WalkError::Unread { source } => Self::unread(path, source),
         }
     }
 

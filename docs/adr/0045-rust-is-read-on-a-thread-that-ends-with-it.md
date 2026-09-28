@@ -40,6 +40,8 @@ The bounds were measured, not guessed: in a debug build, where frames are larges
 Laws read a text at each bound and at both at once, through discovery, item numbering and the skeleton, and refuse one a group or a token past each; a text a reading only lexes is refused only for its nesting, since no tree is built from it.
 
 A reading that fails for any of those reasons, or because its thread could not start (RM0019), is not an answer about the text: discovery fails the file by name, instrumentation says why, and a check that already answers conservatively for a file that does not parse — the scan assumes an include, the selection shadows every name — takes that same answer.
+Every error that carries a reading's failure holds the `ReadingError` itself in a named `source`, made by its one `From<ReadingError>`, and answers with the reading's code: instrumentation turns each error it wraps into its own through one exhaustive match, so a refusal the reading made is never told as a source that changed under the run (RM3002) or a defect of the engine (RM3004), and the runner carries the code of a source its model phase could not read rather than its own.
+A law feeds a text too deep to read to every way into the engine that reads Rust and holds each to RM0020.
 The skeleton is the check whose answer for text that is not Rust is the permissive one: a data file declares nothing another file sees.
 So it keeps three answers apart in a closed `Read { File, NotRust, Unread }` that each of its rules matches in full, with no default any call site supplies, and a file it could not read unseals every body of its unit as `unit-file-unread` rather than reading as a file that declares nothing.
 

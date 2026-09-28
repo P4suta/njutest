@@ -223,9 +223,172 @@ fn tokens_are_handed_on_however_long_a_chain_they_hold() {
     let Err(refused) = rust_mutants::flatten::flatten(&deep) else {
         panic!("a nesting past the bound is refused even where only tokens are read")
     };
-    assert!(
-        refused.to_string().contains("RM0020"),
+    assert_eq!(
+        refused.code().code,
+        "RM0020",
         "the refusal keeps its code: {refused}"
+    );
+}
+
+/// The code `answered` refused with, or what it answered instead.
+fn code_of<T, E: std::fmt::Display>(
+    answered: Result<T, E>,
+    code: impl FnOnce(&E) -> &'static str,
+) -> String {
+    match answered {
+        Ok(_) => "read".to_owned(),
+        Err(error) => format!("{}: {error}", code(&error)),
+    }
+}
+
+#[test]
+fn every_way_into_the_engine_that_reads_rust_refuses_a_text_too_deep_by_its_own_code() {
+    let past = NESTING + 1;
+    let deep = format!(
+        "fn f() -> bool {{ {}true{} }}\n",
+        "(".repeat(past),
+        ")".repeat(past)
+    );
+    let registry = Registry::canonical();
+    let selection = Selection::tier(&registry, Tier::All);
+    let named = |answered: Result<String, rust_mutants::instrument::ModuleNameError>| match answered
+    {
+        Ok(_) => "read".to_owned(),
+        Err(rust_mutants::instrument::ModuleNameError::Tokens { source }) => {
+            format!("{}: {source}", source.code().code)
+        }
+        Err(rust_mutants::instrument::ModuleNameError::SuffixesExhausted) => {
+            "suffixes exhausted".to_owned()
+        }
+    };
+    let reading = |error: &ReadingError| error.code().code;
+    let answers = [
+        (
+            "discover_file",
+            code_of(
+                discover_file("src/lib.rs", deep.as_bytes(), &selection),
+                |error| error.code().code,
+            ),
+        ),
+        (
+            "module_name",
+            named(rust_mutants::instrument::module_name("src/lib.rs", &deep)),
+        ),
+        (
+            "module_named_for",
+            named(rust_mutants::instrument::module_named_for(
+                &deep,
+                "__rm_witness",
+            )),
+        ),
+        (
+            "flatten",
+            code_of(rust_mutants::flatten::flatten(&deep), |error| {
+                error.code().code
+            }),
+        ),
+        (
+            "forbids_guard_noise",
+            code_of(
+                rust_mutants::discover::forbids_guard_noise(&deep, &[]),
+                reading,
+            ),
+        ),
+        (
+            "freestanding",
+            code_of(rust_mutants::discover::freestanding(&deep, "2024"), reading),
+        ),
+        (
+            "read_through",
+            code_of(
+                rust_mutants::testkit::source::read_through(&deep, "__rm"),
+                reading,
+            ),
+        ),
+    ];
+    let lost: Vec<String> = answers
+        .iter()
+        .filter(|(_, answered)| !answered.starts_with("RM0020: "))
+        .map(|(entry, answered)| format!("{entry}: {answered}"))
+        .collect();
+    assert!(
+        lost.is_empty(),
+        "every way into the engine that reads Rust refuses a text too deep to read by the \
+         reading's own code, whatever error it wraps the reading in: {lost:#?}"
+    );
+}
+
+#[test]
+fn instrumenting_a_file_too_deep_to_read_says_so_by_the_readings_own_code() {
+    let past = NESTING + 1;
+    let deep = format!(
+        "fn f() -> bool {{ {}true{} }}\n",
+        "(".repeat(past),
+        ")".repeat(past)
+    );
+    let source = deep.as_bytes();
+    let file = rust_mutants::instrument::ItemSource {
+        path: "src/lib.rs",
+        package: "demo",
+        source,
+    };
+    let probing = [rust_mutants::instrument::witness::Probing {
+        index: 0,
+        value: rust_mutants::span::Span::new(15, 19).expect("a span"),
+        question: rust_mutants::probe::Question::True,
+        super_depth: 0,
+    }];
+    let comparable = std::collections::BTreeSet::new();
+    let probed = std::collections::BTreeMap::new();
+    let codes = [
+        (
+            "items",
+            rust_mutants::instrument::items("src/lib.rs", source, 0).map(|_| ()),
+        ),
+        (
+            "catalog_items",
+            rust_mutants::instrument::catalog_items(&[file]).map(|_| ()),
+        ),
+        (
+            "instrument_file",
+            rust_mutants::instrument::instrument_file(&rust_mutants::instrument::Instrumenting {
+                path: "src/lib.rs",
+                source,
+                placements: &[],
+                markers: &[],
+                comparable: &comparable,
+                probed: &probed,
+                catalog_digest: "0",
+                first_item: 0,
+                watched: "/watched",
+            })
+            .map(|_| ()),
+        ),
+        (
+            "witness_file",
+            rust_mutants::instrument::witness::witness_file(
+                "src/lib.rs",
+                source,
+                &rust_mutants::instrument::witness::Asking {
+                    conditions: &[],
+                    probes: &probing,
+                },
+            )
+            .map(|_| ()),
+        ),
+    ];
+    let lost: Vec<String> = codes
+        .iter()
+        .filter_map(|(entry, answered)| match answered {
+            Err(error) if error.code().code == "RM0020" => None,
+            Err(error) => Some(format!("{entry}: {}: {error}", error.code().code)),
+            Ok(()) => Some(format!("{entry}: read")),
+        })
+        .collect();
+    assert!(
+        lost.is_empty(),
+        "a reading that refused the text is not a source that changed under the run (RM3002) \
+         nor a defect of the engine (RM3004): its own code says what to do: {lost:#?}"
     );
 }
 
