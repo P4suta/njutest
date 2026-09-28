@@ -45,6 +45,8 @@ mod doctor_probe;
 mod documented_commands;
 #[path = "drift.rs"]
 mod drift;
+#[path = "ended.rs"]
+mod ended;
 #[path = "equivalence.rs"]
 mod equivalence;
 #[path = "errors_doc.rs"]

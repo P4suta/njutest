@@ -149,8 +149,8 @@ fn ended(exec: &Value) -> (String, Option<i64>) {
     (kind, code)
 }
 
-/// What the interpretation `run` came to, with the toolchain's answer `probe` where it was asked, or nothing where what it said was not kept as text.
-fn came(run: Said<'_>, probe: Option<&Value>) -> Option<Came> {
+/// What the interpretation `run` came to, with the toolchain's answer `probe` where it was asked, or nothing where what either said was not kept as text.
+fn came(run: Said<'_>, probe: Option<Said<'_>>) -> Option<Came> {
     let Some(Kept::Whole(said)) = run.output else {
         return None;
     };
@@ -162,10 +162,50 @@ fn came(run: Said<'_>, probe: Option<&Value>) -> Option<Came> {
     if kind == "timed-out" || kind == "stalled" {
         return Some(Came::TimedOut);
     }
-    if code != Some(0) && probe.is_some_and(|asked| ended(asked).1 != Some(0)) {
-        return Some(Came::Absent);
+    let asked = match probe {
+        Some(asked) if code != Some(0) => probed(asked),
+        Some(_) | None => Probed::Unsaid,
+    };
+    match asked {
+        Probed::Absent => Some(Came::Absent),
+        Probed::Unread => None,
+        Probed::Unsaid => Some(heard.came(code)),
     }
-    Some(heard.came(code))
+}
+
+/// What the toolchain's answer to the version question says about its interpreter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Probed {
+    /// Nothing was launched, or it exited with a code and said the interpreter is not installed.
+    Absent,
+    /// It did not say the interpreter is absent: it answered, or it ran out of time or ended by a signal and so nobody answered.
+    Unsaid,
+    /// What it said was not kept as text, so it cannot be read either way.
+    Unread,
+}
+
+/// What the toolchain's answer `asked` says about its interpreter.
+fn probed(asked: Said<'_>) -> Probed {
+    let (kind, code) = ended(asked.exec);
+    if kind == "not-started" {
+        return Probed::Absent;
+    }
+    let said_absent = |said: &str| {
+        if Heard::of(said).absent {
+            Probed::Absent
+        } else {
+            Probed::Unsaid
+        }
+    };
+    match code {
+        Some(0) | None => Probed::Unsaid,
+        Some(_) => match asked.output {
+            Some(Kept::Whole(said)) => said_absent(said),
+            Some(Kept::Mismatched | Kept::NotText) => Probed::Unread,
+            None if asked.exec.get("output_path").is_some_and(Value::is_string) => Probed::Unread,
+            None => Probed::Unsaid,
+        },
+    }
 }
 
 /// What the interpreter's output `said` comes to where its run exited with `code`, read by the structure the published contract gives it, as the contract names the verdict.
@@ -396,7 +436,11 @@ pub(super) fn audited(
                 );
                 return notes.looked();
             }
-            match came(Said { exec: one, output }, probe) {
+            let asked = probe.map(|asked| Said {
+                exec: asked,
+                output: said(asked),
+            });
+            match came(Said { exec: one, output }, asked) {
                 Some(derived) => compared(&reported, derived, &mut notes),
                 None => notes.unaudited(
                     "soundness",
@@ -542,5 +586,96 @@ fn compared(reported: &Reported, derived: Came, notes: &mut Notes<'_>) {
                  said comes to {derived:?}, which earns {owed:?}"
             ),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use super::{Came, Kept, Said, came};
+
+    /// What an interpreter run printed where one of its tests failed.
+    const FAILED_RUN: &str = "     Running unittests src/lib.rs (x)\n\nrunning 1 test\ntest t ... FAILED\n\nfailures:\n\n---- t stdout ----\nboom\n\nfailures:\n    t\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
+
+    /// An exec record of `argv` that ended as `stopped`, with its output kept at `output/1.txt` or kept nowhere.
+    fn exec(argv: &[&str], stopped: &Value, kept: bool) -> Value {
+        json!({
+            "argv": argv,
+            "stopped": stopped,
+            "output_path": if kept { json!("output/1.txt") } else { Value::Null },
+        })
+    }
+
+    /// How a process that exited with `code` ended, as a recording spells it.
+    fn exited(code: i64) -> Value {
+        json!({ "kind": "exited", "exit": { "kind": "code", "value": code } })
+    }
+
+    #[test]
+    fn a_question_about_the_interpreter_nobody_answered_is_not_an_interpreter_that_is_absent() {
+        let run = exec(&["cargo", "+nightly", "miri", "test"], &exited(101), true);
+        let output = Kept::Whole(FAILED_RUN.to_owned());
+        let failed = Said {
+            exec: &run,
+            output: Some(&output),
+        };
+        let absent = Kept::Whole("error: no such command: `miri`\n".to_owned());
+        let other = Kept::Whole("error: failed to download\n".to_owned());
+        for (stopped, said, came_to, why) in [
+            (
+                json!({ "kind": "exited", "exit": { "kind": "signal", "value": 9 } }),
+                None,
+                Some(Came::Failed),
+                "a probe ended by a signal answered nothing",
+            ),
+            (
+                json!({ "kind": "timed-out", "raised": null }),
+                None,
+                Some(Came::Failed),
+                "a probe that ran out of time answered nothing",
+            ),
+            (
+                exited(101),
+                Some(&other),
+                Some(Came::Failed),
+                "a probe that failed without saying the interpreter is missing did not say so",
+            ),
+            (
+                exited(101),
+                Some(&absent),
+                Some(Came::Absent),
+                "a probe that says there is no such command says the interpreter is absent",
+            ),
+            (
+                json!({ "kind": "not-started", "cause": { "kind": "missing" } }),
+                None,
+                Some(Came::Absent),
+                "a probe nothing launched is a toolchain that could not be run",
+            ),
+            (
+                exited(101),
+                Some(&Kept::Mismatched),
+                None,
+                "a probe whose kept answer is not the one it gave cannot be read either way",
+            ),
+        ] {
+            let asked = exec(
+                &["cargo", "+nightly", "miri", "--version"],
+                &stopped,
+                said.is_some(),
+            );
+            assert_eq!(
+                came(
+                    failed,
+                    Some(Said {
+                        exec: &asked,
+                        output: said,
+                    })
+                ),
+                came_to,
+                "{why}"
+            );
+        }
     }
 }

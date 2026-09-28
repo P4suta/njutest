@@ -251,6 +251,8 @@ They are what the run says about its own footing, and each is stated fail-closed
 - The toolchain has no interpreter and the contract is `whole-v1` (`miri-unavailable`).
   `whole-v1` names each thing it could not establish rather than refusing the run, so the soundness nothing interpreted is a limitation beside a `not-measured` finding, and the run is not `ASSURED`.
   `deep-v1` promises interpretation, and there the same toolchain ends the run with `NJ7001`.
+  A toolchain has no interpreter only where nothing could be launched or it says the interpreter is not installed.
+  A run somebody stopped is an interrupted run, and a version probe that ran out of time, ended by a signal, or failed without saying so is a question nobody answered, so what the interpreter's own run said is what is read.
 - The interpreter ended without a test result (`miri-ran-no-test`): no `test result:` line said a test failed, or that every one passed.
   Its status is then about the interpreter — its setup could not start a test binary, or there was no test to run — so it is neither a failing test, which would blame the suite with a defect, nor a pass, which would claim soundness nobody interpreted; it is a `not-measured` finding beside this limitation.
 - A file the soundness inventory walked could not be read as Rust this release understands (`soundness-source-unreadable`), so what it holds is not in the count.

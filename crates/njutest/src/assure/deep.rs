@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use rust_mutants::runner::{Spec, run};
 
+use super::ended::ProcessEnd;
 use crate::error::RunnerError;
 use crate::report::{Finding, FindingKind, Limitation};
 use crate::trace::ExecRecord;
@@ -140,22 +141,22 @@ pub fn interpret(
         phase: "miri",
         source,
     })?;
-    if ran.error().is_some() || absent(said) {
+    let ending = match ProcessEnd::of(&ran.termination) {
+        ProcessEnd::Interrupted => return Err(RunnerError::Interrupted),
+        ProcessEnd::Unlaunched { why } => return unavailable(interpreting.absent, why),
+        ProcessEnd::Passed => Ending::Passed,
+        ProcessEnd::Failed => Ending::Failed,
+        ProcessEnd::TimedOut => Ending::TimedOut,
+        ProcessEnd::Unanswered { .. } => Ending::Unanswered,
+    };
+    if absent(said) {
         return unavailable(interpreting.absent, absence(said, ran.error()));
     }
-    if !ran.timed_out()
-        && ran.conventional_exit_code() != 0
+    if ending == Ending::Failed
         && let Some(absence) = missing(interpreting, watch)?
     {
         return unavailable(interpreting.absent, absence);
     }
-    let ending = if ran.timed_out() {
-        Ending::TimedOut
-    } else if ran.conventional_exit_code() == 0 {
-        Ending::Passed
-    } else {
-        Ending::Failed
-    };
     Ok(read(said, ending))
 }
 
@@ -183,7 +184,7 @@ fn unavailable(absent: Absent, message: String) -> Result<Interpreted, RunnerErr
     }
 }
 
-/// What the toolchain says when it has no interpreter, asked once the run it was given has failed.
+/// What the toolchain says when it has no interpreter, asked once the run it was given has failed: absent only where nothing launched or it says so, since a question nobody answered says nothing either way.
 fn missing(
     interpreting: &Interpreting<'_>,
     watch: Watch<'_>,
@@ -201,14 +202,19 @@ fn missing(
     spec.env = Some(environment(interpreting));
     let asked = run(&spec, watch.cancel);
     watch.trace.exec_result(ExecRecord::of(&spec, &asked));
-    if asked.error().is_none() && asked.conventional_exit_code() == 0 {
-        return Ok(None);
+    match ProcessEnd::of(&asked.termination) {
+        ProcessEnd::Interrupted => Err(RunnerError::Interrupted),
+        ProcessEnd::Unlaunched { why } => Ok(Some(why)),
+        ProcessEnd::Failed => {
+            let said =
+                std::str::from_utf8(&asked.output).map_err(|source| RunnerError::PhaseOutput {
+                    phase: "miri version probe",
+                    source,
+                })?;
+            Ok(absent(said).then(|| absence(said, None)))
+        }
+        ProcessEnd::Passed | ProcessEnd::TimedOut | ProcessEnd::Unanswered { .. } => Ok(None),
     }
-    let said = std::str::from_utf8(&asked.output).map_err(|source| RunnerError::PhaseOutput {
-        phase: "miri version probe",
-        source,
-    })?;
-    Ok(Some(absence(said, asked.error())))
 }
 
 /// What Miri's own environment is: the run's, plus what the configuration passes to the interpreter.
@@ -229,6 +235,8 @@ enum Ending {
     Failed,
     /// It ran out of time.
     TimedOut,
+    /// It ended without an answer of its own, by a signal or a failure to supervise it.
+    Unanswered,
 }
 
 /// Records that the interpreter ended without a test result, which says nothing about the suite.
@@ -445,7 +453,9 @@ fn read(said: &str, ending: Ending) -> Interpreted {
             position: None,
         }),
         Ending::Passed if passed => {}
-        Ending::Failed | Ending::Passed | Ending::TimedOut => ran_no_test(&mut interpreted, said),
+        Ending::Failed | Ending::Passed | Ending::TimedOut | Ending::Unanswered => {
+            ran_no_test(&mut interpreted, said);
+        }
     }
     interpreted
 }

@@ -192,6 +192,68 @@ fn a_cargo_that_is_not_there_is_a_toolchain_with_no_interpreter() {
 }
 
 #[test]
+fn a_run_that_was_asked_to_stop_is_interrupted_and_not_a_toolchain_with_no_interpreter() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cancel = Cancel::new();
+    cancel.cancel();
+    let trace = Recorder::disabled();
+    let cargo = cargo();
+    let stopped = interpret(
+        &Interpreting {
+            root: dir.path(),
+            cargo: rust_mutants::cargo::Selecting::named(&cargo),
+            env: saying(PASSED, 0),
+            packages: &[],
+            flags: &[],
+            timeout: Some(Duration::from_secs(30)),
+            offline: true,
+            locked: true,
+            absent: Absent::Refused,
+        },
+        Watch::new(&cancel, &trace),
+    )
+    .expect_err("a run that was asked to stop answers nothing");
+    assert!(
+        matches!(stopped, RunnerError::Interrupted),
+        "a stop the run asked for is the run being interrupted; reading it as a toolchain \
+         with no interpreter tells somebody to install one: {stopped}"
+    );
+}
+
+#[test]
+fn a_question_about_the_interpreter_nobody_answered_is_not_an_interpreter_that_is_absent() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cancel = Cancel::new();
+    let trace = Recorder::disabled();
+    let cargo = cargo();
+    let mut env = saying(FAILED_RUN, 101);
+    env.set("FAKE_CARGO_PROBE_SIGNAL", "KILL");
+    let done = interpret(
+        &Interpreting {
+            root: dir.path(),
+            cargo: rust_mutants::cargo::Selecting::named(&cargo),
+            env,
+            packages: &[],
+            flags: &[],
+            timeout: Some(Duration::from_secs(30)),
+            offline: true,
+            locked: true,
+            absent: Absent::Refused,
+        },
+        Watch::new(&cancel, &trace),
+    )
+    .expect(
+        "a version probe that ended by a signal said nothing about whether the interpreter is \
+         there, so it is not a toolchain with no interpreter",
+    );
+    assert_eq!(
+        done.findings.first().map(|one| one.kind),
+        Some(FindingKind::FailingTest),
+        "what the interpreter's own run said is what is read, and it said a test failed: {done:?}"
+    );
+}
+
+#[test]
 fn what_a_run_promised_cargo_it_would_not_do_is_said_to_this_cargo_too() {
     let dir = tempfile::tempdir().expect("a directory");
     let cancel = Cancel::new();
