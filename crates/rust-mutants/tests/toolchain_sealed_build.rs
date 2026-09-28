@@ -405,3 +405,45 @@ fn every_mutant_of_a_sealable_fixture_stands_on_sealed_executions_alone() {
         "every mutant of a fixture that builds and passes sealed has a verdict: {other:?}"
     );
 }
+
+#[test]
+fn a_sealed_control_passes_under_every_harness_option_a_run_may_be_configured_with() {
+    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-simple");
+    let session = rust_mutants::workspace::Workspace::open(
+        fixture.root(),
+        rust_mutants::testkit::opening::opening(
+            &njutest_devkit::paths::cargo_binary(),
+            fixture.temp(),
+        ),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(
+        &rust_mutants::session::PrepareOptions {
+            sealing: Sealing::On,
+            harness_args: vec![
+                "--test-threads=2".to_owned(),
+                "--nocapture".to_owned(),
+                "--show-output".to_owned(),
+            ],
+            ..rust_mutants::session::PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
+        },
+        &Cancel::new(),
+    )
+    .expect("prepare");
+    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
+        .expect("the sealed runner starts");
+    let bench = session.bench(&runner).expect("the bench is assembled");
+    assert!(!bench.stations.is_empty(), "{:?}", bench.unsealed);
+    for (target, station) in &bench.stations {
+        assert!(!station.controls.is_empty(), "{target} lists its tests");
+        for (test, control) in &station.controls {
+            assert!(
+                control.is_ok(),
+                "{target} {test}: a sealed invocation sets the thread count and the capture \
+                 itself, and a configured one gives way to it rather than being passed twice, \
+                 which libtest refuses: {control:?}"
+            );
+        }
+    }
+}

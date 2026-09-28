@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use super::{Asked, FAILURE_STATUS, Unaccounted, account, listing};
+use super::{Asked, Configured, FAILURE_STATUS, Own, Unaccounted, account, listing};
 
 const PASSED: &str = "\nrunning 2 tests\ntest a ... ok\ntest b ... ok\n\n\
     test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n";
@@ -236,5 +236,70 @@ fn a_listing_its_harness_did_not_close_lists_nothing() {
         ),
     ] {
         assert_eq!(listing(unclosed.as_bytes()), None, "{why}: {unclosed:?}");
+    }
+}
+
+#[test]
+fn an_option_an_invocation_sets_itself_takes_the_place_of_the_configured_one_however_spelled() {
+    let configured = Configured::new(names(&[
+        "--test-threads=4",
+        "--include-ignored",
+        "--nocapture",
+        "--test-threads",
+        "2",
+        "--show-output",
+    ]));
+    assert_eq!(
+        configured.beside(&[Own::OneThread, Own::Uncaptured]),
+        names(&[
+            "--test-threads=1",
+            "--nocapture",
+            "--include-ignored",
+            "--show-output"
+        ]),
+        "libtest refuses an option given twice, so the invocation's own is the only one given"
+    );
+    assert_eq!(
+        configured.beside(&[Own::OneThread]),
+        names(&[
+            "--test-threads=1",
+            "--include-ignored",
+            "--nocapture",
+            "--show-output"
+        ]),
+        "an option the invocation leaves alone is passed on as configured"
+    );
+    assert_eq!(
+        configured.beside(&[]),
+        names(&[
+            "--test-threads=4",
+            "--include-ignored",
+            "--nocapture",
+            "--test-threads",
+            "2",
+            "--show-output",
+        ]),
+        "an invocation that sets nothing passes on everything"
+    );
+}
+
+#[test]
+fn a_word_after_the_end_of_the_options_is_a_filter_and_never_an_option_given_twice() {
+    let configured = Configured::new(names(&["--nocapture", "--", "--nocapture"]));
+    assert_eq!(
+        configured.beside(&[Own::Uncaptured]),
+        names(&["--nocapture", "--", "--nocapture"]),
+    );
+}
+
+#[test]
+fn every_option_an_invocation_sets_is_one_libtest_takes_once() {
+    for own in Own::ALL {
+        let configured = Configured::new(names(&[own.spelled()]));
+        assert_eq!(
+            configured.beside(&[own]),
+            names(&[own.spelled()]),
+            "{own:?} configured and set is given once"
+        );
     }
 }

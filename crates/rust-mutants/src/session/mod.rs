@@ -337,9 +337,9 @@ impl Perturbation {
             }),
             arguments: self
                 .schedule
-                .arguments()
+                .owns()
                 .iter()
-                .map(|argument| (*argument).to_owned())
+                .map(|option| option.spelled().to_owned())
                 .collect(),
             delay: self.delay.map(|delay| crate::trace::DelayRecord {
                 site: delay.site,
@@ -871,7 +871,7 @@ pub struct Session {
     mutant_timeout: Timeout,
     mutant_steps: Option<u64>,
     /// The arguments every test binary of this session is started with, unless one execution names its own.
-    harness_args: Vec<String>,
+    harness_args: crate::libtest::Configured,
     /// The files as they were before instrumentation, so a position can be counted in the file a person would open rather than in the rewrite.
     sources: BTreeMap<String, String>,
     /// Which package each mutant belongs to.
@@ -2045,7 +2045,7 @@ impl Session {
             }),
         };
         let mut exec = ExecRequest::new(target)
-            .with_args(self.arguments(request))
+            .with_args(self.arguments(request, &[]))
             .with_timeout(Some(timeout))
             .with_scratch(scratch.clone())
             .in_scratch(self.scratch_working_directory);
@@ -2174,7 +2174,7 @@ impl Session {
             crash: None,
         };
         let mut exec = ExecRequest::new(target)
-            .with_args(self.arguments(request))
+            .with_args(self.arguments(request, &[]))
             .with_timeout(Some(timeout))
             .with_scratch(scratch)
             .in_scratch(self.scratch_working_directory);
@@ -2318,7 +2318,7 @@ impl Session {
             };
             let context = self.mutant_context((mutant, beside), log.as_deref());
             let mut exec = ExecRequest::new(target)
-                .with_args(self.arguments(request))
+                .with_args(self.arguments(request, &[]))
                 .with_timeout(Some(timeout))
                 .with_scratch(scratch)
                 .in_scratch(self.scratch_working_directory);
@@ -2520,12 +2520,12 @@ impl Session {
         Ok(())
     }
 
-    /// The arguments one execution's test binary is started with.
-    fn arguments(&self, request: &Request) -> Vec<String> {
+    /// The arguments one execution's test binary is started with, beside the options `own` it sets itself.
+    fn arguments(&self, request: &Request, own: &[crate::libtest::Own]) -> Vec<String> {
         if request.args.is_empty() {
-            self.harness_args.clone()
+            self.harness_args.beside(own)
         } else {
-            request.args.clone()
+            crate::libtest::Configured::new(request.args.clone()).beside(own)
         }
     }
 
@@ -2732,14 +2732,7 @@ impl Session {
                 ),
             );
         }
-        let mut arguments = self.arguments(once.request);
-        arguments.extend(
-            perturbation
-                .schedule
-                .arguments()
-                .iter()
-                .map(|argument| (*argument).to_owned()),
-        );
+        let arguments = self.arguments(once.request, perturbation.schedule.owns());
         let mut exec = ExecRequest::new(once.target)
             .with_args(arguments)
             .with_timeout(Some(once.timeout))
@@ -2866,7 +2859,7 @@ impl Session {
         for target in targets {
             let (timeout, source) = self.timeout_for(request, target.id())?;
             let mut exec = ExecRequest::new(target)
-                .with_args(self.arguments(request))
+                .with_args(self.arguments(request, &[]))
                 .with_timeout(Some(timeout))
                 .with_scratch(self.exec_scratch(self.home_of(target.id()))?)
                 .in_scratch(self.scratch_working_directory);

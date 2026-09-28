@@ -19,9 +19,9 @@ Everything a native run observes is a lead: something a person may look into, ne
 
 The engine builds the instrumented snapshot a second time, with `cargo test --no-run --target wasm32-wasip1 --keep-going`, into its own target directory.
 Each test binary becomes a WebAssembly command module.
-Its tests are the ones `--list` names inside the host.
+Its tests are the ones `--list` names inside the host, given the harness arguments the run was configured with.
 
-Each test of each module runs in its own instance, as `<module> --exact <name> --test-threads 1 --nocapture`.
+Each test of each module runs in its own instance, as `<module> --exact <name> --test-threads=1 --nocapture` and then the harness arguments the run was configured with, less a thread count or a capture of their own, which libtest refuses to be given twice.
 The instance is new, the memory is the module's initial memory, the filesystem is the snapshot with nothing written, and the clock reads zero.
 `--nocapture` keeps a panic's message on the stream the host records, where libtest's capture would hold it in memory the abort discards.
 

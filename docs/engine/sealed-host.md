@@ -96,7 +96,7 @@ The copy-on-write memory images wasmtime can use instead exist on Linux alone, w
 | `MemoryExhausted` | the memory limit refused a growth, or the memory a module starts with, and the guest then trapped, as a Rust guest does when its allocator fails |
 
 A panicking Rust guest traps `Unreachable` with its message on standard error, because `wasm32-wasip1` aborts on a panic.
-A libtest harness run with `--exact <name> --test-threads 1 --nocapture` returns for a passing test, traps for a panicking one, and exits 101 for one that returns `Err`.
+A libtest harness run with `--exact <name> --test-threads=1 --nocapture` returns for a passing test, traps for a panicking one, and exits 101 for one that returns `Err`.
 
 ## The transcript
 

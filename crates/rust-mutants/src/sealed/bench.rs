@@ -18,7 +18,7 @@ use rust_mutants_sealed::{
 
 use super::{SealedBuild, Unsealed};
 use crate::execute::TestTarget;
-use crate::libtest::{Asked, account};
+use crate::libtest::{Asked, Configured, Own, account};
 
 /// Where the runtime's records land inside an instance: a directory nothing but the runtime writes.
 pub const RECORDS: &str = "/rust-mutants-sealed";
@@ -207,27 +207,27 @@ pub struct Bench<'runner> {
     /// Each target with no station, and why.
     pub unsealed: BTreeMap<String, Unsealed>,
     tree: Tree,
-    harness: Vec<String>,
+    harness: Configured,
     catalog: String,
     bounds: crate::touch::Bounds,
 }
 
 impl<'runner> Bench<'runner> {
-    /// Prepares every module of `sealed` on `runner`, lists its tests and runs each one's control inside `tree`, every invocation given the harness arguments `harness` as the native ones are.
+    /// Prepares every module of `sealed` on `runner`, lists its tests and runs each one's control inside `tree`, every invocation given the harness arguments `harness` as the native ones are, less the options it sets itself.
     ///
     /// # Errors
     /// A module that cannot be read, an environment that is not text, or a host that cannot run what it is given.
     pub fn assemble(
         runner: &'runner SealedRunner,
         sealed: &SealedBuild,
-        (tree, harness): (Tree, &[String]),
+        (tree, harness): (Tree, &Configured),
         (catalog, bounds): (&str, crate::touch::Bounds),
     ) -> Result<Self, BenchError> {
         let mut bench = Self {
             stations: BTreeMap::new(),
             unsealed: sealed.unsealed.clone(),
             tree,
-            harness: harness.to_vec(),
+            harness: harness.clone(),
             catalog: catalog.to_owned(),
             bounds,
         };
@@ -279,7 +279,7 @@ impl<'runner> Bench<'runner> {
             .fuel
             .saturating_mul(FUEL_FACTOR)
             .saturating_add(FUEL_FLOOR);
-        let invocation = self.invocation(station, one_test(test), (Some(mutant), budget))?;
+        let invocation = self.invocation(station, &exactly(test), (Some(mutant), budget))?;
         let transcript = invoke(station, &invocation)?;
         if written(&transcript, DECLINE_LOG).is_some_and(|notice| !notice.is_empty()) {
             return Ok(Some(Sealed::Doubted(
@@ -290,8 +290,7 @@ impl<'runner> Bench<'runner> {
     }
 
     fn listed(&self, station: &Station<'_>) -> Result<Option<Vec<String>>, BenchError> {
-        let invocation =
-            self.invocation(station, vec!["--list".to_owned()], (None, CONTROL_FUEL))?;
+        let invocation = self.invocation(station, &Invoked::Listing, (None, CONTROL_FUEL))?;
         let transcript = invoke(station, &invocation)?;
         if transcript.stop() != SealedStop::Returned {
             return Ok(None);
@@ -304,7 +303,7 @@ impl<'runner> Bench<'runner> {
         station: &Station<'_>,
         test: &str,
     ) -> Result<Result<Control, Uncontrolled>, BenchError> {
-        let invocation = self.invocation(station, one_test(test), (None, CONTROL_FUEL))?;
+        let invocation = self.invocation(station, &exactly(test), (None, CONTROL_FUEL))?;
         let transcript = invoke(station, &invocation)?;
         let came_to = judged(observed(&transcript, test, None));
         if came_to != Sealed::Passed {
@@ -335,7 +334,7 @@ impl<'runner> Bench<'runner> {
     fn invocation(
         &self,
         station: &Station<'_>,
-        harness: Vec<String>,
+        invoked: &Invoked,
         (mutant, fuel): (Option<&str>, u64),
     ) -> Result<Invocation, BenchError> {
         let id = station.target.id().to_owned();
@@ -349,8 +348,11 @@ impl<'runner> Bench<'runner> {
             None => "test".to_owned(),
         };
         let mut arguments = vec![program];
-        arguments.extend(harness);
-        arguments.extend(self.harness.iter().cloned());
+        match invoked {
+            Invoked::Listing => arguments.push("--list".to_owned()),
+            Invoked::Alone(test) => arguments.extend(["--exact".to_owned(), test.clone()]),
+        }
+        arguments.extend(self.harness.beside(invoked.owns()));
         let mut variables = Vec::new();
         for (name, value) in station.target.cargo_env.for_process() {
             let (Some(name), Some(value)) = (name.to_str(), value.to_str()) else {
@@ -415,15 +417,28 @@ fn invoke(station: &Station<'_>, invocation: &Invocation) -> Result<Transcript, 
         })
 }
 
-/// The harness's arguments that run `test` alone, one thread, its output uncaptured.
-fn one_test(test: &str) -> Vec<String> {
-    vec![
-        "--exact".to_owned(),
-        test.to_owned(),
-        "--test-threads".to_owned(),
-        "1".to_owned(),
-        "--nocapture".to_owned(),
-    ]
+/// What one sealed invocation asks the harness for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Invoked {
+    /// The names of every test it holds.
+    Listing,
+    /// One test, by its exact name, under every option of libtest's own the engine sets: alone on one thread, its output uncaptured.
+    Alone(String),
+}
+
+impl Invoked {
+    /// The options of libtest's own it sets.
+    const fn owns(&self) -> &'static [Own] {
+        match self {
+            Self::Listing => &[],
+            Self::Alone(_) => &Own::ALL,
+        }
+    }
+}
+
+/// The invocation that runs `test` alone.
+fn exactly(test: &str) -> Invoked {
+    Invoked::Alone(test.to_owned())
 }
 
 /// The seed of every instance of `target`, the same for its control and for every mutant's execution.

@@ -166,12 +166,12 @@ pub enum Schedule {
 }
 
 impl Schedule {
-    /// The harness arguments that ask for it, which only libtest takes.
+    /// The options of libtest's own that ask for it, which only libtest takes.
     #[must_use]
-    pub const fn arguments(self) -> &'static [&'static str] {
+    pub const fn owns(self) -> &'static [crate::libtest::Own] {
         match self {
             Self::AsConfigured => &[],
-            Self::OneThread => &["--test-threads=1"],
+            Self::OneThread => &[crate::libtest::Own::OneThread],
         }
     }
 }
