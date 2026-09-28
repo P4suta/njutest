@@ -218,7 +218,9 @@ fn branch_at(files: &[FileOutput], span: &crate::cargo::DiagnosticSpan) -> Optio
         .find(|file| crate::cargo::names_file(&span.file_name, &file.path))?;
     file.branches
         .iter()
-        .filter(|branch| branch.span.start <= span.byte_start && span.byte_start < branch.span.end)
+        .filter(|branch| {
+            branch.span.start <= span.byte_start() && span.byte_start() < branch.span.end
+        })
         .min_by_key(|branch| branch.span.len())
         .map(|branch| branch.index)
 }

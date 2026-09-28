@@ -3761,7 +3761,7 @@ fn external_capture_allowed(file: &str, item: &str) -> bool {
                 "Profile",
                 "CompilerMessage",
                 "Diagnostic",
-                "DiagnosticSpan",
+                "SpanFields",
             ],
         ),
         (

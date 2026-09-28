@@ -145,16 +145,14 @@ impl Diagnostic {
     }
 }
 
-/// One span of a diagnostic.
+/// One span of a diagnostic, which never ends before it starts.
 /// Byte offsets are what attribution uses; columns are characters, for people.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticSpan {
     /// The file, relative to the directory rustc ran in (the workspace root) unless absolute.
     pub file_name: String,
-    /// The first byte.
-    pub byte_start: u32,
-    /// One past the last byte.
-    pub byte_end: u32,
+    byte_start: u32,
+    byte_end: u32,
     /// The 1-based first line.
     pub line_start: u32,
     /// The 1-based last line.
@@ -166,10 +164,74 @@ pub struct DiagnosticSpan {
     /// Whether this is the span the diagnostic is about.
     pub is_primary: bool,
     /// The label, if any.
-    #[serde(default)]
     pub label: Option<String>,
+    external_fields: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+impl DiagnosticSpan {
+    /// The first byte.
+    #[must_use]
+    pub const fn byte_start(&self) -> u32 {
+        self.byte_start
+    }
+
+    /// One past the last byte, which is never before the first.
+    #[must_use]
+    pub const fn byte_end(&self) -> u32 {
+        self.byte_end
+    }
+}
+
+/// A span as cargo writes it, before anything has read whether its ends are in order.
+#[derive(Deserialize)]
+struct SpanFields {
+    file_name: String,
+    byte_start: u32,
+    byte_end: u32,
+    line_start: u32,
+    line_end: u32,
+    column_start: u32,
+    column_end: u32,
+    is_primary: bool,
+    #[serde(default)]
+    label: Option<String>,
     #[serde(flatten)]
     external_fields: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+impl<'de> Deserialize<'de> for DiagnosticSpan {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let SpanFields {
+            file_name,
+            byte_start,
+            byte_end,
+            line_start,
+            line_end,
+            column_start,
+            column_end,
+            is_primary,
+            label,
+            external_fields,
+        } = SpanFields::deserialize(deserializer)?;
+        if byte_end < byte_start {
+            return Err(serde::de::Error::custom(format!(
+                "a span of {file_name:?} ends at byte {byte_end}, before it starts at byte \
+                 {byte_start}"
+            )));
+        }
+        Ok(Self {
+            file_name,
+            byte_start,
+            byte_end,
+            line_start,
+            line_end,
+            column_start,
+            column_end,
+            is_primary,
+            label,
+            external_fields,
+        })
+    }
 }
 
 /// The `code` object of a diagnostic, reduced to its code.

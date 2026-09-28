@@ -220,8 +220,8 @@ fn message_lines_are_typed_and_a_line_that_is_not_one_is_refused() {
     assert_eq!(
         (
             primary.file_name.as_str(),
-            primary.byte_start,
-            primary.byte_end
+            primary.byte_start(),
+            primary.byte_end()
         ),
         ("src/lib.rs", 69, 70)
     );
@@ -250,6 +250,45 @@ fn other_message_kinds_are_typed_and_a_line_that_is_not_one_is_refused() {
     let Err(error) = error else { return };
     assert_eq!(error.kind(), CargoErrorKind::MessageUnparsable);
     assert!(error.to_string().contains("line 2"), "{error}");
+}
+
+/// A compiler message whose one span runs from byte `start` to byte `end`, in the shape cargo writes.
+fn one_span(start: u32, end: u32, primary: bool) -> String {
+    format!(
+        r#"{{"reason":"compiler-message","package_id":"demo","target":{{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"/w/src/lib.rs"}},"message":{{"message":"mismatched types","code":null,"level":"error","spans":[{{"file_name":"src/lib.rs","byte_start":{start},"byte_end":{end},"line_start":3,"line_end":3,"column_start":5,"column_end":5,"is_primary":{primary},"label":null}}],"children":[],"rendered":null}}}}"#
+    )
+}
+
+#[test]
+fn a_span_that_ends_before_it_starts_is_no_span_and_a_stream_that_holds_one_is_refused() {
+    let crash = include_bytes!(
+        "../../../fuzz/regressions/cargo_messages/crash-697342bdd609a52c2e601eeaebd3718399efe4fe"
+    );
+    for (stream, what) in [
+        (
+            crash.to_vec(),
+            "what a scheduled fuzz run found: a primary span from byte 84 back to byte 47",
+        ),
+        (
+            one_span(84, 47, false).into_bytes(),
+            "a span that is not the primary one says no more",
+        ),
+    ] {
+        let parsed = parse_messages(&stream);
+        let Err(error) = parsed else {
+            panic!("{what}: {parsed:?}");
+        };
+        assert_eq!(error.kind(), CargoErrorKind::MessageUnparsable, "{what}");
+    }
+    let empty = parse_messages(one_span(84, 84, true).as_bytes());
+    let Ok(messages) = empty else {
+        panic!("a span of no bytes is one rustc writes where something is missing: {empty:?}");
+    };
+    assert_eq!(
+        option_state(diagnostic_of(&messages[0]).primary_span()),
+        Present,
+        "and it is the whole of the span the diagnostic is about"
+    );
 }
 
 #[test]
