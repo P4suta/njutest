@@ -74,6 +74,14 @@ pub fn items_read_alone(
     crate::syntax::items_read_alone(source)
 }
 
+/// `text` read as a file on a reading thread that may spend only `ceiling` bytes of its locations, which is how a law holds a reading to spending exactly what it charges.
+///
+/// # Errors
+/// The text is not a file, or reading it would spend more than `ceiling`.
+pub fn file_within(ceiling: usize, text: &str) -> Result<(), crate::parsing::ReadingError> {
+    crate::parsing::apart_within(ceiling, |parsing| parsing.file(text).map(|_file| ()))?
+}
+
 /// `source` discovered on a reading thread that may spend only `ceiling` bytes of its locations, which is how a law reaches the refusal a file too large to read would meet.
 ///
 /// # Errors

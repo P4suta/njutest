@@ -11,8 +11,8 @@ use proc_macro2::{Delimiter, Spacing, TokenStream, TokenTree};
 /// How much of its location space one reading thread may spend: half of what proc-macro2's 32-bit locations address.
 const CEILING: usize = 1 << 31;
 
-/// What one byte of text costs a thread's location space, covering the literals syn lexes a second time and the gap left between texts.
-const CHARGE: usize = 3;
+/// The most times syn lexes one negative literal again while it parses, to split its sign from its digits: once to peek at it and twice more to take it, where a generic argument holds it.
+pub const READ_AGAIN: usize = 3;
 
 /// The stack a reading thread runs on, which a long chain of operators needs through the walk, the clone and the drop: reserved rather than committed, so only what a deep file uses is paid for.
 pub const STACK: usize = 64 << 20;
@@ -180,49 +180,7 @@ impl Depth {
     /// How far `tokens` run, a run ending where a list the parser keeps flat moves on and an attribute counting apart from the run it sits in (ADR 0045).
     #[must_use]
     pub fn of(tokens: &TokenStream) -> Self {
-        let mut root = Level::reading(tokens);
-        let mut open: Vec<(Opened, Level)> = Vec::new();
-        let mut nesting = 0_usize;
-        loop {
-            let level = match open.last_mut() {
-                Some((_, level)) => level,
-                None => &mut root,
-            };
-            let Some(tree) = level.tokens.next() else {
-                let Some((opened, finished)) = open.pop() else {
-                    return Self {
-                        nesting,
-                        chain: root.chain(),
-                    };
-                };
-                let parent = match open.last_mut() {
-                    Some((_, parent)) => parent,
-                    None => &mut root,
-                };
-                parent.closed(opened, finished.chain());
-                continue;
-            };
-            if level.last == Last::ClosedBrace && !continues(&tree) {
-                level.end_run();
-            }
-            match tree {
-                TokenTree::Group(group) => {
-                    let opened = match group.delimiter() {
-                        Delimiter::Brace => Opened::Brace,
-                        Delimiter::Bracket if matches!(level.last, Last::Hash | Last::HashBang) => {
-                            Opened::Attribute
-                        }
-                        Delimiter::Parenthesis | Delimiter::Bracket | Delimiter::None => {
-                            Opened::Other
-                        }
-                    };
-                    open.push((opened, Level::reading(&group.stream())));
-                    nesting = nesting.max(open.len());
-                }
-                TokenTree::Punct(punct) => level.punct(&punct),
-                TokenTree::Ident(_) | TokenTree::Literal(_) => level.link(),
-            }
-        }
+        measured(tokens).depth
     }
 
     /// Whether a reading that hands on what `built` says reads text this deep.
@@ -244,6 +202,72 @@ impl Depth {
                 most: CHAIN,
             }),
             Built::Tree | Built::Tokens => Ok(()),
+        }
+    }
+}
+
+/// How far a text runs, and how much of its location space syn spends lexing some of it again while it parses it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Measure {
+    depth: Depth,
+    again: usize,
+}
+
+/// What one walk over `tokens` finds: how far they run, and every negative number syn will lex again, [`READ_AGAIN`] times at most, at its length with its sign and the position left after it.
+fn measured(tokens: &TokenStream) -> Measure {
+    let mut root = Level::reading(tokens);
+    let mut open: Vec<(Opened, Level)> = Vec::new();
+    let (mut nesting, mut again) = (0_usize, 0_usize);
+    loop {
+        let level = match open.last_mut() {
+            Some((_, level)) => level,
+            None => &mut root,
+        };
+        let Some(tree) = level.tokens.next() else {
+            let Some((opened, finished)) = open.pop() else {
+                return Measure {
+                    depth: Depth {
+                        nesting,
+                        chain: root.chain(),
+                    },
+                    again,
+                };
+            };
+            let parent = match open.last_mut() {
+                Some((_, parent)) => parent,
+                None => &mut root,
+            };
+            parent.closed(opened, finished.chain());
+            continue;
+        };
+        if level.last == Last::ClosedBrace && !continues(&tree) {
+            level.end_run();
+        }
+        match tree {
+            TokenTree::Group(group) => {
+                let opened = match group.delimiter() {
+                    Delimiter::Brace => Opened::Brace,
+                    Delimiter::Bracket if matches!(level.last, Last::Hash | Last::HashBang) => {
+                        Opened::Attribute
+                    }
+                    Delimiter::Parenthesis | Delimiter::Bracket | Delimiter::None => Opened::Other,
+                };
+                open.push((opened, Level::reading(&group.stream())));
+                nesting = nesting.max(open.len());
+            }
+            TokenTree::Punct(punct) => level.punct(&punct),
+            TokenTree::Literal(literal) => {
+                if level.last == Last::Minus {
+                    let spelled = literal.to_string();
+                    if spelled.starts_with(|first: char| first.is_ascii_digit()) {
+                        again = again.saturating_add(
+                            READ_AGAIN.saturating_mul(spelled.len().saturating_add(2)),
+                        );
+                    }
+                }
+                level.link();
+            }
+            TokenTree::Ident(_) => level.link(),
         }
     }
 }
@@ -289,6 +313,8 @@ enum Last {
     HashBang,
     /// A group in braces.
     ClosedBrace,
+    /// A `-`, which syn reads together with a number right after it.
+    Minus,
     /// Anything else.
     Other,
 }
@@ -346,6 +372,10 @@ impl Level {
             }
             '#' => self.last = Last::Hash,
             '!' if self.last == Last::Hash => self.last = Last::HashBang,
+            '-' => {
+                self.link();
+                self.last = Last::Minus;
+            }
             _ => self.link(),
         }
     }
@@ -495,34 +525,66 @@ impl Parsing {
         self.lexed(text, Built::Tokens)
     }
 
+    /// `tokens` this reading lexed, read as one `T`, all of it.
+    ///
+    /// # Errors
+    /// The tokens are not one `T`, run deeper than a reading's stack holds, or what syn lexes of them again would spend this thread's locations past its ceiling.
+    pub(crate) fn read_tokens<T: syn::parse::Parse>(
+        &self,
+        tokens: TokenStream,
+    ) -> Result<T, ReadingError> {
+        self.read_tokens_with(T::parse, tokens)
+    }
+
+    /// `tokens` this reading lexed, read by `parser`, all of them.
+    ///
+    /// # Errors
+    /// The parser refuses the tokens, they run deeper than a reading's stack holds, or what syn lexes of them again would spend this thread's locations past its ceiling.
+    pub(crate) fn read_tokens_with<P: syn::parse::Parser>(
+        &self,
+        parser: P,
+        tokens: TokenStream,
+    ) -> Result<P::Output, ReadingError> {
+        self.admitted(&tokens, Built::Tree)?;
+        parser
+            .parse2(tokens)
+            .map_err(|error| ReadingError::of(&error))
+    }
+
     /// `text` lexed, and measured before anything recurses through it, for a reading that hands on what `built` says.
     fn lexed(&self, text: &str, built: Built) -> Result<TokenStream, ReadingError> {
-        self.charge(text)?;
+        self.charge(text.len(), text.len().checked_add(1))?;
         let tokens = text
             .parse::<TokenStream>()
             .map_err(|error| ReadingError::at(error.span().start(), error.to_string()))?;
-        Depth::of(&tokens).admitted(built)?;
+        self.admitted(&tokens, built)?;
         Ok(tokens)
     }
 
-    /// Charges `text` to this thread's locations before a byte of it is read.
-    fn charge(&self, text: &str) -> Result<(), ReadingError> {
+    /// Whether `tokens` run no deeper than a reading holds, and, where a tree is built of them, the charge for what syn lexes of them again, taken before it does.
+    fn admitted(&self, tokens: &TokenStream, built: Built) -> Result<(), ReadingError> {
+        let measure = measured(tokens);
+        measure.depth.admitted(built)?;
+        match built {
+            Built::Tree => self.charge(measure.again, Some(measure.again)),
+            Built::Tokens => Ok(()),
+        }
+    }
+
+    /// Charges `cost` of this thread's locations for reading `asked` bytes, before any of them is lexed: exactly what proc-macro2 takes, a position for every character and one left after the text.
+    fn charge(&self, asked: usize, cost: Option<usize>) -> Result<(), ReadingError> {
         let spent = self.spent.get();
-        let charged = text
-            .len()
-            .checked_mul(CHARGE)
-            .and_then(|cost| cost.checked_add(1));
-        match charged.and_then(|cost| spent.checked_add(cost)) {
+        match cost.and_then(|cost| spent.checked_add(cost)) {
             Some(after) if after <= self.ceiling => {
                 self.spent.set(after);
                 Ok(())
             }
             Some(_) | None => Err(ReadingError::Exhausted {
                 spent,
-                asked: text.len(),
-                charged: match charged {
+                asked,
+                charged: match cost {
                     Some(cost) => cost,
-                    None => text.len(),
+                    None => asked,
                 },
                 ceiling: self.ceiling,
             }),

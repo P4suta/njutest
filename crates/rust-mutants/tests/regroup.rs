@@ -468,6 +468,28 @@ fn a_planted_wrong_grouping_is_caught_by_the_tree_oracle() {
 }
 
 #[test]
+fn a_swap_is_read_back_at_the_size_of_its_edit_not_of_its_item() {
+    let statements = |count: usize| -> String {
+        format!(
+            "fn f(v0: bool, v1: bool) -> bool {{\n{}    v0\n}}\n",
+            "    let _ = v0 || v1;\n".repeat(count)
+        )
+    };
+    let read = |source: &str| {
+        rust_mutants::testkit::source::read_back(source)
+            .expect("the file parses")
+            .expect("what one small file reads back fits")
+    };
+    let (half, whole) = (read(&statements(64)), read(&statements(128)));
+    assert!(
+        whole <= 2 * half,
+        "twice the swaps in one item read back at most twice as much: each is held to the item \
+         it stands in by reading its own edit again, not the whole item once per swap, which \
+         grew with the square of the item: {half} bytes for 64 swaps, {whole} for 128"
+    );
+}
+
+#[test]
 fn a_swap_is_read_back_at_the_size_of_its_own_item_not_of_its_file() {
     let functions = |count: usize| -> String {
         (0..count)
@@ -492,5 +514,103 @@ fn a_swap_is_read_back_at_the_size_of_its_own_item_not_of_its_file() {
         16 * one,
         "sixteen functions read back sixteen times what one does: a swap is held to the item it \
          stands in, and a file that also holds fifteen others is no more to read for it"
+    );
+}
+
+/// The binary operators of `file` in the order a walk meets them, each named, and the file with every operator made `+` and every parenthesis taken out, which is all two readings share when they differ by one operator.
+fn shape(mut file: syn::File) -> (Vec<&'static str>, syn::File) {
+    struct Flattened(Vec<&'static str>);
+    impl syn::visit_mut::VisitMut for Flattened {
+        fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
+            while let syn::Expr::Paren(paren) = expr {
+                let inner = (*paren.expr).clone();
+                *expr = inner;
+            }
+            if let syn::Expr::Binary(binary) = expr {
+                self.0.push(match binary.op {
+                    syn::BinOp::Or(_) => "||",
+                    syn::BinOp::And(_) => "&&",
+                    syn::BinOp::BitOr(_) => "|",
+                    syn::BinOp::BitXor(_) => "^",
+                    syn::BinOp::BitAnd(_) => "&",
+                    _ => "another",
+                });
+                binary.op = syn::BinOp::Add(syn::token::Plus::default());
+            }
+            syn::visit_mut::visit_expr_mut(self, expr);
+        }
+    }
+    let mut flattened = Flattened(Vec::new());
+    syn::visit_mut::VisitMut::visit_file_mut(&mut flattened, &mut file);
+    (flattened.0, file)
+}
+
+#[test]
+fn a_swap_where_tokens_touch_reads_back_as_the_swap_it_names() {
+    let swaps = [
+        ("or-to-and", "||", "&&"),
+        ("and-to-or", "&&", "||"),
+        ("bor-to-band", "|", "&"),
+        ("xor-to-band", "^", "&"),
+        ("band-to-bor", "&", "|"),
+    ];
+    let registry = Registry::canonical();
+    let selection = Selection::tier(&registry, Tier::All);
+    let mut checked = 0;
+    for source in [
+        "fn f() { let probe = v0|&v1; }\n",
+        "fn f() { let probe = v0|&&v1; }\n",
+        "fn f() { let probe = v0||!v1&&v2; }\n",
+        "fn f() { let probe = v0&&-v1||v2; }\n",
+        "fn f() { let probe = v0|*v1^v2&v3; }\n",
+        "fn f() { let probe = v0^&v1|v2; }\n",
+        "fn f() { let probe = (v0||v1)&&(v2||v3); }\n",
+        "fn f() { let probe = v0&&v1||v2&&v3; }\n",
+        "fn f() { let probe = v0|v1&v2^v3; }\n",
+        "fn f() { let probe = v0&!v1|v2; }\n",
+        "fn f() { let probe = v0||v1|v2; }\n",
+        "fn f() { let probe = v0?||v1?; }\n",
+    ] {
+        let original = shape(syn::parse_file(source).expect("the source parses"));
+        let discovered = discover_file("src/lib.rs", source.as_bytes(), &selection)
+            .expect("the source discovers");
+        for found in &discovered.candidates {
+            let Some((rule, from, to)) = swaps
+                .iter()
+                .find(|(rule, _, _)| *rule == found.candidate.rule.name)
+            else {
+                continue;
+            };
+            let (start, end) = (
+                usize::try_from(found.candidate.span.start).expect("an offset"),
+                usize::try_from(found.candidate.span.end).expect("an offset"),
+            );
+            let written = format!(
+                "{}{}{}",
+                &source[..start],
+                String::from_utf8(found.candidate.replacement.clone()).expect("UTF-8"),
+                &source[end..]
+            );
+            let read = shape(syn::parse_file(&written).unwrap_or_else(|error| {
+                panic!("{rule} writes a file that parses: {written:?}: {error}")
+            }));
+            let changed: Vec<(&str, &str)> = original
+                .0
+                .iter()
+                .zip(&read.0)
+                .filter(|(was, now)| was != now)
+                .map(|(was, now)| (*was, *now))
+                .collect();
+            assert!(
+                read.1 == original.1 && changed == [(*from, *to)],
+                "{rule} must write the same operands grouped the same way with the one operator \
+                 swapped, however tightly the tokens around it sit: {source:?} became {written:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked >= 20,
+        "the law reads back the swaps it was written for: {checked}"
     );
 }
