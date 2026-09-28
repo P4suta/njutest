@@ -7,6 +7,7 @@ pub mod baseline;
 pub mod concurrency;
 pub mod crashes;
 pub mod deep;
+pub mod ended;
 pub mod engine;
 pub mod equivalence;
 pub mod faults;

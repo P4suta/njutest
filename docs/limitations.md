@@ -78,9 +78,12 @@ Pure computation that does not open or mutate a report store remains available.
   A target the fuzzer could not drive — no cargo-fuzz on a nightly toolchain, a fuzz crate that will not build, a sanitizer the toolchain has no runtime for — carries `cargo-fuzz-unavailable` and a `not-measured` finding instead, and is never counted among the targets that were driven.
   libFuzzer exits non-zero when it finds something, and something is an input it keeps, so a status with nothing kept is a target that never started.
   A run stopped by its own bound *was* driven, for less time than it was asked, and says that instead.
+  A run somebody stopped is an interrupted run, never a target nothing could drive.
 - `standard-v1` does not execute anything about `unsafe` code; it inventories it and says so (`soundness-not-executed`).
   `deep-v1` interprets the suite under Miri and refuses to run at all without it (`NJ7001`), and what Miri will not interpret is `miri-unsupported` rather than a pass.
   A sanitizer the configuration asks for and the toolchain will not run is `sanitizer-unavailable`; every sanitizer run also carries `sanitizer-standard-library-not-instrumented`.
+  The configuration names each sanitizer once from `address`, `leak`, `memory` and `thread`, so a misspelt one is refused before a run rather than handed to `-Zsanitizer=`, where the compiler's refusal would read as a test that fails under it.
+  A sanitizer's report is read only where the toolchain, the harness and the sanitizer's runtime speak, never inside a failing test's captured output, and a run under it that ran out of time or ended by a signal is `sanitizer-unavailable` too, since it answered nothing about the suite.
 - A question about a seam that hands the caller the bytes it was handed already is `proved` and never run.
   Cutting an answer with no body short keeps everything up to and including the blank line that ends the head, so what comes back is identical; asking for the status the upstream already gave,
   worded the way a run words it, writes the line that is already there.
@@ -254,6 +257,8 @@ They are what the run says about its own footing, and each is stated fail-closed
 - The toolchain has no interpreter and the contract is `whole-v1` (`miri-unavailable`).
   `whole-v1` names each thing it could not establish rather than refusing the run, so the soundness nothing interpreted is a limitation beside a `not-measured` finding, and the run is not `ASSURED`.
   `deep-v1` promises interpretation, and there the same toolchain ends the run with `NJ7001`.
+  A toolchain has no interpreter only where nothing could be launched or it says the interpreter is not installed.
+  A run somebody stopped is an interrupted run, and a version probe that ran out of time, ended by a signal, or failed without saying so is a question nobody answered, so what the interpreter's own run said is what is read.
 - The interpreter ended without a test result (`miri-ran-no-test`): no `test result:` line said a test failed, or that every one passed.
   Its status is then about the interpreter — its setup could not start a test binary, or there was no test to run — so it is neither a failing test, which would blame the suite with a defect, nor a pass, which would claim soundness nobody interpreted; it is a `not-measured` finding beside this limitation.
 - A file the soundness inventory walked could not be read as Rust this release understands (`soundness-source-unreadable`), so what it holds is not in the count.

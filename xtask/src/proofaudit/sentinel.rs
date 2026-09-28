@@ -1958,10 +1958,11 @@ fn knobs_planted(clean: Perturbation) -> Vec<Perturbation> {
     ]
 }
 
-/// A recorded run of the interpreter over the suite that ended with `code` and said `said`, kept at `output/1.txt` with its size and digest.
+/// A recorded run of the interpreter over the suite, the recording's hundredth event, that ended with `code` and said `said`, kept at `output/100.txt` with its size and digest.
 fn interpreted(code: i64, said: &str) -> Value {
     use sha2::Digest as _;
     json!({
+        "seq": 100,
         "type": "exec",
         "exec": {
             "argv": ["cargo", "+nightly", "miri", "test", "--workspace"],
@@ -1969,7 +1970,7 @@ fn interpreted(code: i64, said: &str) -> Value {
             "stopped": { "kind": "exited", "exit": { "kind": "code", "value": code } },
             "duration_ms": 1, "output_bytes": said.len(),
             "output_sha256": hex::encode(sha2::Sha256::digest(said.as_bytes())),
-            "output_truncated": false, "output_path": "output/1.txt", "error": null
+            "output_truncated": false, "output_path": "output/100.txt", "error": null
         }
     })
 }
@@ -1997,10 +1998,11 @@ fn failing_under_the_interpreter() -> Value {
     }))
 }
 
-/// A recorded run of the interpreter that ran out of time, whose kept output is at `output/1.txt`.
+/// A recorded run of the interpreter that ran out of time, the recording's hundredth event, whose kept output is at `output/100.txt`.
 fn interpreted_until_the_clock(said: &str) -> Value {
     use sha2::Digest as _;
     json!({
+        "seq": 100,
         "type": "exec",
         "exec": {
             "argv": ["cargo", "+nightly", "miri", "test", "--workspace"],
@@ -2008,7 +2010,7 @@ fn interpreted_until_the_clock(said: &str) -> Value {
             "stopped": { "kind": "timed-out", "raised": null },
             "duration_ms": 1, "output_bytes": said.len(),
             "output_sha256": hex::encode(sha2::Sha256::digest(said.as_bytes())),
-            "output_truncated": false, "output_path": "output/1.txt", "error": null
+            "output_truncated": false, "output_path": "output/100.txt", "error": null
         }
     })
 }
@@ -2030,7 +2032,7 @@ fn soundness_planted(clean: &Perturbation) -> Vec<Perturbation> {
             name: "a test failing under an interpreter that ran no test",
             document: failing_under_the_interpreter(),
             events: with_run(101, SETUP_FAILED),
-            outputs: vec![("output/1.txt", SETUP_FAILED)],
+            outputs: vec![("output/100.txt", SETUP_FAILED)],
             ..clean.clone()
         },
         Perturbation {
@@ -2045,7 +2047,7 @@ fn soundness_planted(clean: &Perturbation) -> Vec<Perturbation> {
                 }]
             })),
             events: with_run(101, QUOTED_UNDEFINED),
-            outputs: vec![("output/1.txt", QUOTED_UNDEFINED)],
+            outputs: vec![("output/100.txt", QUOTED_UNDEFINED)],
             ..clean.clone()
         },
         Perturbation {
@@ -2056,7 +2058,7 @@ fn soundness_planted(clean: &Perturbation) -> Vec<Perturbation> {
                 events.push(interpreted_until_the_clock("running 1 test\n"));
                 events
             }),
-            outputs: vec![("output/1.txt", "running 1 test\n")],
+            outputs: vec![("output/100.txt", "running 1 test\n")],
             ..clean.clone()
         },
         Perturbation {
@@ -2064,7 +2066,7 @@ fn soundness_planted(clean: &Perturbation) -> Vec<Perturbation> {
             document: failing_under_the_interpreter(),
             events: with_run(0, PASSED),
             outputs: vec![(
-                "output/1.txt",
+                "output/100.txt",
                 "test result: FAILED. 0 passed; 1 failed; 0 ignored\n",
             )],
             ..clean.clone()

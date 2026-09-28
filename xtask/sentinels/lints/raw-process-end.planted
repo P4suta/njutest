@@ -1,0 +1,12 @@
+=== succeeded source crates/njutest/src/assure/phase.rs
+fn ended(ran: &rust_mutants::runner::RunResult) -> bool { ran.succeeded() }
+=== timed-out source crates/njutest/src/assure/deep.rs
+fn ended(ran: &rust_mutants::runner::RunResult) -> bool { ran.timed_out() }
+=== conventional-code source crates/njutest/src/assure/sanitize.rs
+fn ended(ran: &rust_mutants::runner::RunResult) -> bool { ran.conventional_exit_code() != 0 }
+=== qualified source crates/njutest/src/assure/fuzz.rs
+fn ended(ran: &rust_mutants::runner::RunResult) -> bool { rust_mutants::runner::RunResult::succeeded(ran) }
+=== in-a-macro source crates/njutest/src/assure/knobs.rs
+fn ended(ran: &rust_mutants::runner::RunResult) -> String { format!("{}", ran.timed_out()) }
+=== a-nested-phase source crates/njutest/src/assure/model/runner.rs
+fn ended(ran: &rust_mutants::runner::RunResult) -> bool { ran.succeeded() }

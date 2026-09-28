@@ -2547,3 +2547,35 @@ fn only_the_runner_signals_a_process_group_in_shipped_code() {
         );
     }
 }
+
+#[test]
+fn only_one_module_of_the_phases_reads_how_a_process_ended() {
+    let asks = |file: &str, source: &str| {
+        scan_source(file, source)
+            .expect("the source parses")
+            .into_iter()
+            .any(|finding| finding.kind == Kind::RawProcessEnd)
+    };
+    let asked = "fn ended(ran: &rust_mutants::runner::RunResult) -> bool { ran.succeeded() }";
+    assert!(
+        asks("crates/njutest/src/assure/deep.rs", asked),
+        "a phase that asks one question about how its process ended leaves every other ending to \
+         whoever forgot it"
+    );
+    assert!(
+        !asks("crates/njutest/src/assure/ended.rs", asked),
+        "the module that sorts every ending at once is where the questions are asked"
+    );
+    assert!(
+        !asks("crates/njutest/src/targets.rs", asked),
+        "outside the phases a listing that did not succeed is refused whatever ended it, which \
+         concludes nothing about the suite"
+    );
+    assert!(
+        !asks(
+            "crates/njutest/src/assure/deep.rs",
+            "fn ended(status: std::process::ExitStatus) -> bool { status.success() }"
+        ),
+        "a standard exit status says `success`, which is not a supervised run's end"
+    );
+}

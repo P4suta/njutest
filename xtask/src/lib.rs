@@ -10,6 +10,7 @@ pub mod adrs;
 mod cfg_conditions;
 pub mod claims;
 pub mod concurrency;
+pub mod confined;
 pub mod confirm;
 /// The one coverage-floor command shared by local tasks and CI.
 pub mod coverage;

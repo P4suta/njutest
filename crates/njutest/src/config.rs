@@ -560,8 +560,8 @@ impl Default for Reports {
 pub struct Soundness {
     /// Flags for Miri.
     pub miri_flags: Vec<String>,
-    /// Sanitizers to run under, on a toolchain that has them.
-    pub sanitizers: Vec<String>,
+    /// Sanitizers to run under, on a toolchain that has them, each named once from the closed set.
+    pub sanitizers: Vec<crate::assure::sanitize::Sanitizer>,
 }
 
 /// What a run sets differently for one more control of each target: nothing unless asked, since each knob is one more run of every target.
@@ -731,6 +731,29 @@ fn named_once(configurations: &[Configuration], path: &Path) -> Result<(), Confi
             )));
         }
         named.push(name);
+    }
+    Ok(())
+}
+
+/// Whether every sanitizer is asked for once, since two runs of one question are two answers to reconcile.
+fn sanitizers_once(
+    sanitizers: &[crate::assure::sanitize::Sanitizer],
+    path: &Path,
+) -> Result<(), ConfigError> {
+    for (at, one) in sanitizers.iter().enumerate() {
+        if sanitizers
+            .get(..at)
+            .is_some_and(|before| before.contains(one))
+        {
+            return Err(ConfigError::new(
+                ConfigErrorKind::Invalid,
+                path,
+                format!(
+                    "[soundness] sanitizers names {} more than once; each is asked for once",
+                    one.name()
+                ),
+            ));
+        }
     }
     Ok(())
 }
@@ -1042,6 +1065,7 @@ impl Config {
         {
             check_environment_name(name).map_err(|error| invalid(error.to_string()))?;
         }
+        sanitizers_once(&self.soundness.sanitizers, path)?;
         for (name, resource) in &self.resources {
             if resource.command.is_empty() {
                 return Err(invalid(format!("resource {name:?} has no command to run")));
@@ -1192,7 +1216,7 @@ contract = \"whole-v1\"           # \"whole-v1\" | \"standard-v1\" | \"deep-v1\"
 
 [soundness]                      # deep-v1 only
 # miri_flags = []
-# sanitizers = []                # e.g. [\"thread\"] on nightly
+# sanitizers = []                # address, leak, memory, thread; each once, on nightly
 
 # [resources.postgres]
 # command = [\"./tools/postgres-provider\"]

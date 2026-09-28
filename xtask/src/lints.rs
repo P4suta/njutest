@@ -208,6 +208,13 @@ const RAW_ENVIRONMENT_REMEDY: &str = "hold an environment as `rust_mutants::vars
     `OsString` let each reader compare names its own way, and four did it by bytes where Windows \
     takes any case: a declared variable hashed as unset, a composed one inherited beside its \
     replacement, a reserved one let through, and a home the tests were never given";
+const RAW_PROCESS_END_REMEDY: &str = "read how a process an assurance phase started ended \
+    through `assure::ended::ProcessEnd`, which sorts every termination once and exhaustively: a \
+    stop the run asked for is the run interrupted, a clock, a signal or an unclassified status is \
+    no answer about the suite, and only an exit of the process's own is read further. \
+    `succeeded`, `timed_out` and `conventional_exit_code` each answer one question about the end \
+    and leave every other ending to whoever forgot it, which is how a cancelled interpreter run \
+    was reported as a toolchain with no interpreter";
 const RAW_READ_REMEDY: &str = "ask `crate::observe` what the path is. A reader of evidence that \
     touches the filesystem itself decides at its own call site what an I/O failure means, which is \
     how a lock file beside the profiles became a directory that could not be read and how running \
@@ -299,6 +306,7 @@ declare_kinds! {
     BareShell => "bare-shell",
     RawLexing => "raw-lexing",
     RawEnvironment => "raw-environment",
+    RawProcessEnd => "raw-process-end",
 }
 
 impl Kind {
@@ -356,6 +364,7 @@ impl Kind {
             Self::RawEnvironment => RAW_ENVIRONMENT_REMEDY,
             Self::LoneTemporaryVariable => LONE_TEMPORARY_VARIABLE_REMEDY,
             Self::ErrorName => ERROR_NAME_REMEDY,
+            Self::RawProcessEnd => RAW_PROCESS_END_REMEDY,
         }
     }
 }
@@ -469,6 +478,20 @@ const OBSERVER: &str = "crates/njutest/src/observe.rs";
 /// Whether `file` reads evidence and so may not touch the filesystem except through [`OBSERVER`].
 fn evidence_reader(file: &str) -> bool {
     file != OBSERVER && EVIDENCE_READERS.iter().any(|scope| file.starts_with(scope))
+}
+
+/// The assurance phases, each of which concludes about the suite from the processes it starts.
+const PHASES: &str = "crates/njutest/src/assure/";
+
+/// The one module that sorts how a phase's process ended.
+const PROCESS_END: &str = "crates/njutest/src/assure/ended.rs";
+
+/// What a supervised run's result is asked about its end by, one question at a time.
+const PROCESS_END_QUESTIONS: [&str; 3] = ["succeeded", "timed_out", "conventional_exit_code"];
+
+/// Whether `file` is an assurance phase, which reads how its processes ended only through [`PROCESS_END`].
+fn phase_source(file: &str) -> bool {
+    file != PROCESS_END && file.starts_with(PHASES)
 }
 
 /// What a path, or a value standing for one, is asked about the filesystem by.
@@ -600,6 +623,7 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
         (strict_conversions(file), SourcePolicy::StrictConversions),
         (evidence_reader(file), SourcePolicy::EvidenceReader),
         (gate_source(file), SourcePolicy::GateSource),
+        (phase_source(file), SourcePolicy::PhaseSource),
     ]
     .into_iter()
     .filter(|(enabled, _policy)| *enabled)
@@ -4798,6 +4822,7 @@ enum SourcePolicy {
     StrictConversions,
     EvidenceReader,
     GateSource,
+    PhaseSource,
 }
 
 struct Scan {
@@ -5057,6 +5082,14 @@ impl Scan {
         );
         for method in ["from_utf8_lossy", "to_string_lossy"] {
             self.note_each(Kind::LossyText, identifier_spans_in_tokens(tokens, method));
+        }
+        if self.has_policy(SourcePolicy::PhaseSource) {
+            for question in PROCESS_END_QUESTIONS {
+                self.note_each(
+                    Kind::RawProcessEnd,
+                    invocation_spans_in_tokens(tokens, question),
+                );
+            }
         }
         self.note_each(
             Kind::ForgottenValue,
@@ -5526,6 +5559,11 @@ impl Visit<'_> for Scan {
         if self.has_policy(SourcePolicy::GateSource) && call.method == "read_dir" {
             self.note(Kind::RawTreeWalk, call.method.span());
         }
+        if self.has_policy(SourcePolicy::PhaseSource)
+            && PROCESS_END_QUESTIONS.contains(&call.method.to_string().as_str())
+        {
+            self.note(Kind::RawProcessEnd, call.method.span());
+        }
         if call.method == "spawn" && !self.raw_spawn_boundary(call.method.span()) {
             self.note(Kind::UnownedSpawn, call.method.span());
         }
@@ -5599,6 +5637,15 @@ impl Visit<'_> for Scan {
             && let Some(span) = tree_walk_span(&path.path)
         {
             self.note(Kind::RawTreeWalk, span);
+        }
+        if self.has_policy(SourcePolicy::PhaseSource)
+            && path.path.segments.len() > 1
+            && let Some(segment) =
+                path.path.segments.iter().find(|segment| {
+                    PROCESS_END_QUESTIONS.contains(&segment.ident.to_string().as_str())
+                })
+        {
+            self.note(Kind::RawProcessEnd, segment.ident.span());
         }
         if let Some(segment) = path
             .path

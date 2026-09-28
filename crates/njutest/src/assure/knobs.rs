@@ -87,7 +87,14 @@ fn answers(
     let mut spec = Spec::new(argv, Bound::After(rust_mutants::runner::PROBE));
     spec.env = Some(vars.clone());
     let ran = rust_mutants::runner::run(&spec, cancel);
-    ran.succeeded().then_some(ran.output)
+    match super::ended::ProcessEnd::of(&ran.termination) {
+        super::ended::ProcessEnd::Passed => Some(ran.output),
+        super::ended::ProcessEnd::Failed
+        | super::ended::ProcessEnd::Unlaunched { .. }
+        | super::ended::ProcessEnd::Interrupted
+        | super::ended::ProcessEnd::TimedOut
+        | super::ended::ProcessEnd::Unanswered { .. } => None,
+    }
 }
 
 /// Whether the time zone database knows the zone, which it shows by printing one of the zone's own offsets rather than UTC's.

@@ -9,6 +9,8 @@ use std::time::Duration;
 
 use rust_mutants::runner::{Spec, run};
 
+use super::ended::ProcessEnd;
+
 use crate::error::RunnerError;
 use crate::report::{Finding, FindingKind, Limitation};
 use crate::trace::ExecRecord;
@@ -31,6 +33,43 @@ const UNAVAILABLE: [&str; 4] = [
     "no such command",
 ];
 
+/// A sanitizer the suite can be run under, by the name `-Zsanitizer=` takes.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    njutest_macros::AllVariants,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum Sanitizer {
+    /// Out-of-bounds and use-after-free accesses, and the leaks it checks for too.
+    Address,
+    /// Memory nothing freed.
+    Leak,
+    /// Reads of memory nothing initialised.
+    Memory,
+    /// Data races.
+    Thread,
+}
+
+impl Sanitizer {
+    /// The name the configuration, `-Zsanitizer=` and a report spell it by.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Address => "address",
+            Self::Leak => "leak",
+            Self::Memory => "memory",
+            Self::Thread => "thread",
+        }
+    }
+}
 /// What the phase is asked to run, and how it is bounded.
 #[derive(Debug, Clone)]
 pub struct Sanitizing<'a> {
@@ -45,8 +84,8 @@ pub struct Sanitizing<'a> {
     /// The packages to run.
     /// Empty is the whole workspace.
     pub packages: &'a [String],
-    /// The sanitizers the configuration asked for, by name.
-    pub sanitizers: &'a [String],
+    /// The sanitizers the configuration asked for, each once.
+    pub sanitizers: &'a [Sanitizer],
     /// How long one sanitizer run may take.
     pub timeout: Option<Duration>,
     /// Whether cargo may reach the network.
@@ -59,8 +98,8 @@ pub struct Sanitizing<'a> {
 /// What running the suite under the sanitizers established.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Sanitized {
-    /// The sanitizers that ran, in the order they were asked for.
-    pub ran: Vec<String>,
+    /// The sanitizers the suite ran to an answer under, in the order they were asked for.
+    pub ran: Vec<Sanitizer>,
     /// What they found.
     pub findings: Vec<Finding>,
     /// What they could not say.
@@ -69,7 +108,7 @@ pub struct Sanitized {
 
 /// Runs the suite once under each sanitizer the configuration asked for.
 /// # Errors
-/// Returns [`RunnerError::PhaseOutput`] when a sanitizer or its inherited flags are not valid UTF-8 and therefore cannot be interpreted exactly.
+/// Returns [`RunnerError::Interrupted`] when the run was asked to stop, and [`RunnerError::PhaseOutput`] when a sanitizer's output or its inherited flags are not valid UTF-8 and therefore cannot be interpreted exactly.
 pub fn sanitize(sanitizing: &Sanitizing<'_>, watch: Watch<'_>) -> Result<Sanitized, RunnerError> {
     let mut done = Sanitized::default();
     if !sanitizing.sanitizers.is_empty() {
@@ -78,12 +117,11 @@ pub fn sanitize(sanitizing: &Sanitizing<'_>, watch: Watch<'_>) -> Result<Sanitiz
             "the standard library the suite links is not built with the sanitizer, so what \
              it holds is not what was checked",
         ));
-        for sanitizer in sanitizing
-            .sanitizers
-            .iter()
-            .take_while(|_| !watch.cancel.is_cancelled())
-        {
-            one(&mut done, sanitizing, sanitizer, watch)?;
+        for sanitizer in sanitizing.sanitizers {
+            if watch.cancel.is_cancelled() {
+                return Err(RunnerError::Interrupted);
+            }
+            one(&mut done, sanitizing, *sanitizer, watch)?;
         }
     }
     Ok(done)
@@ -93,9 +131,43 @@ pub fn sanitize(sanitizing: &Sanitizing<'_>, watch: Watch<'_>) -> Result<Sanitiz
 fn one(
     done: &mut Sanitized,
     sanitizing: &Sanitizing<'_>,
-    sanitizer: &str,
+    sanitizer: Sanitizer,
     watch: Watch<'_>,
 ) -> Result<(), RunnerError> {
+    let spec = command(sanitizing, sanitizer)?;
+    let ran = run(&spec, watch.cancel);
+    watch.trace.exec_result(ExecRecord::of(&spec, &ran));
+    let failed = match ProcessEnd::of(&ran.termination) {
+        ProcessEnd::Interrupted => return Err(RunnerError::Interrupted),
+        ProcessEnd::Unlaunched { .. } => {
+            refuse(done, sanitizer, "the toolchain would not run it");
+            return Ok(());
+        }
+        ProcessEnd::TimedOut => {
+            refuse(done, sanitizer, "it ran out of time");
+            return Ok(());
+        }
+        ProcessEnd::Unanswered { how } => {
+            refuse(
+                done,
+                sanitizer,
+                &format!("{how}, which is no answer about the suite"),
+            );
+            return Ok(());
+        }
+        ProcessEnd::Passed => false,
+        ProcessEnd::Failed => true,
+    };
+    let said = std::str::from_utf8(&ran.output).map_err(|source| RunnerError::PhaseOutput {
+        phase: "sanitizer",
+        source,
+    })?;
+    heard(done, sanitizer, said, failed);
+    Ok(())
+}
+
+/// The command that runs the suite under `sanitizer`.
+fn command(sanitizing: &Sanitizing<'_>, sanitizer: Sanitizer) -> Result<Spec, RunnerError> {
     let mut argv: Vec<OsString> = vec![
         sanitizing.cargo.path().as_os_str().to_owned(),
         OsString::from("+nightly"),
@@ -126,60 +198,58 @@ fn one(
     );
     spec.dir = Some(sanitizing.root.to_path_buf());
     spec.env = Some(instrumenting(&sanitizing.env, sanitizer)?);
+    Ok(spec)
+}
 
-    let ran = run(&spec, watch.cancel);
-    watch.trace.exec_result(ExecRecord::of(&spec, &ran));
-    let said = std::str::from_utf8(&ran.output).map_err(|source| RunnerError::PhaseOutput {
-        phase: "sanitizer",
-        source,
-    })?;
-    if ran.error().is_some() || UNAVAILABLE.iter().any(|marker| said.contains(marker)) {
+/// What a run under `sanitizer` that exited by itself said, read only where the toolchain, the harness and the sanitizer's runtime speak, never inside a test's captured output.
+fn heard(done: &mut Sanitized, sanitizer: Sanitizer, said: &str, failed: bool) {
+    let spoken = super::deep::uncaptured(said);
+    if spoken
+        .iter()
+        .any(|line| UNAVAILABLE.iter().any(|marker| line.contains(marker)))
+    {
         refuse(done, sanitizer, "the toolchain would not run it");
-        return Ok(());
+        return;
     }
-    if ran.timed_out() {
-        refuse(done, sanitizer, "it ran out of time");
-        return Ok(());
-    }
-    done.ran.push(sanitizer.to_owned());
+    done.ran.push(sanitizer);
+    let name = sanitizer.name();
     if let Some(line) = FOUND.iter().find_map(|marker| {
-        said.lines()
+        spoken
+            .iter()
             .find(|line| line.contains(marker))
             .map(|line| line.trim().to_owned())
     }) {
         done.findings.push(Finding {
             kind: FindingKind::UndefinedBehaviour,
-            subject: format!("sanitizer:{sanitizer}"),
+            subject: format!("sanitizer:{name}"),
             detail: line,
             origin: crate::report::FindingOrigin::Global,
             path: None,
             position: None,
         });
-    } else if ran.conventional_exit_code() != 0 {
+    } else if failed {
         done.findings.push(Finding {
             kind: FindingKind::FailingTest,
-            subject: format!("sanitizer:{sanitizer}"),
-            detail: format!("a test fails under {sanitizer} that passes without it"),
+            subject: format!("sanitizer:{name}"),
+            detail: format!("a test fails under {name} that passes without it"),
             origin: crate::report::FindingOrigin::Global,
             path: None,
             position: None,
         });
     }
-    Ok(())
 }
 
-/// A sanitizer that was asked for and could not be run: a gap somebody asked to close, stated as one.
-fn refuse(done: &mut Sanitized, sanitizer: &str, why: &str) {
+/// A sanitizer that was asked for and could not be run to an answer: a gap somebody asked to close, stated as one.
+fn refuse(done: &mut Sanitized, sanitizer: Sanitizer, why: &str) {
+    let name = sanitizer.name();
     done.limitations.push(Limitation::new(
         crate::limitation::Limitation::SanitizerUnavailable,
-        &format!("{sanitizer} was asked for and {why}"),
+        &format!("{name} was asked for and {why}"),
     ));
     done.findings.push(Finding {
         kind: FindingKind::NotMeasured,
-        subject: format!("sanitizer:{sanitizer}"),
-        detail: format!(
-            "the suite was not run under {sanitizer}, which the configuration asks for"
-        ),
+        subject: format!("sanitizer:{name}"),
+        detail: format!("the suite was not run under {name}, which the configuration asks for"),
         origin: crate::report::FindingOrigin::Global,
         path: None,
         position: None,
@@ -189,7 +259,7 @@ fn refuse(done: &mut Sanitized, sanitizer: &str, why: &str) {
 /// The environment one sanitizer run adds: the flag, and nothing else the caller did not already have.
 fn instrumenting(
     base: &rust_mutants::vars::Variables,
-    sanitizer: &str,
+    sanitizer: Sanitizer,
 ) -> Result<rust_mutants::vars::Variables, RunnerError> {
     let mut env = base.clone();
     let mut flags: Vec<String> = match env.var("RUSTFLAGS") {
@@ -204,7 +274,7 @@ fn instrumenting(
         None => Vec::new(),
     };
     env.remove("CARGO_ENCODED_RUSTFLAGS");
-    flags.push(format!("-Zsanitizer={sanitizer}"));
+    flags.push(format!("-Zsanitizer={}", sanitizer.name()));
     env.set("RUSTFLAGS", flags.join(" "));
     Ok(env)
 }

@@ -108,6 +108,9 @@ qualified calls, macro bodies, and code excluded by the host's `cfg` are subject
 What the kernel answers a group signal is one question wherever it is asked.
 On macOS `EPERM` can mean a group whose members have ended while its leader waits to be reaped, or one with a protected descendant the runner cannot signal; the runner distinguishes these by checking the other members and classifies the stop as whole-group or leader-only reach accordingly.
 
+`raw-process-end` keeps the reading of how a process ended in one place for the assurance phases: code under `crates/njutest/src/assure/` asks `assure::ended::ProcessEnd`, never a run's `succeeded`, `timed_out` or `conventional_exit_code`, whether by method, by path, or inside a macro.
+Each of those answers one question and leaves every other ending to whoever forgot it, which is how a cancelled interpreter run was reported as a toolchain with no interpreter; `ProcessEnd` sorts every ending at once, so a stop is the run interrupted and a clock or a signal is no answer about the suite.
+
 The `tri-state-bool` lint rejects `Option<bool>` and the aliases or macro constructors that can hide it.
 Three semantic states are a closed enum with three named variants, so every match is exhaustive and no caller has to guess whether `None` means unknown, unrecorded, inherited, or not applicable.
 
@@ -207,6 +210,8 @@ Its planted defects are that kind of lie, told consistently, and a law in `xtask
 The `soundness` layer re-derives what interpreting the suite came to from the interpreter's recorded run and the output the recording kept of it, and holds the report's `accounting.soundness.executed` and its findings about soundness to that in both directions.
 It reads that output as `schema/miri-output.json` publishes it, and the runner reads it the same way: each keeps its own copy of the markers, and a test in each crate holds that copy to the contract, so a marker changed in one reading and not the other fails a gate rather than a run.
 A kept output is read only once its size and SHA-256 are the ones its exec record gives, so a copy rewritten after the run is a violation rather than a reading.
+It is read only at `output/<sequence number>.txt`, where the runner writes it, through `xtask::confined::read`, which follows no link and reads no more than the mebibyte the runner keeps whole; a copy named anywhere else, cut, missing, or unreadable is unaudited, and the remark says which.
+The toolchain's answer to `miri --version` is read the same way, and it says the interpreter is absent only where nothing was launched or it said so, as the runner decides.
 Output is read by its structure and never by a phrase anywhere in it: a failing test's captured output says nothing, a diagnostic is the interpreter's own `error: ` line, a result is libtest's exact summary, and a pass needs one for every binary that started; the contract's `cases` are outputs the runner and the audit must each come to the same verdict on.
 A report that says the suite was interpreted with no run of the interpreter recorded, or names a failing test under one that ran no test to a result, is a violation; an output that was cut or not kept is unaudited.
 
