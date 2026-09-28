@@ -37,15 +37,17 @@ impl fmt::Display for Edge {
 
 /// The rule, for the failure message.
 pub const RULE: &str = "The allowed direction is: njutest -> rust-mutants, \
-    rust-mutants-cli -> rust-mutants; xtask and njutest-devkit share only the pure fixture-tree \
+    rust-mutants-cli -> rust-mutants, rust-mutants -> rust-mutants-decision, whose decisions \
+    depend on nothing; xtask and njutest-devkit share only the pure fixture-tree \
     classifier; every crate may use the dependency-free compiler declarations in njutest-macros \
     and may dev-depend on njutest-devkit. compiler-surfaces may depend on the engine and fixture \
     classifier only to compile the incidental tools as private modules. Nothing else, in particular nothing \
     from the engine towards the runner.";
 
-const ALLOWED_NORMAL: [(&str, &str); 6] = [
+const ALLOWED_NORMAL: [(&str, &str); 7] = [
     ("njutest", "rust-mutants"),
     ("rust-mutants-cli", "rust-mutants"),
+    ("rust-mutants", "rust-mutants-decision"),
     ("compiler-surfaces", "rust-mutants"),
     ("xtask", "njutest-fixture-tree"),
     ("njutest-devkit", "njutest-fixture-tree"),
@@ -111,11 +113,12 @@ pub fn prohibited_direct_dependencies<'a>(
 }
 
 /// The crates a release ships, whose dependencies are built with the features their own edges ask for.
-pub const SHIPPED: [&str; 4] = [
+pub const SHIPPED: [&str; 5] = [
     "njutest",
     "njutest-macros",
     "rust-mutants",
     "rust-mutants-cli",
+    "rust-mutants-decision",
 ];
 
 /// The targets a release builds, each of which unifies features over its own graph.

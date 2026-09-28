@@ -14,7 +14,7 @@ const RUSTC_VERSION: &str = "rustc 1.100.0-nightly (8925ea358 2026-08-20)";
 const CBMC_VERSION: &str = "6.11.0 (cbmc-6.11.0)";
 const GOTO_CC_BACKEND: &str = "(goto-cc 6.11.0 (cbmc-6.11.0))";
 const GOTO_INSTRUMENT_VERSION: &str = "6.11.0 (cbmc-6.11.0)";
-const CRATE_NAME: &str = "rust_mutants";
+const CRATE_NAMES: [&str; 2] = ["rust_mutants", "rust_mutants_decision"];
 const SOLVER: &str = "cadical";
 const REACHED_COVER: &str = "njutest-law-reached";
 const BRANCH_COVER_PREFIX: &str = "njutest-law-branch:";
@@ -25,6 +25,16 @@ const TARGETS: [&str; 2] = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"];
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, njutest_macros::AllVariants,
 )]
 pub(crate) enum Harness {
+    #[serde(rename = "evidence::kani_laws::native_executions_alone_never_establish_a_verdict")]
+    NativeAlone,
+    #[serde(rename = "evidence::kani_laws::a_sealed_detection_establishes_the_first_kill")]
+    FirstKill,
+    #[serde(rename = "evidence::kani_laws::survival_is_universal_over_sealed_passes")]
+    UniversalSurvival,
+    #[serde(rename = "evidence::kani_laws::an_unproven_standing_names_a_reason")]
+    UnprovenReason,
+    #[serde(rename = "evidence::kani_laws::the_order_of_the_executions_does_not_change_the_class")]
+    OrderIndependent,
     #[serde(rename = "instrument::runtime::kani_laws::a_counting_checkpoint_counts")]
     CountingCounts,
     #[serde(rename = "instrument::runtime::kani_laws::a_counting_checkpoint_never_stops")]
@@ -73,6 +83,11 @@ impl Harness {
     /// The most program steps CBMC may unfold this harness into on either target: a count no load moves, so a law that starts paying for a payload fails here and not on a runner that runs out of memory.
     const fn ceiling(self) -> u64 {
         match self {
+            Self::NativeAlone => 13_000,
+            Self::FirstKill => 34_000,
+            Self::UniversalSurvival => 30_000,
+            Self::UnprovenReason => 31_000,
+            Self::OrderIndependent => 39_000,
             Self::CountingCounts => 1_800,
             Self::CountingNeverStops | Self::DormantCheckpoint => 1_300,
             Self::CountingUnreachable => 5_800,
@@ -94,6 +109,17 @@ impl Harness {
 
     pub(crate) const fn name(self) -> &'static str {
         match self {
+            Self::NativeAlone => {
+                "evidence::kani_laws::native_executions_alone_never_establish_a_verdict"
+            }
+            Self::FirstKill => "evidence::kani_laws::a_sealed_detection_establishes_the_first_kill",
+            Self::UniversalSurvival => {
+                "evidence::kani_laws::survival_is_universal_over_sealed_passes"
+            }
+            Self::UnprovenReason => "evidence::kani_laws::an_unproven_standing_names_a_reason",
+            Self::OrderIndependent => {
+                "evidence::kani_laws::the_order_of_the_executions_does_not_change_the_class"
+            }
             Self::CountingCounts => "instrument::runtime::kani_laws::a_counting_checkpoint_counts",
             Self::CountingNeverStops => {
                 "instrument::runtime::kani_laws::a_counting_checkpoint_never_stops"
@@ -131,8 +157,49 @@ impl Harness {
         }
     }
 
+    const fn crate_name(self) -> &'static str {
+        self.identity().0
+    }
+
+    const fn package_name(self) -> &'static str {
+        self.identity().1
+    }
+
+    const fn identity(self) -> (&'static str, &'static str) {
+        match self {
+            Self::NativeAlone
+            | Self::FirstKill
+            | Self::UniversalSurvival
+            | Self::UnprovenReason
+            | Self::OrderIndependent => ("rust_mutants_decision", "rust-mutants-decision"),
+            Self::CountingCounts
+            | Self::CountingNeverStops
+            | Self::CountingUnreachable
+            | Self::DormantCheckpoint
+            | Self::Activation
+            | Self::ActiveCheckpoint
+            | Self::Stopping
+            | Self::AttemptDuration
+            | Self::AttemptLedger
+            | Self::CancellationBeforeRetry
+            | Self::CancelledRetry
+            | Self::EqualOutcomes
+            | Self::Killed
+            | Self::RetryReconciliation
+            | Self::Survived
+            | Self::Associative
+            | Self::Commutative
+            | Self::Idempotent => ("rust_mutants", "rust-mutants"),
+        }
+    }
+
     const fn source(self) -> &'static str {
         match self {
+            Self::NativeAlone
+            | Self::FirstKill
+            | Self::UniversalSurvival
+            | Self::UnprovenReason
+            | Self::OrderIndependent => "crates/rust-mutants-decision/src/evidence/kani_laws.rs",
             Self::CountingCounts
             | Self::CountingNeverStops
             | Self::CountingUnreachable
@@ -156,6 +223,28 @@ impl Harness {
 
     const fn expected_covers(self) -> &'static [&'static str] {
         match self {
+            Self::NativeAlone => &[
+                "njutest-law-branch:answerable",
+                "njutest-law-branch:guard-absent",
+                "njutest-law-branch:test-absent",
+                REACHED_COVER,
+            ],
+            Self::FirstKill => &[
+                "njutest-law-branch:detected",
+                "njutest-law-branch:undetected",
+                REACHED_COVER,
+            ],
+            Self::UniversalSurvival => &[
+                "njutest-law-branch:survived",
+                "njutest-law-branch:unreached",
+                REACHED_COVER,
+            ],
+            Self::UnprovenReason => &["njutest-law-branch:unproven", REACHED_COVER],
+            Self::OrderIndependent => &[
+                "njutest-law-branch:two",
+                "njutest-law-branch:three",
+                REACHED_COVER,
+            ],
             Self::ActiveCheckpoint => &[
                 "njutest-law-branch:advance",
                 "njutest-law-branch:boundary",
@@ -208,6 +297,17 @@ impl Harness {
 
     const fn expected_assertions(self) -> &'static [&'static str] {
         match self {
+            Self::NativeAlone => &["njutest-law-assertion:native-alone-unproven"],
+            Self::FirstKill => &[
+                "njutest-law-assertion:first-sealed-detection-kills",
+                "njutest-law-assertion:a-kill-needs-a-sealed-detection",
+            ],
+            Self::UniversalSurvival => &[
+                "njutest-law-assertion:survival-iff-every-sealed-pass",
+                "njutest-law-assertion:unreached-iff-answerable-and-no-test",
+            ],
+            Self::UnprovenReason => &["njutest-law-assertion:unproven-names-a-reason"],
+            Self::OrderIndependent => &["njutest-law-assertion:class-order-independent"],
             Self::DormantCheckpoint => &["njutest-law-assertion:dormant-inert"],
             Self::Activation => &["njutest-law-assertion:activation-idempotent"],
             Self::ActiveCheckpoint => &[
@@ -664,7 +764,14 @@ fn validate_context(document: &Document, workspace: &Path) -> Result<(), AuditEr
     }
     let workspace_text = workspace.to_str().ok_or(AuditError::Project)?;
     let output = Path::new(&document.project.output_dir);
-    if !matches!(document.project.crate_name.as_slice(), [name] if name == CRATE_NAME)
+    if document.project.crate_name.len() != CRATE_NAMES.len()
+        || document
+            .project
+            .crate_name
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>()
+            != BTreeSet::from(CRATE_NAMES)
         || document.project.workspace_root != workspace_text
         || !clean_absolute(output)
         || !output.starts_with(workspace.join("target/kani"))
@@ -772,14 +879,23 @@ fn validate_harnesses(document: &Document) -> Result<(), AuditError> {
             Ledger::ErrorDetails,
         )?;
         let goto = Path::new(&metadata.goto_file);
+        let bound_to_package = if expected.package_name() == "rust-mutants-decision" {
+            output
+                .ancestors()
+                .nth(3)
+                .map(|build| build.join(expected.package_name()))
+                .is_some_and(|package| goto.starts_with(package))
+        } else {
+            goto.starts_with(output)
+        };
         if metadata.pretty_name != expected
             || metadata.mangled_name.trim().is_empty()
-            || metadata.crate_name != CRATE_NAME
+            || metadata.crate_name != expected.crate_name()
             || metadata.source.file != expected.source()
             || metadata.source.start_line == 0
             || metadata.source.end_line < metadata.source.start_line
             || !clean_absolute(goto)
-            || !goto.starts_with(output)
+            || !bound_to_package
             || metadata.attributes.kind != "Proof"
             || metadata.attributes.should_panic
             || metadata.contract.contracted_function_name.0.is_some()
@@ -1012,9 +1128,12 @@ mod tests {
                 json!({
                     "pretty_name": harness.name(),
                     "mangled_name": format!("mangled-{index}"),
-                    "crate_name": "rust_mutants",
+                    "crate_name": harness.crate_name(),
                     "source": {"file": harness.source(), "start_line": 1, "end_line": 2},
-                    "goto_file": format!("{WORKSPACE}/target/kani/out/{index}.symtab.out"),
+                    "goto_file": format!(
+                        "{WORKSPACE}/target/kani/aarch64-apple-darwin/debug/build/{}/fixture/out/{index}.symtab.out",
+                        harness.package_name()
+                    ),
                     "attributes": {"kind": "Proof", "should_panic": false},
                     "contract": {"contracted_function_name": null, "recursion_tracker": null},
                     "has_loop_contracts": false,
@@ -1133,9 +1252,11 @@ mod tests {
                 "build_mode": "release"
             },
             "project": {
-                "crate_name": ["rust_mutants"],
+                "crate_name": ["rust_mutants", "rust_mutants_decision"],
                 "workspace_root": WORKSPACE,
-                "output_dir": format!("{WORKSPACE}/target/kani/out")
+                "output_dir": format!(
+                    "{WORKSPACE}/target/kani/aarch64-apple-darwin/debug/build/rust-mutants/fixture/out"
+                )
             },
             "tools": {
                 "kani": "0.68.0",
@@ -1249,6 +1370,36 @@ mod tests {
     fn exact_complete_export_is_accepted() {
         let audited = outcome(&fixture());
         assert_eq!(result_state(&audited), ResultState::Returned, "{audited:?}");
+    }
+
+    #[test]
+    fn a_decision_crate_law_cannot_be_omitted_or_relabelled() {
+        let law = at(Harness::NativeAlone);
+        let mut missing = fixture();
+        let entries = missing
+            .pointer_mut("/verification_results/results")
+            .and_then(Value::as_array_mut);
+        assert!(entries.is_some(), "the result ledger is an array");
+        let Some(entries) = entries else { return };
+        let removed = entries.remove(law);
+        assert!(removed.is_object(), "the removed row is a result");
+        assert_refused(&missing);
+
+        let mut relabelled = fixture();
+        replace(
+            &mut relabelled,
+            &format!("/harness_metadata/{law}/crate_name"),
+            json!("rust_mutants"),
+        );
+        assert_refused(&relabelled);
+
+        let mut one_crate = fixture();
+        replace(
+            &mut one_crate,
+            "/project/crate_name",
+            json!(["rust_mutants"]),
+        );
+        assert_refused(&one_crate);
     }
 
     #[test]

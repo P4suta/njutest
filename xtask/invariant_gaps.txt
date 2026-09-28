@@ -19,3 +19,5 @@ instrument-shape mutation njutest-14
 execution-confinement mutation ci-mutation-testing-speedup
 repository-claims mutation njutest-14
 test-decline mutation phase-0a-0b-baseline-controls
+sealed-verdict self-check njutest-65
+sealed-verdict mutation njutest-65
