@@ -104,8 +104,12 @@ A raw thread or child may only be constructed inside the exact owner that joins 
 queues have a finite capacity and an explicit full/disconnect policy; and a panic-interrupted lock remains a typed sticky failure rather than being reclassified with `PoisonError::into_inner` or `clear_poison`.
 Renamed imports,
 qualified calls, macro bodies, and code excluded by the host's `cfg` are subject to the same rules.
-`raw-group-signal` keeps the end of a process group in one place: shipped code stops a group through `rust_mutants::runner::stop_group`, and only `runner/unix.rs` names `kill_process_group`, `kill_process`, `killpg` or the C library's `kill`.
+`raw-group-signal` keeps the end of a process group in one place: code stops a group through `rust_mutants::runner::stop_group`, and only the runner's `unix.rs` and `windows.rs` and xtask's `work.rs` signal a process by its id.
 What the kernel answers a group signal is one question wherever it is asked.
+The rule reads what code does with a name rather than how the name is spelled, in every file the gate reads — build scripts, fuzz targets, examples, benchmarks, compiler surfaces and modules under `src/tests` included — except a crate's own suites and what is compiled only for tests.
+A module's signalling function, an import of one, a foreign declaration or `link_name`, a system call by its number, an assembly block, and a program started by any path (`/usr/bin/pkill`, `TASKKILL.EXE`), handed to a wrapper such as `sudo` or `timeout`, or written into a script a shell is given after `-c`, `/C` or `-Command`, are each the same signal.
+A signalling method is judged by its receiver: the child's own `kill`, which knows whether it has reaped, and a method of a type the same file implements are taken; a receiver of any other type, or one the file never types, is refused.
+A binding, a field or a string that only spells `kill` is none.
 On macOS `EPERM` can mean a group whose members have ended while its leader waits to be reaped, or one with a protected descendant the runner cannot signal; the runner distinguishes these by checking the other members and classifies the stop as whole-group or leader-only reach accordingly.
 
 The `tri-state-bool` lint rejects `Option<bool>` and the aliases or macro constructors that can hide it.
