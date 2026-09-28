@@ -186,7 +186,6 @@ pub enum LaneError {
         value: String,
     },
     /// The holder showed nothing new of its work for longer than the quiet window allows.
-    #[cfg(unix)]
     #[error(
         "the {lane} lane's holder, {holder}, has shown nothing new of its work for {silent}: its \
          record and every process of the groups it names have neither changed nor used the \
@@ -219,7 +218,6 @@ impl crate::error::Coded for LaneError {
             | Self::Unseen { .. }
             | Self::HolderUnseen { .. }
             | Self::WaiterUnseen { .. } => crate::error::XtCode::LaneUnavailable,
-            #[cfg(unix)]
             Self::Stalled { .. } => crate::error::XtCode::LaneStalled,
             Self::Interrupted { .. } => crate::error::XtCode::LaneInterrupted,
         }
@@ -237,13 +235,13 @@ impl LaneError {
             | Self::Io { .. }
             | Self::Lock { .. }
             | Self::Progress { .. }
-            | Self::Setting { .. } => None,
+            | Self::Setting { .. }
+            | Self::Stalled { .. } => None,
             #[cfg(unix)]
             Self::Unended { .. }
             | Self::Unseen { .. }
             | Self::HolderUnseen { .. }
-            | Self::WaiterUnseen { .. }
-            | Self::Stalled { .. } => None,
+            | Self::WaiterUnseen { .. } => None,
         }
     }
 }
@@ -405,7 +403,6 @@ impl Place<'_> {
         let mut announced = false;
         let started = Instant::now();
         let mut reported = started;
-        #[cfg(unix)]
         let mut watch = Watch::new(self.quiet);
         loop {
             if self.first_in_line(request.lane, ticket)? {
@@ -442,7 +439,6 @@ impl Place<'_> {
                     signal,
                 });
             }
-            #[cfg(unix)]
             if let Some(silent) = watch.stalled(self.record) {
                 std::fs::remove_file(&marker).map_err(|source| io(&marker, source))?;
                 return Err(self.stalled(request, silent));
@@ -685,7 +681,6 @@ impl Place<'_> {
     }
 
     /// The refusal a run waiting behind this lane's holder gives once the holder has shown nothing new for `silent`.
-    #[cfg(unix)]
     fn stalled(&self, request: &Request<'_>, silent: Duration) -> LaneError {
         LaneError::Stalled {
             lane: request.lane.name(),
@@ -775,6 +770,29 @@ impl Watch {
         }
         let silent = self.moved.elapsed();
         (silent >= self.quiet).then_some(silent)
+    }
+}
+
+/// A watch where a group's processes cannot be listed, which is where a stalled holder cannot be told from a slow one, so the lock alone decides.
+#[cfg(not(unix))]
+#[derive(Debug)]
+struct Watch;
+
+#[cfg(not(unix))]
+impl Watch {
+    /// A watch that never calls a holder stalled, whatever `quiet` says.
+    const fn new(_quiet: Duration) -> Self {
+        Self
+    }
+
+    /// Nothing: a holder is never called stalled where its work cannot be seen.
+    #[expect(
+        clippy::unused_self,
+        clippy::needless_pass_by_ref_mut,
+        reason = "the same signature as the platform that can see a holder's work, whose watch remembers what it saw"
+    )]
+    const fn stalled(&mut self, _record: &Path) -> Option<Duration> {
+        None
     }
 }
 
@@ -1035,6 +1053,7 @@ impl<'a> Record<'a> {
     }
 
     /// Every piece that is no finished line: one a writer was killed before finishing, one still being written, or one that is not text, each as a person can read it.
+    #[cfg(unix)]
     #[must_use]
     pub fn unread(&self) -> Vec<String> {
         self.unread
