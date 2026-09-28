@@ -26,12 +26,35 @@ The credentials are `RELEASE_PLZ_APP_CLIENT_ID` and `RELEASE_PLZ_APP_PRIVATE_KEY
 
 `.github/workflows/release.yml` runs on `v*`:
 
-1. **check** — `cargo xtask release-check` agrees the manifests name one version, the tag names that version, and both binaries say it when asked `--version`.
-   Three points, one answer, or the release stops here.
-2. **artifacts** — a release build on Linux, macOS, and Windows, each bundled with both licences and the README, and each with its SHA-256 beside it.
+1. **check** — `cargo xtask release-check` agrees the manifests name one version, and the tag names that version.
+   The third point, every binary saying it when asked `--version`, is asked where each binary is built, in the next step.
+   Three points, one answer, or nothing is published.
+2. **artifacts** — `cargo xtask bundle --target <triple> --out dist` on Linux, macOS, and Windows, which writes the archive and its SHA-256 beside it.
+   What the archive holds is described under [The archive](#the-archive).
 3. **sbom** — `cargo xtask sbom` writes what the release is made of, as CycloneDX, from the locked graph the build resolved.
 4. **publish** — gated on the `release` environment, so a person approves it.
    It attests the provenance of every file it is about to publish, creates the release as a draft, and then undrafts it, so a failure between the two leaves a draft rather than a half-published release.
+
+## The archive
+
+`cargo binstall njutest` and `cargo binstall rust-mutants-cli` download the archive `[package.metadata.binstall]` names in each manifest and take each binary from the path its `bin-dir` names.
+The archive is made by `cargo xtask bundle`, and nothing else decides what is in it: no list in a workflow, no second spelling of a path.
+
+- Which binaries: every `[[bin]]` of every package cargo would publish, read from `cargo metadata`, so a binary declared tomorrow is bundled tomorrow.
+- Where each goes: the package's `bin-dir`, filled the way binstall fills it for the target, `.exe` and all.
+  Every shipped package's `pkg-url` must name the one archive, and a key, a format, or a template variable the command does not fill the way binstall does is refused (`XT7003`), because what it cannot predict it cannot promise.
+- How each is built: in release, for the target, one package at a time, as `cargo install` builds it, taken from where cargo reports it put it (`XT7004`).
+- What each says: every binary is asked `--version`, and one that does not name its package's version is refused before anything is written (`XT7005`).
+- What goes beside them: both licences and the README, in the binaries' directory.
+
+The archive is written by the tooling rather than by a platform's `tar`, owned by nobody and stamped with one time, so the same binaries make the same bytes on every platform.
+It is read back and compared with its plan, entry by entry, before it takes its name, and its SHA-256 is written beside it as `shasum -a 256` writes one (`XT7006`).
+
+It is the same command on a developer's machine:
+
+```console
+cargo xtask bundle --target aarch64-apple-darwin --out dist
+```
 
 ## Before merging the release pull request
 
