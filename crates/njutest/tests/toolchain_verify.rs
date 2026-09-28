@@ -1735,8 +1735,8 @@ fn two_parts_of_one_catalog_judge_every_mutant_between_them_and_none_twice() {
     let first = verify(&fixture, &["--shard", "1/2"]);
     assert_eq!(
         first.status.code(),
-        Some(0),
-        "{}",
+        Some(i32::from(njutest::cli::EXIT_INSUFFICIENT)),
+        "a part assures nothing on its own: {}",
         njutest_devkit::process::strict_utf8(&first.stderr)
     );
     let one = judged(&fixture);
@@ -1744,8 +1744,8 @@ fn two_parts_of_one_catalog_judge_every_mutant_between_them_and_none_twice() {
     let second = verify(&fixture, &["--shard", "2/2"]);
     assert_eq!(
         second.status.code(),
-        Some(0),
-        "{}",
+        Some(i32::from(njutest::cli::EXIT_INSUFFICIENT)),
+        "a part assures nothing on its own: {}",
         njutest_devkit::process::strict_utf8(&second.stderr)
     );
     let two = judged(&fixture);
@@ -1771,7 +1771,12 @@ fn a_part_of_a_catalog_does_not_claim_what_the_whole_would() {
     assert_eq!(verify(&fixture, &[]).status.code(), Some(0));
     assert_eq!(parsed(&fixture).verdict(), Verdict::Assured);
 
-    assert_eq!(verify(&fixture, &["--shard", "1/2"]).status.code(), Some(0));
+    assert_eq!(
+        verify(&fixture, &["--shard", "1/2"]).status.code(),
+        Some(i32::from(njutest::cli::EXIT_INSUFFICIENT)),
+        "a part exits as a run that established too little to conclude, so a job that runs one \
+         does not pass on it"
+    );
     let part = document(&fixture);
     assert_eq!(
         parsed(&fixture).verdict(),
@@ -1808,9 +1813,10 @@ fn a_part_that_is_not_a_part_of_anything_is_refused_before_anything_is_built() {
 #[test]
 fn the_parts_of_one_catalog_merge_into_the_verdict_neither_of_them_could_say() {
     let fixture = fixture("fixture-assured");
-    assert_eq!(verify(&fixture, &["--shard", "1/2"]).status.code(), Some(0));
+    let partial = Some(i32::from(njutest::cli::EXIT_INSUFFICIENT));
+    assert_eq!(verify(&fixture, &["--shard", "1/2"]).status.code(), partial);
     let one = latest(&fixture);
-    assert_eq!(verify(&fixture, &["--shard", "2/2"]).status.code(), Some(0));
+    assert_eq!(verify(&fixture, &["--shard", "2/2"]).status.code(), partial);
     let two = latest(&fixture);
     assert_ne!(one, two, "two runs, two reports");
 

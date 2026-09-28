@@ -286,7 +286,7 @@ The engine resolves the width once, runs at it, and writes that value, so the re
 ## Shards and projections
 
 A `K/N` shard owns dense catalog indices whose index modulo `N` is `K - 1`.
-A part concludes `PARTIAL`; only a complete, non-overlapping set of all parts can be merged into an unsharded verdict.
+A part concludes `PARTIAL` and exits 2, as a run that established too little to conclude does, since a part assures nothing on its own; only a complete, non-overlapping set of all parts can be merged into an unsharded verdict.
 The merge re-derives accounting,
 findings and verdict from the union instead of adding claims from the parts.
 A run judges an expectation only on the mutations it decided: not those another part holds, a selection such as `--file` left out, a stop came before, or every test that reached them declined to measure ([ADR 0043](adr/0043-a-test-may-decline-to-measure.md)).
@@ -307,9 +307,9 @@ HTML, SARIF and JUnit carry the same audit identity and findings.
 
 | Code | Meaning |
 | ---: | --- |
-| 0 | `ASSURED`, `CHANGE_ASSURED`, `SCOPE_ASSURED`, `PARTIAL`, `RESOLVED` |
+| 0 | `ASSURED`, `CHANGE_ASSURED`, `SCOPE_ASSURED`, `RESOLVED` |
 | 1 | `DEFECT`, `REPRODUCED` |
-| 2 | `INSUFFICIENT`, `INCONCLUSIVE` |
+| 2 | `INSUFFICIENT`, `PARTIAL`, `INCONCLUSIVE` |
 | 3 | `ERROR`, invalid input, or an infrastructure failure |
 | 130 | interrupted |
 | 143 | terminated |

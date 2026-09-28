@@ -170,11 +170,9 @@ impl Verdict {
     #[must_use]
     pub const fn exit_code(self) -> u8 {
         match self {
-            Self::Assured | Self::ChangeAssured | Self::ScopeAssured | Self::Partial => {
-                crate::cli::EXIT_ASSURED
-            }
+            Self::Assured | Self::ChangeAssured | Self::ScopeAssured => crate::cli::EXIT_ASSURED,
             Self::Defect => crate::cli::EXIT_DEFECT,
-            Self::Insufficient => crate::cli::EXIT_INSUFFICIENT,
+            Self::Insufficient | Self::Partial => crate::cli::EXIT_INSUFFICIENT,
             Self::Error => crate::cli::EXIT_ERROR,
         }
     }

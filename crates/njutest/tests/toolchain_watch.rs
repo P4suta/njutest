@@ -1566,8 +1566,8 @@ fn part(root: &std::path::Path, dir: &std::path::Path, shard: &str) -> serde_jso
     );
     assert_eq!(
         code,
-        0,
-        "{shard}: {}",
+        njutest::cli::EXIT_INSUFFICIENT,
+        "{shard} assures nothing on its own: {}",
         njutest_devkit::process::strict_utf8(&complaints)
     );
     latest_report_of(root)

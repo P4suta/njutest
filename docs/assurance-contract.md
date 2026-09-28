@@ -451,7 +451,7 @@ That is what keeps dividing the work out of [ADR 0004](adr/0004-proof-layers-not
 A budget decides not to run something; this decides which machine runs it.
 The parts balance by count rather than by cost, so a part holding a slow mutation takes longer, and how long is something to measure rather than to predict.
 
-A part concludes `PARTIAL` and records its shard.
+A part concludes `PARTIAL`, records its shard, and exits 2, which is what a run that established too little to conclude exits with.
 It assures nothing on its own:
 the mutations it did not judge are not mutations nothing noticed, they are mutations nobody put to a test, and a report that called that an assurance would be claiming the one thing it did not look at.
 A finding in a part is a finding,
