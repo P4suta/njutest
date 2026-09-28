@@ -168,17 +168,17 @@ fn a_target_that_does_not_build_for_wasm_is_unsealed_and_the_rest_still_seal() {
     )
     .expect("library");
     std::fs::write(
-        root.join("tests/unix_only.rs"),
-        "use std::os::unix::fs::PermissionsExt as _;\n\n#[test]\nfn mode() { let _ = std::fs::Permissions::from_mode(0o644); }\n",
+        root.join("tests/host_only.rs"),
+        "#[cfg(target_family = \"wasm\")]\ncompile_error!(\"not for wasm\");\n\n#[test]\nfn host() {}\n",
     )
-    .expect("a test that only builds on unix");
+    .expect("a test that builds on every host and never for wasm");
     let (native, sealed) = built(&root);
-    let unix_only = native
+    let host_only = native
         .iter()
-        .find(|target| target.id().contains("unix_only"))
-        .expect("the native build has the unix-only test");
+        .find(|target| target.id().contains("host_only"))
+        .expect("the native build has the host-only test");
     assert_eq!(
-        sealed.unsealed.get(unix_only.id()),
+        sealed.unsealed.get(host_only.id()),
         Some(&Unsealed::NotBuilt),
         "a target that does not build for {TARGET} is unsealed by name: {:?}",
         sealed.unsealed
