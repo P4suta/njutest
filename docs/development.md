@@ -388,6 +388,8 @@ prelude = "$env:PATH = 'C:\\Program Files\\Git\\bin;' + $env:PATH"
 
 `prelude` is what makes a machine's session look like the pipeline's: the pipeline's Windows runner has Git's `sh` on its path, and an `ssh` session does not.
 A test that writes its child as a shell script takes its shell from `njutest_devkit::paths::posix_sh`, which also looks beside the `git` on the path, so a machine with Git for Windows needs no prelude for that; one without either stops with what to install, not with a test reading an empty output.
+A machine's session also compiles through the cache `mise.toml` names as `RUSTC_WRAPPER`, which the pipeline clears.
+So a test that gives the run it drives a home of its own takes it from `njutest_devkit::paths::given_home`, which leaves that cache out: sccache reads its configuration from the home, and on Windows it panics under one it was not configured in.
 A machine's `target_dir` is for a disk that cannot hold another build; leaving it unset keeps every test's own builds in the worktree, which is where the pipeline has them.
 The file names machines and paths that are nobody else's, so it lives outside the repository, and the command is not part of any gate.
 
