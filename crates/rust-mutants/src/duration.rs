@@ -34,34 +34,42 @@ pub enum DurationError {
         /// The unit that was not understood.
         unit: String,
     },
-    /// A number no duration can hold.
-    #[error("{text:?} holds a number too large to be a duration")]
+    /// A duration longer than the longest one a [`Duration`] holds, however it was spelled.
+    #[error("{text:?} is longer than any duration can be")]
     TooLarge {
         /// The text as given.
         text: String,
     },
 }
 
-/// The units, longest name first so `ms` is never read as `m` followed by `s`.
-const UNITS: [(&str, Duration); 7] = [
-    ("ns", Duration::from_nanos(1)),
-    ("us", Duration::from_micros(1)),
-    ("\u{b5}s", Duration::from_micros(1)),
-    ("ms", Duration::from_millis(1)),
-    ("s", Duration::from_secs(1)),
-    ("m", Duration::from_secs(60)),
-    ("h", Duration::from_secs(3600)),
+/// The units a duration is written in, largest first, each with the nanoseconds one of it is: the one table both [`parse`] and [`render`] read, so what one writes the other reads.
+const UNITS: [(&str, u128); 6] = [
+    ("h", 3_600_000_000_000),
+    ("m", 60_000_000_000),
+    ("s", 1_000_000_000),
+    ("ms", 1_000_000),
+    ("us", 1_000),
+    ("ns", 1),
 ];
 
-/// Reads a duration: one or more `<number><unit>` pairs, added together.
+/// A second spelling a person may write for a unit, with the unit it is.
+const ALIASES: [(&str, &str); 1] = [("\u{b5}s", "us")];
+
+/// The nanoseconds in one second, which is how a [`Duration`] is made from a count of them.
+const NANOS_PER_SECOND: u128 = 1_000_000_000;
+
+/// Reads a duration: one or more `<number><unit>` pairs, added together exactly.
 ///
 /// # Errors
-/// See [`DurationError`].
+/// See [`DurationError`]: [`DurationError::TooLarge`] is about the sum, never about one number of it.
 pub fn parse(text: &str) -> Result<Duration, DurationError> {
     if text.is_empty() {
         return Err(DurationError::Empty);
     }
-    let mut total = Duration::ZERO;
+    let too_large = || DurationError::TooLarge {
+        text: text.to_owned(),
+    };
+    let mut total: u128 = 0;
     let mut rest = text;
     while !rest.is_empty() {
         let digits = rest
@@ -73,11 +81,7 @@ pub fn parse(text: &str) -> Result<Duration, DurationError> {
             });
         }
         let (number, tail) = rest.split_at(digits);
-        let value = number
-            .parse::<u64>()
-            .map_err(|_error| DurationError::TooLarge {
-                text: text.to_owned(),
-            })?;
+        let count = number.parse::<u128>().map_err(|_error| too_large())?;
         let unit_length = tail
             .find(|character: char| character.is_ascii_digit())
             .unwrap_or(tail.len());
@@ -87,23 +91,39 @@ pub fn parse(text: &str) -> Result<Duration, DurationError> {
                 text: text.to_owned(),
             });
         }
-        let scale = UNITS
-            .iter()
-            .find(|(name, _)| *name == unit)
-            .map(|(_, scale)| *scale)
-            .ok_or_else(|| DurationError::UnknownUnit {
-                text: text.to_owned(),
-                unit: unit.to_owned(),
-            })?;
-        total =
-            total.saturating_add(scale.saturating_mul(u32::try_from(value).map_err(|_error| {
-                DurationError::TooLarge {
-                    text: text.to_owned(),
-                }
-            })?));
+        let scale = scale_of(unit).ok_or_else(|| DurationError::UnknownUnit {
+            text: text.to_owned(),
+            unit: unit.to_owned(),
+        })?;
+        total = count
+            .checked_mul(scale)
+            .and_then(|nanos| total.checked_add(nanos))
+            .ok_or_else(too_large)?;
         rest = tail;
     }
-    Ok(total)
+    exactly(total).ok_or_else(too_large)
+}
+
+/// How many nanoseconds one of `unit` is, under its own name or an alias.
+fn scale_of(unit: &str) -> Option<u128> {
+    let unit = ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == unit)
+        .map_or(unit, |(_, named)| *named);
+    UNITS
+        .iter()
+        .find(|(name, _)| *name == unit)
+        .map(|(_, scale)| *scale)
+}
+
+/// The duration of exactly `nanos` nanoseconds, when a [`Duration`] can be that long.
+fn exactly(nanos: u128) -> Option<Duration> {
+    let seconds = nanos.checked_div(NANOS_PER_SECOND)?;
+    let under = nanos.checked_rem(NANOS_PER_SECOND)?;
+    match (u64::try_from(seconds), u32::try_from(under)) {
+        (Ok(seconds), Ok(under)) => Some(Duration::new(seconds, under)),
+        (Err(_), _) | (_, Err(_)) => None,
+    }
 }
 
 /// Writes a duration in the spelling [`parse`] reads, largest unit first and exact.
@@ -111,14 +131,7 @@ pub fn parse(text: &str) -> Result<Duration, DurationError> {
 pub fn render(value: Duration) -> String {
     let mut nanos = value.as_nanos();
     let mut text = String::new();
-    for (name, scale) in [
-        ("h", 3_600_000_000_000u128),
-        ("m", 60_000_000_000),
-        ("s", 1_000_000_000),
-        ("ms", 1_000_000),
-        ("us", 1_000),
-        ("ns", 1),
-    ] {
+    for (name, scale) in UNITS {
         let count = nanos.checked_div(scale).unwrap_or_default();
         if count > 0 {
             let written = write!(text, "{count}{name}");

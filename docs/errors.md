@@ -108,7 +108,7 @@ The first digit names an area:
 | `RM7001` | An executable a successful build named could not be read back for equivalence comparison. | run again after checking nothing removes or rewrites target files while the build is being measured |
 | `RM9001` | A rule name the canonical registry does not know. | `rust-mutants rules` lists every rule this release knows |
 | `RM9002` | A pattern the caller gave is not a pattern. | a pattern is workspace-relative with forward slashes: `src/**/*.rs`, never a leading or trailing slash |
-| `RM9003` | A duration the caller gave is not a duration: an empty text, a number without a unit, a unit without a number, an unknown unit, or a number no duration can hold. | write a duration as 30s, 5m, or 1h30m |
+| `RM9003` | A duration the caller gave is not a duration: an empty text, a number without a unit, a unit without a number, an unknown unit, or a sum longer than any duration can be. | write a duration as 30s, 5m, or 1h30m |
 
 ## njutest
 

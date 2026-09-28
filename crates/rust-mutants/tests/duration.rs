@@ -58,10 +58,9 @@ fn anything_that_is_not_a_duration_is_named_rather_than_guessed_at() {
     );
     assert_eq!(
         parse("5000000000s"),
-        Err(DurationError::TooLarge {
-            text: "5000000000s".to_owned()
-        }),
-        "and one that fits the number it was read as and not the width a duration is built from"
+        Ok(Duration::from_secs(5_000_000_000)),
+        "while a number wider than 32 bits is a duration like any other, because the width it \
+         is multiplied in is how a duration is computed and not how long it is"
     );
     for error in [
         DurationError::Empty,
@@ -101,18 +100,61 @@ fn rendering_a_duration_produces_text_that_parses_back_to_it() {
     }
 }
 
+#[test]
+fn a_duration_is_refused_for_its_length_and_never_for_its_spelling() {
+    let crash = include_bytes!(
+        "../../../fuzz/regressions/duration/crash-bdc7aa6e80adbcc05c913bad7641572f8d2f324c"
+    );
+    let text = std::str::from_utf8(crash).unwrap_or_else(|error| panic!("the crash: {error}"));
+    let read = parse(text);
+    let Ok(read) = read else {
+        panic!("{text:?} sums two hour counts a duration holds: {read:?}");
+    };
+    let rendered = render(read);
+    assert_eq!(
+        parse(&rendered),
+        Ok(read),
+        "what a scheduled fuzz run found: {text:?} reads as {read:?} and renders as \
+         {rendered:?}, one count of hours larger than either it was summed from"
+    );
+    for (value, why) in [
+        (
+            Duration::from_secs(5_000_000_000),
+            "more seconds than 32 bits count",
+        ),
+        (Duration::MAX, "the longest duration there is"),
+    ] {
+        assert_eq!(parse(&render(value)), Ok(value), "{why}");
+    }
+    let past = format!("{}1ns", render(Duration::MAX));
+    assert_eq!(
+        parse(&past),
+        Err(DurationError::TooLarge { text: past.clone() }),
+        "a nanosecond past the longest duration is too long rather than the longest duration"
+    );
+    let summed = "18446744073709551615s1s";
+    assert_eq!(
+        parse(summed),
+        Err(DurationError::TooLarge {
+            text: summed.to_owned()
+        }),
+        "and so is a sum past it, which a saturating total rounded down to it"
+    );
+}
+
 proptest::proptest! {
-    /// Every bound a person can write is one the parser reads back as itself.
+    /// Every duration there is renders as text the parser reads back as itself, which a law over the bounds people write once left out.
     #[test]
     fn what_the_parser_renders_it_reads_back_as_the_same_duration(
-        millis in 0u64..=(1000 * 60 * 60 * 24 * 400)
+        seconds in proptest::num::u64::ANY,
+        nanos in 0u32..1_000_000_000,
     ) {
-        let value = Duration::from_millis(millis);
+        let value = Duration::new(seconds, nanos);
         let rendered = render(value);
         let again = parse(&rendered);
         proptest::prop_assert_eq!(result_state(&again), Returned, "rendered duration: {:?}", again);
         let Ok(again) = again else { return Ok(()) };
-        proptest::prop_assert_eq!(again, value, "{} rendered as {}", millis, rendered);
+        proptest::prop_assert_eq!(again, value, "{:?} rendered as {}", value, rendered);
     }
 
     /// Nothing a person can type makes the parser panic, and what it accepts renders and reads back.
