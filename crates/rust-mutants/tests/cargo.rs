@@ -147,7 +147,7 @@ fn metadata_json_is_parsed_into_packages_and_targets() {
                 t.name.as_str(),
                 t.is_proc_macro(),
                 t.is_custom_build(),
-                t.harness,
+                t.test,
             )
         })
         .collect();
@@ -156,7 +156,7 @@ fn metadata_json_is_parsed_into_packages_and_targets() {
         [
             ("demo", false, false, true),
             ("demo_macros", true, false, false),
-            ("build-script-build", false, true, true),
+            ("build-script-build", false, true, false),
         ]
     );
     assert!(demo.targets[0].is_lib());

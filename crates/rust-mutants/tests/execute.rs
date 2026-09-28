@@ -3,6 +3,11 @@
 
 //! Execution: one test process per mutant, and what its exit status means.
 
+#![expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking"
+)]
+
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
@@ -263,6 +268,154 @@ fn a_target_is_named_by_package_kind_and_name() {
         assert_eq!(TargetKind::parse(kind.name()), Some(kind));
     }
     assert_eq!(TargetKind::parse("bench"), None);
+}
+
+/// One package whose manifest is `manifest` at `root`, holding `targets` as cargo metadata names them.
+fn declared(
+    root: &Path,
+    manifest: Option<&str>,
+    targets: &serde_json::Value,
+) -> rust_mutants::cargo::Metadata {
+    let path = root.join("Cargo.toml");
+    if let Some(text) = manifest {
+        std::fs::write(&path, text).expect("the manifest");
+    }
+    let id = "path+file:///w/own-harness#0.1.0";
+    let document = serde_json::json!({
+        "packages": [{
+            "name": "own-harness", "version": "0.1.0", "id": id, "manifest_path": path,
+            "edition": "2024", "targets": targets, "features": {}, "dependencies": []
+        }],
+        "workspace_members": [id], "workspace_default_members": [id], "resolve": null,
+        "target_directory": root.join("target"), "version": 1, "workspace_root": root,
+        "metadata": null
+    });
+    rust_mutants::cargo::Metadata::parse(document.to_string().as_bytes()).expect("the metadata")
+}
+
+/// What cargo says it built of `target` as a test binary, as `cargo test --all-targets` builds it.
+fn built_as_a_test(root: &Path, target: &serde_json::Value) -> rust_mutants::cargo::Message {
+    let name = target["name"].as_str().expect("a name");
+    let executable = root
+        .join("target")
+        .join("debug")
+        .join("deps")
+        .join(format!("{name}-abc"));
+    let message = serde_json::json!({
+        "reason": "compiler-artifact", "package_id": "path+file:///w/own-harness#0.1.0",
+        "manifest_path": root.join("Cargo.toml"), "target": target,
+        "profile": {
+            "opt_level": "0", "debuginfo": 2, "debug_assertions": true,
+            "overflow_checks": true, "test": true
+        },
+        "features": [], "filenames": [executable], "executable": executable, "fresh": false
+    });
+    let mut messages = rust_mutants::cargo::parse_messages(format!("{message}\n").as_bytes())
+        .expect("the artifact message");
+    messages.pop().expect("one message")
+}
+
+/// A target as cargo metadata and cargo's build messages name it.
+fn cargo_target(kind: &str, name: &str, test: bool) -> serde_json::Value {
+    serde_json::json!({
+        "kind": [kind], "crate_types": [if kind == "lib" { "lib" } else { kind }], "name": name,
+        "src_path": "/w/own-harness/src/lib.rs", "edition": "2024", "doc": kind == "lib",
+        "doctest": false, "test": test
+    })
+}
+
+#[test]
+fn a_target_the_manifest_does_not_test_is_not_a_test_target() {
+    let root = tempfile::tempdir().expect("a directory");
+    let lib = cargo_target("lib", "own_harness", true);
+    let tool = cargo_target("bin", "tool", false);
+    let demo = cargo_target("example", "demo", false);
+    let metadata = declared(
+        root.path(),
+        Some(
+            "[package]\nname = \"own-harness\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+             [[bin]]\nname = \"tool\"\npath = \"src/main.rs\"\ntest = false\n",
+        ),
+        &serde_json::json!([lib, tool, demo]),
+    );
+    let messages = [lib, tool, demo].map(|target| built_as_a_test(root.path(), &target));
+    let targets = rust_mutants::execute::targets_of(
+        &messages,
+        &metadata.packages,
+        &root.path().join("target"),
+    )
+    .expect("the targets");
+    assert_eq!(
+        targets.iter().map(TestTarget::id).collect::<Vec<_>>(),
+        ["own-harness/lib/own_harness"],
+        "`cargo test --all-targets` builds a binary and an example `test = false` leaves out of \
+         `cargo test` as test binaries too, and running them measures tests the project never runs"
+    );
+    assert_eq!(
+        rust_mutants::execute::declared_targets(&metadata.members().collect::<Vec<_>>()),
+        std::collections::BTreeSet::from(["own-harness/lib/own_harness".to_owned()]),
+        "and a target nobody tests is not one a run can be told to skip"
+    );
+}
+
+#[test]
+fn a_library_without_the_harness_is_read_as_its_own_program_whatever_names_it() {
+    for (manifest, kind, name) in [
+        ("[lib]\nharness = false\n", "lib", "own_harness"),
+        (
+            "[lib]\nname = \"renamed\"\nharness = false\n",
+            "lib",
+            "renamed",
+        ),
+        (
+            "[lib]\nproc-macro = true\nharness = false\n",
+            "proc-macro",
+            "own_harness",
+        ),
+    ] {
+        let root = tempfile::tempdir().expect("a directory");
+        let lib = cargo_target(kind, name, true);
+        let metadata = declared(
+            root.path(),
+            Some(&format!(
+                "[package]\nname = \"own-harness\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+                 {manifest}"
+            )),
+            &serde_json::json!([lib]),
+        );
+        let targets = rust_mutants::execute::targets_of(
+            &[built_as_a_test(root.path(), &lib)],
+            &metadata.packages,
+            &root.path().join("target"),
+        )
+        .expect("the targets");
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| target.harness)
+                .collect::<Vec<_>>(),
+            [false],
+            "{manifest:?} builds the {kind} {name} without libtest, so its silence is not a \
+             test result and its exit status is the whole answer"
+        );
+    }
+}
+
+#[test]
+fn a_package_whose_manifest_is_not_there_is_refused_rather_than_read_as_libtest() {
+    let root = tempfile::tempdir().expect("a directory");
+    let lib = cargo_target("lib", "own_harness", true);
+    let metadata = declared(root.path(), None, &serde_json::json!([lib]));
+    let targets = rust_mutants::execute::targets_of(
+        &[built_as_a_test(root.path(), &lib)],
+        &metadata.packages,
+        &root.path().join("target"),
+    );
+    assert!(
+        targets.is_err(),
+        "a manifest that is not there says nothing about the harness, and reading nothing as \
+         libtest reads a custom harness's silence as a test result: {targets:?}"
+    );
 }
 
 fn target() -> TestTarget {

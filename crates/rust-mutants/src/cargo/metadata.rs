@@ -210,9 +210,6 @@ pub struct Target {
     /// Whether the target's documentation is tested.
     #[serde(default)]
     pub doctest: bool,
-    /// Whether the target uses the libtest harness.
-    #[serde(default = "yes")]
-    pub harness: bool,
     #[serde(flatten)]
     external_fields: std::collections::BTreeMap<String, serde_json::Value>,
 }

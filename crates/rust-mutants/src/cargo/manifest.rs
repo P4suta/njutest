@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{CargoError, CargoErrorKind};
+use super::{CargoError, CargoErrorKind, Target};
 
 /// The file every cargo project is named by.
 pub const FILE_NAME: &str = "Cargo.toml";
@@ -99,43 +99,93 @@ fn patches_in(document: &toml::Table) -> Vec<Patch> {
     found
 }
 
-/// Whether each target of the manifest at `path` is built with the libtest harness.
+/// Which targets of one manifest its target tables build without the libtest harness.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Harnesses {
+    declared: std::collections::BTreeMap<Declared, bool>,
+}
+
+/// The manifest table that declares one target.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Declared {
+    /// The one `[lib]` table, which declares the library or the procedural macro whatever it is named.
+    Lib,
+    /// An array of tables that declares each of its targets by name, and the name.
+    Named(Named, String),
+}
+
+impl Declared {
+    /// The table that declares `target`, as cargo metadata and cargo's build messages name it, or nothing for a target no table declares, such as a build script.
+    fn of(target: &Target) -> Option<Self> {
+        if target.is_lib() || target.is_proc_macro() {
+            return Some(Self::Lib);
+        }
+        Named::ALL
+            .into_iter()
+            .find(|named| target.kind.iter().any(|kind| kind == named.table()))
+            .map(|named| Self::Named(named, target.name.clone()))
+    }
+}
+
+/// A manifest table that declares targets by name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, njutest_macros::AllVariants)]
+enum Named {
+    Bin,
+    Test,
+    Example,
+    Bench,
+}
+
+impl Named {
+    /// The key of the array of tables in a manifest.
+    const fn table(self) -> &'static str {
+        match self {
+            Self::Bin => "bin",
+            Self::Test => "test",
+            Self::Example => "example",
+            Self::Bench => "bench",
+        }
+    }
+}
+
+impl Harnesses {
+    /// Whether `target`, as cargo metadata and cargo's build messages name it, is built with the libtest harness: what the table that declares it says, and cargo's own default, libtest, where it says nothing.
+    #[must_use]
+    pub fn of(&self, target: &Target) -> bool {
+        match Declared::of(target).and_then(|declared| self.declared.get(&declared)) {
+            Some(harness) => *harness,
+            None => true,
+        }
+    }
+}
+
+/// Which targets of the manifest at `path` are built without the libtest harness.
 ///
 /// # Errors
-/// The manifest is there and could not be read or parsed.
-pub fn harnesses(
-    path: &Path,
-) -> Result<std::collections::BTreeMap<(String, String), bool>, CargoError> {
+/// The manifest is not there, or could not be read or parsed: a manifest nobody read says nothing about a harness, and taking that for libtest would read a custom harness's silence as a test result.
+pub fn harnesses(path: &Path) -> Result<Harnesses, CargoError> {
     let Some(text) = text_of(path)? else {
-        return Ok(std::collections::BTreeMap::new());
+        return Err(CargoError::new(
+            CargoErrorKind::ManifestUnreadable,
+            format!(
+                "{} is not there, so which of its targets run without libtest cannot be read",
+                path.display()
+            ),
+        ));
     };
     Ok(harnesses_in(&table_of(path, &text)?))
 }
 
-/// Whether each target `text` declares is built with the libtest harness.
-#[must_use]
-pub fn read_harnesses(text: &str) -> std::collections::BTreeMap<(String, String), bool> {
-    let Ok(document) = text.parse::<toml::Table>() else {
-        return std::collections::BTreeMap::new();
-    };
-    harnesses_in(&document)
-}
-
-/// Whether each target a parsed manifest declares is built with the libtest harness.
-fn harnesses_in(document: &toml::Table) -> std::collections::BTreeMap<(String, String), bool> {
-    let mut found = std::collections::BTreeMap::new();
+/// Which targets a parsed manifest builds without the libtest harness, by the table that declares each.
+fn harnesses_in(document: &toml::Table) -> Harnesses {
+    let mut declared = std::collections::BTreeMap::new();
     if let Some(toml::Value::Table(one)) = document.get("lib")
         && let Some(harness) = one.get("harness").and_then(toml::Value::as_bool)
     {
-        let name = one
-            .get("name")
-            .and_then(toml::Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
-        found.entry(("lib".to_owned(), name)).or_insert(harness);
+        declared.insert(Declared::Lib, harness);
     }
-    for kind in ["bin", "test", "bench", "example"] {
-        let Some(toml::Value::Array(entries)) = document.get(kind) else {
+    for table in Named::ALL {
+        let Some(toml::Value::Array(entries)) = document.get(table.table()) else {
             continue;
         };
         for entry in entries {
@@ -145,12 +195,12 @@ fn harnesses_in(document: &toml::Table) -> std::collections::BTreeMap<(String, S
             ) else {
                 continue;
             };
-            found
-                .entry((kind.to_owned(), name.to_owned()))
+            declared
+                .entry(Declared::Named(table, name.to_owned()))
                 .or_insert(harness);
         }
     }
-    found
+    Harnesses { declared }
 }
 
 /// Every lint the manifest at `path` forbids, with the workspace lints it inherits.

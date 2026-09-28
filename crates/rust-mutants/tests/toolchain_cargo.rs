@@ -318,6 +318,82 @@ fn every_unit_is_read_from_the_dep_info_rustc_wrote_whatever_its_name_begins_wit
 }
 
 #[test]
+fn the_test_binaries_are_the_ones_cargo_test_runs_each_read_as_its_manifest_declares_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    for directory in ["src", "tests", "examples"] {
+        std::fs::create_dir_all(root.join(directory)).expect("mkdir");
+    }
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"own-harness\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+         [lib]\nharness = false\n\n\
+         [[bin]]\nname = \"tool\"\npath = \"src/main.rs\"\ntest = false\n\n\
+         [[test]]\nname = \"kept\"\npath = \"tests/kept.rs\"\n\n\
+         [[example]]\nname = \"demo\"\npath = \"examples/demo.rs\"\n",
+    )
+    .expect("manifest");
+    for (file, source) in [
+        (
+            "src/lib.rs",
+            "pub fn above(n: u32) -> bool { n > 10 }\npub fn main() { assert!(above(11)); }\n",
+        ),
+        ("src/main.rs", "fn main() {}\n"),
+        (
+            "tests/kept.rs",
+            "#[test]\nfn eleven() { assert!(own_harness::above(11)); }\n",
+        ),
+        ("examples/demo.rs", "fn main() {}\n"),
+    ] {
+        std::fs::write(root.join(file), source).expect("source");
+    }
+    let tc = toolchain(root);
+    let cancel = Cancel::new();
+    let trace = Recorder::disabled();
+    let driver = Driver {
+        toolchain: &tc,
+        dir: root,
+        cancel: &cancel,
+        trace: &trace,
+    };
+    let metadata = Metadata::load(
+        &driver,
+        MetadataOptions {
+            locked: false,
+            offline: true,
+        },
+    )
+    .expect("metadata");
+    let target = scratch_target("own-harness");
+    let built = rust_mutants::execute::build(
+        &driver,
+        &metadata.packages,
+        &rust_mutants::execute::BuildOptions {
+            target_dir: rust_mutants::cargo::BuildDir::new(target.path().to_path_buf(), Vec::new()),
+            locked: false,
+            offline: true,
+            packages: Vec::new(),
+            build: rust_mutants::cargo::BuildConfig::default(),
+        },
+    )
+    .expect("the test binaries build");
+    let read: Vec<(&str, bool)> = built
+        .iter()
+        .map(|target| (target.id(), target.harness))
+        .collect();
+    assert_eq!(
+        read,
+        [
+            ("own-harness/lib/own_harness", false),
+            ("own-harness/test/kept", true)
+        ],
+        "`cargo test --all-targets` builds the binary and the example that `test = false` leaves \
+         out of `cargo test` as test binaries too, and the library's unnamed `[lib]` table says it \
+         is its own program rather than libtest"
+    );
+}
+
+#[test]
 fn units_from_a_check_name_exactly_the_files_each_unit_compiled() {
     let dir = fixture("fixture-simple");
     let tc = toolchain(&dir);
