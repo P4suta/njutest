@@ -90,7 +90,9 @@ impl BuildDir {
         }
     }
 
-    /// Makes cargo compile again every unit of a member whose files differ from what this directory last built it from, and dates every member's files to when their bytes last moved.
+    /// Makes cargo compile again every unit of a member whose files differ from what this directory last built it from, and dates every member's files back to when their bytes last moved, never forward.
+    ///
+    /// A later time would make stale what another directory built from the same bytes, and bytes this directory never built are compiled again because their units are forgotten, whatever their time.
     ///
     /// # Errors
     /// [`CargoErrorKind::BuildLedger`] when the record cannot be read, is not one this release writes, or cannot be written, when a member's file cannot be read or dated, or when a fingerprint cannot be removed.
@@ -224,15 +226,22 @@ fn member_digest(member: &Member) -> Result<String, CargoError> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// Gives a file of a member the time its member's bytes last moved, which is older than every unit built from them and newer than every unit built from anything else.
+/// Gives a file of a member the time its member's bytes last moved where that is older than the time it has, so that it is older than every unit built from those bytes; never a later time.
 fn dated(path: &Path, since: std::time::SystemTime) -> Result<(), CargoError> {
+    let refused =
+        |error: io::Error| ledger_error(format!("{} could not be dated", path.display()), error);
+    let current = match std::fs::metadata(path).and_then(|metadata| metadata.modified()) {
+        Ok(current) => current,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(refused(error)),
+    };
+    if current <= since {
+        return Ok(());
+    }
     match for_dating(path).and_then(|file| file.set_modified(since)) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(ledger_error(
-            format!("{} could not be dated", path.display()),
-            error,
-        )),
+        Err(error) => Err(refused(error)),
     }
 }
 

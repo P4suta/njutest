@@ -207,31 +207,58 @@ fn a_member_file_carries_the_time_its_member_last_moved_whoever_wrote_it_since()
             member(&tree, "b", &["b/src/lib.rs"]),
         ],
     );
+    let (written_a, written_b) = (modified(&a), modified(&b));
     dir.settle().expect("the first settling");
-    let (first_a, first_b) = (modified(&a), modified(&b));
+    let settled = std::time::SystemTime::now();
     assert_eq!(
-        first_a, first_b,
-        "both moved together, so both carry that moment"
+        (modified(&a), modified(&b)),
+        (written_a, written_b),
+        "a first settling moves no time forward: the bytes are already older than anything \
+         built from them after it"
     );
 
+    std::thread::sleep(std::time::Duration::from_millis(20));
     write(&a, "pub fn a() {}\n");
-    assert_ne!(modified(&a), first_a, "a write moves the time of a file");
+    assert!(modified(&a) > settled, "a write moves the time of a file");
     dir.settle().expect("the same bytes written again");
-    assert_eq!(
-        modified(&a),
-        first_a,
+    assert!(
+        modified(&a) <= settled,
         "the same bytes as the last build are older than it, however recently they were written"
     );
 
+    std::thread::sleep(std::time::Duration::from_millis(20));
     write(&a, "pub fn a() { }\n");
     dir.settle().expect("other bytes");
     assert!(
-        modified(&a) > first_a,
+        modified(&a) > settled,
         "other bytes are newer than every unit built from the old ones"
     );
     assert_eq!(
         modified(&b),
-        first_b,
+        written_b,
         "a member whose bytes stayed keeps its time, read-only or not"
+    );
+}
+
+#[test]
+fn a_second_directory_building_the_tree_never_makes_the_first_one_stale() {
+    let temp = tempfile::tempdir().expect("a directory");
+    let tree = temp.path().join("tree");
+    let target = temp.path().join("target");
+    let a = tree.join("a/src/lib.rs");
+    write(&a, "pub fn a() {}\n");
+    let first = BuildDir::new(target, vec![member(&tree, "a", &["a/src/lib.rs"])]);
+    first.settle().expect("the first directory settles");
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let built = std::time::SystemTime::now();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    first
+        .nested("sealed")
+        .settle()
+        .expect("a directory that has never built the tree settles");
+    assert!(
+        modified(&a) <= built,
+        "the second directory has never built these bytes, and dating them to now would make \
+         cargo in the first rebuild what it already built, under a test running beside it"
     );
 }
