@@ -131,7 +131,7 @@ fn cache_key(name: &str, parts: &[&str]) -> String {
         all.push(b':');
         all.extend_from_slice(part.as_bytes());
     }
-    format!("{name}-{}", rust_mutants_sealed::SealedDigest::of(&all).to_hex())
+    format!("{name}-{}", rust_mutants_sealed::SealedDigest::of(&all))
 }
 
 /// The flags every single-file guest is compiled with: optimized enough that recursion lives on the native stack.

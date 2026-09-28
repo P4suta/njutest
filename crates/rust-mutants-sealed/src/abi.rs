@@ -75,33 +75,6 @@ impl Errno {
             Self::Notcapable => 76,
         }
     }
-
-    /// The name WASI gives it.
-    #[must_use]
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Success => "success",
-            Self::Badf => "badf",
-            Self::Exist => "exist",
-            Self::Fault => "fault",
-            Self::Fbig => "fbig",
-            Self::Ilseq => "ilseq",
-            Self::Inval => "inval",
-            Self::Isdir => "isdir",
-            Self::Mfile => "mfile",
-            Self::Nametoolong => "nametoolong",
-            Self::Noent => "noent",
-            Self::Nospc => "nospc",
-            Self::Nosys => "nosys",
-            Self::Notdir => "notdir",
-            Self::Notempty => "notempty",
-            Self::Notsup => "notsup",
-            Self::Overflow => "overflow",
-            Self::Spipe => "spipe",
-            Self::Xdev => "xdev",
-            Self::Notcapable => "notcapable",
-        }
-    }
 }
 
 /// A file type this host never names more precisely: a stream that is neither a file nor a terminal.
