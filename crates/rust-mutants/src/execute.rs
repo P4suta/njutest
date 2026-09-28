@@ -2955,9 +2955,9 @@ pub fn targets_of(
         env.overlay(&built_by_a_script(messages, &artifact.package_id));
         let held = match harnesses.entry(package.id.clone()) {
             std::collections::btree_map::Entry::Occupied(held) => held.into_mut(),
-            std::collections::btree_map::Entry::Vacant(empty) => {
-                empty.insert(crate::cargo::manifest::harnesses(&package.manifest_path)?)
-            }
+            std::collections::btree_map::Entry::Vacant(empty) => empty.insert(
+                crate::cargo::manifest::harnesses(package.manifest_path.as_path())?,
+            ),
         };
         let harness = held
             .get(&(kind.name().to_owned(), artifact.target.name.clone()))
@@ -3084,7 +3084,7 @@ pub fn package_environment(package: &Package) -> crate::vars::Variables {
         ),
         (
             OsString::from("CARGO_MANIFEST_PATH"),
-            package.manifest_path.as_os_str().to_owned(),
+            package.manifest_path.as_path().as_os_str().to_owned(),
         ),
         (
             OsString::from("CARGO_PKG_NAME"),

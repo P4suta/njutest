@@ -377,7 +377,7 @@ fn manifests_of(workspace: &Workspace) -> Result<String, SessionError> {
         .metadata
         .packages
         .iter()
-        .map(|package| package.manifest_path.clone())
+        .map(|package| package.manifest_path.as_path().to_path_buf())
         .chain([
             root.join("Cargo.toml"),
             root.join("Cargo.lock"),

@@ -1148,13 +1148,7 @@ pub fn selected(narrowing: &Narrowing, metadata: &Metadata) -> Vec<(String, Path
         .packages
         .iter()
         .filter(|package| narrowing.holds(&package.name))
-        .filter_map(|package| {
-            let directory = package.manifest_path.parent()?;
-            if directory.as_os_str().is_empty() {
-                return None;
-            }
-            Some((package.name.clone(), directory.to_path_buf()))
-        })
+        .map(|package| (package.name.clone(), package.manifest_dir().to_path_buf()))
         .collect()
 }
 

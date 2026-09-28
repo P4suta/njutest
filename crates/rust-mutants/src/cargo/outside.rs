@@ -37,7 +37,7 @@ pub fn reaching_outside(metadata: &Metadata, root: &Path, patches: &[Patch]) -> 
             if !within(&root, &full) {
                 found.push(Outside {
                     name: dependency.name.clone(),
-                    manifest: package.manifest_path.clone(),
+                    manifest: package.manifest_path.as_path().to_path_buf(),
                     path: full,
                 });
             }

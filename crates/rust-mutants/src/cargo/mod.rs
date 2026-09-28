@@ -40,8 +40,8 @@ pub use messages::{
     names_file, parse_messages,
 };
 pub use metadata::{
-    DepKind, Dependency, Metadata, MetadataOptions, Node, NodeDep, Package, Resolve, Target,
-    metadata_arguments,
+    DepKind, Dependency, ManifestPath, ManifestPathError, Metadata, MetadataOptions, Node, NodeDep,
+    Package, Resolve, Target, metadata_arguments,
 };
 pub use outside::{Outside, reaching_outside};
 pub use version::{VersionInfo, parse_version};

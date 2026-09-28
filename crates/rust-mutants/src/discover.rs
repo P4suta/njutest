@@ -660,7 +660,7 @@ impl Assigner<'_> {
         let no_std =
             own_root && crate_root_is_freestanding(self.root, &crate_root, &target.edition)?;
         let forbidden = crate::cargo::manifest::forbidden(
-            &package.manifest_path,
+            package.manifest_path.as_path(),
             Some(&self.workspace_manifest),
         )?;
         let forbids = crate_root_forbids_guard_noise(self.root, &crate_root, &forbidden)?;
