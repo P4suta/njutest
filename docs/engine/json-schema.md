@@ -111,7 +111,8 @@ Here `cataloged` is the number of candidate rows in `mutants`, not a blanket cla
 In a filtered run, a row with `outcome: "not_run"` and `not_run_reason: "unselected"` may deliberately have skipped instrumentation and compiler validation.
 Every other outcome is about a compiler-accepted guard present in that run's build.
 
-`exit_code` is the one the process returned: `0` a sealed execution detected every mutant the run decided, `1` there is a finding and nothing is unproven, `2` something is unproven or the run itself failed, `130` it was interrupted, `143` it was terminated.
+`exit_code` is the one the process returned: `0` a sealed execution detected every mutant the run decided, `1` there is a finding and nothing is unproven, `2` something is unproven, `130` it was interrupted, `143` it was terminated.
+A command that failed, or was used wrongly, exits `3` and writes no report.
 
 A row's `exit_code` is the code its test process returned, or `-1` where no code the process chose decides anything: the run stopped it, at a bound or at the first test its harness said failed.
 A process stopped at its first failing test holds `-1` whether it exited before the stop reached it or not, since which of the two came first is the machine's timing, and a row has to read the same from two runs of one catalogue.

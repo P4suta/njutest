@@ -121,9 +121,12 @@ fn every_subcommand_has_its_own_recorded_help() {
 }
 
 #[test]
-fn no_arguments_prints_the_usage_to_stderr_and_exits_2() {
+fn no_arguments_prints_the_usage_to_stderr_and_fails() {
     let output = rust_mutants(&[]);
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants_cli::EXIT_USAGE))
+    );
     assert!(output.stdout.is_empty());
     assert!(njutest_devkit::process::strict_utf8(&output.stderr).contains("Usage:"));
 }
@@ -131,7 +134,10 @@ fn no_arguments_prints_the_usage_to_stderr_and_exits_2() {
 #[test]
 fn an_unknown_subcommand_is_a_usage_error() {
     let output = rust_mutants(&["frobnicate"]);
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants_cli::EXIT_USAGE))
+    );
     let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(
         stderr.contains("frobnicate"),

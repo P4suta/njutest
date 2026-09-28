@@ -427,7 +427,9 @@ fn the_packages_an_inventory_walks_are_the_ones_in_scope_that_have_somewhere_to_
             );
         };
         assert!(
-            refused.to_string().contains("names no file inside a directory"),
+            refused
+                .to_string()
+                .contains("names no file inside a directory"),
             "{refused}"
         );
     }

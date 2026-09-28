@@ -157,7 +157,13 @@ fn partial_mismatched_and_double_modes_are_still_refused() {
     ];
     for (name, vars, compiled) in cases {
         let said = rooted_with_catalog(&fixture, vars, *compiled);
-        assert_eq!(said.code, 2, "{name}: {}{}", said.out, said.err);
+        assert_eq!(
+            said.code,
+            rust_mutants_cli::EXIT_USAGE,
+            "{name}: {}{}",
+            said.out,
+            said.err
+        );
         assert!(said.err.contains("RM0006"), "{name}: {}", said.err);
     }
 }

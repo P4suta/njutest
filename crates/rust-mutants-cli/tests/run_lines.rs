@@ -312,7 +312,7 @@ fn cohere(document: &mut RunDocument) {
         .iter()
         .any(|finding| finding.kind.is_infrastructure())
     {
-        rust_mutants::run::EXIT_FAILED
+        rust_mutants::run::EXIT_UNESTABLISHED
     } else if document.findings.is_empty() {
         rust_mutants::run::EXIT_DETECTED
     } else {

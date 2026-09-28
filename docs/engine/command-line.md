@@ -52,6 +52,7 @@ These narrow a run, and `list`, `catalog`, `why-skipped` and `instrument` read t
 | `--jobs N\|auto\|all`, `-j` | mutants measured at once: a count, `auto` (the machine, capped at 4; the default off CI), or `all` (every processor, for a runner doing nothing else; the default under CI); `0` is refused, since `auto` says it |
 | `--timeout DURATION` | a mutant's own bound; five times the target's baseline when absent |
 | `--no-verify` | do not run the instrumented baseline first |
+| `--no-seal` | build nothing for the sealed target, so every answer is a native lead and the run is unproven |
 | `--no-doctests` | leave a library's documented examples out |
 | `--skip-target ID` | never start this target, as `pkg/kind/name`; a name the workspace declares no target for is refused (`RM5004`) |
 | `--test NAME`, `--target NAME` | one test, one test target |
@@ -98,7 +99,7 @@ A name no directory answers to is refused (`RM0007`) rather than answered from a
 The host is the one the environment names, or the one `--host` asks for; asking for GitHub outside a GitHub Actions step is refused (`RM0014`).
 
 On GitHub Actions it appends the Markdown report to the step summary, appends `verdict=`, `report=` and, with `--sarif`, `sarif=` to the step outputs, and writes one `::error` annotation per survivor no claim accounts for.
-`verdict` is `detected`, `found`, `failed` or `interrupted`, the words for exit codes 0, 1, 2 and 130.
+`verdict` is `detected`, `found`, `unproven` or `interrupted`, the words for exit codes 0, 1, 2 and 130.
 A runner shows ten error annotations per step; past that the summary says how many were shown of how many, and where all of them are.
 An annotation's file is named from the checkout `GITHUB_WORKSPACE` names, so a root outside it is refused (`RM0015`) rather than annotated where the runner cannot place it.
 With `--changed-from REV`, only the survivors on lines that differ from that revision, committed and not, are annotated, and the summary says how many others there are; a revision git cannot answer about is refused (`RM0010`).
@@ -111,7 +112,8 @@ On GitLab CI, and with `--host plain`, it writes the lines `report` writes.
 | --- | --- |
 | 0 | a sealed execution detected every mutant the run decided, or a claim about it held |
 | 1 | there is a finding about the tests, and nothing is unproven: a sealed survivor, a mutation no sealed test reached, or a stale or unmatched claim |
-| 2 | something is unproven: no sealed execution decided a mutation, so what a native run said of it is a lead; or the run could not measure a mutation it ran — it waited, reached its step limit, errored, decided nothing either way, or was not run; or the run itself failed, or the command was used wrongly |
+| 2 | something is unproven: no sealed execution decided a mutation, so what a native run said of it is a lead; or the run could not measure a mutation it ran — it waited, reached its step limit, errored, decided nothing either way, or was not run |
+| 3 | the command failed rather than answered, or was used wrongly |
 | 130 | it was interrupted |
 | 143 | it was terminated, which is what a cancelled job sends |
 

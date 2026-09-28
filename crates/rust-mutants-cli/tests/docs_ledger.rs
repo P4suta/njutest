@@ -178,7 +178,7 @@ fn the_exit_codes_the_page_documents_are_the_ones_the_run_returns() {
         .collect();
     assert_eq!(
         returned.len(),
-        5,
+        rust_mutants::run::Exit::ALL.len(),
         "every code a run can end with is in the table `--help` prints: {printed}"
     );
 
@@ -210,7 +210,7 @@ fn the_exit_codes_the_page_documents_are_the_ones_the_run_returns() {
                  whose script saw it has nowhere to look it up"
             );
         }
-        for invented in [3u8, 4, 5, 101, 131, 142] {
+        for invented in [4u8, 5, 101, 131, 142] {
             let named = table.contains(&format!("`{invented}`"))
                 || table.contains(&format!("| {invented} |"));
             assert!(

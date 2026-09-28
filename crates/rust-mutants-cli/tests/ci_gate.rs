@@ -399,7 +399,7 @@ fn a_root_outside_the_checkout_is_refused_rather_than_misplaced() {
             &os("github"),
         ],
     );
-    assert_eq!(said.code, 2, "{}", said.out);
+    assert_eq!(said.code, rust_mutants_cli::EXIT_USAGE, "{}", said.out);
     assert!(
         said.err.contains("RM0015") && said.annotations().is_empty(),
         "an annotation the runner cannot place is refused by its code, and no annotation \
@@ -422,7 +422,7 @@ fn github_asked_for_where_the_runner_named_no_files_is_refused() {
             &os("github"),
         ],
     );
-    assert_eq!(said.code, 2, "{}", said.out);
+    assert_eq!(said.code, rust_mutants_cli::EXIT_USAGE, "{}", said.out);
     assert!(
         said.err.contains("RM0014"),
         "a host that is asked for and not there is a refusal, not a plain run: {}",
@@ -562,7 +562,7 @@ fn every_verdict_is_one_code_and_one_word() {
     }
     assert_eq!(
         Verdict::ALL.map(Verdict::word),
-        ["detected", "found", "failed", "interrupted"]
+        ["detected", "found", "unproven", "interrupted"]
     );
     assert_eq!(
         Verdict::of(143),
@@ -644,7 +644,7 @@ fn a_change_git_cannot_be_asked_for_is_refused_rather_than_read_as_none() {
             &os("HEAD"),
         ],
     );
-    assert_eq!(said.code, 2, "{}", said.out);
+    assert_eq!(said.code, rust_mutants_cli::EXIT_USAGE, "{}", said.out);
     assert!(
         said.err.contains("RM0010") && said.annotations().is_empty(),
         "a checkout that is not a repository says nothing about which lines changed, and \

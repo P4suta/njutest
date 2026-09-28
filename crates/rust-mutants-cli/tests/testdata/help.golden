@@ -61,7 +61,7 @@ Exit codes:
   sealed test reached, or a stale or unmatched claim
   2    something is unproven: no sealed execution decided a mutation, so what a native run said of
   it is a lead; or the run could not measure a mutation it ran — it waited, reached its step limit,
-  errored, decided nothing either way, or was not run; or the run itself failed, or the command was
-  used wrongly
+  errored, decided nothing either way, or was not run
+  3    the command failed rather than answered, or was used wrongly
   130  it was interrupted
   143  it was terminated, which is what a cancelled job sends

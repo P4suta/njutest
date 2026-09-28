@@ -105,6 +105,10 @@ Options:
       --no-verify
           Skip the run of every target with nothing active
 
+      --no-seal
+          Build nothing for the sealed target, so that every answer is a native lead and the run is
+          unproven
+
       --coverage
           Measure once which target reached what, and run a mutant only against the targets that
           reached it

@@ -17,6 +17,7 @@ The run report is `schema_version` 4: each mutant carries `evidence`, the accoun
 A report of version 3 is refused rather than read as sealed.
 `discharged-mutant` is gone: a discharge is a proof over what a native run recorded, so it is a lead, counted in `unproven_discharged`.
 `inconclusive-mutant` exits 2 rather than 1, since a mutation the run could not decide either way is unproven.
+A command that fails, or is used wrongly, exits 3 rather than 2, which now means something is unproven; `ci gate` says `verdict=unproven` for 2 where it said `failed`.
 
 **A variable a claim's `where.env` names keys every stored answer.** The configuration declares with it that an answer may depend on the variable, so an answer measured under one value is never read back where the tests are given another ([ADR 0042](../adr/0042-a-claim-holds-where-its-facts-do.md)).
 Records move to `rust-mutants-outcome-v3` under `rust-mutants/outcomes-v3`, each carrying the declared names beside one digest of their values; the old store is not read, so the first run after upgrading starts cold, and `cache --clear-outcomes` of the release before removes what it left.
