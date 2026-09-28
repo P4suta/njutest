@@ -761,3 +761,50 @@ fn a_gate_reads_what_the_repository_holds_and_never_what_a_build_left_in_it()
         format!("the committed source is read: {production:?}"),
     )
 }
+
+#[cfg(unix)]
+#[test]
+fn a_gate_lists_the_tree_itself_rather_than_asking_a_file_system_monitor() -> Result<(), TestError>
+{
+    use std::os::unix::fs::PermissionsExt as _;
+    let root = tempfile::tempdir()?;
+    xtask::repository::init(root.path())?;
+    let asked = root.path().join(".git/monitor-asked");
+    let monitor = root.path().join(".git/monitor");
+    std::fs::write(
+        &monitor,
+        format!(
+            "#!{}\nprintf '%s\\n' \"$*\" >> '{}'\nexit 1\n",
+            njutest_devkit::paths::posix_sh().display(),
+            asked.display()
+        ),
+    )?;
+    std::fs::set_permissions(&monitor, std::fs::Permissions::from_mode(0o755))?;
+    let configured = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root.path())
+        .args(["config", "core.fsmonitor"])
+        .arg(&monitor)
+        .status()?;
+    require(configured.success(), "git config core.fsmonitor")?;
+    std::fs::create_dir_all(root.path().join("crates/app/src"))?;
+    std::fs::write(root.path().join("crates/app/src/lib.rs"), "pub fn f() {}\n")?;
+
+    let listed = xtask::repository::files(root.path()).map_err(gates::GateError::from)?;
+    require(
+        listed == ["crates/app/src/lib.rs"],
+        format!("the listing reads the tree: {listed:?}"),
+    )?;
+    let tracked = gates::tracked(root.path())?;
+    require(tracked.starts_with("tracked: "), tracked)?;
+    match std::fs::read_to_string(&asked) {
+        Err(absent) if absent.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(said) => Err(TestError::Contract(format!(
+            "a gate's listing asked the file-system monitor the repository names, which answers \
+             nothing a listing needs, is a daemon each fresh repository starts and leaves running \
+             when it is git's own, and on this machine made each listing wait a second; it was \
+             asked: {said}"
+        ))),
+        Err(unread) => Err(unread.into()),
+    }
+}

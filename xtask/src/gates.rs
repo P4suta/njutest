@@ -2106,12 +2106,8 @@ pub fn tracked(root: &Path) -> Result<String, GateError> {
             planted.join(", ")
         )));
     }
-    let mut git = std::process::Command::new("git");
-    git.arg("-C").arg(root).args(["ls-files", "-z"]);
-    for variable in REDIRECTING_GIT {
-        git.env_remove(variable);
-    }
-    let listed = git
+    let listed = crate::repository::git(root)
+        .args(["ls-files", "-z"])
         .output()
         .map_err(|error| GateError(format!("tracked: git ls-files could not run: {error}")))?;
     if !listed.status.success() {
@@ -2375,9 +2371,7 @@ struct Base {
 /// # Errors
 /// Git could not be started, or answered with a failure.
 fn git_answer(root: &Path, args: &[&str]) -> Result<String, GateError> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
+    let output = crate::repository::git(root)
         .args(args)
         .output()
         .map_err(|error| GateError(format!("ratchets: git could not run: {error}")))?;
@@ -2419,9 +2413,7 @@ impl Base {
     /// Git could not say.
     fn read(&self, root: &Path, relative: &str) -> Result<Option<String>, GateError> {
         let named = format!("{}:{relative}", self.commit);
-        let present = std::process::Command::new("git")
-            .arg("-C")
-            .arg(root)
+        let present = crate::repository::git(root)
             .args(["cat-file", "-e", &named])
             .output()
             .map_err(|error| GateError(format!("ratchets: git could not run: {error}")))?;
