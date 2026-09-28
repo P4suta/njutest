@@ -340,3 +340,65 @@ fn every_mutant_a_fixture_kills_natively_is_detected_by_a_sealed_execution_of_a_
         "the fixture's README names twelve kills; sealed executions detected {detected}, and not {undetected:?}"
     );
 }
+
+#[test]
+fn every_mutant_of_a_sealable_fixture_stands_on_sealed_executions_alone() {
+    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-simple");
+    let session = rust_mutants::workspace::Workspace::open(
+        fixture.root(),
+        rust_mutants::testkit::opening::opening(
+            &njutest_devkit::paths::cargo_binary(),
+            fixture.temp(),
+        ),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(
+        &rust_mutants::session::PrepareOptions {
+            sealing: Sealing::On,
+            ..rust_mutants::session::PrepareOptions::new(rust_mutants::rule::Tier::All)
+        },
+        &Cancel::new(),
+    )
+    .expect("prepare");
+    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
+        .expect("the sealed runner starts");
+    let bench = session.bench(&runner).expect("the bench is assembled");
+    let mut killed = 0_usize;
+    let mut other = Vec::new();
+    for mutant in session.catalog().mutants() {
+        if !session.accepted().contains(&mutant.index) {
+            continue;
+        }
+        let file = session.snapshot_root().join(&mutant.candidate.path);
+        let answer = rust_mutants::sealed::standing::answer(
+            (&bench, session.sealed()),
+            mutant,
+            &file,
+            &session.route(mutant),
+        )
+        .expect("the host runs every execution");
+        match answer.standing {
+            rust_mutants_decision::evidence::Standing::Established(verdict)
+                if matches!(
+                    verdict.found(),
+                    rust_mutants_decision::evidence::Found::Killed { .. }
+                ) =>
+            {
+                killed += 1;
+            }
+            standing => other.push((mutant.display_id.to_string(), standing)),
+        }
+    }
+    assert_eq!(
+        killed, 12,
+        "the README's twelve kills stand as sealed kills; the rest stood as {other:?}"
+    );
+    assert!(
+        other.iter().all(|(_, standing)| matches!(
+            standing,
+            rust_mutants_decision::evidence::Standing::Established(_)
+        )),
+        "every mutant of a fixture that builds and passes sealed has a verdict: {other:?}"
+    );
+}

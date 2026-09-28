@@ -190,6 +190,7 @@ fn sources_of(target: &TestTarget, units: &[Unit], packages: &[Package]) -> BTre
 }
 
 pub mod bench;
+pub mod standing;
 
 #[cfg(test)]
 mod tests;
