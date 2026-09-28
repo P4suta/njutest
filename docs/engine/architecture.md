@@ -246,6 +246,9 @@ A position where wrapping would move a value out of place — an assignment targ
 escalates to its parent expression, then to the statement.
 
 The runtime is a private `mod __rm` appended after the last line of each instrumented file ([ADR 0011](../adr/0011-the-runtime-lives-at-the-end-of-each-instrumented-file.md)).
+It is appended twice, under one name and one condition and its negation, so every target compiles exactly one of them: the module every target but `target_os = "wasi"` compiles, then the one a sealed host runs, which a build for `wasm32-wasip1` compiles in its place.
+The first is byte for byte the module the recorded instrumentation cases hold, and `tests/instrument.rs` compares what a build for any other target reads with those recordings.
+The second holds no step allowance, beat, orphan watch, schedule delay, lock, thread, clock or destructor, because the host's fuel bounds an instance and one thread runs one test; every item the two modules share is the same item, and the laws of `instrument::runtime` refuse one that drifts.
 No lint attribute is put on user code.
 The private generated support module has one exact `#[allow(dead_code, unused_qualifications)]`: one shared runtime serves files that use different subsets of it, and its collision-proof standard-library paths are deliberately fully qualified.
 A crate that `forbid`s either lint (or its `unused`/`warnings` group) is refused before instrumentation because Rust does not permit the module to lower a `forbid`.

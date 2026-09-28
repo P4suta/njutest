@@ -104,7 +104,7 @@ fn reads_through(text: &str) {
     }
 }
 
-/// Instruments `<name>.input` and compares the result with `<name>.golden`.
+/// Instruments `<name>.input` and compares what a build for any target but a sealed host's reads of the result with `<name>.golden`.
 fn golden_case(name: &str) {
     let input = std::fs::read(golden_path(&format!("{name}.input"))).expect("input");
     let source = String::from_utf8(input).expect("utf-8");
@@ -117,8 +117,46 @@ fn golden_case(name: &str) {
         count_lines(source.as_bytes()),
         "{name}: the body kept its line count"
     );
-    njutest_devkit::golden::golden(&golden_path(&format!("{name}.golden")), text.as_bytes())
-        .expect("golden");
+    njutest_devkit::golden::golden(
+        &golden_path(&format!("{name}.golden")),
+        unsealed(&text).as_bytes(),
+    )
+    .expect("golden");
+}
+
+/// The attribute that leaves the runtime every other target compiles out of a build for a sealed host.
+const UNSEALED_ONLY: &str = "#[cfg(not(target_os = \"wasi\"))]\n";
+
+/// The attribute that leaves the runtime a sealed host runs out of a build for every other target.
+const SEALED_ONLY: &str = "#[cfg(target_os = \"wasi\")]\n";
+
+/// What a build for any target but a sealed host's reads of an instrumented `text`: the file without the attribute on its runtime and without the sealed runtime appended after it.
+fn unsealed(text: &str) -> String {
+    let (body, runtime) = split_runtime(text);
+    let head = format!(
+        "#[doc(hidden)]\n{}\n",
+        rust_mutants::instrument::GENERATED_MODULE_ALLOW_ATTRIBUTE
+    );
+    let Some(native) = runtime.strip_prefix(&format!("{head}{UNSEALED_ONLY}")) else {
+        panic!(
+            "the runtime every other target compiles is the one a sealed build leaves out:\n\
+             {runtime}"
+        );
+    };
+    let Some(at) = native.find(&format!("\n{head}{SEALED_ONLY}mod ")) else {
+        panic!("the runtime a sealed host runs is appended after the other one:\n{runtime}");
+    };
+    let (native, sealed) = native.split_at(at + 1);
+    let items =
+        rust_mutants::parsing::apart(|parsing| parsing.file(sealed).map(|file| file.items.len()))
+            .expect("a thread to read on")
+            .expect("the sealed runtime reads as Rust");
+    assert_eq!(
+        items, 1,
+        "the sealed runtime is one module, and nothing a build for another target reads follows \
+         it: {sealed}"
+    );
+    format!("{body}{head}{native}")
 }
 
 /// Splits an instrumented file into the rewritten body and the appended runtime module.
@@ -500,50 +538,59 @@ fn a_checkpoint_inside_a_mutant_edit_stays_in_the_original_branch() {
 }
 
 #[test]
-fn only_the_private_generated_module_carries_the_exact_lint_exception() {
+fn only_the_private_generated_modules_carry_the_exact_lint_exception() {
     let text = instrument(
         "pub fn f(a: i32, b: i32) -> i32 {\n    a + b\n}\n\npub fn g(a: i32) -> i32 {\n    fn inner(x: i32) -> i32 { x * 2 }\n    inner(a) - 1\n}\n",
     );
-    assert_eq!(
-        text.matches("#[allow(").count(),
-        1,
-        "user functions never inherit a generated-code exception: {text}"
-    );
     let parsed = syn::parse_file(&text).expect("instrumented source parses");
-    let module = parsed
+    let modules: Vec<&syn::ItemMod> = parsed
         .items
         .iter()
-        .find_map(|item| match item {
+        .filter_map(|item| match item {
             syn::Item::Mod(module) if module.ident == "__rm" => Some(module),
             _ => None,
         })
-        .expect("the generated support module");
-    assert!(
-        matches!(module.vis, syn::Visibility::Inherited),
-        "the lint exception is confined to a private module: {:?}",
-        module.vis
-    );
-    let attributes: Vec<&syn::Attribute> = module
-        .attrs
-        .iter()
-        .filter(|attribute| attribute.path().is_ident("allow"))
         .collect();
-    assert_eq!(attributes.len(), 1, "{text}");
-    let names = attributes
-        .first()
-        .expect("the one generated allow attribute")
-        .parse_args_with(syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated)
-        .expect("the generated allow is a literal lint list")
-        .iter()
-        .map(|path| {
-            path.segments
-                .iter()
-                .map(|segment| segment.ident.to_string())
-                .collect::<Vec<_>>()
-                .join("::")
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(names, ["dead_code", "unused_qualifications"]);
+    assert_eq!(
+        modules.len(),
+        2,
+        "the runtime a sealed host runs and the one every other target compiles: {text}"
+    );
+    assert_eq!(
+        text.matches("#[allow(").count(),
+        modules.len(),
+        "user functions never inherit a generated-code exception: {text}"
+    );
+    for module in modules {
+        assert!(
+            matches!(module.vis, syn::Visibility::Inherited),
+            "the lint exception is confined to a private module: {:?}",
+            module.vis
+        );
+        let attributes: Vec<&syn::Attribute> = module
+            .attrs
+            .iter()
+            .filter(|attribute| attribute.path().is_ident("allow"))
+            .collect();
+        assert_eq!(attributes.len(), 1, "{text}");
+        let names = attributes
+            .first()
+            .expect("the one generated allow attribute")
+            .parse_args_with(
+                syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated,
+            )
+            .expect("the generated allow is a literal lint list")
+            .iter()
+            .map(|path| {
+                path.segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect::<Vec<_>>()
+                    .join("::")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["dead_code", "unused_qualifications"]);
+    }
     assert!(!text.contains("allow(warnings"), "{text}");
 }
 

@@ -298,6 +298,11 @@ Unset, or `0`, counts nothing and leaves the clock as the only bound.
 `RUST_MUTANTS_STEP_BEAT` is `<ms>@<path>`, set by the runner that watches a counted execution for quiet: a process spending a reservation of its allowance rewrites the file at most `<ms>` apart, a quarter of the window, since the state only changes when a reservation is taken ([ADR 0039](../adr/0039-a-step-is-spent-in-memory.md)).
 Anything but canonical milliseconds above zero and a path is a protocol failure.
 
+A tree built for `wasm32-wasip1`, which a sealed host runs, compiles the runtime's sealed module in place of the one these variables describe.
+The host's fuel is its bound and one thread runs one test, so that module keeps no allowance, no beat, no delay and no orphan watch.
+A process asked for one anyway — `RUST_MUTANTS_STEPS` set to anything but `0`, `RUST_MUTANTS_STEP_BEAT` set at all, or `RUST_MUTANTS_DELAY` set and nonempty — stops with status 94 and a stop line naming `sealed: an allowance`, `sealed: a beat`, or `sealed: a delay`, rather than run as though it were kept.
+Selection, faults, the crash notice, the stale-catalog stop and recording are what they are elsewhere, except that each record is written the first time its index is seen, as one whole line in one write, under `-`: the host names the one test an instance ran.
+
 Every stop the generated runtime makes first writes one line to standard error — `rust-mutants-stop-v1`, the status, the check that failed, and the operating system's code, tab-separated — and the run records that check on the errored mutant and in its trace.
 A copy of the runtime built from another catalog stops as a stale catalog wherever it meets the run, at its first boundary as at its first guard.
 A step-protocol status with no such line comes from a runtime this release did not generate, which is a stale build linked into the tree, and the run says so.
