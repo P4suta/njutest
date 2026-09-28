@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::cargo::{CargoError, Diagnostic, Message};
+use crate::cargo::{CargoError, Completion, Diagnostic, Message};
 use crate::catalog::Catalog;
 use crate::error::{self, ErrorCode};
 use crate::instrument::{FileOutput, InstrumentError};
@@ -23,8 +23,8 @@ pub struct Attempt {
     pub files: Vec<FileOutput>,
     /// Everything the compiler said.
     pub messages: Vec<Message>,
-    /// Whether every unit compiled.
-    pub success: bool,
+    /// How the build came out, as its one final record and cargo's exit code established it together.
+    pub completion: Completion,
     /// How many of the files this attempt had to write again, which is how many its condemnations changed.
     #[doc(alias = "rewritten")]
     pub written: u32,
@@ -36,7 +36,7 @@ pub trait Compile {
     ///
     /// # Errors
     /// Whatever stopped the attempt from happening at all.
-    /// A tree that merely fails to compile is a successful attempt with [`Attempt::success`] false.
+    /// A tree that merely fails to compile is a successful attempt whose [`Attempt::completion`] is [`Completion::Refused`].
     fn attempt(&mut self, condemned: &BTreeSet<u32>) -> Result<Attempt, ValidateError>;
 }
 
@@ -318,16 +318,19 @@ fn validate_set(
         }
         let attempt = cancelled_or(compile.attempt(&condemned), cancel)?;
         rounds = checked_add(rounds, 1, "validation rounds")?;
-        if attempt.success {
-            trace.validate_round(ValidateRoundRecord {
-                round: rounds,
-                condemned: exact_count(condemned.len(), "condemned mutants")?,
-                success: true,
-                attributed: Vec::new(),
-                unattributed: Vec::new(),
-                written: attempt.written,
-            });
-            break;
+        match attempt.completion {
+            Completion::Built => {
+                trace.validate_round(ValidateRoundRecord {
+                    round: rounds,
+                    condemned: exact_count(condemned.len(), "condemned mutants")?,
+                    success: true,
+                    attributed: Vec::new(),
+                    unattributed: Vec::new(),
+                    written: attempt.written,
+                });
+                break;
+            }
+            Completion::Refused => {}
         }
         let attributed = attribute(&attempt.files, &attempt.messages);
         trace.validate_round(ValidateRoundRecord {
@@ -476,10 +479,13 @@ fn settle(
     }
     let live: Vec<u32> = all.difference(condemned).copied().collect();
     let pristine = compile.attempt(all)?;
-    if !pristine.success {
-        return Err(ValidateError::NotMutantInduced {
-            first: first_error(&pristine.messages),
-        });
+    match pristine.completion {
+        Completion::Built => {}
+        Completion::Refused => {
+            return Err(ValidateError::NotMutantInduced {
+                first: first_error(&pristine.messages),
+            });
+        }
     }
     let mut isolation = Isolation {
         compile,
@@ -513,8 +519,9 @@ fn settle(
     finally.extend(offenders);
     let last = compile.attempt(&finally)?;
     settled.rounds = checked_add(settled.rounds, 1, "settling rounds")?;
-    if last.success {
-        return Ok(settled);
+    match last.completion {
+        Completion::Built => return Ok(settled),
+        Completion::Refused => {}
     }
     let again = attribute(&last.files, &last.messages);
     if again.condemned.is_subset(&finally) {
@@ -609,7 +616,10 @@ struct Alone {
 impl Isolation<'_> {
     /// Whether a tree holding only `live` fails to compile.
     fn fails(&mut self, live: &[u32]) -> Result<bool, ValidateError> {
-        Ok(!self.only(live)?.success)
+        Ok(match self.only(live)?.completion {
+            Completion::Built => false,
+            Completion::Refused => true,
+        })
     }
 
     /// One compilation with only `live` in the tree.
@@ -625,8 +635,9 @@ impl Isolation<'_> {
     /// Compiles one offence on its own so its own diagnostic can be kept.
     fn alone(&mut self, offence: &[u32]) -> Result<Alone, ValidateError> {
         let attempt = self.only(offence)?;
-        if attempt.success {
-            return Ok(Alone::default());
+        match attempt.completion {
+            Completion::Built => return Ok(Alone::default()),
+            Completion::Refused => {}
         }
         let attributed = attribute(&attempt.files, &attempt.messages);
         let mut alone = Alone {

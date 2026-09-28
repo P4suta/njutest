@@ -2892,11 +2892,14 @@ pub fn build(
             build: options.build.clone(),
         },
     )?;
-    if !compiled.success {
-        return Err(CargoError::new(
-            CargoErrorKind::CommandFailed,
-            "the test binaries could not be built",
-        ));
+    match compiled.completion() {
+        crate::cargo::Completion::Built => {}
+        crate::cargo::Completion::Refused => {
+            return Err(CargoError::new(
+                CargoErrorKind::CommandFailed,
+                "the test binaries could not be built",
+            ));
+        }
     }
     targets_of(&compiled.messages, packages, options.target_dir.path())
 }

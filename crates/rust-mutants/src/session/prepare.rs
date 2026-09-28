@@ -65,12 +65,11 @@ pub(super) fn pristine(
             build: options.build.clone(),
         },
     )?;
-    if checked.success {
-        Ok(checked)
-    } else {
-        Err(EngineError::from(SessionError::PristineBroken {
+    match checked.completion() {
+        crate::cargo::Completion::Built => Ok(checked),
+        crate::cargo::Completion::Refused => Err(EngineError::from(SessionError::PristineBroken {
             first: crate::validate::first_error_of(&checked.messages),
-        }))
+        })),
     }
 }
 
@@ -1509,8 +1508,8 @@ impl Compile for TreeCompiler<'_> {
                 build: self.build.clone(),
             },
         )?;
-        let success = compiled.success;
-        if success {
+        let completion = compiled.completion();
+        if completion == crate::cargo::Completion::Built {
             self.last_build.clone_from(&compiled.messages);
             self.compared = files
                 .iter()
@@ -1528,7 +1527,7 @@ impl Compile for TreeCompiler<'_> {
         Ok(Attempt {
             files,
             messages: compiled.messages,
-            success,
+            completion,
             written,
         })
     }

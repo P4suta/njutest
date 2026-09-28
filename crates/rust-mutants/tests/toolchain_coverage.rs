@@ -91,7 +91,11 @@ fn measure(fixture: &str, test: &str) -> Measured {
         },
     )
     .expect("build");
-    assert!(built.success, "the instrumented fixture builds");
+    assert_eq!(
+        built.completion(),
+        rust_mutants::cargo::Completion::Built,
+        "the instrumented fixture builds"
+    );
     let executable = built
         .messages
         .iter()

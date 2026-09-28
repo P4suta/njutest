@@ -173,8 +173,9 @@ impl Prover {
             ..CompileOptions::new(self.workspace.build_dir().nested("equivalence"))
         };
         let built = compile(&self.workspace.driver(cancel), &options)?;
-        if !built.success {
-            return Ok(None);
+        match built.completion() {
+            crate::cargo::Completion::Built => {}
+            crate::cargo::Completion::Refused => return Ok(None),
         }
         let targets = targets_of(
             &built.messages,

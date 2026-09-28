@@ -247,12 +247,15 @@ fn checked_until_compiled(
         let Some(Ok(checked)) = checked else {
             return Ok(None);
         };
-        if checked.success {
-            return Ok(Some(Vouching {
-                written,
-                refused,
-                checks,
-            }));
+        match checked.completion() {
+            crate::cargo::Completion::Built => {
+                return Ok(Some(Vouching {
+                    written,
+                    refused,
+                    checks,
+                }));
+            }
+            crate::cargo::Completion::Refused => {}
         }
         let round = refusal(&written.files, &checked.messages);
         if !round.accounts_for_a_failure() {

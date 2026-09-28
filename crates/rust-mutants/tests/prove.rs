@@ -309,7 +309,7 @@ fn a_message_that_is_not_an_error_does_not_stop_the_rule_reading_the_rest() {
     let refused = rust_mutants::prove::refusal(
         &written(),
         &[
-            rust_mutants::cargo::Message::BuildFinished { success: false },
+            rust_mutants::cargo::Message::BuildFinished(rust_mutants::cargo::Finished::new(false)),
             warning,
             rust_mutants::testkit::compile::diagnostic_at("src/lib.rs", 12, 13, 7),
         ],

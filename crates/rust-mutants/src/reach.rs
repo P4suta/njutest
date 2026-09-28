@@ -167,8 +167,11 @@ fn measure(
     let Ok(built) = built else {
         return Ok(refused(Limitation::CoverageBuildFailed, trace));
     };
-    if !built.success {
-        return Ok(refused(Limitation::CoverageBuildFailed, trace));
+    match built.completion() {
+        crate::cargo::Completion::Built => {}
+        crate::cargo::Completion::Refused => {
+            return Ok(refused(Limitation::CoverageBuildFailed, trace));
+        }
     }
     let targets = execute::startable(
         &execute::targets_of(&built.messages, &workspace.metadata.packages, &target_dir)?,

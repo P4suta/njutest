@@ -320,12 +320,14 @@ pub fn command_failed(spec: &Spec, result: &crate::runner::RunResult) -> CargoEr
         crate::runner::Termination::Cancelled { .. } => {
             format!("{} was cancelled", argv.join(" "))
         }
-        crate::runner::Termination::Exited(exit) => {
-            let status = match exit.conventional_code() {
-                Some(code) => code.to_string(),
-                None => String::from("an unknown status"),
-            };
-            format!("{} exited with {status}", argv.join(" "))
+        crate::runner::Termination::Exited(crate::runner::ProcessExit::Code(code)) => {
+            format!("{} exited with {code}", argv.join(" "))
+        }
+        crate::runner::Termination::Exited(crate::runner::ProcessExit::Signal(signal)) => {
+            format!("{} was ended by signal {signal}", argv.join(" "))
+        }
+        crate::runner::Termination::Exited(crate::runner::ProcessExit::Unknown) => {
+            format!("{} exited with an unknown status", argv.join(" "))
         }
     };
     if !said.is_empty() {

@@ -288,9 +288,9 @@ fn a_pristine_tree_that_does_not_compile_is_not_the_mutants_fault() {
                 files: Vec::new(),
                 messages: vec![
                     diagnostic_at("src/lib.rs", 0, 1, 0),
-                    Message::BuildFinished { success: false },
+                    Message::BuildFinished(rust_mutants::cargo::Finished::new(false)),
                 ],
-                success: false,
+                completion: rust_mutants::cargo::Completion::Refused,
                 written: 0,
             })
         }
@@ -560,7 +560,7 @@ fn a_message_before_an_error_does_not_stop_the_reading_of_the_rest() {
     let after = attribute(
         &[file],
         &[
-            Message::BuildFinished { success: false },
+            Message::BuildFinished(rust_mutants::cargo::Finished::new(false)),
             Message::CompilerMessage(warning),
             at(branch.index),
         ],

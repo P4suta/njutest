@@ -104,7 +104,11 @@ fn prepare(fixture: &str) -> Tree {
         },
     )
     .expect("check");
-    assert!(checked.success, "the pristine copy compiles");
+    assert_eq!(
+        checked.completion(),
+        rust_mutants::cargo::Completion::Built,
+        "the pristine copy compiles"
+    );
 
     let discovery = discover(
         &Input {

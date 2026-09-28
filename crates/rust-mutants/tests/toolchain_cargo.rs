@@ -551,7 +551,8 @@ fn a_check_that_fails_to_compile_still_yields_its_messages() {
     );
     assert!(matches!(
         messages.last(),
-        Some(Message::BuildFinished { success: false })
+        Some(Message::BuildFinished(finished))
+            if *finished == rust_mutants::cargo::Finished::new(false)
     ));
 }
 
