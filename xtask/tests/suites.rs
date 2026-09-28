@@ -14,19 +14,50 @@ use std::path::{Path, PathBuf};
 /// The one test file of a crate whose subject is the committed tree rather than code, a binary apart from the suite so a measurement that rewrites the tree can leave it out.
 const THIS_REPOSITORY: &str = "this_repository.rs";
 
-/// The crates whose integration tests are one suite plus a binary per toolchain test.
-const SUITED: [&str; 5] = [
-    "crates/njutest",
-    "crates/rust-mutants",
-    "crates/rust-mutants-cli",
-    "crates/njutest-devkit",
-    "xtask",
-];
+/// The members whose integration tests keep a layout of their own, each with why.
+const APART: [(&str, &str); 1] = [(
+    "crates/njutest-macros",
+    "trybuild reads its compile-fail cases from tests/ui, and all_variants.rs is the one binary \
+     that drives them",
+)];
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+}
+
+/// Every member keeping integration tests but the ones kept apart, as a directory relative to the root, read from cargo so the crate added next is held to the law the day it arrives.
+fn suited(root: &Path) -> Vec<String> {
+    let canonical = std::fs::canonicalize(root).expect("the workspace root resolves");
+    let keeping: Vec<String> = njutest_devkit::census::members(root)
+        .into_iter()
+        .filter(|member| !member.suites().is_empty())
+        .map(|member| {
+            let directory = std::fs::canonicalize(&member.directory).expect("a member resolves");
+            directory
+                .strip_prefix(&canonical)
+                .expect("a member lies inside the workspace")
+                .to_str()
+                .expect("a member directory is named in UTF-8")
+                .replace('\\', "/")
+        })
+        .collect();
+    for (apart, why) in APART {
+        assert!(
+            keeping.iter().any(|member| member == apart),
+            "{apart} is kept apart because {why}, and it is no member keeping integration tests"
+        );
+    }
+    let suited: Vec<String> = keeping
+        .into_iter()
+        .filter(|member| !APART.iter().any(|(apart, _why)| apart == member))
+        .collect();
+    assert!(
+        suited.len() > 3,
+        "the crates are read from cargo, and this found almost none: {suited:?}"
+    );
+    suited
 }
 
 fn read(path: &Path) -> String {
@@ -67,7 +98,8 @@ fn quoted_after(text: &str, marker: &str) -> Vec<String> {
 fn every_test_file_is_compiled_by_the_suite_or_as_a_toolchain_binary() {
     let root = root();
     let mut refused = Vec::new();
-    for crate_dir in SUITED {
+    for crate_dir in suited(&root) {
+        let crate_dir = crate_dir.as_str();
         let manifest = read(&root.join(crate_dir).join("Cargo.toml"));
         if !manifest
             .lines()
