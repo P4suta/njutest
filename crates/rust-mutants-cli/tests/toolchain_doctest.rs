@@ -190,3 +190,64 @@ fn a_library_without_examples_costs_no_run() {
         "and a target that answers nothing must not be what decides a mutation: {document}"
     );
 }
+
+fn events(directory: &std::path::Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(directory.join("trace.jsonl"))
+        .expect("the recording")
+        .lines()
+        .map(|line| njutest_devkit::strictjson::decode_str(line).expect("a trace event"))
+        .collect()
+}
+
+#[test]
+fn running_the_documentation_again_rebuilds_nothing() {
+    let fixture = Fixture::copy("fixture-doctest");
+    let directory = fixture.temp().join("recording");
+    let output = against(
+        &fixture,
+        &["--no-seal", &format!("--trace={}", directory.display())],
+    );
+    assert!(
+        output
+            .status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
+        "{}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let documentation: Vec<serde_json::Value> = events(&directory)
+        .into_iter()
+        .filter(|event| event["payload"]["type"].as_str() == Some("exec"))
+        .filter(|event| {
+            let argv = event["payload"]["exec"]["argv"].as_array();
+            argv.is_some_and(|argv| {
+                argv.iter().any(|arg| arg.as_str() == Some("--doc"))
+                    && !argv
+                        .iter()
+                        .any(|arg| arg.as_str() == Some(rust_mutants::sealed::TARGET))
+            })
+        })
+        .collect();
+    assert!(
+        documentation.len() > 1,
+        "the documentation ran natively for its baseline and for a mutant"
+    );
+    for exec in documentation.iter().skip(1) {
+        let printed = std::fs::read_to_string(
+            directory.join(
+                exec["payload"]["exec"]["output_path"]
+                    .as_str()
+                    .expect("a path"),
+            ),
+        )
+        .expect("the recorded output");
+        assert!(
+            !printed
+                .lines()
+                .any(|line| line.trim_start().starts_with("Compiling ")),
+            "a documentation run after the first that compiles the library again is a build the \
+             tests did not run against, and it rewrites the files a test running beside it \
+             reads:\n{printed}"
+        );
+    }
+}

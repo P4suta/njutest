@@ -511,7 +511,7 @@ fn built_untraced(building: &Building<'_>) -> Result<Built, EngineError> {
         targets.extend(execute::documentation_targets(
             &members,
             workspace.toolchain.cargo(),
-            &documentation_arguments(workspace),
+            &documentation_arguments(workspace, &options.build),
         ));
     }
     let built: Vec<crate::trace::TargetRecord> = targets
@@ -617,7 +617,10 @@ fn excluded(targets: &mut Vec<TestTarget>, verified: &Verified, options: &Prepar
 }
 
 /// What cargo is told before the documentation examples' own arguments, so that running them reuses the build this session already made.
-fn documentation_arguments(workspace: &Workspace) -> Vec<std::ffi::OsString> {
+fn documentation_arguments(
+    workspace: &Workspace,
+    build: &crate::cargo::BuildConfig,
+) -> Vec<std::ffi::OsString> {
     let mut args = vec![
         std::ffi::OsString::from("--target-dir"),
         workspace.target_dir.clone().into_os_string(),
@@ -628,6 +631,12 @@ fn documentation_arguments(workspace: &Workspace) -> Vec<std::ffi::OsString> {
     if workspace.offline {
         args.push(std::ffi::OsString::from("--offline"));
     }
+    args.extend(
+        build
+            .cargo_arguments()
+            .into_iter()
+            .map(std::ffi::OsString::from),
+    );
     args
 }
 

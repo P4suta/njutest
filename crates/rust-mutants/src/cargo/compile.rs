@@ -114,6 +114,14 @@ impl BuildConfig {
         args
     }
 
+    /// Every argument that decides what a build of the tree is: this configuration's own, and what tells cargo to write no debug information, which every cargo command that builds the tree has to pass alike or rebuild what another built.
+    #[must_use]
+    pub fn cargo_arguments(&self) -> Vec<String> {
+        let mut args = self.arguments();
+        args.extend(self.without_debug_information());
+        args
+    }
+
     /// What tells cargo to write no debug information, when nothing asked for any.
     pub(crate) fn without_debug_information(&self) -> Vec<String> {
         if self.debug || self.profile.is_some() {
@@ -185,11 +193,10 @@ pub fn compile_arguments(options: &CompileOptions) -> Vec<OsString> {
         args.push(OsString::from("--profile"));
         args.push(OsString::from("test"));
     }
-    args.extend(options.build.arguments().into_iter().map(OsString::from));
     args.extend(
         options
             .build
-            .without_debug_information()
+            .cargo_arguments()
             .into_iter()
             .map(OsString::from),
     );
