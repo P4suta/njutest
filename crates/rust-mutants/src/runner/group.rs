@@ -227,11 +227,10 @@ fn lead(command: &mut Command) {
 #[cfg(not(unix))]
 const fn lead(_command: &mut Command) {}
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::GroupChild;
 
-    #[cfg(unix)]
     #[test]
     fn a_child_that_has_been_reaped_leads_no_group() {
         let mut ended =
@@ -247,7 +246,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn stopping_a_group_whose_leader_has_already_exited_is_no_failure() {
         let mut ended =
@@ -262,7 +260,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_child_left_running_is_stopped_and_reaped_when_it_is_dropped() {
         let mut command = std::process::Command::new("sleep");
