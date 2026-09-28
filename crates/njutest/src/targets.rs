@@ -424,11 +424,21 @@ impl TargetError {
     }
 }
 
-/// Asks a built binary what tests it holds.
+/// The tests a built binary holds: the whole binary where its manifest says it brings its own harness, which is decided before anything is started, and what libtest lists otherwise.
 ///
 /// # Errors
-/// [`TargetErrorKind::ListFailed`] when the binary could not be started at all, which is not the same as a binary that answered differently.
+/// [`TargetErrorKind::ListFailed`] when a libtest binary could not be started or asked, or answered with something other than a listing.
 pub fn enumerate(unit: &Unit, watch: Watch<'_>) -> Result<Vec<Target>, TargetError> {
+    if !unit.harness {
+        return whole_binary(unit)
+            .map(|target| vec![target])
+            .map_err(|error| TargetError::list(unit, error));
+    }
+    libtest_listing(unit, watch)
+}
+
+/// Asks a binary that implements libtest's listing protocol what tests it holds.
+fn libtest_listing(unit: &Unit, watch: Watch<'_>) -> Result<Vec<Target>, TargetError> {
     let mut spec = Spec::new(
         [
             unit.executable.as_os_str().to_owned(),
@@ -458,11 +468,6 @@ pub fn enumerate(unit: &Unit, watch: Watch<'_>) -> Result<Vec<Target>, TargetErr
         ));
     }
     if !listed.succeeded() {
-        if !unit.harness {
-            return whole_binary(unit)
-                .map(|target| vec![target])
-                .map_err(|error| TargetError::list(unit, error));
-        }
         return Err(TargetError::invalid(
             &unit.name,
             format!(
