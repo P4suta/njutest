@@ -6,11 +6,11 @@
 use std::num::NonZeroU64;
 
 use rust_mutants_sealed::{
-    Arguments, Environment, EnvironmentFault, Invocation, PreopenFault, Preopens, SealedError,
-    Snapshot, SnapshotBuilder,
+    Arguments, Environment, EnvironmentFault, Invocation, PreopenFault, Preopens, SealedDigest,
+    SealedError, Snapshot, SnapshotBuilder,
 };
 
-use crate::common::{command, invocation, run, snapshot};
+use crate::common::{command, invocation, run, runner, snapshot};
 
 #[test]
 fn an_argument_holding_nul_is_refused_by_its_place() {
@@ -126,4 +126,28 @@ fn every_input_moves_the_invocation_digest() {
     }
     let other_module = command(&["sched_yield"], "", "(drop (call $sched_yield))");
     assert_ne!(*run(&other_module, &base).invocation(), reference);
+}
+
+#[test]
+fn a_module_is_named_by_the_digest_of_its_bytes_and_a_runner_by_its_configuration() {
+    let bytes = command(&[], "", "");
+    let one = runner();
+    let other = runner();
+    assert_eq!(
+        one.configuration(),
+        other.configuration(),
+        "two runners on one machine are one configuration"
+    );
+    let module = one.prepare(&bytes).expect("a valid command");
+    assert_eq!(*module.digest(), SealedDigest::of(&bytes));
+    let other_bytes = command(&["sched_yield"], "", "(drop (call $sched_yield))");
+    assert_ne!(*module.digest(), SealedDigest::of(&other_bytes));
+    let spelled = module.digest().to_string();
+    assert_eq!(spelled.len(), 64, "{spelled}");
+    assert!(
+        spelled
+            .chars()
+            .all(|character| matches!(character, '0'..='9' | 'a'..='f')),
+        "{spelled} is lowercase hexadecimal"
+    );
 }

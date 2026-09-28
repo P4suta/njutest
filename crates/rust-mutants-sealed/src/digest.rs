@@ -24,12 +24,6 @@ impl SealedDigest {
         &self.0
     }
 
-    /// The digest in lowercase hexadecimal.
-    #[must_use]
-    pub fn to_hex(self) -> String {
-        hex::encode(self.0)
-    }
-
     /// The first eight bytes of the digest as a little-endian number.
     pub(crate) const fn leading_number(&self) -> u64 {
         let [
