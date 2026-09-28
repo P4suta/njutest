@@ -287,6 +287,8 @@ Every offence bisection names is then compiled once more on its own, so the repo
 A row says `isolated` when the compiler refused it alone, and names the mutants it was refused with when it did not.
 
 A build nobody waited for is a cancellation and not a tree that does not compile: `Ctrl-C` during a round ends validation with `RM0001`, and nothing is condemned on the strength of what a half-finished command printed.
+The same holds of every build either product runs: how it came out is `cargo::Completion`, which exists only where cargo exited with a code of its own and printed exactly one `build-finished` record, last, that agrees with that code.
+A cargo ended by a signal, one that exited without the record, or a record that says what the exit code does not is a failed command or an unreadable stream, never a compiler that refused the tree.
 
 ## Skips, stated
 

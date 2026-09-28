@@ -289,7 +289,7 @@ A `K/N` shard owns dense catalog indices whose index modulo `N` is `K - 1`.
 A part concludes `PARTIAL`; only a complete, non-overlapping set of all parts can be merged into an unsharded verdict.
 The merge re-derives accounting,
 findings and verdict from the union instead of adding claims from the parts.
-A run judges an expectation only on the mutations it decided: not those another part holds, a selection such as `--file` left out, or a stop came before.
+A run judges an expectation only on the mutations it decided: not those another part holds, a selection such as `--file` left out, a stop came before, or every test that reached them declined to measure ([ADR 0043](adr/0043-a-test-may-decline-to-measure.md)).
 A change set (`--changed`, `--changed-from`) builds the catalog from the files it names alone, so a claim on another file resolves to nothing there; it too is `unjudged`, while a claim on a file the change set kept that names nothing is still `unmatched`.
 One that decided none of them says `unjudged`, which is neither met nor contradicted and earns no finding, so a run over one file is not failed by claims about another.
 A `count` spread across parts is therefore checked by the parts together;

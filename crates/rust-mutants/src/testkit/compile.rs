@@ -12,11 +12,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::cargo::{CargoError, CargoErrorKind, Message};
+use crate::cargo::{CargoError, CargoErrorKind, Completion, Exited, Finished, Message};
 use crate::catalog::{Builder, Catalog};
 use crate::instrument::{Placement, instrument_file, plan_file};
 use crate::rule::{Registry, Tier};
-use crate::runner::Cancel;
+use crate::runner::{Cancel, ProcessExit, Termination};
 use crate::syntax::{Selection, discover_file};
 use crate::validate::{Attempt, Compile, ValidateError};
 
@@ -170,11 +170,19 @@ impl Compile for ScriptedCompile {
             messages.push(diagnostic_at(&self.path, 0, 1, u32::MAX));
         }
         let success = messages.is_empty();
-        messages.push(Message::BuildFinished { success });
+        messages.push(Message::BuildFinished(Finished::new(success)));
+        let ended = Termination::Exited(ProcessExit::Code(if success { 0 } else { 101 }));
+        let exited = Exited::of(&ended).ok_or_else(|| ValidateError::AttemptFailed {
+            message: "a status code is an exit of its own".to_owned(),
+        })?;
+        let completion =
+            Completion::of(&messages, exited).map_err(|error| ValidateError::AttemptFailed {
+                message: error.to_string(),
+            })?;
         Ok(Attempt {
             files: vec![file],
             messages,
-            success,
+            completion,
             written: 1,
         })
     }

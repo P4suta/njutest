@@ -25,7 +25,8 @@ use crate::trace::Recorder;
 pub use build_identity::{BUILD_SELECTION_DOMAIN, BuildSelection, BuildSelectionDigest};
 pub use built::{BuildDir, LEDGER_NAME, LEDGER_SCHEMA, Member, MemberFile, fingerprint_of};
 pub use compile::{
-    BuildConfig, Compilation, CompileKind, CompileOptions, Compiled, compile, compile_arguments,
+    BuildConfig, Compilation, CompileKind, CompileOptions, Compiled, Completion, CompletionError,
+    Exited, compile, compile_arguments,
 };
 pub use depinfo::{
     Emitted, Unit, compile_time_inputs, dep_info_path, emitted_of, env_deps, every_unit_of,
@@ -36,7 +37,7 @@ pub use locate::{
     ForTests, LocateOptions, Selecting, Toolchain, command_failed, resolve_executable,
 };
 pub use messages::{
-    Artifact, BuildScript, CompilerMessage, Diagnostic, DiagnosticSpan, Message, Profile,
+    Artifact, BuildScript, CompilerMessage, Diagnostic, DiagnosticSpan, Finished, Message, Profile,
     names_file, parse_messages,
 };
 pub use metadata::{

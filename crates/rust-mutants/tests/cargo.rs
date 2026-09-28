@@ -12,15 +12,16 @@
 
 use std::path::{Path, PathBuf};
 
+use njutest_devkit::fake_cargo::{Installed, Invocation, Script, install};
 use njutest_devkit::result::{
     OptionState::Present,
     ResultState::{Refused, Returned},
     option_state, result_state,
 };
 use rust_mutants::cargo::{
-    BuildConfig, BuildDir, CargoError, CargoErrorKind, CompileKind, CompileOptions, Diagnostic,
-    LocateOptions, Message, Metadata, Toolchain, compile_arguments, dep_info_path, env_deps,
-    parse_dep_info, parse_messages, parse_version, resolve_executable,
+    BuildConfig, BuildDir, CargoError, CargoErrorKind, CompileKind, CompileOptions, Completion,
+    Diagnostic, Finished, LocateOptions, Message, Metadata, Toolchain, compile_arguments,
+    dep_info_path, env_deps, parse_dep_info, parse_messages, parse_version, resolve_executable,
 };
 use rust_mutants::runner::Cancel;
 
@@ -147,7 +148,7 @@ fn metadata_json_is_parsed_into_packages_and_targets() {
                 t.name.as_str(),
                 t.is_proc_macro(),
                 t.is_custom_build(),
-                t.harness,
+                t.test,
             )
         })
         .collect();
@@ -156,7 +157,7 @@ fn metadata_json_is_parsed_into_packages_and_targets() {
         [
             ("demo", false, false, true),
             ("demo_macros", true, false, false),
-            ("build-script-build", false, true, true),
+            ("build-script-build", false, true, false),
         ]
     );
     assert!(demo.targets[0].is_lib());
@@ -241,7 +242,7 @@ fn other_message_kinds_are_typed_and_a_line_that_is_not_one_is_refused() {
     assert!(matches!(&messages[3], Message::Other { reason } if reason == "something-new"));
     assert!(matches!(
         &messages[4],
-        Message::BuildFinished { success: false }
+        Message::BuildFinished(finished) if *finished == Finished::new(false)
     ));
 
     let error =
@@ -291,24 +292,343 @@ fn dep_info_lists_the_prerequisites_of_the_first_rule_with_escapes_undone() {
 }
 
 #[test]
-fn the_dep_info_file_sits_beside_the_artifact_without_the_lib_prefix() {
+fn the_dep_info_file_sits_beside_the_artifact_without_the_lib_prefix_of_a_library() {
+    for (artifact, target, dep_info) in [
+        (
+            "/t/debug/deps/libdemo-abc.rmeta",
+            "demo",
+            "/t/debug/deps/demo-abc.d",
+        ),
+        (
+            "/t/debug/deps/demo_bin-abc.rmeta",
+            "demo-bin",
+            "/t/debug/deps/demo_bin-abc.d",
+        ),
+        (
+            "/t/debug/deps/libdemo-abc.rlib",
+            "demo",
+            "/t/debug/deps/demo-abc.d",
+        ),
+        ("/t/debug/deps/demo-abc", "demo", "/t/debug/deps/demo-abc.d"),
+        (
+            "/t/debug/deps/liblibrary.rlib",
+            "library",
+            "/t/debug/deps/library.d",
+        ),
+        (
+            "/t/debug/deps/library-abc",
+            "library",
+            "/t/debug/deps/library-abc.d",
+        ),
+        (
+            "/t/debug/deps/libtest_x-abc",
+            "libtest-x",
+            "/t/debug/deps/libtest_x-abc.d",
+        ),
+        (
+            "/t/debug/deps/libdemo_x-abc.rlib",
+            "demo",
+            "/t/debug/deps/libdemo_x-abc.d",
+        ),
+    ] {
+        assert_eq!(
+            dep_info_path(Path::new(artifact), target),
+            Some(PathBuf::from(dep_info)),
+            "{artifact} of {target}"
+        );
+    }
+    assert_eq!(dep_info_path(Path::new("/"), "demo"), None);
+}
+
+#[test]
+fn a_unit_whose_name_begins_with_lib_is_read_from_the_dep_info_rustc_wrote_for_it() {
+    let root = tempfile::tempdir().unwrap_or_else(|error| panic!("a directory: {error}"));
+    let deps = root.path().join("target").join("debug").join("deps");
+    std::fs::create_dir_all(&deps).unwrap_or_else(|error| panic!("deps: {error}"));
+    let source = root.path().join("src").join("library.rs");
+    for (kind, name, output, executable, dep_info) in [
+        ("test", "library", "library-abc", true, "library-abc.d"),
+        ("bin", "libretto", "libretto-abc", true, "libretto-abc.d"),
+        (
+            "lib",
+            "library",
+            "liblibrary-def.rlib",
+            false,
+            "library-def.d",
+        ),
+    ] {
+        let output = deps.join(output);
+        std::fs::write(&output, b"").unwrap_or_else(|error| panic!("output: {error}"));
+        std::fs::write(
+            deps.join(dep_info),
+            format!("{}: {}\n", output.display(), source.display()),
+        )
+        .unwrap_or_else(|error| panic!("dep-info: {error}"));
+        let message = serde_json::json!({
+            "reason": "compiler-artifact",
+            "package_id": "path+file:///w/library#0.1.0",
+            "manifest_path": root.path().join("Cargo.toml"),
+            "target": {
+                "kind": [kind], "crate_types": [if kind == "lib" { "lib" } else { "bin" }],
+                "name": name, "src_path": source, "edition": "2024",
+                "doc": false, "doctest": false, "test": true
+            },
+            "profile": {
+                "opt_level": "0", "debuginfo": 2, "debug_assertions": true,
+                "overflow_checks": true, "test": kind == "test"
+            },
+            "features": [],
+            "filenames": [output],
+            "executable": if executable { serde_json::json!(output) } else { serde_json::Value::Null },
+            "fresh": false
+        });
+        let messages = parse_messages(format!("{message}\n").as_bytes())
+            .unwrap_or_else(|error| panic!("the artifact message parses: {error}"));
+        let units = rust_mutants::cargo::units_of(&messages, root.path()).unwrap_or_else(|error| {
+            panic!(
+                "the {kind} target {name} is read from {dep_info}, which rustc wrote beside {}: \
+                 {error}",
+                output.display()
+            )
+        });
+        assert_eq!(
+            units
+                .iter()
+                .map(|unit| unit.sources.clone())
+                .collect::<Vec<_>>(),
+            [vec![source.clone()]],
+            "{kind} {name}"
+        );
+    }
+}
+
+const CARGO_BANNER: &str = "cargo 1.98.0 (abc 2026-08-05)\nrelease: 1.98.0\ncommit-hash: abc\ncommit-date: 2026-08-05\nhost: x86_64-unknown-linux-gnu\n";
+const RUSTC_BANNER: &str = "rustc 1.98.0 (abc 2026-08-05)\nbinary: rustc\nrelease: 1.98.0\nhost: x86_64-unknown-linux-gnu\nLLVM version: 20.1.0\n";
+
+/// The fake toolchain every compilation below is asked of, answering `cargo check` as `check` does.
+fn fake_toolchain(check: Invocation) -> Installed {
+    install(
+        &Script::new()
+            .answering(Invocation::new("cargo", &["-vV"]).printing(CARGO_BANNER))
+            .answering(Invocation::new("rustc", &["-vV"]).printing(RUSTC_BANNER))
+            .answering(
+                Invocation::new("rustc", &["--print", "sysroot"])
+                    .printing("/nonexistent/sysroot\n"),
+            )
+            .answering(check),
+    )
+}
+
+/// A directory for one compilation, and the toolchain the cargo of `installed` answers as from it.
+fn fake_located(installed: &Installed) -> (tempfile::TempDir, Toolchain) {
+    let dir = tempfile::tempdir().unwrap_or_else(|error| panic!("a directory: {error}"));
+    let toolchain = Toolchain::locate(
+        &LocateOptions {
+            cargo: Some(installed.cargo()),
+            search_path: None,
+            env: Some(installed.env().into_iter().collect()),
+        },
+        dir.path(),
+        &Cancel::new(),
+    )
+    .unwrap_or_else(|error| panic!("the fake answers as a toolchain: {error}"));
+    (dir, toolchain)
+}
+
+/// What `compile` makes of a check the cargo of `installed` answers.
+fn compiled_by(installed: &Installed) -> Result<rust_mutants::cargo::Compiled, CargoError> {
+    let (dir, toolchain) = fake_located(installed);
+    let cancel = Cancel::new();
+    let trace = rust_mutants::trace::Recorder::disabled();
+    rust_mutants::cargo::compile(
+        &rust_mutants::cargo::Driver {
+            toolchain: &toolchain,
+            dir: dir.path(),
+            cancel: &cancel,
+            trace: &trace,
+        },
+        &CompileOptions::new(BuildDir::new(dir.path().join("target"), Vec::new())),
+    )
+}
+
+const FINISHED: &str = "{\"reason\":\"build-finished\",\"success\":true}\n";
+const REFUSED: &str = "{\"reason\":\"build-finished\",\"success\":false}\n";
+
+#[test]
+fn a_build_is_read_from_one_final_record_its_exit_code_agrees_with() {
+    for (said, exit, why) in [
+        (
+            FINISHED.to_owned(),
+            101,
+            "a record of success from a cargo that exited 101",
+        ),
+        (
+            format!("{REFUSED}{FINISHED}"),
+            0,
+            "two records, of which the last says success",
+        ),
+        (format!("{FINISHED}{FINISHED}"), 0, "two records of success"),
+        (
+            format!("{FINISHED}{{\"reason\":\"something-new\"}}\n"),
+            0,
+            "a record of success that is not the last thing cargo said",
+        ),
+        (String::new(), 0, "no record from a cargo that exited 0"),
+    ] {
+        let installed = fake_toolchain(
+            Invocation::new("cargo", &["check"])
+                .printing(&said)
+                .failing(exit, ""),
+        );
+        let compiled = compiled_by(&installed);
+        assert!(
+            compiled
+                .as_ref()
+                .is_err_and(|error| error.kind() == CargoErrorKind::MessageUnparsable),
+            "{why} is not the record of one finished build: {compiled:?}"
+        );
+    }
+}
+
+#[test]
+fn a_cargo_that_stopped_before_it_finished_a_build_is_a_failed_command_and_not_a_refusal() {
+    let installed = fake_toolchain(Invocation::new("cargo", &["check"]).failing(
+        101,
+        "error: the lock file needs to be updated but --locked was passed\n",
+    ));
+    let compiled = compiled_by(&installed);
+    assert!(
+        compiled.as_ref().is_err_and(|error| {
+            error.kind() == CargoErrorKind::CommandFailed
+                && error
+                    .message()
+                    .contains("the lock file needs to be updated")
+        }),
+        "cargo exited 101 without a build-finished record, which is cargo refusing to build and \
+         not the compiler refusing the tree, and its own words are the answer: {compiled:?}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn a_cargo_ended_by_a_signal_is_a_failed_command_and_not_a_refusal() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let installed = fake_toolchain(Invocation::new("cargo", &["check"]).printing(FINISHED));
+    let cargo = installed.cargo();
+    std::fs::remove_file(&cargo).unwrap_or_else(|error| panic!("the fake cargo: {error}"));
+    std::fs::write(
+        &cargo,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = \"-vV\" ]; then printf '{}'; exit 0; fi\nkill -KILL $$\n",
+            CARGO_BANNER.replace('\n', "\\n")
+        ),
+    )
+    .unwrap_or_else(|error| panic!("the cargo that ends by a signal: {error}"));
+    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755))
+        .unwrap_or_else(|error| panic!("an executable cargo: {error}"));
+    let compiled = compiled_by(&installed);
+    assert!(
+        compiled
+            .as_ref()
+            .is_err_and(|error| error.kind() == CargoErrorKind::CommandFailed),
+        "a cargo killed by a signal said nothing about the tree, so its silence is not the \
+         compiler refusing it: {compiled:?}"
+    );
+}
+
+#[test]
+fn a_finished_build_is_one_record_its_exit_code_agrees_with() {
+    let built = fake_toolchain(Invocation::new("cargo", &["check"]).printing(FINISHED));
+    let refused = fake_toolchain(
+        Invocation::new("cargo", &["check"])
+            .printing(REFUSED)
+            .failing(101, "error: could not compile\n"),
+    );
+    let built = compiled_by(&built).unwrap_or_else(|error| panic!("a finished build: {error}"));
+    let refused = compiled_by(&refused).unwrap_or_else(|error| panic!("a refused build: {error}"));
     assert_eq!(
-        dep_info_path(Path::new("/t/debug/deps/libdemo-abc.rmeta")),
-        Some(PathBuf::from("/t/debug/deps/demo-abc.d"))
+        built.completion(),
+        Completion::Built,
+        "every unit compiled and cargo exited 0"
     );
     assert_eq!(
-        dep_info_path(Path::new("/t/debug/deps/demo_bin-abc.rmeta")),
-        Some(PathBuf::from("/t/debug/deps/demo_bin-abc.d"))
+        refused.completion(),
+        Completion::Refused,
+        "the compiler refused something and cargo exited 101"
+    );
+}
+
+#[test]
+fn a_completion_is_an_exit_code_and_one_final_record_that_agree() {
+    use rust_mutants::cargo::{CompletionError, Exited};
+    use rust_mutants::runner::{ProcessExit, Termination};
+
+    for ended in [
+        Termination::Exited(ProcessExit::Signal(9)),
+        Termination::Exited(ProcessExit::Unknown),
+        Termination::TimedOut,
+        Termination::Stalled,
+        Termination::StoppedByMonitor,
+        Termination::Answered,
+        Termination::Cancelled { started: true },
+    ] {
+        assert_eq!(
+            Exited::of(&ended),
+            None,
+            "{ended:?} is not cargo exiting with a code of its own, so no record is held to it"
+        );
+    }
+    let exited = |code: i32| {
+        Exited::of(&Termination::Exited(ProcessExit::Code(code)))
+            .unwrap_or_else(|| panic!("{code} is an exit code"))
+    };
+    let record = |success: bool| Message::BuildFinished(Finished::new(success));
+    let other = || Message::Other {
+        reason: "something-new".to_owned(),
+    };
+    assert_eq!(
+        Completion::of(&[other(), record(true)], exited(0)),
+        Ok(Completion::Built)
     );
     assert_eq!(
-        dep_info_path(Path::new("/t/debug/deps/libdemo-abc.rlib")),
-        Some(PathBuf::from("/t/debug/deps/demo-abc.d"))
+        Completion::of(&[other(), record(false)], exited(101)),
+        Ok(Completion::Refused)
     );
     assert_eq!(
-        dep_info_path(Path::new("/t/debug/deps/demo-abc")),
-        Some(PathBuf::from("/t/debug/deps/demo-abc.d"))
+        Completion::of(&[other()], exited(101)),
+        Err(CompletionError::Unfinished { code: 101 })
     );
-    assert_eq!(dep_info_path(Path::new("/")), None);
+    for (messages, code) in [
+        (vec![record(true)], 101),
+        (vec![record(false)], 0),
+        (vec![record(true)], -1),
+    ] {
+        assert!(
+            matches!(
+                Completion::of(&messages, exited(code)),
+                Err(CompletionError::Contradicted { .. })
+            ),
+            "{messages:?} and exit code {code} say two things"
+        );
+    }
+    for (messages, code) in [
+        (Vec::new(), 0),
+        (vec![other()], 0),
+        (vec![record(false), record(true)], 0),
+        (vec![record(true), record(true)], 0),
+        (vec![record(false), record(false)], 101),
+        (vec![record(true), other()], 0),
+        (vec![record(false), other()], 101),
+    ] {
+        assert!(
+            matches!(
+                Completion::of(&messages, exited(code)),
+                Err(CompletionError::Ambiguous { .. })
+            ),
+            "{messages:?} with exit code {code} is not one final record"
+        );
+    }
 }
 
 fn artifact_of(message: &Message) -> &rust_mutants::cargo::Artifact {

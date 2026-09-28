@@ -109,7 +109,11 @@ fn prepare(name: &str) -> Prepared {
         },
     )
     .expect("check");
-    assert!(checked.success, "the fixture compiles");
+    assert_eq!(
+        checked.completion(),
+        rust_mutants::cargo::Completion::Built,
+        "the fixture compiles"
+    );
     Prepared {
         dir,
         metadata,
@@ -528,11 +532,12 @@ fn the_check_records_an_exec_event_and_keeps_the_messages() {
         },
     )
     .expect("check");
-    assert!(checked.success);
+    assert_eq!(checked.completion(), rust_mutants::cargo::Completion::Built);
     assert_eq!(checked.units.len(), 3);
     assert!(checked.messages.iter().any(|m| matches!(
         m,
-        rust_mutants::cargo::Message::BuildFinished { success: true }
+        rust_mutants::cargo::Message::BuildFinished(finished)
+            if *finished == rust_mutants::cargo::Finished::new(true)
     )));
     let execs: Vec<Vec<String>> = recorder
         .events()

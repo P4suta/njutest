@@ -20,16 +20,32 @@ pub enum Message {
     CompilerMessage(CompilerMessage),
     /// A build script ran, and said where it wrote and what it put in the environment.
     BuildScriptExecuted(BuildScript),
-    /// The build ended.
-    BuildFinished {
-        /// Whether every unit succeeded.
-        success: bool,
-    },
+    /// The build ended, which only [`super::Completion::of`] reads, holding it to the exit code cargo ended with.
+    BuildFinished(Finished),
     /// A reason this engine does not know.
     Other {
         /// The reason.
         reason: String,
     },
+}
+
+/// What a `build-finished` record says, readable only where it is held to the exit code cargo ended with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Finished {
+    success: bool,
+}
+
+impl Finished {
+    /// The record of a build that says whether every unit succeeded.
+    #[must_use]
+    pub const fn new(success: bool) -> Self {
+        Self { success }
+    }
+
+    /// Whether the record says every unit succeeded, which is half of an answer until the exit code agrees.
+    pub(super) const fn success(self) -> bool {
+        self.success
+    }
 }
 
 /// A `build-script-executed` message: what a build script left behind for the units that read it.
@@ -245,7 +261,7 @@ fn parse_message(line: &str) -> Result<Message, serde_json::Error> {
                 .get("success")
                 .and_then(serde_json::Value::as_bool)
                 .ok_or_else(|| serde::de::Error::custom("build-finished has no boolean success"))?;
-            Message::BuildFinished { success }
+            Message::BuildFinished(Finished::new(success))
         }
         _ => Message::Other { reason },
     })

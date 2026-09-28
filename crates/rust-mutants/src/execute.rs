@@ -219,10 +219,10 @@ impl TargetKind {
         Self::ALL.into_iter().find(|kind| kind.name() == name)
     }
 
-    /// The kind of a cargo target, or `None` for one that carries no tests the engine runs (a build script, a bench).
+    /// The kind of a cargo target, or `None` for one that carries no tests the engine runs: a build script, a bench, and a target its manifest says `test = false` of, which `cargo test --all-targets` builds as a test binary all the same.
     #[must_use]
     pub fn of(target: &Target) -> Option<Self> {
-        if target.is_custom_build() || target.is_bench() {
+        if !target.test || target.is_custom_build() || target.is_bench() {
             None
         } else if target.is_proc_macro() {
             Some(Self::ProcMacro)
@@ -2908,11 +2908,14 @@ pub fn build(
             build: options.build.clone(),
         },
     )?;
-    if !compiled.success {
-        return Err(CargoError::new(
-            CargoErrorKind::CommandFailed,
-            "the test binaries could not be built",
-        ));
+    match compiled.completion() {
+        crate::cargo::Completion::Built => {}
+        crate::cargo::Completion::Refused => {
+            return Err(CargoError::new(
+                CargoErrorKind::CommandFailed,
+                "the test binaries could not be built",
+            ));
+        }
     }
     targets_of(&compiled.messages, packages, options.target_dir.path())
 }
@@ -2941,7 +2944,7 @@ pub fn targets_of(
     target_dir: &Path,
 ) -> Result<Vec<TestTarget>, CargoError> {
     let binaries = binaries_built(messages)?;
-    let mut harnesses: BTreeMap<String, BTreeMap<(String, String), bool>> = BTreeMap::new();
+    let mut harnesses: BTreeMap<String, crate::cargo::manifest::Harnesses> = BTreeMap::new();
     let mut targets = Vec::new();
     for message in messages {
         let Message::CompilerArtifact(artifact) = message else {
@@ -2975,13 +2978,7 @@ pub fn targets_of(
                 empty.insert(crate::cargo::manifest::harnesses(&package.manifest_path)?)
             }
         };
-        let harness = held
-            .get(&(kind.name().to_owned(), artifact.target.name.clone()))
-            .copied();
-        let harness = match harness {
-            Some(harness) => harness,
-            None => true,
-        };
+        let harness = held.of(&artifact.target);
         targets.push(
             TestTarget::new(
                 package.name.clone(),

@@ -811,6 +811,50 @@ fn a_build_timeout_is_a_not_run_error_and_is_recorded() {
     );
 }
 
+#[test]
+#[cfg(unix)]
+fn a_build_cargo_ended_by_a_signal_is_a_build_that_did_not_run() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let repo = project();
+    let installed = install(&through_metadata(
+        repo.root(),
+        Invocation::new("cargo", &["test", "--no-run"]).printing(&successful_build(None)),
+    ));
+    let cargo = installed.cargo();
+    std::fs::remove_file(&cargo).expect("the fake cargo");
+    std::fs::write(
+        &cargo,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = \"-vV\" ]; then printf '{}'; exit 0; fi\nkill -KILL $$\n",
+            CARGO_BANNER.replace('\n', "\\n")
+        ),
+    )
+    .expect("the cargo that ends by a signal");
+    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755))
+        .expect("an executable cargo");
+    let error = build(
+        &located(repo.root(), &installed),
+        &packages(repo.root()),
+        &options(
+            repo.root(),
+            repo.root().join("target"),
+            repo.root().join("scratch"),
+            installed
+                .env()
+                .into_iter()
+                .collect::<rust_mutants::vars::Variables>(),
+        ),
+        Watch::new(&Cancel::new(), &Recorder::disabled()),
+    )
+    .expect_err("a cargo killed by a signal built nothing");
+    assert!(
+        matches!(error, BuildError::NotRun { ref message } if message.contains("signal 9")),
+        "a cargo ended by a signal said nothing about the build, so the build did not run, and \
+         the signal is what to say: {error}"
+    );
+}
+
 fn target_document(
     root: &Path,
     name: &str,

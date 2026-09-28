@@ -240,6 +240,160 @@ fn a_unit_names_every_file_and_variable_the_compiler_read_for_it() {
 }
 
 #[test]
+fn every_unit_is_read_from_the_dep_info_rustc_wrote_whatever_its_name_begins_with() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    for directory in ["src", "tests"] {
+        std::fs::create_dir_all(root.join(directory)).expect("mkdir");
+    }
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"library\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+         [[bin]]\nname = \"libretto\"\npath = \"src/main.rs\"\n\n\
+         [[test]]\nname = \"libtest-x\"\npath = \"tests/x.rs\"\n",
+    )
+    .expect("manifest");
+    for (file, source) in [
+        ("src/lib.rs", "pub fn one() -> u32 { 1 }\n"),
+        ("src/main.rs", "fn main() {}\n"),
+        ("tests/x.rs", "#[test]\nfn one() {}\n"),
+    ] {
+        std::fs::write(root.join(file), source).expect("source");
+    }
+    let tc = toolchain(root);
+    let target = scratch_target("library");
+    let mut spec = tc.command(
+        root,
+        [
+            "test",
+            "--all-targets",
+            "--no-run",
+            "--message-format=json",
+            "--offline",
+        ],
+    );
+    spec.argv.push("--target-dir".into());
+    spec.argv.push(target.path().into());
+    spec.structured_stdout = Some(64 << 20);
+    let result = run(&spec, &Cancel::new());
+    assert!(
+        result.succeeded(),
+        "{}",
+        std::str::from_utf8(&result.output).expect("the tree writes exact UTF-8")
+    );
+    let messages = parse_messages(&result.stdout).expect("messages");
+    let units = units_of(&messages, root).unwrap_or_else(|error| {
+        panic!(
+            "a library named `library`, a binary named `libretto` and a test named `libtest-x` \
+             are each read from the dep-info rustc wrote for it: {error}"
+        )
+    });
+    let root = root
+        .canonicalize()
+        .expect("the tree has a physical spelling");
+    let read: BTreeSet<(String, bool, Vec<String>)> = units
+        .iter()
+        .map(|unit| {
+            (
+                unit.target.name.clone(),
+                unit.test,
+                unit.sources
+                    .iter()
+                    .map(|path| under(&root, &path.canonicalize().expect("a source")))
+                    .collect(),
+            )
+        })
+        .collect();
+    for (name, test, source) in [
+        ("library", false, "src/lib.rs"),
+        ("library", true, "src/lib.rs"),
+        ("libretto", true, "src/main.rs"),
+        ("libtest-x", true, "tests/x.rs"),
+    ] {
+        assert!(
+            read.contains(&(name.to_owned(), test, vec![source.to_owned()])),
+            "{name} (test: {test}) compiled {source}: {read:?}"
+        );
+    }
+}
+
+#[test]
+fn the_test_binaries_are_the_ones_cargo_test_runs_each_read_as_its_manifest_declares_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    for directory in ["src", "tests", "examples"] {
+        std::fs::create_dir_all(root.join(directory)).expect("mkdir");
+    }
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"own-harness\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+         [lib]\nharness = false\n\n\
+         [[bin]]\nname = \"tool\"\npath = \"src/main.rs\"\ntest = false\n\n\
+         [[test]]\nname = \"kept\"\npath = \"tests/kept.rs\"\n\n\
+         [[example]]\nname = \"demo\"\npath = \"examples/demo.rs\"\n",
+    )
+    .expect("manifest");
+    for (file, source) in [
+        (
+            "src/lib.rs",
+            "pub fn above(n: u32) -> bool { n > 10 }\npub fn main() { assert!(above(11)); }\n",
+        ),
+        ("src/main.rs", "fn main() {}\n"),
+        (
+            "tests/kept.rs",
+            "#[test]\nfn eleven() { assert!(own_harness::above(11)); }\n",
+        ),
+        ("examples/demo.rs", "fn main() {}\n"),
+    ] {
+        std::fs::write(root.join(file), source).expect("source");
+    }
+    let tc = toolchain(root);
+    let cancel = Cancel::new();
+    let trace = Recorder::disabled();
+    let driver = Driver {
+        toolchain: &tc,
+        dir: root,
+        cancel: &cancel,
+        trace: &trace,
+    };
+    let metadata = Metadata::load(
+        &driver,
+        MetadataOptions {
+            locked: false,
+            offline: true,
+        },
+    )
+    .expect("metadata");
+    let target = scratch_target("own-harness");
+    let built = rust_mutants::execute::build(
+        &driver,
+        &metadata.packages,
+        &rust_mutants::execute::BuildOptions {
+            target_dir: rust_mutants::cargo::BuildDir::new(target.path().to_path_buf(), Vec::new()),
+            locked: false,
+            offline: true,
+            packages: Vec::new(),
+            build: rust_mutants::cargo::BuildConfig::default(),
+        },
+    )
+    .expect("the test binaries build");
+    let read: Vec<(&str, bool)> = built
+        .iter()
+        .map(|target| (target.id(), target.harness))
+        .collect();
+    assert_eq!(
+        read,
+        [
+            ("own-harness/lib/own_harness", false),
+            ("own-harness/test/kept", true)
+        ],
+        "`cargo test --all-targets` builds the binary and the example that `test = false` leaves \
+         out of `cargo test` as test binaries too, and the library's unnamed `[lib]` table says it \
+         is its own program rather than libtest"
+    );
+}
+
+#[test]
 fn units_from_a_check_name_exactly_the_files_each_unit_compiled() {
     let dir = fixture("fixture-simple");
     let tc = toolchain(&dir);
@@ -397,7 +551,8 @@ fn a_check_that_fails_to_compile_still_yields_its_messages() {
     );
     assert!(matches!(
         messages.last(),
-        Some(Message::BuildFinished { success: false })
+        Some(Message::BuildFinished(finished))
+            if *finished == rust_mutants::cargo::Finished::new(false)
     ));
 }
 

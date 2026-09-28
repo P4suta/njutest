@@ -94,8 +94,8 @@ impl Compile for CargoScripted {
             })?;
         Ok(Attempt {
             files,
+            completion: checked.completion(),
             messages: checked.messages,
-            success: checked.success,
             written,
         })
     }
@@ -333,7 +333,11 @@ pub fn name(flag: bool) -> &'static str {
         },
     )
     .expect("compile the standalone mutant");
-    assert!(!standalone.success, "{standalone:?}");
+    assert_eq!(
+        standalone.completion(),
+        rust_mutants::cargo::Completion::Refused,
+        "{standalone:?}"
+    );
     let standalone_code = standalone
         .messages
         .iter()
@@ -355,7 +359,7 @@ pub fn name(flag: bool) -> &'static str {
         .attempt(&validated.rejections.iter().map(|one| one.index).collect())
         .expect("final strict attempt");
     assert!(
-        final_attempt.success,
+        final_attempt.completion == rust_mutants::cargo::Completion::Built,
         "the identity macro preserves coercions, temporary extension, ?, break, and async: {:?}",
         final_attempt.messages
     );
@@ -424,7 +428,11 @@ fn the_compiler_decides_which_mutants_are_real_and_says_why_for_each() {
     let final_attempt = fixture
         .attempt(&validated.rejections.iter().map(|r| r.index).collect())
         .expect("attempt");
-    assert!(final_attempt.success, "the accepted tree compiles");
+    assert_eq!(
+        final_attempt.completion,
+        rust_mutants::cargo::Completion::Built,
+        "the accepted tree compiles"
+    );
 }
 
 /// A session over `fixture`, with `RUSTFLAGS` set to `flags` or left alone.

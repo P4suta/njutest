@@ -194,6 +194,56 @@ fn an_ignored_listing_failure_refuses_the_whole_enumeration() {
     );
 }
 
+#[test]
+#[cfg(unix)]
+fn a_binary_with_its_own_harness_is_one_target_without_being_started_to_ask() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let executable = temporary.path().join("by_exit_code");
+    let started = temporary.path().join("started");
+    std::fs::write(
+        &executable,
+        format!(
+            "#!/bin/sh\ntouch '{}'\nexit 0\n",
+            started.to_str().expect("a UTF-8 temporary path")
+        ),
+    )
+    .expect("write the custom harness");
+    let mut permissions = std::fs::metadata(&executable)
+        .expect("harness metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&executable, permissions).expect("make the harness executable");
+
+    let unit = Unit {
+        package: "fixture".to_owned(),
+        kind: UnitKind::Test,
+        name: "by_exit_code".to_owned(),
+        harness: false,
+        executable,
+        cwd: temporary.path().to_path_buf(),
+        env: rust_mutants::vars::Variables::empty(),
+    };
+    let targets = enumerate(&unit, Watch::new(&Cancel::new(), &Recorder::disabled()))
+        .expect("a binary with its own harness is named without asking it");
+    assert_eq!(
+        targets
+            .iter()
+            .map(|target| (target.path.as_str(), target.unit_name.as_str()))
+            .collect::<Vec<_>>(),
+        [(WHOLE_BINARY, "by_exit_code")],
+        "a harness that is not libtest does not answer `--list`: it runs whole, and when it \
+         passes, a listing of nothing would record no target at all"
+    );
+    assert!(
+        std::fs::symlink_metadata(&started)
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+        "a binary the manifest says has its own harness is not started to be asked what libtest \
+         would have answered"
+    );
+}
+
 /// Builds a fixture's test binaries the way a run does, and returns the units they came from.
 fn built_units(fixture: &str) -> (Vec<Unit>, tempfile::TempDir) {
     use njutest::build::{BuildOptions, Cargo, Flavour, Selection, build};

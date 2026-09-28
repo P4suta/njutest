@@ -1211,6 +1211,87 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
 }
 
 #[test]
+fn a_claim_on_a_mutation_the_run_measured_nothing_about_is_unjudged_rather_than_stale() {
+    use rust_mutants::run::{NotRunReason, RowVerdict, Standing, verdict_finding};
+
+    let fixture = Fixture::copy("fixture-simple");
+    let session = prepared(&fixture, false);
+    let mutant = session
+        .catalog()
+        .mutants()
+        .first()
+        .expect("the fixture has a mutation");
+    let claim = rust_mutants::run::Expectation {
+        id: Some(mutant.id.to_string()),
+        locator: None,
+        reason: "a claim a reviewer wrote before the machine declined".to_owned(),
+        outcome: Outcome::Killed,
+        under: rust_mutants::run::Where::default(),
+    };
+    for reason in NotRunReason::ALL {
+        let mut rows = [rust_mutants::run::Judged {
+            index: mutant.index,
+            id: mutant.id.to_string(),
+            display_id: mutant.display_id.to_string(),
+            outcome: Outcome::NotRun,
+            target: String::new(),
+            exit_code: 0,
+            start_failure: None,
+            protocol_failure: None,
+            duration: std::time::Duration::ZERO,
+            tests_run: None,
+            failed_tests: Vec::new(),
+            signal: None,
+            retried: false,
+            lingered: false,
+            expected: false,
+            not_run_reason: Some(reason),
+            route: None,
+            measured: false,
+            identical: rust_mutants::run::CodegenIdentity::NotMeasured,
+            source_run_id: None,
+            declined: Vec::new(),
+            step_notice: None,
+        }];
+        let verified = rust_mutants::run::verify(
+            &session,
+            std::slice::from_ref(&claim),
+            &mut rows,
+            rust_mutants::run::Scope::WHOLE,
+        )
+        .expect("one claim is representable");
+        let raises = verdict_finding(
+            RowVerdict {
+                outcome: Outcome::NotRun,
+                not_run_reason: Some(reason),
+                expected: false,
+            },
+            false,
+        );
+        match raises {
+            None => assert_eq!(
+                verified[0].standing,
+                Standing::Unjudged,
+                "a mutation not run because it was {} raises no finding, so the run established \
+                 nothing a claim about it could be held to, and a claim it cannot hold is not \
+                 contradicted",
+                reason.name()
+            ),
+            Some(kind) => assert_eq!(
+                verified[0].standing,
+                Standing::Stale {
+                    actual: Outcome::NotRun
+                },
+                "a mutation not run because it was {} is a {kind} the run established, which \
+                 contradicts a claim that it is killed",
+                reason.name()
+            ),
+        }
+    }
+    session.close().expect("the session closes");
+}
+
+#[test]
 fn the_packages_a_session_measures_are_each_named_once_and_in_one_order() {
     let fixture = Fixture::copy("fixture-workspace");
     let session = prepare(&fixture);

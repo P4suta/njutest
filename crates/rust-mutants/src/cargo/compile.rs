@@ -10,7 +10,8 @@ use super::depinfo::{Unit, units_of};
 use super::locate::command_failed;
 use super::messages::{Message, parse_messages};
 use super::{CargoError, CargoErrorKind, Driver};
-use crate::runner::run;
+use crate::error::{self, ErrorCode};
+use crate::runner::{ProcessExit, Termination, run};
 use crate::trace::ExecRecord;
 
 /// How much of the message stream is kept.
@@ -188,13 +189,137 @@ pub fn compile_arguments(options: &CompileOptions) -> Vec<OsString> {
 /// What a compilation produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Compiled {
-    /// Whether every unit compiled.
-    pub success: bool,
+    completion: Completion,
     /// Every message, in order, for attribution.
     pub messages: Vec<Message>,
     /// The units that produced an artifact, with their sources.
     /// A failed unit produces none, so on a failed check this is partial.
     pub units: Vec<Unit>,
+}
+
+impl Compiled {
+    /// How the build came out, as its one final record and cargo's exit code established it together.
+    #[must_use]
+    pub const fn completion(&self) -> Completion {
+        self.completion
+    }
+}
+
+/// The exit code a cargo process ended with by itself, which is the one thing its `build-finished` record is held to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Exited {
+    code: i32,
+}
+
+impl Exited {
+    /// The code cargo ended `termination` with, or nothing where it ended some other way: a signal, a status nothing classified, a launch or supervision that failed, or a stop the run imposed, none of which is the compiler's answer about the build.
+    #[must_use]
+    pub const fn of(termination: &Termination) -> Option<Self> {
+        match termination {
+            Termination::Exited(ProcessExit::Code(code)) => Some(Self { code: *code }),
+            Termination::Exited(ProcessExit::Signal(_) | ProcessExit::Unknown)
+            | Termination::NotStarted { .. }
+            | Termination::TimedOut
+            | Termination::Stalled
+            | Termination::StoppedByMonitor
+            | Termination::Answered
+            | Termination::MonitorFailed { .. }
+            | Termination::Cancelled { .. }
+            | Termination::WaitFailed { .. } => None,
+        }
+    }
+}
+
+/// How a cargo build that ran to its end came out, read from its exit code and its one final `build-finished` record together and never from either alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Completion {
+    /// Every unit compiled, and cargo exited 0.
+    Built,
+    /// The compiler refused something, and cargo exited with a code other than 0.
+    Refused,
+}
+
+impl Completion {
+    /// How the build that ended as `exited`, having printed `messages`, came out.
+    ///
+    /// # Errors
+    /// [`CompletionError`] when the messages are not one final `build-finished` record the exit code agrees with.
+    pub fn of(messages: &[Message], exited: Exited) -> Result<Self, CompletionError> {
+        let records = messages
+            .iter()
+            .filter(|message| matches!(message, Message::BuildFinished(_)))
+            .count();
+        let last = match messages.last() {
+            Some(Message::BuildFinished(finished)) => Some(*finished),
+            Some(
+                Message::CompilerArtifact(_)
+                | Message::CompilerMessage(_)
+                | Message::BuildScriptExecuted(_)
+                | Message::Other { .. },
+            )
+            | None => None,
+        };
+        let code = exited.code;
+        match (records, last) {
+            (0, _) if code != 0 => Err(CompletionError::Unfinished { code }),
+            (1, Some(finished)) if finished.success() == (code == 0) => Ok(if code == 0 {
+                Self::Built
+            } else {
+                Self::Refused
+            }),
+            (1, Some(finished)) => Err(CompletionError::Contradicted {
+                success: finished.success(),
+                code,
+            }),
+            (records, last) => Err(CompletionError::Ambiguous {
+                records,
+                ends: last.is_some(),
+            }),
+        }
+    }
+}
+
+/// Why what cargo printed is not the record of one finished build its exit code agrees with.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum CompletionError {
+    /// Cargo exited with a code other than 0 and printed no `build-finished` record: it stopped before it finished a build, so no unit was refused and what it said on its error stream is the answer.
+    #[error("cargo exited with {code} before it finished a build")]
+    Unfinished {
+        /// The code it exited with.
+        code: i32,
+    },
+    /// The stream does not end in exactly one `build-finished` record, so which build it reports, if any, is a guess.
+    #[error(
+        "the message stream holds {records} build-finished records and {ending}, where a \
+         finished build ends in exactly one",
+        ending = if *ends { "ends in one" } else { "does not end in one" }
+    )]
+    Ambiguous {
+        /// How many records it holds.
+        records: usize,
+        /// Whether its last message is one.
+        ends: bool,
+    },
+    /// The one record says what the exit code does not.
+    #[error("build-finished says success={success}, but cargo exited with {code}")]
+    Contradicted {
+        /// What the record says.
+        success: bool,
+        /// The code cargo exited with.
+        code: i32,
+    },
+}
+
+impl CompletionError {
+    /// The stable code of this failure: a cargo that stopped before it finished a build failed as a command, and a stream that is not one finished build cannot be read.
+    #[must_use]
+    pub const fn code(&self) -> ErrorCode {
+        match self {
+            Self::Unfinished { .. } => error::CARGO_COMMAND_FAILED,
+            Self::Ambiguous { .. } | Self::Contradicted { .. } => error::CARGO_MESSAGE_UNPARSABLE,
+        }
+    }
 }
 
 /// What one build compiled: every unit with the files the compiler read for it, and every build script with what it told the linker, as cargo reported them rather than as a directory holds them.
@@ -254,24 +379,15 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
             "the compilation was cancelled",
         ));
     }
-    match &result.termination {
-        crate::runner::Termination::Exited(_) => {}
-        crate::runner::Termination::Cancelled { .. } => {
-            return Err(CargoError::new(
-                CargoErrorKind::Cancelled,
-                "the compilation was cancelled",
-            ));
-        }
-        crate::runner::Termination::NotStarted { .. }
-        | crate::runner::Termination::TimedOut
-        | crate::runner::Termination::Stalled
-        | crate::runner::Termination::StoppedByMonitor
-        | crate::runner::Termination::Answered
-        | crate::runner::Termination::MonitorFailed { .. }
-        | crate::runner::Termination::WaitFailed { .. } => {
-            return Err(command_failed(&spec, &result));
-        }
+    if let Termination::Cancelled { .. } = &result.termination {
+        return Err(CargoError::new(
+            CargoErrorKind::Cancelled,
+            "the compilation was cancelled",
+        ));
     }
+    let Some(exited) = Exited::of(&result.termination) else {
+        return Err(command_failed(&spec, &result));
+    };
     if result.stdout_truncated {
         return Err(CargoError::new(
             CargoErrorKind::MessageUnparsable,
@@ -279,26 +395,21 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
         ));
     }
     let messages = parse_messages(&result.stdout)?;
-    let success = messages
-        .iter()
-        .rev()
-        .find_map(|message| match message {
-            Message::BuildFinished { success } => Some(*success),
-            Message::CompilerArtifact(_)
-            | Message::CompilerMessage(_)
-            | Message::BuildScriptExecuted(_)
-            | Message::Other { .. } => None,
-        })
-        .unwrap_or(false);
-    if !success && result.succeeded() {
-        return Err(CargoError::new(
-            CargoErrorKind::MessageUnparsable,
-            "the compiler exited 0 without reporting a finished build",
-        ));
-    }
+    let completion = match Completion::of(&messages, exited) {
+        Ok(completion) => completion,
+        Err(CompletionError::Unfinished { .. }) => return Err(command_failed(&spec, &result)),
+        Err(
+            unread @ (CompletionError::Ambiguous { .. } | CompletionError::Contradicted { .. }),
+        ) => {
+            return Err(CargoError::new(
+                CargoErrorKind::MessageUnparsable,
+                unread.to_string(),
+            ));
+        }
+    };
     let units = units_of(&messages, driver.dir)?;
     Ok(Compiled {
-        success,
+        completion,
         messages,
         units,
     })

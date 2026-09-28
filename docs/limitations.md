@@ -196,7 +196,10 @@ Pure computation that does not open or mutate a report store remains available.
 - A library with no documented examples has a documentation target that answers nothing.
   It carries `doctests-none`, and no mutation is routed to it: paying a `cargo test --doc` for every mutation nothing else noticed, to be told each time that no test ran, is work nobody reads.
 - A target with `harness = false` says what it found by exiting, and neither `cargo metadata` nor the build's messages report the flag, so the engine reads it from the manifest.
+  It reads it from the table that declares the target: `[lib]` for the library or procedural macro whatever it is named, and the `[[bin]]`, `[[test]]` or `[[example]]` table of the target's name otherwise.
+  A manifest that is not there is refused: one nobody read says nothing about a harness, and reading that as libtest would take a custom harness's silence for a test result.
   How many of its tests ran is something only a harness could have said, and the target carries `custom-harness` to say so.
+- A target whose manifest says `test = false` is one `cargo test` does not run, so no run starts it or accepts it in `skip_targets`, although `cargo test --all-targets` builds it as a test binary all the same.
 - A target named in `[execution] skip_targets` is never started, and carries `target-skipped-by-configuration`.
   It is for a suite whose tests are about the text of what the compiler said, which instrumentation changes: leaving it out is a decision somebody made, and the report says so rather than reporting a failure nobody can read.
 - A run composes `LLVM_PROFILE_FILE` for every test process it starts, so an inherited one never reaches one and an instrumented binary never falls back to `default_*.profraw` in its working directory.

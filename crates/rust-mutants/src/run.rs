@@ -232,7 +232,7 @@ pub enum Standing {
         /// Why the identity resolved to nothing.
         why: String,
     },
-    /// The claim names mutations of this catalog, and this run decided none of them: a selection left them out, another shard holds them, or the run stopped first.
+    /// The claim names mutations of this catalog, and this run decided none of them: a selection left them out, another shard holds them, the run stopped first, or every test that reached them declined.
     Unjudged,
     /// The claim is not judged here, because a fact it was established under does not hold (ADR 0042).
     Inapplicable {
@@ -1239,18 +1239,16 @@ fn scanned(session: &Session, expectation: &Expectation) -> bool {
     })
 }
 
-/// Whether this run decided the mutation `id`: a row it did not leave out, stop short of, or never get to.
+/// Whether this run decided the mutation `id`: a row it established something about, rather than one it left out, stopped short of, never got to, or measured nothing of because every test declined.
 fn decided_here(judged: &[Judged], id: &str) -> bool {
     judged.iter().find(|one| one.id == id).is_none_or(|one| {
-        !(one.outcome == Outcome::NotRun
-            && matches!(
-                one.not_run_reason,
-                Some(
-                    NotRunReason::Unselected
-                        | NotRunReason::StoppedEarly
-                        | NotRunReason::Interrupted
-                )
-            ))
+        one.outcome != Outcome::NotRun
+            || one
+                .not_run_reason
+                .is_none_or(|reason| match reason.established() {
+                    Unexecuted::Established(_) => true,
+                    Unexecuted::Unmeasured => false,
+                })
     })
 }
 
@@ -1907,6 +1905,27 @@ impl NotRunReason {
     pub const fn as_str(self) -> &'static str {
         self.name()
     }
+
+    /// What a run established about a mutation it did not run for this reason: the one place that says which reasons are facts about the mutation and which are facts about the run.
+    #[must_use]
+    pub const fn established(self) -> Unexecuted {
+        match self {
+            Self::Unreached => Unexecuted::Established(FindingKind::UnreachedMutant),
+            Self::Discharged => Unexecuted::Established(FindingKind::DischargedMutant),
+            Self::Interrupted | Self::Unselected | Self::StoppedEarly | Self::Declined => {
+                Unexecuted::Unmeasured
+            }
+        }
+    }
+}
+
+/// What a run established about a mutation it never executed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unexecuted {
+    /// Why it was not run is a fact about the mutation, raised as this finding, and a claim about it is held to that fact.
+    Established(FindingKind),
+    /// The run measured nothing about it, so it raises no finding and a claim about it is neither met nor contradicted.
+    Unmeasured,
 }
 
 impl std::fmt::Display for FindingKind {
@@ -2021,14 +2040,10 @@ pub const fn verdict_finding(row: RowVerdict, interrupted: bool) -> Option<Findi
         Outcome::Inconclusive => Some(FindingKind::InconclusiveMutant),
         Outcome::Errored => Some(FindingKind::ErroredMutant),
         Outcome::NotRun => match reason {
-            Some(NotRunReason::Unreached) => Some(FindingKind::UnreachedMutant),
-            Some(NotRunReason::Discharged) => Some(FindingKind::DischargedMutant),
-            Some(
-                NotRunReason::Interrupted
-                | NotRunReason::Unselected
-                | NotRunReason::StoppedEarly
-                | NotRunReason::Declined,
-            ) => None,
+            Some(reason) => match reason.established() {
+                Unexecuted::Established(kind) => Some(kind),
+                Unexecuted::Unmeasured => None,
+            },
             None if interrupted => None,
             None => Some(FindingKind::NotRunMutant),
         },
@@ -2060,10 +2075,13 @@ const fn stops(one: &Judged) -> bool {
     match one.outcome {
         Outcome::Killed => false,
         Outcome::Survived => !one.expected,
-        Outcome::NotRun => matches!(
-            one.not_run_reason,
-            Some(NotRunReason::Unreached | NotRunReason::Discharged)
-        ),
+        Outcome::NotRun => match one.not_run_reason {
+            Some(reason) => match reason.established() {
+                Unexecuted::Established(_) => true,
+                Unexecuted::Unmeasured => false,
+            },
+            None => false,
+        },
         Outcome::StepLimitReached | Outcome::Waited | Outcome::Inconclusive | Outcome::Errored => {
             true
         }
