@@ -291,24 +291,114 @@ fn dep_info_lists_the_prerequisites_of_the_first_rule_with_escapes_undone() {
 }
 
 #[test]
-fn the_dep_info_file_sits_beside_the_artifact_without_the_lib_prefix() {
-    assert_eq!(
-        dep_info_path(Path::new("/t/debug/deps/libdemo-abc.rmeta")),
-        Some(PathBuf::from("/t/debug/deps/demo-abc.d"))
-    );
-    assert_eq!(
-        dep_info_path(Path::new("/t/debug/deps/demo_bin-abc.rmeta")),
-        Some(PathBuf::from("/t/debug/deps/demo_bin-abc.d"))
-    );
-    assert_eq!(
-        dep_info_path(Path::new("/t/debug/deps/libdemo-abc.rlib")),
-        Some(PathBuf::from("/t/debug/deps/demo-abc.d"))
-    );
-    assert_eq!(
-        dep_info_path(Path::new("/t/debug/deps/demo-abc")),
-        Some(PathBuf::from("/t/debug/deps/demo-abc.d"))
-    );
-    assert_eq!(dep_info_path(Path::new("/")), None);
+fn the_dep_info_file_sits_beside_the_artifact_without_the_lib_prefix_of_a_library() {
+    for (artifact, target, dep_info) in [
+        (
+            "/t/debug/deps/libdemo-abc.rmeta",
+            "demo",
+            "/t/debug/deps/demo-abc.d",
+        ),
+        (
+            "/t/debug/deps/demo_bin-abc.rmeta",
+            "demo-bin",
+            "/t/debug/deps/demo_bin-abc.d",
+        ),
+        (
+            "/t/debug/deps/libdemo-abc.rlib",
+            "demo",
+            "/t/debug/deps/demo-abc.d",
+        ),
+        ("/t/debug/deps/demo-abc", "demo", "/t/debug/deps/demo-abc.d"),
+        (
+            "/t/debug/deps/liblibrary.rlib",
+            "library",
+            "/t/debug/deps/library.d",
+        ),
+        (
+            "/t/debug/deps/library-abc",
+            "library",
+            "/t/debug/deps/library-abc.d",
+        ),
+        (
+            "/t/debug/deps/libtest_x-abc",
+            "libtest-x",
+            "/t/debug/deps/libtest_x-abc.d",
+        ),
+        (
+            "/t/debug/deps/libdemo_x-abc.rlib",
+            "demo",
+            "/t/debug/deps/libdemo_x-abc.d",
+        ),
+    ] {
+        assert_eq!(
+            dep_info_path(Path::new(artifact), target),
+            Some(PathBuf::from(dep_info)),
+            "{artifact} of {target}"
+        );
+    }
+    assert_eq!(dep_info_path(Path::new("/"), "demo"), None);
+}
+
+#[test]
+fn a_unit_whose_name_begins_with_lib_is_read_from_the_dep_info_rustc_wrote_for_it() {
+    let root = tempfile::tempdir().unwrap_or_else(|error| panic!("a directory: {error}"));
+    let deps = root.path().join("target").join("debug").join("deps");
+    std::fs::create_dir_all(&deps).unwrap_or_else(|error| panic!("deps: {error}"));
+    let source = root.path().join("src").join("library.rs");
+    for (kind, name, output, executable, dep_info) in [
+        ("test", "library", "library-abc", true, "library-abc.d"),
+        ("bin", "libretto", "libretto-abc", true, "libretto-abc.d"),
+        (
+            "lib",
+            "library",
+            "liblibrary-def.rlib",
+            false,
+            "library-def.d",
+        ),
+    ] {
+        let output = deps.join(output);
+        std::fs::write(&output, b"").unwrap_or_else(|error| panic!("output: {error}"));
+        std::fs::write(
+            deps.join(dep_info),
+            format!("{}: {}\n", output.display(), source.display()),
+        )
+        .unwrap_or_else(|error| panic!("dep-info: {error}"));
+        let message = serde_json::json!({
+            "reason": "compiler-artifact",
+            "package_id": "path+file:///w/library#0.1.0",
+            "manifest_path": root.path().join("Cargo.toml"),
+            "target": {
+                "kind": [kind], "crate_types": [if kind == "lib" { "lib" } else { "bin" }],
+                "name": name, "src_path": source, "edition": "2024",
+                "doc": false, "doctest": false, "test": true
+            },
+            "profile": {
+                "opt_level": "0", "debuginfo": 2, "debug_assertions": true,
+                "overflow_checks": true, "test": kind == "test"
+            },
+            "features": [],
+            "filenames": [output],
+            "executable": if executable { serde_json::json!(output) } else { serde_json::Value::Null },
+            "fresh": false
+        });
+        let messages = parse_messages(format!("{message}\n").as_bytes())
+            .unwrap_or_else(|error| panic!("the artifact message parses: {error}"));
+        let units = rust_mutants::cargo::units_of(&messages, root.path()).unwrap_or_else(|error| {
+            panic!(
+                "the {kind} target {name} is read from {dep_info}, which rustc wrote beside {}: \
+                 {error}",
+                output.display()
+            )
+        });
+        assert_eq!(
+            units
+                .iter()
+                .map(|unit| unit.sources.clone())
+                .collect::<Vec<_>>(),
+            [vec![source.clone()]],
+            "{kind} {name}"
+        );
+    }
 }
 
 fn artifact_of(message: &Message) -> &rust_mutants::cargo::Artifact {

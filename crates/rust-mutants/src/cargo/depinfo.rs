@@ -26,19 +26,31 @@ pub struct Unit {
     pub env: std::collections::BTreeMap<String, Option<String>>,
 }
 
-/// The dep-info file rustc wrote beside `artifact`: the same stem without the `lib` prefix and with the `.d` extension.
+/// The dep-info file rustc wrote beside `artifact`, an output of the target cargo names `target`: the same stem with the `.d` extension, less the `lib` prefix rustc puts on a library's outputs and on nothing else.
 #[must_use]
-pub fn dep_info_path(artifact: &Path) -> Option<PathBuf> {
+pub fn dep_info_path(artifact: &Path, target: &str) -> Option<PathBuf> {
     let name = artifact.file_name()?.to_str()?;
     let stem = match artifact.extension() {
         Some(_) => artifact.file_stem()?.to_str()?,
         None => name,
     };
+    let crate_name = crate_name(target);
     let stem = match stem.strip_prefix("lib") {
-        Some(stripped) => stripped,
-        None => stem,
+        Some(unprefixed)
+            if unprefixed
+                .strip_prefix(crate_name.as_str())
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('-')) =>
+        {
+            unprefixed
+        }
+        Some(_) | None => stem,
     };
     Some(artifact.with_file_name(format!("{stem}.d")))
+}
+
+/// The name rustc compiles the target cargo names `target` as, which is what it names that target's outputs by.
+fn crate_name(target: &str) -> String {
+    target.replace('-', "_")
 }
 
 /// The prerequisites of the first rule of a dep-info file, with `\ ` escapes undone and line continuations joined.
@@ -283,7 +295,7 @@ fn is_uplift(artifact: &Artifact) -> bool {
 fn dep_info_candidates(artifact: &Artifact) -> Result<Vec<PathBuf>, CargoError> {
     let mut candidates = Vec::new();
     for file in artifact.filenames.iter().chain(artifact.executable.iter()) {
-        let candidate = dep_info_path(file).ok_or_else(|| {
+        let candidate = dep_info_path(file, &artifact.target.name).ok_or_else(|| {
             CargoError::new(
                 CargoErrorKind::DepInfoMissing,
                 format!(
@@ -307,7 +319,7 @@ fn dep_info_candidates(artifact: &Artifact) -> Result<Vec<PathBuf>, CargoError> 
 fn build_script_dep_info(program: &Path, target: &str) -> Option<PathBuf> {
     let directory = program.parent()?;
     let hash = directory.file_name()?.to_str()?.rsplit_once('-')?.1;
-    Some(directory.join(format!("{}-{hash}.d", target.replace('-', "_"))))
+    Some(directory.join(format!("{}-{hash}.d", crate_name(target))))
 }
 
 fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoError> {
