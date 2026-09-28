@@ -15,6 +15,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use njutest_devkit::fixture::copy_tree;
+use njutest_devkit::paths::SEALED_TARGET;
 use rust_mutants::cargo::{
     CompileKind, CompileOptions, Driver, LocateOptions, Message, Metadata, MetadataOptions,
     Toolchain, compile,
@@ -54,8 +55,8 @@ fn toolchain(dir: &Path, cancel: &Cancel) -> Toolchain {
     .expect("locate")
 }
 
-/// Copies `fixture`, instruments every mutable file, and builds its tests.
-fn prepare(fixture: &str) -> Tree {
+/// Copies `fixture`, instruments every mutable file, and builds its tests for `triple`, the host where there is none.
+fn prepare(fixture: &str, triple: Option<&str>) -> Tree {
     let dir = tempfile::Builder::new()
         .prefix("rust-mutants-tree-")
         .tempdir()
@@ -172,15 +173,28 @@ fn prepare(fixture: &str) -> Tree {
     );
     spec.argv.push("--target-dir".into());
     spec.argv.push(target.path().into());
+    let libraries = triple.map(|triple| {
+        spec.argv.push("--target".into());
+        spec.argv.push(triple.into());
+        njutest_devkit::paths::target_libdir(toolchain.rustc(), triple)
+    });
     spec.structured_stdout = Some(64 << 20);
     let built = run(&spec, &cancel);
+    let messages = rust_mutants::cargo::parse_messages(&built.stdout).expect("messages");
     assert!(
         built.succeeded(),
-        "the instrumented tree builds: {}",
-        std::str::from_utf8(&built.output).expect("the fixture writes exact UTF-8")
+        "the instrumented tree builds for {triple:?}, whose standard library is in {libraries:?}: \
+         {}{:#?}",
+        std::str::from_utf8(&built.output).expect("the fixture writes exact UTF-8"),
+        messages
+            .iter()
+            .filter_map(|message| match message {
+                Message::CompilerMessage(said) => Some(&said.message.message),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
     );
-    let binaries = rust_mutants::cargo::parse_messages(&built.stdout)
-        .expect("messages")
+    let binaries = messages
         .into_iter()
         .filter_map(|message| match message {
             Message::CompilerArtifact(artifact) if artifact.profile.test => artifact
@@ -242,7 +256,7 @@ impl Tree {
 
 #[test]
 fn an_instrumented_tree_builds_and_behaves_exactly_as_it_did_until_a_mutant_is_activated() {
-    let tree = prepare("fixture-simple");
+    let tree = prepare("fixture-simple", None);
     assert!(tree.binaries.contains_key("fixture_simple"));
     assert!(tree.binaries.contains_key("parity"));
 
@@ -297,7 +311,7 @@ fn an_instrumented_tree_builds_and_behaves_exactly_as_it_did_until_a_mutant_is_a
 
 #[test]
 fn a_stale_catalog_ends_the_test_process_rather_than_reporting_a_survivor() {
-    let tree = prepare("fixture-simple");
+    let tree = prepare("fixture-simple", None);
     let mutant = tree.mutant("return-default", "if a > b { a } else { b }");
     let stale = "f".repeat(64);
     let result = tree.exec("fixture_simple", Some(&mutant), Some(&stale));
@@ -313,4 +327,20 @@ fn a_stale_catalog_ends_the_test_process_rather_than_reporting_a_survivor() {
         said.contains(tree.catalog.digest()),
         "it names the catalog it was built from: {said}"
     );
+}
+
+#[test]
+fn an_instrumented_tree_builds_its_tests_for_a_sealed_host() {
+    for fixture in ["fixture-simple", "fixture-strict-lints"] {
+        let tree = prepare(fixture, Some(SEALED_TARGET));
+        assert!(
+            !tree.binaries.is_empty()
+                && tree.binaries.values().all(|module| module
+                    .extension()
+                    .is_some_and(|extension| extension == "wasm")),
+            "{fixture}: every test target of the instrumented tree is a module a sealed host can \
+             run: {:?}",
+            tree.binaries
+        );
+    }
 }

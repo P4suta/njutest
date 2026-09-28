@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
+use njutest_devkit::paths::SEALED_TARGET;
 use rust_mutants::instrument::{
     ACTIVE_ENV, Instrumenting, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_PROTOCOL_EXIT, STEP_STATE_ENV,
     STEP_STATE_SCHEMA, STEPS_ENV, instrument_file,
@@ -852,6 +853,73 @@ fn recording_costs_a_crate_neither_its_prelude_nor_its_ban_on_unsafe_code() {
             exact_output(&output.stderr)
         );
     }
+}
+
+/// Compiles `text` for a sealed host with `flags`, returning what rustc said and where the target's standard library is.
+fn built_sealed(
+    name: &str,
+    flags: &[&str],
+    text: &str,
+) -> (std::process::Output, std::path::PathBuf) {
+    let libdir = njutest_devkit::paths::target_libdir(std::path::Path::new("rustc"), SEALED_TARGET);
+    let temporary = tempfile::tempdir().expect("a place to build");
+    let dir = temporary.path();
+    let source = dir.join(format!("{name}.rs"));
+    std::fs::write(&source, text).expect("write");
+    let output = Command::new("rustc")
+        .args(["--edition", "2024", "--target", SEALED_TARGET])
+        .args(flags)
+        .arg("--out-dir")
+        .arg(dir)
+        .arg(&source)
+        .output()
+        .expect("rustc runs");
+    (output, libdir)
+}
+
+#[test]
+fn the_runtime_rendered_for_a_file_compiles_for_a_sealed_host() {
+    let (module, _) = module();
+    for (name, prefix) in [
+        ("sealed", ""),
+        ("sealed_freestanding", "#![no_std]\n"),
+        ("sealed_unsafeless", "#![forbid(unsafe_code)]\n"),
+    ] {
+        let (output, libdir) =
+            built_sealed(name, &["--crate-type", "lib"], &format!("{prefix}{module}"));
+        assert!(
+            output.status.success(),
+            "{prefix}the runtime compiles for {SEALED_TARGET} against {}: {}",
+            libdir.display(),
+            exact_output(&output.stderr)
+        );
+    }
+    let program = format!(
+        "{module}\nfn main() {{\n\
+         \x20   {MODULE_STEM}::item({FIRST_ITEM});\n\
+         \x20   {MODULE_STEM}::checkpoint();\n\
+         \x20   if {MODULE_STEM}::active(0) {{ {MODULE_STEM}::body(0); }}\n\
+         \x20   let differed = {MODULE_STEM}::differing(1, true, || false) && {MODULE_STEM}::untrue(1, true);\n\
+         \x20   let held = ({MODULE_STEM}::undefaulted(2, 1_i32), {MODULE_STEM}::unsomedefault(2, Some(1_i32)));\n\
+         \x20   let kept: Result<i32, std::io::Error> = {MODULE_STEM}::unokdefault(2, Ok(1));\n\
+         \x20   let injected: std::io::Error = {MODULE_STEM}::injected();\n\
+         \x20   let grouped = {MODULE_STEM}::value!(1 + 2);\n\
+         \x20   if !differed || held != (1, Some(1)) || kept.is_err() || injected.kind() != std::io::ErrorKind::Other || grouped != 3 {{\n\
+         \x20       {MODULE_STEM}::crashed_after(());\n\
+         \x20   }}\n\
+         }}\n"
+    );
+    let (output, libdir) = built_sealed(
+        "sealed_program",
+        &["--crate-type", "bin", "-D", "warnings"],
+        &program,
+    );
+    assert!(
+        output.status.success(),
+        "a program that takes every entry a guard calls links for {SEALED_TARGET} against {}: {}",
+        libdir.display(),
+        exact_output(&output.stderr)
+    );
 }
 
 #[test]
