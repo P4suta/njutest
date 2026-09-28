@@ -286,6 +286,8 @@ pub struct FileOutput {
     pub path: String,
     /// The rewritten text, runtime included.
     pub text: String,
+    /// The byte offset in `text` where the appended runtime starts, which is the end of the rewritten body.
+    pub runtime_at: usize,
     /// Every guard placed, in catalog order.
     pub guards: Vec<Guard>,
     /// Every alternative branch, in file order: where each mutant's own text landed.
@@ -662,6 +664,7 @@ fn instrument_with(
         text.push('\n');
     }
     worker.reparsed(&text)?;
+    let runtime_at = text.len();
     worker.append_runtime(
         &mut text,
         &Rendering {
@@ -678,6 +681,7 @@ fn instrument_with(
     Ok(FileOutput {
         path: path.to_owned(),
         text,
+        runtime_at,
         guards: guards_of(placements),
         branches,
         compared: compared.into_iter().collect(),

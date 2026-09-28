@@ -1327,18 +1327,16 @@ fn lines(bytes: &[u8]) -> Result<u64, ValidateError> {
 
 /// How many lines the rewritten body holds, the appended runtime excluded.
 fn body_lines(file: &FileOutput) -> Result<u64, ValidateError> {
-    let text = file.text.as_bytes();
-    match file.text.rfind("\n#[doc(hidden)]") {
-        Some(at) => {
-            let body = text
-                .get(..=at)
-                .ok_or_else(|| ValidateError::AttemptFailed {
-                    message: format!("runtime boundary {at} is not a source byte boundary"),
-                })?;
-            lines(body)
-        }
-        None => lines(text),
-    }
+    let body = file
+        .text
+        .get(..file.runtime_at)
+        .ok_or_else(|| ValidateError::AttemptFailed {
+            message: format!(
+                "runtime boundary {} is not a byte boundary of the rewritten text",
+                file.runtime_at
+            ),
+        })?;
+    lines(body.as_bytes())
 }
 
 /// The markers each file carries, by the file the bodies they mark are in.
