@@ -14,7 +14,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use njutest::assure::sanitize::{Sanitizing, sanitize};
+use njutest::assure::sanitize::{Sanitizer, Sanitizing, sanitize};
 use njutest::report::FindingKind;
 use njutest::trace::Recorder;
 use njutest::watch::Watch;
@@ -39,7 +39,7 @@ fn sanitized(
     said: &str,
     code: i32,
     dir: &Path,
-    sanitizers: &[String],
+    sanitizers: &[Sanitizer],
 ) -> njutest::assure::sanitize::Sanitized {
     let cancel = Cancel::new();
     let trace = Recorder::disabled();
@@ -77,9 +77,9 @@ fn a_suite_a_sanitizer_passes_is_one_it_ran_under() {
         "test result: ok. 3 passed",
         0,
         dir.path(),
-        &["address".to_owned()],
+        &[Sanitizer::Address],
     );
-    assert_eq!(done.ran, ["address"]);
+    assert_eq!(done.ran, [Sanitizer::Address]);
     assert!(done.findings.is_empty(), "{done:?}");
     assert_eq!(
         done.limitations
@@ -95,7 +95,7 @@ fn a_suite_a_sanitizer_passes_is_one_it_ran_under() {
 fn what_a_sanitizer_finds_is_a_defect() {
     let dir = tempfile::tempdir().expect("tempdir");
     let said = "==1234==ERROR: AddressSanitizer: heap-use-after-free on address 0x602000000010";
-    let done = sanitized(said, 1, dir.path(), &["address".to_owned()]);
+    let done = sanitized(said, 1, dir.path(), &[Sanitizer::Address]);
     let finding = done.findings.first().expect("a finding");
     assert_eq!(finding.kind, FindingKind::UndefinedBehaviour);
     assert!(finding.kind.is_defect());
@@ -110,7 +110,7 @@ fn what_a_sanitizer_finds_is_a_defect() {
 fn a_data_race_the_thread_sanitizer_sees_is_a_defect() {
     let dir = tempfile::tempdir().expect("tempdir");
     let said = "WARNING: ThreadSanitizer: data race (pid=1234)";
-    let done = sanitized(said, 66, dir.path(), &["thread".to_owned()]);
+    let done = sanitized(said, 66, dir.path(), &[Sanitizer::Thread]);
     assert_eq!(
         done.findings.first().map(|one| one.kind),
         Some(FindingKind::UndefinedBehaviour)
@@ -121,7 +121,7 @@ fn a_data_race_the_thread_sanitizer_sees_is_a_defect() {
 fn a_sanitizer_that_was_asked_for_and_could_not_run_is_a_gap_and_not_a_pass() {
     let dir = tempfile::tempdir().expect("tempdir");
     let said = "error: the option `Z` is only accepted on the nightly compiler";
-    let done = sanitized(said, 1, dir.path(), &["address".to_owned()]);
+    let done = sanitized(said, 1, dir.path(), &[Sanitizer::Address]);
     assert!(done.ran.is_empty(), "{done:?}");
     assert_eq!(
         done.findings.first().map(|one| one.kind),
@@ -142,11 +142,87 @@ fn a_test_that_fails_under_a_sanitizer_is_a_failing_test() {
         "test result: FAILED. 1 failed",
         101,
         dir.path(),
-        &["address".to_owned()],
+        &[Sanitizer::Address],
     );
     assert_eq!(
         done.findings.first().map(|one| one.kind),
         Some(FindingKind::FailingTest)
+    );
+}
+
+#[test]
+fn what_a_test_printed_in_its_captured_output_is_not_a_sanitizer_report() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let said = "running 1 test\ntest t ... FAILED\n\nfailures:\n\n---- t stdout ----\n\
+                ==1==ERROR: AddressSanitizer: quoted by the test\n\nfailures:\n    t\n\n\
+                test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; \
+                finished in 0.01s";
+    let done = sanitized(said, 101, dir.path(), &[Sanitizer::Address]);
+    assert_eq!(
+        done.findings.iter().map(|one| one.kind).collect::<Vec<_>>(),
+        [FindingKind::FailingTest],
+        "a sanitizer writes its report past the harness's capture, so the same words inside a \
+         failing test's captured output are the test's own: {done:?}"
+    );
+}
+
+#[test]
+fn a_cargo_ended_by_a_signal_under_a_sanitizer_measured_nothing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cancel = Cancel::new();
+    let trace = Recorder::disabled();
+    let cargo = cargo();
+    let mut env = saying("running 1 test", 0);
+    env.set("FAKE_CARGO_SIGNAL", "KILL");
+    let done = sanitize(
+        &Sanitizing {
+            root: dir.path(),
+            cargo: rust_mutants::cargo::Selecting::named(&cargo),
+            host: "x86_64-unknown-linux-gnu",
+            env,
+            packages: &[],
+            sanitizers: &[Sanitizer::Address],
+            timeout: Some(Duration::from_secs(30)),
+            offline: true,
+            locked: true,
+        },
+        Watch::new(&cancel, &trace),
+    )
+    .expect("the fixture sanitizer output is valid UTF-8");
+    assert!(done.ran.is_empty(), "{done:?}");
+    assert_eq!(
+        done.findings.iter().map(|one| one.kind).collect::<Vec<_>>(),
+        [FindingKind::NotMeasured],
+        "a cargo ended by a signal said nothing about the suite, so it is neither a test that \
+         fails under the sanitizer nor a pass: {done:?}"
+    );
+}
+
+#[test]
+fn a_sanitizer_run_that_was_asked_to_stop_is_interrupted() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cancel = Cancel::new();
+    cancel.cancel();
+    let trace = Recorder::disabled();
+    let cargo = cargo();
+    let stopped = sanitize(
+        &Sanitizing {
+            root: dir.path(),
+            cargo: rust_mutants::cargo::Selecting::named(&cargo),
+            host: "x86_64-unknown-linux-gnu",
+            env: saying("test result: ok", 0),
+            packages: &[],
+            sanitizers: &[Sanitizer::Address],
+            timeout: Some(Duration::from_secs(30)),
+            offline: true,
+            locked: true,
+        },
+        Watch::new(&cancel, &trace),
+    );
+    assert!(
+        matches!(stopped, Err(njutest::error::RunnerError::Interrupted)),
+        "a run asked to stop is interrupted, rather than a phase that quietly ran nothing: \
+         {stopped:?}"
     );
 }
 
@@ -157,9 +233,9 @@ fn every_sanitizer_the_configuration_names_is_run() {
         "test result: ok",
         0,
         dir.path(),
-        &["address".to_owned(), "leak".to_owned()],
+        &[Sanitizer::Address, Sanitizer::Leak],
     );
-    assert_eq!(done.ran, ["address", "leak"]);
+    assert_eq!(done.ran, [Sanitizer::Address, Sanitizer::Leak]);
 }
 
 #[test]
@@ -188,7 +264,7 @@ fn what_a_run_asks_of_the_sanitizer_is_the_whole_of_what_it_asks() {
             host: "x86_64-unknown-linux-gnu",
             env: saying("", 0),
             packages: &packages,
-            sanitizers: &["address".to_owned()],
+            sanitizers: &[Sanitizer::Address],
             timeout: Some(Duration::from_secs(30)),
             offline: true,
             locked: true,
@@ -196,7 +272,11 @@ fn what_a_run_asks_of_the_sanitizer_is_the_whole_of_what_it_asks() {
         Watch::new(&cancel, &trace),
     )
     .expect("the fixture sanitizer output is valid UTF-8");
-    assert_eq!(done.ran, ["address"], "the recorded command completed");
+    assert_eq!(
+        done.ran,
+        [Sanitizer::Address],
+        "the recorded command completed"
+    );
 
     let exec = trace
         .events()
@@ -246,7 +326,7 @@ fn as_started(dir: &Path, base: rust_mutants::vars::Variables) -> String {
             host: "x86_64-unknown-linux-gnu",
             env,
             packages: &[],
-            sanitizers: &["address".to_owned()],
+            sanitizers: &[Sanitizer::Address],
             timeout: Some(Duration::from_secs(30)),
             offline: true,
             locked: true,
@@ -254,7 +334,11 @@ fn as_started(dir: &Path, base: rust_mutants::vars::Variables) -> String {
         Watch::new(&cancel, &trace),
     )
     .expect("the fixture sanitizer output is valid UTF-8");
-    assert_eq!(done.ran, ["address"], "the environment probe completed");
+    assert_eq!(
+        done.ran,
+        [Sanitizer::Address],
+        "the environment probe completed"
+    );
     std::fs::read_to_string(&seen).expect("what the cargo it started saw")
 }
 
@@ -310,7 +394,7 @@ fn a_run_that_named_no_package_asks_the_sanitizer_for_the_whole_workspace() {
             host: "x86_64-unknown-linux-gnu",
             env: saying("test result: ok", 0),
             packages: &[],
-            sanitizers: &["address".to_owned()],
+            sanitizers: &[Sanitizer::Address],
             timeout: Some(Duration::from_secs(30)),
             offline: true,
             locked: true,
@@ -318,7 +402,11 @@ fn a_run_that_named_no_package_asks_the_sanitizer_for_the_whole_workspace() {
         Watch::new(&cancel, &trace),
     )
     .expect("the fixture sanitizer output is valid UTF-8");
-    assert_eq!(done.ran, ["address"], "the recorded command completed");
+    assert_eq!(
+        done.ran,
+        [Sanitizer::Address],
+        "the recorded command completed"
+    );
     let exec = trace
         .events()
         .iter()
@@ -349,7 +437,7 @@ fn a_run_that_named_no_package_asks_the_sanitizer_for_the_whole_workspace() {
 #[test]
 fn what_a_sanitizer_could_not_say_is_said_in_words_a_person_can_act_on() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let done = sanitized("test result: ok", 0, dir.path(), &["address".to_owned()]);
+    let done = sanitized("test result: ok", 0, dir.path(), &[Sanitizer::Address]);
     let stated = done.limitations.first().expect("a limitation");
     assert!(
         stated
@@ -364,7 +452,7 @@ fn what_a_sanitizer_could_not_say_is_said_in_words_a_person_can_act_on() {
         "error: the option `Z` is only accepted on the nightly compiler",
         1,
         dir.path(),
-        &["address".to_owned()],
+        &[Sanitizer::Address],
     );
     assert!(
         refused
@@ -388,7 +476,7 @@ fn what_a_sanitizer_could_not_say_is_said_in_words_a_person_can_act_on() {
         "test result: FAILED. 1 failed",
         101,
         dir.path(),
-        &["address".to_owned()],
+        &[Sanitizer::Address],
     );
     assert!(
         failing
@@ -415,7 +503,7 @@ fn a_sanitizer_that_runs_out_of_time_has_not_checked_anything() {
             host: "x86_64-unknown-linux-gnu",
             env,
             packages: &[],
-            sanitizers: &["address".to_owned()],
+            sanitizers: &[Sanitizer::Address],
             timeout: Some(Duration::from_millis(200)),
             offline: true,
             locked: true,

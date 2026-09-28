@@ -78,6 +78,8 @@ Pure computation that does not open or mutate a report store remains available.
 - `standard-v1` does not execute anything about `unsafe` code; it inventories it and says so (`soundness-not-executed`).
   `deep-v1` interprets the suite under Miri and refuses to run at all without it (`NJ7001`), and what Miri will not interpret is `miri-unsupported` rather than a pass.
   A sanitizer the configuration asks for and the toolchain will not run is `sanitizer-unavailable`; every sanitizer run also carries `sanitizer-standard-library-not-instrumented`.
+  The configuration names each sanitizer once from `address`, `leak`, `memory` and `thread`, so a misspelt one is refused before a run rather than handed to `-Zsanitizer=`, where the compiler's refusal would read as a test that fails under it.
+  A sanitizer's report is read only where the toolchain, the harness and the sanitizer's runtime speak, never inside a failing test's captured output, and a run under it that ran out of time or ended by a signal is `sanitizer-unavailable` too, since it answered nothing about the suite.
 - A question about a seam that hands the caller the bytes it was handed already is `proved` and never run.
   Cutting an answer with no body short keeps everything up to and including the blank line that ends the head, so what comes back is identical; asking for the status the upstream already gave,
   worded the way a run words it, writes the line that is already there.

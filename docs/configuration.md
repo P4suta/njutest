@@ -78,7 +78,7 @@ explore = 0                    # guards to delay per test binary not proven sing
 
 [soundness]                     # deep-v1 only
 miri_flags = []
-sanitizers = []                 # e.g. ["thread"] on nightly
+sanitizers = []                 # address, leak, memory, thread; each once, on nightly
 
 [resources.postgres]
 command = ["./tools/postgres-provider"]

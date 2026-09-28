@@ -300,17 +300,7 @@ struct Reading {
 /// `said` read line by line: a test's captured output skipped, binaries and results counted apart since cargo and libtest write them to different streams, and diagnostics taken only where the interpreter or the toolchain speaks.
 fn reading(said: &str) -> Reading {
     let mut read = Reading::default();
-    let mut captured = false;
-    let lines: Vec<&str> = said.lines().map(str::trim_end).collect();
-    for (at, line) in lines.iter().copied().enumerate() {
-        if line.starts_with(CAPTURE_OPEN) && CAPTURED.iter().any(|end| line.ends_with(end)) {
-            captured = true;
-            continue;
-        }
-        if captured {
-            captured = !closes_capture(&lines, at);
-            continue;
-        }
+    for line in uncaptured(said) {
         let spoken = line.trim_start();
         if BINARY.iter().any(|start| spoken.starts_with(start)) {
             read.started = read.started.saturating_add(1);
@@ -338,6 +328,25 @@ fn reading(said: &str) -> Reading {
         read.absent |= ABSENT.iter().any(|marker| diagnostic.contains(marker));
     }
     read
+}
+
+/// The lines of `said` outside every test's captured output, where the harness, the toolchain and a sanitizer's runtime speak rather than a test.
+pub(super) fn uncaptured(said: &str) -> Vec<&str> {
+    let lines: Vec<&str> = said.lines().map(str::trim_end).collect();
+    let mut open = Vec::with_capacity(lines.len());
+    let mut captured = false;
+    for (at, line) in lines.iter().copied().enumerate() {
+        if line.starts_with(CAPTURE_OPEN) && CAPTURED.iter().any(|end| line.ends_with(end)) {
+            captured = true;
+            continue;
+        }
+        if captured {
+            captured = !closes_capture(&lines, at);
+            continue;
+        }
+        open.push(line);
+    }
+    open
 }
 
 /// Whether the line at `at` is the `failures:` libtest closes a binary's captured output with: one or more names indented four spaces, a blank line, and the binary's exact summary; a `failures:` a test printed is followed by anything else.

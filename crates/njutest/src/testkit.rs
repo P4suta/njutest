@@ -1046,7 +1046,7 @@ pub fn documented_specimen() -> crate::config::Config {
         },
         soundness: Soundness {
             miri_flags: vec!["-Zmiri-strict-provenance".to_owned()],
-            sanitizers: vec!["address".to_owned()],
+            sanitizers: vec![crate::assure::sanitize::Sanitizer::Address],
         },
         fuzz: Fuzz {
             run: true,
