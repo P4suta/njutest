@@ -863,6 +863,42 @@ fn seed_copier_takes_the_hidden_one_too() {
     }
 }
 
+/// The copier is a POSIX shell script run where fuzz targets build, which is unix.
+#[cfg(unix)]
+#[test]
+fn every_fuzz_run_replays_the_crashes_an_earlier_run_found_before_it_explores() {
+    let fixture = tempfile::tempdir()
+        .unwrap_or_else(|error| panic!("could not make a fuzz-regression fixture: {error}"));
+    let kept = fixture.path().join("regressions/example");
+    std::fs::create_dir_all(&kept)
+        .unwrap_or_else(|error| panic!("could not make {}: {error}", kept.display()));
+    std::fs::write(kept.join("crash-1"), b"crashed once")
+        .unwrap_or_else(|error| panic!("could not write a kept crash: {error}"));
+    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("scripts/seed-fuzz-corpus.sh");
+    let output = std::process::Command::new("bash")
+        .arg(&script)
+        .arg("example")
+        .current_dir(fixture.path())
+        .output()
+        .unwrap_or_else(|error| panic!("could not run {}: {error}", script.display()));
+    assert!(
+        output.status.success(),
+        "seed copier failed: {:?}",
+        output.stderr
+    );
+    let copied = fixture.path().join("corpus/example/crash-1");
+    let actual = std::fs::read_to_string(&copied).unwrap_or_else(|error| {
+        panic!(
+            "{} was not copied, so a run starts without the input that crashed the last one \
+             and a crash that came back is found again only by luck: {error}",
+            copied.display()
+        )
+    });
+    assert_eq!(actual, "crashed once");
+}
+
 #[test]
 fn fallible_values_cannot_be_erased_through_convenience_methods() {
     let configured = repository("clippy.toml");

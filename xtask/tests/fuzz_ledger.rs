@@ -49,6 +49,47 @@ fn file_name(entry: &std::fs::DirEntry) -> String {
     }
 }
 
+/// Every Rust source under `directory`, however deep.
+fn rust_sources(directory: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut pending = vec![directory.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        for entry in directory_entries(&next) {
+            let path = entry.path();
+            if file_type(&entry).is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                found.push(path);
+            }
+        }
+    }
+    found
+}
+
+/// Every crash reproducer kept under `fuzz/regressions`, by target, as the path a test names it by.
+fn kept_crashes() -> Vec<(String, Vec<String>)> {
+    let kept = root().join("fuzz/regressions");
+    match std::fs::symlink_metadata(&kept) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(error) => panic!("{}: {error}", kept.display()),
+    }
+    let mut found: Vec<(String, Vec<String>)> = directory_entries(&kept)
+        .into_iter()
+        .map(|entry| {
+            let target = file_name(&entry);
+            let mut crashes: Vec<String> = directory_entries(&entry.path())
+                .iter()
+                .map(|crash| format!("fuzz/regressions/{target}/{}", file_name(crash)))
+                .collect();
+            crashes.sort();
+            (target, crashes)
+        })
+        .collect();
+    found.sort();
+    found
+}
+
 /// Every target the fuzz crate declares, and whether its stanza keeps it out of `cargo bench`.
 fn declared() -> Vec<(String, bool)> {
     let manifest = read("fuzz/Cargo.toml");
@@ -167,4 +208,43 @@ fn every_seed_corpus_belongs_to_a_target_that_still_exists() {
              corpus this exists to avoid"
         );
     }
+}
+
+#[test]
+fn every_kept_crash_belongs_to_a_target_that_still_exists() {
+    let named: Vec<String> = declared().into_iter().map(|(name, _bench)| name).collect();
+    for (target, crashes) in kept_crashes() {
+        assert!(
+            named.contains(&target),
+            "fuzz/regressions/{target} keeps crashes of a target the fuzz crate does not \
+             define, so no run replays them"
+        );
+        assert!(
+            !crashes.is_empty(),
+            "fuzz/regressions/{target} is a directory with no crash in it"
+        );
+    }
+}
+
+#[test]
+fn every_kept_crash_is_the_input_of_an_ordinary_test() {
+    let sources: Vec<String> = ["crates", "xtask"]
+        .iter()
+        .flat_map(|directory| rust_sources(&root().join(directory)))
+        .map(|source| {
+            std::fs::read_to_string(&source)
+                .unwrap_or_else(|error| panic!("{}: {error}", source.display()))
+        })
+        .collect();
+    let untested: Vec<String> = kept_crashes()
+        .into_iter()
+        .flat_map(|(_target, crashes)| crashes)
+        .filter(|crash| !sources.iter().any(|source| source.contains(crash.as_str())))
+        .collect();
+    assert!(
+        untested.is_empty(),
+        "these crashes are kept and no test reads them, so the suite a pull request waits for \
+         never asks whether they still crash, and the weekly run that would is not one it \
+         waits for: {untested:?}"
+    );
 }

@@ -444,7 +444,7 @@ See [fixtures/README.md](../fixtures/README.md).
 `fuzz/` is a standalone cargo-fuzz crate (nightly, sanitizer) with one target per fail-closed parser or byte transformation of the engine; each target states one property in its doc comment and `fuzz/README.md` lists them.
 `mise run fuzz:smoke` runs every target briefly, which is what somebody changing a parser does before pushing; the `fuzz` workflow spends twenty-five minutes a target, weekly and on request, and never on a pull request.
 Five thousand executions searches nothing a parser is afraid of, and the workflow does not gate `required`, so a crash found there could not have stopped a merge in any case.
-A crash reproducer worth keeping becomes a regular test.
+A crash reproducer worth keeping goes under `fuzz/regressions/<target>/`, where every later run replays it before exploring, and becomes a regular test that reads it; `xtask/tests/fuzz_ledger.rs` refuses a kept crash no test reads.
 `xtask/tests/fuzz_ledger.rs` keeps the four places that name the targets in step: the source files, the manifest stanzas (each with `bench = false`, so `cargo bench` never builds a sanitizer target), the README rows, and the weekly workflow's matrix.
 
 Being standalone is what makes them cheap to run and easy to lose: nothing in `cargo test --workspace` compiles them, so a target can rot against an API change and say nothing until the weekly job.
