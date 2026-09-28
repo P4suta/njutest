@@ -56,6 +56,8 @@ pub enum Unaccounted {
         /// How many the closing line says failed.
         failed: u32,
     },
+    /// The reports together count more tests than a count holds.
+    TooMany,
     /// The process's exit status is neither the harness's success nor its failure status for what it said.
     ExitContradicts {
         /// The status the process ended with.
@@ -90,6 +92,9 @@ impl std::fmt::Display for Unaccounted {
                 "the closing list names {named} failed tests where the closing line counts {failed}, \
                  or names one the run did not ask for"
             ),
+            Self::TooMany => {
+                formatter.write_str("the reports together count more tests than a count holds")
+            }
             Self::ExitContradicts { code } => write!(
                 formatter,
                 "the process exited with {code}, which is neither the harness's success nor its \
@@ -116,7 +121,7 @@ fn text_lines(output: &[u8]) -> Vec<&str> {
 }
 
 /// The count a `running N tests` line announces.
-fn announcement(line: &str) -> Option<u32> {
+pub(crate) fn announcement(line: &str) -> Option<u32> {
     let rest = line.trim().strip_prefix("running ")?;
     let (count, noun) = rest.split_once(' ')?;
     let count = match count.parse::<u32>() {
@@ -149,6 +154,53 @@ fn same_count(names: usize, counted: u32) -> bool {
     u32::try_from(names).is_ok_and(|names| names == counted)
 }
 
+/// How many tests a closing line accounts for.
+fn accounted(summary: &Summary) -> u32 {
+    summary
+        .passed
+        .checked_add(summary.failed)
+        .and_then(|sum| sum.checked_add(summary.ignored))
+        .and_then(|sum| sum.checked_add(summary.measured))
+        .unwrap_or(u32::MAX)
+}
+
+/// Whether one report, announcing `announced` where it announced at all and closing with `summary` after `body`, accounts for itself: its counts agree, its verdict agrees with them, and its closing list names as many failures as it counts.
+fn closed_report(
+    body: &[&str],
+    announced: Option<u32>,
+    summary: &Summary,
+) -> Result<Vec<String>, Unaccounted> {
+    if let Some(announced) = announced
+        && accounted(summary) != announced
+    {
+        return Err(Unaccounted::CountsDisagree {
+            announced,
+            accounted: accounted(summary),
+        });
+    }
+    if summary.ok != (summary.failed == 0) {
+        return Err(Unaccounted::VerdictContradicts);
+    }
+    let failed = failure_list(body);
+    if !same_count(failed.len(), summary.failed) {
+        return Err(Unaccounted::FailuresDisagree {
+            named: failed.len(),
+            failed: summary.failed,
+        });
+    }
+    Ok(failed)
+}
+
+/// Whether `exit` is the status a harness ends with for a report that says `ok`.
+const fn exits_as_said(exit: Option<i32>, ok: bool) -> Result<(), Unaccounted> {
+    match exit {
+        Some(0) if ok => Ok(()),
+        Some(FAILURE_STATUS) if !ok => Ok(()),
+        Some(code) => Err(Unaccounted::ExitContradicts { code }),
+        None => Ok(()),
+    }
+}
+
 /// What the harness's own report in `output` establishes about the run that asked it for `asked` and ended with `exit`.
 ///
 /// `exit` is the process's status where it exited with one; a process that ended any other way is judged by what it printed.
@@ -175,21 +227,8 @@ pub fn account(output: &[u8], asked: Asked<'_>, exit: Option<i32>) -> Result<Acc
         (None, Some((close, summary))) if truncated => (None, summary, close),
         (None, Some(_) | None) => return Err(Unaccounted::Unannounced),
     };
-    let accounted = summary
-        .passed
-        .checked_add(summary.failed)
-        .and_then(|sum| sum.checked_add(summary.ignored))
-        .and_then(|sum| sum.checked_add(summary.measured))
-        .unwrap_or(u32::MAX);
-    if let Some(announced) = announced
-        && accounted != announced
-    {
-        return Err(Unaccounted::CountsDisagree {
-            announced,
-            accounted,
-        });
-    }
     if let (Asked::Exact(names), Some(announced)) = (asked, announced)
+        && accounted(&summary) == announced
         && !same_count(names.len(), announced)
     {
         return Err(Unaccounted::SelectionDisagrees {
@@ -197,26 +236,89 @@ pub fn account(output: &[u8], asked: Asked<'_>, exit: Option<i32>) -> Result<Acc
             announced,
         });
     }
-    if summary.ok != (summary.failed == 0) {
-        return Err(Unaccounted::VerdictContradicts);
-    }
-    let failed = failure_list(lines.get(..closing).unwrap_or_default());
+    let failed = closed_report(
+        lines.get(..closing).unwrap_or_default(),
+        announced,
+        &summary,
+    )?;
     let foreign = match asked {
         Asked::Whole => false,
         Asked::Exact(names) => failed.iter().any(|name| !names.contains(name)),
     };
-    if !same_count(failed.len(), summary.failed) || foreign {
+    if foreign {
         return Err(Unaccounted::FailuresDisagree {
             named: failed.len(),
             failed: summary.failed,
         });
     }
-    match exit {
-        Some(0) if summary.ok => {}
-        Some(FAILURE_STATUS) if !summary.ok => {}
-        Some(code) => return Err(Unaccounted::ExitContradicts { code }),
-        None => {}
+    exits_as_said(exit, summary.ok)?;
+    Ok(Account {
+        summary,
+        failed,
+        announced,
+    })
+}
+
+/// The counts of two closing lines together, where they fit.
+fn added(sum: Summary, one: &Summary) -> Option<Summary> {
+    Some(Summary {
+        ok: sum.ok && one.ok,
+        passed: sum.passed.checked_add(one.passed)?,
+        failed: sum.failed.checked_add(one.failed)?,
+        ignored: sum.ignored.checked_add(one.ignored)?,
+        measured: sum.measured.checked_add(one.measured)?,
+        filtered_out: sum.filtered_out.checked_add(one.filtered_out)?,
+    })
+}
+
+/// What a run whose harness prints one whole report after another establishes: rustdoc's, which prints the report of each merged doctest binary it ran and then its own, and ended with `exit`.
+///
+/// # Errors
+/// Every way one of its reports fails to account for itself, the first found, and a run that printed no report at all.
+pub fn accounts(output: &[u8], exit: Option<i32>) -> Result<Account, Unaccounted> {
+    let lines = text_lines(output);
+    let truncated = lines
+        .first()
+        .is_some_and(|line| line.starts_with(crate::runner::OUTPUT_TRUNCATED_PREFIX));
+    let mut open: Option<(usize, Option<u32>)> = truncated.then_some((0, None));
+    let mut summary = Summary {
+        ok: true,
+        passed: 0,
+        failed: 0,
+        ignored: 0,
+        measured: 0,
+        filtered_out: 0,
+    };
+    let mut failed = Vec::new();
+    let mut announced = Some(0_u32);
+    let mut reported = false;
+    for (at, line) in lines.iter().enumerate() {
+        if let Some(count) = announcement(line) {
+            if matches!(open, Some((_, Some(_)))) {
+                return Err(Unaccounted::Unfinished);
+            }
+            open = Some((at, Some(count)));
+        } else if let Some(closing) = crate::execute::parse_summary_line(line) {
+            let Some((start, said)) = open.take() else {
+                return Err(Unaccounted::Unannounced);
+            };
+            let body = lines.get(start..at).unwrap_or_default();
+            failed.extend(closed_report(body, said, &closing)?);
+            summary = added(summary, &closing).ok_or(Unaccounted::TooMany)?;
+            announced = match (announced, said) {
+                (Some(sum), Some(one)) => Some(sum.checked_add(one).ok_or(Unaccounted::TooMany)?),
+                (None | Some(_), None) | (None, Some(_)) => None,
+            };
+            reported = true;
+        }
     }
+    if matches!(open, Some((_, Some(_)))) {
+        return Err(Unaccounted::Unfinished);
+    }
+    if !reported {
+        return Err(Unaccounted::Unannounced);
+    }
+    exits_as_said(exit, summary.ok)?;
     Ok(Account {
         summary,
         failed,

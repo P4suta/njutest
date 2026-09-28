@@ -814,6 +814,11 @@ pub enum SummaryRecord {
         /// The summary's count.
         tests_run: Option<u32>,
     },
+    /// rustdoc, with how many doctests its summaries together said ran, or nothing where it printed none.
+    Rustdoc {
+        /// The summaries' count.
+        tests_run: Option<u32>,
+    },
     /// A harness that answers by exit code, names no test, and prints no summary.
     Custom,
     /// No process answered.
@@ -828,6 +833,9 @@ impl SummaryRecord {
     pub fn of(result: &crate::execute::MutantResult) -> Self {
         match result.protocol {
             crate::execute::Protocol::Libtest => Self::Libtest {
+                tests_run: result.tests_run(),
+            },
+            crate::execute::Protocol::Rustdoc => Self::Rustdoc {
                 tests_run: result.tests_run(),
             },
             crate::execute::Protocol::Custom => Self::Custom,

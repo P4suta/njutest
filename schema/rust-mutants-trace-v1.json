@@ -535,6 +535,26 @@
               "type": "object",
               "additionalProperties": false,
               "required": [
+                "protocol",
+                "tests_run"
+              ],
+              "properties": {
+                "protocol": {
+                  "const": "rustdoc"
+                },
+                "tests_run": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 0
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
                 "protocol"
               ],
               "properties": {

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use super::{Asked, FAILURE_STATUS, Unaccounted, account, listing};
+use super::{Asked, FAILURE_STATUS, Unaccounted, account, accounts, listing};
 
 const PASSED: &str = "\nrunning 2 tests\ntest a ... ok\ntest b ... ok\n\n\
     test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n";
@@ -237,4 +237,79 @@ fn a_listing_its_harness_did_not_close_lists_nothing() {
     ] {
         assert_eq!(listing(unclosed.as_bytes()), None, "{why}: {unclosed:?}");
     }
+}
+
+const MERGED_THEN_ALONE: &str = "\nrunning 5 tests\ntest src/lib.rs - add (line 15) ... ignored\n\
+    test src/lib.rs - add (line 11) - compile ... ok\ntest src/lib.rs - add (line 3) ... ok\n\
+    test src/lib.rs - sub (line 26) ... ok\ntest src/lib.rs - add (line 7) - should panic ... ok\n\n\
+    test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\n\
+    running 1 test\ntest src/lib.rs - add (line 19) - compile fail ... ok\n\n\
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s\n\n\
+    all doctests ran in 0.18s; merged doctests compilation took 0.14s\n";
+
+#[test]
+fn rustdocs_reports_one_after_another_are_accounted_for_together() {
+    let said = accounts(MERGED_THEN_ALONE.as_bytes(), Some(0));
+    let Ok(said) = said else {
+        panic!("a merged binary's report and rustdoc's own are one run: {said:?}");
+    };
+    assert_eq!(said.announced, Some(6));
+    assert_eq!(
+        (
+            said.summary.passed,
+            said.summary.ignored,
+            said.summary.failed
+        ),
+        (5, 1, 0)
+    );
+    assert_eq!(
+        account(MERGED_THEN_ALONE.as_bytes(), Asked::Whole, Some(0)),
+        Err(Unaccounted::CountsDisagree {
+            announced: 5,
+            accounted: 1
+        }),
+        "one test binary's output is one report, so the same output read as one is refused"
+    );
+}
+
+#[test]
+fn a_failure_in_any_of_rustdocs_reports_fails_the_run_and_is_named() {
+    let failing = MERGED_THEN_ALONE
+        .replace(
+            "test src/lib.rs - add (line 3) ... ok",
+            "test src/lib.rs - add (line 3) ... FAILED",
+        )
+        .replace(
+            "test result: ok. 4 passed; 0 failed; 1 ignored",
+            "failures:\n    src/lib.rs - add (line 3)\n\ntest result: FAILED. 3 passed; 1 failed; 1 ignored",
+        );
+    let said = accounts(failing.as_bytes(), Some(FAILURE_STATUS));
+    let Ok(said) = said else {
+        panic!("a failure one report names is the run's: {said:?}");
+    };
+    assert!(!said.summary.ok);
+    assert_eq!(said.failed, names(&["src/lib.rs - add (line 3)"]));
+    assert_eq!(
+        accounts(failing.as_bytes(), Some(0)),
+        Err(Unaccounted::ExitContradicts { code: 0 }),
+        "rustdoc exits with the failure status where any report failed"
+    );
+}
+
+#[test]
+fn a_report_rustdoc_left_open_or_never_opened_is_refused() {
+    let open = MERGED_THEN_ALONE.replace(
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s",
+        "",
+    );
+    assert_eq!(
+        accounts(open.as_bytes(), Some(0)),
+        Err(Unaccounted::Unfinished)
+    );
+    let unopened = MERGED_THEN_ALONE.replace("running 1 test\n", "");
+    assert_eq!(
+        accounts(unopened.as_bytes(), Some(0)),
+        Err(Unaccounted::Unannounced)
+    );
+    assert_eq!(accounts(b"", Some(0)), Err(Unaccounted::Unannounced));
 }

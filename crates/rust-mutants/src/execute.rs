@@ -462,6 +462,22 @@ pub fn parse_summary(output: &[u8]) -> Result<Option<Summary>, LibtestOutputErro
     Ok(parse_summary_text(text))
 }
 
+/// Every summary line of `text` counted together, as rustdoc's reports are one run: nothing where there is none or the counts do not fit.
+fn summed_summaries(text: &str) -> Option<Summary> {
+    let mut summaries = text.lines().filter_map(parse_summary_line);
+    let first = summaries.next()?;
+    summaries.try_fold(first, |sum, one| {
+        Some(Summary {
+            ok: sum.ok && one.ok,
+            passed: sum.passed.checked_add(one.passed)?,
+            failed: sum.failed.checked_add(one.failed)?,
+            ignored: sum.ignored.checked_add(one.ignored)?,
+            measured: sum.measured.checked_add(one.measured)?,
+            filtered_out: sum.filtered_out.checked_add(one.filtered_out)?,
+        })
+    })
+}
+
 fn parse_summary_text(text: &str) -> Option<Summary> {
     text.lines().rev().find_map(parse_summary_line)
 }
@@ -2571,6 +2587,8 @@ pub struct MutantResult {
 pub enum Protocol {
     /// libtest, which names every test's result and closes with a summary counting them.
     Libtest,
+    /// rustdoc, which prints the libtest report of each merged doctest binary it ran and then one of its own, each closing with a summary.
+    Rustdoc,
     /// A harness that answers by its exit code and names no test.
     Custom,
     /// No process answered, so no protocol was spoken.
@@ -2599,7 +2617,7 @@ impl MutantResult {
     #[must_use]
     pub fn reading(&self) -> Reading {
         match self.protocol {
-            Protocol::Libtest => {
+            Protocol::Libtest | Protocol::Rustdoc => {
                 let whole = self.tests_run().is_some_and(|ran| {
                     usize::try_from(ran).is_ok_and(|ran| ran == self.passed_tests.len())
                 });
@@ -2623,6 +2641,10 @@ impl MutantResult {
             Protocol::Libtest => Some(crate::libtest::account(
                 &self.output,
                 asked,
+                self.signal.is_none().then_some(self.exit_code),
+            )),
+            Protocol::Rustdoc => Some(crate::libtest::accounts(
+                &self.output,
                 self.signal.is_none().then_some(self.exit_code),
             )),
             Protocol::Custom | Protocol::Unanswered => None,
@@ -2740,6 +2762,9 @@ fn concluded(
     output: &[u8],
 ) -> (MutantConclusion, Option<Summary>, Lines) {
     let (summary, lines, protocol_exact) = match (target.harness, std::str::from_utf8(output)) {
+        (true, Ok(text)) if target.kind() == TargetKind::Doc => {
+            (summed_summaries(text), parse_lines_text(text), true)
+        }
         (true, Ok(text)) => (parse_summary_text(text), parse_lines_text(text), true),
         (true, Err(_not_utf8)) => (None, Lines::default(), false),
         (false, _) => (None, Lines::default(), true),
@@ -2850,10 +2875,24 @@ fn finished(
         exit_code: result.conventional_exit_code(),
         duration: result.duration,
         output: result.output,
-        protocol: if target.harness {
-            Protocol::Libtest
-        } else {
-            Protocol::Custom
+        protocol: match (target.kind(), target.harness) {
+            (TargetKind::Doc, _) => Protocol::Rustdoc,
+            (
+                TargetKind::Lib
+                | TargetKind::Bin
+                | TargetKind::Test
+                | TargetKind::Example
+                | TargetKind::ProcMacro,
+                true,
+            ) => Protocol::Libtest,
+            (
+                TargetKind::Lib
+                | TargetKind::Bin
+                | TargetKind::Test
+                | TargetKind::Example
+                | TargetKind::ProcMacro,
+                false,
+            ) => Protocol::Custom,
         },
         summary,
         signal,
