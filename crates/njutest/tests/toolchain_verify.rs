@@ -3044,3 +3044,136 @@ fn a_kept_sealed_answer_about_one_mutation_is_believed_only_once_its_executions_
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_kill_a_checkpoint_kept_is_inherited_only_once_its_executions_come_out_the_same() {
+    use rust_mutants::sealed::record::{Came, Evidence};
+    let fixture = fixture("fixture-assured");
+    let first = verify(&fixture, &[]);
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "{}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    let established = document(&fixture);
+    let njutest::report::ReportDocument::Complete(report) = parsed(&fixture) else {
+        panic!("a run of the whole catalog writes a complete report");
+    };
+    let build = report.builds().next().expect("the run made one build");
+    let store = njutest::cache::store::Store::new(
+        &njutest_devkit::paths::cache_beside(&fixture.root).expect("a cache directory"),
+        u64::MAX,
+        std::time::Duration::from_hours(1),
+    );
+    let whole = text(&established["provenance"]["identity"]);
+    let identity =
+        rust_mutants::id::HexDigest::try_from(whole.as_str()).expect("a canonical identity");
+    std::fs::remove_file(store.entry(&identity))
+        .expect("the whole answer is forgotten, so the next run resumes where the checkpoint says");
+    let row = established["builds"][0]["parts"][0]["mutants"]
+        .as_array()
+        .expect("mutation rows")
+        .iter()
+        .find(|row| row["decision"]["outcome"] == "killed" && row["evidence"]["kind"] == "sealed")
+        .expect("the fixture kills a mutation with a sealed execution")
+        .clone();
+    let mutant = rust_mutants::id::HexDigest::try_from(text(&row["id"]).as_str())
+        .expect("a canonical mutant identity");
+    let mut evidence = njutest::evidence::store::read(store.root(), &mutant)
+        .expect("the store of mutations reads")
+        .expect("the run kept what it established about the mutation")
+        .evidence;
+    let Evidence::Sealed { executions } = &mut evidence else {
+        panic!("a sealed kill rests on its sealed executions: {evidence:?}");
+    };
+    let killing = executions
+        .last_mut()
+        .expect("a sealed kill rests on the execution that detected it");
+    let came_to = killing.came_to;
+    killing.came_to = if came_to == Came::Failed {
+        Came::Panicked
+    } else {
+        Came::Failed
+    };
+    let (target, test, stored) = (
+        killing.target.clone(),
+        killing.test.clone(),
+        killing.came_to,
+    );
+    let continuation = njutest::evidence::key::continuation_identity(&whole, build.selection());
+    let mut state = njutest::checkpoint::State::new(&continuation);
+    state.attempts = 1;
+    state.record_mutant(njutest::checkpoint::SavedMutant {
+        id: text(&row["id"]),
+        disposition: njutest::checkpoint::SavedDisposition::Killed {
+            by: text(&row["decision"]["killed_by"]),
+            before: Vec::new(),
+        },
+        evidence,
+        duration_ms: 0,
+    });
+    let checkpoints = store.root().join(njutest::app::verify::CHECKPOINTS);
+    njutest::checkpoint::write(&checkpoints, &state).expect("the checkpoint takes the state");
+    assert_eq!(
+        njutest::checkpoint::read(&checkpoints, &continuation)
+            .expect("the checkpoint reads the state back")
+            .as_ref(),
+        Some(&state),
+        "the state passes every check the checkpoint makes of what it reads"
+    );
+
+    let second = verify(&fixture, &["--trace"]);
+    let stderr = njutest_devkit::process::strict_utf8(&second.stderr);
+    assert_eq!(second.status.code(), Some(0), "{stderr}");
+    let answered = document(&fixture);
+    assert!(
+        answered["builds"][0]["parts"][0]["limitations"]
+            .as_array()
+            .expect("limitations")
+            .iter()
+            .any(|one| one["name"] == "resumed-from-checkpoint"),
+        "the run resumed from the checkpoint: {answered}"
+    );
+    let now = answered["builds"][0]["parts"][0]["mutants"]
+        .as_array()
+        .expect("mutation rows")
+        .iter()
+        .find(|one| one["id"] == row["id"])
+        .expect("the mutation is still in the catalog")
+        .clone();
+    assert_eq!(
+        now["evidence"]["executions"]
+            .as_array()
+            .and_then(|executions| executions.last())
+            .map(|execution| execution["came_to"].clone()),
+        Some(serde_json::json!(came_to.name())),
+        "a kill a checkpoint kept one of whose executions comes to something else when it is \
+         put again is not inherited, and the run establishes the mutation afresh: {now}"
+    );
+    let events = recording_of(&fixture, &text(&answered["run_id"]));
+    let said: Vec<String> = events
+        .iter()
+        .filter_map(|event| njutest::testkit::payload::of(&event.payload).note())
+        .filter(|note| note.kind == "unreproduced")
+        .map(|note| note.detail.clone())
+        .collect();
+    let display = text(&row["display_id"]);
+    let note = said
+        .iter()
+        .find(|detail| detail.contains(&display))
+        .unwrap_or_else(|| panic!("the recording names the kill it did not inherit: {said:?}"));
+    for named in [
+        target.as_str(),
+        test.as_str(),
+        stored.name(),
+        came_to.name(),
+    ] {
+        assert!(
+            note.contains(named),
+            "the note names the execution that differed, what the checkpoint said it came to, \
+             and what it came to now; {named} is missing: {note}"
+        );
+    }
+}

@@ -818,7 +818,7 @@ fn establish(
         character_column: at.char_column,
     });
     let came = if let Some(saved) = state.and_then(|state| state.mutant(mutant.id.as_str())) {
-        resumed(judging, mutant, saved)
+        resumed(judging, mutant, saved)?
     } else if let Some(diagnostic) = rejected.get(mutant.id.as_str()) {
         if judging.subject.perturbing == Perturbing::Faults {
             record_rejection(watch, mutant, diagnostic);
@@ -878,24 +878,40 @@ enum Sealed {
     Lead(RestsOn),
 }
 
-/// The kill an interrupted run established with sealed executions, which a checkpoint holds and nothing else.
-fn resumed(judging: &Judging<'_>, mutant: &Mutant, saved: &crate::checkpoint::SavedMutant) -> Came {
+/// The kill an interrupted run established with sealed executions, which a checkpoint holds and nothing else, inherited once they come out the same again on this run's bench, and established afresh where they do not (ADR 0046, decision 7).
+///
+/// # Errors
+/// What stopped the executions, or the mutation established afresh, from running.
+fn resumed(
+    judging: &Judging<'_>,
+    mutant: &Mutant,
+    saved: &crate::checkpoint::SavedMutant,
+) -> Result<Came, crate::error::RunnerError> {
     let crate::checkpoint::SavedDisposition::Killed { by, before } = &saved.disposition;
+    let route = judging.subject.session.route(mutant);
+    if let RestsOn::Sealed { executions } = &saved.evidence
+        && let Some(afresh) = again(judging, mutant, &route, (None, executions))?
+    {
+        return match afresh {
+            Settled::Came(came) => Ok(came),
+            Settled::Native(lead) => natively(judging, mutant, &route, lead),
+        };
+    }
     if judging.subject.perturbing == Perturbing::Mutants {
         judging.watch.trace.resumed(crate::trace::ResumedRecord {
             mutant: mutant.id.as_str().to_owned(),
             killed_by: by.clone(),
         });
     }
-    Came {
+    Ok(Came {
         disposition: inherited(saved),
         evidence: Some(saved.evidence.clone()),
         routing: Some(crate::report::Routing::of(
-            &judging.subject.session.route(mutant),
+            &route,
             through(before.iter().cloned(), by),
         )),
         source: None,
-    }
+    })
 }
 
 /// What putting `mutant` again on this run's bench makes of `kept`, the sealed executions a verdict rests on that `source` established where another run did: nothing where they come to what it recorded, in the order they ran, and what the run settles on afresh, from what they came to now, where they do not (ADR 0046, decision 7).
