@@ -14,8 +14,3 @@ stall-watch mutation njutest-14
 step-transition mutation njutest-14
 step-stop-said self-check njutest-14
 step-stop-said mutation njutest-14
-operator-swap mutation njutest-14
-instrument-shape mutation njutest-14
-execution-confinement mutation ci-mutation-testing-speedup
-repository-claims mutation njutest-14
-test-decline mutation phase-0a-0b-baseline-controls
