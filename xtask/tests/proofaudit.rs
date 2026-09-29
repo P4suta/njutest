@@ -2593,7 +2593,8 @@ fn a_control_that_reached_a_site_its_baseline_never_did_is_owed_an_unstable_base
         serde_json::json!({ "findings": [{}, {
             "kind": "unstable-baseline",
             "subject": TARGET,
-            "detail": "moved",
+            "detail": "moved: 1 mutation a proof removed its run of, and 0 mutations no test \
+                       reached, rest on it",
             "position": null
         }] }),
     );
@@ -4288,5 +4289,110 @@ fn repairs_out_of_the_order_the_repair_takes_are_a_violation() {
     assert!(
         said.iter().any(|line| line.contains("out of the order")),
         "a repair of an earlier mutation after a later one is not what the run does: {said:?}"
+    );
+}
+
+#[test]
+fn an_unstable_baseline_finding_counts_what_the_rows_and_routes_leave_resting() {
+    let engine = || {
+        vec![
+            sentinel::touch("baseline", &[0]),
+            sentinel::touch("control", &[0, 1]),
+        ]
+    };
+    let found = |detail: &str| {
+        let mut document = with(sentinel::drifted("moved"));
+        merge(
+            &mut document,
+            serde_json::json!({ "findings": [{}, {
+                "kind": "unstable-baseline",
+                "subject": TARGET,
+                "detail": detail,
+                "position": null
+            }] }),
+        );
+        drift_violations(&with_engine(document, engine()))
+    };
+    let counted = |detail: &[String]| {
+        detail
+            .iter()
+            .any(|line| line.contains("does not say what the rows and repairs leave resting"))
+    };
+    let right = found(
+        "pkg/test/lib reached something ... is unfounded: 1 mutation a proof removed its run \
+         of, and 0 mutations no test reached, rest on it. Make what the suite reaches \
+         independent of order, time and earlier processes, and run again",
+    );
+    assert!(!counted(&right), "{right:?}");
+    let wrong = found(
+        "pkg/test/lib reached something ... is unfounded: 3 mutations a proof removed its run \
+         of, and 0 mutations no test reached, rest on it. Make what the suite reaches \
+         independent of order, time and earlier processes, and run again",
+    );
+    assert!(
+        counted(&wrong),
+        "one survivor its route kept off the moved target rests on it, and a finding that \
+         counts three is not what the rows say (ADR 0036 decision 3): {wrong:?}"
+    );
+}
+
+#[test]
+fn a_reach_moved_limitation_counts_the_dispositions_the_repairs_replaced() {
+    let stated = |again: &str| {
+        let mut events = routes();
+        events.push(serde_json::json!({
+            "type": "mutant-exec",
+            "mutant": {
+                "mutant": SURVIVED, "target": TARGET, "args": [], "outcome": "survived",
+                "duration_ms": 5
+            }
+        }));
+        events.push(serde_json::json!({
+            "type": "repair",
+            "repair": {
+                "mutant": SURVIVED, "target": TARGET,
+                "was": "survived", "now": "survived", "reached": "reached"
+            }
+        }));
+        let mut document = with(sentinel::drifted("moved"));
+        merge(
+            &mut document,
+            serde_json::json!({ "limitations": [{
+                "name": "reach-moved",
+                "detail": format!(
+                    "a target reached something on an original-code control that it did not \
+                     reach on its baseline, so what it reaches is not a function of the target; \
+                     {again} that rested on its baseline were decided again by running against \
+                     it, and nothing this run concludes stands on the moved record ({TARGET})"
+                )
+            }] }),
+        );
+        let laid = sentinel::Perturbation {
+            name: "reach-moved",
+            document,
+            events: Some(events),
+            engine: Some(vec![
+                sentinel::touch("baseline", &[0]),
+                sentinel::touch("control", &[0, 1]),
+                repair_touch(&"b".repeat(64), &[1]),
+            ]),
+            shards: Vec::new(),
+            outputs: Vec::new(),
+        }
+        .lay()
+        .expect("the specimen is laid out");
+        let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+            .expect("a recording this audit can read");
+        drift_violations(&audit)
+            .into_iter()
+            .any(|line| line.contains("does not count the"))
+    };
+    assert!(
+        !stated("1 disposition"),
+        "the one repair that reached the site replaced the one disposition resting there"
+    );
+    assert!(
+        stated("2 dispositions"),
+        "and a limitation that counts two is not what the repairs say (ADR 0036 decision 3)"
     );
 }

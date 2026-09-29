@@ -1260,7 +1260,109 @@ fn drift(
     held_to_findings(recording, &resting, &mut notes);
     held_to_limitation(recording, &derived, &mut notes);
     held_to_repairs(recording, &resting, &mut notes);
+    if let Some(rerouted) = rerouted {
+        held_to_counts(recording, &derived, rerouted, &mut notes);
+    }
     notes.looked()
+}
+
+/// The counts the `unstable-baseline` finding and the `reach-moved` limitation give each moved target, re-derived from the rows, their routes and the repairs: how many survivors and how many unreached claims still rest on it, and how many dispositions resting on it a repair replaced (ADR 0036 decision 3).
+fn held_to_counts(
+    recording: &Recording<'_>,
+    derived: &BTreeMap<String, crate::drift::Standing>,
+    Rerouted { routing, repairs }: Rerouted<'_>,
+    notes: &mut Notes<'_>,
+) {
+    let moved = derived
+        .iter()
+        .filter(|(_, standing)| **standing == crate::drift::Standing::Moved)
+        .map(|(target, _)| target);
+    for target in moved {
+        let still = |outcome: &str| {
+            recording
+                .mutants
+                .iter()
+                .filter(|row| row.outcome == outcome)
+                .filter(|row| {
+                    !routing.routes.iter().any(|route| {
+                        route.names(&row.id, &row.display_id)
+                            && route.reaching.iter().any(|one| one == target)
+                    })
+                })
+                .filter(|row| {
+                    !repairs.iter().any(|repair| {
+                        repair.mutant == row.display_id
+                            && repair.target == *target
+                            && repair.reached == "reached"
+                    })
+                })
+                .count()
+        };
+        let counted = format!(
+            ": {} a proof removed its run of, and {} no test reached, rest on it",
+            mutations(still(SURVIVED)),
+            mutations(still(UNREACHED))
+        );
+        for detail in recording
+            .part
+            .findings
+            .iter()
+            .filter(|row| {
+                field(row, "kind").as_deref() == Some(UNSTABLE_BASELINE)
+                    && field(row, "subject").as_deref() == Some(target.as_str())
+            })
+            .filter_map(|row| field(row, "detail"))
+            .filter(|detail| !detail.contains(&counted))
+        {
+            notes.violated(
+                target,
+                format!(
+                    "the {UNSTABLE_BASELINE} finding about {target} does not say what the rows \
+                     and repairs leave resting on it, which is `{}`: {detail}",
+                    counted.trim_start_matches(": ")
+                ),
+            );
+        }
+        let again = repairs
+            .iter()
+            .filter(|repair| repair.target == *target)
+            .filter(|repair| repair.reached == "reached" || repair.now != repair.was)
+            .count();
+        let said = format!(
+            "; {again} {} that rested on its baseline",
+            if again == 1 {
+                "disposition"
+            } else {
+                "dispositions"
+            }
+        );
+        for detail in recording
+            .part
+            .limitations
+            .iter()
+            .filter(|row| field(row, "name").as_deref() == Some(REACH_MOVED))
+            .filter_map(|row| field(row, "detail"))
+            .filter(|detail| detail.ends_with(&format!("({target})")))
+            .filter(|detail| !detail.contains(&said))
+        {
+            notes.violated(
+                target,
+                format!(
+                    "the {REACH_MOVED} limitation about {target} does not count the {again} \
+                     disposition(s) the repairs replaced there: {detail}"
+                ),
+            );
+        }
+    }
+}
+
+/// How many mutations, in the words a finding counts them in.
+fn mutations(count: usize) -> String {
+    if count == 1 {
+        "1 mutation".to_owned()
+    } else {
+        format!("{count} mutations")
+    }
 }
 
 /// How many dispositions still rest on each moved target: a survivor or an unreached claim whose route did not put the target to it, and which no repair against it that reached the site decided again; every one where the run kept no routing to tell.
