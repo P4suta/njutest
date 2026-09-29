@@ -405,6 +405,7 @@
           "expected",
           "unreached",
           "source_run_id",
+          "part_run_id",
           "evidence"
         ],
         "properties": {
@@ -679,6 +680,18 @@
               }
             ],
             "description": "The run that established this outcome, when it was read back rather than executed."
+          },
+          "part_run_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              }
+            ],
+            "description": "The run of the part that decided this row, on whose bench its executions ran, where the report merges the parts of a catalog; null in a run's own report, which decided every row itself."
           },
           "evidence": {
             "description": "What the verdict rests on: the sealed executions that established it, or no verdict and every reason why, in which case the outcome is a native lead (ADR 0046).",

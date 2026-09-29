@@ -265,6 +265,29 @@ impl Layer {
             Self::Sealed => "sealed",
         }
     }
+
+    /// What this layer reads of the executions the recording holds, which says whether a defect only a sealed execution shows is owed to it.
+    #[must_use]
+    pub const fn reads(self) -> crate::route::Reads {
+        use crate::route::Reads;
+        match self {
+            Self::Trace => Reads::Both,
+            Self::Proofs | Self::Work => Reads::Native,
+            Self::Identity
+            | Self::Accounting
+            | Self::Score
+            | Self::Findings
+            | Self::Expectations
+            | Self::Exit
+            | Self::Merge
+            | Self::Sites
+            | Self::Ledger
+            | Self::Touch
+            | Self::Entry
+            | Self::Carry
+            | Self::Sealed => Reads::Nothing,
+        }
+    }
 }
 
 /// One thing the re-decision has to say about one part of one run.
@@ -721,6 +744,8 @@ struct Row {
     unreached: bool,
     not_run_reason: Option<NotRunReason>,
     source_run_id: Option<String>,
+    /// The run of the part that decided the row, where the report merges parts.
+    part_run_id: Option<String>,
     declined: Vec<Decline>,
     evidence: Resting,
 }

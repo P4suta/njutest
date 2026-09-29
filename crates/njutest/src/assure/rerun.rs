@@ -72,6 +72,38 @@ pub enum Rerun {
 /// One sealed execution a row rests on, with the row.
 type Executed<'report> = (&'report MutantRecord, &'report SealedRun);
 
+/// What running a report's sealed executions again in the workspace at `root` asks for, as `config` configures it and `cargo` bounds its commands: no run of its own is measured, so nothing of one is kept.
+#[must_use]
+pub fn asking(
+    root: &std::path::Path,
+    config: crate::config::Config,
+    (cargo, run_id, started): (
+        crate::build::Cargo,
+        rust_mutants::id::RunId,
+        jiff::Timestamp,
+    ),
+) -> Request {
+    Request {
+        root: root.to_path_buf(),
+        build: config.execution.build(),
+        packages: run::asked_for(&[], &config),
+        test_args: config.execution.test_binary_args.clone(),
+        config,
+        cargo,
+        keep_temp: false,
+        run_id,
+        started,
+        engine_trace: rust_mutants::trace::Recorder::disabled(),
+        carried_evidence: None,
+        evidence: crate::assure::identity::Evidence::default(),
+        configuration: String::new(),
+        changed: None,
+        checkpoints: None,
+        evidence_store: None,
+        shard: None,
+    }
+}
+
 /// Runs every sealed execution `stored` rests on again, build by build as `request` prepares each, and says whether all came out the same.
 ///
 /// # Errors

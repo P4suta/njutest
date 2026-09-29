@@ -342,6 +342,9 @@ pub struct RunMutantDocument {
     /// The run that established this, when it was not this one.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub source_run_id: Option<String>,
+    /// The run of the part that decided this row, on whose bench its executions ran, where the report merges the parts of a catalog; none in a run's own report, which decided every row itself.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub part_run_id: Option<String>,
     /// What the verdict rests on: sealed executions, or nothing and every reason why (ADR 0046).
     pub evidence: crate::sealed::record::Evidence,
 }
@@ -523,6 +526,19 @@ pub enum DocumentError {
         /// The contradictory mutant.
         mutant: String,
     },
+    /// A row says which part's run decided it where the report is one run's, or says none where the report merges parts.
+    #[error(
+        "mutant {mutant} {said} the part run that decided it, and the report is {is}: a merge \
+         names the part run of every row, and a run's own report of none"
+    )]
+    PartProvenance {
+        /// The row that disagrees with the report.
+        mutant: String,
+        /// Whether the row names a part run.
+        said: &'static str,
+        /// What the report's other rows or its shard make it.
+        is: &'static str,
+    },
     /// A not-run reason was attached to a result that did run.
     #[error("mutant {mutant} carries a not-run reason that contradicts its outcome")]
     NotRunReason {
@@ -617,6 +633,7 @@ impl RunDocument {
     pub fn validate(&self) -> Result<(), DocumentError> {
         self.validate_header()?;
         self.validate_catalog_rows()?;
+        self.validate_part_provenance()?;
         for one in &self.mutants {
             self.validate_mutant(one)?;
         }
@@ -636,6 +653,38 @@ impl RunDocument {
                 expected: expected_exit,
                 actual: self.run.exit_code,
             });
+        }
+        Ok(())
+    }
+
+    /// Every row names the part run that decided it, in a merge, or none does, in a run's own report; a part of a catalog is a run's own report.
+    fn validate_part_provenance(&self) -> Result<(), DocumentError> {
+        let merge = self.run.shard.is_none()
+            && self
+                .mutants
+                .first()
+                .is_some_and(|first| first.part_run_id.is_some());
+        let is = if merge {
+            "a merge of parts"
+        } else {
+            "one run's own"
+        };
+        for one in &self.mutants {
+            let named = one
+                .part_run_id
+                .as_deref()
+                .is_some_and(|run| !run.is_empty());
+            if named != merge || one.part_run_id.is_some() != merge {
+                return Err(DocumentError::PartProvenance {
+                    mutant: one.id.clone(),
+                    said: if one.part_run_id.is_some() {
+                        "names"
+                    } else {
+                        "names no"
+                    },
+                    is,
+                });
+            }
         }
         Ok(())
     }
@@ -1335,6 +1384,7 @@ fn mutant(
         expected: one.expected,
         unreached: one.not_run_reason == Some(NotRunReason::Unreached),
         source_run_id: one.source_run_id.clone(),
+        part_run_id: None,
     })
 }
 
@@ -1603,17 +1653,7 @@ pub fn merge(parts: &[RunDocument]) -> Result<RunDocument, MergeError> {
             });
         }
     }
-    let mut mutants: BTreeMap<u32, RunMutantDocument> = BTreeMap::new();
-    for part in parts {
-        for one in &part.mutants {
-            if mutants.insert(one.index, one.clone()).is_some() {
-                return Err(MergeError::Overlapping {
-                    mutant: one.id.clone(),
-                });
-            }
-        }
-    }
-    let mutants: Vec<RunMutantDocument> = mutants.into_values().collect();
+    let mutants = decided_in(parts)?;
     let accounting = accounting_of(&mutants, first)?;
     let mut merged = first.clone();
     merged.run = RunMeta {
@@ -1646,6 +1686,31 @@ pub fn merge(parts: &[RunDocument]) -> Result<RunDocument, MergeError> {
         .validate()
         .map_err(|error| MergeError::InvalidPart { error })?;
     Ok(merged)
+}
+
+/// Every row of `parts`, in catalog order, each naming the run of the part that decided it: a merge runs nothing, so a row rests on what its part's run ran, on that run's bench.
+///
+/// # Errors
+/// [`MergeError::Overlapping`] where two parts decided one mutant.
+fn decided_in(parts: &[RunDocument]) -> Result<Vec<RunMutantDocument>, MergeError> {
+    let mut mutants: BTreeMap<u32, RunMutantDocument> = BTreeMap::new();
+    for part in parts {
+        for one in &part.mutants {
+            let decided = RunMutantDocument {
+                part_run_id: Some(match &one.part_run_id {
+                    Some(earlier) => earlier.clone(),
+                    None => part.run.id.clone(),
+                }),
+                ..one.clone()
+            };
+            if mutants.insert(one.index, decided).is_some() {
+                return Err(MergeError::Overlapping {
+                    mutant: one.id.clone(),
+                });
+            }
+        }
+    }
+    Ok(mutants.into_values().collect())
 }
 
 /// The columns the merged records add up to.

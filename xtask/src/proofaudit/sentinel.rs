@@ -2175,6 +2175,7 @@ pub fn merge_plant(
             "a merge that completes a model batch no merge can"
         }
         MergeRule::Shards => forged_alike(&mut document, &mut shards),
+        MergeRule::Sealed => unwitnessed(&mut shards),
         MergeRule::Dimensions => {
             kept = Some(established_everywhere());
             "a merge whose record stream calls every dimension established and names one open"
@@ -2244,6 +2245,19 @@ fn forged_alike(document: &mut Value, shards: &mut [Shard]) -> &'static str {
         json!({ "report": { "builds": [{ "parts": [forged] }] } }),
     );
     "a kill reported as a survivor in a shard and in its merge alike"
+}
+
+/// The survivor's shard with its engine recording keeping no sealed execution, so the merged survivor rests on executions the run that measured its part never recorded.
+fn unwitnessed(shards: &mut [Shard]) -> &'static str {
+    if let Some(shard) = shards.get_mut(1) {
+        shard.engine = shard.engine.take().map(|events| {
+            events
+                .into_iter()
+                .filter(|event| event.get("type").and_then(Value::as_str) != Some("sealed-exec"))
+                .collect()
+        });
+    }
+    "a merged survivor the run that measured its part recorded no sealed execution of"
 }
 
 /// `document` with the array at `pointer` cut to its first element.

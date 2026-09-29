@@ -109,6 +109,7 @@ fn mutant(index: u32, outcome: Outcome, expected: bool) -> RunMutantDocument {
         expected,
         unreached: false,
         source_run_id: None,
+        part_run_id: None,
         step_notice: None,
         evidence: rust_mutants::testkit::evidence::sealed_as(outcome, None, "demo/lib/demo"),
     }
@@ -671,6 +672,70 @@ fn merging_the_parts_of_a_run_earns_the_code_the_whole_would_have_earned() {
         merged.run.exit_code, 1,
         "a mutation nothing reaches is a gap in the tests, not a run that broke; the whole \
          earns what each part earned"
+    );
+}
+
+/// Two coherent parts of one catalog, each deciding one row sealed, measured by the runs `ids` name.
+fn two_parts(ids: [&str; 2]) -> [RunDocument; 2] {
+    let part = |index: u32, shard: &str, id: &str| {
+        let mut document = document();
+        id.clone_into(&mut document.run.id);
+        document.run.shard = Some(shard.to_owned());
+        document.mutants = vec![mutant(index, Outcome::Killed, false)];
+        document.findings.clear();
+        document.expectations.clear();
+        cohere(&mut document);
+        document
+    };
+    [part(0, "1/2", ids[0]), part(1, "2/2", ids[1])]
+}
+
+#[test]
+fn a_merge_says_which_part_s_run_decided_each_row() {
+    let merged = match rust_mutants_cli::report::run::merge(&two_parts(["first-run", "second-run"]))
+    {
+        Ok(merged) => merged,
+        Err(error) => panic!("coherent parts must merge: {error:?}"),
+    };
+
+    let written = serde_json::to_value(&merged).expect("a merged report serializes");
+    let named: Vec<Option<&serde_json::Value>> = written
+        .get("mutants")
+        .and_then(serde_json::Value::as_array)
+        .expect("the merged rows")
+        .iter()
+        .map(|row| row.get("part_run_id"))
+        .collect();
+    assert_eq!(
+        named,
+        [
+            Some(&serde_json::json!("first-run")),
+            Some(&serde_json::json!("second-run"))
+        ],
+        "a merge runs nothing, so a row it carries rests on the executions the run of its part \
+         ran, on that run's bench, and says which run that was (ADR 0046)"
+    );
+}
+
+#[test]
+fn a_report_of_one_run_whose_row_names_a_part_run_is_refused() {
+    let [mut part, other] = two_parts(["first-run", "second-run"]);
+    assert_eq!(
+        other.validate().map_err(|error| error.to_string()),
+        Ok(()),
+        "a part that names no part run for its rows is one run's own report"
+    );
+    if let Some(row) = part.mutants.first_mut() {
+        row.part_run_id = Some("another-run".to_owned());
+    }
+
+    assert!(
+        matches!(
+            part.validate(),
+            Err(rust_mutants_cli::report::run::DocumentError::PartProvenance { .. })
+        ),
+        "a part decided its rows itself, so a row naming another run's part says what did not \
+         happen"
     );
 }
 

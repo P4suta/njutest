@@ -136,6 +136,8 @@ A mutant's `evidence` says what its verdict rests on ([ADR 0046](../adr/0046-a-v
 A target's `sealed` says where the reasons come from: `state` is `sealed` where the target has sealed tests, or the reason it has none, with `remedy` saying what to do about it; `uncontrolled` names each test its native baseline ran that has no sealed control, and why — what its control came to, `unbuilt`, or `not-held` where the sealed build does not hold it; a test whose control declined to measure has a control, which holds its words (ADR 0043).
 A route to a target that is not sealed, or to one of its uncontrolled tests, is what `test-absent` in a mutant's `evidence` is.
 `sealed` lists the sealed executions that established it, in the order they ran, each with its target, its test, and what it came to; a reader decides the verdict again from them, and refuses a report whose outcome is not that verdict.
+A mutant's `part_run_id` is null in a run's own report, part of a catalog or whole, which decided every row itself; in a report `merge` wrote it names the run of the part that decided the row, on whose bench its sealed executions ran, since a merge runs nothing.
+A reader refuses a report some of whose rows name a part run and some do not, and a part of a catalog whose row names one.
 `unproven` lists every reason there is no verdict, and the outcome beside it is a lead.
 
 A mutant's `not_run_reason` says which of six things left it unexecuted, or left its execution measuring nothing:

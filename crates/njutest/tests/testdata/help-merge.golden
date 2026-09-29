@@ -6,5 +6,11 @@ Arguments:
   <REPORT>...  The reports to combine, one per part
 
 Options:
-      --output <FILE>  Write the combined report here rather than to standard output
-  -h, --help           Print help
+      --output <FILE>    Write the combined report here rather than to standard output
+      --rerun            Run every sealed execution the whole rests on again on this machine, and
+                         write it only where each comes to what its part recorded
+      --directory <DIR>  The workspace the parts measured, which `--rerun` runs the executions in.
+                         The working directory by default
+      --offline          Pass --offline to every cargo command `--rerun` starts
+      --locked           Pass --locked to every cargo command `--rerun` starts
+  -h, --help             Print help

@@ -2890,7 +2890,15 @@ pub fn proofaudit_sentinels(checkers: &crate::schemas::Checkers) -> Result<usize
     let mut found = 0_usize;
     for layer in proofaudit::Layer::ALL {
         let planted = proofaudit_sighted(checkers, layer, &layer.planted())?;
-        let sealed = sealed_sighted(checkers, layer)?;
+        let sealed = sealed_sighted(
+            (
+                "proofaudit",
+                layer.label(),
+                layer.reads(),
+                layer.sealed_planted().len(),
+            ),
+            || proofaudit_sighted(checkers, layer, &layer.sealed_planted()),
+        )?;
         found = found
             .checked_add(planted)
             .and_then(|found| found.checked_add(sealed))
@@ -2907,26 +2915,27 @@ pub fn proofaudit_sentinels(checkers: &crate::schemas::Checkers) -> Result<usize
     Ok(found)
 }
 
-/// How many defects only a sealed execution shows were planted for `layer` and found, where it reads sealed executions; none where it reads none and none is planted.
+/// How many defects only a sealed execution shows were planted for the layer `label` names in `gate` and found by `sighted`, where it `reads` sealed executions; none where it reads none and none is planted.
 ///
 /// # Errors
 /// A layer that reads sealed executions with nothing planted that only one shows, which is a layer nothing holds to not ignoring them, a plant for a layer that reads none, or a plant the layer does not find.
 fn sealed_sighted(
-    checkers: &crate::schemas::Checkers,
-    layer: proofaudit::Layer,
+    (gate, label, reads, planted): (&str, &str, crate::route::Reads, usize),
+    sighted: impl FnOnce() -> Result<usize, GateError>,
 ) -> Result<usize, GateError> {
-    let planted = layer.sealed_planted();
-    match (layer.reads(), planted.is_empty()) {
-        (proofaudit::Reads::Both, true) => Err(GateError(format!(
-            "proofaudit: the {} layer reads sealed executions and nothing planted for it shows              a defect only a sealed execution shows, so nothing says it does not ignore them              (`Layer::sealed_planted` in xtask/src/proofaudit/sentinel.rs)",
-            layer.label()
+    use crate::route::Reads;
+    match (reads, planted) {
+        (Reads::Both, 0) => Err(GateError(format!(
+            "{gate}: the {label} layer reads sealed executions and nothing planted for it shows \
+             a defect only a sealed execution shows, so nothing says it does not ignore them \
+             (`Layer::sealed_planted` beside the layer's other plants)"
         ))),
-        (proofaudit::Reads::Nothing | proofaudit::Reads::Native, false) => Err(GateError(format!(
-            "proofaudit: a defect only a sealed execution shows is planted for the {} layer,              which `Layer::reads` says reads none",
-            layer.label()
+        (Reads::Nothing | Reads::Native, 1..) => Err(GateError(format!(
+            "{gate}: a defect only a sealed execution shows is planted for the {label} layer, \
+             which `Layer::reads` says reads none"
         ))),
-        (proofaudit::Reads::Both, false) => proofaudit_sighted(checkers, layer, &planted),
-        (proofaudit::Reads::Nothing | proofaudit::Reads::Native, true) => Ok(0),
+        (Reads::Both, 1..) => sighted(),
+        (Reads::Nothing | Reads::Native, 0) => Ok(0),
     }
 }
 
@@ -3194,6 +3203,15 @@ pub fn engine_audit_sentinels(checkers: &crate::schemas::Checkers) -> Result<usi
     let mut found = 0_usize;
     for layer in engineaudit::Layer::ALL {
         let planted = engine_audit_sighted(checkers, layer, &layer.planted())?;
+        sealed_sighted(
+            (
+                "engine-audit",
+                layer.label(),
+                layer.reads(),
+                layer.sealed_planted().len(),
+            ),
+            || engine_audit_sighted(checkers, layer, &layer.sealed_planted()),
+        )?;
         found = found.checked_add(planted).ok_or_else(|| {
             GateError("engine-audit: more planted defects than a count can hold".to_owned())
         })?;

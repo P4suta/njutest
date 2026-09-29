@@ -84,6 +84,7 @@ fn mutant(index: u32, outcome: Outcome, rule: &str) -> RunMutantDocument {
         expected: false,
         unreached: false,
         source_run_id: None,
+        part_run_id: None,
         step_notice: None,
         evidence: rust_mutants::testkit::evidence::sealed_as(outcome, None, "demo/lib/demo"),
     }

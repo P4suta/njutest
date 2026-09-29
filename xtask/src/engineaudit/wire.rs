@@ -361,6 +361,8 @@ struct Mutant {
     unreached: bool,
     #[serde(deserialize_with = "required_option")]
     source_run_id: Option<String>,
+    #[serde(deserialize_with = "required_option")]
+    part_run_id: Option<String>,
     evidence: super::Resting,
 }
 
@@ -414,6 +416,7 @@ impl Mutant {
             expected,
             unreached,
             source_run_id,
+            part_run_id,
             evidence,
         } = self;
         let route = route.map(Route::decision);
@@ -443,6 +446,7 @@ impl Mutant {
             unreached,
             not_run_reason,
             source_run_id,
+            part_run_id,
             declined,
             evidence,
         }

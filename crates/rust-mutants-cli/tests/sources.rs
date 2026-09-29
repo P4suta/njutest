@@ -52,6 +52,7 @@ fn mutant(path: &str, digest: &str) -> RunMutantDocument {
         expected: false,
         unreached: false,
         source_run_id: None,
+        part_run_id: None,
         step_notice: None,
         evidence: rust_mutants::testkit::evidence::sealed_as(
             Outcome::Killed,
