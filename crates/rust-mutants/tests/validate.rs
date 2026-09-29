@@ -815,7 +815,11 @@ fn a_refused_call_inside_a_const_fn_that_keeps_its_const_for_want_of_a_guard_mak
 
 #[test]
 fn where_a_refused_call_stands_decides_whether_its_const_fn_carries_the_guard_whatever_the_words() {
-    let (file, a, _b) = twins_in(NESTED);
+    let (file, a, b) = twins_in(NESTED);
+    assert!(
+        !a.is_empty() && a.is_disjoint(&b),
+        "the call names A's make, whose guards are its own"
+    );
     let at_call = |after: u32| -> (u32, u32) {
         let start = file
             .text
