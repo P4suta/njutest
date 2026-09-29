@@ -524,7 +524,7 @@ pub fn every_stopped() -> [crate::execute::Stopped; 19] {
 
 /// Every closed step-protocol failure shape.
 #[must_use]
-pub fn every_step_protocol_failure() -> [crate::execute::StepProtocolFailure; 19] {
+pub fn every_step_protocol_failure() -> [crate::execute::StepProtocolFailure; 20] {
     use crate::execute::StepProtocolFailure;
 
     let failures = [
@@ -540,6 +540,7 @@ pub fn every_step_protocol_failure() -> [crate::execute::StepProtocolFailure; 19
             check: "lock".to_owned(),
             os: 33,
         },
+        StepProtocolFailure::Unconfirmed {},
         StepProtocolFailure::NoticeMissing {},
         StepProtocolFailure::NoticeNotRegular {
             path: "notice".to_owned(),
@@ -581,6 +582,7 @@ pub fn every_step_protocol_failure() -> [crate::execute::StepProtocolFailure; 19
             | StepProtocolFailure::MonitorInspect { .. }
             | StepProtocolFailure::Publication {}
             | StepProtocolFailure::Stated { .. }
+            | StepProtocolFailure::Unconfirmed {}
             | StepProtocolFailure::NoticeMissing {}
             | StepProtocolFailure::NoticeNotRegular { .. }
             | StepProtocolFailure::NoticeMetadata { .. }

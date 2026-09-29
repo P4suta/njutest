@@ -51,8 +51,7 @@ pub const STEP_NOTICE_SCHEMA: &str = "rust-mutants-step-notice-v1";
 /// The exit status of a bounded test process whose generated runtime could not publish its nonce-correlated step notice.
 pub const STEP_PROTOCOL_EXIT: i32 = 94;
 
-/// The first field of the line the runtime writes to standard error before it ends a process, followed by the status, the check that failed, and the operating system's code, `0` where no call is what failed.
-pub const STOP_SCHEMA: &str = "rust-mutants-stop-v1";
+pub use rust_mutants_decision::said::STOP_SCHEMA;
 
 /// Names the file the guards append to, saying which of the process's threads reached them.
 pub const TOUCH_ENV: &str = "RUST_MUTANTS_TOUCH";

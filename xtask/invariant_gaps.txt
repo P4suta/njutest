@@ -9,8 +9,6 @@
 # refuses a line the table no longer leaves open, so a closed hole cannot stay listed.
 
 step-transition mutation njutest-14
-step-stop-said self-check njutest-14
-step-stop-said mutation njutest-14
 operator-swap mutation njutest-14
 instrument-shape mutation njutest-14
 execution-confinement mutation ci-mutation-testing-speedup
