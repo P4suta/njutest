@@ -89,6 +89,36 @@ fn an_explicit_cargo_path_must_exist_and_a_bare_name_is_searched_on_the_given_pa
     assert_eq!(bare_without_path.kind(), CargoErrorKind::ToolchainNotFound);
 }
 #[test]
+fn variables_added_to_an_environment_the_toolchain_was_never_given_are_refused() {
+    let dir = scratch_target("unenvironed");
+    let tc = toolchain(dir.path());
+    let cancel = Cancel::new();
+    let trace = Recorder::disabled();
+    let mut options = rust_mutants::cargo::CompileOptions::new(rust_mutants::cargo::BuildDir::new(
+        dir.path().join("target"),
+        Vec::new(),
+    ));
+    options.env.set("RUST_MUTANTS_ADDED", "1");
+    let refused = rust_mutants::cargo::compile(
+        &Driver {
+            toolchain: &tc,
+            dir: dir.path(),
+            cancel: &cancel,
+            trace: &trace,
+        },
+        &options,
+    )
+    .expect_err(
+        "a toolchain given no environment inherits this process's, so the variables a build adds \
+         have nothing to be added to, and an empty set in its place loses everything inherited",
+    );
+    assert!(
+        refused.to_string().contains("was given none"),
+        "the refusal says the toolchain was given no environment: {refused}"
+    );
+}
+
+#[test]
 fn locating_reads_both_versions_from_inside_the_directory() {
     let dir = fixture("fixture-simple");
     let tc = toolchain(&dir);

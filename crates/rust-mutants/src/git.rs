@@ -167,8 +167,12 @@ impl Within {
 }
 
 /// The lines a change set left in the files under the root, as the new side of each file counts them.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lines {
+    /// The revision the lines were asked against.
+    pub base: String,
+    /// The commit that revision and `HEAD` share, which the lines are counted from, or none where git named none and they are counted from the revision itself, which counts what it changed since as changed too.
+    pub merge_base: Option<String>,
     /// Every file with a changed line, relative to the root, and which of its lines changed.
     pub files: BTreeMap<String, Touched>,
 }
@@ -207,7 +211,16 @@ pub fn lines<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Lines> {
     );
     let against = match merge_base.as_deref() {
         Some(fork_point) => fork_point,
-        None => base,
+        None => {
+            asking.watch.note(
+                "change-set",
+                &format!(
+                    "git named no commit {base} and HEAD share, so the changed lines are read \
+                     against {base} itself, which counts what it changed since as changed too"
+                ),
+            );
+            base
+        }
     };
     let diff = ask_up_to(
         asking,
@@ -236,7 +249,11 @@ pub fn lines<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Lines> {
         files.insert(path.to_owned(), Touched::Whole);
     }
     files.retain(|path, _touched| !is_under(path, asking.excluded));
-    Some(Lines { files })
+    Some(Lines {
+        base: base.to_owned(),
+        merge_base,
+        files,
+    })
 }
 
 /// Where a `--unified=0` diff is: in a file's header, or in its hunks, where a line that looks like a header is content.

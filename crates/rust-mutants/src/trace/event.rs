@@ -382,6 +382,19 @@ impl TryFrom<NjutestBuildWire> for NjutestBuild {
     }
 }
 
+/// Reads a command line, refusing one that names no program, which no recorder writes.
+fn command_line<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
+    let argv = Vec::<String>::deserialize(deserializer)?;
+    if argv.is_empty() {
+        return Err(serde::de::Error::custom(
+            "an exec record's command line names no program",
+        ));
+    }
+    Ok(argv)
+}
+
 fn nested_run_id(final_run_id: &RunId, ordinal: u32) -> Result<RunId, NjutestBuildError> {
     RunId::try_from(format!("{final_run_id}-b{ordinal:010}")).map_err(|source| {
         NjutestBuildError::RunId {
@@ -498,7 +511,8 @@ pub struct SnapshotRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExecRecord {
-    /// The command line, verbatim.
+    /// The command line, verbatim, which names at least its program.
+    #[serde(deserialize_with = "command_line")]
     pub argv: Vec<String>,
     /// The working directory.
     #[serde(deserialize_with = "crate::strictjson::required_option")]

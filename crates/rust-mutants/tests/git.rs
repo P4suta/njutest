@@ -368,6 +368,58 @@ fn a_change_names_the_lines_it_left_and_every_line_of_a_file_git_does_not_track(
 }
 
 #[test]
+fn lines_read_against_a_base_that_shares_no_commit_with_head_are_noted_as_read_against_it() {
+    let asked = Asked::new(Vec::new());
+    asked.repo.write("src/lib.rs", &twenty(&[], &[]));
+    asked.repo.commit();
+    let named = njutest_devkit::repo::git(asked.repo.root())
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("git names the first commit");
+    let base = String::from_utf8(named.stdout)
+        .expect("a commit is named in hex")
+        .trim()
+        .to_owned();
+    asked.repo.write("src/lib.rs", &twenty(&[5], &[]));
+    asked.repo.commit();
+    let recorder = rust_mutants::testkit::trace::memory_recorder();
+    let watch = Watched::new(cancel(), &recorder);
+    let said = lines(
+        &Asking {
+            root: asked.repo.root(),
+            env: &asked.env,
+            excluded: &asked.excluded,
+            watch: &watch,
+        },
+        &base,
+    );
+    assert_eq!(option_state(said.as_ref()), Present, "the changed lines");
+    let noted: Vec<String> = recorder
+        .events()
+        .into_iter()
+        .filter_map(|event| {
+            if let rust_mutants::trace::Payload::Note { note } = event.payload
+                && note.kind == "change-set"
+            {
+                Some(note.detail)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(
+        noted.iter().any(|detail| detail.contains(&base)),
+        "git names no commit the base and HEAD share, so the lines are read against the base \
+         itself, and the trace says so: {noted:?}"
+    );
+    assert_eq!(
+        said.map(|read| read.merge_base),
+        Some(None),
+        "and the lines name no commit they were counted from"
+    );
+}
+
+#[test]
 fn a_line_that_reads_like_a_header_is_what_the_file_says() {
     let asked = Asked::new(Vec::new());
     asked.repo.write("src/lib.rs", "let a = 1;\n");

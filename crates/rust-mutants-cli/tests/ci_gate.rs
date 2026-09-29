@@ -69,7 +69,14 @@ fn mutant(index: u32, outcome: Outcome) -> RunMutantDocument {
         signal: None,
         not_run_reason: None,
         declined: Vec::new(),
-        route: None,
+        route: Some(rust_mutants_cli::report::run::RouteDocument {
+            granularity: "all".to_owned(),
+            fallback: None,
+            reaching: Vec::new(),
+            discharged: Vec::new(),
+            executed: Vec::new(),
+            tests: std::collections::BTreeMap::new(),
+        }),
         identical: rust_mutants::run::CodegenIdentity::NotMeasured,
         retried: false,
         lingered: false,
@@ -625,6 +632,50 @@ fn with_a_change_only_the_survivors_on_its_lines_are_annotated() {
         ),
         "and the summary says the others exist rather than letting the annotations read as \
          all there is: {summary}"
+    );
+}
+
+#[test]
+fn a_change_whose_base_shares_no_commit_with_head_is_read_against_the_base_and_says_so() {
+    let repo = njutest_devkit::repo::Repo::new();
+    repo.write("src/lib.rs", &numbered(20, &[]));
+    repo.commit();
+    let asked = njutest_devkit::repo::git(repo.root())
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("git names the first commit");
+    let base = String::from_utf8(asked.stdout)
+        .expect("a commit is named in hex")
+        .trim()
+        .to_owned();
+    repo.write("src/lib.rs", &numbered(20, &[5]));
+    repo.commit();
+    repo.write("src/lib.rs", &numbered(20, &[5, 12]));
+    let job = Job::new();
+    let report = job.report(&document(3));
+    let said = gate(
+        CiHost::GitHub {
+            summary: job.path("summary.md"),
+            output: job.path("output.txt"),
+            workspace: repo.root().to_path_buf(),
+        },
+        repo.root(),
+        &[
+            &os("--report"),
+            &report.into_os_string(),
+            &os("--host"),
+            &os("github"),
+            &os("--changed-from"),
+            &os(&base),
+        ],
+    );
+    assert_eq!(said.code, 1, "{}", said.err);
+    let summary = job.read("summary.md");
+    assert!(
+        summary.contains(&format!("read against {base} itself")),
+        "git names no commit the base and HEAD share, so the lines are counted from the base, \
+         which counts what the base changed since too; the summary says so rather than \
+         reading as the change alone: {summary}"
     );
 }
 

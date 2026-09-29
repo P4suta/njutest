@@ -45,6 +45,37 @@ impl Drop for JoinedWork<'_> {
     }
 }
 
+#[test]
+fn a_phase_whose_end_carries_no_duration_ends_the_stream_rather_than_taking_no_time() {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    sender
+        .send(rust_mutants::trace::Event {
+            seq: 1,
+            timestamp: "2026-09-29T00:00:00Z".to_owned(),
+            elapsed_ms: 0,
+            payload: rust_mutants::trace::Payload::PhaseEnd {
+                phase: rust_mutants::trace::PhaseRecord {
+                    name: "prepare".to_owned(),
+                    duration_ms: None,
+                },
+            },
+        })
+        .expect("the channel holds one event");
+    drop(sender);
+    let mut written: Vec<u8> = Vec::new();
+    let refused = rust_mutants_cli::stream::watch(&receiver, &mut written, &|| false)
+        .expect_err("a phase's end with no duration is no line the stream can write");
+    assert!(
+        refused.to_string().contains("prepare"),
+        "the refusal names the phase: {refused}"
+    );
+    assert_eq!(
+        written,
+        Vec::<u8>::new(),
+        "nothing was written as though the phase took no time"
+    );
+}
+
 /// A recorder whose events arrive on `receiver`, as the command line builds one for a display.
 fn watched() -> (
     Recorder,

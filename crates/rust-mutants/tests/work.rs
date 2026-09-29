@@ -139,6 +139,44 @@ fn pairs(work: &Work, reason: &str) -> u64 {
 }
 
 #[test]
+fn a_row_no_run_writes_is_refused_rather_than_counted_as_unreached() {
+    let document = document(&["demo/test/one"], &[row(0, &serde_json::json!({}))]);
+    let refused = Work::of(&document).expect_err(
+        "a row with no route, no reason it was not run and no run it came from says nothing \
+         about what removed its pairs, so it is no row a run writes",
+    );
+    assert!(
+        refused.to_string().contains(&format!("{:064x}", 0)),
+        "the refusal names the row: {refused}"
+    );
+}
+
+#[test]
+fn a_target_the_document_does_not_list_is_refused_rather_than_counted_as_one_test() {
+    let document = document(
+        &["demo/test/one"],
+        &[row(
+            0,
+            &serde_json::json!({
+                "route": {
+                    "granularity": "all",
+                    "reaching": ["demo/test/one"],
+                    "executed": ["demo/test/two"]
+                }
+            }),
+        )],
+    );
+    let refused = Work::of(&document).expect_err(
+        "how many tests a target the document does not list was asked is written nowhere, so \
+         the ledger cannot count them",
+    );
+    assert!(
+        refused.to_string().contains("demo/test/two"),
+        "the refusal names the target: {refused}"
+    );
+}
+
+#[test]
 fn every_pair_a_whole_run_would_start_is_started_or_removed_by_something_named() {
     let document = document(
         &["demo/test/one", "demo/test/two", "demo/lib/demo"],

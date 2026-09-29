@@ -107,6 +107,15 @@ pub enum WorkError {
         /// The target.
         target: String,
     },
+    /// A row with no route, no reason it was not run and no run it came from, which says nothing about what removed its pairs and is no row a run writes.
+    #[error(
+        "mutant {mutant} has no route, no reason it was not run and no run it came from, which \
+         is no row a run writes"
+    )]
+    UnaccountedRow {
+        /// The row's identity.
+        mutant: String,
+    },
 }
 
 /// A mutation no measured target reaches, which coverage routing removed.
@@ -370,11 +379,12 @@ fn per_mutant(
         return Ok(vec![(REUSED.to_owned(), Removal::Memory, targets)]);
     }
     let Some(route) = mutant.route.as_ref() else {
-        let reason = match mutant.not_run_reason {
-            Some(unrun) => unrun.name(),
-            None => UNREACHED,
-        }
-        .to_owned();
+        let Some(unrun) = mutant.not_run_reason else {
+            return Err(WorkError::UnaccountedRow {
+                mutant: mutant.id.clone(),
+            });
+        };
+        let reason = unrun.name().to_owned();
         return Ok(vec![(reason.clone(), kind_of(&reason), targets)]);
     };
     let reaching = count_u64(WorkQuantity::ReachingTargets, route.reaching.len())?;
