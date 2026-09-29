@@ -301,8 +301,12 @@ fn a_moved_target_whose_repair_left_a_hole_says_it_was_run_again_and_not_decided
         },
         false,
     )];
-    let counted = std::collections::BTreeMap::from([(TARGET.to_owned(), 1_usize)]);
-    let stated = drift::repaired(&[moved()], &rows, &counted);
+    let counted = [drift::Repaired {
+        target: TARGET.to_owned(),
+        again: 1,
+    }];
+    let stated =
+        drift::repaired(&[moved()], &rows, &counted).expect("one count fits the report's counter");
     let [limitation] = stated.as_slice() else {
         panic!("nothing rests on the moved target, so it is named in reach-moved: {stated:?}");
     };

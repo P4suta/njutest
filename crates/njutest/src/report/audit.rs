@@ -940,6 +940,7 @@ fn validate_build_parts<'a>(
             findings: part.findings.clone(),
             limitations: part.limitations.clone(),
             drift: part.drift.clone(),
+            repaired: part.repaired.clone(),
             knobs: part.knobs.clone(),
             concurrency: part.concurrency.clone(),
         };

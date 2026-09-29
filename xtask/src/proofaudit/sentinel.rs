@@ -1993,6 +1993,10 @@ pub fn merge_plant(
             kept = Some(established_everywhere());
             "a merge whose record stream calls every dimension established and names one open"
         }
+        MergeRule::Moved => {
+            kept = Some(repaired_unseen(kept.as_deref()));
+            "a merge whose record stream says a target moved and was repaired that no part saw move"
+        }
     };
     Ok(Perturbation {
         name,
@@ -2012,6 +2016,19 @@ fn merge_plants() -> Vec<Perturbation> {
             Err(_unbuilt_is_refused_by_the_merge_gate) => None,
         })
         .collect()
+}
+
+/// The record stream `kept`, or none, with a `reach-moved` limitation about [`TARGET`], whose reach no part of the clean specimen saw move.
+fn repaired_unseen(kept: Option<&str>) -> String {
+    let stated = format!(
+        "LIMITATION\treach-moved\ta target reached something on an original-code control that it \
+         did not reach on its baseline; 1 disposition that rested on its baseline was run again \
+         against it ({TARGET})\n"
+    );
+    match kept {
+        Some(stream) => format!("{stream}{stated}"),
+        None => stated,
+    }
 }
 
 /// A record stream whose every column says there was nothing to ask, beside a finding that names one of them open, which no `standard-v1` merge of the clean specimen's parts says.

@@ -3976,6 +3976,63 @@ fn a_merged_stream_that_calls_a_dimension_established_where_the_parts_leave_it_o
     );
 }
 
+/// The clean merge with its first part seeing [`TARGET`] move and running one disposition again against it, its second part's survivor routed to [`TARGET`] so nothing rests on the move, and `kept` as the record stream beside it; the merge's violations of the `moved` rule.
+fn moved_merge_violations(kept: &str) -> Vec<String> {
+    let mut planted = sharded();
+    merge(
+        &mut planted.document,
+        serde_json::json!({ "report": { "builds": [{ "parts": [
+            {
+                "drift": [sentinel::moved(TARGET)],
+                "repaired": [{ "target": TARGET, "again": 1 }]
+            },
+            { "mutants": [{ "routing": {
+                "granularity": "block", "reaching": [TARGET], "discharged": [],
+                "fallback": null, "answered": []
+            } }] }
+        ] }] } }),
+    );
+    planted.kept = Some(kept.to_owned());
+    merge_violations(&planted)
+        .into_iter()
+        .filter(|line| line.contains("moved: "))
+        .collect()
+}
+
+#[test]
+fn a_merged_stream_is_held_to_the_reach_moved_every_part_s_records_decide() {
+    let stated = format!(
+        "LIMITATION\treach-moved\ta target reached something on an original-code control that \
+         it did not reach on its baseline, so what it reaches is not a function of the target; \
+         1 disposition that rested on its baseline was run again against it, and nothing this \
+         run concludes stands on the moved record ({TARGET})\n"
+    );
+    assert_eq!(
+        moved_merge_violations(&stated),
+        Vec::<String>::new(),
+        "one part ran its one resting disposition again and nothing rests on the move over the \
+         whole catalog, which is what the stream says"
+    );
+    let unstated = moved_merge_violations("");
+    assert!(
+        unstated
+            .iter()
+            .any(|line| line.contains("0 of the reach-moved limitation")),
+        "a merge whose stream leaves the repaired move unsaid is refused (ADR 0036 decision 4): \
+         {unstated:?}"
+    );
+    let miscounted = moved_merge_violations(&stated.replace(
+        "1 disposition that rested on its baseline was",
+        "2 dispositions that rested on its baseline were",
+    ));
+    assert!(
+        miscounted
+            .iter()
+            .any(|line| line.contains("without `1 disposition that rested on its baseline")),
+        "the count is what every part's repair records add up to: {miscounted:?}"
+    );
+}
+
 #[test]
 fn a_shard_the_report_was_not_merged_from_is_refused_rather_than_ignored() {
     let mut stranger = sharded();

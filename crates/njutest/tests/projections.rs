@@ -412,6 +412,10 @@ fn a_moved_baseline_is_told_as_a_measurement_the_proofs_cannot_stand_on() {
                 infected: nothing(),
                 entered: nothing(),
             }];
+            source.repaired = vec![njutest::report::drift::Repaired {
+                target: "core/lib/core tests::works".to_owned(),
+                again: 0,
+            }];
         },
     );
     let root = tempfile::tempdir().expect("a directory with no source in it");

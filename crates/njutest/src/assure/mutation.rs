@@ -252,8 +252,8 @@ pub struct Mutation {
     pub drift: Vec<Drift>,
     /// The SHA-256 of each file the catalog's mutants were read from, as the catalog read it.
     pub sources: BTreeMap<String, rust_mutants::id::HexDigest>,
-    /// How many dispositions resting on each moved target a run against it replaced, with an answer or a hole (ADR 0036).
-    pub repaired: BTreeMap<String, usize>,
+    /// How many dispositions resting on each moved target a run against it replaced, with an answer or a hole, one record per moved target in name order (ADR 0036).
+    pub repaired: Vec<crate::report::drift::Repaired>,
 }
 
 impl Mutation {
@@ -740,44 +740,47 @@ fn repaired(
         })
         .collect();
     for target in &moved {
-        let Some(measured) = judging
+        let mut again = 0_u32;
+        if let Some(measured) = judging
             .subject
             .baseline
             .iter()
             .find(|measured| measured.target.name() == *target)
-        else {
-            continue;
-        };
-        for judged in &mut mutation.judged {
-            let resting = matches!(
-                judged.disposition,
-                Disposition::Survived { .. } | Disposition::Unreached
-            ) && judged.verdict(false).lead()
-                && crate::report::drift::rests_on(judged.routing.as_ref(), target);
-            if !resting {
-                continue;
+        {
+            for judged in &mut mutation.judged {
+                let resting = matches!(
+                    judged.disposition,
+                    Disposition::Survived { .. } | Disposition::Unreached
+                ) && judged.verdict(false).lead()
+                    && crate::report::drift::rests_on(judged.routing.as_ref(), target);
+                if !resting {
+                    continue;
+                }
+                let Some(mutant) = session
+                    .catalog()
+                    .mutants()
+                    .iter()
+                    .find(|mutant| mutant.index == judged.catalog_index)
+                else {
+                    continue;
+                };
+                if judging.watch.cancel.is_cancelled() {
+                    return Err(crate::error::RunnerError::Interrupted);
+                }
+                if !repair(judging, (judged, mutant), target, measured)? {
+                    continue;
+                }
+                again = again
+                    .checked_add(1)
+                    .ok_or(crate::report::CountError::Overflow {
+                        field: "repaired dispositions",
+                    })?;
             }
-            let Some(mutant) = session
-                .catalog()
-                .mutants()
-                .iter()
-                .find(|mutant| mutant.index == judged.catalog_index)
-            else {
-                continue;
-            };
-            if judging.watch.cancel.is_cancelled() {
-                return Err(crate::error::RunnerError::Interrupted);
-            }
-            if !repair(judging, (judged, mutant), target, measured)? {
-                continue;
-            }
-            let count = mutation.repaired.entry(target.clone()).or_insert(0);
-            *count = count
-                .checked_add(1)
-                .ok_or(crate::report::CountError::Overflow {
-                    field: "repaired dispositions",
-                })?;
         }
+        mutation.repaired.push(crate::report::drift::Repaired {
+            target: target.clone(),
+            again,
+        });
     }
     Ok(())
 }

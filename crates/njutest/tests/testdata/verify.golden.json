@@ -935,6 +935,7 @@
           "part": {
             "kind": "whole"
           },
+          "repaired": [],
           "resources": [],
           "run_id": "<volatile>",
           "seams": [],

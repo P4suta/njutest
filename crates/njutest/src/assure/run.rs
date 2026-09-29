@@ -1760,6 +1760,7 @@ pub fn record(
         .collect();
     report.findings.extend(mutation.findings(accepted));
     report.drift.clone_from(&mutation.drift);
+    report.repaired.clone_from(&mutation.repaired);
     report.sources.clone_from(&mutation.sources);
     if report.scope.shard.is_none() {
         let whole = crate::report::whole_catalog(&report.drift, &report.knobs, &report.mutants);
@@ -1768,8 +1769,8 @@ pub fn record(
         report.limitations.extend(crate::report::drift::repaired(
             &report.drift,
             &report.mutants,
-            &mutation.repaired,
-        ));
+            &report.repaired,
+        )?);
     }
     for (reason, count) in &mutation.skips {
         report.limitations.push(Limitation::new(

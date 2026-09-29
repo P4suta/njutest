@@ -849,7 +849,7 @@ fn a_move_one_part_saw_is_raised_by_the_merge_over_every_part_s_rows() {
         "one",
         "1/2",
         vec![row(0, &"a".repeat(64), "unreached", false)],
-        &|source| source.drift = vec![moved_at(target)],
+        &repaired_at(target, 0),
     );
     let two = part_varying(
         "two",
@@ -899,6 +899,75 @@ fn a_move_one_part_saw_is_raised_by_the_merge_over_every_part_s_rows() {
         conclusion.limitations
     );
     assert_eq!(whole.verdict(), Verdict::Insufficient);
+}
+
+/// Records that a part saw `target` move and ran `again` of its dispositions again against it.
+fn repaired_at(target: &'static str, again: u32) -> impl Fn(&mut BuildReport) {
+    move |source: &mut BuildReport| {
+        source.drift = vec![moved_at(target)];
+        source.repaired = vec![njutest::report::drift::Repaired {
+            target: target.to_owned(),
+            again,
+        }];
+    }
+}
+
+#[test]
+fn a_merge_states_reach_moved_with_what_every_part_ran_again() {
+    let target = "pkg/lib/pkg";
+    let one = part_varying(
+        "one",
+        "1/2",
+        vec![row(0, &"a".repeat(64), "killed", false)],
+        &repaired_at(target, 1),
+    );
+    let two = part_varying(
+        "two",
+        "2/2",
+        vec![row(1, &"b".repeat(64), "killed", false)],
+        &repaired_at(target, 1),
+    );
+    let conclusion = whole("the-whole", &[one, two])
+        .conclusion()
+        .expect("the checked whole has a representable conclusion");
+    let moved: Vec<&str> = conclusion
+        .limitations
+        .iter()
+        .filter(|limitation| limitation.name() == njutest::limitation::REACH_MOVED)
+        .map(|limitation| limitation.detail.as_str())
+        .collect();
+    let [stated] = moved.as_slice() else {
+        panic!(
+            "each part ran its one resting disposition again and nothing rests on the moved \
+             target over the whole catalog, so the merge states reach-moved about it once \
+             (ADR 0036 decision 4): {:?}",
+            conclusion.limitations
+        );
+    };
+    assert!(
+        stated.contains("2 dispositions that rested on its baseline were run again")
+            && stated.ends_with(&format!("({target})")),
+        "the count is what every part ran again, read from the parts' own records: {stated}"
+    );
+}
+
+#[test]
+fn a_part_whose_repair_counts_are_not_its_moved_targets_is_refused() {
+    let refused = tried_part(
+        "one",
+        "1/2",
+        vec![row(0, &"a".repeat(64), "killed", false)],
+        &|source| source.drift = vec![moved_at("pkg/lib/pkg")],
+        &|_| {},
+    )
+    .expect_err("a moved target with no repair count");
+    assert!(
+        refused
+            .to_string()
+            .contains("repair records that are not its moved targets' own"),
+        "a part that saw a target move says how many dispositions it ran again against it, \
+         or a merge could not count them: {refused}"
+    );
 }
 
 #[test]
@@ -1301,7 +1370,16 @@ proptest::proptest! {
                         &format!("part{index}of{of}"),
                         &format!("{index}/{of}"),
                         owned,
-                        &move |source| source.drift.clone_from(&drift),
+                        &move |source| {
+                            source.drift.clone_from(&drift);
+                            source.repaired = drift
+                                .iter()
+                                .map(|one| njutest::report::drift::Repaired {
+                                    target: one.target().to_owned(),
+                                    again: 0,
+                                })
+                                .collect();
+                        },
                     )
                 })
                 .collect();
