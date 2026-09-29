@@ -161,16 +161,64 @@ fn a_run_not_asked_for_crashes_stops_nothing() {
     );
 }
 
+/// The runner's recording of the run the index points at, read back.
+fn recording(fixture: &Fixture) -> Vec<njutest::trace::Event> {
+    let run = njutest::app::reports::pointed_at(&fixture.root, njutest::app::reports::Index::Any)
+        .expect("the index is readable")
+        .expect("the index names a run");
+    let stream = fixture
+        .root
+        .join(".njutest/trace")
+        .join(run.as_str())
+        .join(njutest::trace::FILE_NAME);
+    njutest::trace::read_events(std::io::BufReader::new(
+        std::fs::File::open(&stream).expect("the recording"),
+    ))
+    .expect("the recording reads back")
+}
+
+/// Every phase the recording starts inside the stage `stage`, in order.
+fn phases_inside(events: &[njutest::trace::Event], stage: &str) -> Vec<String> {
+    let mut inside = false;
+    let mut phases = Vec::new();
+    for event in events {
+        if let njutest::trace::Payload::PhaseStart { phase } = &event.payload {
+            if phase.name == stage {
+                inside = true;
+            } else if inside {
+                phases.push(phase.name.clone());
+            }
+        }
+        if let njutest::trace::Payload::PhaseEnd { phase } = &event.payload
+            && phase.name == stage
+        {
+            inside = false;
+        }
+    }
+    phases
+}
+
 #[test]
-fn a_tree_that_writes_nothing_has_nothing_to_stop_after() {
+fn a_tree_that_writes_nothing_is_known_to_from_discovery_before_anything_is_built() {
     let fixture = fixture("fixture-faulted");
-    let output = verify(&fixture, &["--crashes"]);
+    let output = verify(&fixture, &["--crashes", "--trace"]);
     let part = part(&fixture);
     assert_eq!(
         named(&part, "limitations", "name", "crash-no-site").len(),
         1,
         "no measured file of it calls anything that writes: {part}\n{}",
         njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    assert_eq!(
+        named(&part, "findings", "subject", "crash-baseline-not-measured").len(),
+        0,
+        "a tree with nothing to ask cannot leave the crashes unmeasured: {part}"
+    );
+    assert_eq!(
+        phases_inside(&recording(&fixture), "crashes"),
+        Vec::<String>::new(),
+        "discovery alone says there is nothing to stop after, so no crash build is made and no \
+         baseline runs"
     );
 }
 

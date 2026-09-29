@@ -276,7 +276,7 @@ The first test that reaches the call, target by target in name order, is stopped
 `accounting.crashes` counts the records, and `restarted + corrupt + unshared + unreached + undecided + not_put` equals `sites`.
 Every `corrupt` record raises a `corrupt-after-crash` finding, a defect; every `unshared` or `undecided` one a `not-measured` finding.
 `restarted` says the next run passed over what the stop left, not that it read it, and a stop here is a process stopping, not the power failing; the durable column says it does not speak about either.
-A tree with no call that writes in a measured file states `crash-no-site`, and one whose crashed baseline could not be measured raises a `not-measured` finding about `crash-baseline-not-measured`.
+A tree with no call that writes in a measured file states `crash-no-site`, which discovery alone decides before anything is built or run, and one whose crashed baseline could not be measured raises a `not-measured` finding about `crash-baseline-not-measured`.
 
 ## The matrix
 

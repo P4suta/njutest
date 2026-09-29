@@ -11,7 +11,7 @@ use crate::cargo::{Driver, LocateOptions, Metadata, MetadataOptions, Toolchain};
 use crate::error::{self, ErrorCode};
 use crate::glob::Pattern;
 use crate::runner::Cancel;
-use crate::session::{PrepareOptions, Session, prepare};
+use crate::session::{PrepareOptions, Session, discovered, prepare};
 use crate::snapshot::{self, DIR_PREFIX, Options as SnapshotOptions, Snapshot};
 use crate::tempowner::{self, SweepResult};
 use crate::trace::{OpenRecord, Recorder, SnapshotRecord, SweepRecord};
@@ -1276,6 +1276,18 @@ impl Workspace {
         cancel: &Cancel,
     ) -> Result<Session, crate::EngineError> {
         prepare(self, options, cancel)
+    }
+
+    /// What discovery finds that `options` selects, behind the gate the tree has to pass, with nothing instrumented, built or run: what a preparation would put, known before it builds anything.
+    ///
+    /// # Errors
+    /// A tree that does not compile as it was copied, and the failures of discovery.
+    pub fn discover(
+        &self,
+        options: &PrepareOptions,
+        cancel: &Cancel,
+    ) -> Result<crate::catalog::Catalog, crate::EngineError> {
+        discovered(self, options, cancel)
     }
 
     /// Prepares as [`Workspace::prepare`] does, the sealed build included, starting no test natively and measuring no coverage, for nothing but running recorded sealed executions again ([`crate::session::Rerunnable`]).

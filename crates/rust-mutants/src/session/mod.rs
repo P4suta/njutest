@@ -10,7 +10,7 @@ mod route;
 mod verify;
 
 pub use carry::{Answered, Tree as CarriedTree};
-pub use prepare::{prepare, rewrite_needed};
+pub use prepare::{discovered, prepare, rewrite_needed};
 use prepare::{pristine, selection};
 pub use rerun::Rerunnable;
 use verify::verify;

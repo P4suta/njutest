@@ -41,7 +41,17 @@ pub fn put(
     notes.phase("crashes")?;
     watch.trace.stage("crashes");
     let session = match prepared(request, environment, watch) {
-        Ok(session) => session,
+        Ok(Prepared::Nothing(kept)) => {
+            report.limitations.push(Limitation::new(
+                crate::limitation::Limitation::CrashNoSite,
+                "no measured file calls anything that writes, so there was nothing to stop after",
+            ));
+            for path in kept {
+                notes.note("kept", &path.display().to_string())?;
+            }
+            return Ok(());
+        }
+        Ok(Prepared::Guarded(session)) => *session,
         Err(error) => {
             if baseline::refused(&error).is_none() {
                 return Err(error);
@@ -57,12 +67,6 @@ pub fn put(
         return Ok(());
     }
     let records = sites(&session, request, watch)?;
-    if session.catalog().mutants().is_empty() {
-        report.limitations.push(Limitation::new(
-            crate::limitation::Limitation::CrashNoSite,
-            "no measured file calls anything that writes, so there was nothing to stop after",
-        ));
-    }
     report.accounting.crashes = CrashAccounting::of(&records)?;
     report
         .findings
@@ -523,12 +527,20 @@ fn unmeasured() -> Finding {
     )
 }
 
-/// The session every call that writes is guarded in, with its one run with nothing active.
+/// What a crash phase is prepared as.
+enum Prepared {
+    /// Discovery found no call that writes, so nothing was built or run, and the closed workspace kept these paths.
+    Nothing(Vec<std::path::PathBuf>),
+    /// The session every call that writes is guarded in, with its one run with nothing active.
+    Guarded(Box<Session>),
+}
+
+/// The session every call that writes is guarded in, or nothing where discovery alone finds no such call, before anything is built.
 fn prepared(
     request: &Request,
     environment: &Environment,
     watch: Watch<'_>,
-) -> Result<Session, RunnerError> {
+) -> Result<Prepared, RunnerError> {
     let workspace = rust_mutants::workspace::Workspace::open(
         &request.root,
         rust_mutants::workspace::OpenOptions {
@@ -537,14 +549,21 @@ fn prepared(
         },
         watch.cancel,
     )?;
-    Ok(workspace.prepare(
-        &rust_mutants::session::PrepareOptions {
-            operators: vec![RULE.to_owned()],
-            sealing: rust_mutants::sealed::Sealing::Off,
-            ..crate::assure::run::preparing(request)?
-        },
-        watch.cancel,
-    )?)
+    let options = rust_mutants::session::PrepareOptions {
+        operators: vec![RULE.to_owned()],
+        sealing: rust_mutants::sealed::Sealing::Off,
+        ..crate::assure::run::preparing(request)?
+    };
+    if workspace
+        .discover(&options, watch.cancel)?
+        .mutants()
+        .is_empty()
+    {
+        return Ok(Prepared::Nothing(workspace.close()?));
+    }
+    Ok(Prepared::Guarded(Box::new(
+        workspace.prepare(&options, watch.cancel)?,
+    )))
 }
 
 #[cfg(test)]
