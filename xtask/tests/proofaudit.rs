@@ -12,8 +12,7 @@ use std::path::Path;
 
 use xtask::gates;
 use xtask::proofaudit::sentinel::{
-    self, ASKED, KILLED, RUN, SURVIVED, TARGET, base, merge, never_noticed, routes, was_put,
-    went_past, with,
+    self, ASKED, KILLED, RUN, SURVIVED, TARGET, base, merge, routes, was_put, went_past, with,
 };
 use xtask::proofaudit::{
     Audit, AuditError, Coverage, EXIT_UNREADABLE, Layer, REPORT_FILE, Standing,
@@ -1030,7 +1029,7 @@ fn the_summary_line_says_what_was_re_decided_and_what_it_found() {
     let rendered = audited_with_routes(&base()).to_string();
     assert!(
         rendered.ends_with(&format!(
-            "proofaudit: {RUN}: 2 mutants and 1 target re-decided; 0 violations, 3 unaudited"
+            "proofaudit: {RUN}: 2 mutants and 1 target re-decided; 0 violations, 4 unaudited"
         )),
         "{rendered}"
     );
@@ -1043,7 +1042,7 @@ fn every_violation_is_a_line_of_its_own_before_the_summary() {
     let first = lines.next().unwrap_or_default();
     assert!(first.starts_with("violation: findings: "), "{rendered}");
     assert!(first.contains(SURVIVED), "{rendered}");
-    assert!(rendered.ends_with("1 violation, 3 unaudited"), "{rendered}");
+    assert!(rendered.ends_with("1 violation, 4 unaudited"), "{rendered}");
 }
 
 #[test]
@@ -2244,33 +2243,110 @@ fn a_route_that_says_an_answer_was_both_read_back_and_refused_is_a_violation() {
 }
 
 #[test]
-fn a_hollow_target_the_report_does_not_name_is_a_violation() {
-    let audit = audited_with(&base(), &never_noticed());
-    let violated: Vec<String> = audit
-        .remarks
-        .iter()
-        .filter(|remark| remark.layer == Layer::Hollow && remark.standing == Standing::Violated)
-        .map(|remark| remark.subject.clone())
-        .collect();
-    assert_eq!(
-        violated,
-        vec!["blunt".to_owned()],
-        "the recording says `blunt` was put to two mutations and answered `survived` \
-         to both, so the report owes a hollow-target finding about it. A report that \
-         is silent there is one this audit exists to refuse: {:?}",
+fn a_target_only_native_executions_show_noticing_nothing_is_owed_no_hollow_finding() {
+    let laid = sentinel::Perturbation {
+        events: Some(never_noticed()),
+        ..sentinel::clean()
+    }
+    .lay()
+    .expect("the specimen is laid out");
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        .expect("a recording this audit can read");
+    assert!(
+        hollow_violations(&audit).is_empty(),
+        "the runner's recording says `blunt` ran natively under two mutations and survived \
+         both, and a native execution is a lead: what a target noticed is what its sealed \
+         executions say (ADR 0046), so nothing is owed about it: {:?}",
         audit.remarks
     );
 }
 
 #[test]
+fn a_target_its_sealed_executions_show_noticing_nothing_is_owed_a_hollow_finding() {
+    let laid = sentinel::noticing_nothing_sealed()
+        .lay()
+        .expect("the specimen is laid out");
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        .expect("a recording this audit can read");
+    assert_eq!(
+        hollow_violations(&audit),
+        vec![TARGET.to_owned()],
+        "the engine recorded {TARGET}'s one test passing under both mutations, sealed, so it \
+         answered about two and noticed neither, which is what a hollow-target finding says; \
+         a native execution beside it decides nothing (ADR 0046): {:?}",
+        audit.remarks
+    );
+}
+
+#[test]
+fn a_hollow_target_its_sealed_executions_bear_out_is_no_violation_whatever_ran_natively() {
+    let mut specimen = sentinel::noticing_nothing_sealed();
+    specimen
+        .document
+        .get_mut("findings")
+        .and_then(serde_json::Value::as_array_mut)
+        .expect("the findings")
+        .push(serde_json::json!({
+            "kind": "hollow-target", "subject": TARGET, "detail": "planted", "position": null
+        }));
+    let laid = specimen.lay().expect("the specimen is laid out");
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        .expect("a recording this audit can read");
+    assert!(
+        hollow_violations(&audit).is_empty(),
+        "the report names {TARGET} hollow and its sealed executions say it noticed nothing; \
+         the native kill the runner's recording holds is a lead, which says nothing about \
+         what a target noticed: {:?}",
+        audit.remarks
+    );
+}
+
+/// The recording of [`routes`], after which one target, `blunt`, ran natively under both mutations and noticed neither.
+fn never_noticed() -> Vec<serde_json::Value> {
+    let mut events = routes();
+    for mutant in [KILLED, SURVIVED] {
+        events.push(serde_json::json!({
+            "type": "mutant-exec",
+            "mutant": {
+                "mutant": mutant, "target": "blunt", "args": [], "outcome": "survived",
+                "duration_ms": 5
+            }
+        }));
+    }
+    for (seq, event) in (1_u64..).zip(events.iter_mut()) {
+        merge(event, serde_json::json!({ "seq": seq }));
+    }
+    events
+}
+
+/// The subjects of every hollow-layer violation of `audit`.
+fn hollow_violations(audit: &Audit) -> Vec<String> {
+    audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Hollow && remark.standing == Standing::Violated)
+        .map(|remark| remark.subject.clone())
+        .collect()
+}
+
+#[test]
 fn a_target_that_noticed_something_is_not_owed_a_hollow_finding() {
-    let audit = audited_with(&base(), &routes());
+    let laid = sentinel::clean().lay().expect("the specimen is laid out");
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        .expect("a recording this audit can read");
     assert!(
         !audit
             .remarks
             .iter()
-            .any(|remark| remark.layer == Layer::Hollow && remark.standing == Standing::Violated),
-        "`t1` noticed one of the two, so nothing is owed about it: {:?}",
+            .any(|remark| remark.layer == Layer::Hollow && remark.standing == Standing::Unaudited),
+        "the clean specimen's engine recorded its sealed executions, so the layer re-decided \
+         them rather than passing over them: {:?}",
+        audit.remarks
+    );
+    assert!(
+        hollow_violations(&audit).is_empty(),
+        "{TARGET}'s one test detected one of the two mutations, sealed, so nothing is owed \
+         about it: {:?}",
         audit.remarks
     );
 }

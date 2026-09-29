@@ -673,7 +673,7 @@ pub fn audit_with(
             ),
             Layer::Proofs => proofs(&recording, rerouted, &mut audit),
             Layer::Executions => executions(&recording, (routing.as_ref(), &engines), &mut audit),
-            Layer::Hollow => hollow(&recording, routing.as_ref(), &mut audit),
+            Layer::Hollow => hollow(&recording, &engines, &mut audit),
             Layer::Wire => wire(&recording, watched.as_ref(), &mut audit),
             Layer::Model => models(&recording, run, &mut audit),
             Layer::Merge => Notes::on(&mut audit, Layer::Merge)
@@ -2971,20 +2971,15 @@ fn model_columns(recording: &Recording<'_>, notes: &mut Notes<'_>) {
 }
 
 /// Whether any layer removed a target that then killed the mutation it removed.
-/// The targets the recording says noticed nothing, held to the findings that name them.
+/// The targets the sealed executions say noticed nothing, held to the findings that name them.
 ///
-/// Re-derived from the executions alone.
-/// A target is asked about a mutation only after every target before it in the route survived it, so every execution the recording holds is one where that target had its chance —
-/// except one nobody decided, which is a chance the run could not give it and is left out of the count rather than held against it.
+/// Re-derived from the sealed executions the engine recorded, as the runner decides it (ADR 0046): of a row resting on sealed executions, a target answered where its executions detected the mutation or passed, and noticed it where one detected it.
+/// A target whose executions established nothing, or were set aside for declining as their controls did, gave no answer to hold against it, and a native execution is a lead, which answers nothing.
 ///
 /// A part of a catalog is not held to this at all.
 /// Whether a target notices anything is a statement about the whole catalog, and a part has seen a slice: a target silent in this part may have noticed something in another,
 /// and demanding a finding here would demand one the whole would contradict.
-fn hollow(
-    recording: &Recording<'_>,
-    routing: Option<&crate::route::Routing>,
-    audit: &mut Audit,
-) -> Decided {
+fn hollow(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Hollow);
     if recording.shard.is_some() {
         notes.unaudited(
@@ -2995,41 +2990,60 @@ fn hollow(
         );
         return notes.looked();
     }
-    let Some(routing) = routing else {
+    if engines.is_empty() {
         notes.unaudited(
-            "executions",
-            "the run kept no recording of what it ran, so which targets were put to a \
-             mutation and noticed none cannot be re-derived"
-                .to_owned(),
-        );
-        return notes.looked();
-    };
-    if routing.execs.is_empty() {
-        notes.unaudited(
-            "executions",
-            "the recording holds no mutation execution, so no target was put to anything \
-             this audit could hold it to"
+            "sealed-exec",
+            "the run kept no engine recording, so which targets sealed executions put to a \
+             mutation and which noticed none cannot be re-derived"
                 .to_owned(),
         );
         return notes.looked();
     }
-    let asked = match asked_targets(routing) {
+    let Some(sealed) = sealed_of(engines) else {
+        notes.unaudited(
+            "sealed-exec",
+            "an engine recording holds a sealed execution this audit cannot read, so which \
+             targets noticed nothing cannot be re-derived"
+                .to_owned(),
+        );
+        return notes.looked();
+    };
+    let asked = match answering(recording, &sealed) {
         Ok(asked) => asked,
-        Err(overflow) => {
+        Err(HollowError::Overflow { target }) => {
             notes.violated(
-                overflow.target,
+                target,
                 "the execution count exceeds the report wire's u64 range".to_owned(),
             );
             return notes.looked();
         }
+        Err(HollowError::Unplaced { target, came_to }) => {
+            notes.violated(
+                target,
+                format!(
+                    "a sealed execution of {target} came to {came_to:?}, which is no ending a \
+                     sealed execution comes to"
+                ),
+            );
+            return notes.looked();
+        }
     };
+    hollow_held_to_findings(&asked, &named_hollow_targets(recording), &mut notes);
+    notes.looked()
+}
+
+/// Holds the hollow-target findings `named` to the targets `asked` says answered about a mutation and noticed none.
+fn hollow_held_to_findings(
+    asked: &BTreeMap<&str, (u64, bool)>,
+    named: &BTreeSet<&str>,
+    notes: &mut Notes<'_>,
+) {
     let owed: BTreeSet<&str> = asked
         .iter()
         .filter(|(_, (count, noticed))| *count > 0 && !*noticed)
         .map(|(target, _)| *target)
         .collect();
-    let named = named_hollow_targets(recording);
-    for target in owed.difference(&named) {
+    for target in owed.difference(named) {
         let count = match asked.get(target) {
             Some((count, _noticed)) => *count,
             None => {
@@ -3058,29 +3072,80 @@ fn hollow(
             ),
         );
     }
-    notes.looked()
 }
 
+/// Why the answers of the sealed executions could not be counted.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct HollowCountOverflow<'a> {
-    target: &'a str,
+enum HollowError<'a> {
+    /// A target answered about more mutations than the report wire counts.
+    Overflow { target: &'a str },
+    /// A sealed execution came to an ending this audit does not know.
+    Unplaced { target: &'a str, came_to: &'a str },
 }
 
-fn asked_targets(
-    routing: &crate::route::Routing,
-) -> Result<BTreeMap<&str, (u64, bool)>, HollowCountOverflow<'_>> {
-    let mut asked = BTreeMap::new();
-    for exec in &routing.execs {
-        if !matches!(exec.outcome.as_str(), "killed" | "survived") {
+/// What one target's sealed executions of one mutation said, weakest first: set aside, passed, established nothing, detected it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+enum SealedAnswer {
+    /// Its test declined as its control did, which measures nothing.
+    SetAside,
+    /// Its test passed with the mutation in place.
+    Passed,
+    /// Its execution established nothing.
+    Doubted,
+    /// Its execution detected the mutation.
+    Detected,
+}
+
+impl SealedAnswer {
+    /// What an execution that came to `came_to` said, where it is an ending a sealed execution comes to.
+    fn of(came_to: &str) -> Option<Self> {
+        if DETECTIONS.contains(&came_to) {
+            Some(Self::Detected)
+        } else if DOUBTS.contains(&came_to) {
+            Some(Self::Doubted)
+        } else if came_to == PASSED {
+            Some(Self::Passed)
+        } else if came_to == SET_ASIDE {
+            Some(Self::SetAside)
+        } else {
+            None
+        }
+    }
+}
+
+/// How many mutations each target answered about and whether it noticed one, over every row resting on sealed executions, each target's answer to a row being the strongest thing its executions of it said.
+fn answering<'a>(
+    recording: &Recording<'_>,
+    sealed: &BTreeMap<&str, Vec<&'a SealedRun>>,
+) -> Result<BTreeMap<&'a str, (u64, bool)>, HollowError<'a>> {
+    let mut asked: BTreeMap<&str, (u64, bool)> = BTreeMap::new();
+    for mutant in &recording.mutants {
+        if !mutant.sealed() {
             continue;
         }
-        let target = exec.target.as_str();
-        let held = asked.entry(target).or_insert((0_u64, false));
-        held.0 = held
-            .0
-            .checked_add(1)
-            .ok_or(HollowCountOverflow { target })?;
-        held.1 |= exec.outcome == KILLED;
+        let mut said: BTreeMap<&str, SealedAnswer> = BTreeMap::new();
+        for run in sealed_of_row(sealed, mutant) {
+            let target = run.target.as_str();
+            let now = SealedAnswer::of(&run.came_to).ok_or(HollowError::Unplaced {
+                target,
+                came_to: run.came_to.as_str(),
+            })?;
+            let held = said.entry(target).or_insert(now);
+            *held = (*held).max(now);
+        }
+        for (target, answer) in said {
+            let noticed = match answer {
+                SealedAnswer::Detected => true,
+                SealedAnswer::Passed => false,
+                SealedAnswer::Doubted | SealedAnswer::SetAside => continue,
+            };
+            let held = asked.entry(target).or_insert((0_u64, false));
+            held.0 = held
+                .0
+                .checked_add(1)
+                .ok_or(HollowError::Overflow { target })?;
+            held.1 |= noticed;
+        }
     }
     Ok(asked)
 }

@@ -865,22 +865,6 @@ fn numbered(mut events: Vec<Value>) -> Vec<Value> {
     events
 }
 
-/// The recording of [`routes`], after which one target, `blunt`, was put to both mutations and noticed neither.
-#[must_use]
-pub fn never_noticed() -> Vec<Value> {
-    let mut events = routes();
-    for mutant in [KILLED, SURVIVED] {
-        events.push(json!({
-            "type": "mutant-exec",
-            "mutant": {
-                "mutant": mutant, "target": "blunt", "args": [], "outcome": "survived",
-                "duration_ms": 5
-            }
-        }));
-    }
-    numbered(events)
-}
-
 /// One exchange that went past the `api` seam, which licenses the question [`ASKED`] among others.
 #[must_use]
 pub fn went_past() -> Value {
@@ -1667,6 +1651,11 @@ fn carried_past_its_killer(clean: Perturbation) -> Perturbation {
 
 /// The engine recording of the clean specimen: its build, its single-threaded baseline, one control, and one knob's control that held.
 fn clean_engine() -> Vec<Value> {
+    engine_of(&mutated())
+}
+
+/// The clean specimen's engine recording, with the sealed executions `rows` rest on.
+fn engine_of(rows: &Value) -> Vec<Value> {
     let mut engine = vec![
         built(),
         verified(&["--test-threads=1"]),
@@ -1674,8 +1663,30 @@ fn clean_engine() -> Vec<Value> {
         touch("control", &[0, 1]),
         perturbed("survived", &[], &recorded_reach(&[0, 1])),
     ];
-    engine.extend(sealed_execs(&mutated()));
+    engine.extend(sealed_execs(rows));
     engine
+}
+
+/// The clean specimen with its kill a sealed survivor too, [`TARGET`]'s one test passing under both mutations as its engine recorded: a target that answered about two mutations and noticed neither, which the report does not say.
+#[must_use]
+pub fn noticing_nothing_sealed() -> Perturbation {
+    let mut clean = clean();
+    merge(
+        &mut clean.document,
+        json!({ "mutants": [{
+            "decision": { "outcome": "survived", "killed_by": null, "step_boundary": null },
+            "evidence": { "executions": [{ "came_to": "passed" }] }
+        }] }),
+    );
+    let engine = match clean.document.get("mutants") {
+        Some(rows) => engine_of(rows),
+        None => Vec::new(),
+    };
+    Perturbation {
+        name: "a target its sealed executions show noticing nothing, which the report does not name",
+        engine: Some(engine),
+        ..clean
+    }
 }
 
 /// The engine's record of every sealed execution the mutation `rows` rest on, each under the row's display identity and its place among them.
@@ -2236,11 +2247,7 @@ impl Layer {
                 events: Some(discharged_then_killed()),
                 ..clean
             }],
-            Self::Hollow => vec![Perturbation {
-                name: "a hollow target the report does not name",
-                events: Some(never_noticed()),
-                ..clean
-            }],
+            Self::Hollow => vec![noticing_nothing_sealed()],
             Self::Wire => vec![Perturbation {
                 name: "a question nothing noticed that the report does not name",
                 events: Some(vec![went_past(), was_put(ASKED, "unnoticed")]),
