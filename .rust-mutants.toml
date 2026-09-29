@@ -218,3 +218,18 @@ item = "said"
 rule = "lt-to-le"
 original = "<"
 reason = "the line is cut to the width and marked whichever side of it the loop stopped on, so both render the same line; a_command_is_shown_by_its_own_name_and_cut_where_it_stops_being_readable holds the width, the mark and the beginning"
+
+# Whether the executions measured, as the first detection writes it.
+#
+# A pass over the executions reads `measured` only where no execution killed the mutant:
+# `standing` settles on the kill before it asks whether anything measured.
+# So what the first detection writes into `measured` decides nothing,
+# and `true` or `false` there give every sequence of executions the same standing;
+# `every_standing_up_to_three_executions_is_the_one_the_rules_give` holds every standing of up to three executions,
+# and the Kani law `a_sealed_detection_establishes_the_first_kill` holds it for every sequence the harness spans.
+[[mutation.expect]]
+path = "crates/rust-mutants-decision/src/evidence.rs"
+item = "Pass::after"
+rule = "true-to-false"
+original = "true"
+reason = "a pass over the executions reads measured only where no execution killed the mutant, so what the first detection writes into it gives every sequence the same standing; every_standing_up_to_three_executions_is_the_one_the_rules_give and a_sealed_detection_establishes_the_first_kill hold that"

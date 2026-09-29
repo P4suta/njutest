@@ -258,18 +258,10 @@ fn rows_of(
         .get("mutants")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| GateError("receipt: the report lists no mutants".to_owned()))?;
-    let within = module
-        .strip_prefix(&format!("crates/{package}/"))
-        .ok_or_else(|| {
-            GateError(format!(
-                "receipt: {module} is not under crates/{package}/, where this repository keeps \
-                 the package's sources"
-            ))
-        })?;
     let mut mutants = Vec::new();
     for row in rows {
         let ours = row.get("package").and_then(serde_json::Value::as_str) == Some(package)
-            && row.get("path").and_then(serde_json::Value::as_str) == Some(within);
+            && row.get("path").and_then(serde_json::Value::as_str) == Some(module);
         if ours {
             mutants.push(mutant_of(row)?);
         }

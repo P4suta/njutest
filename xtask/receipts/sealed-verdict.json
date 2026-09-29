@@ -1,0 +1,1189 @@
+{
+  "schema": "njutest-mutation-receipt-v1",
+  "decision": "sealed-verdict",
+  "package": "rust-mutants-decision",
+  "module": "crates/rust-mutants-decision/src/evidence.rs",
+  "source_sha256": "1704eaccf734c74c60a543612b036c121b687cd90e99d4002e3b053b2dc10464",
+  "mutants": [
+    {
+      "display_id": "82dac2f5d5124db4b940",
+      "position": "112:9",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "9ef840efca9904c15458",
+      "position": "113:29",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "7d94718a1ba80cd94248",
+      "position": "113:29",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "e00f05314678f9bcb06a",
+      "position": "113:29",
+      "rule": "int-decrement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "7cd2b6c51c36dbe1c0c8",
+      "position": "114:34",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "771083da9b532761ee82",
+      "position": "114:34",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "46f1c5b81a49dde72716",
+      "position": "114:34",
+      "rule": "int-decrement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "12426fd11dc764afdea5",
+      "position": "115:33",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "72eff1866b9ee6acb7f4",
+      "position": "115:33",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "edb53d794036703c853d",
+      "position": "115:33",
+      "rule": "int-decrement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "4b610345fba89a6095a7",
+      "position": "116:34",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "dd2290f68f84c97c71a5",
+      "position": "116:34",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "f874f32cd8741ad4a6d6",
+      "position": "116:34",
+      "rule": "int-decrement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "6b8fee344af0afdb1a42",
+      "position": "117:36",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "16c8c363cb0849ee2fc3",
+      "position": "117:36",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "61675fb31c5af9e5c1d0",
+      "position": "117:36",
+      "rule": "int-decrement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "0c5c15c3a1cf4ddf10ff",
+      "position": "118:30",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "f1fa54548082cf3ed5cf",
+      "position": "118:30",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "6976f78b7390b5c5c91d",
+      "position": "118:30",
+      "rule": "int-decrement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "691635b600b59c7c7e21",
+      "position": "119:34",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "21bcdc143bf2038350f2",
+      "position": "119:34",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "5e96e30c7dc6c3d9934e",
+      "position": "119:34",
+      "rule": "int-decrement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "e62fe21628ec72d52b62",
+      "position": "120:35",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "c3cca2950b3fd38a528d",
+      "position": "120:35",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "5e89db0089790777b7ff",
+      "position": "120:35",
+      "rule": "int-decrement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "00a58a6136e1b754d2e8",
+      "position": "121:31",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "5b985097e56a1a2dc65e",
+      "position": "121:31",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "5c2e97417d294d204978",
+      "position": "121:31",
+      "rule": "int-decrement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "0d4c61faa0f84bdd5c76",
+      "position": "122:32",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "c082e657b15fea9fd80e",
+      "position": "122:32",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "ba1a2ed3dd4d85596e33",
+      "position": "122:32",
+      "rule": "int-decrement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "26170fe3580fda5fa734",
+      "position": "137:21",
+      "rule": "bor-to-band",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "8e2617603c75e42fbecb",
+      "position": "143:9",
+      "rule": "return-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "30c0307937e5fa049e2e",
+      "position": "143:16",
+      "rule": "band-to-bor",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "35d798ec543ece178fa8",
+      "position": "143:31",
+      "rule": "neq-to-eq",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "8cd4e5e5c234f2e50219",
+      "position": "143:34",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "9839ff72500415e40a77",
+      "position": "203:23",
+      "rule": "false-to-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "b2ffb2931a420e59c520",
+      "position": "221:23",
+      "rule": "true-to-false",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "417811e600557d723a4e",
+      "position": "235:31",
+      "rule": "true-to-false",
+      "outcome": "survived",
+      "accepted": true,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "passed"
+        }
+      ]
+    },
+    {
+      "display_id": "32f3b329948939e20b21",
+      "position": "249:8",
+      "rule": "negate-condition",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "f6b48919f752041f0b89",
+      "position": "249:8",
+      "rule": "condition-to-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "a381f203cb7b1083031f",
+      "position": "249:8",
+      "rule": "condition-to-false",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::an_unproven_standing_always_names_a_reason",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::every_standing_up_to_three_executions_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "e2ba79de166bbf9446e6",
+      "position": "249:20",
+      "rule": "eq-to-neq",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "730db893cd97cbc5dd8e",
+      "position": "272:14",
+      "rule": "negate-bool-method",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "d23af0876a39a533d654",
+      "position": "272:14",
+      "rule": "remove-match-guard",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_ignores_a_doubt_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "evidence::tests::a_standing_that_reads_a_native_pass_as_sealed_is_caught",
+          "came_to": "panicked"
+        }
+      ]
+    }
+  ]
+}

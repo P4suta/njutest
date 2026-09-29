@@ -498,14 +498,28 @@ fn cells(line: &str) -> Option<Vec<&str>> {
     Some(inner.split('|').map(str::trim).collect())
 }
 
-/// Whether `name` is an item's name or a path ending in one: identifier segments joined by `::`.
+/// Whether `name` is an item's name or a path ending in one, identifier segments joined by `::`, or a receipt a Mutation cell names.
 fn a_name(name: &str) -> bool {
-    name.split("::").all(|segment| {
-        !segment.is_empty()
-            && segment
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_')
-    })
+    a_receipt(name)
+        || name.split("::").all(|segment| {
+            !segment.is_empty()
+                && segment
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+}
+
+/// Whether `name` is a receipt under `xtask/receipts`: a file name of lowercase words and hyphens ending in `.json`.
+fn a_receipt(name: &str) -> bool {
+    name.strip_prefix(crate::receipt::DIRECTORY)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .and_then(|rest| rest.strip_suffix(".json"))
+        .is_some_and(|stem| {
+            !stem.is_empty()
+                && stem
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        })
 }
 
 /// The names one layer cell holds, or that it is open.
@@ -523,7 +537,8 @@ fn cell(text: &str, decision: &str) -> Result<Cell, InvariantError> {
                 source_name: "docs/invariants.md".to_owned(),
                 detail: format!(
                     "{decision}: a layer cell is `none` or backticked item names, each perhaps \
-                     qualified by `::`, joined by \", \", and {text:?} is neither"
+                     qualified by `::`, or receipts under xtask/receipts, joined by \", \", and \
+                     {text:?} is neither"
                 ),
             })?;
         names.push(name.to_owned());
