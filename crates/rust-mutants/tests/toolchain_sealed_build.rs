@@ -16,8 +16,10 @@ use rust_mutants::cargo::{
     MetadataOptions, Toolchain, compile,
 };
 use rust_mutants::runner::Cancel;
+use rust_mutants::sealed::record::Came;
+use rust_mutants::sealed::rerun::{Now, Recorded, Reproduction, Reran, Unmade};
 use rust_mutants::sealed::{SealedBuild, Sealing, TARGET, Unsealed, installed};
-use rust_mutants::trace::Recorder;
+use rust_mutants::trace::{MemorySink, Payload, Recorder, Sink};
 
 fn toolchain(dir: &Path) -> Toolchain {
     let options = LocateOptions {
@@ -615,4 +617,186 @@ fn a_test_that_reads_the_tree_by_a_path_its_build_gave_it_passes_its_control_sea
         .map(|station| station.controls.len())
         .sum();
     assert_eq!(controlled, 4, "every test is controlled");
+}
+
+/// The options every preparation of a fixture below is made with, the one that records and the one that runs again alike.
+fn every_rule() -> rust_mutants::session::PrepareOptions {
+    rust_mutants::session::PrepareOptions {
+        sealing: Sealing::On,
+        ..rust_mutants::session::PrepareOptions::new(rust_mutants::rule::Tier::All)
+    }
+}
+
+/// Every sealed execution a run of `fixture` puts its accepted mutants to, as a report records them.
+fn recorded_by_a_run(fixture: &njutest_devkit::fixture::Fixture) -> Vec<Recorded> {
+    let session = rust_mutants::workspace::Workspace::open(
+        fixture.root(),
+        rust_mutants::testkit::opening::opening(
+            &njutest_devkit::paths::cargo_binary(),
+            fixture.temp(),
+        ),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(&every_rule(), &Cancel::new())
+    .expect("prepare");
+    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
+        .expect("the sealed runner starts");
+    let bench = session
+        .bench(&runner, &Cancel::new())
+        .expect("the bench is assembled");
+    let mut recorded = Vec::new();
+    for mutant in session.catalog().mutants() {
+        if !session.accepted().contains(&mutant.index) {
+            continue;
+        }
+        let answer = rust_mutants::sealed::standing::answer(
+            (&bench, session.sealed()),
+            mutant,
+            &session.snapshot_root().join(&mutant.candidate.path),
+            &session.route(mutant),
+        )
+        .expect("the host runs every execution");
+        recorded.extend(answer.puts.iter().map(|put| Recorded {
+            mutant: mutant.id.to_string(),
+            target: put.target.clone(),
+            test: put.test.clone(),
+            came_to: Came::of(put.came_to),
+        }));
+    }
+    drop(bench);
+    session
+        .close()
+        .expect("the recording run's snapshot is removed");
+    recorded
+}
+
+/// `fixture` prepared to run recorded executions again, with every event the preparation records going to `trace`.
+fn rerunnable(
+    fixture: &njutest_devkit::fixture::Fixture,
+    trace: Recorder,
+) -> rust_mutants::session::Rerunnable {
+    rust_mutants::workspace::Workspace::open(
+        fixture.root(),
+        rust_mutants::workspace::OpenOptions {
+            trace,
+            ..rust_mutants::testkit::opening::opening(
+                &njutest_devkit::paths::cargo_binary(),
+                fixture.temp(),
+            )
+        },
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare_to_rerun(&every_rule(), &Cancel::new())
+    .expect("prepared to run recorded executions again")
+}
+
+#[test]
+fn a_preparation_to_rerun_starts_no_test_natively_and_reproduces_every_execution() {
+    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-simple");
+    let recorded = recorded_by_a_run(&fixture);
+    assert_eq!(
+        recorded.iter().filter(|one| one.came_to.detected()).count(),
+        12,
+        "the README's twelve kills each rest on one sealed detection: {recorded:?}"
+    );
+    let trace = Recorder::wall(
+        Sink::Memory(MemorySink::unbounded()),
+        rust_mutants::testkit::trace::standalone_context(),
+    );
+    let prepared = rerunnable(&fixture, trace.clone());
+    let mut phases: Vec<String> = Vec::new();
+    for event in trace.events() {
+        if let Payload::PhaseStart { phase } = event.payload {
+            phases.push(phase.name);
+        }
+    }
+    assert!(
+        phases.iter().any(|phase| phase == "build")
+            && !phases
+                .iter()
+                .any(|phase| phase == "verify" || phase == "coverage"),
+        "the preparation builds as a run does and starts no test natively, since a recorded \
+         execution names its test and no native baseline has to say which tests are the suite's: \
+         {phases:?}"
+    );
+    assert_eq!(
+        prepared
+            .rerun(&recorded, &Cancel::new())
+            .expect("the host runs every execution again"),
+        Reproduction::Reproduced(
+            recorded
+                .iter()
+                .map(|one| Reran {
+                    recorded: one.clone(),
+                    now: Now::Came(one.came_to),
+                })
+                .collect()
+        ),
+        "every recorded execution runs again, each test's control first, and comes to what it \
+         came to"
+    );
+    let cancel = Cancel::new();
+    cancel.cancel();
+    assert!(
+        matches!(
+            prepared.rerun(&recorded, &cancel),
+            Err(rust_mutants::EngineError::Interrupted)
+        ),
+        "a run cancelled before its executions ran again reproduces nothing"
+    );
+    prepared.close().expect("the snapshot is removed");
+}
+
+#[test]
+fn running_recorded_executions_again_stops_at_the_first_that_comes_to_something_else_now() {
+    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-simple");
+    let recorded = recorded_by_a_run(&fixture);
+    let prepared = rerunnable(&fixture, Recorder::disabled());
+    let flipped = recorded
+        .iter()
+        .position(|one| one.came_to.detected())
+        .expect("a detection");
+    let mut contradicted = recorded.clone();
+    contradicted
+        .get_mut(flipped)
+        .expect("the detection found")
+        .came_to = Came::Passed;
+    let Reproduction::Differed { agreed, first } = prepared
+        .rerun(&contradicted, &Cancel::new())
+        .expect("the host runs every execution again")
+    else {
+        panic!("a recorded pass the mutant is detected by now is a difference");
+    };
+    assert_eq!(
+        (agreed.len(), Some(&first.recorded), Some(first.now)),
+        (
+            flipped,
+            contradicted.get(flipped),
+            recorded.get(flipped).map(|truly| Now::Came(truly.came_to))
+        ),
+        "the executions before the contradicted one agree, it comes to what it truly comes to, \
+         and nothing after it runs"
+    );
+
+    let uncataloged = Recorded {
+        mutant: "0".repeat(64),
+        ..recorded.first().expect("a recorded execution").clone()
+    };
+    assert_eq!(
+        prepared
+            .rerun(std::slice::from_ref(&uncataloged), &Cancel::new())
+            .expect("nothing had to run"),
+        Reproduction::Differed {
+            agreed: Vec::new(),
+            first: Reran {
+                recorded: uncataloged.clone(),
+                now: Now::Unmade(Unmade::Uncataloged),
+            },
+        },
+        "an execution of a mutant this tree does not catalog cannot be made again, which is a \
+         difference and never an agreement"
+    );
+    prepared.close().expect("the snapshot is removed");
 }
