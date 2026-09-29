@@ -252,7 +252,7 @@ pub struct Mutation {
     pub drift: Vec<Drift>,
     /// The SHA-256 of each file the catalog's mutants were read from, as the catalog read it.
     pub sources: BTreeMap<String, rust_mutants::id::HexDigest>,
-    /// How many dispositions resting on each moved target were decided again against it (ADR 0036).
+    /// How many dispositions resting on each moved target a run against it replaced, with an answer or a hole (ADR 0036).
     pub repaired: BTreeMap<String, usize>,
 }
 

@@ -291,3 +291,29 @@ fn a_moved_target_nothing_rests_on_is_concluded_as_the_published_verdict_conclud
          report publishes are one function of the same evidence, and they agree"
     );
 }
+
+#[test]
+fn a_moved_target_whose_repair_left_a_hole_says_it_was_run_again_and_not_decided() {
+    let rows = [row(
+        0,
+        Decided::Errored {
+            on: TARGET.to_owned(),
+        },
+        false,
+    )];
+    let counted = std::collections::BTreeMap::from([(TARGET.to_owned(), 1_usize)]);
+    let stated = drift::repaired(&[moved()], &rows, &counted);
+    let [limitation] = stated.as_slice() else {
+        panic!("nothing rests on the moved target, so it is named in reach-moved: {stated:?}");
+    };
+    assert!(
+        limitation
+            .detail
+            .contains("1 disposition that rested on its baseline was run again")
+            && !limitation.detail.contains("decided"),
+        "the repair ran the one resting disposition again and it errored, a hole and no answer, \
+         so the limitation counts what was run again and calls none of it decided (ADR 0036 \
+         decision 3): {}",
+        limitation.detail
+    );
+}

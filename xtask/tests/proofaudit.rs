@@ -4362,8 +4362,8 @@ fn a_reach_moved_limitation_counts_the_dispositions_the_repairs_replaced() {
                 "detail": format!(
                     "a target reached something on an original-code control that it did not \
                      reach on its baseline, so what it reaches is not a function of the target; \
-                     {again} that rested on its baseline were decided again by running against \
-                     it, and nothing this run concludes stands on the moved record ({TARGET})"
+                     {again} that rested on its baseline were run again against it, and \
+                     nothing this run concludes stands on the moved record ({TARGET})"
                 )
             }] }),
         );
