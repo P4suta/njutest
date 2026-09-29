@@ -4996,8 +4996,7 @@ impl BuildReport {
     pub fn concluded(&self) -> Verdict {
         let part = self.scope.shard.is_some();
         concluded_from(&Basis {
-            run_kind: self.run_kind,
-            part,
+            extent: Extent::of(self.run_kind, part),
             findings: &self.findings,
             answered: self
                 .mutants
@@ -6706,8 +6705,7 @@ fn shard_verdict(builds: &ShardBuildLedger, global_findings: &[Finding]) -> Verd
         .cloned()
         .collect();
     concluded_from(&Basis {
-        run_kind: RunKind::Full,
-        part: true,
+        extent: Extent::Part,
         findings: &findings,
         answered: builds.iter().all(|build| {
             build
@@ -6728,13 +6726,28 @@ fn shard_verdict(builds: &ShardBuildLedger, global_findings: &[Finding]) -> Verd
 
 /// What a report's verdict is drawn from, whichever report holds it: one build's, a part's, or the projection of every build.
 struct Basis<'a> {
-    run_kind: RunKind,
-    part: bool,
+    extent: Extent,
     findings: &'a [Finding],
     answered: bool,
     observed: bool,
     /// Whether a part of a divided catalog saw a reach move or a knob shake, whose findings only the merge raises over what every part holds (ADR 0036 decision 4).
     unsettled: bool,
+}
+
+/// How much of a catalog a body of evidence is about, which is what it can assure where nothing stands against it.
+#[derive(Debug, Clone, Copy)]
+enum Extent {
+    /// The whole catalog, of a run of this kind.
+    Whole(RunKind),
+    /// One part of a divided catalog, which assures nothing on its own.
+    Part,
+}
+
+impl Extent {
+    /// The extent of a run of `kind` that was one `part` of a divided catalog or the whole of it.
+    const fn of(kind: RunKind, part: bool) -> Self {
+        if part { Self::Part } else { Self::Whole(kind) }
+    }
 }
 
 /// Whether a row decided `decision` and judged by `verdict` answers its mutation: a model's decision, or a row whose verdict is an answer.
@@ -6756,13 +6769,11 @@ fn concluded_from(basis: &Basis<'_>) -> Verdict {
     if !basis.answered || !basis.observed || !basis.findings.is_empty() || basis.unsettled {
         return Verdict::Insufficient;
     }
-    if basis.part {
-        return Verdict::Partial;
-    }
-    match basis.run_kind {
-        RunKind::Full => Verdict::Assured,
-        RunKind::Changed => Verdict::ChangeAssured,
-        RunKind::Scoped => Verdict::ScopeAssured,
+    match basis.extent {
+        Extent::Part => Verdict::Partial,
+        Extent::Whole(RunKind::Full) => Verdict::Assured,
+        Extent::Whole(RunKind::Changed) => Verdict::ChangeAssured,
+        Extent::Whole(RunKind::Scoped) => Verdict::ScopeAssured,
     }
 }
 
@@ -6801,8 +6812,7 @@ fn concluded_from_projection(projection: ConclusionProjection<'_>) -> Verdict {
         findings,
     } = projection;
     concluded_from(&Basis {
-        run_kind,
-        part: shard.is_some(),
+        extent: Extent::of(run_kind, shard.is_some()),
         findings,
         answered: mutants.iter().all(|mutant| {
             matches!(

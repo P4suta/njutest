@@ -327,12 +327,7 @@ fn followed(
         Payload::Model { model } if model.mutant() == id => {
             came_to = model_decision(model).or(came_to);
         }
-        Payload::Beside { beside } if beside.mutant == id => {
-            steps.push(Step::ObservableUnderFault {
-                fault: beside.fault.clone(),
-                target: beside.target.clone(),
-            });
-        }
+        Payload::Beside { beside } if beside.mutant == id => steps.push(observable(beside)),
         Payload::RunStart { .. }
         | Payload::FaultControl { .. }
         | Payload::FaultAttribution { .. }
@@ -369,6 +364,14 @@ fn followed(
         | Payload::RunEnd { .. } => {}
     }
     came_to
+}
+
+/// The step a survivor's evidence beside a fault is.
+fn observable(beside: &crate::report::faults::BesideRecord) -> Step {
+    Step::ObservableUnderFault {
+        fault: beside.fault.clone(),
+        target: beside.target.clone(),
+    }
 }
 
 /// What the sealed executions among `steps` establish: a kill by the first that detected the mutant, or a survival where every one passed; nothing where one names what this release does not spell.

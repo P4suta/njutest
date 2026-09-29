@@ -2213,24 +2213,8 @@ impl Session {
         let result = self.observed(&in_scratch(scratch), &context, (cancel, None))?;
         let unrecorded = result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT;
         let result = if unrecorded {
-            self.workspace.trace.note(
-                crate::touch::UNRECORDED,
-                &format!(
-                    "{}: a mutation run again against it could not write what its guards \
-                     reached, so it is run again with nothing to record and whether it reached \
-                     the site is not known",
-                    target.id()
-                ),
-            );
             let again = in_scratch(self.exec_scratch(self.home_of(target.id()))?);
-            self.observed(
-                &again,
-                &Context {
-                    touch: None,
-                    ..context
-                },
-                (cancel, None),
-            )?
+            self.unrecorded_again(target, (&again, &context), cancel)?
         } else {
             result
         };
@@ -2247,6 +2231,35 @@ impl Session {
         }
         let reach = self.site_reach(target, &log, (mutant.index, mutant.id.as_str(), &result))?;
         Ok((result, reach))
+    }
+
+    /// Runs `exec` of `target` again with nothing to record, after a run that could not write what its guards reached, as a control is run again (ADR 0036 decision 1).
+    ///
+    /// # Errors
+    /// What [`Session::exec_reaching`] refuses.
+    fn unrecorded_again(
+        &self,
+        target: &TestTarget,
+        (exec, context): (&ExecRequest<'_>, &Context<'_>),
+        cancel: &Cancel,
+    ) -> Result<MutantResult, EngineError> {
+        self.workspace.trace.note(
+            crate::touch::UNRECORDED,
+            &format!(
+                "{}: a mutation run again against it could not write what its guards reached, \
+                 so it is run again with nothing to record and whether it reached the site is \
+                 not known",
+                target.id()
+            ),
+        );
+        self.observed(
+            exec,
+            &Context {
+                touch: None,
+                ..*context
+            },
+            (cancel, None),
+        )
     }
 
     /// Runs one fault against the one target `request` names, asking its runtime to record what became of each failure it made (ADR 0032).
