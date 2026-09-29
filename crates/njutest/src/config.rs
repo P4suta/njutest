@@ -168,6 +168,17 @@ impl Default for Contract {
 impl Contract {
     const PROTOCOL_DEFAULT: Self = Self::WholeV1;
 
+    /// The name a document, a report and a key spell it by.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::StandardV1 => "standard-v1",
+            Self::DeepV1 => "deep-v1",
+            Self::VerifiedV1 => "verified-v1",
+            Self::WholeV1 => "whole-v1",
+        }
+    }
+
     /// Whether the soundness phase runs Miri, where an inventory alone would be a limitation.
     #[must_use]
     pub const fn runs_miri(self) -> bool {
@@ -927,16 +938,12 @@ impl Config {
     /// Returns a typed error when a `verified-v1` bound is absent or zero, or when another contract carries verifier-only keys.
     /// This rechecks public fields so a caller that constructs or mutates [`Config`] cannot bypass the same boundary enforced by [`Config::parse`].
     pub fn verified(&self) -> Result<Option<Verified>, VerificationError> {
-        match self.contract {
-            Contract::VerifiedV1 => self.verification.checked().map(Some),
-            Contract::StandardV1 | Contract::DeepV1 | Contract::WholeV1
-                if self.verification.is_empty() =>
-            {
-                Ok(None)
-            }
-            Contract::StandardV1 | Contract::DeepV1 | Contract::WholeV1 => {
-                Err(VerificationError::WrongContract)
-            }
+        if self.contract.proves_models() {
+            self.verification.checked().map(Some)
+        } else if self.verification.is_empty() {
+            Ok(None)
+        } else {
+            Err(VerificationError::WrongContract)
         }
     }
 

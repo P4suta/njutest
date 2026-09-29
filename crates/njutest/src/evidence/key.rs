@@ -37,8 +37,8 @@ pub struct Common {
     pub platform: String,
     /// The environment the run selected, as names and values.
     pub environment: Vec<(String, String)>,
-    /// The contract, by name.
-    pub contract: String,
+    /// The contract.
+    pub contract: crate::config::Contract,
     /// The arguments the test binaries were given.
     pub test_args: Vec<String>,
     /// The canonical, typed Cargo selection for this particular configured build.
@@ -76,7 +76,7 @@ pub fn runner(common: &Common) -> String {
                 .iter()
                 .map(|(name, value)| format!("{name}\u{0}{value}")),
         )
-        .field("contract", &common.contract)
+        .field("contract", common.contract.name())
         .list("versions", &common.versions)
         .field("corpus", &common.corpus);
     fields.finish()
@@ -154,7 +154,7 @@ fn key(domain: &str, linked: &Linked, common: &Common) -> String {
                 .iter()
                 .map(|(name, value)| format!("{name}={value}")),
         )
-        .field("contract", &common.contract)
+        .field("contract", common.contract.name())
         .list("test-args", &common.test_args);
     fields
         .field("build", common.build.digest().as_str())

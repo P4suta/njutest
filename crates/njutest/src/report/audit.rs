@@ -1033,7 +1033,10 @@ fn reject_models_for_contract(
     for model in models {
         violations.push(Violation::ModelEvidenceIncoherent {
             mutant: model.mutant().to_owned(),
-            because: format!("contract {contract:?} does not admit retained model answers"),
+            because: format!(
+                "contract {} does not admit retained model answers",
+                contract.name()
+            ),
         });
     }
     for row in mutants {
@@ -1044,7 +1047,8 @@ fn reject_models_for_contract(
             violations.push(Violation::ModelEvidenceIncoherent {
                 mutant: row.id().to_owned(),
                 because: format!(
-                    "contract {contract:?} does not admit model-decided mutation outcomes"
+                    "contract {} does not admit model-decided mutation outcomes",
+                    contract.name()
                 ),
             });
         }

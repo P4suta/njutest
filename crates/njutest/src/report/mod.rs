@@ -5960,7 +5960,7 @@ pub enum CompletionError {
     #[error("verified-v1 requires an exact post-lattice model batch")]
     ModelRequired,
     /// A non-model contract was given a model batch.
-    #[error("contract {contract:?} does not admit model evidence")]
+    #[error("contract {} does not admit model evidence", contract.name())]
     ModelForbidden {
         /// The contract that has no model phase.
         contract: crate::config::Contract,
@@ -6273,25 +6273,15 @@ impl Report {
     fn checked(report: Self) -> Result<Self, CompletionError> {
         validate_completion_shape(&report.run_id, &report.composition, &report.builds)?;
         reject_premature_model_outcomes(&report.builds)?;
-        match (&report.contract, &report.model_completion) {
-            (crate::config::Contract::VerifiedV1, ModelCompletion::Verified(batch)) => {
+        match (report.contract.proves_models(), &report.model_completion) {
+            (true, ModelCompletion::Verified(batch)) => {
                 validate_model_batch(&report.run_id, &report.builds, batch)?;
             }
-            (crate::config::Contract::VerifiedV1, ModelCompletion::NotRequired) => {
+            (true, ModelCompletion::NotRequired) => {
                 return Err(CompletionError::ModelRequired);
             }
-            (
-                crate::config::Contract::StandardV1
-                | crate::config::Contract::DeepV1
-                | crate::config::Contract::WholeV1,
-                ModelCompletion::NotRequired,
-            ) => {}
-            (
-                crate::config::Contract::StandardV1
-                | crate::config::Contract::DeepV1
-                | crate::config::Contract::WholeV1,
-                ModelCompletion::Verified(_),
-            ) => {
+            (false, ModelCompletion::NotRequired) => {}
+            (false, ModelCompletion::Verified(_)) => {
                 return Err(CompletionError::ModelForbidden {
                     contract: report.contract,
                 });

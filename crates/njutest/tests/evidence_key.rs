@@ -18,13 +18,26 @@ use njutest::evidence::tree::{Scan, scan};
 use njutest_devkit::repo::Repo;
 use rust_mutants::cargo::Metadata;
 
+#[test]
+fn a_key_spells_each_contract_as_a_document_names_it() {
+    for contract in njutest::config::Contract::ALL {
+        let named = serde_json::to_value(contract).expect("a contract serializes");
+        assert_eq!(
+            Some(contract.name()),
+            named.as_str(),
+            "the key a run is keyed under names its contract as the configuration does, not by \
+             the spelling a debugger prints"
+        );
+    }
+}
+
 fn common() -> Common {
     Common {
         toolchain: "rustc 1.98.0".to_owned(),
         platform: "x86_64-unknown-linux-gnu".to_owned(),
         engine: "e".repeat(64),
         environment: vec![("RUSTFLAGS".to_owned(), "-Copt-level=1".to_owned())],
-        contract: "standard-v1".to_owned(),
+        contract: njutest::config::Contract::StandardV1,
         test_args: vec!["--test-threads=1".to_owned()],
         build: rust_mutants::cargo::BuildConfig {
             features: vec!["a".to_owned()],
@@ -280,7 +293,9 @@ fn a_key_covers_everything_that_could_change_what_the_target_does() {
         ("the environment", |c| {
             c.environment.push(("CC".to_owned(), "clang".to_owned()));
         }),
-        ("the contract", |c| c.contract = "deep-v1".to_owned()),
+        ("the contract", |c| {
+            c.contract = njutest::config::Contract::DeepV1;
+        }),
         ("the harness arguments", |c| c.test_args.clear()),
         ("the features", |c| {
             c.build = rust_mutants::cargo::BuildConfig {
