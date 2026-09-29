@@ -2301,6 +2301,52 @@ fn a_hollow_target_its_sealed_executions_bear_out_is_no_violation_whatever_ran_n
     );
 }
 
+#[test]
+fn a_run_whose_every_verdict_rests_on_no_execution_is_re_decided_rather_than_unaudited() {
+    let mut specimen = sentinel::clean();
+    let unreached = serde_json::json!({
+        "decision": { "outcome": "unreached", "killed_by": null, "step_boundary": null },
+        "evidence": { "kind": "sealed", "executions": [] }
+    });
+    merge(
+        &mut specimen.document,
+        serde_json::json!({ "mutants": [unreached.clone(), unreached] }),
+    );
+    let mut events: Vec<serde_json::Value> = routes()
+        .into_iter()
+        .filter(|event| {
+            event.get("type").and_then(serde_json::Value::as_str) != Some("mutant-exec")
+        })
+        .collect();
+    for (seq, event) in (1_u64..).zip(events.iter_mut()) {
+        merge(event, serde_json::json!({ "seq": seq }));
+    }
+    specimen.events = Some(events);
+    specimen.engine = specimen.engine.map(|engine| {
+        engine
+            .into_iter()
+            .filter(|event| {
+                event.get("type").and_then(serde_json::Value::as_str) != Some("sealed-exec")
+            })
+            .collect()
+    });
+    let laid = specimen.lay().expect("the specimen is laid out");
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        .expect("a recording this audit can read");
+    let said: Vec<String> = audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Executions)
+        .map(|remark| format!("{:?}: {}", remark.standing, remark.detail))
+        .collect();
+    assert!(
+        said.is_empty(),
+        "both mutations are unreached on sealed evidence of no execution, and the recordings \
+         hold none: there is nothing a verdict rests on that did not run, which is a layer that \
+         looked and found nothing rather than one that could not look: {said:?}"
+    );
+}
+
 /// The recording of [`routes`], after which one target, `blunt`, ran natively under both mutations and noticed neither.
 fn never_noticed() -> Vec<serde_json::Value> {
     let mut events = routes();

@@ -4367,15 +4367,6 @@ fn executions(
         );
         return notes.looked();
     };
-    if routing.execs.is_empty() && sealed.is_empty() {
-        notes.unaudited(
-            "mutant-exec",
-            "the recording holds no mutation execution, native or sealed, so no outcome can be \
-             held to what ran"
-                .to_owned(),
-        );
-        return notes.looked();
-    }
     let mut ran: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for exec in &routing.execs {
         ran.entry(exec.mutant.as_str())
