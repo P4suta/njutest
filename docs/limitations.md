@@ -326,6 +326,7 @@ Crashes are asked for by `[durability] crash`, by `--crashes`, or by `whole-v1`,
 A crash stops the process just after a call that writes and runs the test that reached it again over what it left, so `restarted` says the next run passed over those files, not that it read them: a test that keeps its state under a name it picks afresh every run reads nothing its predecessor left.
 The stop is a process ending, so what it wrote is in the system's cache and on disk to every next run; a power failure that loses unflushed writes is not modelled.
 A call a target reaches without the run knowing which of its tests reaches it is `undecided`, because stopping every test of the target at once would tear what the others were writing.
+A call whose value is a future has written nothing when it returns, so a stop after it would stop before the write: the runtime makes the compiler refuse that stop, and an asynchronous write is not put rather than read as `restarted`.
 The compiler refusing a crash is stated in `crash-not-put`, and a tree with no call that writes in `crash-no-site`.
 
 ## What a run asks of a suite that talks about time
