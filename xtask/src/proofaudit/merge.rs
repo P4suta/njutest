@@ -31,6 +31,8 @@ pub enum MergeRule {
     Models,
     /// Each shard, re-decided against its own recording, holds.
     Shards,
+    /// Every row a part rests on sealed executions is one the part's own run recorded those executions of, in order (ADR 0046).
+    Sealed,
     /// The record stream kept beside the merge says of each dimension what every part's records establish.
     Dimensions,
 }
@@ -49,6 +51,7 @@ impl MergeRule {
             Self::Identity => "identity",
             Self::Models => "models",
             Self::Shards => "shards",
+            Self::Sealed => "sealed",
             Self::Dimensions => "dimensions",
         }
     }
@@ -151,6 +154,44 @@ enum Document {
 pub struct AuditedShard {
     report: ShardReport,
     audit: Audit,
+    witnessed: Witnessed,
+}
+
+/// The sealed executions a shard's own recording holds, which every sealed row of its part is held to.
+#[derive(Debug)]
+enum Witnessed {
+    /// Every sealed execution its engine recordings hold, with the mutation each ran, in the order recorded.
+    Held(Vec<(String, super::SealedRun)>),
+    /// Its recording keeps no engine recording.
+    Unrecorded,
+    /// An engine recording holds a sealed execution this audit cannot read.
+    Unreadable,
+}
+
+impl Witnessed {
+    /// What the engine recordings `engines` hold, each read and held to its schema once.
+    fn of(
+        checkers: &crate::schemas::Checkers,
+        engines: &[(String, String)],
+    ) -> Result<Self, AuditError> {
+        if engines.is_empty() {
+            return Ok(Self::Unrecorded);
+        }
+        let mut held = Vec::new();
+        for (recording_path, text) in engines {
+            let checked =
+                crate::route::Checked::<crate::schemas::EngineLines>::read(text, checkers)
+                    .map_err(|source| AuditError::MalformedRecording {
+                        path: recording_path.clone(),
+                        source,
+                    })?;
+            match super::sealed_runs(checked.events()) {
+                Some(runs) => held.extend(runs),
+                None => return Ok(Self::Unreadable),
+            }
+        }
+        Ok(Self::Held(held))
+    }
 }
 
 /// The run a shard document at `path` holding `text` names, which is where its recording is kept.
@@ -187,9 +228,11 @@ pub fn audited(
         });
     };
     let audit = super::audit_with(checkers, reported, recorded, run)?;
+    let witnessed = Witnessed::of(checkers, recorded.engines)?;
     Ok(AuditedShard {
         report: *report,
         audit,
+        witnessed,
     })
 }
 
@@ -231,7 +274,14 @@ pub fn merged_with(
             .iter()
             .find(|shard| shard.report.run_id == source.run_id)
         {
-            Some(shard) => held(&merged, (position, source, shard), &mut notes),
+            Some(shard) => {
+                held(&merged, (position, source, shard), &mut notes);
+                for build in &merged.builds {
+                    if let Some(part) = build.parts.get(position) {
+                        witnessed(part, (&source.run_id, &shard.witnessed), &mut notes);
+                    }
+                }
+            }
             None => notes.unaudited(
                 &source.run_id,
                 format!(
@@ -686,6 +736,92 @@ fn held(
                 ),
             );
         }
+    }
+}
+
+/// Every row of `part` that rests on sealed executions, held to the sealed executions the run `run_id` that measured it recorded of its mutation, in order: a merge that affirms a row its part's own recording does not hold affirms what no run was seen to run.
+fn witnessed(part: &Value, (run_id, witnessed): (&str, &Witnessed), notes: &mut Notes<'_>) {
+    let Some(rows) = part.get("mutants").and_then(Value::as_array) else {
+        broke(
+            notes,
+            MergeRule::Sealed,
+            run_id,
+            "a part of the merge holds no list of its rows, so none of them can be held to what              its run recorded",
+        );
+        return;
+    };
+    let sealed: Vec<(&Value, Vec<super::SealedRun>)> = rows
+        .iter()
+        .filter_map(|row| Some((row, rested_on(row.get("evidence")?)?)))
+        .collect();
+    if sealed.is_empty() {
+        return;
+    }
+    let recorded = match witnessed {
+        Witnessed::Held(recorded) => recorded,
+        Witnessed::Unrecorded => {
+            notes.unaudited(
+                run_id,
+                format!(
+                    "{} of its rows rest on sealed executions, and its recording keeps no engine \
+                     recording, so whether its run ran them cannot be re-derived",
+                    sealed.len()
+                ),
+            );
+            return;
+        }
+        Witnessed::Unreadable => {
+            notes.unaudited(
+                run_id,
+                "an engine recording of its run holds a sealed execution this audit cannot read, \
+                 so whether its run ran its sealed rows' executions cannot be re-derived"
+                    .to_owned(),
+            );
+            return;
+        }
+    };
+    for (row, named) in sealed {
+        let names = |mutant: &str| {
+            ["display_id", "id"].into_iter().any(|key| {
+                row.get(key)
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| !name.is_empty() && name == mutant)
+            })
+        };
+        let ran: Vec<&super::SealedRun> = recorded
+            .iter()
+            .filter(|(mutant, _)| names(mutant))
+            .map(|(_, run)| run)
+            .collect();
+        if !named.iter().eq(ran.iter().copied()) {
+            let said = |runs: &mut dyn Iterator<Item = &super::SealedRun>| {
+                runs.map(|run| format!("{} {} {}", run.target, run.test, run.came_to))
+                    .collect::<Vec<_>>()
+            };
+            broke(
+                notes,
+                MergeRule::Sealed,
+                run_id,
+                &format!(
+                    "{} rests on the sealed executions {:?}, and the run that measured its part \
+                     recorded {:?} of it",
+                    match row.get("display_id").and_then(Value::as_str) {
+                        Some(display) => display,
+                        None => "a row that names no mutant",
+                    },
+                    said(&mut named.iter()),
+                    said(&mut ran.into_iter())
+                ),
+            );
+        }
+    }
+}
+
+/// The sealed executions `evidence` names, where it says the row rests on sealed executions and names each whole; nothing otherwise.
+fn rested_on(evidence: &Value) -> Option<Vec<super::SealedRun>> {
+    match super::Rests::read(evidence)? {
+        super::Rests::Sealed(runs) => Some(runs),
+        super::Rests::Nothing | super::Rests::Unproven(_) => None,
     }
 }
 

@@ -3958,6 +3958,39 @@ fn sharded() -> sentinel::Perturbation {
 }
 
 #[test]
+fn a_merge_does_not_affirm_the_sealed_rows_of_a_part_whose_run_kept_no_engine_recording() {
+    let mut merged = sharded();
+    if let Some(shard) = merged.shards.get_mut(1) {
+        shard.engine = None;
+    }
+
+    let audit = merge_audit(&merged).expect("a merge is read with its shards");
+
+    let said: Vec<String> = audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Merge && remark.standing == Standing::Unaudited)
+        .map(|remark| format!("{}: {}", remark.subject, remark.detail))
+        .collect();
+    assert!(
+        said.iter()
+            .any(|line| line.contains("rest on sealed executions")),
+        "a merged row resting on sealed executions is believed only where the run that measured \
+         its part is seen to have run them (ADR 0046): {said:?}"
+    );
+}
+
+#[test]
+fn a_merge_holds_each_sealed_row_to_the_executions_its_part_s_own_run_recorded() {
+    let said = merge_violations(&sharded());
+
+    assert!(
+        !said.iter().any(|line| line.contains("sealed: ")),
+        "each part's own recording holds the sealed executions its rows rest on: {said:?}"
+    );
+}
+
+#[test]
 fn a_shard_document_is_re_decided_against_its_own_recording_as_the_one_part_it_measured() {
     let laid = laid_sharded(&sharded());
     let first = laid.shards().into_iter().next().expect("a first shard");

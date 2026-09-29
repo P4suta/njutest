@@ -488,6 +488,8 @@ A run report is a collection of what running something said,
 and two collections add up whatever produced them; an assurance report is one claim, that a contract was met, and a claim assembled from a part that met it and a part that met something else is true of neither.
 
 The mutant rows of the whole are the union of the parts'.
+Each row stays in the part it came from, `builds[].parts[]`, under that part's own `run_id` and `part`, and the composition names every such run as a source: a merge runs nothing, so a row resting on sealed executions rests on the ones the run of its part recorded, on that run's bench, and says which run that was.
+`cargo xtask proofaudit <merged-report> --shard … --traces …` holds each such row to the `sealed-exec` records of its part's own recording (the `sealed` rule of the merge layer), so a merge affirms no sealed row whose executions its part's run is not seen to have run.
 Its accounting is derived from that union rather than added up from what each part counted, so the whole's columns say what the whole's own records say.
 The exception is `accepted`, which is a fact about a reviewer rather than about a mutation and appears in no record, and is therefore summed — each mutation belongs to one part, so each acceptance is counted once.
 No score crosses a merge at all: two ratios over different denominators average into a number no run observed.
