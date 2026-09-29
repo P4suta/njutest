@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU64;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use rust_mutants_decision::evidence::Sealed;
@@ -129,7 +129,7 @@ impl BenchError {
 /// What the instrumented tree is inside an instance: its files, preopened where the build knew them.
 #[derive(Debug, Clone)]
 pub struct Tree {
-    /// The absolute path the build read the tree at, which the guest reaches it by.
+    /// The absolute path the build read the tree at, spelled as it baked it in, without a trailing separator, which the guest reaches it by.
     pub root: String,
     /// Its files, instrumented.
     pub snapshot: Snapshot,
@@ -158,7 +158,8 @@ impl Tree {
         let snapshot = builder
             .build()
             .map_err(|source| BenchError::Snapshot { source })?;
-        let root = match root.to_str() {
+        let spelled: PathBuf = root.components().collect();
+        let root = match spelled.to_str() {
             Some(root) => root.to_owned(),
             None => {
                 return Err(BenchError::EnvironmentNotText {
@@ -168,6 +169,24 @@ impl Tree {
             }
         };
         Ok(Self { root, snapshot })
+    }
+
+    /// Where `directory` is in the tree, as `/`-separated names below its root, or nothing where it is outside the tree or its names are not text.
+    #[must_use]
+    pub fn within(&self, directory: &Path) -> Option<String> {
+        let below = match directory.strip_prefix(&self.root) {
+            Ok(below) => below,
+            Err(_outside) => return None,
+        };
+        let mut names = Vec::new();
+        for component in below.components() {
+            match component {
+                Component::Normal(name) => names.push(name.to_str()?),
+                Component::CurDir => {}
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+            }
+        }
+        Some(names.join("/"))
     }
 }
 
@@ -641,20 +660,26 @@ impl<'runner> Bench<'runner> {
             source,
         };
         let records = Snapshot::builder().build().map_err(host)?;
+        let mut preopens = vec![
+            Preopen::Tree {
+                path: self.tree.root.clone(),
+                snapshot: self.tree.snapshot.clone(),
+            },
+            Preopen::Tree {
+                path: RECORDS.to_owned(),
+                snapshot: records,
+            },
+        ];
+        if let Some(directory) = self.tree.within(&station.target.cwd) {
+            preopens.push(Preopen::Working {
+                tree: self.tree.root.clone(),
+                directory,
+            });
+        }
         Ok(Invocation {
             arguments: Arguments::new(arguments).map_err(host)?,
             environment: Environment::new(variables).map_err(host)?,
-            preopens: Preopens::new(vec![
-                Preopen::Tree {
-                    path: self.tree.root.clone(),
-                    snapshot: self.tree.snapshot.clone(),
-                },
-                Preopen::Tree {
-                    path: RECORDS.to_owned(),
-                    snapshot: records,
-                },
-            ])
-            .map_err(host)?,
+            preopens: Preopens::new(preopens).map_err(host)?,
             seed: seed(station.target.id()),
             fuel,
             limits: Limits {

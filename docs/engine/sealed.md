@@ -23,6 +23,8 @@ Its tests are the ones `--list` names inside the host.
 
 Each test of each module runs in its own instance, as `<module> --exact <name> --test-threads 1 --nocapture`.
 The instance is new, the memory is the module's initial memory, the filesystem is the snapshot with nothing written, and the clock reads zero.
+Its working directory is its package's directory in the snapshot, where cargo runs a test and rustdoc a doctest, so a relative path reads what it reads natively.
+A path the build baked in, such as `env!("CARGO_MANIFEST_DIR")`, reaches the snapshot as the build spelled it, a Windows build's `C:\…` included, as [the sealed host](sealed-host.md#the-working-directory) says.
 `--nocapture` keeps a panic's message on the stream the host records, where libtest's capture would hold it in memory the abort discards.
 
 A library's doctests seal too, as [Doctests](#doctests) says.
@@ -62,9 +64,9 @@ A refusal returns its error to the guest and is recorded in the transcript, so a
 | `fd_fdstat_get`, `fd_fdstat_set_flags`, `fd_fdstat_set_rights` | On the instance's descriptor table. |
 | `fd_filestat_get`, `path_filestat_get` | Fixed metadata: every timestamp one constant, the inode derived from the path, the size the overlay's. |
 | `fd_filestat_set_times`, `path_filestat_set_times` | Recorded in the overlay and read back; a time never set reads as the constant. |
-| `fd_prestat_get`, `fd_prestat_dir_name` | The snapshot's one preopened directory, at the path the build knew it by. |
+| `fd_prestat_get`, `fd_prestat_dir_name` | The snapshot, at the path the build knew it by; the directory the runtime's records land in; and `.`, the test's working directory in the snapshot. |
 | `fd_readdir` | Entries in name order, with cookies that are their positions. |
-| `path_open`, `path_create_directory`, `path_remove_directory`, `path_rename`, `path_unlink_file` | Inside the preopened directory, on the overlay. A path outside it is refused, `ENOTCAPABLE`. |
+| `path_open`, `path_create_directory`, `path_remove_directory`, `path_rename`, `path_unlink_file` | Inside the snapshot, on the overlay: a relative path from the working directory, an absolute one below the snapshot's root as the build spelled it. A path outside it is refused, `ENOTCAPABLE`. |
 | `path_readlink` | A link the snapshot holds. |
 | `path_link`, `path_symlink` | Refused, `ENOTSUP`. |
 | `sock_accept`, `sock_recv`, `sock_send`, `sock_shutdown` | Refused, `ENOTSUP`. |
