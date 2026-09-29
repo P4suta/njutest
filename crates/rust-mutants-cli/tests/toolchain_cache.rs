@@ -1007,3 +1007,68 @@ fn a_stored_sealed_answer_is_believed_only_once_its_executions_come_out_the_same
         );
     }
 }
+
+#[test]
+fn a_stored_sealed_answer_is_not_believed_where_its_executions_establish_another_verdict() {
+    use rust_mutants::outcomes::CacheOutcome;
+    use rust_mutants::sealed::record::Class;
+    let fixture = Fixture::copy("fixture-simple");
+    measured(&fixture);
+    let store = rust_mutants::outcomes::Store::new(fixture.cache());
+    let mut record = store
+        .export()
+        .expect("the store the run left reads back whole")
+        .records
+        .into_iter()
+        .find(|record| {
+            record.outcome == CacheOutcome::Killed && record.evidence.class() == Class::Sealed
+        })
+        .expect("the run kept a kill its sealed executions established");
+    record.outcome = CacheOutcome::Survived;
+    store
+        .put(&record)
+        .expect("the store files the record under the key its own inputs name");
+    assert!(
+        store
+            .get(&record.key(), &record.mutant)
+            .expect("the store reads the record back as the record it claims to be")
+            .is_some(),
+        "the record passes every check the store makes of what it reads"
+    );
+
+    let output = against(
+        &fixture,
+        &["run", "--offline", "--locked", "--ui", "quiet", "--trace"],
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let (run, document) = newest(&fixture);
+    let row = document["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .find(|row| row["id"] == record.mutant.as_str())
+        .expect("the run has a row for the mutant the record answers for");
+    assert_eq!(
+        row["outcome"], "killed",
+        "what the run reports is what the executions establish: {row}"
+    );
+    assert!(
+        row["source_run_id"].is_null(),
+        "a stored answer whose own sealed executions establish another verdict than it says is \
+         not believed, even where they come out the same, and the run establishes the mutant \
+         afresh: {row}"
+    );
+    let said = notes(&run.join("trace"), "unreproduced");
+    let display = row["display_id"].as_str().expect("a display identity");
+    let note = said
+        .iter()
+        .find(|note| note.contains(display))
+        .unwrap_or_else(|| panic!("the recording names the answer it did not believe: {said:?}"));
+    for named in ["survived", "killed"] {
+        assert!(
+            note.contains(named),
+            "the note names the verdict the store kept and the one its executions establish; \
+             {named} is missing: {note}"
+        );
+    }
+}

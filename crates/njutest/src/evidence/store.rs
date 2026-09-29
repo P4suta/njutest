@@ -104,7 +104,7 @@ pub enum Refusal {
     NothingRouted,
     /// The record is a native lead, and this run's sealed executions decided the mutation (ADR 0046).
     Superseded,
-    /// The record is a sealed verdict, and this run's sealed executions of the mutation did not come to what it recorded, in the same order, or establish no verdict now (ADR 0046, decision 7).
+    /// The record is a sealed verdict, and this run's sealed executions of the mutation did not come to what it recorded, in the same order, or do not establish the verdict it records (ADR 0046, decision 7).
     Unreproduced,
 }
 

@@ -1663,7 +1663,7 @@ fn one_mutant(
                     session,
                     mutant,
                     bench,
-                    (one.source_run_id.as_deref(), executions),
+                    (one.source_run_id.as_deref(), one.outcome, executions),
                 )? {
                     Again::Reproduced(judged) => return Ok(*judged),
                     Again::Departed(departed, sealing) => {
@@ -1810,7 +1810,7 @@ pub enum Again {
     Interrupted,
 }
 
-/// Puts `mutant` again to this run's `bench`, and says whether it comes to `kept`, the executions run `source`'s verdict rests on (ADR 0046, decision 7).
+/// Puts `mutant` again to this run's `bench`, and says whether it comes to `kept`, the executions run `source`'s verdict `claimed` rests on (ADR 0046, decision 7).
 ///
 /// # Errors
 /// A host that cannot run an execution, or an environment that is not text.
@@ -1818,7 +1818,7 @@ pub fn sealed_again(
     session: &Session,
     mutant: &Mutant,
     bench: Option<&crate::sealed::bench::Bench<'_>>,
-    (source, kept): (Option<&str>, &[crate::sealed::record::SealedRun]),
+    (source, claimed, kept): (Option<&str>, Outcome, &[crate::sealed::record::SealedRun]),
 ) -> Result<Again, EngineError> {
     let Some(bench) = bench else {
         let departed = match crate::sealed::rerun::Departed::of(kept, &[]) {
@@ -1838,14 +1838,19 @@ pub fn sealed_again(
         .iter()
         .map(crate::sealed::record::SealedRun::of)
         .collect();
-    let established = matches!(
-        answer.standing,
-        rust_mutants_decision::evidence::Standing::Established(_)
-    );
-    let departed = match crate::sealed::rerun::Departed::of(kept, &made) {
-        Some(departed) => Some(departed),
-        None if established => None,
-        None => Some(crate::sealed::rerun::Departed::unestablished(kept)),
+    let found = match answer.standing {
+        rust_mutants_decision::evidence::Standing::Established(verdict) => {
+            Some(crate::sealed::record::row_of(verdict.found()).0)
+        }
+        rust_mutants_decision::evidence::Standing::Unproven(_) => None,
+    };
+    let departed = match (crate::sealed::rerun::Departed::of(kept, &made), found) {
+        (Some(departed), _) => Some(departed),
+        (None, None) => Some(crate::sealed::rerun::Departed::unestablished(kept)),
+        (None, Some(now)) if now == claimed => None,
+        (None, Some(now)) => {
+            Some(crate::sealed::rerun::Departed::Contradicted { kept: claimed, now })
+        }
     };
     if let Some(departed) = departed {
         let now = sealing(session, mutant, (&route, answer, started), None)?;

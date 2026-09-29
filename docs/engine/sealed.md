@@ -194,9 +194,9 @@ What it costs is the preparation's builds, which the engine's build cache makes 
 
 A sealed verdict kept for one mutant is run again too, on the bench the run assembles anyway.
 The engine's outcome store, njutest's store of mutation answers and njutest's checkpoint of an interrupted run each keep, beside a verdict, the sealed executions it rests on, and a run that reads one back puts the mutant again to its own bench, through `Bench::put` and `judged` as every sealed execution goes, by `rust_mutants::run::sealed_again`.
-The kept verdict is believed, or the kept kill inherited, only where the executions come to what it recorded, in the order they ran, and establish a verdict again.
+The kept verdict is believed, or the kept kill inherited, only where the executions come to what it recorded, in the order they ran, and establish again the verdict it records: a kept verdict whose own executions, each coming out as kept, establish another is a record that contradicts itself, and is not believed either.
 The comparison is over the whole sequence: an execution the record left out, one it names that the bench cannot make again, because its target has no station, its test no control or its control no reach of the mutant, and a survival that a test now reaching the mutant natively leaves unproven all part from it.
-Where they part, the mutant is established afresh from those same executions, never read back, and the trace carries an `unreproduced` note naming the first execution that parted: its place, its target and test, what it was kept as and what it came to now.
+Where they part, the mutant is established afresh from those same executions, never read back, and the trace carries an `unreproduced` note naming the first execution that parted: its place, its target and test, what it was kept as and what it came to now, or the verdict they establish where the one kept is another.
 A run that seals nothing cannot make a kept execution again, so it establishes the mutant natively, and what it says is a lead.
 Believing a kept verdict costs one fresh answer: the executions a fresh answer makes are the ones compared, one instance each, and nothing is built for them that the run does not build anyway.
 So a kept sealed verdict no longer saves an instance; it says which run first established the verdict.

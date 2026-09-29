@@ -3177,3 +3177,102 @@ fn a_kill_a_checkpoint_kept_is_inherited_only_once_its_executions_come_out_the_s
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_kept_answer_its_own_sealed_executions_contradict_is_established_again() {
+    let fixture = fixture("fixture-assured");
+    let first = verify(&fixture, &[]);
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "{}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    let established = document(&fixture);
+    let store = njutest::cache::store::Store::new(
+        &njutest_devkit::paths::cache_beside(&fixture.root).expect("a cache directory"),
+        u64::MAX,
+        std::time::Duration::from_hours(1),
+    );
+    let identity = rust_mutants::id::HexDigest::try_from(
+        text(&established["provenance"]["identity"]).as_str(),
+    )
+    .expect("a canonical identity");
+    std::fs::remove_file(store.entry(&identity))
+        .expect("the whole answer is forgotten, so the next run asks the store of mutations");
+    let row = established["builds"][0]["parts"][0]["mutants"]
+        .as_array()
+        .expect("mutation rows")
+        .iter()
+        .find(|row| {
+            row["decision"]["outcome"] == "killed"
+                && row["evidence"]["kind"] == "sealed"
+                && row["routing"]["reaching"].as_array().map(Vec::len) == Some(1)
+        })
+        .expect("the fixture kills a mutation one target reaches with a sealed execution")
+        .clone();
+    let mutant = rust_mutants::id::HexDigest::try_from(text(&row["id"]).as_str())
+        .expect("a canonical mutant identity");
+    let mut record = njutest::evidence::store::read(store.root(), &mutant)
+        .expect("the store of mutations reads")
+        .expect("the run kept what it established about the mutation");
+    let njutest::evidence::store::Outcome::Killed { target, key, .. } = record.outcome.clone()
+    else {
+        panic!("the run kept a kill: {record:?}");
+    };
+    record.outcome = njutest::evidence::store::Outcome::Survived {
+        targets: BTreeMap::from([(target, key)]),
+    };
+    njutest::evidence::store::write(store.root(), &record)
+        .expect("the store of mutations takes the record");
+    assert_eq!(
+        njutest::evidence::store::read(store.root(), &mutant)
+            .expect("the store of mutations reads the record back")
+            .as_ref(),
+        Some(&record),
+        "the record passes every check the store makes of what it reads"
+    );
+
+    let second = verify(&fixture, &["--trace"]);
+    let stderr = njutest_devkit::process::strict_utf8(&second.stderr);
+    assert_eq!(
+        second.status.code(),
+        Some(0),
+        "a kept answer its own sealed executions contradict is not believed, so the run \
+         establishes the mutation afresh and finds what the fixture is, every mutation killed: \
+         {stderr}"
+    );
+    let answered = document(&fixture);
+    let now = answered["builds"][0]["parts"][0]["mutants"]
+        .as_array()
+        .expect("mutation rows")
+        .iter()
+        .find(|one| one["id"] == row["id"])
+        .expect("the mutation is still in the catalog")
+        .clone();
+    assert_eq!(now["decision"]["outcome"], "killed", "{now}");
+    assert_eq!(
+        now["reuse"]["reused"], false,
+        "the answer the run established is its own: {now}"
+    );
+    let events = recording_of(&fixture, &text(&answered["run_id"]));
+    let said: Vec<String> = events
+        .iter()
+        .filter_map(|event| njutest::testkit::payload::of(&event.payload).note())
+        .filter(|note| note.kind == "unreproduced")
+        .map(|note| note.detail.clone())
+        .collect();
+    let display = text(&row["display_id"]);
+    let note = said
+        .iter()
+        .find(|detail| detail.contains(&display))
+        .unwrap_or_else(|| panic!("the recording names the answer it did not believe: {said:?}"));
+    for named in ["survived", "killed"] {
+        assert!(
+            note.contains(named),
+            "the note names the verdict the store kept and the one its executions establish; \
+             {named} is missing: {note}"
+        );
+    }
+}
