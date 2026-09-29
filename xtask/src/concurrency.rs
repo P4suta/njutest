@@ -528,18 +528,18 @@ pub struct Context {
     pub asked_any: bool,
 }
 
-/// Why a binary with no delayed control was not explored, as the recording decides it, or nothing where it cannot: a passing binary whose baseline reach was not recorded.
+/// Why a binary with no delayed control was not explored, as the recording decides it.
 #[must_use]
-pub const fn unexplored_because(context: Context) -> Option<&'static str> {
+pub const fn unexplored_because(context: Context) -> &'static str {
     if context.single_threaded {
-        Some("not-needed")
+        "not-needed"
     } else if !context.passing {
-        Some("not-passing")
+        "not-passing"
     } else {
         match context.reached {
-            Some(0) => Some("no-site"),
-            Some(_) => Some("not-asked"),
-            None => None,
+            Some(0) => "no-site",
+            Some(_) => "not-asked",
+            None => "reach-unrecorded",
         }
     }
 }
@@ -563,10 +563,11 @@ pub fn agrees_explored(
     };
     let asked = explored.get("asked").and_then(Value::as_u64);
     let holds = match (explored.get("state").and_then(Value::as_str), derived) {
-        (Some("unexplored"), Explored::Nothing) => unexplored_because(context).is_some_and(|why| {
+        (Some("unexplored"), Explored::Nothing) => {
+            let why = unexplored_because(context);
             explored.get("why").and_then(Value::as_str) == Some(why)
                 && !(why == "not-asked" && context.asked_any)
-        }),
+        }
         (Some("sampled"), Explored::Sampled { delayed }) => {
             !context.single_threaded
                 && sites("delayed").as_ref() == Some(delayed)

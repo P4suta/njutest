@@ -183,7 +183,11 @@ pub fn explored(
                 why: Unexplored::NotAsked,
             } => {}
             Exploration::Unexplored {
-                why: Unexplored::NotNeeded | Unexplored::NotPassing | Unexplored::NoSite,
+                why:
+                    Unexplored::NotNeeded
+                    | Unexplored::NotPassing
+                    | Unexplored::NoSite
+                    | Unexplored::ReachUnrecorded,
             }
             | Exploration::Sampled { .. }
             | Exploration::Undecided { .. }
@@ -195,10 +199,13 @@ pub fn explored(
             };
             continue;
         }
-        let reached = touched
-            .get(&record.target)
-            .map(|touches| touches.reached.union())
-            .unwrap_or_default();
+        let Some(recorded) = touched.get(&record.target) else {
+            record.explored = Exploration::Unexplored {
+                why: Unexplored::ReachUnrecorded,
+            };
+            continue;
+        };
+        let reached = recorded.reached.union();
         if reached.is_empty() {
             record.explored = Exploration::Unexplored {
                 why: Unexplored::NoSite,

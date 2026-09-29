@@ -334,6 +334,19 @@ mod explored {
                 ..quiet
             }
         ));
+        let unrecorded = Context {
+            reached: None,
+            ..quiet
+        };
+        assert!(
+            holds_in(&unexplored("reach-unrecorded"), &[], unrecorded),
+            "a passing binary whose baseline reach nobody recorded had no guard to choose, \
+             and its record says so"
+        );
+        assert!(
+            !holds_in(&unexplored("no-site"), &[], unrecorded),
+            "a reach nobody recorded is not a reach of nothing"
+        );
         assert!(
             !holds_in(
                 &unexplored("not-asked"),

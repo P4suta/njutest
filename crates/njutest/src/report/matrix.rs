@@ -445,6 +445,13 @@ fn schedule(
                     "{}: it is not proven to run one thread and reached no guard to delay",
                     record.target
                 )),
+                Exploration::Unexplored {
+                    why: Unexplored::ReachUnrecorded,
+                } => Counted::Hole(format!(
+                    "{}: it is not proven to run one thread and its baseline reach was not \
+                     recorded, so no guard of it could be chosen to delay",
+                    record.target
+                )),
             })
             .chain(unrecorded),
         Vec::new(),

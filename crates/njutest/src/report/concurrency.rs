@@ -75,6 +75,8 @@ pub enum Unexplored {
     NotPassing,
     /// Its baseline reached no guard, so there is nowhere to delay a thread.
     NoSite,
+    /// Its baseline reach was not recorded, so no guard of it could be chosen to delay.
+    ReachUnrecorded,
 }
 
 /// The findings the records earn: one `schedule-dependent` for each binary a delayed site broke.
@@ -126,7 +128,11 @@ pub fn limited(records: &[ConcurrencyRecord]) -> Vec<Limitation> {
                 why: Unexplored::NotNeeded,
             } => {}
             Exploration::Unexplored {
-                why: Unexplored::NotAsked | Unexplored::NotPassing | Unexplored::NoSite,
+                why:
+                    Unexplored::NotAsked
+                    | Unexplored::NotPassing
+                    | Unexplored::NoSite
+                    | Unexplored::ReachUnrecorded,
             } => unexplored.push(record.target.as_str()),
             Exploration::Sampled { .. } => sampled.push(record.target.as_str()),
             Exploration::Undecided { .. } => undecided.push(record.target.as_str()),
