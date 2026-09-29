@@ -18,12 +18,10 @@ The canonical document is `njutest-assurance-report-v1.json`; HTML, SARIF,
 JUnit and line output are projections of that document.
 `latest-any.json` names the latest completed run, and `latest-full.json` advances only for a full run.
 
-Authoritative report publication and reading currently require the Unix handle-relative filesystem backend.
-That backend holds the workspace,
-configured report root, selected run, and each file open while it validates and uses them; it never turns a checked path spelling back into authority.
-On Windows and other non-Unix hosts, commands that would publish, select,
-read, retain, or delete durable reports refuse with the typed `REPORT_NOT_KEPT` error.
-They do not fall back to pathname checks whose object could change between validation and use.
+Authoritative report publication and reading go through one capability directory, `rust_mutants::capdir`, on Unix and on Windows alike.
+It holds the workspace, configured report root, selected run, and each file open while it validates and uses them, and names every operation relative to a held handle; it never turns a checked path spelling back into authority.
+On Windows a store is kept only on NTFS or ReFS with POSIX unlink and rename semantics, and any other volume refuses with the typed `REPORT_NOT_KEPT` error naming its file system ([limitations](limitations.md)).
+Nothing falls back to pathname checks whose object could change between validation and use.
 
 ## Mutation records
 

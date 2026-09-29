@@ -1798,30 +1798,18 @@ mod tests {
             let store =
                 crate::app::reports::Store::read(project.path()).expect("held report store");
             let report = complete_report("20260101t000000z-abacac");
-            match store.keep(&report) {
-                Ok(kept) => {
-                    let document =
-                        std::fs::read(kept.directory.join(crate::app::reports::DOCUMENT_NAME))
-                            .expect(
-                                "the directory a publication names holds the document it wrote",
-                            );
-                    assert!(
-                        !document.is_empty(),
-                        "a published report is the bytes at the directory it says it wrote to: {}",
-                        kept.directory.display()
-                    );
-                }
-                Err(refused) => assert!(
-                    matches!(
-                        refused,
-                        crate::app::reports::StoreError::UnsupportedCapability
-                    ),
-                    "a platform that cannot publish says so rather than failing some other way: {refused:?}"
-                ),
-            }
+            let kept = store
+                .keep(&report)
+                .expect("every platform keeps what it decided");
+            let document = std::fs::read(kept.directory.join(crate::app::reports::DOCUMENT_NAME))
+                .expect("the directory a publication names holds the document it wrote");
+            assert!(
+                !document.is_empty(),
+                "a published report is the bytes at the directory it says it wrote to: {}",
+                kept.directory.display()
+            );
         }
 
-        #[cfg(unix)]
         #[test]
         fn every_path_a_run_says_it_wrote_is_a_file_it_wrote() {
             use crate::app::reports::Surface;
@@ -1856,7 +1844,6 @@ mod tests {
             }
         }
 
-        #[cfg(unix)]
         #[test]
         fn json_output_uses_the_checked_value_after_the_report_path_is_replaced() {
             use super::super::said;

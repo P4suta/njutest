@@ -21,12 +21,15 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 ## Decided in advance
 
-### Durable report authority is Unix-only today
+### Durable report authority is one capability directory
 
 Publishing or reopening evidence is an authority decision, not a display-path operation.
-njutest currently makes that decision only through its Unix handle-relative, no-follow backend, which retains the workspace and configured report-root identities through publication, index updates, reading, and retention.
-Windows and other non-Unix builds therefore refuse durable report publication and authority-bearing reads with `REPORT_NOT_KEPT`; they do not silently substitute a weaker pathname implementation.
-Pure computation that does not open or mutate a report store remains available.
+njutest makes that decision through one capability directory, `rust_mutants::capdir`, which retains the workspace and configured report-root identities through publication, index updates, reading, and retention: on Unix through the `openat` family, and on Windows through `NtCreateFile` relative to a held handle, never following a link ([ADR 0037](adr/0037-the-report-store-has-one-capability-directory.md)).
+On Windows a published rename is as durable as the NTFS journal after that flush: Windows documents no directory `fsync`, and `FlushFileBuffers` on the directory's handle commits the journal up to that point.
+A report is kept on Windows only on NTFS or ReFS with POSIX unlink and rename semantics; any other volume, FAT or exFAT or a share that does not say it has them, is refused with `NJ6004` naming its file system, rather than served with weaker semantics nobody asked for.
+Retention of a run somebody is reading may be refused on Windows while the reader holds it open; that is `NJ6004`, not a race.
+While a claim is held, Windows refuses to move or replace a directory beneath which the store holds a handle, so the replacement races the Unix laws stage cannot happen there at all.
+Tightening an existing store directory to its owner, the system and the administrators does not reach the entries it already holds, because Windows lets anyone pass through a directory they may not list; a store njutest made holds nothing else, since every entry it makes carries the same protected list.
 
 - Doctests are run as one target per library, switched off with `[execution] doctests = false` or `--no-doctests`, and mutations are routed to them at file granularity (`doctests-routed-by-file`): a documented example reaches every mutation in the files its library is made of and narrows none of them.
   A kill one finds names the library's documentation and not the example, because rustdoc merges a file's examples into one compilation whose harness cannot be asked for one of them.
@@ -222,19 +225,6 @@ Pure computation that does not open or mutate a report store remains available.
   That tree is not the project's code: it is the project's code with a statement written in front of each condition, put there to ask the compiler one question about the types, and whether the project's own lints are satisfied is not that question.
   A caller who denies warnings for their own build — which is what a continuous integration job does — is therefore not asking for every proof of their tree to go unmade.
   The project's own `.cargo/config.toml` flags are still put back in front of the cap, because a tree that does not compile without them would not compile here either.
-
-## What a run cannot do on Windows
-
-A report is published through a capability rooted at the store's own directory, so that what a reader opens is the file this run wrote and not one a name was pointed at afterwards.
-That rooting is implemented with the POSIX directory-capability calls and has no Windows equivalent here, so `Store::keep` answers `NJ6004` on Windows rather than publishing:
-`this platform has no supported capability-rooted report publication backend`.
-
-A Windows run therefore measures, decides and prints, and cannot leave a durable report where the next run or a reader will find it.
-Everything downstream of publication — `njutest report`,
-`accept`, `bundle`, `why` against a stored run — has nothing to read.
-
-This is a deliberate refusal rather than a defect: the alternative is publishing through a path that can be replaced between the check and the write, which is the thing the capability exists to prevent.
-What it is not is documented anywhere a person would look before installing on Windows, which is why it is here.
 
 ## What a run says about itself
 

@@ -3,13 +3,10 @@
 
 //! What a run keeps of itself, and what a later run may take away.
 
-#![cfg_attr(
-    unix,
-    expect(
-        clippy::expect_used,
-        clippy::too_many_lines,
-        reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table, and what these permit is what a test that reads a published report needs, which this platform cannot publish: those tests are behind cfg(unix) one by one, so what their shapes permit is behind it too"
-    )
+#![expect(
+    clippy::expect_used,
+    clippy::too_many_lines,
+    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
 #[derive(Debug, thiserror::Error)]
@@ -61,46 +58,15 @@ fn the_authority_backend_contract_is_explicit_on_every_platform() {
     let directory = tempfile::tempdir().expect("an isolated report store");
     let report = platform_report().expect("the checked platform-contract report");
 
-    #[cfg(unix)]
-    {
-        let kept = njutest::app::reports::keep(directory.path(), &report)
-            .expect("Unix has the capability-rooted authority backend");
-        assert!(
-            kept.indexes.permits_retention(),
-            "a supported backend completes canonical and derived publication"
-        );
-    }
-
-    #[cfg(not(unix))]
-    {
-        use njutest::app::reports::{Index, StoreError, keep, pointed_at, retain};
-
-        assert!(
-            matches!(
-                keep(directory.path(), &report),
-                Err(StoreError::UnsupportedCapability)
-            ),
-            "an unsupported host cannot publish through a path fallback"
-        );
-        assert!(
-            matches!(
-                pointed_at(directory.path(), Index::Any),
-                Err(StoreError::UnsupportedCapability)
-            ),
-            "an unsupported host cannot treat a pathname as index authority"
-        );
-        assert!(
-            matches!(
-                retain(directory.path(), 1),
-                Err(StoreError::UnsupportedCapability)
-            ),
-            "an unsupported host cannot delete through a pathname inventory"
-        );
-    }
+    let kept = njutest::app::reports::keep(directory.path(), &report)
+        .expect("every platform has the capability-rooted authority backend");
+    assert!(
+        kept.indexes.permits_retention(),
+        "a supported backend completes canonical and derived publication"
+    );
 }
 
-#[cfg(unix)]
-mod unix {
+mod published {
 
     use std::path::{Path, PathBuf};
 
@@ -112,6 +78,22 @@ mod unix {
     use njutest::report::{BuildReport, CompletionError, LatticedDocument, Report, RunKind};
     use rust_mutants::cargo::BuildConfig;
     use rust_mutants::id::{RunId, RunIdError, StoredRunId};
+
+    /// Makes `at` a link to the directory `target`: a symbolic link on Unix, and on Windows a junction, which any user may make.
+    fn link_directory(target: &Path, at: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, at).expect("an adversarial link");
+        #[cfg(windows)]
+        {
+            let made = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(at)
+                .arg(target)
+                .output()
+                .expect("mklink runs");
+            assert!(made.status.success(), "a junction was made: {made:?}");
+        }
+    }
 
     fn stored_run_id(value: &str) -> StoredRunId {
         StoredRunId::try_from(value).expect("a path-safe stored run id")
@@ -416,14 +398,11 @@ mod unix {
 
     #[test]
     fn a_symlink_cannot_stand_in_for_a_run_directory_or_index() {
-        use std::os::unix::fs::symlink;
-
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
         std::fs::create_dir_all(runs_root(root)).expect("the runs root");
         let outside = tempfile::tempdir().expect("outside");
-        symlink(outside.path(), run_path(root, &stored_run_id(BLOCKED_RUN)))
-            .expect("a run symlink");
+        link_directory(outside.path(), &run_path(root, &stored_run_id(BLOCKED_RUN)));
         assert!(
             matches!(
                 keep(root, &keepable(BLOCKED_RUN, RunKind::Full)),
@@ -433,9 +412,8 @@ mod unix {
         );
 
         let index = index_path(root, Index::Any);
-        let target = outside.path().join("index.json");
-        std::fs::write(&target, "{}").expect("a target");
-        symlink(&target, &index).expect("an index symlink");
+        std::fs::write(outside.path().join("index.json"), "{}").expect("a target");
+        link_directory(outside.path(), &index);
         assert!(
             matches!(
                 pointed_at(root, Index::Any),
