@@ -2910,6 +2910,7 @@ fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn an_untraced_run_carries_nothing_since_it_keeps_nothing_an_audit_could_hold_it_to() {
     let fixture = fixture("fixture-two-bodies");
