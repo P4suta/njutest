@@ -19,12 +19,18 @@ fn every_answer() -> Vec<(Delivered, Delivered, Others)> {
     every
 }
 
-fn every_decision() -> [StopDecision; 3] {
-    [
-        StopDecision::Reached(Stopped::Group),
-        StopDecision::Reached(Stopped::LeaderOnly),
-        StopDecision::Failed,
-    ]
+fn every_decision() -> Vec<StopDecision> {
+    let mut every: Vec<StopDecision> = Stopped::ALL
+        .into_iter()
+        .map(StopDecision::Reached)
+        .collect();
+    every.push(StopDecision::Failed);
+    for decision in &every {
+        match decision {
+            StopDecision::Reached(Stopped::Group | Stopped::LeaderOnly) | StopDecision::Failed => {}
+        }
+    }
+    every
 }
 
 fn by_the_table(group: Delivered, leader: Delivered, others: Others) -> StopDecision {
