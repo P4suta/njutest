@@ -199,6 +199,7 @@ pub fn invocation() -> Invocation {
             monotonic_origin: 5_000_000_000,
             nanos_per_fuel: NonZeroU64::MIN,
         },
+        halt: None,
     }
 }
 

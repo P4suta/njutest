@@ -28,6 +28,7 @@ An `Invocation` is one value holding everything the run is a function of:
 | `fuel` | the budget every WebAssembly instruction and every host call spends |
 | `limits` | the most memory, standard output, standard error, and overlay the guest may hold |
 | `clock` | the origins of the clocks and how many nanoseconds a unit of fuel moves them |
+| `halt` | nothing, or an absolute guest path inside a tree given before, at which a rename that puts a file there ends the guest in that call, as [`Halted`](#how-a-run-ends) |
 
 The runner's own watchdog is not an input.
 It is a wall-clock backstop, and when it fires the invocation ends in `RS3002`, an error, never in a stop a caller could read as an answer about the guest.
@@ -115,6 +116,10 @@ The copy-on-write memory images wasmtime can use instead exist on Linux alone, w
 | `Trapped { kind }` | the guest trapped; `TrapKind` names every trap of the pinned wasmtime but running out of fuel and being interrupted |
 | `FuelExhausted` | the budget ran out, in WebAssembly, in a host call, in instantiation, or in a wait nothing ends |
 | `MemoryExhausted` | the memory limit refused a growth, or the memory a module starts with, and the guest then trapped, as a Rust guest does when its allocator fails |
+| `Halted` | a `path_rename` put a file at the invocation's `halt` path; the host ended the guest in that call, so the overlay is what it held when the rename was done and nothing the guest would have run after it ran: no destructor, exit handler or flush |
+
+A halt path names a place below a tree's guest path by `/`-separated names; one below no tree, naming a tree itself, or holding an empty name, `.`, `..` or NUL is refused before the guest starts (`RS0006`).
+Only a rename halts: a file made at the path by opening it is still being written, and a rename is how a writer says it is whole.
 
 A panicking Rust guest traps `Unreachable` with its message on standard error, because `wasm32-wasip1` aborts on a panic.
 A libtest harness run with `--exact <name> --test-threads=1 --nocapture` returns for a passing test, traps for a panicking one, and exits 101 for one that returns `Err`.

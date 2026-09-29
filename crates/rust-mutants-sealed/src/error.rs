@@ -50,6 +50,8 @@ pub enum SealedCode {
     PreopenInvalid,
     /// A working directory no tree preopened before it holds.
     WorkingDirectoryInvalid,
+    /// A path to halt at that no tree the invocation is given holds a place for.
+    HaltInvalid,
     /// Bytes that are not a WebAssembly binary.
     ModuleMalformed,
     /// A WebAssembly component rather than a core module.
@@ -113,6 +115,11 @@ impl SealedCode {
                 code: "RS0005",
                 summary: "a working directory that names no tree preopened before it, or a directory that tree does not hold",
                 remedy: "preopen the tree first, and name the directory by `/`-separated names below its root, or by nothing for the root itself",
+            },
+            Self::HaltInvalid => ErrorCode {
+                code: "RS0006",
+                summary: "a path to halt at that no tree the invocation is given holds a place for: below no tree's guest path, naming the tree itself, or holding an empty name, `.`, `..` or NUL",
+                remedy: "name the halt by a tree's guest path and `/`-separated names below it, where a rename puts the file that ends the guest",
             },
             Self::ModuleMalformed => ErrorCode {
                 code: "RS1001",
@@ -255,6 +262,12 @@ pub enum SealedError {
         /// What is wrong with it.
         fault: WorkingFault,
     },
+    /// A path to halt at that no tree holds a place for.
+    #[error("the guest path {path:?} to halt at is in no tree the invocation is given")]
+    Halt {
+        /// The path as given.
+        path: String,
+    },
     /// Bytes the WebAssembly parser could not read.
     #[error("the bytes are not a WebAssembly binary: {source}")]
     ModuleMalformed {
@@ -365,6 +378,7 @@ impl SealedError {
             Self::SnapshotPath { .. } => SealedCode::SnapshotInvalid,
             Self::Preopen { .. } => SealedCode::PreopenInvalid,
             Self::WorkingDirectory { .. } => SealedCode::WorkingDirectoryInvalid,
+            Self::Halt { .. } => SealedCode::HaltInvalid,
             Self::ModuleMalformed { .. } => SealedCode::ModuleMalformed,
             Self::ModuleComponent => SealedCode::ModuleComponent,
             Self::ModuleMemory { .. } => SealedCode::ModuleMemory,

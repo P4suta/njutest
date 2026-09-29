@@ -72,6 +72,7 @@ fn invocation(arguments: &[&str]) -> Invocation {
             monotonic_origin: 1_000_000_000_000,
             nanos_per_fuel: NonZeroU64::MIN,
         },
+        halt: None,
     }
 }
 

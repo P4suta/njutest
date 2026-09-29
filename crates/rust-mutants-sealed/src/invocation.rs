@@ -292,16 +292,56 @@ pub struct Invocation {
     pub limits: Limits,
     /// How the guest's clocks read.
     pub clock: ClockPolicy,
+    /// The absolute guest path, inside a tree given before, at which a rename that puts a file there ends the guest as [`crate::SealedStop::Halted`], in that call and with nothing after it; nothing where no rename halts it.
+    pub halt: Option<String>,
+}
+
+/// Where an invocation halts, as the host finds it: a tree, counting trees alone, and the names below its root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Halt {
+    /// The tree.
+    pub(crate) tree: usize,
+    /// The names from its root to the path.
+    pub(crate) names: Vec<String>,
 }
 
 impl Invocation {
+    /// Where this invocation halts, refusing a path no tree it is given holds a place for.
+    ///
+    /// # Errors
+    /// [`SealedError::Halt`] for a path below no tree's guest path, or naming nothing below it, or naming `.`, `..`, an empty name or NUL.
+    pub(crate) fn halting(&self) -> Result<Option<Halt>, SealedError> {
+        let Some(path) = &self.halt else {
+            return Ok(None);
+        };
+        let trees = self.preopens.0.iter().filter_map(|laid| match laid {
+            Laid::Tree { path, .. } => Some(path.as_str()),
+            Laid::Working { .. } => None,
+        });
+        for (tree, root) in trees.enumerate() {
+            let Some(below) = path.strip_prefix(root.trim_end_matches('/')) else {
+                continue;
+            };
+            let Some(below) = below.strip_prefix('/') else {
+                continue;
+            };
+            if let Some(names) = names_of(below).filter(|names| !names.is_empty()) {
+                return Ok(Some(Halt {
+                    tree,
+                    names: names.into_iter().map(ToOwned::to_owned).collect(),
+                }));
+            }
+        }
+        Err(SealedError::Halt { path: path.clone() })
+    }
+
     /// The digest of this invocation of the module `module` under the configuration `configuration`.
     pub(crate) fn digest(
         &self,
         module: &SealedDigest,
         configuration: &SealedDigest,
     ) -> SealedDigest {
-        let mut encoder = Encoder::new("rust-mutants-sealed/invocation/v2");
+        let mut encoder = Encoder::new("rust-mutants-sealed/invocation/v3");
         encoder.digest(configuration).digest(module);
         encoder.count(self.arguments.0.len());
         for argument in &self.arguments.0 {
@@ -334,6 +374,10 @@ impl Invocation {
             .number(self.clock.realtime_origin)
             .number(self.clock.monotonic_origin)
             .number(self.clock.nanos_per_fuel.get());
+        match &self.halt {
+            Some(path) => encoder.tag(b'H').text(path),
+            None => encoder.tag(b'N'),
+        };
         encoder.finish()
     }
 }

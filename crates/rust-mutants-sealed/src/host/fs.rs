@@ -1135,8 +1135,34 @@ impl Filesystem {
         Ok(false)
     }
 
-    /// Moves what `from` names to `to`, each resolved from its own directory descriptor.
-    pub(crate) fn rename(&mut self, from: (u32, &str), to: (u32, &str)) -> Result<(), Fault> {
+    /// The file `names` walk to from the root of tree `tree`, where there is one.
+    pub(crate) fn file_at(&self, tree: usize, names: &[String]) -> Option<NodeId> {
+        let mut at = ROOT;
+        for name in names {
+            let Ok(entries) = self.entries(tree, at) else {
+                return None;
+            };
+            at = *entries.get(name)?;
+        }
+        match self.live(tree, at) {
+            Ok(Live {
+                held: Held::File(_),
+                ..
+            }) => Some(at),
+            Ok(Live {
+                held: Held::Directory(_),
+                ..
+            })
+            | Err(_) => None,
+        }
+    }
+
+    /// Moves what `from` names to `to`, each resolved from its own directory descriptor, and answers the tree and node it moved, or nothing where `to` already was what `from` names.
+    pub(crate) fn rename(
+        &mut self,
+        from: (u32, &str),
+        to: (u32, &str),
+    ) -> Result<Option<(usize, NodeId)>, Fault> {
         let source = self.resolve(from.0, from.1)?;
         let target = self.resolve(to.0, to.1)?;
         if source.tree != target.tree {
@@ -1166,7 +1192,7 @@ impl Filesystem {
             return Err(errno(Errno::Inval));
         }
         let Some((parent, name)) = self.destination(tree, node, target)? else {
-            return Ok(());
+            return Ok(None);
         };
         self.entries_mut(tree, source_parent)
             .map_err(errno)?
@@ -1175,7 +1201,7 @@ impl Filesystem {
             .map_err(errno)?
             .insert(name, node);
         self.live_mut(tree, node).map_err(errno)?.parent = parent;
-        Ok(())
+        Ok(Some((tree, node)))
     }
 
     /// Where a rename of `node` to `target` puts it, or nothing where `target` already is `node`.

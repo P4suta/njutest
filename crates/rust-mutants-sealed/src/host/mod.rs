@@ -19,7 +19,7 @@ use crate::abi::{CLOCK_REALTIME, Errno, RIGHTS_FD_WRITE};
 use crate::error::Invariant;
 use crate::imports::WasiFunction;
 use crate::interrupt::Interrupt;
-use crate::invocation::{ClockPolicy, Invocation};
+use crate::invocation::{ClockPolicy, Halt, Invocation};
 use crate::random::RandomStream;
 use crate::transcript::{Captured, Denials, OverlayEntry, Refusal, RefusalReason};
 
@@ -54,6 +54,8 @@ pub(crate) enum HostStop {
     },
     /// The guest's fuel ran out in a host call, or it waited for a time the clock never reaches.
     FuelExhausted,
+    /// A rename put a file at the path the invocation halts at.
+    Halted,
     /// The wall-clock watchdog expired.
     WatchdogExpired,
     /// Whoever ran the guest stopped.
@@ -140,6 +142,8 @@ pub(crate) struct Host {
     deadline: Option<Instant>,
     /// What stops the guest when whoever runs it stops.
     interrupt: Interrupt,
+    /// Where a rename that puts a file there ends the guest, where anywhere does.
+    halt: Option<Halt>,
 }
 
 /// What the host hands the runner once the guest has stopped.
@@ -162,9 +166,9 @@ pub(crate) struct Ended {
 }
 
 impl Host {
-    /// The host for `invocation`, the watchdog expiring at `deadline` where it does, and every call refused once `interrupt` is raised.
+    /// The host for `invocation`, halting where `halt` says, the watchdog expiring at `deadline` where it does, and every call refused once `interrupt` is raised.
     pub(crate) fn new(
-        invocation: &Invocation,
+        (invocation, halt): (&Invocation, Option<Halt>),
         (deadline, interrupt): (Option<Instant>, Interrupt),
     ) -> Result<Self, Invariant> {
         let arguments = invocation
@@ -198,6 +202,7 @@ impl Host {
             stop: None,
             deadline,
             interrupt,
+            halt,
         })
     }
 
@@ -340,9 +345,18 @@ impl Host {
             WasiFunction::PathRename => {
                 let from = io::path(memory, params.w(1)?, params.w(2)?)?;
                 let to = io::path(memory, params.w(4)?, params.w(5)?)?;
-                Ok(self
+                let moved = self
                     .files
-                    .rename((params.w(0)?, &from), (params.w(3)?, &to))?)
+                    .rename((params.w(0)?, &from), (params.w(3)?, &to))?;
+                match (&self.halt, moved) {
+                    (Some(halt), Some((tree, node)))
+                        if tree == halt.tree
+                            && self.files.file_at(tree, &halt.names) == Some(node) =>
+                    {
+                        Err(Failure::Stop(HostStop::Halted))
+                    }
+                    (Some(_) | None, Some(_) | None) => Ok(()),
+                }
             }
             WasiFunction::PathUnlinkFile => {
                 let path = io::path(memory, params.w(1)?, params.w(2)?)?;
@@ -464,6 +478,7 @@ pub(crate) fn call(
                     Err(_unmetered) => HostStop::Broken(Invariant::Width),
                 },
                 HostStop::Exited { .. }
+                | HostStop::Halted
                 | HostStop::WatchdogExpired
                 | HostStop::Interrupted
                 | HostStop::Broken(_) => stop,

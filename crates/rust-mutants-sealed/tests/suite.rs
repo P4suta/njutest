@@ -7,6 +7,8 @@
 pub mod common;
 #[path = "errors_doc.rs"]
 mod errors_doc;
+#[path = "halt.rs"]
+mod halt;
 #[path = "host.rs"]
 mod host;
 #[path = "invocation.rs"]

@@ -954,6 +954,7 @@ impl<'runner> Bench<'runner> {
                 monotonic_origin: 0,
                 nanos_per_fuel: NonZeroU64::MIN,
             },
+            halt: None,
         })
     }
 }
@@ -991,7 +992,7 @@ fn observed(
         SealedStop::Exited { code } if i32::try_from(code).is_ok_and(|code| code == failure) => {
             Ending::ExitedFailure
         }
-        SealedStop::Exited { .. } => Ending::ExitedOther,
+        SealedStop::Exited { .. } | SealedStop::Halted => Ending::ExitedOther,
         SealedStop::Trapped {
             kind: TrapKind::Unreachable,
         } if holds(stderr, " panicked at ") => Ending::Panicked,
@@ -1032,9 +1033,10 @@ fn accounted(transcript: &Transcript, test: &str) -> Account {
             Ok(code) => Some(code),
             Err(_wider) => None,
         },
-        SealedStop::Trapped { .. } | SealedStop::FuelExhausted | SealedStop::MemoryExhausted => {
-            None
-        }
+        SealedStop::Trapped { .. }
+        | SealedStop::FuelExhausted
+        | SealedStop::MemoryExhausted
+        | SealedStop::Halted => None,
     };
     let asked = [test.to_owned()];
     match account(transcript.stdout().bytes(), Asked::Exact(&asked), exit) {
