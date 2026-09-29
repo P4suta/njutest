@@ -66,7 +66,7 @@ A refusal returns its error to the guest and is recorded in the transcript, so a
 | `fd_close`, `fd_renumber` | On the instance's descriptor table. |
 | `fd_advise`, `fd_datasync`, `fd_sync` | Succeed; there is no disk. |
 | `fd_allocate`, `fd_filestat_set_size` | Grow or shrink the overlay's copy. |
-| `fd_fdstat_get`, `fd_fdstat_set_flags`, `fd_fdstat_set_rights` | On the instance's descriptor table. |
+| `fd_fdstat_get`, `fd_fdstat_set_flags`, `fd_fdstat_set_rights` | On the instance's descriptor table, whose rights every call they govern asks for: a right narrowed away is gone, and opening through a directory does not give it back. |
 | `fd_filestat_get`, `path_filestat_get` | Fixed metadata: every timestamp one constant, the inode derived from the path, the size the overlay's. |
 | `fd_filestat_set_times`, `path_filestat_set_times` | Recorded in the overlay and read back; a time never set reads as the constant. |
 | `fd_prestat_get`, `fd_prestat_dir_name` | The snapshot, at the path the build knew it by; the directory the runtime's records land in; a scratch directory of the instance's own, whose empty `home` and `tmp` are what `HOME` and `TMPDIR` name; for a target cargo gives one, an empty directory at the `CARGO_TARGET_TMPDIR` the build baked in; and `.`, the test's working directory in the snapshot. |

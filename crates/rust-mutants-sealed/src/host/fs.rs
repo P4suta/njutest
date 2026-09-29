@@ -10,8 +10,15 @@ use crate::abi::{
     EVENTRWFLAGS_HANGUP, Errno, FDFLAGS_ALL, FDFLAGS_APPEND, FILETYPE_DIRECTORY,
     FILETYPE_REGULAR_FILE, FILETYPE_UNKNOWN, FSTFLAGS_ATIM, FSTFLAGS_ATIM_NOW, FSTFLAGS_MTIM,
     FSTFLAGS_MTIM_NOW, OFLAGS_ALL, OFLAGS_CREAT, OFLAGS_DIRECTORY, OFLAGS_EXCL, OFLAGS_TRUNC,
-    RIGHTS_ALL, RIGHTS_DIRECTORY, RIGHTS_FD_READ, RIGHTS_FD_WRITE, RIGHTS_FILE, RIGHTS_STDIN,
-    RIGHTS_STDOUT, WHENCE_CUR, WHENCE_END, WHENCE_SET,
+    RIGHTS_ALL, RIGHTS_DIRECTORY, RIGHTS_FD_ADVISE, RIGHTS_FD_ALLOCATE, RIGHTS_FD_DATASYNC,
+    RIGHTS_FD_FDSTAT_SET_FLAGS, RIGHTS_FD_FILESTAT_GET, RIGHTS_FD_FILESTAT_SET_SIZE,
+    RIGHTS_FD_FILESTAT_SET_TIMES, RIGHTS_FD_READ, RIGHTS_FD_READDIR, RIGHTS_FD_SEEK,
+    RIGHTS_FD_SYNC, RIGHTS_FD_TELL, RIGHTS_FD_WRITE, RIGHTS_FILE, RIGHTS_PATH_CREATE_DIRECTORY,
+    RIGHTS_PATH_CREATE_FILE, RIGHTS_PATH_FILESTAT_GET, RIGHTS_PATH_FILESTAT_SET_SIZE,
+    RIGHTS_PATH_FILESTAT_SET_TIMES, RIGHTS_PATH_OPEN, RIGHTS_PATH_READLINK,
+    RIGHTS_PATH_REMOVE_DIRECTORY, RIGHTS_PATH_RENAME_SOURCE, RIGHTS_PATH_RENAME_TARGET,
+    RIGHTS_PATH_UNLINK_FILE, RIGHTS_POLL_FD_READWRITE, RIGHTS_STDIN, RIGHTS_STDOUT, WHENCE_CUR,
+    WHENCE_END, WHENCE_SET,
 };
 use crate::invocation::{Laid, Preopens, WORKING_NAME};
 use crate::snapshot::{Body, NodeId, ROOT, Snapshot, inode_of};
@@ -39,6 +46,58 @@ pub(crate) enum Fault {
 /// An error number as a filesystem fault.
 const fn errno(errno: Errno) -> Fault {
     Fault::Errno(errno)
+}
+
+/// What a call needs of the rights of a descriptor it names, which every way of reaching a descriptor asks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Needs {
+    /// No right: the call asks about the descriptor table, or changes the table itself.
+    Nothing,
+    /// Every one of these rights.
+    All(u64),
+    /// At least one of these rights.
+    Any(u64),
+}
+
+impl Needs {
+    /// What a descriptor holding `rights` is answered with, nothing where they are enough: `badf` where reading or writing is missing, as POSIX answers a descriptor not open for it, and `notcapable` for any other right.
+    const fn refusal(self, rights: u64) -> Option<Errno> {
+        let missing = match self {
+            Self::Nothing => 0,
+            Self::All(needed) => needed & !rights,
+            Self::Any(needed) => {
+                if needed & rights == 0 {
+                    needed
+                } else {
+                    0
+                }
+            }
+        };
+        if missing == 0 {
+            None
+        } else if missing & (RIGHTS_FD_READ | RIGHTS_FD_WRITE) != 0 {
+            Some(Errno::Badf)
+        } else {
+            Some(Errno::Notcapable)
+        }
+    }
+
+    /// Whether `descriptor` holds what the call needs, and the error number it is answered with where it does not.
+    const fn held_by(self, descriptor: &Descriptor) -> Result<(), Errno> {
+        match self.refusal(descriptor.rights) {
+            None => Ok(()),
+            Some(refused) => Err(refused),
+        }
+    }
+}
+
+/// What a sync asks of the file it flushes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Flush {
+    /// `fd_datasync`: the data.
+    Data,
+    /// `fd_sync`: the data and the metadata.
+    Everything,
 }
 
 /// A file's bytes: the snapshot's until the guest writes them, the overlay's after.
@@ -364,14 +423,18 @@ impl Filesystem {
         })
     }
 
-    /// The descriptor `fd`.
-    fn descriptor(&self, fd: u32) -> Result<&Descriptor, Errno> {
-        self.descriptors.get(&fd).ok_or(Errno::Badf)
+    /// The descriptor `fd`, once it is known to hold what the call `needs`.
+    fn descriptor(&self, fd: u32, needs: Needs) -> Result<&Descriptor, Errno> {
+        let descriptor = self.descriptors.get(&fd).ok_or(Errno::Badf)?;
+        needs.held_by(descriptor)?;
+        Ok(descriptor)
     }
 
-    /// The descriptor `fd`, to change.
-    fn descriptor_mut(&mut self, fd: u32) -> Result<&mut Descriptor, Errno> {
-        self.descriptors.get_mut(&fd).ok_or(Errno::Badf)
+    /// The descriptor `fd`, to change, once it is known to hold what the call `needs`.
+    fn descriptor_mut(&mut self, fd: u32, needs: Needs) -> Result<&mut Descriptor, Errno> {
+        let descriptor = self.descriptors.get_mut(&fd).ok_or(Errno::Badf)?;
+        needs.held_by(descriptor)?;
+        Ok(descriptor)
     }
 
     /// The node `node` of tree `tree`.
@@ -390,9 +453,9 @@ impl Filesystem {
             .ok_or(Errno::Badf)
     }
 
-    /// Which stream `fd` is, once it is known to carry `right`.
-    pub(crate) fn stream(&self, fd: u32, right: u64) -> Result<Stream, Errno> {
-        let descriptor = self.descriptor(fd)?;
+    /// Which stream `fd` is, once it is known to hold what the call `needs`.
+    pub(crate) fn stream(&self, fd: u32, needs: Needs) -> Result<Stream, Errno> {
+        let descriptor = self.descriptor(fd, Needs::Nothing)?;
         let stream = match descriptor.object {
             Object::Stdin => Stream::Stdin,
             Object::Stdout => Stream::Stdout,
@@ -400,35 +463,32 @@ impl Filesystem {
             Object::File { .. } => Stream::File,
             Object::Directory { .. } => return Err(Errno::Isdir),
         };
-        if descriptor.rights & right == 0 {
-            return Err(Errno::Badf);
-        }
+        needs.held_by(descriptor)?;
         Ok(stream)
     }
 
-    /// The file `fd` reaches, and where it stands in it.
-    fn file(&self, fd: u32) -> Result<Opened, Errno> {
-        match self.descriptor(fd)?.object {
+    /// The file `fd` reaches, and where it stands in it, once it is known to hold what the call `needs`.
+    fn file(&self, fd: u32, needs: Needs) -> Result<Opened, Errno> {
+        let descriptor = self.descriptor(fd, Needs::Nothing)?;
+        let opened = match descriptor.object {
             Object::File {
                 tree,
                 node,
                 position,
-            } => Ok(Opened {
+            } => Opened {
                 at: (tree, node),
                 position,
-            }),
-            Object::Directory { .. } => Err(Errno::Isdir),
-            Object::Stdin | Object::Stdout | Object::Stderr => Err(Errno::Spipe),
-        }
+            },
+            Object::Directory { .. } => return Err(Errno::Isdir),
+            Object::Stdin | Object::Stdout | Object::Stderr => return Err(Errno::Spipe),
+        };
+        needs.held_by(descriptor)?;
+        Ok(opened)
     }
 
-    /// The tree and node of the file `fd` reaches, once it is known to carry `right`.
-    fn file_with(&self, fd: u32, right: u64) -> Result<(usize, NodeId), Errno> {
-        let opened = self.file(fd)?;
-        if self.descriptor(fd)?.rights & right == 0 {
-            return Err(Errno::Badf);
-        }
-        Ok(opened.at)
+    /// The tree and node of the file `fd` reaches, once it is known to hold what the call `needs`.
+    fn file_with(&self, fd: u32, needs: Needs) -> Result<(usize, NodeId), Errno> {
+        self.file(fd, needs).map(|opened| opened.at)
     }
 
     /// The bytes of the file `node` of tree `tree`.
@@ -441,10 +501,10 @@ impl Filesystem {
 
     /// Up to `len` bytes of `fd` at its position, which moves past them.
     pub(crate) fn read(&mut self, fd: u32, len: usize) -> Result<Vec<u8>, Errno> {
-        if self.stream(fd, RIGHTS_FD_READ)? == Stream::Stdin {
+        if self.stream(fd, Needs::All(RIGHTS_FD_READ))? == Stream::Stdin {
             return Ok(Vec::new());
         }
-        let opened = self.file(fd)?;
+        let opened = self.file(fd, Needs::All(RIGHTS_FD_READ))?;
         let (tree, node) = opened.at;
         let bytes = slice_at(self.contents(tree, node)?, opened.position, len).to_vec();
         let read = u64::try_from(bytes.len()).map_err(|_wide| Errno::Overflow)?;
@@ -455,15 +515,17 @@ impl Filesystem {
 
     /// Up to `len` bytes of `fd` at `offset`, the position left where it was.
     pub(crate) fn pread(&self, fd: u32, len: usize, offset: u64) -> Result<Vec<u8>, Errno> {
-        let (tree, node) = self.file_with(fd, RIGHTS_FD_READ)?;
+        let (tree, node) = self.file_with(fd, Needs::All(RIGHTS_FD_READ | RIGHTS_FD_SEEK))?;
         Ok(slice_at(self.contents(tree, node)?, offset, len).to_vec())
     }
 
     /// Writes `data` to the file `fd` at its position, or at its end for an appending descriptor, and moves the position past it.
     pub(crate) fn write(&mut self, fd: u32, data: &[u8]) -> Result<usize, Fault> {
-        let (tree, node) = self.file_with(fd, RIGHTS_FD_WRITE).map_err(errno)?;
-        let at = if self.descriptor(fd).map_err(errno)?.flags & FDFLAGS_APPEND == 0 {
-            self.file(fd).map_err(errno)?.position
+        let writing = Needs::All(RIGHTS_FD_WRITE);
+        let opened = self.file(fd, writing).map_err(errno)?;
+        let (tree, node) = opened.at;
+        let at = if self.descriptor(fd, writing).map_err(errno)?.flags & FDFLAGS_APPEND == 0 {
+            opened.position
         } else {
             len_of(self.contents(tree, node).map_err(errno)?)?
         };
@@ -474,7 +536,9 @@ impl Filesystem {
 
     /// Writes `data` to the file `fd` at `offset`, the position left where it was.
     pub(crate) fn pwrite(&mut self, fd: u32, data: &[u8], offset: u64) -> Result<usize, Fault> {
-        let (tree, node) = self.file_with(fd, RIGHTS_FD_WRITE).map_err(errno)?;
+        let (tree, node) = self
+            .file_with(fd, Needs::All(RIGHTS_FD_WRITE | RIGHTS_FD_SEEK))
+            .map_err(errno)?;
         self.write_at((tree, node), data, offset)?;
         Ok(data.len())
     }
@@ -537,9 +601,9 @@ impl Filesystem {
         Ok(())
     }
 
-    /// Moves the position of the file `fd` to `to`.
+    /// Moves the position of the file `fd` to `to`, where the call that moves it has already asked what it needs.
     fn set_position(&mut self, fd: u32, to: u64) -> Result<(), Errno> {
-        match &mut self.descriptor_mut(fd)?.object {
+        match &mut self.descriptor_mut(fd, Needs::Nothing)?.object {
             Object::File { position, .. } => {
                 *position = to;
                 Ok(())
@@ -549,9 +613,14 @@ impl Filesystem {
         }
     }
 
-    /// Moves the position of `fd` by `delta` from `whence`, and answers where it now is.
+    /// Moves the position of `fd` by `delta` from `whence`, and answers where it now is: asking where it is without moving it needs only the right to ask it.
     pub(crate) fn seek(&mut self, fd: u32, delta: i64, whence: u32) -> Result<u64, Errno> {
-        let opened = self.file(fd)?;
+        let needs = if delta == 0 && whence == WHENCE_CUR {
+            Needs::Any(RIGHTS_FD_TELL | RIGHTS_FD_SEEK)
+        } else {
+            Needs::All(RIGHTS_FD_SEEK)
+        };
+        let opened = self.file(fd, needs)?;
         let (tree, node) = opened.at;
         let from = match whence {
             WHENCE_SET => 0,
@@ -566,12 +635,13 @@ impl Filesystem {
 
     /// The position of `fd`.
     pub(crate) fn tell(&self, fd: u32) -> Result<u64, Errno> {
-        self.file(fd).map(|opened| opened.position)
+        self.file(fd, Needs::Any(RIGHTS_FD_TELL | RIGHTS_FD_SEEK))
+            .map(|opened| opened.position)
     }
 
     /// The `fdstat` of `fd`.
     pub(crate) fn fdstat(&self, fd: u32) -> Result<Fdstat, Errno> {
-        let descriptor = self.descriptor(fd)?;
+        let descriptor = self.descriptor(fd, Needs::Nothing)?;
         let filetype = match descriptor.object {
             Object::Stdin | Object::Stdout | Object::Stderr => FILETYPE_UNKNOWN,
             Object::File { .. } => FILETYPE_REGULAR_FILE,
@@ -590,7 +660,8 @@ impl Filesystem {
         if flags & !FDFLAGS_ALL != 0 {
             return Err(Errno::Inval);
         }
-        self.descriptor_mut(fd)?.flags = flags;
+        self.descriptor_mut(fd, Needs::All(RIGHTS_FD_FDSTAT_SET_FLAGS))?
+            .flags = flags;
         Ok(())
     }
 
@@ -601,7 +672,7 @@ impl Filesystem {
         rights: u64,
         inheriting: u64,
     ) -> Result<(), Errno> {
-        let descriptor = self.descriptor_mut(fd)?;
+        let descriptor = self.descriptor_mut(fd, Needs::Nothing)?;
         if rights & !descriptor.rights != 0 || inheriting & !descriptor.inheriting != 0 {
             return Err(Errno::Notcapable);
         }
@@ -612,7 +683,10 @@ impl Filesystem {
 
     /// The `filestat` of what `fd` reaches.
     pub(crate) fn filestat(&self, fd: u32) -> Result<Filestat, Errno> {
-        match self.descriptor(fd)?.object {
+        match self
+            .descriptor(fd, Needs::All(RIGHTS_FD_FILESTAT_GET))?
+            .object
+        {
             Object::Stdin | Object::Stdout | Object::Stderr => Ok(Filestat {
                 device: 0,
                 inode: 0,
@@ -652,14 +726,18 @@ impl Filesystem {
 
     /// Makes the file `fd` reaches `size` bytes long.
     pub(crate) fn set_size(&mut self, fd: u32, size: u64) -> Result<(), Fault> {
-        let (tree, node) = self.file_with(fd, RIGHTS_FD_WRITE).map_err(errno)?;
+        let (tree, node) = self
+            .file_with(fd, Needs::All(RIGHTS_FD_FILESTAT_SET_SIZE))
+            .map_err(errno)?;
         let size = usize::try_from(size).map_err(|_wide| errno(Errno::Fbig))?;
         self.resize((tree, node), size)
     }
 
     /// Makes the file `fd` reaches at least `offset + len` bytes long.
     pub(crate) fn allocate(&mut self, fd: u32, offset: u64, len: u64) -> Result<(), Fault> {
-        let (tree, node) = self.file_with(fd, RIGHTS_FD_WRITE).map_err(errno)?;
+        let (tree, node) = self
+            .file_with(fd, Needs::All(RIGHTS_FD_ALLOCATE))
+            .map_err(errno)?;
         let end = offset.checked_add(len).ok_or(errno(Errno::Fbig))?;
         let end = usize::try_from(end).map_err(|_wide| errno(Errno::Fbig))?;
         let held = self.contents(tree, node).map_err(errno)?.len();
@@ -671,23 +749,35 @@ impl Filesystem {
 
     /// Answers whether `fd` is a file advice can be given about, and `advice` advice WASI defines.
     pub(crate) fn advise(&self, fd: u32, advice: u32) -> Result<(), Errno> {
-        self.file(fd).map_err(|_not_a_file| Errno::Badf)?;
+        let descriptor = self.descriptor(fd, Needs::Nothing)?;
+        match descriptor.object {
+            Object::File { .. } => Needs::All(RIGHTS_FD_ADVISE).held_by(descriptor)?,
+            Object::Directory { .. } | Object::Stdin | Object::Stdout | Object::Stderr => {
+                return Err(Errno::Badf);
+            }
+        }
         if advice > 5 {
             return Err(Errno::Inval);
         }
         Ok(())
     }
 
-    /// Answers whether `fd` is open, which is all a flush of memory needs.
-    pub(crate) fn sync(&self, fd: u32) -> Result<(), Errno> {
-        self.descriptor(fd).map(|_open| ())
+    /// Answers whether `fd` is open with the right to flush what `flush` asks, which is all a flush of memory needs.
+    pub(crate) fn sync(&self, fd: u32, flush: Flush) -> Result<(), Errno> {
+        let right = match flush {
+            Flush::Data => RIGHTS_FD_DATASYNC,
+            Flush::Everything => RIGHTS_FD_SYNC,
+        };
+        self.descriptor(fd, Needs::All(right)).map(|_open| ())
     }
 
     /// Sets the times of what `fd` reaches.
     pub(crate) fn set_times(&mut self, fd: u32, request: TimesRequest) -> Result<(), Errno> {
-        match self.descriptor(fd)?.object {
+        let descriptor = self.descriptor(fd, Needs::Nothing)?;
+        match descriptor.object {
             Object::Stdin | Object::Stdout | Object::Stderr => Err(Errno::Badf),
             Object::File { tree, node, .. } | Object::Directory { tree, node, .. } => {
+                Needs::All(RIGHTS_FD_FILESTAT_SET_TIMES).held_by(descriptor)?;
                 self.touch(tree, node, request)
             }
         }
@@ -728,7 +818,7 @@ impl Filesystem {
 
     /// Moves the descriptor `from` onto the number `to`, closing what `to` was.
     pub(crate) fn renumber(&mut self, from: u32, to: u32) -> Result<(), Errno> {
-        self.descriptor(to)?;
+        self.descriptor(to, Needs::Nothing)?;
         let moved = self.descriptors.remove(&from).ok_or(Errno::Badf)?;
         self.descriptors.insert(to, moved);
         Ok(())
@@ -736,7 +826,7 @@ impl Filesystem {
 
     /// The name `fd` was preopened by: its tree's guest path, or `.` for the working directory.
     pub(crate) fn preopened(&self, fd: u32) -> Result<&str, Errno> {
-        match self.descriptor(fd)?.object {
+        match self.descriptor(fd, Needs::Nothing)?.object {
             Object::Directory {
                 tree,
                 preopen: Some(Entrance::Root),
@@ -760,7 +850,7 @@ impl Filesystem {
 
     /// The entries of the directory `fd` from `cookie` on: `.`, `..`, then every name in order.
     pub(crate) fn readdir(&self, fd: u32, cookie: u64) -> Result<Vec<Dirent>, Errno> {
-        let (tree, node) = self.directory(fd)?;
+        let (tree, node) = self.directory(fd, Needs::All(RIGHTS_FD_READDIR))?;
         let live = self.live(tree, node)?;
         let Held::Directory(entries) = &live.held else {
             return Err(Errno::Notdir);
@@ -795,9 +885,10 @@ impl Filesystem {
         Ok(dirents)
     }
 
-    /// The tree and node of the directory `fd` reaches.
-    fn directory(&self, fd: u32) -> Result<(usize, NodeId), Errno> {
-        self.entered(fd).map(|(tree, node, _preopen)| (tree, node))
+    /// The tree and node of the directory `fd` reaches, once it is known to hold what the call `needs`.
+    fn directory(&self, fd: u32, needs: Needs) -> Result<(usize, NodeId), Errno> {
+        self.entered(fd, needs)
+            .map(|(tree, node, _preopen)| (tree, node))
     }
 
     /// The entries of the directory `node` of tree `tree`.
@@ -829,18 +920,21 @@ impl Filesystem {
         Ok(matches!(self.live(tree, node)?.held, Held::Directory(_)))
     }
 
-    /// The tree and node of the directory `fd` reaches, and how the guest was given it where it was preopened.
-    fn entered(&self, fd: u32) -> Result<(usize, NodeId, Option<Entrance>), Errno> {
-        match self.descriptor(fd)?.object {
+    /// The tree and node of the directory `fd` reaches, and how the guest was given it where it was preopened, once it is known to hold what the call `needs`.
+    fn entered(&self, fd: u32, needs: Needs) -> Result<(usize, NodeId, Option<Entrance>), Errno> {
+        let descriptor = self.descriptor(fd, Needs::Nothing)?;
+        let entered = match descriptor.object {
             Object::Directory {
                 tree,
                 node,
                 preopen,
-            } => Ok((tree, node, preopen)),
+            } => (tree, node, preopen),
             Object::File { .. } | Object::Stdin | Object::Stdout | Object::Stderr => {
-                Err(Errno::Notdir)
+                return Err(Errno::Notdir);
             }
-        }
+        };
+        needs.held_by(descriptor)?;
+        Ok(entered)
     }
 
     /// The directories from the root of tree `tree` down to `node`, `node` last, which `..` climbs back through.
@@ -860,9 +954,9 @@ impl Filesystem {
         Err(Fault::Refused(RefusalReason::Escape))
     }
 
-    /// Resolves `path` from the directory `fd`, refusing one that leaves what `fd` reaches: its own directory, or for the working directory its whole tree.
-    fn resolve(&self, fd: u32, path: &str) -> Result<Resolved, Fault> {
-        let (tree, start, preopen) = self.entered(fd).map_err(errno)?;
+    /// Resolves `path` from the directory `fd` once it is known to hold what the call `needs`, refusing a path that leaves what `fd` reaches: its own directory, or for the working directory its whole tree.
+    fn resolve(&self, fd: u32, path: &str, needs: Needs) -> Result<Resolved, Fault> {
+        let (tree, start, preopen) = self.entered(fd, needs).map_err(errno)?;
         if path.is_empty() {
             return Err(errno(Errno::Noent));
         }
@@ -993,7 +1087,18 @@ impl Filesystem {
         if request.oflags & !OFLAGS_ALL != 0 || request.fdflags & !FDFLAGS_ALL != 0 {
             return Err(errno(Errno::Inval));
         }
-        let resolved = self.resolve(fd, path)?;
+        let mut needed = RIGHTS_PATH_OPEN;
+        if request.oflags & OFLAGS_CREAT != 0 {
+            needed |= RIGHTS_PATH_CREATE_FILE;
+        }
+        if request.oflags & OFLAGS_TRUNC != 0 {
+            needed |= RIGHTS_PATH_FILESTAT_SET_SIZE;
+        }
+        let resolved = self.resolve(fd, path, Needs::All(needed))?;
+        let passed_on = self
+            .descriptor(fd, Needs::Nothing)
+            .map_err(errno)?
+            .inheriting;
         let tree = resolved.tree;
         let wants_directory = request.oflags & OFLAGS_DIRECTORY != 0;
         let node = match resolved.found {
@@ -1044,8 +1149,8 @@ impl Filesystem {
         self.install(Descriptor {
             object,
             flags: request.fdflags,
-            rights: request.rights & mask,
-            inheriting: request.inheriting & RIGHTS_ALL,
+            rights: request.rights & mask & passed_on,
+            inheriting: request.inheriting & RIGHTS_ALL & passed_on,
         })
         .map_err(errno)
     }
@@ -1065,7 +1170,7 @@ impl Filesystem {
 
     /// Makes a directory at `path` from the directory `fd`.
     pub(crate) fn create_directory(&mut self, fd: u32, path: &str) -> Result<(), Fault> {
-        let resolved = self.resolve(fd, path)?;
+        let resolved = self.resolve(fd, path, Needs::All(RIGHTS_PATH_CREATE_DIRECTORY))?;
         match resolved.found {
             Found::Existing { .. } => Err(errno(Errno::Exist)),
             Found::Absent { parent, name } => self
@@ -1080,7 +1185,7 @@ impl Filesystem {
 
     /// Removes the empty directory at `path` from the directory `fd`.
     pub(crate) fn remove_directory(&mut self, fd: u32, path: &str) -> Result<(), Fault> {
-        let resolved = self.resolve(fd, path)?;
+        let resolved = self.resolve(fd, path, Needs::All(RIGHTS_PATH_REMOVE_DIRECTORY))?;
         let tree = resolved.tree;
         match resolved.found {
             Found::Absent { .. } => Err(errno(Errno::Noent)),
@@ -1100,7 +1205,7 @@ impl Filesystem {
 
     /// Removes the file at `path` from the directory `fd`.
     pub(crate) fn unlink_file(&mut self, fd: u32, path: &str) -> Result<(), Fault> {
-        let resolved = self.resolve(fd, path)?;
+        let resolved = self.resolve(fd, path, Needs::All(RIGHTS_PATH_UNLINK_FILE))?;
         let tree = resolved.tree;
         match resolved.found {
             Found::Absent { .. } => Err(errno(Errno::Noent)),
@@ -1137,8 +1242,8 @@ impl Filesystem {
 
     /// Moves what `from` names to `to`, each resolved from its own directory descriptor.
     pub(crate) fn rename(&mut self, from: (u32, &str), to: (u32, &str)) -> Result<(), Fault> {
-        let source = self.resolve(from.0, from.1)?;
-        let target = self.resolve(to.0, to.1)?;
+        let source = self.resolve(from.0, from.1, Needs::All(RIGHTS_PATH_RENAME_SOURCE))?;
+        let target = self.resolve(to.0, to.1, Needs::All(RIGHTS_PATH_RENAME_TARGET))?;
         if source.tree != target.tree {
             return Err(errno(Errno::Xdev));
         }
@@ -1219,7 +1324,7 @@ impl Filesystem {
 
     /// The `filestat` of what `path` names from the directory `fd`.
     pub(crate) fn path_filestat(&self, fd: u32, path: &str) -> Result<Filestat, Fault> {
-        let resolved = self.resolve(fd, path)?;
+        let resolved = self.resolve(fd, path, Needs::All(RIGHTS_PATH_FILESTAT_GET))?;
         match resolved.found {
             Found::Absent { .. } => Err(errno(Errno::Noent)),
             Found::Existing { node, .. } => self.node_stat(resolved.tree, node).map_err(errno),
@@ -1233,7 +1338,7 @@ impl Filesystem {
         path: &str,
         request: TimesRequest,
     ) -> Result<(), Fault> {
-        let resolved = self.resolve(fd, path)?;
+        let resolved = self.resolve(fd, path, Needs::All(RIGHTS_PATH_FILESTAT_SET_TIMES))?;
         match resolved.found {
             Found::Absent { .. } => Err(errno(Errno::Noent)),
             Found::Existing { node, .. } => self.touch(resolved.tree, node, request).map_err(errno),
@@ -1242,7 +1347,7 @@ impl Filesystem {
 
     /// What `path_readlink` answers: no path names a symbolic link, because the overlay makes none.
     pub(crate) fn readlink(&self, fd: u32, path: &str) -> Fault {
-        match self.resolve(fd, path) {
+        match self.resolve(fd, path, Needs::All(RIGHTS_PATH_READLINK)) {
             Ok(Resolved {
                 found: Found::Existing { .. },
                 ..
@@ -1261,10 +1366,11 @@ impl Filesystem {
             Readiness::Read => RIGHTS_FD_READ,
             Readiness::Write => RIGHTS_FD_WRITE,
         };
-        match (self.stream(fd, right)?, readiness) {
+        let needs = Needs::All(right | RIGHTS_POLL_FD_READWRITE);
+        match (self.stream(fd, needs)?, readiness) {
             (Stream::Stdin, Readiness::Read) => Ok((0, EVENTRWFLAGS_HANGUP)),
             (Stream::File, Readiness::Read) => {
-                let opened = self.file(fd)?;
+                let opened = self.file(fd, needs)?;
                 let (tree, node) = opened.at;
                 let len = len_of(self.contents(tree, node)?).map_err(|_full| Errno::Overflow)?;
                 Ok((len.saturating_sub(opened.position), 0))

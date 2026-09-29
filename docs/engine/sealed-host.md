@@ -68,6 +68,13 @@ Floating-point NaNs are canonicalized.
 | `proc_raise` | refused with `nosys` and recorded |
 | `path_link`, `path_symlink` | refused with `notsup` and recorded |
 
+Every descriptor carries the rights WASI gives it, and a call a right governs asks the descriptor it names for that right before it does anything.
+A descriptor without it is answered `notcapable`, or `badf` where the right is reading or writing, as POSIX answers a descriptor not open for them, and nothing is recorded: a right the guest gave up is its own narrowing, not the sandbox refusing.
+A preopen carries every right a directory can and passes every right on; a descriptor `path_open` gives out carries what it asked for of what its directory passes on and of what its kind can carry, never more; and `fd_fdstat_set_rights` narrows, never widens.
+`path_open` needs `path_open`, with `path_create_file` to make the file and `path_filestat_set_size` to truncate it; `path_rename` needs `path_rename_source` of the one descriptor and `path_rename_target` of the other; `fd_pread` and `fd_pwrite` need `fd_seek` besides reading or writing; asking the position without moving it needs `fd_tell` or `fd_seek`; and a descriptor waited on in `poll_oneoff` needs `poll_fd_readwrite`.
+Every other call a right is named after needs that right: `fd_advise`, `fd_allocate`, `fd_datasync`, `fd_fdstat_set_flags`, `fd_filestat_get`, `fd_filestat_set_size`, `fd_filestat_set_times`, `fd_readdir`, `fd_seek`, `fd_sync`, `fd_tell`, `path_create_directory`, `path_filestat_get`, `path_filestat_set_times`, `path_readlink`, `path_remove_directory` and `path_unlink_file`.
+The standard streams carry reading or writing, polling, asking their metadata and setting their flags.
+
 A path that leaves what the descriptor it is resolved from may reach, or that is absolute and names no place inside it, is refused with `notcapable` and recorded.
 A write the overlay has no room left for is refused with `nospc` and recorded.
 A wait on a CPU-time clock, which moves only while the guest runs, is answered with `notsup` in its event and recorded.

@@ -136,22 +136,56 @@ pub(crate) const EVENTTYPE_FD_WRITE: u8 = 2;
 /// An event whose stream has reached its end.
 pub(crate) const EVENTRWFLAGS_HANGUP: u16 = 1;
 
+/// The right to flush a file's data.
+pub(crate) const RIGHTS_FD_DATASYNC: u64 = 1 << 0;
 /// The right to read.
 pub(crate) const RIGHTS_FD_READ: u64 = 1 << 1;
-/// The right to move the position.
-const RIGHTS_FD_SEEK: u64 = 1 << 2;
+/// The right to move the position, which implies the right to ask it.
+pub(crate) const RIGHTS_FD_SEEK: u64 = 1 << 2;
+/// The right to set the descriptor's flags.
+pub(crate) const RIGHTS_FD_FDSTAT_SET_FLAGS: u64 = 1 << 3;
+/// The right to flush a file's data and metadata.
+pub(crate) const RIGHTS_FD_SYNC: u64 = 1 << 4;
 /// The right to ask the position.
-const RIGHTS_FD_TELL: u64 = 1 << 5;
+pub(crate) const RIGHTS_FD_TELL: u64 = 1 << 5;
 /// The right to write.
 pub(crate) const RIGHTS_FD_WRITE: u64 = 1 << 6;
 /// The right to advise how a file will be used.
-const RIGHTS_FD_ADVISE: u64 = 1 << 7;
+pub(crate) const RIGHTS_FD_ADVISE: u64 = 1 << 7;
 /// The right to allocate space in a file.
-const RIGHTS_FD_ALLOCATE: u64 = 1 << 8;
+pub(crate) const RIGHTS_FD_ALLOCATE: u64 = 1 << 8;
+/// The right to make a directory.
+pub(crate) const RIGHTS_PATH_CREATE_DIRECTORY: u64 = 1 << 9;
+/// The right to open a file that is made where it is absent.
+pub(crate) const RIGHTS_PATH_CREATE_FILE: u64 = 1 << 10;
+/// The right to open a path.
+pub(crate) const RIGHTS_PATH_OPEN: u64 = 1 << 13;
+/// The right to read a directory's entries.
+pub(crate) const RIGHTS_FD_READDIR: u64 = 1 << 14;
+/// The right to read a symbolic link.
+pub(crate) const RIGHTS_PATH_READLINK: u64 = 1 << 15;
+/// The right to rename from a directory.
+pub(crate) const RIGHTS_PATH_RENAME_SOURCE: u64 = 1 << 16;
+/// The right to rename into a directory.
+pub(crate) const RIGHTS_PATH_RENAME_TARGET: u64 = 1 << 17;
+/// The right to ask the metadata of a path.
+pub(crate) const RIGHTS_PATH_FILESTAT_GET: u64 = 1 << 18;
+/// The right to open a file that is truncated.
+pub(crate) const RIGHTS_PATH_FILESTAT_SET_SIZE: u64 = 1 << 19;
+/// The right to set the times of a path.
+pub(crate) const RIGHTS_PATH_FILESTAT_SET_TIMES: u64 = 1 << 20;
+/// The right to ask the metadata of what the descriptor reaches.
+pub(crate) const RIGHTS_FD_FILESTAT_GET: u64 = 1 << 21;
 /// The right to change a file's size through its descriptor.
-const RIGHTS_FD_FILESTAT_SET_SIZE: u64 = 1 << 22;
+pub(crate) const RIGHTS_FD_FILESTAT_SET_SIZE: u64 = 1 << 22;
+/// The right to set the times of what the descriptor reaches.
+pub(crate) const RIGHTS_FD_FILESTAT_SET_TIMES: u64 = 1 << 23;
+/// The right to remove a directory.
+pub(crate) const RIGHTS_PATH_REMOVE_DIRECTORY: u64 = 1 << 25;
+/// The right to remove a file.
+pub(crate) const RIGHTS_PATH_UNLINK_FILE: u64 = 1 << 26;
 /// The right to be polled for reading or writing.
-const RIGHTS_POLL_FD_READWRITE: u64 = 1 << 27;
+pub(crate) const RIGHTS_POLL_FD_READWRITE: u64 = 1 << 27;
 /// The rights only a socket carries.
 const RIGHTS_SOCKET: u64 = (1 << 28) | (1 << 29);
 /// Every right WASI defines.
@@ -170,10 +204,13 @@ pub(crate) const RIGHTS_DIRECTORY: u64 = RIGHTS_ALL
         | RIGHTS_FD_ADVISE
         | RIGHTS_FD_ALLOCATE
         | RIGHTS_FD_FILESTAT_SET_SIZE);
-/// The rights standard input carries: reading, and polling for it.
-pub(crate) const RIGHTS_STDIN: u64 = RIGHTS_FD_READ | RIGHTS_POLL_FD_READWRITE;
-/// The rights standard output and standard error carry: writing, and polling for it.
-pub(crate) const RIGHTS_STDOUT: u64 = RIGHTS_FD_WRITE | RIGHTS_POLL_FD_READWRITE;
+/// The rights every standard stream carries: polling for it, asking its metadata, and setting its flags.
+const RIGHTS_STREAM: u64 =
+    RIGHTS_POLL_FD_READWRITE | RIGHTS_FD_FILESTAT_GET | RIGHTS_FD_FDSTAT_SET_FLAGS;
+/// The rights standard input carries: reading, and what every stream carries.
+pub(crate) const RIGHTS_STDIN: u64 = RIGHTS_FD_READ | RIGHTS_STREAM;
+/// The rights standard output and standard error carry: writing, and what every stream carries.
+pub(crate) const RIGHTS_STDOUT: u64 = RIGHTS_FD_WRITE | RIGHTS_STREAM;
 
 /// The size of a `filestat` record.
 pub(crate) const FILESTAT_SIZE: usize = 64;
