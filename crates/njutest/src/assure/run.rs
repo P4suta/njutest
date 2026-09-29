@@ -112,6 +112,8 @@ pub struct Request {
     pub started: Timestamp,
     /// Where the engine records its own stream.
     pub engine_trace: rust_mutants::trace::Recorder,
+    /// Where the engine keeps, beside its recording, what an audit re-derives this build's carried answers from; nothing where the run keeps no recording.
+    pub carried_evidence: Option<PathBuf>,
     /// What this run is, as numbers.
     /// Empty when the tree could not be read, which states a limitation rather than failing the run.
     pub evidence: crate::assure::identity::Evidence,
@@ -1431,6 +1433,10 @@ fn run_mutation(
     record(mutating.report, &mutation, &accepted.ids)?;
     mutating.report.findings.extend(accepted.findings);
     concurrency_of(mutating, session, watch)?;
+    if let Some(directory) = &mutating.request.carried_evidence {
+        rust_mutants::report::evidence::carried(session, directory)
+            .map_err(|source| RunnerError::CarriedEvidence { source })?;
+    }
     Ok(())
 }
 

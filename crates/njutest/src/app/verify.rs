@@ -862,6 +862,7 @@ fn every_build(
             selection,
             binding,
             trace: engine_trace,
+            carried_evidence,
         } = configured;
         let ordinal = binding.ordinal();
         let name = binding.name().to_owned();
@@ -869,6 +870,7 @@ fn every_build(
             build,
             run_id: binding.internal_run_id().clone(),
             engine_trace: engine_trace.start(),
+            carried_evidence,
             ..request.clone()
         };
         asked.evidence = request.evidence.for_build(&asked.build);
@@ -942,6 +944,7 @@ fn asking(establishing: &Establishing<'_>, shard: Option<rust_mutants::run::Shar
         run_id: identity.clone(),
         started,
         engine_trace: rust_mutants::trace::Recorder::disabled(),
+        carried_evidence: None,
         evidence: evidence.clone(),
         changed: establishing.changed.clone(),
         checkpoints: (!arguments.no_cache).then(|| store.root().join(CHECKPOINTS)),
@@ -1618,6 +1621,8 @@ struct ConfiguredBuild {
     selection: rust_mutants::cargo::BuildSelection,
     binding: rust_mutants::trace::NjutestBuild,
     trace: EngineTrace,
+    /// Where the engine keeps what its carried answers rest on beside its recording, when the run keeps one.
+    carried_evidence: Option<PathBuf>,
 }
 
 /// The only two pre-execution engine trace states.
@@ -1675,6 +1680,7 @@ fn configured_builds(
             selection,
             binding,
             trace: EngineTrace::Disabled,
+            carried_evidence: None,
         });
     }
 
@@ -1700,6 +1706,7 @@ fn configured_builds(
             source,
         })?;
         let engine = namespace.join(crate::app::trace::ENGINE_DIRECTORY);
+        build.carried_evidence = Some(engine.clone());
         let sink = rust_mutants::trace::DirSink::create(&engine).map_err(|source| {
             TraceSetupError::Engine {
                 ordinal,

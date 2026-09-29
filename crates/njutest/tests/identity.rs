@@ -31,6 +31,7 @@ fn asked(root: &str) -> Request {
             .expect("a canonical run identity"),
         started: jiff::Timestamp::from_second(1_800_000_000).expect("in range"),
         engine_trace: rust_mutants::trace::Recorder::disabled(),
+        carried_evidence: None,
         evidence: Evidence::default(),
         changed: None,
         checkpoints: None,

@@ -2536,6 +2536,66 @@ fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn a_traced_run_keeps_what_every_answer_it_carried_rests_on_beside_the_engine_recording() {
+    let fixture = fixture("fixture-two-bodies");
+    let first = verify(&fixture, &["--no-seal"]);
+    assert!(
+        first.status.code().is_some_and(|code| code < 3),
+        "{}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    let source = fixture.root.join("src/lib.rs");
+    let text = std::fs::read_to_string(&source).expect("the library");
+    std::fs::write(&source, text.replace("left + right", "right + left"))
+        .expect("edit inside the body of `total` alone");
+    let trace = fixture
+        .root
+        .parent()
+        .expect("the fixture's own directory")
+        .join("carried-trace");
+    let flag = format!("--trace={}", trace.display());
+    let carried = verify(&fixture, &["--no-seal", &flag]);
+    assert!(
+        carried.status.code().is_some_and(|code| code < 3),
+        "{}",
+        njutest_devkit::process::strict_utf8(&carried.stderr)
+    );
+    let reused: BTreeSet<String> = rows_by_place(&document(&fixture))
+        .values()
+        .filter(|row| row["reuse"]["reused"] == true)
+        .map(|row| row["id"].as_str().expect("an identity").to_owned())
+        .collect();
+    assert!(
+        !reused.is_empty(),
+        "the mutations of `over` are carried across an edit inside `total`"
+    );
+    let engine = trace.join("builds").join("0000000000").join("engine");
+    let believed: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(engine.join("carried-v1.json"))
+            .expect("the carried records the build believed"),
+    )
+    .expect("a carried document");
+    let records: BTreeSet<String> = believed["records"]
+        .as_array()
+        .expect("the records")
+        .iter()
+        .map(|record| record["mutant"].as_str().expect("a mutant").to_owned())
+        .collect();
+    assert_eq!(
+        records, reused,
+        "every answer the build carried is one whose record it keeps beside its recording, which \
+         is what an audit holds to ADR 0041 again"
+    );
+    for kept in ["skeletons-v1.json", "touched-v1.json"] {
+        assert!(
+            engine.join(kept).is_file(),
+            "and {kept}, which the records are read against"
+        );
+    }
+}
+
 /// The answers every row of the latest run's first part was given, by where and what it mutates.
 #[cfg(unix)]
 fn answers_by_place(report: &serde_json::Value) -> BTreeMap<Place, Vec<(String, String)>> {

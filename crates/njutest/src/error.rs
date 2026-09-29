@@ -506,6 +506,16 @@ pub enum RunnerError {
         #[source]
         source: rust_mutants::outcomes::StoreError,
     },
+    /// What an audit re-derives a build's carried answers from could not be kept beside its engine recording (ADR 0041).
+    #[error(
+        "{}: what this build's carried answers rest on could not be kept beside its recording: {source}",
+        OUTPUT_UNWRITABLE.code
+    )]
+    CarriedEvidence {
+        /// Why the engine could not write it.
+        #[source]
+        source: rust_mutants::report::evidence::EvidenceError,
+    },
     /// Coverage could not be read.
     #[error(transparent)]
     Coverage(#[from] crate::coverage::CoverageError),
@@ -637,7 +647,7 @@ impl RunnerError {
     pub const fn code(&self) -> ErrorCode {
         match self {
             Self::Interrupted => INTERRUPTED,
-            Self::Output { .. } => OUTPUT_UNWRITABLE,
+            Self::Output { .. } | Self::CarriedEvidence { .. } => OUTPUT_UNWRITABLE,
             Self::Config(error) => error.code(),
             Self::Target(error) => error.code(),
             Self::Evidence(error) => error.code(),
