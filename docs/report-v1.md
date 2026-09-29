@@ -171,16 +171,16 @@ A record's `state` is `held` where an original-code control of the whole target 
 `moved` where it did not, with what only the control reported (`gained`) and what only the baseline reported (`lost`) for each union by catalog index,
 and `not-measured` with one closed `why`: `no-control` (the run was cancelled before any control of it ran), `unrecorded`, `unreadable`, `control-failed`, `other-tests`, `no-baseline`, `baseline-retried`, which a target whose baseline passed only when run again in the directory its failed first attempt left gets, because that run did not happen under the conditions a control's does, or `unparsed`, where the tests either run was read as passing do not come to the count its own summary gives, because then which tests passed is the parser's answer and not the harness's.
 
-A part that measured the whole catalog raises `unstable-baseline` about each moved target and states `drift-not-measured` naming every target that is not measured.
+A part that measured the whole catalog raises `unstable-baseline` about each moved target something still rests on and states `drift-not-measured` naming every target that is not measured.
 A shard records drift and raises neither, and concludes `INSUFFICIENT` rather than `PARTIAL` where a target moved; a merge raises both from the combined records of every part of the build.
 The same holds for `hollow-target`, since which targets answered about a mutation and noticed none is only known over the whole catalog.
 What only the whole catalog decides is one function, `report::whole_catalog`, called by a run that measured the catalog whole and by a merge over the combined records, so a catalog concludes the same whether it was measured whole or in shards.
-Re-executing what rested on a moved record is not done by this release; the finding is what a reader acts on.
+Every survived or unreached disposition that rested on a moved target is run again against it with its reach recorded, and replaced by what that run decides where it reached the site ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)); a moved target nothing rests on afterwards is stated as the limitation `reach-moved`, naming it and how many dispositions were run again.
 
 ## Faults
 
 Every part carries `faults`, one record per site a fault was asked at, in catalog order, and empty unless the run was asked for faults ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
-A fault site is a `?` in a measured file; its catalog is its own, discovered by the rule `inject-error` alone, so `catalog_index` counts faults and a `K/N` shard owns the faults whose index modulo `N` is `K - 1`, exactly as it owns mutations.
+A fault site is a `?` in a measured file; its catalog is its own, holding the rule `inject-error` and the error-propagation mutations a fault is put beside, so `catalog_index` counts in that catalog and a `K/N` shard owns the faults whose index modulo `N` is `K - 1`, exactly as it owns mutations.
 A record carries the fault's `id` and `display_id`, its `path`, `item` and `position`, and one closed `decision`:
 
 | `decision` | what it says | carries |

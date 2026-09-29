@@ -9,6 +9,16 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Proposed, 2026-09-24.
 The dimension `faulted-v1` of the assurance plan: what a run establishes when a call the program makes fails.
+Implemented by `inject-error`, the runtime's `Injectable` and its record of where a failure went, `njutest::assure::faults` and the proofaudit `faults` layer; `absorbed` landed on 2026-09-29.
+What stands between it and acceptance, as a reading of the tree on 2026-09-29 found it:
+
+- Decision 1: the engine audit re-mints an `inject-error` row only of `rust-mutants run --operator inject-error`, and no committed engine run holds one; a fault njutest reports carries no rule, span or digest to re-mint from.
+  A `?` in a const context and one a macro expands to are held by the walker's general rules, with no fault test.
+- Decision 2: four of the six `Injectable` implementations are never run by a test, and nothing pins that the set is exactly six.
+- Decision 3: the faulted phase still runs `compared_alone` and `repaired` of the shared judging, so an original-code control of the faulted session emits `drift` records, and a moved target would emit `repair` records naming a fault.
+- Decision 5: the audit does not require every reaching target to have run for `unnoticed`, nor `by` to be the first noticing target in name order, and counts attribution runs as the fault's own; nothing audits `fault-write-unattributed`, and the paths written before the first fault and after the last are not recorded.
+- Decision 6: the name `observable-under-fault` is used nowhere, and `beside` evidence reaches the JSON alone, no drawing, page or `why`; the runtime's stop on an unknown fault is untested; `ignore-question-statement` carries nothing only because njutest selects the whole family.
+- End to end, nothing runs an unreached `?`, a waited or declined fault, a fault several targets reach, or `failed: alone`.
 
 ## Context
 
@@ -28,7 +38,7 @@ This decision fails a call inside the program, at the place it asks whether the 
 
 2. **A fault replaces the call with its failure.** Under a fault, `expr?` evaluates `Err(injected)` instead of `expr`: the callee fails before it does anything, which is the failure every caller has to be ready for.
    It is written the way every mutant is, as a branch of the guard at the site — `if active(i) { Err(injected()) } else { expr }` — so the two branches unify, the error type comes from `expr`, `expr` is not evaluated under the fault, and the borrow checker sees the original code.
-   `injected` is built by a trait the generated runtime declares, `Injectable`, implemented for exactly the error types the engine can make without guessing: `std::io::Error` (`ErrorKind::Other`, which the fault's record names, so `unnoticed` reads as unnoticed as `Other`), `std::str::Utf8Error`, `std::string::FromUtf8Error`, `std::num::ParseIntError`, `std::num::ParseFloatError` and `std::num::TryFromIntError`.
+   `injected` is built by a trait the generated runtime declares, `Injectable`, implemented for exactly the error types the engine can make without guessing: `std::io::Error` (`ErrorKind::Other`, carrying the runtime's own payload, so `unnoticed` reads as unnoticed as `Other`), `std::str::Utf8Error`, `std::string::FromUtf8Error`, `std::num::ParseIntError`, `std::num::ParseFloatError` and `std::num::TryFromIntError`.
    A site whose error type is anything else — a user's own error type, an `Option` — does not compile under the fault, and the validation rounds that already condemn a mutant the compiler refuses condemn it with the compiler's words: the fault is `not-put`, which is a statement about the engine and never a finding about the program.
 
 3. **A fault is activated like a mutant, and beside one.** On its own it is activated through `RUST_MUTANTS_ACTIVE`, like any cataloged perturbation; for the composite of point 6, `RUST_MUTANTS_FAULT` names a fault active beside the mutant.
@@ -64,7 +74,8 @@ This decision fails a call inside the program, at the place it asks whether the 
 
 ## Consequences
 
-- The two accepted survivors of `prove.rs` gain the evidence that they are not equivalences, and stay in `.rust-mutants.toml` until a test fails those calls; the plan's acceptance of removing them is replaced by that, because removing them would be the unsound claim of point 6.
+- Neither accepted survivor of `prove.rs` can gain that evidence: one is an `ignore-question-statement`, which point 6 does not ask, and the other propagates `EngineError`, which the engine does not make, so its fault is `not-put`.
+  Both stay in `.rust-mutants.toml` with their reasons until a test fails those calls; removing them would still be the unsound claim of point 6.
 - Every `?` reached by a test costs one more execution, every surviving error-propagation mutant one more, and every fault every reaching test passed one more on each target until one does not bear out that it was absorbed; a site the compiler refuses costs a validation round and nothing after it.
 - A user's own error type is never injected.
   Implementing a trait of ours in their tree would put our code in their program's type system, and guessing a constructor would inject something their code never returns; both are refused by construction, and the site says `not-put`.

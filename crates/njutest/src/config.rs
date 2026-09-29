@@ -411,7 +411,7 @@ pub const WHOLE_SCHEDULES: u32 = 8;
 #[serde(deny_unknown_fields, default)]
 pub struct Durability {
     /// Stop after the calls.
-    /// It costs a third instrumented build and baseline, and three executions for every call that writes a test reaches.
+    /// It costs a third instrumented build and baseline, and two executions for every call that writes a test reaches, eleven where the next run fails.
     pub crash: bool,
 }
 

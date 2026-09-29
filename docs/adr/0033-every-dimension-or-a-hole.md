@@ -9,11 +9,22 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Proposed, 2026-09-24.
 The contract `whole-v1` and the assurance matrix of the plan's Part III.
+Implemented by `njutest::report::matrix`, the contract's `runs_miri`, `proves_models` and `asks_every_dimension`, the DIMENSION records and the proofaudit `dimensions` layer; decision 5 happened in the change that measured the schedule column, and `whole-v1` is the default.
+What stands between it and acceptance, as a reading of the tree on 2026-09-29 found it:
+
+- Decision 3: the schedule row does not name which binary and why; the DIMENSION record and the drawing print counts alone.
+- Decision 1: the mutation column's classes not spoken about are the `skipped-*` limitations by name prefix rather than one exhaustive match, and include choices another run could put; a run whose baseline did not build is labelled `nothing-to-ask` or `not-asked` where it is `unmeasured`.
+- Decision 1, several builds and parts: pooled classes keep duplicates, and a merge multiplies the schedule counts and wire's unwatched holes by its number of shards.
+- Decision 3: a dimension's finding is raised once per build rather than once per column; `[repeatable] knobs` naming every knob in another order is refused as naming fewer; the crash and schedule refusals are untested; a missing interpreter is a hole under `whole-v1` where `deep-v1` refuses, which the contract states and this record did not.
+- Decision 3: the drawing omits `speaks_not_about`.
+- Decision 4: `Config::verified` and `Report::checked` still match `Contract::VerifiedV1` rather than ask `proves_models`, and the evidence key spells the contract from its debugging name.
+- The audit re-derives holes for one flat part only: nothing re-derives a merge's dimension findings, a column's state or counts, or the DIMENSION records.
+- No test shows a `whole-v1` run can be `ASSURED`, which decision 5's premise rests on.
 
 ## Context
 
 A run now measures along more than one dimension: what a mutation changes ([ADR 0004](0004-proof-layers-not-budgets.md)), what a seam is asked ([ADR 0021](0021-a-claim-is-a-perturbation-an-observer-and-a-decision.md)), what a knob sets differently ([ADR 0031](0031-a-knob-is-one-control-started-differently.md)), and what a failed call does ([ADR 0032](0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
-Schedules and durability are planned.
+Schedules and durability were planned when this was written; both are measured now ([ADR 0034](0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md), [ADR 0035](0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
 Each has its own closed set of decisions, and the report reads them part by part.
 
 Two things are missing.

@@ -268,7 +268,7 @@ Where nothing rests on a moved target any more, `reach-moved` still names it: no
 
 ## What a run asks of a call that can fail
 
-Faults are opt-in, and a run that is not asked for them says nothing about failed calls ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
+Faults are asked for by `[faults] inject`, by `--faults`, or by `whole-v1`, the default contract, and a run that is not asked for them says nothing about failed calls ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
 A run that is asked pays a second instrumented build and baseline of the tree, one execution for every `?` a test reaches, and one more on each target of a fault every reaching test passed.
 
 Three things are not claimed, and each is stated.
@@ -322,7 +322,7 @@ And a thread given exactly the name of a test that passed is read as that test's
 
 ## What a run asks of a program that keeps state
 
-Crashes are opt-in, and a run not asked for them says nothing about a stop between two writes ([ADR 0035](adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
+Crashes are asked for by `[durability] crash`, by `--crashes`, or by `whole-v1`, the default contract, and a run not asked for them says nothing about a stop between two writes ([ADR 0035](adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
 A crash stops the process just after a call that writes and runs the test that reached it again over what it left, so `restarted` says the next run passed over those files, not that it read them: a test that keeps its state under a name it picks afresh every run reads nothing its predecessor left.
 The stop is a process ending, so what it wrote is in the system's cache and on disk to every next run; a power failure that loses unflushed writes is not modelled.
 A call a target reaches without the run knowing which of its tests reaches it is `undecided`, because stopping every test of the target at once would tear what the others were writing.
