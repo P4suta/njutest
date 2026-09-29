@@ -518,7 +518,7 @@ impl XtCode {
             ),
             Self::SpecimenEvent => (
                 "XT5002",
-                "An event of an audit specimen's recording is not an object, or lacks its envelope.",
+                "An event of an audit specimen's recording is not an object, lacks its envelope, or states one its writer keeps: a sequence number that is not after every one before it, or a clock.",
                 "fix the specimen in the sentinel module the gate names",
             ),
             Self::SpecimenIncomplete => (

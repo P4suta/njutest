@@ -138,7 +138,6 @@ fn crash_reported(decision: &Value, counted: &str, finding: Option<(&str, &str)>
 /// One step of the crash [`CRASHED`], as the runner records it.
 fn crash_step(taken: &Value) -> Value {
     json!({
-        "timestamp": "2026-09-06T00:00:07Z", "elapsed_ms": 7,
         "type": "crash-step",
         "step": { "crash": CRASHED, "taken": taken }
     })
@@ -164,7 +163,6 @@ fn crash_run(test: &str, stage: &str, ended: &str, files: &[&str]) -> Value {
         })
     });
     json!({
-        "timestamp": "2026-09-06T00:00:07Z", "elapsed_ms": 7,
         "type": "crash-exec",
         "crash": {
             "crash": CRASHED, "target": TARGET, "test": test, "stage": stage,
@@ -500,18 +498,17 @@ fn besides_planted(clean: &Perturbation) -> Vec<Perturbation> {
             events: Some(
                 fault_recorded(&json!({ "decision": "unnoticed" }), "survived")
                     .into_iter()
-                    .chain([4, 5].map(|at| {
+                    .chain(std::iter::repeat_n(
                         json!({
-                            "timestamp": "2026-09-06T00:00:04Z", "elapsed_ms": at,
                             "type": "beside-run",
                             "pair": {
                                 "mutant": SURVIVED, "fault": FAULTED, "target": TARGET,
                                 "alone": "killed", "with": "killed"
                             }
-                        })
-                    }))
+                        }),
+                        2,
+                    ))
                     .chain([json!({
-                        "timestamp": "2026-09-06T00:00:06Z", "elapsed_ms": 6,
                         "type": "beside",
                         "beside": {
                             "mutant": SURVIVED, "fault": FAULTED, "target": TARGET,
@@ -653,7 +650,6 @@ fn fault_recorded(decision: &Value, outcome: &str) -> Vec<Value> {
         .into_iter()
         .chain([
             json!({
-                "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
                 "type": "fault-exec",
                 "fault": {
                     "fault": FAULTED, "role": "first", "target": TARGET, "args": [],
@@ -661,7 +657,6 @@ fn fault_recorded(decision: &Value, outcome: &str) -> Vec<Value> {
                 }
             }),
             json!({
-                "timestamp": "2026-09-06T00:00:03Z", "elapsed_ms": 3,
                 "type": "fault",
                 "fault": fault_site(decision)
             }),
@@ -728,12 +723,10 @@ pub fn confirmation(mutant: &str, answer: &str, reproduced: Option<&str>) -> Vec
     };
     vec![
         json!({
-            "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
             "type": "control",
             "control": { "target": TARGET, "test": null, "asked_for": mutant, "answer": answer }
         }),
         json!({
-            "timestamp": "2026-09-06T00:00:03Z", "elapsed_ms": 3,
             "type": "confirm",
             "confirm": {
                 "mutant": mutant, "target": TARGET, "test": null, "expected": "killed",
@@ -758,7 +751,6 @@ fn route_events(mutants: &[(&str, &str)]) -> Vec<Value> {
     let mut events = Vec::new();
     for &(mutant, outcome) in mutants {
         events.push(json!({
-            "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0,
             "type": "route",
             "route": {
                 "mutant": mutant, "granularity": "block", "fallback": null,
@@ -766,7 +758,6 @@ fn route_events(mutants: &[(&str, &str)]) -> Vec<Value> {
             }
         }));
         events.push(json!({
-            "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1,
             "type": "mutant-exec",
             "mutant": {
                 "mutant": mutant, "target": "t1", "args": [], "outcome": outcome,
@@ -791,8 +782,6 @@ pub fn never_noticed() -> Vec<Value> {
     let mut events = routes();
     for mutant in [KILLED, SURVIVED] {
         events.push(json!({
-            "timestamp": "2026-09-06T00:00:02Z",
-            "elapsed_ms": 2,
             "type": "mutant-exec",
             "mutant": {
                 "mutant": mutant, "target": "blunt", "args": [], "outcome": "survived",
@@ -977,6 +966,27 @@ pub enum SpecimenError {
         /// Its position in the recording.
         at: usize,
     },
+    /// One event states a sequence number that is not after every one the recording has used.
+    #[error(
+        "event {at} of the specimen recording says it is number {stated}, and the next the \
+         recording can write is {next}"
+    )]
+    Sequence {
+        /// Its position in the recording.
+        at: usize,
+        /// The number it states.
+        stated: Value,
+        /// The first number the recording has not used.
+        next: u64,
+    },
+    /// One event states a clock, which the writer keeps.
+    #[error("event {at} of the specimen recording states its own {field}, which the writer keeps")]
+    Clock {
+        /// Its position in the recording.
+        at: usize,
+        /// The field it states.
+        field: &'static str,
+    },
     /// The flat report could not be completed into the document a run writes.
     #[error(transparent)]
     Incomplete(#[from] crate::specimen::CompletionError),
@@ -988,7 +998,9 @@ impl crate::error::Coded for SpecimenError {
             Self::Directory { .. } | Self::Unwritable { .. } => {
                 crate::error::XtCode::SpecimenUnwritable
             }
-            Self::NotAnObject { .. } => crate::error::XtCode::SpecimenEvent,
+            Self::NotAnObject { .. } | Self::Sequence { .. } | Self::Clock { .. } => {
+                crate::error::XtCode::SpecimenEvent
+            }
             Self::Incomplete(_) => crate::error::XtCode::SpecimenIncomplete,
         }
     }
@@ -1151,26 +1163,42 @@ fn record_into(
 }
 
 /// `events` as the lines `producer` writes, each payload completed with what its test leaves out.
+///
+/// The writer keeps the envelope as the runner's sink does: it numbers the events in turn, one may say it comes later than the one before it and none earlier, and it writes the clock itself.
 fn stream_of(
     events: &[Value],
     producer: crate::schemas::Producer,
 ) -> Result<String, SpecimenError> {
     let mut stream = String::new();
-    for ((at, event), position) in events.iter().enumerate().zip(1_u64..) {
+    let mut next: u64 = 1;
+    for (at, event) in events.iter().enumerate() {
         let mut payload = event
             .as_object()
             .cloned()
             .ok_or(SpecimenError::NotAnObject { at })?;
-        let seq = payload.remove("seq").unwrap_or_else(|| json!(position));
-        let timestamp = payload
-            .remove("timestamp")
-            .unwrap_or_else(|| json!("2026-09-06T00:00:00Z"));
-        let elapsed_ms = payload.remove("elapsed_ms").unwrap_or_else(|| json!(at));
+        if let Some(field) = ["timestamp", "elapsed_ms"]
+            .into_iter()
+            .find(|field| payload.contains_key(*field))
+        {
+            return Err(SpecimenError::Clock { at, field });
+        }
+        let seq = match payload.remove("seq") {
+            None => next,
+            Some(stated) => match stated.as_u64() {
+                Some(stated) if stated >= next => stated,
+                Some(_) | None => return Err(SpecimenError::Sequence { at, stated, next }),
+            },
+        };
+        next = seq.checked_add(1).ok_or_else(|| SpecimenError::Sequence {
+            at,
+            stated: json!(seq),
+            next,
+        })?;
         crate::specimen::completed(producer, &mut payload);
         let envelope = json!({
             "seq": seq,
-            "timestamp": timestamp,
-            "elapsed_ms": elapsed_ms,
+            "timestamp": "2026-09-06T00:00:00Z",
+            "elapsed_ms": at,
             "payload": Value::Object(payload),
         });
         stream.push_str(&envelope.to_string());
@@ -1507,7 +1535,7 @@ fn lay_engine(into: &Path, engine: Option<&[Value]>) -> Result<(), SpecimenError
 fn discharged_then_killed() -> Vec<Value> {
     vec![
         json!({
-            "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0,
+            "seq": 1,
             "type": "route",
             "route": {
                 "mutant": KILLED, "granularity": "block", "fallback": null,
@@ -1517,7 +1545,7 @@ fn discharged_then_killed() -> Vec<Value> {
             }
         }),
         json!({
-            "seq": 2, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1,
+            "seq": 2,
             "type": "mutant-exec",
             "mutant": {
                 "mutant": KILLED, "target": "t2", "args": [], "outcome": "killed",
@@ -1561,7 +1589,6 @@ fn repaired_where_nothing_moved(clean: Perturbation) -> Perturbation {
 fn unobserved_repair_called_a_survival() -> Perturbation {
     let mut events = routes();
     events.push(json!({
-        "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
         "type": "mutant-exec",
         "mutant": {
             "mutant": SURVIVED, "target": TARGET, "args": [], "outcome": "inconclusive",
@@ -1727,7 +1754,6 @@ fn keep_first(document: &mut Value, pointer: &str) {
 /// A `control` event: what the original code answered to [`TARGET`], asked for `asked_for`.
 fn control_event(asked_for: &str, answer: &Value) -> Value {
     json!({
-        "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
         "type": "control",
         "control": { "target": TARGET, "test": null, "asked_for": asked_for, "answer": answer }
     })
@@ -1739,7 +1765,6 @@ fn confirm_event(
     (expected, answered_for, reproduced): (&str, &str, Option<&str>),
 ) -> Value {
     json!({
-        "timestamp": "2026-09-06T00:00:03Z", "elapsed_ms": 3,
         "type": "confirm",
         "confirm": {
             "mutant": mutant, "target": target, "test": null, "expected": expected,

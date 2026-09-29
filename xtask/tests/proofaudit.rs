@@ -366,7 +366,7 @@ fn a_kill_by_a_target_a_proof_discharged_is_a_violation() {
         &base(),
         &[
             serde_json::json!({
-                "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+                "seq": 1, "type": "route",
                 "route": {
                     "mutant": KILLED, "granularity": "block", "fallback": null,
                     "reaching": ["t1"],
@@ -375,7 +375,7 @@ fn a_kill_by_a_target_a_proof_discharged_is_a_violation() {
                 }
             }),
             serde_json::json!({
-                "seq": 2, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1, "type": "mutant-exec",
+                "seq": 2, "type": "mutant-exec",
                 "mutant": {
                     "mutant": KILLED, "target": "t2", "args": [], "outcome": "killed",
                     "duration_ms": 5
@@ -1014,14 +1014,14 @@ fn a_mutation_the_route_calls_unreached_and_the_recording_runs_is_a_violation() 
         &base(),
         &[
             serde_json::json!({
-                "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+                "seq": 1, "type": "route",
                 "route": {
                     "mutant": KILLED, "granularity": "unreached", "fallback": null,
                     "reaching": [], "discharged": [], "considered": [TARGET], "reused": null
                 }
             }),
             serde_json::json!({
-                "seq": 2, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1, "type": "mutant-exec",
+                "seq": 2, "type": "mutant-exec",
                 "mutant": {
                     "mutant": KILLED, "target": "t1", "args": [], "outcome": "killed",
                     "duration_ms": 5
@@ -1042,7 +1042,7 @@ fn a_mutation_the_route_widened_to_everything_and_never_ran_is_a_violation() {
     let audit = audited_with(
         &base(),
         &[serde_json::json!({
-            "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+            "seq": 1, "type": "route",
             "route": {
                 "mutant": SURVIVED, "granularity": "all", "fallback": "coverage-incomplete",
                 "reaching": ["t1"], "discharged": [], "considered": [], "reused": null
@@ -1062,7 +1062,7 @@ fn a_route_the_run_read_back_from_an_earlier_one_is_not_held_to_running_anything
     let audit = audited_with(
         &base(),
         &[serde_json::json!({
-            "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+            "seq": 1, "type": "route",
             "route": {
                 "mutant": SURVIVED, "granularity": "all", "fallback": "outside-blocks",
                 "reaching": ["t1"], "discharged": [], "considered": [], "reused": "earlier"
@@ -1082,7 +1082,7 @@ fn a_route_that_removed_every_execution_and_named_nobody_cannot_be_audited_at_al
     let audit = audited_with(
         &base(),
         &[serde_json::json!({
-            "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+            "seq": 1, "type": "route",
             "route": {
                 "mutant": SURVIVED, "granularity": "unreached", "fallback": null,
                 "reaching": [], "discharged": [], "considered": [], "reused": null
@@ -1103,7 +1103,7 @@ fn a_route_that_says_a_target_did_not_reach_a_mutation_it_also_kept_it_for_is_a_
     let audit = audited_with(
         &base(),
         &[serde_json::json!({
-            "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+            "seq": 1, "type": "route",
             "route": {
                 "mutant": SURVIVED, "granularity": "block", "fallback": null,
                 "reaching": [TARGET], "discharged": [], "considered": [TARGET], "reused": null
@@ -1122,7 +1122,7 @@ fn a_route_held_to_a_target_the_run_does_not_report_is_held_to_nothing() {
     let audit = audited_with(
         &base(),
         &[serde_json::json!({
-            "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+            "seq": 1, "type": "route",
             "route": {
                 "mutant": SURVIVED, "granularity": "unreached", "fallback": null,
                 "reaching": [], "discharged": [],
@@ -1143,7 +1143,7 @@ fn a_route_that_removed_a_target_with_a_proof_and_says_it_reached_nothing_is_a_v
     let audit = audited_with(
         &base(),
         &[serde_json::json!({
-            "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+            "seq": 1, "type": "route",
             "route": {
                 "mutant": SURVIVED, "granularity": "unreached", "fallback": null,
                 "reaching": [],
@@ -1168,7 +1168,7 @@ fn a_kill_by_a_target_the_route_never_named_is_a_violation() {
         &base(),
         &[
             serde_json::json!({
-                "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+                "seq": 1, "type": "route",
                 "route": {
                     "mutant": KILLED, "granularity": "block", "fallback": null,
                     "reaching": ["somewhere/else"], "discharged": [], "considered": [],
@@ -1176,7 +1176,7 @@ fn a_kill_by_a_target_the_route_never_named_is_a_violation() {
                 }
             }),
             serde_json::json!({
-                "seq": 2, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1, "type": "mutant-exec",
+                "seq": 2, "type": "mutant-exec",
                 "mutant": {
                     "mutant": KILLED, "target": TARGET, "args": [], "outcome": "killed",
                     "duration_ms": 5
@@ -1199,21 +1199,21 @@ fn a_route_that_kept_nothing_and_ran_something_is_one_violation_and_not_two() {
         &base(),
         &[
             serde_json::json!({
-                "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+                "seq": 1, "type": "route",
                 "route": {
                     "mutant": KILLED, "granularity": "unreached", "fallback": null,
                     "reaching": [], "discharged": [], "considered": [TARGET], "reused": null
                 }
             }),
             serde_json::json!({
-                "seq": 2, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1, "type": "mutant-exec",
+                "seq": 2, "type": "mutant-exec",
                 "mutant": {
                     "mutant": KILLED, "target": TARGET, "args": [], "outcome": "killed",
                     "duration_ms": 5
                 }
             }),
             serde_json::json!({
-                "seq": 3, "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2, "type": "mutant-exec",
+                "seq": 3, "type": "mutant-exec",
                 "mutant": {
                     "mutant": SURVIVED, "target": TARGET, "args": [], "outcome": "survived",
                     "duration_ms": 5
@@ -1287,7 +1287,7 @@ fn routed(mutant: &str, granularity: &str, route: &serde_json::Value) -> serde_j
         }
     }
     serde_json::json!({
-        "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0,
+        "seq": 1,
         "type": "route", "route": record
     })
 }
@@ -1300,7 +1300,7 @@ fn executed(mutant: &str, target: &str, outcome: &str) -> serde_json::Value {
 /// One execution event, numbered, so a recording can hold more than one.
 fn at(seq: u64, mutant: &str, target: &str, outcome: &str) -> serde_json::Value {
     serde_json::json!({
-        "seq": seq, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1, "type": "mutant-exec",
+        "seq": seq, "type": "mutant-exec",
         "mutant": { "mutant": mutant, "target": target, "args": [], "outcome": outcome,
                     "duration_ms": 5,
                     "step_boundary": if outcome == "step_limit_reached" {
@@ -1564,7 +1564,7 @@ fn a_route_the_audit_passes_over_does_not_stop_it_looking_at_the_rest() {
         &base(),
         &[
             serde_json::json!({
-                "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+                "seq": 1, "type": "route",
                 "route": {
                     "mutant": "an earlier answer", "granularity": "all",
                     "fallback": "not-measured", "reaching": [TARGET], "discharged": [],
@@ -1572,7 +1572,7 @@ fn a_route_the_audit_passes_over_does_not_stop_it_looking_at_the_rest() {
                 }
             }),
             serde_json::json!({
-                "seq": 2, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1, "type": "route",
+                "seq": 2, "type": "route",
                 "route": {
                     "mutant": SURVIVED, "granularity": "unreached", "fallback": null,
                     "reaching": [], "discharged": [], "considered": [], "reused": null
@@ -1590,9 +1590,51 @@ fn a_route_the_audit_passes_over_does_not_stop_it_looking_at_the_rest() {
 }
 
 #[test]
+fn the_specimen_writer_keeps_the_envelope_and_numbers_every_event_forward() {
+    let note = |envelope: serde_json::Value| {
+        let mut event = serde_json::json!({
+            "type": "note",
+            "note": { "kind": "equivalence", "detail": "0000000000000000000a same" }
+        });
+        merge(&mut event, envelope);
+        let mut events = routes();
+        events.push(event);
+        sentinel::recorded(&events)
+    };
+    assert!(
+        note(serde_json::json!({})).is_ok(),
+        "an event that states no envelope is written in the writer's"
+    );
+    assert!(
+        note(serde_json::json!({ "seq": 100 })).is_ok(),
+        "an event may say it comes later than the one before it"
+    );
+    for (said, envelope) in [
+        (
+            "a sequence number the recording has used",
+            serde_json::json!({ "seq": 1 }),
+        ),
+        (
+            "a clock of its own",
+            serde_json::json!({ "timestamp": "2026-09-06T00:00:00Z" }),
+        ),
+        (
+            "an elapsed time of its own",
+            serde_json::json!({ "elapsed_ms": 0 }),
+        ),
+    ] {
+        assert!(
+            note(envelope).is_err(),
+            "an event stating {said} is refused rather than laid beside another that says the \
+             same, since the writer keeps the envelope"
+        );
+    }
+}
+
+#[test]
 fn one_fact_said_twice_is_one_line() {
     let twice = serde_json::json!({
-        "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+        "seq": 1, "type": "route",
         "route": {
             "mutant": SURVIVED, "granularity": "unreached", "fallback": null,
             "reaching": [], "discharged": [], "considered": [], "reused": null
@@ -2109,7 +2151,7 @@ fn a_route_that_says_an_answer_was_both_read_back_and_refused_is_a_violation() {
         audited_with(
             &base(),
             &[serde_json::json!({
-                "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+                "seq": 1, "type": "route",
                 "route": {
                     "mutant": SURVIVED, "granularity": "block", "fallback": null,
                     "reaching": [TARGET], "discharged": [], "considered": [],
@@ -3437,7 +3479,6 @@ fn repair_audit(repaired: &[&str], engine: Vec<serde_json::Value>) -> Vec<String
     let mut events = routes();
     for mutant in repaired {
         events.push(serde_json::json!({
-            "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
             "type": "mutant-exec",
             "mutant": {
                 "mutant": mutant, "target": TARGET, "args": [], "outcome": "survived",
@@ -3538,7 +3579,6 @@ fn on_target(mut touch: serde_json::Value, target: &str) -> serde_json::Value {
 fn two_repairs(second_was: &str) -> Vec<String> {
     let other = "pkg/test/other";
     let mut events = vec![serde_json::json!({
-        "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0,
         "type": "route",
         "route": {
             "mutant": SURVIVED, "granularity": "unreached", "fallback": null,
@@ -3547,7 +3587,6 @@ fn two_repairs(second_was: &str) -> Vec<String> {
     })];
     for (target, was) in [(TARGET, "unreached"), (other, second_was)] {
         events.push(serde_json::json!({
-            "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1,
             "type": "mutant-exec",
             "mutant": {
                 "mutant": SURVIVED, "target": target, "args": [], "outcome": "survived",

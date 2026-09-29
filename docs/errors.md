@@ -236,7 +236,7 @@ The first digit names an area: 0 the gates, their ledgers, and what runs them (t
 | `XT4102` | A retained model artifact is outside the run directory or cannot be read. | audit the run directory the artifacts were retained in |
 | `XT4103` | A retained Kani export is not the pinned schema, or does not establish the answer the report gives. | read the model record the message names |
 | `XT5001` | An audit specimen could not be laid out in a temporary directory. | check the temporary directory is writable |
-| `XT5002` | An event of an audit specimen's recording is not an object, or lacks its envelope. | fix the specimen in the sentinel module the gate names |
+| `XT5002` | An event of an audit specimen's recording is not an object, lacks its envelope, or states one its writer keeps: a sequence number that is not after every one before it, or a clock. | fix the specimen in the sentinel module the gate names |
 | `XT5003` | A flat audit specimen could not be completed into the document a run writes. | fix the specimen in the sentinel module the gate names |
 | `XT5101` | A planted text of the lint sentinels is not the header-and-files shape they are read in. | fix the planted text under `xtask/sentinels/` the message names |
 | `XT6001` | An identity field exceeds the length prefix of the recipe it is minted by. | report it; an identity this recipe cannot spell is not one to truncate |
