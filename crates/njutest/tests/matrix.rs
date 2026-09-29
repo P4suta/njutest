@@ -39,7 +39,7 @@ const fn counts(column: &Column) -> Option<(usize, usize, usize)> {
             answered,
             holes,
             ..
-        } => Some((*catalogued, *answered, *holes)),
+        } => Some((*catalogued, *answered, holes.len())),
         Column::Unmeasured { .. } | Column::NotAsked | Column::NothingToAsk { .. } => None,
     }
 }
@@ -48,7 +48,7 @@ const fn counts(column: &Column) -> Option<(usize, usize, usize)> {
 fn each_fault_decision_is_answered_a_hole_or_a_class_the_column_does_not_speak_about() {
     let faults: Vec<FaultRecord> = FaultDecision::every().into_iter().map(fault).collect();
     let evidence = Evidence {
-        mutations: (4, 1),
+        mutations: (4, vec!["cccccccccc: waited".to_owned()]),
         knobs: &[],
         faults: &faults,
         crashes: &[],
@@ -87,7 +87,7 @@ fn every_seam_that_could_not_be_watched_is_a_hole_of_its_own() {
         ),
     ];
     let evidence = Evidence {
-        mutations: (0, 0),
+        mutations: (0, Vec::new()),
         knobs: &[],
         faults: &[],
         crashes: &[],
@@ -102,21 +102,24 @@ fn every_seam_that_could_not_be_watched_is_a_hole_of_its_own() {
 
 #[test]
 fn a_hole_in_any_build_is_a_hole_of_every_build_together() {
-    let measured = |catalogued, answered, holes| Column::Measured {
+    let measured = |catalogued, answered, holes: &[&str]| Column::Measured {
         catalogued,
         answered,
-        holes,
+        holes: holes.iter().map(|hole| (*hole).to_owned()).collect(),
         speaks_not_about: Vec::new(),
     };
     assert_eq!(
-        counts(&pooled(vec![measured(3, 3, 0), measured(2, 1, 1)])),
+        counts(&pooled(vec![
+            measured(3, 3, &[]),
+            measured(2, 1, &["pkg/test/it: sampled"])
+        ])),
         Some((5, 4, 1)),
         "where every build measured it, the counts add"
     );
     assert!(
         matches!(
             pooled(vec![
-                measured(3, 3, 0),
+                measured(3, 3, &[]),
                 Column::Unmeasured {
                     why: "no baseline".to_owned()
                 }
@@ -126,7 +129,7 @@ fn a_hole_in_any_build_is_a_hole_of_every_build_together() {
         "one build's unmeasured column is not hidden under another's counts"
     );
     assert_eq!(
-        pooled(vec![measured(3, 3, 0), Column::NotAsked]),
+        pooled(vec![measured(3, 3, &[]), Column::NotAsked]),
         Column::NotAsked
     );
 }
@@ -186,7 +189,7 @@ fn a_whole_contract_accepts_every_knob_named_in_any_order() {
 
 const fn nothing() -> Evidence<'static> {
     Evidence {
-        mutations: (1, 0),
+        mutations: (1, Vec::new()),
         knobs: &[],
         faults: &[],
         crashes: &[],
@@ -263,7 +266,7 @@ fn a_column_that_put_nothing_does_not_read_as_measured() {
         matches!(
             column(
                 &Evidence {
-                    mutations: (0, 0),
+                    mutations: (0, Vec::new()),
                     ..nothing()
                 },
                 Dimension::Mutation
@@ -271,5 +274,94 @@ fn a_column_that_put_nothing_does_not_read_as_measured() {
             Column::NothingToAsk { .. }
         ),
         "a tree with nothing to mutate has nothing to ask"
+    );
+}
+
+fn drawn(matrix: Vec<njutest::report::matrix::Row>) -> String {
+    use njutest::presentation::{Headline, Terminal, Told, human};
+    human::draw(
+        &Told {
+            headline: Headline {
+                verdict: njutest::report::Verdict::Insufficient,
+                cataloged: 1,
+                killed: 1,
+                survived: 0,
+                unreached: 0,
+                step_limit_reached: 0,
+                waited: 0,
+                duration_ms: 1,
+                kept: "runs/20260101T000000Z-aaaaaa".to_owned(),
+            },
+            places: Vec::new(),
+            diagnostics: Vec::new(),
+            limitations: Vec::new(),
+            matrix,
+        },
+        Terminal::plain(200),
+    )
+}
+
+#[test]
+fn the_schedule_row_names_which_binary_is_open_and_why() {
+    use njutest::report::concurrency::{ConcurrencyRecord, Exploration};
+    let records = [
+        ConcurrencyRecord {
+            target: "pkg/test/sampled".to_owned(),
+            standing: njutest::concurrency::proof::Standing::Concurrent {
+                because: vec![njutest::concurrency::proof::Because::LooseReach],
+            },
+            explored: Exploration::Sampled {
+                asked: 2,
+                delayed: vec![0, 1],
+            },
+        },
+        ConcurrencyRecord {
+            target: "pkg/test/alone".to_owned(),
+            standing: njutest::concurrency::proof::Standing::SingleThreaded,
+            explored: Exploration::Unexplored {
+                why: njutest::report::concurrency::Unexplored::NotNeeded,
+            },
+        },
+    ];
+    let evidence = Evidence {
+        concurrency: &records,
+        ..nothing()
+    };
+    let scheduled = column(&evidence, Dimension::Schedule);
+    let said = format!("{scheduled:?}");
+    assert!(
+        said.contains("pkg/test/sampled") && !said.contains("pkg/test/alone"),
+        "the row names the binary it leaves open, and only that one: {said}"
+    );
+    let drawing = drawn(rows(&evidence));
+    assert!(
+        drawing.contains("pkg/test/sampled") && drawing.contains("sample"),
+        "the drawing says which binary is open and why:\n{drawing}"
+    );
+}
+
+#[test]
+fn the_drawing_says_what_a_dimension_does_not_speak_about() {
+    use njutest::report::crashes::{CrashDecision, CrashRecord};
+    let crashes = [CrashRecord {
+        catalog_index: njutest::report::CatalogIndex::new(0),
+        id: "d".repeat(64),
+        display_id: "d".repeat(20),
+        path: "src/lib.rs".to_owned(),
+        item: "save".to_owned(),
+        position: None,
+        decision: CrashDecision::Restarted {
+            on: "pkg/test/it::saves".to_owned(),
+            left: vec!["state.json".to_owned()],
+        },
+    }];
+    let evidence = Evidence {
+        crashes: &crashes,
+        ..nothing()
+    };
+    let drawing = drawn(rows(&evidence));
+    assert!(
+        drawing.contains("writes the system had not yet flushed to disk"),
+        "a class a column cannot put is stated where the reader reads the column:\n{drawing}"
     );
 }

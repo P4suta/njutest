@@ -324,7 +324,10 @@ fn dimension(row: &super::matrix::Row, out: &mut String) {
         } => {
             append(out, &format!("catalogued={catalogued}"));
             append(out, &format!("answered={answered}"));
-            append(out, &format!("holes={holes}"));
+            append(out, &format!("holes={}", holes.len()));
+            if !holes.is_empty() {
+                append(out, &format!("open={}", holes.join("; ")));
+            }
             append_optional(
                 out,
                 (!speaks_not_about.is_empty())

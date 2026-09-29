@@ -7059,7 +7059,7 @@ fn pooled_matrix(builds: &BuildLedger) -> Vec<matrix::Row> {
 
 /// Every record of some builds a matrix is read off, gathered from every part.
 struct MatrixEvidence {
-    mutations: (usize, usize),
+    mutations: (usize, Vec<String>),
     targets: Vec<TargetRecord>,
     knobs: Vec<knobs::KnobRecord>,
     faults: Vec<faults::FaultRecord>,
@@ -7074,16 +7074,8 @@ impl MatrixEvidence {
     /// What every part of `builds` holds.
     fn of(builds: &[&BuildEvidence]) -> Self {
         let parts = || builds.iter().flat_map(|build| build.parts.iter());
-        let holes = parts()
-            .flat_map(|part| part.mutants.iter())
-            .filter(|mutant| mutant.verdict().unsettled())
-            .count();
-        let answered = parts()
-            .flat_map(|part| part.mutants.iter())
-            .filter(|mutant| !mutant.verdict().unsettled())
-            .count();
         Self {
-            mutations: (answered, holes),
+            mutations: matrix::mutations(parts().flat_map(|part| part.mutants.iter())),
             targets: parts()
                 .flat_map(|part| part.targets.iter().cloned())
                 .collect(),
@@ -7113,7 +7105,7 @@ impl MatrixEvidence {
     /// The same records, as the matrix reads them.
     fn borrowed(&self) -> matrix::Evidence<'_> {
         matrix::Evidence {
-            mutations: self.mutations,
+            mutations: self.mutations.clone(),
             targets: &self.targets,
             knobs: &self.knobs,
             faults: &self.faults,

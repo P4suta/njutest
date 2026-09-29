@@ -48,8 +48,8 @@ pub enum Column {
         catalogued: usize,
         /// What it decided.
         answered: usize,
-        /// What it put and could not decide.
-        holes: usize,
+        /// What it put and could not decide, each named with why.
+        holes: Vec<String>,
         /// Each class the dimension cannot put at all, named; never a hole.
         speaks_not_about: Vec<String>,
     },
@@ -84,10 +84,13 @@ impl Column {
     pub fn hole(&self, dimension: Dimension) -> Option<String> {
         let name = dimension.name();
         match self {
-            Self::Measured { holes: 0, .. } | Self::NothingToAsk { .. } => None,
+            Self::Measured { holes, .. } if holes.is_empty() => None,
+            Self::NothingToAsk { .. } => None,
             Self::Measured { holes, .. } => Some(format!(
-                "{holes} thing(s) the {name} dimension put were not decided, so it is not \
-                 established along it"
+                "{} thing(s) the {name} dimension put were not decided, so it is not established \
+                 along it: {}",
+                holes.len(),
+                holes.join("; ")
             )),
             Self::Unmeasured { why } => Some(format!(
                 "the {name} dimension was asked and could not be measured: {why}"
@@ -110,10 +113,10 @@ pub struct Row {
 }
 
 /// The records one run, or every part of one build, holds about what it measured.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Evidence<'a> {
-    /// How many mutations the run decided, and how many it put and could not decide.
-    pub mutations: (usize, usize),
+    /// How many mutations the run decided, and each it put and could not decide, named with why.
+    pub mutations: (usize, Vec<String>),
     /// Every target the run selected, each whose baseline passed owed a record by a dimension that measures binaries.
     pub targets: &'a [super::TargetRecord],
     /// What each knob established about each target.
@@ -136,18 +139,8 @@ impl<'a> Evidence<'a> {
     /// What one run's own report holds.
     #[must_use]
     pub fn of(report: &'a super::BuildReport) -> Self {
-        let holes = report
-            .mutants
-            .iter()
-            .filter(|mutant| mutant.verdict().unsettled())
-            .count();
-        let answered = report
-            .mutants
-            .iter()
-            .filter(|mutant| !mutant.verdict().unsettled())
-            .count();
         Self {
-            mutations: (answered, holes),
+            mutations: mutations(&report.mutants),
             targets: &report.targets,
             knobs: &report.knobs,
             faults: &report.faults,
@@ -158,6 +151,30 @@ impl<'a> Evidence<'a> {
             findings: &report.findings,
         }
     }
+}
+
+/// How many of `mutants` the run decided, and each it put and could not decide, named with why.
+#[must_use]
+pub fn mutations<'m>(
+    mutants: impl IntoIterator<Item = &'m super::MutantRecord>,
+) -> (usize, Vec<String>) {
+    let mut answered = Vec::new();
+    let mut holes = Vec::new();
+    for mutant in mutants {
+        let verdict = mutant.verdict();
+        if !verdict.unsettled() {
+            answered.push(());
+        } else if verdict.lead() {
+            holes.push(format!(
+                "{}: a native lead of {} no sealed execution established",
+                mutant.display_id,
+                verdict.outcome.name()
+            ));
+        } else {
+            holes.push(format!("{}: {}", mutant.display_id, verdict.outcome.name()));
+        }
+    }
+    (answered.len(), holes)
 }
 
 /// Whether a mutation's outcome is one the run put and could not decide, whatever it rests on; [`super::RowVerdict::unsettled`] is what a reader asks, since a lead is unsettled too.
@@ -210,11 +227,15 @@ pub fn holes(rows: &[Row]) -> Vec<Finding> {
 /// What the run established along `dimension`.
 fn column(dimension: Dimension, evidence: &Evidence<'_>) -> Column {
     match dimension {
-        Dimension::Mutation => match evidence.mutations {
-            (0, 0) => Column::NothingToAsk {
+        Dimension::Mutation => match &evidence.mutations {
+            (0, holes) if holes.is_empty() => Column::NothingToAsk {
                 why: "no measured file has anything to mutate".to_owned(),
             },
-            (answered, holes) => measured(answered, holes, named(evidence.limitations, "skipped-")),
+            (answered, holes) => measured(
+                *answered,
+                holes.clone(),
+                named(evidence.limitations, "skipped-"),
+            ),
         },
         Dimension::Repeatable => repeatable(evidence.knobs),
         Dimension::Fault => fault(evidence),
@@ -225,8 +246,8 @@ fn column(dimension: Dimension, evidence: &Evidence<'_>) -> Column {
 }
 
 /// A measured column, or an unmeasured one where its counts do not add up to a count.
-fn measured(answered: usize, holes: usize, speaks_not_about: Vec<String>) -> Column {
-    answered.checked_add(holes).map_or_else(
+fn measured(answered: usize, holes: Vec<String>, speaks_not_about: Vec<String>) -> Column {
+    answered.checked_add(holes.len()).map_or_else(
         || Column::Unmeasured {
             why: "more was put than a count can hold".to_owned(),
         },
@@ -243,8 +264,8 @@ fn measured(answered: usize, holes: usize, speaks_not_about: Vec<String>) -> Col
 enum Counted {
     /// Decided.
     Answered,
-    /// Put and not decided.
-    Hole,
+    /// Put and not decided, named with why.
+    Hole(String),
     /// Of a class the dimension does not speak about, named.
     SpeaksNotAbout(String),
 }
@@ -256,16 +277,16 @@ fn tallied(counted: impl Iterator<Item = Counted>, mut speaks_not_about: Vec<Str
         .iter()
         .filter(|one| matches!(one, Counted::Answered))
         .count();
-    let holes = counted
-        .iter()
-        .filter(|one| matches!(one, Counted::Hole))
-        .count();
     let put = !counted.is_empty();
-    speaks_not_about.extend(counted.into_iter().filter_map(|one| match one {
-        Counted::SpeaksNotAbout(class) => Some(class),
-        Counted::Answered | Counted::Hole => None,
-    }));
-    if put && answered == 0 && holes == 0 {
+    let mut holes = Vec::new();
+    for one in counted {
+        match one {
+            Counted::Answered => {}
+            Counted::Hole(named) => holes.push(named),
+            Counted::SpeaksNotAbout(class) => speaks_not_about.push(class),
+        }
+    }
+    if put && answered == 0 && holes.is_empty() {
         return Column::Unmeasured {
             why: format!(
                 "every record is of a class the column does not speak about: {}",
@@ -287,8 +308,17 @@ fn repeatable(knobs: &[KnobRecord]) -> Column {
             | Standing::Passed
             | Standing::Broke { .. }
             | Standing::Moved { .. } => Counted::Answered,
-            Standing::Uncompared { .. } | Standing::Unsettled { .. } => Counted::Hole,
-            Standing::NotPut { why } if why.another_machine_could() => Counted::Hole,
+            Standing::Uncompared { .. } | Standing::Unsettled { .. } => Counted::Hole(format!(
+                "{} on {}: no control settled what it sets",
+                record.knob.name(),
+                record.target
+            )),
+            Standing::NotPut { why } if why.another_machine_could() => Counted::Hole(format!(
+                "{} on {}: {}, which another machine could put",
+                record.knob.name(),
+                record.target,
+                why.said()
+            )),
             Standing::NotPut { why } => Counted::SpeaksNotAbout(format!(
                 "{} on {} ({})",
                 record.knob.name(),
@@ -329,7 +359,14 @@ fn fault(evidence: &Evidence<'_>) -> Column {
             | FaultDecision::Unnoticed
             | FaultDecision::Absorbed
             | FaultDecision::Unreached => Counted::Answered,
-            FaultDecision::Waited { .. } | FaultDecision::Undecided { .. } => Counted::Hole,
+            FaultDecision::Waited { .. } => Counted::Hole(format!(
+                "the fault at {}: a bound expired before it was decided",
+                record.place()
+            )),
+            FaultDecision::Undecided { .. } => Counted::Hole(format!(
+                "the fault at {}: a run could not be decided",
+                record.place()
+            )),
             FaultDecision::NotPut { .. } => Counted::SpeaksNotAbout(format!(
                 "an error type the engine does not make, at {}",
                 record.place()
@@ -349,7 +386,12 @@ fn schedule(
         .iter()
         .filter(|target| target.status == super::TargetStatus::Passed)
         .filter(|target| !records.iter().any(|record| record.target == target.name))
-        .map(|_target| Counted::Hole)
+        .map(|target| {
+            Counted::Hole(format!(
+                "{}: it passed and no record says whether it runs one thread",
+                target.name
+            ))
+        })
         .collect();
     if records.is_empty() && unrecorded.is_empty() {
         return Column::NothingToAsk {
@@ -364,11 +406,33 @@ fn schedule(
                     why: Unexplored::NotNeeded,
                 }
                 | Exploration::Broke { .. } => Counted::Answered,
-                Exploration::Sampled { .. }
-                | Exploration::Undecided { .. }
-                | Exploration::Unexplored {
-                    why: Unexplored::NotAsked | Unexplored::NotPassing | Unexplored::NoSite,
-                } => Counted::Hole,
+                Exploration::Sampled { .. } => Counted::Hole(format!(
+                    "{}: every delayed schedule passed, which is a sample of its schedules and \
+                     never all of them",
+                    record.target
+                )),
+                Exploration::Undecided { .. } => Counted::Hole(format!(
+                    "{}: no delay broke it, and the controls of a delayed guard settled nothing",
+                    record.target
+                )),
+                Exploration::Unexplored {
+                    why: Unexplored::NotAsked,
+                } => Counted::Hole(format!(
+                    "{}: it is not proven to run one thread and no schedule of it was asked for",
+                    record.target
+                )),
+                Exploration::Unexplored {
+                    why: Unexplored::NotPassing,
+                } => Counted::Hole(format!(
+                    "{}: its baseline did not pass, so no schedule of it could be held",
+                    record.target
+                )),
+                Exploration::Unexplored {
+                    why: Unexplored::NoSite,
+                } => Counted::Hole(format!(
+                    "{}: it is not proven to run one thread and reached no guard to delay",
+                    record.target
+                )),
             })
             .chain(unrecorded),
         Vec::new(),
@@ -407,7 +471,13 @@ fn durable(evidence: &Evidence<'_>) -> Column {
                 CrashDecision::Restarted { .. }
                 | CrashDecision::Corrupt { .. }
                 | CrashDecision::Unreached => Counted::Answered,
-                CrashDecision::Unshared { .. } | CrashDecision::Undecided { .. } => Counted::Hole,
+                CrashDecision::Unshared { on } => Counted::Hole(format!(
+                    "the crash at {} on {on}: the stopped process left nothing in its scratch",
+                    record.place()
+                )),
+                CrashDecision::Undecided { on, why } => {
+                    Counted::Hole(format!("the crash at {} on {on}: {why}", record.place()))
+                }
                 CrashDecision::NotPut { .. } => Counted::SpeaksNotAbout(format!(
                     "a call the compiler would not stop after, at {}",
                     record.place()
@@ -426,7 +496,7 @@ fn wire(evidence: &Evidence<'_>) -> Column {
         .limitations
         .iter()
         .filter(|limitation| limitation.name == crate::limitation::SEAM_NOT_WATCHED)
-        .map(|_unwatched| Counted::Hole);
+        .map(|unwatched| Counted::Hole(unwatched.detail.clone()));
     if evidence.seams.is_empty() && unwatched.clone().next().is_none() {
         return Column::NothingToAsk {
             why: "no seam was configured or asked a question".to_owned(),
@@ -440,7 +510,10 @@ fn wire(evidence: &Evidence<'_>) -> Column {
                 SeamDecision::Tests { .. }
                 | SeamDecision::Proved { .. }
                 | SeamDecision::Unnoticed => Counted::Answered,
-                SeamDecision::Unreached => Counted::Hole,
+                SeamDecision::Unreached => Counted::Hole(format!(
+                    "the question {} of {} exchange {}: no test reached it",
+                    seam.id, seam.capability, seam.seq
+                )),
             })
             .chain(unwatched),
         vec![
@@ -461,7 +534,7 @@ pub fn pooled(columns: Vec<Column>) -> Column {
                 Some(Column::Measured {
                     catalogued,
                     answered,
-                    holes,
+                    mut holes,
                     mut speaks_not_about,
                 }),
                 Column::Measured {
@@ -471,20 +544,21 @@ pub fn pooled(columns: Vec<Column>) -> Column {
                     speaks_not_about: more_classes,
                 },
             ) => {
+                holes.extend(more_holes);
                 speaks_not_about.extend(more_classes);
+                speaks_not_about.sort();
                 speaks_not_about.dedup();
                 match (
                     catalogued.checked_add(more),
                     answered.checked_add(more_answered),
-                    holes.checked_add(more_holes),
                 ) {
-                    (Some(catalogued), Some(answered), Some(holes)) => Column::Measured {
+                    (Some(catalogued), Some(answered)) => Column::Measured {
                         catalogued,
                         answered,
                         holes,
                         speaks_not_about,
                     },
-                    _ => Column::Unmeasured {
+                    (None, _) | (_, None) => Column::Unmeasured {
                         why: "more was put than a count can hold".to_owned(),
                     },
                 }
