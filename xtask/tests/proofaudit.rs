@@ -912,6 +912,85 @@ fn a_disposition_read_back_that_also_ran_is_a_violation() {
     );
 }
 
+/// What `layer` said of `perturbation`, laid out on disk and read as the gate reads a run.
+fn said_by(layer: Layer, perturbation: &sentinel::Perturbation) -> Vec<(Standing, String)> {
+    let laid = perturbation.lay().expect("the specimen is laid out");
+    gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        .expect("a recording this audit can read")
+        .remarks
+        .into_iter()
+        .filter(|remark| remark.layer == layer)
+        .map(|remark| (remark.standing, remark.subject))
+        .collect()
+}
+
+#[test]
+fn a_sealed_detection_by_a_target_a_proof_discharged_is_a_violation() {
+    let said = said_by(Layer::Proofs, &sentinel::discharged_then_detected_sealed());
+
+    assert_eq!(
+        said,
+        [(Standing::Violated, KILLED.to_owned())],
+        "a sealed detection is the kill a run proves (ADR 0046), and a proof that removed its \
+         target dropped it, whatever the native executions say"
+    );
+}
+
+#[test]
+fn a_recording_of_no_routes_leaves_the_proofs_unaudited_whatever_ran_sealed() {
+    let unrouted = sentinel::Perturbation {
+        events: Some(Vec::new()),
+        ..sentinel::clean()
+    };
+
+    let said = said_by(Layer::Proofs, &unrouted);
+
+    assert_eq!(
+        said,
+        [(Standing::Unaudited, "route".to_owned())],
+        "a sealed execution is no route, and a layer with no route to hold to a kill has \
+         re-decided nothing"
+    );
+}
+
+#[test]
+fn a_route_widened_to_everything_whose_only_execution_is_sealed_ran_something() {
+    let said = said_by(Layer::Proofs, &sentinel::widened_and_run_sealed());
+
+    assert_eq!(
+        said,
+        [],
+        "a premise that fails has to end in more work, and a sealed execution is work"
+    );
+}
+
+#[test]
+fn a_sealed_verdict_read_back_that_no_execution_made_again_is_a_violation() {
+    let said = said_by(Layer::Reuse, &sentinel::believed_without_running_again());
+
+    assert!(
+        said.contains(&(Standing::Violated, KILLED.to_owned())),
+        "a kept sealed verdict is believed only once its executions come out the same on this \
+         run's bench (ADR 0046, decision 7), and nothing ran it again: {said:?}"
+    );
+}
+
+#[test]
+fn a_sealed_verdict_read_back_whose_executions_came_out_the_same_again_is_believed() {
+    let reproduced = sentinel::Perturbation {
+        engine: sentinel::clean().engine,
+        ..sentinel::believed_without_running_again()
+    };
+
+    let said = said_by(Layer::Reuse, &reproduced);
+
+    assert!(
+        !said.contains(&(Standing::Violated, KILLED.to_owned())),
+        "the engine made the kept execution again and it came to what the verdict rests on: \
+         {said:?}"
+    );
+}
+
 #[test]
 fn a_run_directory_with_no_report_in_it_cannot_be_audited() {
     let directory = tempfile::tempdir().expect("a temporary directory");

@@ -7,8 +7,11 @@
 
 mod knobs;
 pub mod merge;
+mod ran;
 pub mod sentinel;
 pub mod soundness;
+
+use ran::{Executions, Kept, Ran};
 
 use crate::error::Coded as _;
 pub use crate::layers::Coverage;
@@ -313,6 +316,42 @@ impl Layer {
             Self::Evidence => "evidence",
         }
     }
+
+    /// What this layer reads of the executions a row can rest on, which says whether a defect only a sealed execution shows is owed to it.
+    #[must_use]
+    pub const fn reads(self) -> Reads {
+        match self {
+            Self::Executions | Self::Proofs | Self::Hollow | Self::Reuse => Reads::Both,
+            Self::Repair => Reads::Native,
+            Self::Accounting
+            | Self::Killers
+            | Self::Findings
+            | Self::Acceptances
+            | Self::Wire
+            | Self::Model
+            | Self::Merge
+            | Self::Drift
+            | Self::Faults
+            | Self::Knobs
+            | Self::Crashes
+            | Self::Dimensions
+            | Self::Concurrency
+            | Self::Confirmations
+            | Self::Soundness
+            | Self::Evidence => Reads::Nothing,
+        }
+    }
+}
+
+/// What a layer reads of the executions a row can rest on, each handed to it as a [`Ran`] it has to place (ADR 0046).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reads {
+    /// No execution of a mutation.
+    Nothing,
+    /// Native executions alone, because what it holds runs only natively: a disposition run again against a moved target runs with sealing off.
+    Native,
+    /// Native and sealed executions, and a defect only a sealed execution shows is planted for it.
+    Both,
 }
 
 /// What a layer hands back to show it said how far it got, which only [`Notes::looked`] and [`Notes::absent`] make.
@@ -649,6 +688,7 @@ pub fn audit_with(
         recorded_executions,
     } = runner_evidence(runner.as_ref())?;
     let engines = engine_evidence(checkers, recorded.engines)?;
+    let executions = Executions::read(routing.as_ref(), &engines);
     let rerouted = routing
         .as_ref()
         .zip(repairs.as_deref())
@@ -660,6 +700,7 @@ pub fn audit_with(
         remarks: Vec::new(),
         coverage: BTreeMap::new(),
     };
+    let held = (routing.as_ref(), &executions, engines.as_slice());
     for layer in Layer::ALL {
         let Decided(()) = match layer {
             Layer::Accounting => accounting(&recording, &mut audit),
@@ -668,18 +709,18 @@ pub fn audit_with(
             Layer::Acceptances => acceptances(&recording, &mut audit),
             Layer::Reuse => reuse(
                 &recording,
-                (routing.as_ref(), recorded.beside, &engines),
+                (routing.as_ref(), recorded.beside, &engines, &executions),
                 &mut audit,
             ),
-            Layer::Proofs => proofs(&recording, rerouted, &mut audit),
-            Layer::Executions => executions(&recording, (routing.as_ref(), &engines), &mut audit),
-            Layer::Hollow => hollow(&recording, &engines, &mut audit),
+            Layer::Proofs => proofs(&recording, rerouted, &executions, &mut audit),
+            Layer::Executions => executions_held(&recording, held, &mut audit),
+            Layer::Hollow => hollow(&recording, &executions, &mut audit),
             Layer::Wire => wire(&recording, watched.as_ref(), &mut audit),
             Layer::Model => models(&recording, run, &mut audit),
             Layer::Merge => Notes::on(&mut audit, Layer::Merge)
                 .absent("this report is one run's, and a merge is audited against its shards"),
             Layer::Drift => drift(&recording, (&engines, rerouted), &mut audit),
-            Layer::Repair => repaired(&recording, (&engines, rerouted), &mut audit),
+            Layer::Repair => repaired(&recording, (&engines, rerouted), &executions, &mut audit),
             Layer::Faults => faults(&recording, faulted.as_ref(), &mut audit),
             Layer::Dimensions => dimensions(&recording, run, &mut audit),
             Layer::Crashes => crashes(&recording, crashed.as_ref(), &mut audit),
@@ -1523,6 +1564,7 @@ fn held_to_repairs(
 fn repaired(
     recording: &Recording<'_>,
     (engines, rerouted): (&[Engine], Option<Rerouted<'_>>),
+    executions: &Executions<'_>,
     audit: &mut Audit,
 ) -> Decided {
     let mut notes = Notes::on(audit, Layer::Repair);
@@ -1565,7 +1607,7 @@ fn repaired(
     if repairs.is_empty() && owed == 0 {
         return notes.absent("the run ran no disposition again against a target whose reach moved");
     }
-    let paired = paired(recording, repairs, (routing, touched), &mut notes);
+    let paired = paired(recording, repairs, (executions, touched), &mut notes);
     for repair in repairs {
         one_repair(recording, (repair, &moved, routing), &paired, &mut notes);
     }
@@ -1665,7 +1707,7 @@ fn owed(
 fn paired<'a>(
     recording: &Recording<'_>,
     repairs: &[crate::repair::Repair],
-    (routing, touched): (&'a crate::route::Routing, &'a crate::drift::Touched),
+    (executions, touched): (&Executions<'a>, &'a crate::drift::Touched),
     notes: &mut Notes<'_>,
 ) -> Vec<(&'a crate::route::Exec, Option<&'a crate::drift::Touch>)> {
     let full = |display: &str| {
@@ -1700,10 +1742,14 @@ fn paired<'a>(
             );
         }
     }
+    let native: Vec<&crate::route::Exec> = executions
+        .each()
+        .filter_map(|(_, ran)| run_again_natively(ran))
+        .collect();
     let mut pairs = Vec::new();
     for repair in repairs {
         let id = full(&repair.mutant);
-        let Some(exec) = routing.execs.iter().rev().find(|exec| {
+        let Some(exec) = native.iter().rev().copied().find(|exec| {
             exec.target == repair.target
                 && (exec.mutant == repair.mutant || id.as_ref() == Some(&exec.mutant))
         }) else {
@@ -1719,6 +1765,14 @@ fn paired<'a>(
         pairs.push((exec, naming.last().copied()));
     }
     pairs
+}
+
+/// The execution `ran` is where a repair could be it: a repair runs with sealing off (ADR 0036), so a sealed execution is the mutation phase's and never a repair's.
+const fn run_again_natively(ran: Ran<'_>) -> Option<&crate::route::Exec> {
+    match ran {
+        Ran::Native(exec) => Some(exec),
+        Ran::Sealed(_) => None,
+    }
 }
 
 /// Whether a repair's disposition rested on its target: the target moved, the route did not put it, and what it was is what its route made it before any repair, which every run of it again starts from.
@@ -2972,7 +3026,7 @@ fn model_columns(recording: &Recording<'_>, notes: &mut Notes<'_>) {
 /// A part of a catalog is not held to this at all.
 /// Whether a target notices anything is a statement about the whole catalog, and a part has seen a slice: a target silent in this part may have noticed something in another,
 /// and demanding a finding here would demand one the whole would contradict.
-fn hollow(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit) -> Decided {
+fn hollow(recording: &Recording<'_>, executions: &Executions<'_>, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Hollow);
     if recording.shard.is_some() {
         notes.unaudited(
@@ -2983,25 +3037,28 @@ fn hollow(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit) -> D
         );
         return notes.looked();
     }
-    if engines.is_empty() {
-        notes.unaudited(
-            "sealed-exec",
-            "the run kept no engine recording, so which targets sealed executions put to a \
-             mutation and which noticed none cannot be re-derived"
-                .to_owned(),
-        );
-        return notes.looked();
+    match executions.sealed {
+        Kept::Held => {}
+        Kept::Unrecorded => {
+            notes.unaudited(
+                "sealed-exec",
+                "the run kept no engine recording, so which targets sealed executions put to a \
+                 mutation and which noticed none cannot be re-derived"
+                    .to_owned(),
+            );
+            return notes.looked();
+        }
+        Kept::Unreadable => {
+            notes.unaudited(
+                "sealed-exec",
+                "an engine recording holds a sealed execution this audit cannot read, so which \
+                 targets noticed nothing cannot be re-derived"
+                    .to_owned(),
+            );
+            return notes.looked();
+        }
     }
-    let Some(sealed) = sealed_of(engines) else {
-        notes.unaudited(
-            "sealed-exec",
-            "an engine recording holds a sealed execution this audit cannot read, so which \
-             targets noticed nothing cannot be re-derived"
-                .to_owned(),
-        );
-        return notes.looked();
-    };
-    let asked = match answering(recording, &sealed) {
+    let asked = match answering(recording, executions) {
         Ok(asked) => asked,
         Err(Uncounted::Overflow { target }) => {
             notes.violated(
@@ -3109,7 +3166,7 @@ impl SealedAnswer {
 /// How many mutations each target answered about and whether it noticed one, over every row resting on sealed executions, each target's answer to a row being the strongest thing its executions of it said.
 fn answering<'a>(
     recording: &Recording<'_>,
-    sealed: &BTreeMap<&str, Vec<&'a SealedRun>>,
+    executions: &Executions<'a>,
 ) -> Result<BTreeMap<&'a str, (u64, bool)>, Uncounted<'a>> {
     let mut asked: BTreeMap<&str, (u64, bool)> = BTreeMap::new();
     for mutant in &recording.mutants {
@@ -3117,7 +3174,11 @@ fn answering<'a>(
             continue;
         }
         let mut said: BTreeMap<&str, SealedAnswer> = BTreeMap::new();
-        for run in sealed_of_row(sealed, mutant) {
+        for ran in executions.of(mutant) {
+            let run = match ran {
+                Ran::Native(_) => continue,
+                Ran::Sealed(run) => run,
+            };
             let target = run.target.as_str();
             let now = SealedAnswer::of(&run.came_to).ok_or(Uncounted::Unplaced {
                 target,
@@ -4336,9 +4397,9 @@ fn confirmation_of(
 const STEP_LIMIT_EXEC: &str = "step_limit_reached";
 
 /// Every mutation's reported outcome against the executions of it the recording holds, so a report cannot say a test noticed what every recorded execution says survived, nor rest on a sealed execution its engine never ran.
-fn executions(
+fn executions_held(
     recording: &Recording<'_>,
-    (routing, engines): (Option<&crate::route::Routing>, &[Engine]),
+    (routing, executions, engines): (Option<&crate::route::Routing>, &Executions<'_>, &[Engine]),
     audit: &mut Audit,
 ) -> Decided {
     let mut notes = Notes::on(audit, Layer::Executions);
@@ -4351,29 +4412,27 @@ fn executions(
         );
         return notes.looked();
     };
-    let Some(sealed) = sealed_of(engines) else {
-        notes.unaudited(
-            "sealed-exec",
-            "an engine recording holds a sealed execution this audit cannot read, so no sealed \
-             verdict can be held to what ran"
-                .to_owned(),
-        );
-        return notes.looked();
-    };
-    let mut ran: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for exec in &routing.execs {
-        ran.entry(exec.mutant.as_str())
-            .or_default()
-            .push(exec.outcome.as_str());
-    }
-    let held = !engines.is_empty();
-    if !held && recording.mutants.iter().any(MutantRow::sealed) {
-        notes.unaudited(
-            "sealed-exec",
-            "the run kept no engine recording, so no sealed verdict can be held to the \
-             executions its engine ran"
-                .to_owned(),
-        );
+    match executions.sealed {
+        Kept::Held => {}
+        Kept::Unreadable => {
+            notes.unaudited(
+                "sealed-exec",
+                "an engine recording holds a sealed execution this audit cannot read, so no \
+                 sealed verdict can be held to what ran"
+                    .to_owned(),
+            );
+            return notes.looked();
+        }
+        Kept::Unrecorded => {
+            if recording.mutants.iter().any(MutantRow::sealed) {
+                notes.unaudited(
+                    "sealed-exec",
+                    "the run kept no engine recording, so no sealed verdict can be held to the \
+                     executions its engine ran"
+                        .to_owned(),
+                );
+            }
+        }
     }
     for mutant in recording
         .mutants
@@ -4381,12 +4440,14 @@ fn executions(
         .filter(|mutant| mutant.read_back_from.is_none())
     {
         let mut recorded: Vec<&str> = Vec::new();
-        for key in [mutant.display_id.as_str(), mutant.id.as_str()] {
-            if let Some(outcomes) = ran.get(key) {
-                recorded.extend(outcomes.iter().copied());
+        let mut sealed: Vec<&SealedRun> = Vec::new();
+        for ran in executions.of(mutant) {
+            match ran {
+                Ran::Native(exec) => recorded.push(exec.outcome.as_str()),
+                Ran::Sealed(run) => sealed.push(run),
             }
         }
-        let sealed_runs = held.then(|| sealed_of_row(&sealed, mutant));
+        let sealed_runs = (executions.sealed == Kept::Held).then_some(sealed);
         if let Some(why) = misexecuted(mutant, &recorded, sealed_runs) {
             notes.violated(mutant.label(), why);
         } else if mutant.outcome == EQUIVALENT
@@ -4403,7 +4464,7 @@ fn executions(
             );
         }
     }
-    if held {
+    if executions.sealed == Kept::Held {
         sealed_unreached(recording, (routing, engines), &mut notes);
     }
     notes.looked()
@@ -4517,31 +4578,6 @@ fn misexecuted(
     }
 }
 
-/// Every sealed execution every engine recording holds, by the mutant it ran, in the order recorded, or nothing where one recording holds one this audit cannot read.
-fn sealed_of(engines: &[Engine]) -> Option<BTreeMap<&str, Vec<&SealedRun>>> {
-    let mut sealed: BTreeMap<&str, Vec<&SealedRun>> = BTreeMap::new();
-    for engine in engines {
-        for (mutant, run) in engine.sealed.as_ref()? {
-            sealed.entry(mutant.as_str()).or_default().push(run);
-        }
-    }
-    Some(sealed)
-}
-
-/// The sealed executions the recordings hold of `mutant`, under either of its names.
-fn sealed_of_row<'a>(
-    sealed: &BTreeMap<&str, Vec<&'a SealedRun>>,
-    mutant: &MutantRow,
-) -> Vec<&'a SealedRun> {
-    let mut runs = Vec::new();
-    for key in [mutant.display_id.as_str(), mutant.id.as_str()] {
-        if let Some(recorded) = sealed.get(key) {
-            runs.extend(recorded.iter().copied());
-        }
-    }
-    runs
-}
-
 /// Why the sealed executions a row `named` are not the ones its engine `recorded`, in order, if they are not.
 fn unrecorded_sealed(named: &[SealedRun], recorded: Vec<&SealedRun>) -> Option<String> {
     let said = |runs: &mut dyn Iterator<Item = &SealedRun>| {
@@ -4617,7 +4653,12 @@ fn contradicted(reported: &str, recorded: &[&str]) -> Option<String> {
     }
 }
 
-fn proofs(recording: &Recording<'_>, rerouted: Option<Rerouted<'_>>, audit: &mut Audit) -> Decided {
+fn proofs(
+    recording: &Recording<'_>,
+    rerouted: Option<Rerouted<'_>>,
+    executions: &Executions<'_>,
+    audit: &mut Audit,
+) -> Decided {
     let mut notes = Notes::on(audit, Layer::Proofs);
     let Some(Rerouted { routing, repairs }) = rerouted else {
         notes.unaudited(
@@ -4640,34 +4681,33 @@ fn proofs(recording: &Recording<'_>, rerouted: Option<Rerouted<'_>>, audit: &mut
             (route.mutant.clone(), discharged)
         })
         .collect();
-    let licensed = |exec: &&crate::route::Exec| {
-        !repairs
-            .iter()
-            .any(|repair| repair.mutant == exec.mutant && repair.target == exec.target)
-    };
-    let executed: BTreeSet<String> = routing
-        .execs
-        .iter()
-        .filter(licensed)
-        .map(|exec| exec.mutant.clone())
-        .collect();
-    let ran: Vec<(String, String, String)> = routing
-        .execs
-        .iter()
-        .filter(licensed)
-        .map(|exec| {
-            (
-                exec.mutant.clone(),
-                exec.target.clone(),
-                exec.outcome.clone(),
-            )
-        })
-        .collect();
-    if removed.is_empty() && ran.is_empty() {
+    let mut executed = Executed::default();
+    let mut noticed: Vec<Noticed<'_>> = Vec::new();
+    for (mutant, ran) in executions.each() {
+        let noticing = match ran {
+            Ran::Native(exec) => {
+                if repairs
+                    .iter()
+                    .any(|repair| repair.mutant == exec.mutant && repair.target == exec.target)
+                {
+                    continue;
+                }
+                executed.natively.insert(mutant);
+                exec.outcome == KILLED
+            }
+            Ran::Sealed(run) => DETECTIONS.contains(&run.came_to.as_str()),
+        };
+        executed.at_all.insert(mutant);
+        if noticing {
+            noticed.push(Noticed { mutant, by: ran });
+        }
+    }
+    if removed.is_empty() && executed.natively.is_empty() {
         notes.unaudited(
             "route",
-            "the recording holds no routing decision and no mutation execution, so there is \
-             nothing to hold a layer to"
+            "the recording holds no routing decision and no native mutation execution, so \
+             there is nothing to hold a layer to; a sealed execution is put where its own \
+             control reached, which no route decides"
                 .to_owned(),
         );
         return notes.looked();
@@ -4677,8 +4717,8 @@ fn proofs(recording: &Recording<'_>, rerouted: Option<Rerouted<'_>>, audit: &mut
         .iter()
         .map(|target| target.name.as_str())
         .collect();
-    discharges(&removed, &ran, &mut notes);
-    kept(&routing.routes, &ran, &mut notes);
+    discharges(&removed, &noticed, &mut notes);
+    kept(&routing.routes, &noticed, &mut notes);
     reach(&routing.routes, &known, &executed, &mut notes);
     believed(&routing.routes, &mut notes);
     notes.looked()
@@ -4700,38 +4740,68 @@ fn believed(routes: &[crate::route::Route], notes: &mut Notes<'_>) {
     }
 }
 
-/// Every proof that removed a target, against the kills the recording holds: a layer that drops a target which then finds a defect is unsound.
+/// The mutations the proofs layer holds a route to having run: natively, where a route's claim about the native measurement is contradicted, and at all, where its premise failing has to end in work.
+#[derive(Debug, Default)]
+struct Executed<'a> {
+    natively: BTreeSet<&'a str>,
+    at_all: BTreeSet<&'a str>,
+}
+
+/// One execution that noticed a mutation: a native kill, which is a lead, or a sealed detection, which is a kill the run proved (ADR 0046).
+#[derive(Debug, Clone, Copy)]
+struct Noticed<'a> {
+    mutant: &'a str,
+    by: Ran<'a>,
+}
+
+impl Noticed<'_> {
+    /// What its target did, as a violation says it.
+    fn said(&self) -> String {
+        match self.by {
+            Ran::Native(_) => format!("{KILLED} it"),
+            Ran::Sealed(run) => format!(
+                "detected it: its sealed execution of {} came to {}",
+                run.test, run.came_to
+            ),
+        }
+    }
+}
+
+/// Every proof that removed a target, against every execution that noticed the mutation it removed the target from, sealed or native: a layer that drops a target which then finds a defect is unsound.
 fn discharges(
     removed: &BTreeMap<String, BTreeMap<String, String>>,
-    ran: &[(String, String, String)],
+    noticed: &[Noticed<'_>],
     notes: &mut Notes<'_>,
 ) {
-    for (mutant, target, outcome) in ran {
-        if outcome != KILLED {
-            continue;
-        }
-        let Some(proof) = removed.get(mutant).and_then(|one| one.get(target)) else {
+    for one in noticed {
+        let target = one.by.target();
+        let Some(proof) = removed.get(one.mutant).and_then(|by| by.get(target)) else {
             continue;
         };
         notes.violated(
-            mutant,
+            one.mutant,
             format!(
                 "{proof} removed {target} from what could notice this mutation, and {target} \
-                 then {outcome} it; a layer that drops a target which finds a defect is unsound"
+                 then {}; a layer that drops a target which finds a defect is unsound",
+                one.said()
             ),
         );
     }
 }
 
-/// Every kill, against the route that decided which targets would be asked: a layer that drops a target which then finds a defect is unsound, however it dropped it.
-fn kept(routes: &[crate::route::Route], ran: &[(String, String, String)], notes: &mut Notes<'_>) {
-    for (mutant, target, outcome) in ran {
-        if outcome != KILLED {
-            continue;
+/// Every native kill, against the route that decided which targets would be asked: a layer that drops a target which then finds a defect is unsound, however it dropped it.
+///
+/// A sealed detection is not held here: a sealed execution is put to the tests whose own control reached the mutation, which the native route does not decide.
+fn kept(routes: &[crate::route::Route], noticed: &[Noticed<'_>], notes: &mut Notes<'_>) {
+    for one in noticed {
+        match one.by {
+            Ran::Native(_) => {}
+            Ran::Sealed(_) => continue,
         }
+        let (mutant, target) = (one.mutant, one.by.target());
         let Some(route) = routes
             .iter()
-            .find(|route| &route.mutant == mutant && route.reused.is_none())
+            .find(|route| route.mutant == mutant && route.reused.is_none())
         else {
             continue;
         };
@@ -4745,28 +4815,32 @@ fn kept(routes: &[crate::route::Route], ran: &[(String, String, String)], notes:
             mutant,
             format!(
                 "the route did not keep {target} for this mutation and the recording then \
-                 shows {target} {outcome} it; a target the measurement placed elsewhere is \
+                 shows {target} {}; a target the measurement placed elsewhere is \
                  a target the reach layer removed, and a layer that removes one which \
-                 finds a defect is unsound"
+                 finds a defect is unsound",
+                one.said()
             ),
         );
     }
 }
 
 /// The reach layer, re-derived from what the route named rather than confirmed from what it decided.
+///
+/// A route that says no measured target reaches a mutation is contradicted by a native execution of it; a sealed one is put where its own control reached, which is another measurement.
+/// A route widened to every target is held to anything running at all.
 fn reach(
     routes: &[crate::route::Route],
     known: &BTreeSet<&str>,
-    executed: &BTreeSet<String>,
+    executed: &Executed<'_>,
     notes: &mut Notes<'_>,
 ) {
     for route in routes {
         if route.reused.is_some() {
             continue;
         }
-        let ran = executed.contains(&route.mutant);
+        let ran = executed.at_all.contains(route.mutant.as_str());
         if route.granularity == UNREACHED {
-            if ran {
+            if executed.natively.contains(route.mutant.as_str()) {
                 notes.violated(
                     &route.mutant,
                     "the route says no measured target reaches this mutation and the \
@@ -5643,7 +5717,12 @@ fn acceptances(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
 /// Whether each target an exact answer rests on keeps the behaviour key it had is not in the report, and is left unaudited.
 fn reuse(
     recording: &Recording<'_>,
-    (routing, beside, engines): (Option<&crate::route::Routing>, &[Beside], &[Engine]),
+    (routing, beside, engines, executions): (
+        Option<&crate::route::Routing>,
+        &[Beside],
+        &[Engine],
+        &Executions<'_>,
+    ),
     audit: &mut Audit,
 ) -> Decided {
     let mut notes = Notes::on(audit, Layer::Reuse);
@@ -5666,7 +5745,7 @@ fn reuse(
     match routing {
         Some(routing) => {
             for mutant in &read_back {
-                routed_back(mutant, routing, &mut notes);
+                routed_back(mutant, routing, executions, &mut notes);
             }
             carried_back(&read_back, routing, (beside, engines), &mut notes);
         }
@@ -5766,7 +5845,12 @@ fn carried_back(
 }
 
 /// Whether the run's own route of `mutant`, a disposition read back, says it read it back from the run the report names, ran none of it, and still reaches the target a kill names.
-fn routed_back(mutant: &MutantRow, routing: &crate::route::Routing, notes: &mut Notes<'_>) {
+fn routed_back(
+    mutant: &MutantRow,
+    routing: &crate::route::Routing,
+    executions: &Executions<'_>,
+    notes: &mut Notes<'_>,
+) {
     let Some(route) = routing.route_of(&mutant.id, &mutant.display_id) else {
         notes.violated(
             mutant.label(),
@@ -5786,11 +5870,15 @@ fn routed_back(mutant: &MutantRow, routing: &crate::route::Routing, notes: &mut 
             ),
         );
     }
-    if routing
-        .execs_for(&mutant.id, &mutant.display_id)
-        .next()
-        .is_some()
-    {
+    let mut native = false;
+    let mut again: Vec<&SealedRun> = Vec::new();
+    for ran in executions.of(mutant) {
+        match ran {
+            Ran::Native(_) => native = true,
+            Ran::Sealed(run) => again.push(run),
+        }
+    }
+    if native {
         notes.violated(
             mutant.label(),
             "an answer read back is an execution that did not happen, and the recording holds \
@@ -5798,6 +5886,7 @@ fn routed_back(mutant: &MutantRow, routing: &crate::route::Routing, notes: &mut 
                 .to_owned(),
         );
     }
+    reproduced(mutant, &again, executions.sealed, notes);
     if let Some(killer) = &mutant.killed_by
         && !route.reaching.iter().any(|target| target == killer)
     {
@@ -5810,6 +5899,47 @@ fn routed_back(mutant: &MutantRow, routing: &crate::route::Routing, notes: &mut 
             format!(
                 "the kill read back names {killer}, which this run's route no longer reaches \
                  ({word})"
+            ),
+        );
+    }
+}
+
+/// Whether a sealed verdict read back was believed only once the executions it rests on, `again` on this run's bench, came to what it recorded (ADR 0046, decision 7); a lead read back rests on nothing sealed, so nothing of it is run again.
+fn reproduced(mutant: &MutantRow, again: &[&SealedRun], kept: Kept, notes: &mut Notes<'_>) {
+    let named = match (&mutant.rests, mutant.sealed()) {
+        (Rests::Sealed(named), true) => named,
+        (Rests::Nothing | Rests::Unproven(_) | Rests::Sealed(_), _) => return,
+    };
+    match kept {
+        Kept::Held => {}
+        Kept::Unrecorded | Kept::Unreadable => {
+            notes.unaudited(
+                mutant.label(),
+                "a sealed verdict was read back, and the run kept no engine recording this audit \
+                 can read of its executions made again, so whether they came out the same \
+                 cannot be re-derived"
+                    .to_owned(),
+            );
+            return;
+        }
+    }
+    if !named.iter().eq(again.iter().copied()) {
+        let said = |runs: &mut dyn Iterator<Item = &SealedRun>| {
+            runs.map(|run| format!("{} {} {}", run.target, run.test, run.came_to))
+                .collect::<Vec<_>>()
+        };
+        notes.violated(
+            mutant.label(),
+            format!(
+                "the verdict read back from {} rests on the sealed executions {:?}, and this \
+                 run's engine recorded {:?} of it; a kept sealed verdict is believed only once \
+                 its executions come out the same on this run's bench",
+                match mutant.read_back_from.as_deref() {
+                    Some(run) => run,
+                    None => "an earlier run",
+                },
+                said(&mut named.iter()),
+                said(&mut again.iter().copied())
             ),
         );
     }

@@ -1509,6 +1509,19 @@ fn reuse_planted(clean: Perturbation) -> Vec<Perturbation> {
             &json!({ "line": 2, "column": 1 }),
         ),
         unreached_plan(clean),
+        believed_without_running_again(),
+    ]
+}
+
+/// The defects planted for the proofs layer: a native kill by a target a proof discharged, and a sealed detection by one.
+fn proofs_planted(clean: Perturbation) -> Vec<Perturbation> {
+    vec![
+        Perturbation {
+            name: "a kill by a target a proof discharged",
+            events: Some(discharged_then_killed()),
+            ..clean
+        },
+        discharged_then_detected_sealed(),
     ]
 }
 
@@ -1684,6 +1697,88 @@ pub fn noticing_nothing_sealed() -> Perturbation {
     };
     Perturbation {
         name: "a target its sealed executions show noticing nothing, which the report does not name",
+        engine: Some(engine),
+        ..clean
+    }
+}
+
+/// The defect planted for the proofs layer that only a sealed execution shows: a proof removed [`TARGET`] from what could notice the kill, and [`TARGET`]'s sealed execution then detected it, while the one native kill came from a target the route kept.
+#[must_use]
+pub fn discharged_then_detected_sealed() -> Perturbation {
+    let mut events = vec![
+        json!({
+            "type": "route",
+            "route": {
+                "mutant": KILLED, "granularity": "block", "fallback": null,
+                "reaching": ["t1"],
+                "discharged": [{ "target": TARGET, "proof": "never-infected" }],
+                "considered": [], "reused": null
+            }
+        }),
+        json!({
+            "type": "mutant-exec",
+            "mutant": {
+                "mutant": KILLED, "target": "t1", "args": [], "outcome": "killed",
+                "duration_ms": 5
+            }
+        }),
+    ];
+    events.extend(route_events(&[(SURVIVED, "survived")]));
+    events.extend(confirmation(&"a".repeat(64), "passed", Some("killed")));
+    Perturbation {
+        name: "a sealed detection by a target a proof discharged",
+        events: Some(numbered(events)),
+        ..clean()
+    }
+}
+
+/// The clean specimen with its survivor's route widened to every target and nothing of it run natively, its one sealed execution the only work its failed premise ended in.
+#[must_use]
+pub fn widened_and_run_sealed() -> Perturbation {
+    let mut events = route_events(&[(KILLED, "killed")]);
+    events.push(json!({
+        "type": "route",
+        "route": {
+            "mutant": SURVIVED, "granularity": "all", "fallback": "coverage-incomplete",
+            "reaching": ["t1"], "discharged": [], "considered": [], "reused": null
+        }
+    }));
+    events.extend(confirmation(&"a".repeat(64), "passed", Some("killed")));
+    Perturbation {
+        name: "a route widened to every target whose only execution is sealed",
+        events: Some(numbered(events)),
+        ..clean()
+    }
+}
+
+/// The defect planted for the reuse layer that only the sealed executions show: a kill read back from [`EARLIER`] that no sealed execution on this run's bench made again (ADR 0046, decision 7).
+#[must_use]
+pub fn believed_without_running_again() -> Perturbation {
+    let clean = clean();
+    let mut document = clean.document.clone();
+    merge(
+        &mut document,
+        json!({
+            "mutants": [{ "reuse": { "reused": true, "source_run_id": EARLIER } }],
+            "accounting": { "mutants": { "reused_killed": 1 } }
+        }),
+    );
+    let mut events = vec![json!({
+        "type": "route",
+        "route": {
+            "mutant": KILLED, "granularity": "block", "fallback": null,
+            "reaching": [TARGET], "discharged": [], "considered": [], "reused": EARLIER
+        }
+    })];
+    events.extend(route_events(&[(SURVIVED, "survived")]));
+    let engine = clean_engine()
+        .into_iter()
+        .filter(|event| event.pointer("/sealed/mutant").and_then(Value::as_str) != Some(KILLED))
+        .collect();
+    Perturbation {
+        name: "a sealed kill read back that no execution on this run's bench made again",
+        document,
+        events: Some(numbered(events)),
         engine: Some(engine),
         ..clean
     }
@@ -2218,6 +2313,34 @@ fn confirmation_plants() -> Vec<Perturbation> {
 }
 
 impl Layer {
+    /// The defects planted for this layer that only a sealed execution shows, each of which it must report as a violation; none for a layer that reads no sealed execution.
+    #[must_use]
+    pub fn sealed_planted(self) -> Vec<Perturbation> {
+        match self {
+            Self::Executions => vec![sealed_never_run(clean())],
+            Self::Proofs => vec![discharged_then_detected_sealed()],
+            Self::Hollow => vec![noticing_nothing_sealed()],
+            Self::Reuse => vec![believed_without_running_again()],
+            Self::Accounting
+            | Self::Killers
+            | Self::Findings
+            | Self::Acceptances
+            | Self::Wire
+            | Self::Model
+            | Self::Merge
+            | Self::Drift
+            | Self::Faults
+            | Self::Repair
+            | Self::Knobs
+            | Self::Crashes
+            | Self::Dimensions
+            | Self::Concurrency
+            | Self::Confirmations
+            | Self::Soundness
+            | Self::Evidence => Vec::new(),
+        }
+    }
+
     /// The defects planted for this layer, each of which it must report as a violation.
     #[must_use]
     pub fn planted(self) -> Vec<Perturbation> {
@@ -2259,11 +2382,7 @@ impl Layer {
                 ..clean
             }],
             Self::Reuse => reuse_planted(clean),
-            Self::Proofs => vec![Perturbation {
-                name: "a kill by a target a proof discharged",
-                events: Some(discharged_then_killed()),
-                ..clean
-            }],
+            Self::Proofs => proofs_planted(clean),
             Self::Hollow => vec![noticing_nothing_sealed()],
             Self::Wire => vec![Perturbation {
                 name: "a question nothing noticed that the report does not name",

@@ -2883,15 +2883,20 @@ pub fn proofaudit_sentinels(checkers: &crate::schemas::Checkers) -> Result<usize
             "proofaudit: the clean specimen cannot be measured in shards: {error}"
         ))
     })?;
-    for specimen in [&clean, &merged] {
+    let widened = proofaudit::sentinel::widened_and_run_sealed();
+    for specimen in [&clean, &merged, &widened] {
         silent(checkers, specimen)?;
     }
     let mut found = 0_usize;
     for layer in proofaudit::Layer::ALL {
         let planted = proofaudit_sighted(checkers, layer, &layer.planted())?;
-        found = found.checked_add(planted).ok_or_else(|| {
-            GateError("proofaudit: more planted defects than a count can hold".to_owned())
-        })?;
+        let sealed = sealed_sighted(checkers, layer)?;
+        found = found
+            .checked_add(planted)
+            .and_then(|found| found.checked_add(sealed))
+            .ok_or_else(|| {
+                GateError("proofaudit: more planted defects than a count can hold".to_owned())
+            })?;
     }
     for rule in proofaudit::merge::MergeRule::ALL {
         merge_rule_sighted(checkers, rule)?;
@@ -2900,6 +2905,29 @@ pub fn proofaudit_sentinels(checkers: &crate::schemas::Checkers) -> Result<usize
         confirm_rule_sighted(checkers, rule)?;
     }
     Ok(found)
+}
+
+/// How many defects only a sealed execution shows were planted for `layer` and found, where it reads sealed executions; none where it reads none and none is planted.
+///
+/// # Errors
+/// A layer that reads sealed executions with nothing planted that only one shows, which is a layer nothing holds to not ignoring them, a plant for a layer that reads none, or a plant the layer does not find.
+fn sealed_sighted(
+    checkers: &crate::schemas::Checkers,
+    layer: proofaudit::Layer,
+) -> Result<usize, GateError> {
+    let planted = layer.sealed_planted();
+    match (layer.reads(), planted.is_empty()) {
+        (proofaudit::Reads::Both, true) => Err(GateError(format!(
+            "proofaudit: the {} layer reads sealed executions and nothing planted for it shows              a defect only a sealed execution shows, so nothing says it does not ignore them              (`Layer::sealed_planted` in xtask/src/proofaudit/sentinel.rs)",
+            layer.label()
+        ))),
+        (proofaudit::Reads::Nothing | proofaudit::Reads::Native, false) => Err(GateError(format!(
+            "proofaudit: a defect only a sealed execution shows is planted for the {} layer,              which `Layer::reads` says reads none",
+            layer.label()
+        ))),
+        (proofaudit::Reads::Both, false) => proofaudit_sighted(checkers, layer, &planted),
+        (proofaudit::Reads::Nothing | proofaudit::Reads::Native, true) => Ok(0),
+    }
 }
 
 /// Nothing, where every defect planted for `rule` draws a confirmation violation of that rule by name.

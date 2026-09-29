@@ -255,15 +255,41 @@ pub struct SealedControl {
     pub reached: Vec<u64>,
 }
 
+impl Sealed {
+    /// Whether this execution is about the mutant either identity names.
+    #[must_use]
+    pub fn names(&self, id: &str, display_id: &str) -> bool {
+        self.mutant == id || (!display_id.is_empty() && self.mutant == display_id)
+    }
+}
+
+/// One execution of one mutant, the only shape a reader is handed one in, so a reader of either kind says what it makes of the other (ADR 0046).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Execution {
+    /// A native execution: what the process said of itself, which is a lead.
+    Native(Exec),
+    /// A sealed execution: what the host observed, which a verdict rests on.
+    Sealed(Sealed),
+}
+
+impl Execution {
+    /// Whether this execution is about the mutant either identity names.
+    #[must_use]
+    pub fn names(&self, id: &str, display_id: &str) -> bool {
+        match self {
+            Self::Native(exec) => exec.names(id, display_id),
+            Self::Sealed(sealed) => sealed.names(id, display_id),
+        }
+    }
+}
+
 /// The routes and the executions of one recording, in the order they were written.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Routing {
     /// Every routing decision.
     pub routes: Vec<Route>,
-    /// Every mutant execution.
-    pub execs: Vec<Exec>,
-    /// Every sealed execution.
-    pub sealed: Vec<Sealed>,
+    /// Every execution, native and sealed, which only [`Routing::executions`] hands out.
+    executions: Vec<Execution>,
     /// Every sealed control.
     pub controls: Vec<SealedControl>,
     /// What the equivalence layer answered for each mutation it asked about, by display identity.
@@ -284,21 +310,27 @@ impl Routing {
         self.routes.iter().find(|route| route.names(id, display_id))
     }
 
-    /// Every execution of one mutant, in the order they ran.
-    #[cfg(feature = "testkit")]
-    pub fn execs_of<'a>(&'a self, mutant: &'a str) -> impl Iterator<Item = &'a Exec> {
-        self.execs_for(mutant, mutant)
+    /// Every execution, native and sealed, in the order they were written.
+    #[must_use]
+    pub fn executions(&self) -> &[Execution] {
+        &self.executions
     }
 
-    /// Every execution of one mutant a caller holds both identities of.
-    pub fn execs_for<'a>(
+    /// Every execution of one mutant, in the order they ran.
+    #[cfg(feature = "testkit")]
+    pub fn executions_of<'a>(&'a self, mutant: &'a str) -> impl Iterator<Item = &'a Execution> {
+        self.executions_for(mutant, mutant)
+    }
+
+    /// Every execution of one mutant a caller holds both identities of, in the order they ran.
+    pub fn executions_for<'a>(
         &'a self,
         id: &'a str,
         display_id: &'a str,
-    ) -> impl Iterator<Item = &'a Exec> {
-        self.execs
+    ) -> impl Iterator<Item = &'a Execution> {
+        self.executions
             .iter()
-            .filter(move |exec| exec.names(id, display_id))
+            .filter(move |execution| execution.names(id, display_id))
     }
 }
 
@@ -325,11 +357,15 @@ pub(crate) fn from_events(events: &[Value]) -> Result<Routing, ReadError> {
             }
             Some("mutant-exec") => {
                 let record = required(event, "mutant", Some).map_err(placed)?;
-                routing.execs.push(exec(record).map_err(placed)?);
+                routing
+                    .executions
+                    .push(Execution::Native(exec(record).map_err(placed)?));
             }
             Some("sealed-exec") => {
                 let record = required(event, "sealed", Some).map_err(placed)?;
-                routing.sealed.push(sealed(record).map_err(placed)?);
+                routing
+                    .executions
+                    .push(Execution::Sealed(sealed(record).map_err(placed)?));
             }
             Some("sealed-control") => {
                 let record = required(event, "control", Some).map_err(placed)?;
