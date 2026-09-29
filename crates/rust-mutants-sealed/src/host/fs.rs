@@ -114,8 +114,8 @@ impl Tree {
                     },
                     inode: node.inode,
                     parent: node.parent,
-                    accessed: FILE_TIME,
-                    modified: FILE_TIME,
+                    accessed: node.times.accessed,
+                    modified: node.times.modified,
                 })
                 .collect(),
         }

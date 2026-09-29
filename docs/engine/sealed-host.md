@@ -30,6 +30,10 @@ An `Invocation` is one value holding everything the run is a function of:
 | `clock` | the origins of the clocks and how many nanoseconds a unit of fuel moves them |
 | `halt` | nothing, or an absolute guest path inside a tree given before, at which a rename that puts a file there ends the guest in that call, as [`Halted`](#how-a-run-ends) |
 
+An invocation can start where another stopped.
+`Preopens::after` gives each tree as a transcript's overlay, or any part of it, left it: an entry changes the tree whose guest path is the longest that holds it, in the order the overlay lists them, times included, so a snapshot after an overlay is exactly the snapshot built with what the overlay left, down to its digest.
+An entry below no tree, or inside a directory its tree does not hold by then, is refused (`RS0003`).
+
 The runner's own watchdog is not an input.
 It is a wall-clock backstop, and when it fires the invocation ends in `RS3002`, an error, never in a stop a caller could read as an answer about the guest.
 Neither is the `Interrupt` a caller passes beside the invocation: raised, it ends the invocation in `RS3005` at the guest's next epoch or host call, and one raised before the invocation starts is refused without starting it.

@@ -7,11 +7,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::abi::Errno;
-use crate::snapshot::{Body, Node, NodeId};
+use crate::snapshot::{Body, Node, NodeId, Times};
 use crate::transcript::{OverlayEntry, OverlayState};
 
-use super::FILE_TIME;
-use super::fs::{Contents, Filesystem, Held};
+use super::fs::{Contents, Filesystem, Held, Live};
 
 /// One tree compared with the snapshot it grew from.
 pub(crate) struct Walk<'walk> {
@@ -37,6 +36,12 @@ impl Walk<'_> {
         }
     }
 
+    /// Whether the live node `held` carries other times than the snapshot's node `base`, which a node the snapshot does not hold carries the constant for.
+    fn retimed(&self, base: NodeId, held: &Live) -> bool {
+        let times = self.base.get(base).map_or(Times::UNSET, |node| node.times);
+        held.accessed != times.accessed || held.modified != times.modified
+    }
+
     /// The entries of the snapshot's directory `node`.
     fn base_entries(&self, node: NodeId) -> Option<&BTreeMap<String, NodeId>> {
         match &self.base.get(node)?.body {
@@ -53,7 +58,7 @@ impl Walk<'_> {
         out: &mut Vec<OverlayEntry>,
     ) -> Result<(), Errno> {
         let held = self.filesystem.live(self.tree, live)?;
-        if held.accessed != FILE_TIME || held.modified != FILE_TIME {
+        if self.retimed(base, held) {
             out.push(OverlayEntry {
                 path: self.guest(relative),
                 state: OverlayState::Directory {
@@ -138,7 +143,7 @@ impl Walk<'_> {
                     Contents::Snapshot(is) => Arc::ptr_eq(was, is) || was == is,
                     Contents::Overlay(is) => **was == **is,
                 };
-                if !same_bytes || held.accessed != FILE_TIME || held.modified != FILE_TIME {
+                if !same_bytes || self.retimed(base, held) {
                     out.push(OverlayEntry {
                         path: self.guest(relative),
                         state: OverlayState::File {

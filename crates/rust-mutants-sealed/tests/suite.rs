@@ -3,6 +3,8 @@
 
 //! Every integration test of this crate that needs no toolchain, as one binary rather than one binary per file.
 
+#[path = "after.rs"]
+mod after;
 #[path = "common.rs"]
 pub mod common;
 #[path = "errors_doc.rs"]

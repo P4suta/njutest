@@ -103,7 +103,7 @@ impl SealedCode {
             },
             Self::SnapshotInvalid => ErrorCode {
                 code: "RS0003",
-                summary: "a snapshot path that is not a relative path of named components, or a path the snapshot would hold twice or as both a file and a directory",
+                summary: "a snapshot path that is not a relative path of named components, a path the snapshot would hold twice or as both a file and a directory, or a change to a path whose directory the snapshot does not hold",
                 remedy: "give each file once, by a relative path of `/`-separated names with no `.`, `..`, empty or NUL-bearing component",
             },
             Self::PreopenInvalid => ErrorCode {
@@ -430,6 +430,8 @@ pub enum SnapshotFault {
     Repeated,
     /// The path is a file in one place and a directory in another.
     FileAndDirectory,
+    /// A change to the path came before the directory it is in was one the snapshot holds.
+    NoParent,
 }
 
 impl fmt::Display for SnapshotFault {
@@ -438,6 +440,7 @@ impl fmt::Display for SnapshotFault {
             Self::NotRelative => "it is not a relative path of named components",
             Self::Repeated => "it is given twice",
             Self::FileAndDirectory => "it is both a file and a directory",
+            Self::NoParent => "the directory it is in is not one the snapshot holds",
         })
     }
 }

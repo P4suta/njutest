@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use crate::digest::{Encoder, SealedDigest};
 use crate::error::{SealedError, SnapshotFault};
+use crate::transcript::OverlayState;
 
 /// The identity of a node within one arena.
 pub(crate) type NodeId = usize;
@@ -33,6 +34,25 @@ pub(crate) struct Node {
     pub(crate) inode: u64,
     /// The directory holding it; the root holds itself.
     pub(crate) parent: NodeId,
+    /// Its access and modification times.
+    pub(crate) times: Times,
+}
+
+/// The access and modification times of a node, in nanoseconds since the Unix epoch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Times {
+    /// When it was last read.
+    pub(crate) accessed: u64,
+    /// When it was last written.
+    pub(crate) modified: u64,
+}
+
+impl Times {
+    /// The times of every node a snapshot is given without any: the host's constant.
+    pub(crate) const UNSET: Self = Self {
+        accessed: crate::host::FILE_TIME,
+        modified: crate::host::FILE_TIME,
+    };
 }
 
 /// A read-only tree of files and directories a guest may be given at a preopened path.
@@ -84,6 +104,52 @@ impl Snapshot {
         match self.nodes.get(at)?.body {
             Body::Directory(_) => Some(at),
             Body::File(_) => None,
+        }
+    }
+
+    /// This snapshot as an invocation's overlay leaves it: each change a path below the root, `/`-separated and empty for the root itself, and what it holds after, in the order an overlay lists them, each directory before what it holds.
+    ///
+    /// # Errors
+    /// [`SealedError::SnapshotPath`] for a path that is not one of named components, a change whose directory the snapshot does not hold by then, or the root changed into anything but a directory.
+    pub fn after<'a>(
+        &self,
+        changes: impl IntoIterator<Item = (&'a str, &'a OverlayState)>,
+    ) -> Result<Self, SealedError> {
+        let mut draft = self.draft(ROOT).ok_or(SealedError::SnapshotPath {
+            path: String::new(),
+            fault: SnapshotFault::NoParent,
+        })?;
+        for (path, state) in changes {
+            draft.changed(path, state)?;
+        }
+        Ok(Self::laid(draft))
+    }
+
+    /// The node `node` and everything under it, as a draft.
+    fn draft(&self, node: NodeId) -> Option<Draft> {
+        let held = self.nodes.get(node)?;
+        Some(match &held.body {
+            Body::File(bytes) => Draft::File(bytes.to_vec(), held.times),
+            Body::Directory(entries) => Draft::Directory(
+                entries
+                    .iter()
+                    .map(|(name, child)| Some((name.clone(), self.draft(*child)?)))
+                    .collect::<Option<_>>()?,
+                held.times,
+            ),
+        })
+    }
+
+    /// The snapshot `draft` lays out.
+    fn laid(draft: Draft) -> Self {
+        let mut layout = Layout {
+            nodes: Vec::new(),
+            encoder: Encoder::new("rust-mutants-sealed/snapshot/v2"),
+        };
+        draft.lay_out((ROOT, ROOT_INODE), "", &mut layout);
+        Self {
+            nodes: layout.nodes.into(),
+            digest: layout.encoder.finish(),
         }
     }
 }
@@ -141,19 +207,11 @@ impl SnapshotBuilder {
     /// # Errors
     /// [`SealedError::SnapshotPath`] where a path is a file in one place and a directory in another.
     pub fn build(self) -> Result<Snapshot, SealedError> {
-        let mut draft = Draft::Directory(BTreeMap::new());
+        let mut draft = Draft::Directory(BTreeMap::new(), Times::UNSET);
         for (path, entry) in self.entries {
             draft.place(&path, entry)?;
         }
-        let mut layout = Layout {
-            nodes: Vec::new(),
-            encoder: Encoder::new("rust-mutants-sealed/snapshot/v1"),
-        };
-        draft.lay_out((ROOT, ROOT_INODE), "", &mut layout);
-        Ok(Snapshot {
-            nodes: layout.nodes.into(),
-            digest: layout.encoder.finish(),
-        })
+        Ok(Snapshot::laid(draft))
     }
 }
 
@@ -168,10 +226,10 @@ struct Layout {
 /// A snapshot as a nested tree, before it is laid out in an arena.
 #[derive(Debug)]
 enum Draft {
-    /// A file with these bytes.
-    File(Vec<u8>),
-    /// A directory with these entries.
-    Directory(BTreeMap<String, Self>),
+    /// A file with these bytes and times.
+    File(Vec<u8>, Times),
+    /// A directory with these entries and times.
+    Directory(BTreeMap<String, Self>, Times),
 }
 
 impl Draft {
@@ -184,49 +242,135 @@ impl Draft {
         let mut names = path.split('/').peekable();
         let mut here = self;
         while let Some(name) = names.next() {
-            let Self::Directory(entries) = here else {
+            let Self::Directory(entries, _) = here else {
                 return Err(conflict());
             };
             if names.peek().is_some() {
                 here = entries
                     .entry(name.to_owned())
-                    .or_insert_with(|| Self::Directory(BTreeMap::new()));
+                    .or_insert_with(|| Self::Directory(BTreeMap::new(), Times::UNSET));
                 continue;
             }
             let placed = match entry {
-                Given::File(contents) => Self::File(contents),
-                Given::Directory => Self::Directory(BTreeMap::new()),
+                Given::File(contents) => Self::File(contents, Times::UNSET),
+                Given::Directory => Self::Directory(BTreeMap::new(), Times::UNSET),
             };
             return match entries.insert(name.to_owned(), placed) {
                 None => Ok(()),
-                Some(Self::Directory(_) | Self::File(_)) => Err(conflict()),
+                Some(Self::Directory(..) | Self::File(..)) => Err(conflict()),
             };
         }
         Err(conflict())
+    }
+
+    /// Makes `path`, below this directory and empty for the directory itself, hold what `state` says, its directory already held.
+    fn changed(&mut self, path: &str, state: &OverlayState) -> Result<(), SealedError> {
+        let refuse = |fault| SealedError::SnapshotPath {
+            path: path.to_owned(),
+            fault,
+        };
+        if path.is_empty() {
+            return match (self, state) {
+                (Self::Directory(_, times), OverlayState::Directory { accessed, modified }) => {
+                    *times = Times {
+                        accessed: *accessed,
+                        modified: *modified,
+                    };
+                    Ok(())
+                }
+                (
+                    Self::Directory(..) | Self::File(..),
+                    OverlayState::Directory { .. }
+                    | OverlayState::File { .. }
+                    | OverlayState::Removed,
+                ) => Err(refuse(SnapshotFault::FileAndDirectory)),
+            };
+        }
+        if !relative_names(path) {
+            return Err(refuse(SnapshotFault::NotRelative));
+        }
+        let (directory, name) = match path.rsplit_once('/') {
+            Some((directory, name)) => (Some(directory), name),
+            None => (None, path),
+        };
+        let mut here = self;
+        for step in directory
+            .into_iter()
+            .flat_map(|directory| directory.split('/'))
+        {
+            let Self::Directory(entries, _) = here else {
+                return Err(refuse(SnapshotFault::NoParent));
+            };
+            here = entries
+                .get_mut(step)
+                .ok_or_else(|| refuse(SnapshotFault::NoParent))?;
+        }
+        let Self::Directory(entries, _) = here else {
+            return Err(refuse(SnapshotFault::NoParent));
+        };
+        match state {
+            OverlayState::File {
+                contents,
+                accessed,
+                modified,
+            } => {
+                let times = Times {
+                    accessed: *accessed,
+                    modified: *modified,
+                };
+                entries.insert(name.to_owned(), Self::File(contents.clone(), times));
+            }
+            OverlayState::Directory { accessed, modified } => {
+                let times = Times {
+                    accessed: *accessed,
+                    modified: *modified,
+                };
+                match entries.get_mut(name) {
+                    Some(Self::Directory(_, held)) => *held = times,
+                    Some(Self::File(..)) | None => {
+                        entries.insert(name.to_owned(), Self::Directory(BTreeMap::new(), times));
+                    }
+                }
+            }
+            OverlayState::Removed => {
+                entries.remove(name);
+            }
+        }
+        Ok(())
     }
 
     /// Lays this node out under `parent` with the inode `inode`, its children after it, and adds it to the digest.
     fn lay_out(self, (parent, inode): (NodeId, u64), path: &str, layout: &mut Layout) {
         let id = layout.nodes.len();
         match self {
-            Self::File(contents) => {
+            Self::File(contents, times) => {
                 layout
                     .encoder
                     .tag(b'F')
                     .text(path)
-                    .digest(&SealedDigest::of(&contents));
+                    .digest(&SealedDigest::of(&contents))
+                    .number(times.accessed)
+                    .number(times.modified);
                 layout.nodes.push(Node {
                     body: Body::File(contents.into()),
                     inode,
                     parent,
+                    times,
                 });
             }
-            Self::Directory(children) => {
-                layout.encoder.tag(b'D').text(path).count(children.len());
+            Self::Directory(children, times) => {
+                layout
+                    .encoder
+                    .tag(b'D')
+                    .text(path)
+                    .count(children.len())
+                    .number(times.accessed)
+                    .number(times.modified);
                 layout.nodes.push(Node {
                     body: Body::Directory(Arc::new(BTreeMap::new())),
                     inode,
                     parent,
+                    times,
                 });
                 let mut entries = BTreeMap::new();
                 for (name, child) in children {
