@@ -71,17 +71,31 @@ fn a_windows_path_below_the_trees_root_starts_at_the_root_whatever_separates_its
 }
 
 #[test]
-fn the_drive_letter_is_read_in_either_case_and_every_other_name_exactly() {
+fn the_roots_names_are_read_in_either_case_and_every_name_below_it_as_spelled() {
     let spelling = windows();
+    for path in [
+        r"c:\work\tree\top.txt",
+        r"C:\Work\tree\top.txt",
+        r"C:\work\TREE\top.txt",
+        r"c:\WORK\Tree\top.txt",
+    ] {
+        assert_eq!(
+            spelling.read(path),
+            Reading::Rooted(vec!["top.txt"]),
+            "NTFS reads a name in either case, so a build that spelled the root in another \
+             case reaches the tree: {path}"
+        );
+    }
     assert_eq!(
-        spelling.read(r"c:\work\tree\top.txt"),
+        Spelling::of(r"c:\work\tree").read(r"C:\WORK\TREE\top.txt"),
         Reading::Rooted(vec!["top.txt"])
     );
     assert_eq!(
-        Spelling::of(r"c:\work\tree").read(r"C:\work\tree\top.txt"),
-        Reading::Rooted(vec!["top.txt"])
+        spelling.read(r"C:\WORK\TREE\Pkg\Top.TXT"),
+        Reading::Rooted(vec!["Pkg", "Top.TXT"]),
+        "a name below the root is walked as spelled, as the snapshot holds it"
     );
-    for path in [r"C:\Work\tree\top.txt", r"C:\work\TREE\top.txt"] {
+    for path in [r"C:\work\trees\top.txt", r"C:\wörk\tree\top.txt"] {
         assert_eq!(spelling.read(path), Reading::Elsewhere, "{path}");
     }
 }
@@ -186,6 +200,32 @@ proptest! {
             }
             Reading::Elsewhere => {}
         }
+    }
+
+    #[test]
+    fn a_windows_root_is_read_in_either_case_and_the_names_below_it_as_spelled(
+        root in proptest::collection::vec("[a-zA-Z0-9]{1,6}", 1..4),
+        flips in proptest::collection::vec(proptest::bool::ANY, 1..32),
+        below in proptest::collection::vec("[a-zA-Z0-9]{1,6}", 0..4),
+    ) {
+        let spelling = Spelling::of(&format!("C:\\{}", root.join("\\")));
+        let mut flip = flips.iter().cycle();
+        let recased: Vec<String> = root
+            .iter()
+            .map(|name| {
+                name.chars()
+                    .map(|character| match flip.next() {
+                        Some(true) => character.to_ascii_uppercase(),
+                        Some(false) | None => character.to_ascii_lowercase(),
+                    })
+                    .collect()
+            })
+            .collect();
+        let walked: Vec<&str> = below.iter().map(String::as_str).collect();
+        let recased_path = format!("c:\\{}\\{}", recased.join("\\"), below.join("\\"));
+        prop_assert_eq!(spelling.read(&recased_path), Reading::Rooted(walked));
+        let longer = format!("C:\\{}x\\{}", root.join("\\"), below.join("\\"));
+        prop_assert_eq!(spelling.read(&longer), Reading::Elsewhere);
     }
 
     #[test]
