@@ -14,4 +14,3 @@
 3 xtask/src/proofaudit/merge.rs
 3 xtask/src/proofaudit/sentinel.rs
 2 xtask/src/proofaudit/soundness.rs
-2 xtask/src/route.rs

@@ -388,7 +388,15 @@ fn baseline_declines(
             continue;
         };
         match crate::route::declines(record) {
-            Ok(declines) => excused.entry(target).or_default().extend(declines),
+            Ok(crate::route::Recorded::Said(declines)) => {
+                excused.entry(target).or_default().extend(declines);
+            }
+            Ok(crate::route::Recorded::Unrecorded) => notes.unaudited(
+                &target,
+                "the baseline's verification does not say which of its tests declined, so no \
+                 decline under a mutation is excused by it"
+                    .to_owned(),
+            ),
             Err(error) => notes.violated(
                 &target,
                 format!("the baseline's declines cannot be read: {error}"),
@@ -396,6 +404,41 @@ fn baseline_declines(
         }
     }
     excused
+}
+
+/// One execution and the declines it recorded.
+struct Declining<'a> {
+    exec: &'a crate::route::Exec,
+    declines: &'a [(String, String)],
+}
+
+/// Each execution with the declines it recorded, or nothing where one of them does not say which tests declined, which is said.
+fn said_declines<'a>(
+    row: &Row,
+    execs: &[&'a crate::route::Exec],
+    notes: &mut Notes<'_>,
+) -> Option<Vec<Declining<'a>>> {
+    let mut said = Vec::new();
+    for exec in execs {
+        match &exec.declined {
+            crate::route::Recorded::Said(declines) => said.push(Declining {
+                exec,
+                declines: declines.as_slice(),
+            }),
+            crate::route::Recorded::Unrecorded => {
+                notes.unaudited(
+                    row.label(),
+                    format!(
+                        "its execution against {} does not say which tests declined, so the \
+                         row's declines are not re-derived",
+                        exec.target
+                    ),
+                );
+                return None;
+            }
+        }
+    }
+    Some(said)
 }
 
 /// A row's declines and what they made of it, re-derived from its executions and the declines each target's baseline made (ADR 0043).
@@ -410,8 +453,11 @@ fn declined(
     let Some(answer) = execs.iter().rev().find(|exec| exec.target == row.target) else {
         return;
     };
+    let Some(said) = said_declines(row, execs, notes) else {
+        return;
+    };
     let recorded: BTreeSet<&(String, String)> =
-        execs.iter().flat_map(|exec| exec.declined.iter()).collect();
+        said.iter().flat_map(|one| one.declines.iter()).collect();
     let claimed: BTreeSet<(String, String)> = row
         .declined
         .iter()
@@ -428,16 +474,13 @@ fn declined(
             ),
         );
     }
-    for exec in execs {
-        let changed = exec
-            .declined
-            .iter()
-            .find(|one| match excused.get(&exec.target) {
-                Some(baseline) => !baseline.contains(*one),
-                None => true,
-            });
-        let answering = std::ptr::eq(*exec, *answer);
-        let every = !exec.declined.is_empty() && exec.tests_run == Some(count(exec.declined.len()));
+    for Declining { exec, declines } in said {
+        let changed = declines.iter().find(|one| match excused.get(&exec.target) {
+            Some(baseline) => !baseline.contains(*one),
+            None => true,
+        });
+        let answering = std::ptr::eq(exec, *answer);
+        let every = !declines.is_empty() && exec.tests_run == Some(count(declines.len()));
         match changed {
             Some((test, why))
                 if !answering || row.outcome != KILLED || row.killed_by != [test.clone()] =>
@@ -491,24 +534,26 @@ fn ran_in_order(
     execs: &[&crate::route::Exec],
     notes: &mut Notes<'_>,
 ) {
+    let crate::route::Recorded::Said(executed) = &route.executed else {
+        notes.unaudited(
+            row.label(),
+            "the recording's route does not say which targets ran, so the order they ran in is \
+             not re-derived"
+                .to_owned(),
+        );
+        return;
+    };
     let mut ran: Vec<&str> = execs.iter().map(|exec| exec.target.as_str()).collect();
     if row.retried {
         ran.pop();
     }
-    if ran
-        != route
-            .executed
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-    {
+    if ran != executed.iter().map(String::as_str).collect::<Vec<_>>() {
         notes.violated(
             row.label(),
             format!(
-                "the route says {:?} ran, in that order, and the recording ran {ran:?}; a route \
-                 that names work nobody did, or leaves out work somebody did, is not an account \
-                 of the run",
-                route.executed
+                "the route says {executed:?} ran, in that order, and the recording ran {ran:?}; a \
+                 route that names work nobody did, or leaves out work somebody did, is not an \
+                 account of the run"
             ),
         );
     }
@@ -525,11 +570,18 @@ fn named_its_tests(
         let Some(known) = tests.get(&exec.target) else {
             continue;
         };
-        for test in exec
-            .failed_tests
-            .iter()
-            .filter(|test| !known.contains(*test))
-        {
+        let crate::route::Recorded::Said(failed) = &exec.failed_tests else {
+            notes.unaudited(
+                row.label(),
+                format!(
+                    "the killing execution against {} does not say which tests failed, so \
+                     whether they are tests its baseline ran is not re-derived",
+                    exec.target
+                ),
+            );
+            continue;
+        };
+        for test in failed.iter().filter(|test| !known.contains(*test)) {
             notes.violated(
                 row.label(),
                 format!(
@@ -575,12 +627,21 @@ fn reported_route(row: &Row, recorded: &crate::route::Route, notes: &mut Notes<'
         );
     }
     let reported_executed: BTreeSet<&str> = reported.executed.iter().map(String::as_str).collect();
-    let recorded_executed: BTreeSet<&str> = recorded.executed.iter().map(String::as_str).collect();
-    if reported_executed != recorded_executed {
-        notes.violated(
+    match &recorded.executed {
+        crate::route::Recorded::Said(executed) => {
+            if reported_executed != executed.iter().map(String::as_str).collect() {
+                notes.violated(
+                    row.label(),
+                    "the report and recording name different executed targets".to_owned(),
+                );
+            }
+        }
+        crate::route::Recorded::Unrecorded => notes.unaudited(
             row.label(),
-            "the report and recording name different executed targets".to_owned(),
-        );
+            "the recording's route does not say which targets ran, so the report's are not \
+             held to it"
+                .to_owned(),
+        ),
     }
     let reported_discharged: BTreeSet<(&str, &str)> = reported
         .discharged
@@ -692,8 +753,23 @@ fn attributed(row: &Row, exec: &crate::route::Exec, notes: &mut Notes<'_>) {
     let Some(signal) = exec.signal else {
         return;
     };
-    if exec.outcome != KILLED || !exec.failed_tests.is_empty() {
+    if exec.outcome != KILLED {
         return;
+    }
+    match &exec.failed_tests {
+        crate::route::Recorded::Said(failed) if !failed.is_empty() => return,
+        crate::route::Recorded::Said(_) => {}
+        crate::route::Recorded::Unrecorded => {
+            notes.unaudited(
+                row.label(),
+                format!(
+                    "an execution against {} is counted killed on signal {signal} and does not \
+                     say which tests failed, so whether the tests ended it is not known",
+                    exec.target
+                ),
+            );
+            return;
+        }
     }
     match raised(signal) {
         Raised::Itself => {}

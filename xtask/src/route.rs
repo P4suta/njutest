@@ -97,8 +97,17 @@ pub struct Discharge {
     pub proof: String,
 }
 
+/// A field only one of the two producers writes: what this recording says, or that its producer does not write it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Recorded<T> {
+    /// The producer of this recording does not write the field, so the recording says nothing of it.
+    Unrecorded,
+    /// What the recording says.
+    Said(T),
+}
+
 /// One routing decision, as either producer records it.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Route {
     /// The mutant, as a person types it.
     pub mutant: String,
@@ -113,7 +122,7 @@ pub struct Route {
     /// The targets a proof removed.
     pub discharged: Vec<Discharge>,
     /// The targets that ran, which only the engine records.
-    pub executed: Vec<String>,
+    pub executed: Recorded<Vec<String>>,
     /// The targets that were measured, asked, and did not reach the mutation.
     pub considered: Vec<String>,
     /// The run this disposition was read back from.
@@ -164,9 +173,9 @@ pub struct Exec {
     /// The signal the process died of, where the producer recorded one.
     pub signal: Option<i64>,
     /// Every test the harness said failed, which only the engine records.
-    pub failed_tests: Vec<String>,
+    pub failed_tests: Recorded<Vec<String>>,
     /// Each test that declined to measure and its words, as `(test, why)`, which only the engine records (ADR 0043).
-    pub declined: Vec<(String, String)>,
+    pub declined: Recorded<Vec<(String, String)>>,
 }
 
 /// What a recording establishes about whether a process outlived its harness's answer.
@@ -410,10 +419,10 @@ fn route(record: &Value) -> Result<Route, ReadCauseError> {
         index: number(record, "index"),
         granularity: required(record, "granularity", owned)?,
         fallback: text(record, "fallback"),
-        reaching: strings(record, "reaching"),
+        reaching: texts(record, "reaching")?,
         discharged: discharges(record)?,
-        executed: strings(record, "executed"),
-        considered: strings(record, "considered"),
+        executed: recorded_texts(record, "executed")?,
+        considered: texts(record, "considered")?,
         reused: text(record, "reused"),
         refused: text(record, "refused"),
         rule: text(record, "rule"),
@@ -445,18 +454,18 @@ fn exec(record: &Value) -> Result<Exec, ReadCauseError> {
         alone: Isolation::recorded(record.get("alone")),
         lingered: Linger::recorded(record.get("lingered")),
         signal: record.get("signal").and_then(Value::as_i64),
-        failed_tests: strings(record, "failed_tests"),
+        failed_tests: recorded_texts(record, "failed_tests")?,
         declined: declines(record)?,
     })
 }
 
-/// Each test a record says declined to measure, with its words; none where the producer records no declines, since the runner's records carry none.
+/// Each test a record says declined to measure, with its words, or that its producer does not record declines, as the runner's records do not.
 ///
 /// # Errors
-/// [`ReadCauseError::Absent`] for an entry that is not a test and its words.
-pub fn declines(record: &Value) -> Result<Vec<(String, String)>, ReadCauseError> {
+/// [`ReadCauseError::Absent`] for a list that is not one, or an entry that is not a test and its words.
+pub fn declines(record: &Value) -> Result<Recorded<Vec<(String, String)>>, ReadCauseError> {
     let Some(entries) = record.get("declined") else {
-        return Ok(Vec::new());
+        return Ok(Recorded::Unrecorded);
     };
     let Some(entries) = entries.as_array() else {
         return Err(ReadCauseError::Absent {
@@ -471,7 +480,8 @@ pub fn declines(record: &Value) -> Result<Vec<(String, String)>, ReadCauseError>
                 field: "declined[].test and declined[].why".to_owned(),
             }),
         })
-        .collect()
+        .collect::<Result<Vec<(String, String)>, ReadCauseError>>()
+        .map(Recorded::Said)
 }
 
 /// The mutant a record is about: the runner writes `mutant`, the engine writes `id`.
@@ -483,24 +493,17 @@ fn named(record: &Value) -> Result<String, ReadCauseError> {
         })
 }
 
-/// Every target a proof removed, with the proof; none where the producer writes no such list.
+/// Every target a proof removed, with the proof, which both producers write on every route.
 fn discharges(record: &Value) -> Result<Vec<Discharge>, ReadCauseError> {
-    record
-        .get("discharged")
-        .and_then(Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .map(|entry| {
-                    Ok(Discharge {
-                        target: required(entry, "target", owned)?,
-                        proof: required(entry, "proof", owned)?,
-                    })
-                })
-                .collect::<Result<Vec<Discharge>, ReadCauseError>>()
+    required(record, "discharged", Value::as_array)?
+        .iter()
+        .map(|entry| {
+            Ok(Discharge {
+                target: required(entry, "target", owned)?,
+                proof: required(entry, "proof", owned)?,
+            })
         })
-        .transpose()
-        .map(Option::unwrap_or_default)
+        .collect()
 }
 
 /// A string, owned.
@@ -518,16 +521,28 @@ fn number(value: &Value, key: &str) -> Option<u64> {
     value.get(key)?.as_u64()
 }
 
-/// One array of strings, empty when it is absent.
-fn strings(value: &Value, key: &str) -> Vec<String> {
-    value
-        .get(key)
-        .and_then(Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .filter_map(|entry| entry.as_str().map(str::to_owned))
-                .collect()
+/// The strings of the array field `key`, which every line on its schema carries.
+///
+/// # Errors
+/// [`ReadCauseError::Absent`] where the field is not there, is not an array, or holds anything but strings.
+fn texts(value: &Value, key: &str) -> Result<Vec<String>, ReadCauseError> {
+    required(value, key, Value::as_array)?
+        .iter()
+        .map(|entry| {
+            owned(entry).ok_or_else(|| ReadCauseError::Absent {
+                field: format!("{key}[]"),
+            })
         })
-        .unwrap_or_default()
+        .collect()
+}
+
+/// The strings of the array field `key` where this record's producer writes it, and that it does not where the field is not there.
+///
+/// # Errors
+/// What [`texts`] refuses, for a field that is there.
+fn recorded_texts(value: &Value, key: &str) -> Result<Recorded<Vec<String>>, ReadCauseError> {
+    match value.get(key) {
+        None => Ok(Recorded::Unrecorded),
+        Some(_) => texts(value, key).map(Recorded::Said),
+    }
 }

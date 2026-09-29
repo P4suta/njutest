@@ -124,7 +124,10 @@ fn each_producer_keeps_the_fields_only_it_records() {
         return;
     };
     assert_eq!(engine_route.index, Some(3));
-    assert_eq!(engine_route.executed, vec!["pkg/lib/pkg".to_owned()]);
+    assert_eq!(
+        engine_route.executed,
+        route::Recorded::Said(vec!["pkg/lib/pkg".to_owned()])
+    );
     assert!(engine_route.considered.is_empty());
     let engine_exec = engine.execs.first();
     assert_eq!(option_state(engine_exec), OptionState::Present);
@@ -140,7 +143,11 @@ fn each_producer_keeps_the_fields_only_it_records() {
     };
     assert_eq!(runner_route.index, None);
     assert_eq!(runner_route.considered, vec!["pkg/test/wide".to_owned()]);
-    assert!(runner_route.executed.is_empty());
+    assert_eq!(
+        runner_route.executed,
+        route::Recorded::Unrecorded,
+        "the runner does not write which targets ran, which is not that none did"
+    );
     assert_eq!(
         runner_route.discharged,
         vec![Discharge {
