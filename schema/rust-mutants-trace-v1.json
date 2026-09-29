@@ -1978,6 +1978,65 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
+            "control",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "sealed-control"
+            },
+            "control": {
+              "description": "One test of one sealed module run with nothing active, alone in a fresh instance: whether a mutant's execution can be judged against it, and every guard it reached (ADR 0046).",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "target",
+                "test",
+                "standing",
+                "reached"
+              ],
+              "properties": {
+                "target": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "test": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "standing": {
+                  "enum": [
+                    "controlled",
+                    "panicked",
+                    "failed",
+                    "trapped",
+                    "fuel-exceeded",
+                    "memory-exceeded",
+                    "declined",
+                    "exited-early",
+                    "stack-overflow",
+                    "refused",
+                    "unaccounted",
+                    "unmatched",
+                    "unbuilt",
+                    "not-held"
+                  ]
+                },
+                "reached": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
             "sealed",
             "type"
           ],

@@ -19,9 +19,10 @@ pub use event::{
     DiscoverFileRecord, EVERY_TYPE, Event, EvidenceRecord, ExecRecord, IdenticalRecord,
     InstrumentRecord, KeptRecord, Measurement, MutantExecRecord, NjutestBuild, NjutestBuildError,
     NoteRecord, OpenRecord, Payload, PerturbationRecord, PerturbedRecord, PhaseRecord, ReachRecord,
-    RouteRecord, RunOutcome, RunRecord, SCHEMA, SealedExecRecord, SelectRecord, SetRecord,
-    SiteRecord, SkipClaimRecord, SkipCount, SnapshotRecord, SummaryRecord, SweepRecord,
-    TargetRecord, TouchRecord, TraceContext, ValidateRoundRecord, VerifyRecord, WitnessRecord,
+    RouteRecord, RunOutcome, RunRecord, SCHEMA, SealedControlRecord, SealedExecRecord,
+    SelectRecord, SetRecord, SiteRecord, SkipClaimRecord, SkipCount, SnapshotRecord, SummaryRecord,
+    SweepRecord, TargetRecord, TouchRecord, TraceContext, ValidateRoundRecord, VerifyRecord,
+    WitnessRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{
@@ -458,6 +459,11 @@ impl Recorder {
     /// Records one mutant executed against one target.
     pub fn mutant_exec(&self, record: MutantExecRecord) {
         self.emit(Payload::MutantExec { mutant: record });
+    }
+
+    /// Records one sealed control: one test run with nothing active, and every guard it reached.
+    pub fn sealed_control(&self, record: SealedControlRecord) {
+        self.emit(Payload::SealedControl { control: record });
     }
 
     /// Records one sealed execution of one test with one mutant active.

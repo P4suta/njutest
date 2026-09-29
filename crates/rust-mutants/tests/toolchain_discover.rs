@@ -63,6 +63,7 @@ const fn relevant_payload(payload: &Payload) -> RelevantPayload<'_> {
         | Payload::Identical { .. }
         | Payload::Evidence { .. }
         | Payload::MutantExec { .. }
+        | Payload::SealedControl { .. }
         | Payload::SealedExec { .. }
         | Payload::Note { .. }
         | Payload::RunEnd { .. } => RelevantPayload::Other,

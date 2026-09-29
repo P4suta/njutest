@@ -14,7 +14,7 @@ use crate::id::RunId;
 pub const SCHEMA: &str = "rust-mutants-trace-v1";
 
 /// Every type a recording can hold, in the order [`Payload::type_name`] answers with.
-pub const EVERY_TYPE: [&str; 26] = [
+pub const EVERY_TYPE: [&str; 27] = [
     "run-start",
     "phase-start",
     "phase-end",
@@ -38,6 +38,7 @@ pub const EVERY_TYPE: [&str; 26] = [
     "evidence",
     "kept",
     "mutant-exec",
+    "sealed-control",
     "sealed-exec",
     "note",
     "run-end",
@@ -184,6 +185,11 @@ pub enum Payload {
     MutantExec {
         /// The record.
         mutant: MutantExecRecord,
+    },
+    /// One test of one sealed module was run with nothing active, alone in a fresh instance: its control, which every sealed execution of it is judged against (ADR 0046).
+    SealedControl {
+        /// The record.
+        control: SealedControlRecord,
     },
     /// One test of one sealed module was run with one mutant active, alone in a fresh instance (ADR 0046).
     SealedExec {
@@ -414,6 +420,7 @@ impl Payload {
             Self::Identical { .. } => "identical",
             Self::Evidence { .. } => "evidence",
             Self::MutantExec { .. } => "mutant-exec",
+            Self::SealedControl { .. } => "sealed-control",
             Self::SealedExec { .. } => "sealed-exec",
             Self::Note { .. } => "note",
             Self::RunEnd { .. } => "run-end",
@@ -961,6 +968,20 @@ pub struct MutantExecRecord {
     pub lingered: bool,
     /// Each test of it that declined to measure, and its words, where its notice was believed (ADR 0043).
     pub declined: Vec<crate::decline::Decline>,
+}
+
+/// One sealed control: one test of one module run with nothing active, whether a mutant's execution can be judged against it, and every guard it reached.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SealedControlRecord {
+    /// The target whose module ran.
+    pub target: String,
+    /// The test it ran.
+    pub test: String,
+    /// `controlled`, or why no mutant's execution can be judged against it, as a report spells it.
+    pub standing: String,
+    /// Every guard it reached, by dense catalog index, in order; none where it has no control.
+    pub reached: Vec<u32>,
 }
 
 /// One sealed execution: one test of one module with one mutant active, and what it came to.

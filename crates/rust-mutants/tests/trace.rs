@@ -64,6 +64,7 @@ const fn relevant_payload(payload: &Payload) -> RelevantPayload<'_> {
         | Payload::Identical { .. }
         | Payload::Evidence { .. }
         | Payload::MutantExec { .. }
+        | Payload::SealedControl { .. }
         | Payload::SealedExec { .. }
         | Payload::Note { .. }
         | Payload::RunEnd { .. } => RelevantPayload::Other,
@@ -1037,6 +1038,12 @@ fn one_of_each_execution(recorder: &Recorder) {
         lingered: false,
         step_notice: None,
         declined: Vec::new(),
+    });
+    recorder.sealed_control(rust_mutants::trace::SealedControlRecord {
+        target: "demo/lib/demo".to_owned(),
+        test: "demo::tests::le_bound".to_owned(),
+        standing: "controlled".to_owned(),
+        reached: vec![0, 1],
     });
     recorder.sealed_exec(rust_mutants::trace::SealedExecRecord {
         mutant: "b".repeat(20),

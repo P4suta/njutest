@@ -307,6 +307,7 @@ pub fn phase_line(event: &Event) -> Option<String> {
         | Payload::Identical { .. }
         | Payload::Evidence { .. }
         | Payload::MutantExec { .. }
+        | Payload::SealedControl { .. }
         | Payload::SealedExec { .. }
         | Payload::Note { .. }
         | Payload::RunEnd { .. } => None,

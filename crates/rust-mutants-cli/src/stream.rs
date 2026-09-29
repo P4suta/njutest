@@ -150,6 +150,7 @@ fn phase_of(event: &Event) -> Option<Line> {
         | Payload::Identical { .. }
         | Payload::Evidence { .. }
         | Payload::MutantExec { .. }
+        | Payload::SealedControl { .. }
         | Payload::SealedExec { .. }
         | Payload::Note { .. }
         | Payload::RunEnd { .. } => None,
@@ -231,6 +232,7 @@ impl<'a> Writer<'a> {
                 | Payload::Identical { .. }
                 | Payload::Evidence { .. }
                 | Payload::MutantExec { .. }
+                | Payload::SealedControl { .. }
                 | Payload::SealedExec { .. }
                 | Payload::Note { .. }
                 | Payload::RunEnd { .. } => continue,

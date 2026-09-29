@@ -1038,12 +1038,31 @@ impl Session {
                 (id.clone(), ran)
             })
             .collect();
-        Ok(crate::sealed::bench::Bench::assemble(
+        let bench = crate::sealed::bench::Bench::assemble(
             (runner, rust_mutants_sealed::Interrupt::of(cancel.flags())),
             (&self.sealed, &natives),
             (tree, &self.harness_args),
             (self.catalog.digest(), bounds),
-        )?)
+        )?;
+        for (target, station) in &bench.stations {
+            for (test, control) in &station.controls {
+                let (standing, reached) = match control {
+                    Ok(control) => (
+                        "controlled".to_owned(),
+                        control.reached.iter().copied().collect(),
+                    ),
+                    Err(why) => (why.name().to_owned(), Vec::new()),
+                };
+                self.trace()
+                    .sealed_control(crate::trace::SealedControlRecord {
+                        target: target.clone(),
+                        test: test.clone(),
+                        standing,
+                        reached,
+                    });
+            }
+        }
+        Ok(bench)
     }
 
     /// The instrumented tree as a sealed instance reads it, every file of the snapshot read now.
