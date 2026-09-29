@@ -180,7 +180,7 @@ fn crash_run(test: &str, stage: &str, ended: &str, files: &[&str]) -> Value {
         "crash": {
             "crash": CRASHED, "target": TARGET, "test": test, "stage": stage,
             "exit_code": exit_code, "outcome": outcome, "noticed": ended == "stopped",
-            "issued": issued, "left": left, "failed": failed
+            "issued": issued, "left": left, "unnamed": null, "failed": failed
         }
     })
 }
