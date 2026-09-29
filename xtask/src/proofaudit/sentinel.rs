@@ -1488,10 +1488,33 @@ fn reuse_planted(clean: Perturbation) -> Vec<Perturbation> {
         carried_past_its_killer(clean.clone()),
         carried(
             "a kill carried from an earlier tree though a body its killer entered starts elsewhere since",
-            clean,
+            clean.clone(),
             &json!({ "line": 2, "column": 1 }),
         ),
+        unreached_plan(clean),
     ]
+}
+
+/// The defect planted for the reuse layer: a kill carried under a plan that runs a target the guards' record says reaches nothing of the mutation.
+fn unreached_plan(clean: Perturbation) -> Perturbation {
+    let mut planted = carried(
+        "a kill carried under a plan that runs a target the guards' record says reaches nothing of it",
+        clean,
+        &json!({ "line": BODY_START.0, "column": BODY_START.1 }),
+    );
+    for (file, document) in &mut planted.beside {
+        if *file == "touched-v1.json" {
+            merge(document, json!({ "targets": reached_by(&[1]) }));
+        }
+    }
+    planted
+}
+
+/// The guards' record's targets, of [`TARGET`] reaching the mutations at `sites` from a thread no test answers for.
+fn reached_by(sites: &[u64]) -> Value {
+    json!({ TARGET: {
+        "reached": { "loose": sites }, "bodies": {}, "infected": {}, "entered": {}, "ran": []
+    } })
 }
 
 /// The run that established the answers a specimen carries.
@@ -1523,7 +1546,10 @@ pub fn carried(name: &'static str, clean: Perturbation, entered: &Value) -> Pert
     Perturbation {
         name,
         document: with(json!({
-            "mutants": [{ "reuse": { "reused": true, "source_run_id": EARLIER } }],
+            "mutants": [{
+                "catalog_index": 0,
+                "reuse": { "reused": true, "source_run_id": EARLIER }
+            }],
             "accounting": { "mutants": { "reused_killed": 1 } }
         })),
         events: Some(numbered(events)),
@@ -1531,7 +1557,7 @@ pub fn carried(name: &'static str, clean: Perturbation, entered: &Value) -> Pert
             (
                 "touched-v1.json",
                 json!({
-                    "targets": {}, "limitations": [],
+                    "targets": reached_by(&[0]), "limitations": [],
                     "items": [{
                         "index": 0, "package": "pkg", "path": "src/lib.rs", "name": "negated",
                         "span": { "start": 60, "end": 90 },

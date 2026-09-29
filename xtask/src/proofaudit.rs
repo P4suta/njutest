@@ -5074,6 +5074,10 @@ fn carried_back(
     (beside, engines): (&[Beside], &[Engine]),
     notes: &mut Notes<'_>,
 ) {
+    let indices: BTreeMap<String, u64> = read_back
+        .iter()
+        .filter_map(|mutant| Some((mutant.id.clone(), mutant.catalog_index?)))
+        .collect();
     let mut believed: BTreeMap<String, crate::engineaudit::carry::Rederived> = BTreeMap::new();
     for kept in beside {
         let standings = engines
@@ -5085,7 +5089,7 @@ fn carried_back(
                 skeletons: &kept.skeletons,
                 touched: &kept.touched,
             },
-            standings.as_ref(),
+            (standings.as_ref(), &indices),
         ) {
             Ok(records) => {
                 believed.extend(records.into_iter().map(|one| (one.mutant.clone(), one)));
@@ -5125,6 +5129,15 @@ fn carried_back(
                 mutant.label(),
                 format!("the run carried it though a premise of ADR 0041 fails: {why}"),
             );
+        }
+        for why in &record.unplanned {
+            notes.violated(
+                mutant.label(),
+                format!("the run held it to a plan the guards' record does not bear out: {why}"),
+            );
+        }
+        for why in &record.unkept {
+            notes.unaudited(mutant.label(), why.clone());
         }
     }
 }
