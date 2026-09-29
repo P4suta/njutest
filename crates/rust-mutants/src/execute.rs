@@ -611,6 +611,8 @@ pub enum StepProtocolFailure {
         /// The operating system's code where a call the runtime made is what failed, and `0` where none did.
         os: i32,
     },
+    /// The process exited with the step-protocol code, and the run's reading of its stop record disagreed with that record decided again, so no check is named.
+    Unconfirmed {},
     /// A monitor stop had no completed notice.
     NoticeMissing {},
     /// The opened notice was not a regular file.
@@ -694,6 +696,10 @@ impl StepProtocolFailure {
                 "a step-protocol stop record named check `{check}`, where the \
                  operating system answered {os}"
             ),
+            Self::Unconfirmed {} => "the process exited with the step-protocol status, and the \
+                                     run's reading of its stop record disagreed with the record \
+                                     read again, so no check is named"
+                .to_owned(),
             Self::NoticeMissing {} => "the runtime stopped for its allowance and no complete \
                                        notice was there"
                 .to_owned(),
@@ -1132,13 +1138,13 @@ fn refused(result: &RunResult) -> bool {
     };
     let recorded = |status: i32, known: fn(&str) -> bool| {
         ended(status)
-            && stop_record(&result.output)
-                .is_some_and(|(said, check, _os)| said == status && known(check))
+            && rust_mutants_decision::said::record(&result.output)
+                .is_some_and(|record| record.status == status && known(record.check))
     };
     (ended(crate::instrument::STALE_CATALOG_EXIT)
         && said(&result.output, crate::instrument::STALE_CATALOG_MARKER))
         || recorded(crate::instrument::TOUCH_UNAVAILABLE_EXIT, touch_stop_check)
-        || recorded(STEP_PROTOCOL_EXIT, step_stop_check)
+        || recorded(STEP_PROTOCOL_EXIT, rust_mutants_decision::said::step_check)
 }
 
 /// Whether `check` is one the runtime ends a process with when it cannot record what its guards reached.
@@ -1598,87 +1604,58 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
     }
 }
 
-/// What the generated runtime said on its way out of a failed step protocol: its final complete line with a check this release recognizes, or that it said nothing this release reads.
+/// What the generated runtime said on its way out of a failed step protocol, as [`rust_mutants_decision::said::stated`] reads it, where the output confirms that reading, and [`StepProtocolFailure::Unconfirmed`] where it does not.
 fn stated(output: &[u8]) -> StepProtocolFailure {
-    match stop_record(output) {
-        Some((STEP_PROTOCOL_EXIT, check, os)) if step_stop_check(check) => {
-            StepProtocolFailure::Stated {
-                check: check.to_owned(),
-                os,
-            }
+    let reading = rust_mutants_decision::said::stated(output, STEP_PROTOCOL_EXIT);
+    if !stop_said_agrees(output, reading.map(|record| (record.check, record.os))) {
+        return StepProtocolFailure::Unconfirmed {};
+    }
+    match reading {
+        Some(record) => StepProtocolFailure::Stated {
+            check: record.check.to_owned(),
+            os: record.os,
+        },
+        None => StepProtocolFailure::Publication {},
+    }
+}
+
+/// Whether `reading` is what the runtime's last line says, decided again apart from [`rust_mutants_decision::said::stated`]: a check it names is a known one whose stop line, written as the runtime writes it, is that line, and a reading that names none meets no known check's line there.
+fn stop_said_agrees(output: &[u8], reading: Option<(&str, i32)>) -> bool {
+    let Some(body) = output.strip_suffix(b"\n") else {
+        return reading.is_none();
+    };
+    let last = match body.iter().rposition(|byte| *byte == b'\n') {
+        Some(newline) => body.get(newline..).and_then(|line| line.get(1..)),
+        None => Some(body),
+    };
+    let Some(last) = last else {
+        return reading.is_none();
+    };
+    let last = last.strip_suffix(b"\r").unwrap_or(last);
+    let opening = |check: &str| format!("{STOP_SCHEMA}\t{STEP_PROTOCOL_EXIT}\t{check}\t");
+    match reading {
+        Some((check, os)) => {
+            rust_mutants_decision::said::STEP_CHECKS.contains(&check)
+                && last == format!("{}{os}", opening(check)).as_bytes()
         }
-        Some(_) | None => StepProtocolFailure::Publication {},
+        None => !rust_mutants_decision::said::STEP_CHECKS
+            .iter()
+            .any(|check| {
+                last.strip_prefix(opening(check).as_bytes())
+                    .is_some_and(|code| written_code(code).is_some())
+            }),
     }
 }
 
-/// The runtime's stop record, where it is the final complete line of `output`: the status it ended the process with, the check that failed, and the operating system's code, each spelled canonically.
-fn stop_record(output: &[u8]) -> Option<(i32, &str, i32)> {
-    let complete = output.strip_suffix(b"\n")?;
-    let line = complete.rsplit(|byte| *byte == b'\n').next()?;
-    let line = match std::str::from_utf8(line) {
-        Ok(line) => line,
-        Err(_not_a_runtime_line) => return None,
-    };
-    let line = line.strip_suffix('\r').unwrap_or(line);
-    let mut fields = line
-        .strip_prefix(STOP_SCHEMA)?
-        .strip_prefix('\t')?
-        .split('\t');
-    let (status, check, os, rest) = (
-        fields.next()?,
-        fields.next()?,
-        fields.next()?,
-        fields.next(),
-    );
-    if rest.is_some() {
+/// The code `bytes` spell where they spell it as the runtime writes one, which is how Rust formats an `i32`.
+fn written_code(bytes: &[u8]) -> Option<i32> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
         return None;
-    }
-    let canonical = |field: &str| match field.parse::<i32>() {
-        Ok(number) if number.to_string() == field => Some(number),
-        Ok(_) | Err(_) => None,
     };
-    Some((canonical(status)?, check, canonical(os)?))
-}
-
-fn step_stop_check(check: &str) -> bool {
-    matches!(
-        check,
-        "allowance: not Unicode"
-            | "allowance: not a number"
-            | "allowance: not canonical"
-            | "allowance: no room past it"
-            | "no state path"
-            | "no nonce"
-            | "no active mutant"
-            | "poisoned"
-            | "metadata"
-            | "not a regular file"
-            | "open"
-            | "lock"
-            | "count"
-            | "unlock"
-            | "seek"
-            | "read"
-            | "too large"
-            | "not UTF-8"
-            | "not canonical"
-            | "a field too many"
-            | "another schema"
-            | "another execution's nonce"
-            | "another mutant"
-            | "phase"
-            | "truncate"
-            | "write"
-            | "sync"
-            | "notice: no path"
-            | "notice: no nonce"
-            | "notice: no active mutant"
-            | "notice: create"
-            | "notice: write"
-            | "notice: sync"
-            | "notice: publish"
-            | "unstated"
-    )
+    match text.parse::<i32>() {
+        Ok(code) if code.to_string() == text => Some(code),
+        Ok(_) | Err(_) => None,
+    }
 }
 
 /// What one run of a test binary establishes about its mutant, given what its harness said before it stopped: a failed test or a signal the process raised itself is a kill, a clean summary a survivor, and a signal sent from outside inconclusive, as `docs/engine/verdicts.md` decides.
@@ -4191,6 +4168,54 @@ mod tests {
                 StepProtocolFailure::Publication {},
                 "a line for another stop, or one out of shape, names nothing: {unread:?}"
             );
+        }
+    }
+
+    #[test]
+    fn a_planted_misreading_of_a_stop_record_is_refused_by_the_check() {
+        let output = format!("running 1 test\n{STOP_SCHEMA}\t{STEP_PROTOCOL_EXIT}\tlock\t33\n");
+        assert!(super::stop_said_agrees(
+            output.as_bytes(),
+            Some(("lock", 33))
+        ));
+        for planted in [
+            Some(("open", 33)),
+            Some(("lock", 2)),
+            Some(("invented check", 33)),
+            None,
+        ] {
+            assert!(
+                !super::stop_said_agrees(output.as_bytes(), planted),
+                "a reading of {planted:?} passed for a record that says lock, 33"
+            );
+        }
+        for silent in ["", "running 1 test\n", "running 1 test"] {
+            assert!(super::stop_said_agrees(silent.as_bytes(), None));
+            assert!(
+                !super::stop_said_agrees(silent.as_bytes(), Some(("lock", 0))),
+                "a check read out of an output that names none: {silent:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_stop_the_runtime_can_say_is_named_and_confirmed() {
+        for check in rust_mutants_decision::said::STEP_CHECKS {
+            for os in [0, 2, 33, -5] {
+                for ending in ["\n", "\r\n"] {
+                    let output = format!(
+                        "running 1 test\n{STOP_SCHEMA}\t{STEP_PROTOCOL_EXIT}\t{check}\t{os}{ending}"
+                    );
+                    assert_eq!(
+                        super::stated(output.as_bytes()),
+                        StepProtocolFailure::Stated {
+                            check: check.to_owned(),
+                            os
+                        },
+                        "{output:?}"
+                    );
+                }
+            }
         }
     }
 

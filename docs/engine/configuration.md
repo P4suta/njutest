@@ -306,6 +306,7 @@ A process asked for one anyway — `RUST_MUTANTS_STEPS` set to anything but `0`,
 Selection, faults, the crash notice, the stale-catalog stop and recording are what they are elsewhere, except that each record is written the first time its index is seen, as one whole line in one write, under `-`: the host names the one test an instance ran.
 
 Every stop the generated runtime makes first writes one line to standard error — `rust-mutants-stop-v1`, the status, the check that failed, and the operating system's code, tab-separated — and the run records that check on the errored mutant and in its trace.
+The run decides that line again apart from its reading of it, by writing the line the named check would have been; where the two disagree it names no check, and the stop is recorded as `unconfirmed`.
 A copy of the runtime built from another catalog stops as a stale catalog wherever it meets the run, at its first boundary as at its first guard.
 A step-protocol status with no such line comes from a runtime this release did not generate, which is a stale build linked into the tree, and the run says so.
 
