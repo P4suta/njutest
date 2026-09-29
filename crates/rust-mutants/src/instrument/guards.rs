@@ -5,6 +5,8 @@
 
 use std::fmt::Write as _;
 
+use rust_mutants_decision::shape::opens_a_block;
+
 use crate::syntax::Form;
 
 /// The path one of the runtime's functions is called by from a site `super_depth` inline modules down.
@@ -86,23 +88,6 @@ pub(super) fn compose(
         Form::S => Ok(chain(paths, alternatives, original, Holds::Statements)),
         Form::M => arm(paths, alternatives, original),
     }
-}
-
-/// Whether `text` begins the way an expression ending at its own closing brace does, which ends a statement or an arm there.
-/// A guard over such an expression has to end the same way, and what a guard places at the start of a block has to be held so it cannot: the identity macro holds it, and the guard is a chain rather than a macro call.
-/// Reading only the first token errs toward holding: an expression that merely starts with a block, like `{ a } + b`, is held too, which is harmless wherever it stood.
-pub(super) fn opens_a_block(text: &str) -> bool {
-    const OPENERS: [&str; 8] = [
-        "if", "match", "loop", "while", "for", "unsafe", "const", "async",
-    ];
-    if text.starts_with(['{', '#', '\'']) {
-        return true;
-    }
-    let word: String = text
-        .chars()
-        .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
-        .collect();
-    OPENERS.contains(&word.as_str())
 }
 
 /// Form M: the guard an arm did not have, written after the pattern that did not need one.
@@ -315,46 +300,6 @@ mod tests {
             text: "false".to_owned(),
             comparable,
             probe: None,
-        }
-    }
-
-    #[test]
-    fn every_way_an_expression_can_open_a_block_is_read_as_one_and_nothing_else_is() {
-        for opening in [
-            "{ a }",
-            "#[cfg(x)] { a }",
-            "'label: { break 'label a; }",
-            "if a { b } else { c }",
-            "match a { _ => b }",
-            "loop { break a; }",
-            "while a { b(); }",
-            "for x in a { b(x); }",
-            "unsafe { a }",
-            "const { 1 }",
-            "async { a }",
-        ] {
-            assert!(
-                super::opens_a_block(opening),
-                "{opening} ends at its own closing brace, so its guard has to as well"
-            );
-        }
-        for plain in [
-            "a",
-            "iffy()",
-            "matches!(a, b)",
-            "looping()",
-            "whilst",
-            "fortune()",
-            "unsafely()",
-            "constant",
-            "asyncio()",
-            "f({ a })",
-            "(match a { _ => b })",
-        ] {
-            assert!(
-                !super::opens_a_block(plain),
-                "{plain} begins with no block, so the identity macro can hold its guard"
-            );
         }
     }
 

@@ -8,4 +8,5 @@
 
 pub mod evidence;
 pub mod judgement;
+pub mod shape;
 pub mod swap;
