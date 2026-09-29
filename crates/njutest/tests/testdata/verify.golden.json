@@ -25,6 +25,7 @@
               "unshared": 0
             },
             "faults": {
+              "absorbed": 0,
               "not_put": 0,
               "noticed": 0,
               "sites": 0,
