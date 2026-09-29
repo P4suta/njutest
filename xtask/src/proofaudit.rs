@@ -573,6 +573,8 @@ pub struct Recorded<'a> {
     pub outputs: &'a [(String, soundness::Kept)],
     /// What each configured build's engine kept beside its recording of the answers it carried.
     pub beside: &'a [Beside],
+    /// The tree the run measured, which every body a carried answer rests on is read again from, or nothing where no `--root` names it.
+    pub root: Option<&'a Path>,
 }
 
 /// The documents one configured build's engine kept beside its recording of the answers it carried (ADR 0041).
@@ -670,7 +672,7 @@ pub fn audit_with(
             Layer::Acceptances => acceptances(&recording, &mut audit),
             Layer::Reuse => reuse(
                 &recording,
-                (routing.as_ref(), recorded.beside, &engines),
+                (routing.as_ref(), (recorded.beside, recorded.root), &engines),
                 &mut audit,
             ),
             Layer::Proofs => proofs(&recording, rerouted, &mut audit),
@@ -5594,7 +5596,7 @@ fn acceptances(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
 /// Whether each target an exact answer rests on keeps the behaviour key it had is not in the report, and is left unaudited.
 fn reuse(
     recording: &Recording<'_>,
-    (routing, beside, engines): (Option<&crate::route::Routing>, &[Beside], &[Engine]),
+    (routing, (beside, root), engines): Reusing<'_>,
     audit: &mut Audit,
 ) -> Decided {
     let mut notes = Notes::on(audit, Layer::Reuse);
@@ -5620,6 +5622,7 @@ fn reuse(
                 routed_back(mutant, routing, &mut notes);
             }
             carried_back(&read_back, routing, (beside, engines), &mut notes);
+            bodies_read_again(&read_back, routing, (beside, root), &mut notes);
         }
         None => notes.unaudited(
             "provenance",
@@ -5640,6 +5643,65 @@ fn reuse(
     );
     notes.looked()
 }
+
+/// Whether every body an answer the run carried rests on is, in the tree `root` names, the body the build kept the digest and start of, in a file the skeletons' digest proves the one measured; unaudited where no `--root` names the tree.
+fn bodies_read_again(
+    read_back: &[&MutantRow],
+    routing: &crate::route::Routing,
+    (beside, root): (&[Beside], Option<&Path>),
+    notes: &mut Notes<'_>,
+) {
+    let carried = read_back.iter().any(|mutant| {
+        routing
+            .route_of(&mutant.id, &mutant.display_id)
+            .is_some_and(|route| route.rule.as_deref() == Some("carried"))
+    });
+    if !carried || beside.is_empty() {
+        return;
+    }
+    let Some(root) = root else {
+        notes.unaudited(
+            "root",
+            "no --root names the tree the run measured, so the bodies its carried answers rest on \
+             are held to the digests the run kept of them, not read again"
+                .to_owned(),
+        );
+        return;
+    };
+    for kept in beside {
+        let said = crate::engineaudit::carry::bodies_again(
+            crate::engineaudit::carry::Kept {
+                carried: &kept.carried,
+                skeletons: &kept.skeletons,
+                touched: &kept.touched,
+                catalog: &kept.catalog,
+            },
+            root,
+        );
+        match said {
+            Ok(said) => {
+                for one in said {
+                    match one {
+                        crate::engineaudit::carry::ReadAgain::Violated { subject, detail } => {
+                            notes.violated(&subject, detail);
+                        }
+                        crate::engineaudit::carry::ReadAgain::Unaudited { subject, detail } => {
+                            notes.unaudited(&subject, detail);
+                        }
+                    }
+                }
+            }
+            Err(why) => notes.violated(&kept.path, crate::error::Coded::coded(&why)),
+        }
+    }
+}
+
+/// What the reuse layer reads beside the report: the run's routes, what each build kept of the answers it carried with the tree they are read again from, and each build's engine recording.
+type Reusing<'a> = (
+    Option<&'a crate::route::Routing>,
+    (&'a [Beside], Option<&'a Path>),
+    &'a [Engine],
+);
 
 /// What each row read back says of its mutation's edit and catalog index, by identity, for a row that names its index.
 fn reported_of(read_back: &[&MutantRow]) -> BTreeMap<String, crate::engineaudit::carry::Reported> {

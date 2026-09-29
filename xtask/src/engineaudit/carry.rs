@@ -499,8 +499,12 @@ struct Skeletons {
     document_type: String,
     schema_version: u64,
     items: Vec<ItemClaim>,
+    files: std::collections::BTreeMap<String, String>,
     units: Vec<Unit>,
 }
+
+/// The version of the skeletons document this audit reads, the first to keep every file's digest.
+const SKELETONS_VERSION: u64 = 3;
 
 /// What the run claims of one cataloged item's body.
 #[derive(Debug, serde::Deserialize)]
@@ -791,11 +795,14 @@ fn documents(
         ("skeletons-v1.json", "rust-mutants/skeletons"),
         notes,
     )?;
-    if skeletons.document_type != "rust-mutants/skeletons" || skeletons.schema_version != 2 {
+    if skeletons.document_type != "rust-mutants/skeletons"
+        || skeletons.schema_version != SKELETONS_VERSION
+    {
         notes.violated(
             "skeletons-v1.json",
             format!(
-                "the document says it is {} version {}, not rust-mutants/skeletons version 2",
+                "the document says it is {} version {}, not rust-mutants/skeletons version \
+                 {SKELETONS_VERSION}",
                 skeletons.document_type, skeletons.schema_version
             ),
         );
@@ -876,11 +883,7 @@ pub(super) fn layer(
             return notes.looked();
         }
     };
-    let measured: std::collections::BTreeMap<&str, &str> = report
-        .mutants
-        .iter()
-        .map(|row| (row.path.as_str(), row.source_digest.as_str()))
-        .collect();
+    let measured = measured(&skeletons, report, &mut notes);
     let items = cataloged(&skeletons, &spans, &mut notes);
     let mut read = Tree::new(root, &measured);
     for item in &items {
@@ -889,6 +892,32 @@ pub(super) fn layer(
     refs(&items, &mut notes);
     skeleton_folds((&skeletons, &items, page.lists()), &mut read, &mut notes);
     notes.looked()
+}
+
+/// The digest of every file the run measured, as the skeletons keep it for every file an item is in and as each row's source digest says it, every disagreement between the two said.
+fn measured<'r>(
+    skeletons: &'r Skeletons,
+    report: &'r super::Report,
+    notes: &mut super::Notes<'_>,
+) -> std::collections::BTreeMap<&'r str, &'r str> {
+    let mut measured: std::collections::BTreeMap<&str, &str> = skeletons
+        .files
+        .iter()
+        .map(|(path, digest)| (path.as_str(), digest.as_str()))
+        .collect();
+    for row in &report.mutants {
+        match measured.insert(row.path.as_str(), row.source_digest.as_str()) {
+            Some(kept) if kept != row.source_digest => notes.violated(
+                &row.display_id,
+                format!(
+                    "the row says {} was measured as {}, and the skeletons keep it as {kept}",
+                    row.path, row.source_digest
+                ),
+            ),
+            Some(_) | None => {}
+        }
+    }
+    measured
 }
 
 /// The files of the measured tree, each read once and proved to be the file the run measured where the report can say.
@@ -1700,6 +1729,158 @@ fn catalog_of(catalog: &serde_json::Value) -> Result<Vec<CatalogEdit>, KeptError
         .collect()
 }
 
+/// What reading one body a carried answer rests on again from the tree said.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadAgain {
+    /// The file is proved the one the run measured, and what the build kept of the body is not what its bytes make.
+    Violated {
+        /// The item, as the carry evidence names it.
+        subject: String,
+        /// What it kept and what the bytes make.
+        detail: String,
+    },
+    /// What the build kept could not be held to the bytes: the file cannot be read from the tree, or is not the one the run measured.
+    Unaudited {
+        /// The item, as the carry evidence names it.
+        subject: String,
+        /// Why.
+        detail: String,
+    },
+}
+
+/// Every body the carried answers a runner's build believed rest on, read again from the tree at `root` and held to the digest and start the build kept of it.
+///
+/// A body is read only in a file whose digest in the skeletons proves it the one the run measured, and every body counts: each locus's own and every one an execution entered.
+///
+/// # Errors
+/// The first document that is not the one this audit reads, in words.
+pub fn bodies_again(kept: Kept<'_>, root: &std::path::Path) -> Result<Vec<ReadAgain>, KeptError> {
+    let skeletons =
+        serde_json::from_value::<Skeletons>(kept.skeletons.clone()).map_err(|source| {
+            KeptError::Undecodable {
+                file: "skeletons-v1.json",
+                document: "rust-mutants/skeletons",
+                source,
+            }
+        })?;
+    if skeletons.document_type != "rust-mutants/skeletons"
+        || skeletons.schema_version != SKELETONS_VERSION
+    {
+        return Err(KeptError::Other {
+            file: "skeletons-v1.json",
+            said: skeletons.document_type,
+            version: skeletons.schema_version,
+            document: "rust-mutants/skeletons",
+            expected: SKELETONS_VERSION,
+        });
+    }
+    let touched =
+        super::wire::read_touched(kept.touched).map_err(|source| KeptError::Undecodable {
+            file: "touched-v1.json",
+            document: "guards' record",
+            source,
+        })?;
+    let spans = spans(&touched).ok_or(KeptError::Uncataloged)?;
+    let carried = serde_json::from_value::<Believed>(kept.carried.clone()).map_err(|source| {
+        KeptError::Undecodable {
+            file: "carried-v1.json",
+            document: "rust-mutants/carried",
+            source,
+        }
+    })?;
+    let resting: std::collections::BTreeSet<&NamedItem> = carried
+        .records
+        .iter()
+        .flat_map(|entry| {
+            std::iter::once(&entry.record.locus.item).chain(
+                entry
+                    .record
+                    .executions
+                    .iter()
+                    .flat_map(|execution| execution.entered.iter().map(|one| &one.item)),
+            )
+        })
+        .collect();
+    Ok(resting
+        .into_iter()
+        .filter_map(|item| {
+            let claim = skeletons.items.iter().find(|claim| claim.item == *item)?;
+            read_again(item, claim, (&skeletons.files, &spans), root)
+        })
+        .collect())
+}
+
+/// What reading `claim`'s body again from `root` says against what the build kept of it, or nothing where it holds.
+fn read_again(
+    item: &NamedItem,
+    claim: &ItemClaim,
+    (files, spans): (&std::collections::BTreeMap<String, String>, &Spans),
+    root: &std::path::Path,
+) -> Option<ReadAgain> {
+    let subject = item.to_string();
+    let unaudited = |detail: String| {
+        Some(ReadAgain::Unaudited {
+            subject: subject.clone(),
+            detail,
+        })
+    };
+    let Some((path, body)) = spans.get(&claim.index) else {
+        return unaudited("the guards' record keeps no body span for it".to_owned());
+    };
+    let Ok(bytes) = std::fs::read(root.join(path)) else {
+        return unaudited(format!("{path} cannot be read from the tree"));
+    };
+    match files.get(path) {
+        Some(digest) if *digest == sha256(&bytes) => {}
+        Some(_) => return unaudited(format!("{path} is not the file the run measured")),
+        None => {
+            return unaudited(format!(
+                "the skeletons keep no digest of {path}, so no file read again is proved the one \
+                 the run measured"
+            ));
+        }
+    }
+    let violated = |detail: String| {
+        Some(ReadAgain::Violated {
+            subject: subject.clone(),
+            detail,
+        })
+    };
+    let (Ok(start), Ok(end)) = (usize::try_from(body.start), usize::try_from(body.end)) else {
+        return violated(format!(
+            "its body span does not fit this machine's addresses, so no byte of {path} is its body"
+        ));
+    };
+    let range = start..end;
+    let Some(read) = bytes.get(range.clone()) else {
+        return violated(format!(
+            "its body span lies outside {path}, the file the run measured"
+        ));
+    };
+    if sha256(read) != claim.body_digest {
+        return violated(format!(
+            "the build kept a body digest of {} that its body's bytes in {path}, the file the run \
+             measured, do not hash to, so an answer carried across it rests on a body nobody read",
+            claim.name
+        ));
+    }
+    let start = match bytes
+        .split_at_checked(range.start)
+        .map(|(before, _)| std::str::from_utf8(before))
+    {
+        Some(Ok(before)) => placed(before, before.len()),
+        Some(Err(_)) | None => None,
+    };
+    (start != claim.start).then(|| ReadAgain::Violated {
+        subject: subject.clone(),
+        detail: format!(
+            "the build kept {} as starting at {:?}, and its body starts at {start:?} in {path}, \
+             the file the run measured",
+            claim.name, claim.start
+        ),
+    })
+}
+
 /// One carried answer a runner's build believed, as this audit reads it again.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rederived {
@@ -1735,7 +1916,7 @@ pub enum KeptError {
         source: serde_json::Error,
     },
     /// A document says it is another document, or another version of it.
-    #[error("{file} says it is {said} version {version}, not {document} version 2")]
+    #[error("{file} says it is {said} version {version}, not {document} version {expected}")]
     Other {
         /// The document's file name.
         file: &'static str,
@@ -1745,6 +1926,8 @@ pub enum KeptError {
         version: u64,
         /// The document it should be.
         document: &'static str,
+        /// The version it should be.
+        expected: u64,
     },
     /// The guards' record keeps no item catalog, or the kept catalog no mutation list, so no body or edit can be named.
     #[error("touched-v1.json keeps no item catalog, or catalog-v1.json no mutations")]
@@ -1795,12 +1978,15 @@ pub fn rederived(
                 source,
             }
         })?;
-    if skeletons.document_type != "rust-mutants/skeletons" || skeletons.schema_version != 2 {
+    if skeletons.document_type != "rust-mutants/skeletons"
+        || skeletons.schema_version != SKELETONS_VERSION
+    {
         return Err(KeptError::Other {
             file: "skeletons-v1.json",
             said: skeletons.document_type,
             version: skeletons.schema_version,
             document: "rust-mutants/skeletons",
+            expected: SKELETONS_VERSION,
         });
     }
     let touched =
@@ -1823,6 +2009,7 @@ pub fn rederived(
             said: carried.document_type,
             version: carried.schema_version,
             document: "rust-mutants/carried",
+            expected: 2,
         });
     }
     let held = Held::of(&skeletons, &touched, &spans);

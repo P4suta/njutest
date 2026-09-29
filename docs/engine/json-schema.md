@@ -199,6 +199,9 @@ They are the premises its proof layers rest on: what each target's guards record
 which says so, the body digests, sealing and unit skeletons an answer would be carried across an edit by ([carrying an answer](carry.md)), every carried record the run believed, with every execution each rests on, and the catalog with the branch bodies the compiler vouched for.
 `cargo xtask engine-audit` reads them and re-decides every route without the engine that produced them, which is what makes a report's `discharged` a proof rather than a claim.
 
+`skeletons-v1.json` is at schema version 3: version 3 added `files`, the digest of every file an item of the catalog is in, and by the rule above that is a new identity, so a reader of this release reads version 3 and refuses 2 rather than read a document without the digests it proves files by.
+The file keeps its name, which names the family of documents, and the version inside it says which of them it is.
+
 Writing them never fails a run.
 A file that could not be written is one an audit calls unaudited, which is the honest answer.
 

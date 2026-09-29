@@ -380,7 +380,7 @@ fn every_outcome_a_report_can_claim_is_refused_when_its_executions_say_otherwise
         let laid = lie
             .lay()
             .unwrap_or_else(|error| panic!("{}: {error}", lie.name));
-        let audit = xtask::gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        let audit = xtask::gates::proofaudit(&checkers(), laid.run(), laid.trace(), laid.root())
             .unwrap_or_else(|error| panic!("{}: {error}", lie.name));
         if audit.violations() == 0 {
             believed.push(format!("{outcome}: `{}` drew no violation", lie.name));

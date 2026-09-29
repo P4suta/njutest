@@ -2530,7 +2530,7 @@ pub fn all(root: &Path) -> Result<String, GateError> {
     Ok(report.trim_end().to_owned())
 }
 
-/// Whether a completed run's verdicts are the ones its own recording supports.
+/// Whether a completed run's verdicts are the ones its own recording supports, every body an answer it carried rests on read again from the tree at `root` where one is named.
 ///
 /// # Errors
 /// A run directory whose report could not be read, is not JSON, or is not the assurance report.
@@ -2538,6 +2538,7 @@ pub fn proofaudit(
     checkers: &crate::schemas::Checkers,
     run: &Path,
     trace: Option<&Path>,
+    root: Option<&Path>,
 ) -> Result<proofaudit::Audit, proofaudit::AuditError> {
     let path = run.join(proofaudit::REPORT_FILE);
     let label = path.display().to_string();
@@ -2553,7 +2554,10 @@ pub fn proofaudit(
             path: &label,
             text: &text,
         },
-        kept.recorded(),
+        proofaudit::Recorded {
+            root,
+            ..kept.recorded()
+        },
         Some(run),
     )
 }
@@ -2577,6 +2581,7 @@ impl Recordings {
             engines: &self.engines,
             outputs: &self.outputs,
             beside: &self.beside,
+            root: None,
         }
     }
 }
@@ -3035,7 +3040,7 @@ fn proofaudit_specimen(
         .map_err(|error| GateError(format!("proofaudit: specimen `{name}`: {error}")))?;
     let shards: Vec<PathBuf> = laid.shards().into_iter().map(Path::to_path_buf).collect();
     if shards.is_empty() {
-        proofaudit(checkers, laid.run(), laid.trace())
+        proofaudit(checkers, laid.run(), laid.trace(), laid.root())
     } else {
         proofaudit_merged(checkers, laid.run(), &shards, laid.traces())
     }

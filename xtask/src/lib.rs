@@ -145,6 +145,9 @@ enum ExecutionGate {
         /// The directory holding each shard's recording under the run it names, as `.njutest/trace` does; without it, each shard's layers are unaudited.
         #[arg(long, requires = "shards")]
         traces: Option<std::path::PathBuf>,
+        /// The tree the run measured, which every body an answer it carried rests on is read again from, proved the file measured by the digest its build kept first.
+        #[arg(long, value_name = "DIR", conflicts_with = "shards")]
+        root: Option<std::path::PathBuf>,
     },
     /// Whether a completed engine run's report is the one its own rows, recording, and ledger support (ADR 0004).
     EngineAudit {
@@ -297,9 +300,11 @@ fn run_execution(
             trace,
             shards,
             traces,
+            root,
         } => {
             return audit_run(
                 (&run, trace.as_deref(), &shards, traces.as_deref()),
+                root.as_deref(),
                 stdout,
                 stderr,
             );
@@ -400,6 +405,7 @@ fn audit_engine(
 /// A recording that could not be read at all, like an audit with a layer blind to what was planted for it, is neither a clean audit nor a failed one, so it leaves by an exit code of its own.
 fn audit_run(
     (run, trace, shards, traces): (&Path, Option<&Path>, &[std::path::PathBuf], Option<&Path>),
+    root: Option<&Path>,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> ExitCode {
@@ -422,7 +428,7 @@ fn audit_run(
         }
     };
     let audited = if shards.is_empty() {
-        gates::proofaudit(&checkers, run, trace)
+        gates::proofaudit(&checkers, run, trace, root)
     } else {
         gates::proofaudit_merged(&checkers, run, shards, traces)
     };

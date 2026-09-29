@@ -124,6 +124,8 @@ rustfmt
 
 An item's `body_digest` is the lowercase hex SHA-256 of the bytes `touched-v1.json`'s `items[].body` names, braces included, as the pristine file holds them.
 Every item is named by `item`, the reference an entered union names it by: its package, its file, and its `ordinal`.
+`files` keeps, for every file an item is in that a unit read, the lowercase hex SHA-256 of all its bytes, whether or not the run mutated anything in it.
+It is what proves a file an audit reads again from the tree is the file the run measured, so a body digest or a `start` of a file only a test compiles, which no mutation's source digest names, is held as surely as one of a mutated file.
 
 An item's `start` is where its body's first byte stands, as the compiler reports a position with `line!()` and `column!()`: a line counted from 1 that only a line feed ends, and a column counted from 1 in characters.
 A leading byte-order mark is no column, a carriage return before a line feed ends no line and stands on the line it ends, and a carriage return alone is a column like any character.
@@ -178,6 +180,7 @@ A believed record is reported like an exact one, with the run that established i
 
 An answer is carried only by a run that keeps what it rests on where an audit reads it again.
 njutest keeps the carried records it believed, the skeletons, the guards' record and the catalog beside each build's recording, and `cargo xtask proofaudit` derives each record's locus again from the catalog's edit for its mutant, which must be the edit the report's row says.
+Given `--root`, the audit also reads every body a carried answer rests on again from the tree, in a file the skeletons' `files` digest proves the one measured, a file only a test compiles among them, and holds the build's digest and `start` of it to those bytes.
 Only a traced run writes that recording, so a run that is not traced files its answers for a later run and carries none: `mutation::Keeping::Nowhere` refuses the lookup before any record is read.
 
 A carried record lists native executions, and keeps no sealed execution, so a carried answer is a lead and never a verdict ([ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md)).

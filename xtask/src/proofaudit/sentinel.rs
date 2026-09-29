@@ -1198,6 +1198,7 @@ pub fn sharded_clean() -> Result<Perturbation, SpecimenError> {
         outputs: Vec::new(),
         beside: Vec::new(),
         kept: None,
+        tree: Vec::new(),
     })
 }
 
@@ -1305,6 +1306,8 @@ pub struct Perturbation {
     pub beside: Vec<(&'static str, Value)>,
     /// The record stream the run kept beside its report, or nothing where it kept none.
     pub kept: Option<String>,
+    /// The files of the tree the run measured, each by its path under the root the audit is given, or nothing where no root is.
+    pub tree: Vec<(&'static str, String)>,
 }
 
 /// The clean specimen every perturbation starts from, on which no layer may find anything.
@@ -1332,6 +1335,7 @@ pub fn clean() -> Perturbation {
         outputs: Vec::new(),
         beside: Vec::new(),
         kept: None,
+        tree: Vec::new(),
     }
 }
 
@@ -1342,6 +1346,7 @@ pub struct Laid {
     trace: Option<TempDir>,
     shards: Vec<TempDir>,
     traces: Option<TempDir>,
+    root: Option<TempDir>,
 }
 
 impl Laid {
@@ -1355,6 +1360,12 @@ impl Laid {
     #[must_use]
     pub fn trace(&self) -> Option<&Path> {
         self.trace.as_ref().map(TempDir::path)
+    }
+
+    /// The tree the run measured, when the perturbation lays one.
+    #[must_use]
+    pub fn root(&self) -> Option<&Path> {
+        self.root.as_ref().map(TempDir::path)
     }
 
     /// The run directory of each shard a merged report was merged from, in the order they were laid.
@@ -1432,11 +1443,13 @@ impl Perturbation {
             }
             Some(traces)
         };
+        let root = lay_tree(&self.tree)?;
         Ok(Laid {
             run,
             trace,
             shards,
             traces,
+            root,
         })
     }
 }
@@ -1504,6 +1517,7 @@ fn reuse_planted(clean: Perturbation) -> Vec<Perturbation> {
         },
         carried_past_its_killer(clean.clone()),
         carried_elsewhere(clean.clone()),
+        carried_through_another_body(clean.clone()),
         carried(
             "a kill carried from an earlier tree though a body its killer entered starts elsewhere since",
             clean.clone(),
@@ -1511,6 +1525,29 @@ fn reuse_planted(clean: Perturbation) -> Vec<Perturbation> {
         ),
         unreached_plan(clean),
     ]
+}
+
+/// The defect planted for the reuse layer: a kill carried though the body its killer entered is, in the tree the run measured, not the body whose digest the build kept.
+#[must_use]
+pub fn carried_through_another_body(clean: Perturbation) -> Perturbation {
+    let measured = CARRIED_SOURCE.replace("{ !ready }", "{ ready! }");
+    let mut planted = carried(
+        "a kill carried though the body its killer entered is another in the tree the run measured",
+        clean,
+        &json!({ "line": BODY_START.0, "column": BODY_START.1 }),
+    );
+    for (file, document) in &mut planted.beside {
+        if *file == "skeletons-v1.json" {
+            merge(
+                document,
+                json!({ "files": {
+                    "src/lib.rs": crate::engineaudit::carry::digest_of(measured.as_bytes())
+                } }),
+            );
+        }
+    }
+    planted.tree = vec![("src/lib.rs", measured)];
+    planted
 }
 
 /// The defect planted for the reuse layer: a kill carried under a record whose locus names another place in the body than the mutation's edit.
@@ -1568,6 +1605,24 @@ pub const BODY_START: (u64, u64) = (6, 23);
 /// The column of the carried kill's edit, the `!` two bytes into the body `{ !ready }` that starts at [`BODY_START`].
 const EDIT_COLUMN: u64 = 25;
 
+/// The file the carried kill is in, as the tree the run measured holds it: the body of [`carried_item`] at bytes 80 to 90, at [`BODY_START`].
+const CARRIED_SOURCE: &str = "//\n//\n//\n//\n// xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nfn negated(ready:bool){ !ready }\n";
+
+/// The skeletons a specimen's build keeps beside its recording: [`carried_item`] with the body `digest` starting at `now`, in [`CARRIED_SOURCE`].
+fn carried_skeletons(digest: &str, now: &Value) -> Value {
+    json!({
+        "document_type": "rust-mutants/skeletons", "schema_version": 3,
+        "items": [{
+            "index": 0, "item": carried_item(), "name": "negated",
+            "body_digest": digest, "sealed": true, "unsealed": null, "start": now
+        }],
+        "files": {
+            "src/lib.rs": crate::engineaudit::carry::digest_of(CARRIED_SOURCE.as_bytes())
+        },
+        "units": []
+    })
+}
+
 /// The catalog a specimen's build keeps beside its recording: the carried kill's edit, which takes the `!` out of the body of [`carried_item`].
 fn carried_catalog() -> Value {
     json!({
@@ -1613,6 +1668,7 @@ pub fn carried(name: &'static str, clean: Perturbation, entered: &Value) -> Pert
             "accounting": { "mutants": { "reused_killed": 1 } }
         })),
         events: Some(numbered(events)),
+        tree: vec![("src/lib.rs", CARRIED_SOURCE.to_owned())],
         beside: vec![
             ("catalog-v1.json", carried_catalog()),
             (
@@ -1627,17 +1683,7 @@ pub fn carried(name: &'static str, clean: Perturbation, entered: &Value) -> Pert
                     }]
                 }),
             ),
-            (
-                "skeletons-v1.json",
-                json!({
-                    "document_type": "rust-mutants/skeletons", "schema_version": 2,
-                    "items": [{
-                        "index": 0, "item": carried_item(), "name": "negated",
-                        "body_digest": digest, "sealed": true, "unsealed": null, "start": now
-                    }],
-                    "units": []
-                }),
-            ),
+            ("skeletons-v1.json", carried_skeletons(&digest, &now)),
             (
                 "carried-v1.json",
                 json!({
@@ -1843,6 +1889,25 @@ fn lay_engine(into: &Path, engine: Option<&[Value]>) -> Result<(), SpecimenError
 }
 
 /// Writes each of `beside` into the engine directory of the one configured build of the recording directory `into`.
+/// The tree the run measured, laid in a directory of its own, or nothing where the perturbation names no file of it.
+fn lay_tree(tree: &[(&'static str, String)]) -> Result<Option<TempDir>, SpecimenError> {
+    if tree.is_empty() {
+        return Ok(None);
+    }
+    let root = directory()?;
+    for (relative, text) in tree {
+        let at = root.path().join(relative);
+        if let Some(parent) = at.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| SpecimenError::Unwritable {
+                path: parent.display().to_string(),
+                source,
+            })?;
+        }
+        written(&at, text)?;
+    }
+    Ok(Some(root))
+}
+
 fn lay_beside(into: &Path, beside: &[(&'static str, Value)]) -> Result<(), SpecimenError> {
     let namespace = into.join("builds").join("0000000000").join("engine");
     for (file, document) in beside {
@@ -1950,6 +2015,7 @@ fn unobserved_repair_called_a_survival() -> Perturbation {
         outputs: Vec::new(),
         beside: Vec::new(),
         kept: None,
+        tree: Vec::new(),
     }
 }
 

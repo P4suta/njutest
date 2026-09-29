@@ -66,11 +66,11 @@ fn audited(document: &serde_json::Value) -> Audit {
     let confirmed = confirmations(document);
     let concluded = sentinel::concluding(document, &confirmed);
     if concluded.is_empty() {
-        return gates::proofaudit(&checkers(), directory.path(), None)
+        return gates::proofaudit(&checkers(), directory.path(), None, None)
             .expect("a recording this audit can read");
     }
     let trace = recorded(&concluded);
-    gates::proofaudit(&checkers(), directory.path(), Some(trace.path()))
+    gates::proofaudit(&checkers(), directory.path(), Some(trace.path()), None)
         .expect("a recording this audit can read")
 }
 
@@ -144,7 +144,7 @@ fn confirmations(document: &serde_json::Value) -> Vec<serde_json::Value> {
 fn off_schema(document: &serde_json::Value) -> bool {
     let directory = run_directory(document);
     matches!(
-        gates::proofaudit(&checkers(), directory.path(), None),
+        gates::proofaudit(&checkers(), directory.path(), None, None),
         Err(AuditError::OffSchema { .. })
     )
 }
@@ -156,7 +156,7 @@ fn audited_with_routes(document: &serde_json::Value) -> Audit {
 fn audited_with(document: &serde_json::Value, lines: &[serde_json::Value]) -> Audit {
     let run = run_directory(document);
     let trace = recorded(&sentinel::concluding(document, lines));
-    gates::proofaudit(&checkers(), run.path(), Some(trace.path()))
+    gates::proofaudit(&checkers(), run.path(), Some(trace.path()), None)
         .expect("a recording this audit can read")
 }
 
@@ -187,7 +187,7 @@ fn exit_code(directory: &Path) -> i32 {
 #[test]
 fn a_recording_that_agrees_with_itself_violates_nothing_and_leaves_only_the_package_scan() {
     let laid = sentinel::clean().lay().expect("the specimen is laid out");
-    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace(), laid.root())
         .expect("a recording this audit can read");
     assert_eq!(audit.violations(), 0, "{audit}");
     let unaudited: Vec<(Layer, &str)> = audit
@@ -818,7 +818,7 @@ fn reuse_remarks(
 /// The reuse layer's remarks about `perturbation`, laid out as a run and its recording, by standing, subject and detail.
 fn carried_remarks(perturbation: &sentinel::Perturbation) -> Vec<(Standing, String, String)> {
     let laid = perturbation.lay().expect("the specimen is laid out");
-    gates::proofaudit(&checkers(), laid.run(), laid.trace())
+    gates::proofaudit(&checkers(), laid.run(), laid.trace(), laid.root())
         .expect("a recording this audit can read")
         .remarks
         .into_iter()
@@ -854,6 +854,15 @@ fn a_carried_answer_is_held_to_every_premise_again_from_what_its_build_kept() {
         }),
         "the killer entered a body that starts elsewhere now, so a position it read may be \
          another: {moved:?}"
+    );
+    let another = carried_remarks(&sentinel::carried_through_another_body(sentinel::clean()));
+    assert!(
+        another.iter().any(|(standing, _, detail)| {
+            *standing == Standing::Violated && detail.contains("do not hash to")
+        }),
+        "the tree the run measured, proved by the digest its build kept of the file, holds another \
+         body where the kill's killer entered one, so the digest the carried answer was held to \
+         is not the body's: {another:?}"
     );
     let elsewhere = carried_remarks(&sentinel::carried_elsewhere(sentinel::clean()));
     assert!(
@@ -939,8 +948,8 @@ fn a_disposition_read_back_that_also_ran_is_a_violation() {
 #[test]
 fn a_run_directory_with_no_report_in_it_cannot_be_audited() {
     let directory = tempfile::tempdir().expect("a temporary directory");
-    let error =
-        gates::proofaudit(&checkers(), directory.path(), None).expect_err("nothing to re-decide");
+    let error = gates::proofaudit(&checkers(), directory.path(), None, None)
+        .expect_err("nothing to re-decide");
     assert!(matches!(error, AuditError::Unreadable { .. }), "{error}");
     assert!(error.to_string().contains(REPORT_FILE), "{error}");
 }
@@ -949,7 +958,7 @@ fn a_run_directory_with_no_report_in_it_cannot_be_audited() {
 fn an_explicit_recording_that_is_missing_cannot_be_audited() {
     let run = run_directory(&base());
     let trace = tempfile::tempdir().expect("a temporary directory");
-    let error = gates::proofaudit(&checkers(), run.path(), Some(trace.path()))
+    let error = gates::proofaudit(&checkers(), run.path(), Some(trace.path()), None)
         .expect_err("an explicitly requested recording must exist");
     assert!(matches!(error, AuditError::Unreadable { .. }), "{error}");
     assert!(error.to_string().contains("trace.jsonl"), "{error}");
@@ -960,7 +969,7 @@ fn a_corrupt_line_rejects_the_entire_explicit_recording() {
     let run = run_directory(&base());
     let trace = tempfile::tempdir().expect("a temporary directory");
     std::fs::write(trace.path().join("trace.jsonl"), "not json\n").expect("the corrupt recording");
-    let error = gates::proofaudit(&checkers(), run.path(), Some(trace.path()))
+    let error = gates::proofaudit(&checkers(), run.path(), Some(trace.path()), None)
         .expect_err("corrupt evidence must not become an empty recording");
     assert!(
         matches!(error, AuditError::MalformedRecording { .. }),
@@ -973,8 +982,8 @@ fn a_corrupt_line_rejects_the_entire_explicit_recording() {
 fn a_report_that_is_not_json_cannot_be_audited() {
     let directory = tempfile::tempdir().expect("a temporary directory");
     std::fs::write(directory.path().join(REPORT_FILE), "not json").expect("the recording");
-    let error =
-        gates::proofaudit(&checkers(), directory.path(), None).expect_err("nothing to re-decide");
+    let error = gates::proofaudit(&checkers(), directory.path(), None, None)
+        .expect_err("nothing to re-decide");
     assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
 }
 
@@ -1019,6 +1028,7 @@ fn duplicate_report_keys_are_malformed_before_any_redecision() {
             engines: &[],
             outputs: &[],
             beside: &[],
+            root: None,
         };
         let checkers = xtask::schemas::Checkers::compiled().expect("the published schemas compile");
         let error = xtask::proofaudit::audit_with(
@@ -1043,8 +1053,8 @@ fn duplicate_report_keys_are_malformed_before_any_redecision() {
 fn a_document_of_another_schema_cannot_be_audited() {
     let document = with(serde_json::json!({ "schema": "njutest-trace-v1" }));
     let directory = run_directory(&document);
-    let error =
-        gates::proofaudit(&checkers(), directory.path(), None).expect_err("nothing to re-decide");
+    let error = gates::proofaudit(&checkers(), directory.path(), None, None)
+        .expect_err("nothing to re-decide");
     assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 }
 
@@ -2274,7 +2284,7 @@ fn a_target_only_native_executions_show_noticing_nothing_is_owed_no_hollow_findi
     }
     .lay()
     .expect("the specimen is laid out");
-    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace(), laid.root())
         .expect("a recording this audit can read");
     assert!(
         hollow_violations(&audit).is_empty(),
@@ -2290,7 +2300,7 @@ fn a_target_its_sealed_executions_show_noticing_nothing_is_owed_a_hollow_finding
     let laid = sentinel::noticing_nothing_sealed()
         .lay()
         .expect("the specimen is laid out");
-    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace(), laid.root())
         .expect("a recording this audit can read");
     assert_eq!(
         hollow_violations(&audit),
@@ -2314,7 +2324,7 @@ fn a_hollow_target_its_sealed_executions_bear_out_is_no_violation_whatever_ran_n
             "kind": "hollow-target", "subject": TARGET, "detail": "planted", "position": null
         }));
     let laid = specimen.lay().expect("the specimen is laid out");
-    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace(), laid.root())
         .expect("a recording this audit can read");
     assert!(
         hollow_violations(&audit).is_empty(),
@@ -2355,7 +2365,7 @@ fn a_run_whose_every_verdict_rests_on_no_execution_is_re_decided_rather_than_una
             .collect()
     });
     let laid = specimen.lay().expect("the specimen is laid out");
-    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace(), laid.root())
         .expect("a recording this audit can read");
     let said: Vec<String> = audit
         .remarks
@@ -2402,7 +2412,7 @@ fn hollow_violations(audit: &Audit) -> Vec<String> {
 #[test]
 fn a_target_that_noticed_something_is_not_owed_a_hollow_finding() {
     let laid = sentinel::clean().lay().expect("the specimen is laid out");
-    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace(), laid.root())
         .expect("a recording this audit can read");
     assert!(
         !audit
@@ -2654,10 +2664,11 @@ fn with_engine(document: serde_json::Value, engine: Vec<serde_json::Value>) -> A
         outputs: Vec::new(),
         beside: Vec::new(),
         kept: None,
+        tree: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
-    gates::proofaudit(&checkers(), laid.run(), laid.trace())
+    gates::proofaudit(&checkers(), laid.run(), laid.trace(), laid.root())
         .expect("a recording this audit can read")
 }
 
@@ -2719,7 +2730,7 @@ fn a_knob_limitation_that_names_no_target_is_refused_rather_than_read_as_naming_
         }] }),
     );
     let laid = planted.lay().expect("the specimen is laid out");
-    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace(), laid.root())
         .expect("a recording this audit can read");
     assert!(
         knob_violations(&audit)
@@ -2764,8 +2775,8 @@ fn a_model_completion_the_contract_does_not_carry_is_refused() {
 #[test]
 fn a_run_that_kept_no_recording_has_not_said_it_repaired_nothing() {
     let run = run_directory(&with(sentinel::drifted("moved")));
-    let audit =
-        gates::proofaudit(&checkers(), run.path(), None).expect("a recording this audit can read");
+    let audit = gates::proofaudit(&checkers(), run.path(), None, None)
+        .expect("a recording this audit can read");
     assert!(
         !matches!(
             audit.coverage.get(&Layer::Repair),
@@ -2877,10 +2888,11 @@ fn a_complete_report_is_re_decided_as_the_one_build_it_measured_whole() {
         outputs: Vec::new(),
         beside: Vec::new(),
         kept: None,
+        tree: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
-    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace(), laid.root())
         .expect("a complete report is read");
     assert_eq!(audit.violations(), 0, "{audit}");
     assert_eq!(audit.mutants, 2, "{audit}");
@@ -2903,8 +2915,8 @@ fn a_complete_report_of_two_builds_is_refused_rather_than_read_as_one() {
     let second = builds.first().cloned().expect("one build");
     builds.push(second);
     let directory = run_directory(&document);
-    let error =
-        gates::proofaudit(&checkers(), directory.path(), None).expect_err("two builds are not one");
+    let error = gates::proofaudit(&checkers(), directory.path(), None, None)
+        .expect_err("two builds are not one");
     assert!(matches!(error, AuditError::Unprojected { .. }), "{error}");
     assert!(error.to_string().contains("2 configured builds"), "{error}");
 }
@@ -3405,7 +3417,7 @@ fn a_report_that_says_there_was_nothing_to_crash_is_unaudited_without_a_recordin
         "limitations": [{ "name": "crash-no-site", "detail": "no measured file writes" }]
     }));
     let directory = run_directory(&document);
-    let audit = gates::proofaudit(&checkers(), directory.path(), None)
+    let audit = gates::proofaudit(&checkers(), directory.path(), None, None)
         .expect("a report this audit can read");
     assert!(
         audit.remarks.iter().any(|remark| {
@@ -3450,8 +3462,8 @@ fn a_binary_the_run_did_not_measure_owes_no_thread_record() {
     }
     .lay()
     .expect("the specimen is laid out");
-    let audit =
-        gates::proofaudit(&checkers(), laid.run(), laid.trace()).expect("the specimen is read");
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace(), laid.root())
+        .expect("the specimen is read");
     assert!(
         !audit
             .remarks
@@ -3485,8 +3497,8 @@ fn a_built_binary_with_no_baseline_record_is_said_to_be_unaccounted_for() {
     }
     .lay()
     .expect("the specimen is laid out");
-    let audit =
-        gates::proofaudit(&checkers(), laid.run(), laid.trace()).expect("the specimen is read");
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace(), laid.root())
+        .expect("the specimen is read");
     assert!(
         audit
             .remarks
@@ -3723,10 +3735,11 @@ fn repair_audit_of(
         outputs: Vec::new(),
         beside: Vec::new(),
         kept: None,
+        tree: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
-    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace(), laid.root())
         .expect("a recording this audit can read");
     audit
         .remarks
@@ -3842,10 +3855,11 @@ fn two_repairs(second_was: &str) -> Vec<String> {
         outputs: Vec::new(),
         beside: Vec::new(),
         kept: None,
+        tree: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
-    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace(), laid.root())
         .expect("a recording this audit can read");
     audit
         .remarks
@@ -3910,8 +3924,8 @@ fn a_shard_document_is_re_decided_against_its_own_recording_as_the_one_part_it_m
         .traces()
         .expect("the shards' recordings")
         .join(format!("{}-s1", sentinel::MERGED));
-    let audit =
-        gates::proofaudit(&checkers(), first, Some(&trace)).expect("a shard is read as its part");
+    let audit = gates::proofaudit(&checkers(), first, Some(&trace), None)
+        .expect("a shard is read as its part");
     assert_eq!(audit.violations(), 0, "{audit}");
     assert_eq!(audit.mutants, 1, "{audit}");
     assert_eq!(audit.run_id, format!("{}-s1", sentinel::MERGED), "{audit}");
@@ -3935,8 +3949,8 @@ fn a_merged_report_is_held_to_every_shard_it_names_and_says_which_it_could_not_s
         "a shard the report names and nobody gave is unaudited, not agreed: {half}"
     );
     let alone = run_directory(&clean.document);
-    let error =
-        gates::proofaudit(&checkers(), alone.path(), None).expect_err("two parts are not one");
+    let error = gates::proofaudit(&checkers(), alone.path(), None, None)
+        .expect_err("two parts are not one");
     assert!(matches!(error, AuditError::Unprojected { .. }), "{error}");
 }
 
@@ -3954,7 +3968,7 @@ fn a_kept_stream_whose_column_the_records_contradict_is_refused() {
     let mut planted = sentinel::clean();
     planted.kept = Some(established_everywhere());
     let laid = planted.lay().expect("the specimen is laid out");
-    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace(), laid.root())
         .expect("a recording this audit can read");
     assert!(
         audit
@@ -4112,6 +4126,7 @@ fn recorded_shard(edit: impl FnOnce(&mut serde_json::Value)) -> Audit {
         &checkers(),
         run.path(),
         Some(&recorded.join("traces").join(shard)),
+        None,
     )
     .expect("a recorded run is read")
 }
@@ -4415,7 +4430,7 @@ fn soundness_remarks(
     .lay()
     .expect("the specimen is laid out");
     lay(laid.trace().expect("the specimen keeps a recording"));
-    gates::proofaudit(&checkers(), laid.run(), laid.trace())
+    gates::proofaudit(&checkers(), laid.run(), laid.trace(), laid.root())
         .expect("the specimen is read")
         .remarks
         .into_iter()
@@ -4652,10 +4667,11 @@ fn a_reach_moved_limitation_counts_the_dispositions_the_repairs_replaced() {
             outputs: Vec::new(),
             beside: Vec::new(),
             kept: None,
+            tree: Vec::new(),
         }
         .lay()
         .expect("the specimen is laid out");
-        let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace(), laid.root())
             .expect("a recording this audit can read");
         drift_violations(&audit)
             .into_iter()
