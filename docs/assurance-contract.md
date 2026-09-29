@@ -380,7 +380,7 @@ Fuzz targets disqualify a survival in both directions.
 #### An answer carried across an edit
 
 Where this tree's own store has no answer to believe, the run asks the store of answers carried across edits ([ADR 0041](adr/0041-an-answer-carries-across-an-edit-it-never-entered.md)), under the mutation's locus: the item its edit is inside, that body's digest, the edit, and everything the engine keys an answer on but the pristine closure, with a digest of what this runner decides an answer under beside it — the platform, the environment, the contract, the versions and the corpora — so an answer one contract or machine established never answers another.
-It is believed only where every premise of that ADR holds, which the engine decides, and is otherwise refused with the word of the premise it failed: `skeleton-changed`, `item-changed`, `unsealed`, `entry-incomplete`, `route-grew`, `filter-differs`, `reach-moved`, or `uncontrolled`.
+It is believed only where every premise of that ADR holds, which the engine decides, and is otherwise refused with the word of the premise it failed: `skeleton-changed`, `item-changed`, `unsealed`, `item-moved`, `entry-incomplete`, `route-grew`, `filter-differs`, `reach-moved`, or `uncontrolled`.
 Every execution of a mutation runs only the tests the route puts it to, and in a run that keeps a store it also records the items its process entered: that is the execution a carried record says it rests on.
 
 #### A mutant the evidence cannot say nothing reaches

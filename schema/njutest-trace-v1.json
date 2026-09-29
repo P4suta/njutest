@@ -326,7 +326,7 @@
                 },
                 "rule": { "enum": ["exact", "carried", null] },
                 "carry_refused": {
-                  "enum": ["skeleton-changed", "item-changed", "unsealed", "entry-incomplete", "route-grew", "filter-differs", "reach-moved", "uncontrolled", null]
+                  "enum": ["skeleton-changed", "item-changed", "unsealed", "item-moved", "entry-incomplete", "route-grew", "filter-differs", "reach-moved", "uncontrolled", null]
                 }
               }
             }

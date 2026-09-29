@@ -2241,6 +2241,7 @@
                     "skeleton-changed",
                     "item-changed",
                     "unsealed",
+                    "item-moved",
                     "entry-incomplete",
                     "route-grew",
                     "filter-differs",
