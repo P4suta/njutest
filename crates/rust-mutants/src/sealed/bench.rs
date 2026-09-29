@@ -19,7 +19,7 @@ use rust_mutants_sealed::{
 use super::doctest::{Expects, Listed, NO_SUCH_INDEX, RUN_ONE, listed};
 use super::{SealedBuild, Unsealed};
 use crate::execute::TestTarget;
-use crate::libtest::{Asked, account};
+use crate::libtest::{Asked, Configured, Own, account};
 
 /// Where the runtime's records land inside an instance: a directory nothing but the runtime writes.
 pub const RECORDS: &str = "/rust-mutants-sealed";
@@ -265,11 +265,15 @@ struct Asking {
 }
 
 impl Run {
-    /// What running it as `name` asks, libtest's run given `harness` as the native one is.
-    fn asking(self, name: &str, harness: &[String]) -> Asking {
+    /// What running it as `name` asks, libtest's run given `harness` as the native one is, less the options it sets itself.
+    fn asking(self, name: &str, harness: &Configured) -> Asking {
         match self {
             Self::Libtest => Asking {
-                arguments: [one_test(name), harness.to_vec()].concat(),
+                arguments: [
+                    vec!["--exact".to_owned(), name.to_owned()],
+                    harness.beside(&Own::ALL),
+                ]
+                .concat(),
                 index: None,
             },
             Self::Doctest { index, .. } => Asking {
@@ -344,7 +348,7 @@ pub struct Bench<'runner> {
     /// Each target with no station, and why.
     pub unsealed: BTreeMap<String, Unsealed>,
     tree: Tree,
-    harness: Vec<String>,
+    harness: Configured,
     catalog: String,
     bounds: crate::touch::Bounds,
 }
@@ -366,21 +370,21 @@ fn prepared<'runner>(
 }
 
 impl<'runner> Bench<'runner> {
-    /// Prepares every module of `sealed` on `runner`, lists its tests and runs each one's control inside `tree`, every libtest invocation given the harness arguments `harness` as the native ones are, and holds each station to every test its target's native baseline in `natives` ran.
+    /// Prepares every module of `sealed` on `runner`, lists its tests and runs each one's control inside `tree`, every libtest invocation given the harness arguments `harness` as the native ones are, less the options it sets itself, and holds each station to every test its target's native baseline in `natives` ran.
     ///
     /// # Errors
     /// A module that cannot be read, an environment that is not text, or a host that cannot run what it is given.
     pub fn assemble(
         runner: &'runner SealedRunner,
         (sealed, natives): (&SealedBuild, &BTreeMap<String, Ran>),
-        (tree, harness): (Tree, &[String]),
+        (tree, harness): (Tree, &Configured),
         (catalog, bounds): (&str, crate::touch::Bounds),
     ) -> Result<Self, BenchError> {
         let mut bench = Self {
             stations: BTreeMap::new(),
             unsealed: sealed.unsealed.clone(),
             tree,
-            harness: harness.to_vec(),
+            harness: harness.clone(),
             catalog: catalog.to_owned(),
             bounds,
         };
@@ -611,7 +615,7 @@ impl<'runner> Bench<'runner> {
         module: &SealedModule<'_>,
     ) -> Result<Option<Vec<String>>, BenchError> {
         let asking = Asking {
-            arguments: [vec!["--list".to_owned()], self.harness.clone()].concat(),
+            arguments: [vec!["--list".to_owned()], self.harness.beside(&[])].concat(),
             index: None,
         };
         let invocation = self.invocation(station, asking, (None, CONTROL_FUEL))?;
@@ -740,17 +744,6 @@ fn invoke(
             target: station.target.id().to_owned(),
             source,
         })
-}
-
-/// The harness's arguments that run `test` alone, one thread, its output uncaptured.
-fn one_test(test: &str) -> Vec<String> {
-    vec![
-        "--exact".to_owned(),
-        test.to_owned(),
-        "--test-threads".to_owned(),
-        "1".to_owned(),
-        "--nocapture".to_owned(),
-    ]
 }
 
 /// The seed of every instance of `target`, the same for its control and for every mutant's execution.

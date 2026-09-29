@@ -137,6 +137,15 @@ pub enum Step {
         /// What the target answered.
         outcome: String,
     },
+    /// It was put to one test alone, sealed, and the instance came to this.
+    Sealed {
+        /// The target whose sealed module ran the test.
+        target: String,
+        /// The test.
+        test: String,
+        /// What the execution came to.
+        came_to: String,
+    },
     /// It was read back from an earlier run rather than established here.
     ReadBack {
         /// The run it came from.
@@ -196,6 +205,7 @@ fn fault(id: &str, events: &[Event]) -> Why {
             | Payload::Artifact { .. }
             | Payload::Route { .. }
             | Payload::MutantExec { .. }
+            | Payload::SealedExec { .. }
             | Payload::FaultExec { .. }
             | Payload::Beside { .. }
             | Payload::Knob { .. }
@@ -236,70 +246,7 @@ fn mutation(id: &str, events: &[Event]) -> Why {
     let mut steps = Vec::new();
     let mut came_to = None;
     for event in events {
-        match &event.payload {
-            Payload::Route { route } if route.mutant == id => {
-                if let Some(run) = route.reused.clone() {
-                    steps.push(Step::ReadBack { run });
-                }
-                steps.push(Step::Routed {
-                    granularity: route.granularity,
-                    reaching: route.reaching.clone(),
-                    discharged: route
-                        .discharged
-                        .iter()
-                        .map(|one| (one.target.clone(), one.proof.clone()))
-                        .collect(),
-                    fallback: route.fallback,
-                });
-            }
-            Payload::MutantExec { mutant } if mutant.mutant == id => {
-                steps.push(Step::Asked {
-                    target: mutant.target.clone(),
-                    outcome: mutant.outcome.clone(),
-                });
-                came_to = crate::report::Outcome::parse(&mutant.outcome)
-                    .and_then(|outcome| {
-                        Decided::of(outcome, Some(mutant.target.clone()), mutant.step_boundary)
-                            .or_else(|| Decided::of(outcome, None, mutant.step_boundary))
-                    })
-                    .or(came_to);
-            }
-            Payload::Model { model } if model.mutant() == id => {
-                came_to = model_decision(model).or(came_to);
-            }
-            Payload::RunStart { .. }
-            | Payload::FaultControl { .. }
-            | Payload::FaultAttribution { .. }
-            | Payload::FaultRoute { .. }
-            | Payload::FaultRejected { .. }
-            | Payload::PhaseStart { .. }
-            | Payload::PhaseEnd { .. }
-            | Payload::Exec { .. }
-            | Payload::Progress { .. }
-            | Payload::Artifact { .. }
-            | Payload::Route { .. }
-            | Payload::MutantExec { .. }
-            | Payload::ProbeExec { .. }
-            | Payload::WireExchange { .. }
-            | Payload::WireExec { .. }
-            | Payload::FaultExec { .. }
-            | Payload::Fault { .. }
-            | Payload::Beside { .. }
-            | Payload::BesideRun { .. }
-            | Payload::CrashExec { .. }
-            | Payload::CrashStep { .. }
-            | Payload::Crash { .. }
-            | Payload::Sentinel { .. }
-            | Payload::Model { .. }
-            | Payload::Drift { .. }
-            | Payload::Control { .. }
-            | Payload::Confirm { .. }
-            | Payload::Resumed { .. }
-            | Payload::Repair { .. }
-            | Payload::Knob { .. }
-            | Payload::Note { .. }
-            | Payload::RunEnd { .. } => {}
-        }
+        came_to = followed(id, &event.payload, (&mut steps, came_to));
     }
     match came_to {
         Some(came_to) if !steps.is_empty() => Why::Followed(Chain::Mutation {
@@ -311,6 +258,110 @@ fn mutation(id: &str, events: &[Event]) -> Why {
             recorded: mutations(events),
         },
     }
+}
+
+/// What `payload` adds to the chain of mutation `id`: the steps it pushes onto `steps`, and what the mutation came to after it, given `came_to` before it.
+fn followed(
+    id: &str,
+    payload: &Payload,
+    (steps, mut came_to): (&mut Vec<Step>, Option<Decided>),
+) -> Option<Decided> {
+    match payload {
+        Payload::Route { route } if route.mutant == id => {
+            if let Some(run) = route.reused.clone() {
+                steps.push(Step::ReadBack { run });
+            }
+            steps.push(Step::Routed {
+                granularity: route.granularity,
+                reaching: route.reaching.clone(),
+                discharged: route
+                    .discharged
+                    .iter()
+                    .map(|one| (one.target.clone(), one.proof.clone()))
+                    .collect(),
+                fallback: route.fallback,
+            });
+        }
+        Payload::MutantExec { mutant } if mutant.mutant == id => {
+            steps.push(Step::Asked {
+                target: mutant.target.clone(),
+                outcome: mutant.outcome.clone(),
+            });
+            came_to = crate::report::Outcome::parse(&mutant.outcome)
+                .and_then(|outcome| {
+                    Decided::of(outcome, Some(mutant.target.clone()), mutant.step_boundary)
+                        .or_else(|| Decided::of(outcome, None, mutant.step_boundary))
+                })
+                .or(came_to);
+        }
+        Payload::SealedExec { sealed } if sealed.mutant == id => {
+            steps.push(Step::Sealed {
+                target: sealed.target.clone(),
+                test: sealed.test.clone(),
+                came_to: sealed.came_to.clone(),
+            });
+            came_to = sealed_decision(steps);
+        }
+        Payload::Model { model } if model.mutant() == id => {
+            came_to = model_decision(model).or(came_to);
+        }
+        Payload::RunStart { .. }
+        | Payload::FaultControl { .. }
+        | Payload::FaultAttribution { .. }
+        | Payload::FaultRoute { .. }
+        | Payload::FaultRejected { .. }
+        | Payload::PhaseStart { .. }
+        | Payload::PhaseEnd { .. }
+        | Payload::Exec { .. }
+        | Payload::Progress { .. }
+        | Payload::Artifact { .. }
+        | Payload::Route { .. }
+        | Payload::MutantExec { .. }
+        | Payload::SealedExec { .. }
+        | Payload::ProbeExec { .. }
+        | Payload::WireExchange { .. }
+        | Payload::WireExec { .. }
+        | Payload::FaultExec { .. }
+        | Payload::Fault { .. }
+        | Payload::Beside { .. }
+        | Payload::BesideRun { .. }
+        | Payload::CrashExec { .. }
+        | Payload::CrashStep { .. }
+        | Payload::Crash { .. }
+        | Payload::Sentinel { .. }
+        | Payload::Model { .. }
+        | Payload::Drift { .. }
+        | Payload::Control { .. }
+        | Payload::Confirm { .. }
+        | Payload::Resumed { .. }
+        | Payload::Repair { .. }
+        | Payload::Knob { .. }
+        | Payload::Note { .. }
+        | Payload::RunEnd { .. } => {}
+    }
+    came_to
+}
+
+/// What the sealed executions among `steps` establish: a kill by the first that detected the mutant, or a survival where every one passed; nothing where one names what this release does not spell.
+fn sealed_decision(steps: &[Step]) -> Option<Decided> {
+    let mut passed = false;
+    for step in steps {
+        let Step::Sealed {
+            target, came_to, ..
+        } = step
+        else {
+            continue;
+        };
+        let came = rust_mutants::sealed::record::Came::named(came_to)?;
+        if came.detected() {
+            return Some(Decided::Killed { by: target.clone() });
+        }
+        passed = came == rust_mutants::sealed::record::Came::Passed;
+        if !passed {
+            return None;
+        }
+    }
+    passed.then_some(Decided::Survived)
 }
 
 /// Projects the two affirmative model answers into the mutation explanation.
@@ -376,6 +427,9 @@ fn mutations(events: &[Event]) -> usize {
             }
             Payload::MutantExec { mutant } => {
                 seen.extend(std::iter::once(mutant.mutant.as_str()));
+            }
+            Payload::SealedExec { sealed } => {
+                seen.extend(std::iter::once(sealed.mutant.as_str()));
             }
             Payload::RunStart { .. }
             | Payload::FaultControl { .. }

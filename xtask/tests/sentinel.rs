@@ -395,6 +395,44 @@ fn every_outcome_a_report_can_claim_is_refused_when_its_executions_say_otherwise
     );
 }
 
+#[test]
+fn every_way_a_sealed_execution_ends_and_every_reason_it_decides_nothing_is_one_the_audit_reads() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("schema/njutest-assurance-report-v1.json");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let schema = xtask::strictjson::from_str(&text)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let published = |pointer: &str| -> std::collections::BTreeSet<String> {
+        schema
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or_else(|| panic!("the schema no longer lists {pointer}"))
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_owned))
+            .collect()
+    };
+    let read = |words: &[&[&str]]| -> std::collections::BTreeSet<String> {
+        words
+            .iter()
+            .flat_map(|words| words.iter())
+            .map(|word| (*word).to_owned())
+            .collect()
+    };
+    assert_eq!(
+        published("/$defs/evidence/oneOf/0/properties/executions/items/properties/came_to/enum"),
+        read(&[&["passed"], &proofaudit::DETECTIONS, &proofaudit::DOUBTS]),
+        "the evidence layer decides a sealed verdict again from what each execution came to, \
+         so a way of ending the schema adds is one it reads the day it arrives"
+    );
+    assert_eq!(
+        published("/$defs/evidence/oneOf/1/properties/reasons/items/enum"),
+        read(&[&proofaudit::REASONS]),
+        "and a lead names reasons the audit knows as a sealed run's"
+    );
+}
+
 /// Every published schema, compiled.
 fn checkers() -> xtask::schemas::Checkers {
     xtask::schemas::Checkers::compiled().expect("the published schemas compile")

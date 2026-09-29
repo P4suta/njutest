@@ -108,7 +108,16 @@ impl SealedRun {
 }
 
 /// What one sealed execution came to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    njutest_macros::AllVariants,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum Came {
     /// The test passed.
@@ -159,6 +168,18 @@ impl Came {
             Self::Refused => "refused",
             Self::Unaccounted => "unaccounted",
         }
+    }
+
+    /// The one this name spells, where it spells one.
+    #[must_use]
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|came| came.name() == name)
+    }
+
+    /// Whether the execution detected the mutant.
+    #[must_use]
+    pub const fn detected(self) -> bool {
+        matches!(self.sealed(), Sealed::Detected(_))
     }
 
     const fn sealed(self) -> Sealed {

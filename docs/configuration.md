@@ -46,6 +46,7 @@ target = ""                     # target triple; empty = the host
 
 [mutation]
 equivalence = false             # ask the compiler whether it renders each survivor identically
+seal = true                     # decide each mutation from sealed executions; --no-seal turns it off
 
 [faults]
 inject = false                  # fail each call a `?` asks about and ask what noticed; --faults sets it
@@ -105,6 +106,10 @@ expires = "2026-12-31T00:00:00Z"
 owner = "quality-team"
 ticket = "QA-123"
 ```
+
+`[mutation] seal`, true by default, builds the instrumented tree a second time for `wasm32-wasip1` and decides each mutation from its sealed executions ([ADR 0046](adr/0046-a-verdict-is-what-a-sealed-run-observed.md)); `rustup target add wasm32-wasip1` installs what it needs.
+`false`, which `--no-seal` writes for one run of `verify` or `watch`, builds nothing for the sealed target, so every answer is a native lead and the run concludes `INSUFFICIENT` ([the assurance contract](assurance-contract.md#what-a-verdict-rests-on)).
+It is part of what a run is keyed on, so an answer a run sealed is never read back by one that sealed nothing, or the other way round.
 
 `[schedules] explore` asks for up to that many schedules of every test binary not proven to run one thread whose baseline passed: each delays one guard its baseline reached by 100 ms, the first time each thread reaches it, and a delay that makes the tests fail twice more while they pass without it is `schedule-dependent`, a defect ([ADR 0034](adr/0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)).
 Empty by default, because each schedule is one more run of the binary.

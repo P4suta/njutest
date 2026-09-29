@@ -334,7 +334,10 @@ impl Section {
             Decision::Types | Decision::Tests | Decision::ModelNoticed => Self::Pinned,
             Decision::Unnoticed | Decision::Unreached => Self::Free,
             Decision::Proved | Decision::ModelProved => Self::Same,
-            Decision::StepLimitReached | Decision::Waited | Decision::Errored => Self::Unsettled,
+            Decision::Unproven
+            | Decision::StepLimitReached
+            | Decision::Waited
+            | Decision::Errored => Self::Unsettled,
         }
     }
 }
@@ -356,6 +359,18 @@ impl<'a> Answer<'a> {
     /// What the build established, with the names its route recorded.
     #[must_use]
     pub fn held(self) -> Held {
+        if self.row.verdict().lead() {
+            let reasons = match self.row.evidence() {
+                Some(rust_mutants::sealed::record::Evidence::Unproven { reasons }) => {
+                    reasons.iter().map(|reason| reason.said()).collect()
+                }
+                Some(rust_mutants::sealed::record::Evidence::Sealed { .. }) | None => Vec::new(),
+            };
+            return Held::Unsettled(Unsettled::Unproven {
+                lead: self.row.outcome().name(),
+                reasons,
+            });
+        }
         Held::of(
             self.row.outcome(),
             self.row.accepted(),
@@ -464,6 +479,13 @@ pub enum Same {
 /// Why nothing was established about a change.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unsettled {
+    /// No sealed execution decided it, so what a native run said of it is a lead (ADR 0046).
+    Unproven {
+        /// What the native run said of it.
+        lead: &'static str,
+        /// Every reason no sealed execution decided it, in the words a finding says them in.
+        reasons: Vec<&'static str>,
+    },
     /// The target crossed its step allowance without a control verdict.
     StepLimit {
         /// The target.
@@ -700,7 +722,7 @@ impl Asked {
 }
 
 impl Free {
-    /// Who ran a mutation nothing noticed, and what removed the rest of those that reach it.
+    /// Who ran a mutation nothing noticed, and what removed the rest of those that reach it: a target that answered was not removed from what it answered, whatever a proof over a native run said of it.
     fn of(recorded: Recorded<'_>) -> Self {
         let Recorded::Asked(routing) = recorded else {
             return Self::Unrecorded;
@@ -710,7 +732,12 @@ impl Free {
             .iter()
             .map(|one| one.target.clone())
             .collect();
-        let removed: Vec<Discharged> = routing.discharged.clone();
+        let removed: Vec<Discharged> = routing
+            .discharged
+            .iter()
+            .filter(|one| !answered.contains(&one.target))
+            .cloned()
+            .collect();
         match (answered.is_empty(), removed.is_empty()) {
             (false, _) => Self::Ran { answered, removed },
             (true, false) => Self::Removed(removed),

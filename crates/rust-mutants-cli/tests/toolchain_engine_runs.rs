@@ -55,11 +55,13 @@ fn committed(name: &str) -> PathBuf {
         .join(name)
 }
 
-/// A run of `fixture` as the committed ones are recorded: every tier, offline, locked, with its recording, under the least of this environment a nested run needs.
+/// A run of `fixture` as the committed ones are recorded: every tier, offline, locked, with its recording, under the least of this environment a nested run needs and the toolchain this repository pins, whose sealed target every machine holds where a default toolchain may not.
 fn recorded(fixture: &Fixture) -> PathBuf {
     let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command.env_clear();
-    command.envs(njutest_devkit::paths::environment_for_a_toolchain_run(&[]));
+    command.envs(njutest_devkit::paths::environment_for_a_toolchain_run(&[
+        "RUSTUP_TOOLCHAIN",
+    ]));
     command.env("NO_COLOR", "1");
     command.envs(njutest_devkit::paths::temporary_directory(fixture.temp()));
     command.env("XDG_CACHE_HOME", fixture.cache());

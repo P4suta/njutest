@@ -136,6 +136,12 @@ fn survivor(display_id: &str) -> Judged {
         original: ">".to_owned(),
         replacement: String::new(),
         position: None,
+        evidence: njutest::testkit::reports::sealed_as(
+            &(Disposition::Survived {
+                route: block(&["core/lib/core"]),
+            })
+            .decided(),
+        ),
         disposition: Disposition::Survived {
             route: block(&["core/lib/core"]),
         },

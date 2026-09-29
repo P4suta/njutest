@@ -124,6 +124,7 @@ fn reported_at(position: Position, unplaced_finding: bool, measured: &str) -> Re
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: String::new(),
+        evidence: njutest::testkit::reports::sealed_as(&njutest::report::Decided::Survived),
         outcome: njutest::report::Decided::Survived,
         accepted: false,
         reuse: njutest::report::Reuse(njutest::report::Established::Here),

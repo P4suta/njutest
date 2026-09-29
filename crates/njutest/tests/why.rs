@@ -5,8 +5,8 @@
 
 use njutest::report::{Decided, SeamDecision};
 use njutest::trace::{
-    DischargeRecord, Event, MutantExecRecord, Payload, Read, RouteRecord, WireExchangeRecord,
-    WireExecRecord,
+    DischargeRecord, Event, MutantExecRecord, Payload, Read, RouteRecord, SealedExecRecord,
+    WireExchangeRecord, WireExecRecord,
 };
 use njutest::why::{Chain, Claim, Step, Why, why};
 
@@ -133,6 +133,77 @@ fn a_recording_that_does_not_name_a_claim_says_how_many_it_does() {
         "the count is what lets a page say `this recording names one claim and yours \
          is not one of them` without counting anything itself, which is the whole of \
          the line between the value and the page"
+    );
+}
+
+/// A recording of one mutation routed and put sealed to two tests, the second of which detected it, or of `came_to` for both.
+fn routed_and_sealed(came_to: [&str; 2]) -> Vec<Event> {
+    let mut events = vec![routed_and_killed().remove(0)];
+    for (seq, (test, came)) in [(2, ("passes", came_to[0])), (3, ("catches", came_to[1]))] {
+        events.push(event(
+            seq,
+            Payload::SealedExec {
+                sealed: SealedExecRecord {
+                    mutant: MUTANT.to_owned(),
+                    target: "pkg/test/it".to_owned(),
+                    test: test.to_owned(),
+                    came_to: came.to_owned(),
+                },
+            },
+        ));
+    }
+    events
+}
+
+#[test]
+fn a_mutation_a_sealed_run_decided_is_explained_by_its_sealed_executions() {
+    let asked = Claim::Mutation(MUTANT.to_owned());
+    let Why::Followed(Chain::Mutation { steps, came_to, .. }) =
+        why(&asked, Some(&routed_and_sealed(["passed", "panicked"])))
+    else {
+        panic!("a recording that names it answers with the chain");
+    };
+    assert_eq!(
+        came_to,
+        Decided::Killed {
+            by: "pkg/test/it".to_owned()
+        },
+        "a kill is existential: the first sealed execution that detected it decides"
+    );
+    assert_eq!(
+        steps.get(1..),
+        Some(
+            &[
+                Step::Sealed {
+                    target: "pkg/test/it".to_owned(),
+                    test: "passes".to_owned(),
+                    came_to: "passed".to_owned(),
+                },
+                Step::Sealed {
+                    target: "pkg/test/it".to_owned(),
+                    test: "catches".to_owned(),
+                    came_to: "panicked".to_owned(),
+                },
+            ][..]
+        ),
+        "each sealed execution is a step, with the test it ran and what the instance came to"
+    );
+    let Why::Followed(Chain::Mutation { came_to, .. }) =
+        why(&asked, Some(&routed_and_sealed(["passed", "passed"])))
+    else {
+        panic!("a recording that names it answers with the chain");
+    };
+    assert_eq!(
+        came_to,
+        Decided::Survived,
+        "a survival is universal: every sealed execution passed"
+    );
+    assert!(
+        matches!(
+            why(&asked, Some(&routed_and_sealed(["passed", "unheard-of"]))),
+            Why::Unknown { .. }
+        ),
+        "an ending this release does not spell decides nothing"
     );
 }
 

@@ -28,7 +28,7 @@ pub const ASKED: &str = "f714f108a1ce93e4cae5d149115f5f2efc4d4ceb620ccecc762f1c4
 pub fn base() -> Value {
     json!({
         "schema": "njutest-assurance-report-v1",
-        "schema_version": 2,
+        "schema_version": 3,
         "run_id": RUN,
         "run_kind": "scoped",
         "contract": "standard-v1",
@@ -68,32 +68,7 @@ pub fn base() -> Value {
                 "message": null
             }
         ],
-        "mutants": [
-            {
-                "id": "a".repeat(64),
-                "display_id": KILLED,
-                "path": "src/lib.rs",
-                "position": { "line": 7, "column": 9, "character_column": 9 },
-                "rule": "negate-condition@1",
-                "decision": {
-                    "outcome": "killed", "killed_by": TARGET, "step_boundary": null
-                },
-                "accepted": false,
-                "reuse": { "reused": false, "source_run_id": null }
-            },
-            {
-                "id": "b".repeat(64),
-                "display_id": SURVIVED,
-                "path": "src/lib.rs",
-                "position": { "line": 11, "column": 5, "character_column": 5 },
-                "rule": "return-ok-default@1",
-                "decision": {
-                    "outcome": "survived", "killed_by": null, "step_boundary": null
-                },
-                "accepted": false,
-                "reuse": { "reused": false, "source_run_id": null }
-            }
-        ],
+        "mutants": mutated(),
         "models": [],
         "findings": [
             {
@@ -105,6 +80,44 @@ pub fn base() -> Value {
         ],
         "limitations": []
     })
+}
+
+/// The specimen's two mutation rows: the kill a sealed execution of [`TARGET`]'s one test detected, and the survivor it passed.
+fn mutated() -> Value {
+    json!([
+        {
+            "id": "a".repeat(64),
+            "display_id": KILLED,
+            "path": "src/lib.rs",
+            "position": { "line": 7, "column": 9, "character_column": 9 },
+            "rule": "negate-condition@1",
+            "decision": {
+                "outcome": "killed", "killed_by": TARGET, "step_boundary": null
+            },
+            "evidence": {
+                "kind": "sealed",
+                "executions": [{ "target": TARGET, "test": "tests::one", "came_to": "panicked" }]
+            },
+            "accepted": false,
+            "reuse": { "reused": false, "source_run_id": null }
+        },
+        {
+            "id": "b".repeat(64),
+            "display_id": SURVIVED,
+            "path": "src/lib.rs",
+            "position": { "line": 11, "column": 5, "character_column": 5 },
+            "rule": "return-ok-default@1",
+            "decision": {
+                "outcome": "survived", "killed_by": null, "step_boundary": null
+            },
+            "evidence": {
+                "kind": "sealed",
+                "executions": [{ "target": TARGET, "test": "tests::one", "came_to": "passed" }]
+            },
+            "accepted": false,
+            "reuse": { "reused": false, "source_run_id": null }
+        }
+    ])
 }
 
 /// The display identity of the crash the crashes layer's planted defects put.
@@ -1769,7 +1782,13 @@ fn missing_plants() -> Vec<Perturbation> {
     let killed = "a".repeat(64);
     let passed = json!({ "kind": "passed" });
     vec![
-        confirmed_by("a kill the recording holds no confirmation of", Vec::new()),
+        Perturbation {
+            document: resting(clean().document, 0, lead()),
+            ..confirmed_by(
+                "a kill no sealed execution decided, which the recording holds no confirmation of",
+                Vec::new(),
+            )
+        },
         confirmed_by(
             "a kill confirmed against a target other than the one said to kill it",
             vec![
@@ -1873,11 +1892,14 @@ impl Layer {
     pub fn planted(self) -> Vec<Perturbation> {
         let clean = clean();
         match self {
-            Self::Accounting => vec![Perturbation {
-                name: "a mutant column the records contradict",
-                document: with(json!({ "accounting": { "mutants": { "killed": 5 } } })),
-                ..clean
-            }],
+            Self::Accounting => vec![
+                Perturbation {
+                    name: "a mutant column the records contradict",
+                    document: with(json!({ "accounting": { "mutants": { "killed": 5 } } })),
+                    ..clean.clone()
+                },
+                assured_over_a_lead(clean),
+            ],
             Self::Killers => vec![Perturbation {
                 name: "a kill by a target the run never recorded",
                 document: with(
@@ -1885,11 +1907,14 @@ impl Layer {
                 ),
                 ..clean
             }],
-            Self::Findings => vec![Perturbation {
-                name: "a survivor no finding names",
-                document: with(json!({ "findings": [] })),
-                ..clean
-            }],
+            Self::Findings => vec![
+                Perturbation {
+                    name: "a survivor no finding names",
+                    document: with(json!({ "findings": [] })),
+                    ..clean.clone()
+                },
+                lead_named_as_a_survivor(clean),
+            ],
             Self::Acceptances => vec![Perturbation {
                 name: "an unmatched acceptance the whole catalog resolves",
                 document: with(json!({
@@ -1942,8 +1967,106 @@ impl Layer {
             Self::Confirmations => confirmation_plants(),
             Self::Soundness => soundness_planted(&clean),
             Self::Executions => LIED_OUTCOMES.into_iter().filter_map(lie).collect(),
+            Self::Evidence => evidence_planted(&clean),
         }
     }
+}
+
+/// What a lead rests on: a test that reaches the mutation ran only natively.
+fn lead() -> Value {
+    json!({ "kind": "unproven", "reasons": ["native"] })
+}
+
+/// `document` with what its row at `index` rests on replaced by `evidence`.
+fn resting(mut document: Value, index: usize, evidence: Value) -> Value {
+    if let Some(Value::Object(row)) = document.pointer_mut(&format!("/mutants/{index}")) {
+        row.insert("evidence".to_owned(), evidence);
+    }
+    document
+}
+
+/// The planted defect of the accounting layer about leads: an assurance over a kill no sealed execution decided, with every other row answered and nothing found.
+fn assured_over_a_lead(clean: Perturbation) -> Perturbation {
+    Perturbation {
+        name: "an assurance over a kill no sealed execution decided",
+        document: resting(
+            with(json!({
+                "verdict": "SCOPE_ASSURED",
+                "accounting": { "mutants": { "accepted": 1, "observers": { "unproven": 1 } } },
+                "mutants": [{}, { "accepted": true }],
+                "findings": []
+            })),
+            0,
+            lead(),
+        ),
+        ..clean
+    }
+}
+
+/// The planted defect of the findings layer about leads: a survival no sealed execution decided, named as a surviving mutation rather than as unproven.
+fn lead_named_as_a_survivor(clean: Perturbation) -> Perturbation {
+    Perturbation {
+        name: "a lead named as a survivor rather than as unproven",
+        document: resting(
+            with(json!({ "accounting": { "mutants": { "observers": { "unproven": 1 } } } })),
+            1,
+            lead(),
+        ),
+        ..clean
+    }
+}
+
+/// The defects planted for the evidence layer: verdicts resting on what cannot establish them, a lead a reviewer accepted, and a lead the accounting does not count.
+fn evidence_planted(clean: &Perturbation) -> Vec<Perturbation> {
+    let plant = |name: &'static str, document: Value| Perturbation {
+        name,
+        document,
+        ..clean.clone()
+    };
+    vec![
+        plant(
+            "a kill its sealed executions never detected",
+            with(
+                json!({ "mutants": [{ "evidence": { "executions": [{ "came_to": "passed" }] } }] }),
+            ),
+        ),
+        plant(
+            "a kill named for a target other than the one whose sealed execution detected it first",
+            with(json!({
+                "mutants": [{ "evidence": { "executions": [{ "target": "pkg/test/other" }] } }]
+            })),
+        ),
+        plant(
+            "a survival resting on a sealed execution that established nothing",
+            with(json!({
+                "mutants": [{}, { "evidence": { "executions": [{ "came_to": "unaccounted" }] } }]
+            })),
+        ),
+        plant(
+            "a kill resting on no execution at all",
+            resting(with(json!({})), 0, Value::Null),
+        ),
+        plant(
+            "a lead a reviewer's acceptance answers",
+            resting(
+                with(json!({
+                    "accounting": { "mutants": { "accepted": 1, "observers": { "unproven": 1 } } },
+                    "mutants": [{}, { "accepted": true }],
+                    "findings": [{ "kind": "unproven-mutant" }]
+                })),
+                1,
+                lead(),
+            ),
+        ),
+        plant(
+            "a lead the accounting counts as decided",
+            resting(
+                with(json!({ "findings": [{ "kind": "unproven-mutant" }] })),
+                1,
+                lead(),
+            ),
+        ),
+    ]
 }
 
 /// The lies about knobs the knobs layer must refuse.

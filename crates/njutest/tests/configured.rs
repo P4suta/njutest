@@ -47,7 +47,7 @@ fn counted(rows: &[MutantRecord]) -> MutantAccounting {
         let outcome = row.outcome.outcome();
         counts
             .observers
-            .counted(outcome.decision())
+            .counted(row.decision())
             .expect("a fixture's rows are countable");
         if row.accepted {
             counts.accepted += 1;
@@ -131,6 +131,11 @@ fn report(run: &str, outcomes: &[(&str, &str)]) -> BuildReport {
                 item: "sign".to_owned(),
                 original: ">".to_owned(),
                 replacement: ">=".to_owned(),
+                evidence: njutest::testkit::reports::sealed_as(
+                    &Decided::of(outcome, Some("pkg/lib/pkg".to_owned()), boundary)
+                        .or_else(|| Decided::of(outcome, None, boundary))
+                        .unwrap_or(Decided::Survived),
+                ),
                 outcome: Decided::of(outcome, Some("pkg/lib/pkg".to_owned()), boundary)
                     .or_else(|| Decided::of(outcome, None, boundary))
                     .unwrap_or(Decided::Survived),
@@ -147,9 +152,8 @@ fn report(run: &str, outcomes: &[(&str, &str)]) -> BuildReport {
         .iter()
         .filter_map(|mutant| {
             mutant
-                .outcome
-                .outcome()
-                .required_finding(mutant.accepted)
+                .verdict()
+                .required_finding()
                 .map(|kind| Finding::new(kind, &mutant.display_id, "synthetic mutation finding"))
         })
         .collect();

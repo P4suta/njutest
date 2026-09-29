@@ -49,7 +49,7 @@ fn counted(rows: &[MutantRecord]) -> MutantAccounting {
         let outcome = row.outcome.outcome();
         counts
             .observers
-            .counted(outcome.decision())
+            .counted(row.decision())
             .expect("a fixture's rows are countable");
         if row.accepted {
             counts.accepted += 1;
@@ -117,6 +117,7 @@ fn disposed(id: &str, outcome: &str, reused: bool) -> MutantRecord {
             column: 1,
             character_column: 1,
         },
+        evidence: njutest::testkit::reports::sealed_as(&decided(outcome, None)),
         outcome: decided(outcome, None),
         accepted: false,
         reuse: njutest::report::Reuse(if reused {
@@ -198,9 +199,8 @@ fn measured(
         .iter()
         .filter_map(|mutant| {
             mutant
-                .outcome
-                .outcome()
-                .required_finding(mutant.accepted)
+                .verdict()
+                .required_finding()
                 .map(|kind| Finding::new(kind, &mutant.display_id, "synthetic mutation finding"))
         })
         .collect();
@@ -743,16 +743,19 @@ fn the_acceptances_of_the_whole_are_the_ones_its_parts_recorded_and_no_others() 
 fn answered_by(rows: Vec<MutantRecord>, target: &str, outcome: &str) -> Vec<MutantRecord> {
     rows.into_iter()
         .map(|mut record| {
-            record.routing = Some(njutest::report::Routing {
-                granularity: rust_mutants::session::Granularity::Block,
-                reaching: vec![target.to_owned()],
-                discharged: Vec::new(),
-                fallback: None,
-                answered: vec![njutest::report::Answered {
-                    target: target.to_owned(),
-                    outcome: Outcome::parse(outcome).unwrap_or(Outcome::Errored),
-                }],
-            });
+            njutest::testkit::reports::asked(
+                &mut record,
+                njutest::report::Routing {
+                    granularity: rust_mutants::session::Granularity::Block,
+                    reaching: vec![target.to_owned()],
+                    discharged: Vec::new(),
+                    fallback: None,
+                    answered: vec![njutest::report::Answered {
+                        target: target.to_owned(),
+                        outcome: Outcome::parse(outcome).unwrap_or(Outcome::Errored),
+                    }],
+                },
+            );
             record
         })
         .collect()
@@ -1171,7 +1174,7 @@ proptest::proptest! {
                 let mut record =
                     row(index, &format!("{:02x}{}", at.saturating_add(1), "a".repeat(62)), outcome, false);
                 record.outcome = decided(outcome, Some(last));
-                record.routing = Some(njutest::report::Routing {
+                njutest::testkit::reports::asked(&mut record, njutest::report::Routing {
                     granularity: rust_mutants::session::Granularity::Block,
                     reaching: order.iter().map(|target| (*target).to_owned()).collect(),
                     discharged: Vec::new(),

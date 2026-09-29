@@ -73,6 +73,11 @@ pub enum Payload {
         /// The record.
         mutant: MutantExecRecord,
     },
+    /// One sealed execution a mutation's verdict rests on.
+    SealedExec {
+        /// The record.
+        sealed: SealedExecRecord,
+    },
     /// One fault put to one target, which no reader of mutant executions ever sees.
     FaultExec {
         /// The record.
@@ -208,6 +213,7 @@ impl Payload {
             Self::Artifact { .. } => "artifact",
             Self::Route { .. } => "route",
             Self::MutantExec { .. } => "mutant-exec",
+            Self::SealedExec { .. } => "sealed-exec",
             Self::FaultExec { .. } => "fault-exec",
             Self::FaultControl { .. } => "fault-control",
             Self::FaultAttribution { .. } => "fault-attribution",
@@ -504,6 +510,20 @@ pub struct MutantExecRecord {
     pub duration_ms: u64,
     /// Whether the machine was given to this execution, which a run does once when a budget expires.
     pub alone: bool,
+}
+
+/// One sealed execution a mutation's verdict rests on: the test, the target whose sealed module ran it, and what it came to (ADR 0046).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SealedExecRecord {
+    /// The mutant a person types.
+    pub mutant: String,
+    /// The target whose sealed module ran.
+    pub target: String,
+    /// The test it ran.
+    pub test: String,
+    /// What it came to, as the report's evidence spells it.
+    pub came_to: String,
 }
 
 /// Which execution of a fault one record is, so a detection can be held to the confirmation it needs.

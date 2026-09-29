@@ -116,7 +116,7 @@ pub fn replay(
             mutant_timeout: replaying.timeout.map_or(Timeout::Auto, Timeout::Fixed),
             mutant_steps: (replaying.steps > 0).then_some(replaying.steps),
             operators,
-            ..crate::assure::engine::switches()
+            ..crate::assure::engine::switches(rust_mutants::sealed::Sealing::Off)
         },
         watch.cancel,
     )?;
@@ -160,6 +160,7 @@ fn replayed(kind: FindingKind) -> Replayable {
         | FindingKind::Timeout
         | FindingKind::WaitedMutant
         | FindingKind::StepLimitReachedMutant
+        | FindingKind::UnprovenMutant
         | FindingKind::NotMeasured
         | FindingKind::UnmatchedAcceptance
         | FindingKind::UndefinedBehaviour
@@ -217,7 +218,8 @@ const fn observed(kind: FindingKind, outcome: Measured) -> Outcome {
         }
         FindingKind::BrokenUnderFault
         | FindingKind::DimensionNotMeasured
-        | FindingKind::CorruptAfterCrash => Outcome::Inconclusive,
+        | FindingKind::CorruptAfterCrash
+        | FindingKind::UnprovenMutant => Outcome::Inconclusive,
         FindingKind::StepLimitReachedMutant => {
             if matches!(outcome, Measured::StepLimitReached) {
                 Outcome::Reproduced

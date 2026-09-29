@@ -20,7 +20,7 @@ use njutest::assure::mutation::{Disposition, Judged, Mutation, Unconfirmed};
 use njutest::config::Contract;
 use njutest::evidence::digest::{Inputs, Mode, identity};
 use njutest::report::across::across;
-use njutest::report::{Decision, Outcome as Recorded, StepBoundary};
+use njutest::report::{Decision, Outcome as Recorded, StepBoundary, Verdict};
 use proptest::prelude::*;
 use rust_mutants::session::{Fallback, Route};
 
@@ -88,6 +88,20 @@ fn every_mutation_specimen_has_the_outcome_that_selected_it() {
     }
 }
 
+#[test]
+fn only_a_verdict_that_assures_something_exits_as_one() {
+    for verdict in Verdict::ALL {
+        assert_eq!(
+            verdict.exit_code() == njutest::cli::EXIT_ASSURED,
+            verdict.is_assurance(),
+            "{} exits {}: a verdict that assures nothing and ends as one that did lets a job \
+             pass on a run that established too little to conclude",
+            verdict.name(),
+            verdict.exit_code()
+        );
+    }
+}
+
 /// One way a mutation can be decided.
 fn decision_of() -> impl Strategy<Value = Decision> {
     proptest::sample::select(Decision::ALL.to_vec())
@@ -115,6 +129,7 @@ fn judged_from(dispositions: Vec<Disposition>) -> Mutation {
                 original: ">".to_owned(),
                 replacement: String::new(),
                 position: None,
+                evidence: njutest::testkit::reports::sealed_as(&(disposition).decided()),
                 disposition,
                 source_run_id: None,
                 observed: Vec::new(),

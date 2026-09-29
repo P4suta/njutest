@@ -195,6 +195,12 @@ fn close(blindness: Blindness, named: &str) -> String {
 /// Telling something to write a test and then run `replay`, where `replay` can pass without proving anything, is telling it that it succeeded at something it did not do.
 fn settle(unsettled: Unsettled, named: &str) -> String {
     let (explains, look) = match unsettled {
+        Unsettled::Unproven => (
+            "every reason no sealed execution decided it, and what the native run said",
+            "Make the tests that reach it seal — the reasons name what kept them from it: a thread, \
+             a process, a socket, a target that does not build for wasm32-wasip1 — and run the \
+             verification again.",
+        ),
         Unsettled::StepLimitReached => (
             "the verified step boundary and the target that reached it",
             "Run the same target under a matched control before treating the count as mutation-caused divergence.",
@@ -231,6 +237,9 @@ const fn came(standing: Standing) -> &'static str {
         }
         Standing::Unsettled(Unsettled::Waited) => {
             "nothing finished, so the run established nothing about it"
+        }
+        Standing::Unsettled(Unsettled::Unproven) => {
+            "no sealed execution decided it, so what a native run said of it is a lead"
         }
         Standing::Unsettled(Unsettled::StepLimitReached) => {
             "the step boundary was reached without a control comparison, so the run established no mutation verdict"

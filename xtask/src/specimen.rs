@@ -359,7 +359,7 @@ pub(crate) fn shard(
         "schema".to_owned(),
         Value::from("njutest-assurance-shard-report-v1"),
     );
-    shard.insert("schema_version".to_owned(), Value::from(2));
+    shard.insert("schema_version".to_owned(), Value::from(3));
     shard.insert("run_id".to_owned(), Value::from(run));
     shard.insert(
         "shard".to_owned(),
@@ -394,7 +394,7 @@ pub(crate) fn merged(shards: &[Value], run: &str) -> Result<Value, CompletionErr
         "schema".to_owned(),
         Value::from("njutest-assurance-report-v1"),
     );
-    report.insert("schema_version".to_owned(), Value::from(2));
+    report.insert("schema_version".to_owned(), Value::from(3));
     report.insert("run_id".to_owned(), Value::from(run));
     for key in [
         "run_kind",

@@ -127,7 +127,7 @@ pub fn check(
             build_timeout: checking.build_timeout,
             mutant_timeout: Timeout::Fixed(checking.timeout),
             mutant_steps: (checking.steps > 0).then_some(checking.steps),
-            ..crate::assure::engine::switches()
+            ..crate::assure::engine::switches(rust_mutants::sealed::Sealing::Off)
         },
         watch.cancel,
     )?;

@@ -35,8 +35,9 @@ fn fixture(name: &str) -> Fixture {
     Fixture { root, _dir: dir }
 }
 
+/// A run of `njutest verify` whose mutations are put natively, since what these tests are about is how a fault is put, which only a native run does, and what it says of a mutation is a lead.
 fn verify(fixture: &Fixture, extra: &[&str]) -> Output {
-    let mut args = vec!["verify", "--offline", "--locked"];
+    let mut args = vec!["verify", "--offline", "--locked", "--no-seal"];
     args.extend_from_slice(extra);
     asked(fixture, &args)
 }

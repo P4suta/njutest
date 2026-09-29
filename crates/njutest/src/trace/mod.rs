@@ -25,8 +25,8 @@ pub use event::{
     Event, ExecRecord, Expected, FaultAttributionRecord, FaultControlRecord, FaultExecRecord,
     FaultRejectedRecord, FaultRole, FaultRouteRecord, MutantExecRecord, NoteRecord, Payload,
     PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RepairRecord, ResumedRecord, ReuseRule,
-    RouteRecord, RunAccounting, RunRecord, SentinelRecord, SiteReached, StartRecord, Unfaulted,
-    WireExchangeRecord, WireExecRecord,
+    RouteRecord, RunAccounting, RunRecord, SealedExecRecord, SentinelRecord, SiteReached,
+    StartRecord, Unfaulted, WireExchangeRecord, WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{DirSink, FILE_NAME, OUTPUT_DIRECTORY_NAME, Sink};
@@ -382,6 +382,11 @@ impl Recorder {
     /// Records one mutant run against one target.
     pub fn mutant_exec(&self, record: MutantExecRecord) {
         self.emit(Payload::MutantExec { mutant: record });
+    }
+
+    /// Records one sealed execution a mutation's verdict rests on.
+    pub fn sealed_exec(&self, record: SealedExecRecord) {
+        self.emit(Payload::SealedExec { sealed: record });
     }
 
     /// Records one fault run against one target.

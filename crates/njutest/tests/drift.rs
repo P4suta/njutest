@@ -52,6 +52,7 @@ fn row(index: u32, outcome: Decided, discharged: bool) -> MutantRecord {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: ">=".to_owned(),
+        evidence: njutest::testkit::reports::sealed_as(&outcome),
         outcome,
         accepted: false,
         blind_in: Vec::new(),

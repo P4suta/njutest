@@ -149,16 +149,31 @@ fn the_ways_the_page_says_a_mutation_is_decided_are_the_ways_there_are() {
         })
         .collect();
     paged.sort();
-    let mut ours: Vec<(String, String)> = njutest::report::Outcome::ALL
+    let ours: Vec<(String, String)> = njutest::report::Outcome::ALL
         .iter()
-        .map(|one| (one.name().to_owned(), one.decision().name().to_owned()))
+        .flat_map(|outcome| {
+            njutest::report::Resting::ALL.into_iter().map(|resting| {
+                (
+                    outcome.name().to_owned(),
+                    njutest::report::RowVerdict {
+                        outcome: *outcome,
+                        accepted: false,
+                        resting,
+                    }
+                    .decision()
+                    .name()
+                    .to_owned(),
+                )
+            })
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
         .collect();
-    ours.sort();
     assert_eq!(
         paged, ours,
-        "and every outcome a report can record is on exactly one row of it: an \
-         outcome the page forgets is one a reader cannot tell the standing of, and \
-         one it puts on two rows is one they would count twice"
+        "and every outcome a report can record is on exactly the rows what it rests on puts \
+         it on: an outcome the page forgets is one a reader cannot tell the standing of, and \
+         one it puts on a row nothing puts it on is one they would count twice"
     );
 }
 
@@ -607,7 +622,14 @@ fn every_closed_set_the_schema_declares_is_one_this_release_produces() {
             "/$defs/mutant/allOf/0/then/properties/decision/properties/outcome",
             Outcome::ALL
                 .into_iter()
-                .filter(|one| one.review_answerable())
+                .filter(|one| {
+                    njutest::report::RowVerdict {
+                        outcome: *one,
+                        accepted: false,
+                        resting: njutest::report::Resting::Sealed,
+                    }
+                    .acceptable()
+                })
                 .map(|one| wire(&one))
                 .collect(),
         ),
@@ -696,6 +718,14 @@ fn every_closed_set_the_schema_declares_is_one_this_release_produces() {
     rows.push((
         "/$defs/concurrencyExploration/oneOf/0/properties/why",
         names(&njutest::report::concurrency::Unexplored::ALL),
+    ));
+    rows.push((
+        "/$defs/evidence/oneOf/0/properties/executions/items/properties/came_to",
+        names(&rust_mutants::sealed::record::Came::ALL),
+    ));
+    rows.push((
+        "/$defs/evidence/oneOf/1/properties/reasons/items",
+        names(&rust_mutants::sealed::record::Doubt::ALL),
     ));
     let borrowed: Vec<(&str, Vec<&str>)> = rows
         .iter()
@@ -815,7 +845,16 @@ fn the_sections_the_contract_says_a_specification_lists_are_the_ones_it_draws() 
                     njutest::presentation::spec::heading(section).to_owned(),
                     njutest::report::Outcome::ALL
                         .into_iter()
-                        .filter(|outcome| njutest::spec::Section::of(outcome.decision()) == section)
+                        .filter(|outcome| {
+                            njutest::spec::Section::of(
+                                njutest::report::RowVerdict {
+                                    outcome: *outcome,
+                                    accepted: false,
+                                    resting: njutest::report::Resting::Sealed,
+                                }
+                                .decision(),
+                            ) == section
+                        })
                         .map(|outcome| outcome.name().to_owned())
                         .collect(),
                 )

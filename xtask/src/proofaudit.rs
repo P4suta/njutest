@@ -39,6 +39,7 @@ const ERRORED: &str = "errored";
 const DECLINED: &str = "declined";
 const PASSED: &str = "passed";
 const SURVIVING_MUTANT: &str = "surviving-mutant";
+const UNPROVEN_MUTANT: &str = "unproven-mutant";
 const UNNOTICED_FAULT: &str = "unnoticed-fault";
 const DIMENSION_NOT_MEASURED: &str = "dimension-not-measured";
 const CORRUPT_AFTER_CRASH: &str = "corrupt-after-crash";
@@ -269,6 +270,8 @@ pub enum Layer {
     Executions,
     /// What interpreting the suite established, re-derived from what the interpreter said.
     Soundness,
+    /// What each row's decision rests on, re-derived from the sealed executions it names or the reasons a lead has none (ADR 0046).
+    Evidence,
 }
 
 impl Layer {
@@ -296,6 +299,7 @@ impl Layer {
             Self::Confirmations => "confirmations",
             Self::Executions => "executions",
             Self::Soundness => "soundness",
+            Self::Evidence => "evidence",
         }
     }
 }
@@ -659,6 +663,7 @@ pub fn audit_with(
                 recorded.outputs,
                 &mut audit,
             ),
+            Layer::Evidence => evidence(&recording, &mut audit),
         };
     }
     audit.remarks.sort();
@@ -1652,7 +1657,73 @@ struct MutantRow {
     acceptance: AcceptanceFact,
     killed_by: Option<String>,
     read_back_from: Option<String>,
+    rests: Rests,
 }
+
+/// What a row says its decision rests on, as its `evidence` says it (ADR 0046).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Rests {
+    /// No execution: the compiler refused the mutation.
+    Nothing,
+    /// The sealed executions it names, each as the target whose module ran and what it came to, in the order they ran.
+    Sealed(Vec<(String, String)>),
+    /// No sealed execution established anything, for every reason it names.
+    Unproven(Vec<String>),
+}
+
+impl Rests {
+    /// What `evidence` says, where it is in a shape a run writes it in.
+    fn read(evidence: &serde_json::Value) -> Option<Self> {
+        if evidence.is_null() {
+            return Some(Self::Nothing);
+        }
+        match evidence.get("kind")?.as_str()? {
+            "sealed" => evidence
+                .get("executions")?
+                .as_array()?
+                .iter()
+                .map(|execution| Some((field(execution, "target")?, field(execution, "came_to")?)))
+                .collect::<Option<Vec<_>>>()
+                .map(Self::Sealed),
+            "unproven" => evidence
+                .get("reasons")?
+                .as_array()?
+                .iter()
+                .map(|reason| reason.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()
+                .map(Self::Unproven),
+            _ => None,
+        }
+    }
+}
+
+/// The outcomes only a sealed execution establishes, which a native run's say-so leaves a lead.
+const SEALED_OUTCOMES: [&str; 4] = [KILLED, SURVIVED, UNREACHED, EQUIVALENT];
+
+/// What a sealed execution comes to where it detected the mutation.
+pub const DETECTIONS: [&str; 5] = [
+    "panicked",
+    "failed",
+    "trapped",
+    "fuel-exceeded",
+    "memory-exceeded",
+];
+
+/// What a sealed execution comes to where it established nothing, which no execution beside it can make a verdict of but a detection.
+pub const DOUBTS: [&str; 4] = ["exited-early", "stack-overflow", "refused", "unaccounted"];
+
+/// Every reason a sealed run gives for establishing no verdict.
+pub const REASONS: [&str; 9] = [
+    "not-sealed",
+    "native",
+    "guard-absent",
+    "test-absent",
+    "reach-differs",
+    "exited-early",
+    "stack-overflow",
+    "refused",
+    "unaccounted",
+];
 
 /// The three distinct facts a report can state about row-local review acceptance.
 ///
@@ -1687,6 +1758,16 @@ impl MutantRow {
 
     fn answers_to(&self, subject: &str) -> bool {
         subject == self.display_id || subject == self.id
+    }
+
+    /// Whether what the row says is a lead: an outcome only a sealed execution establishes, which none did.
+    fn lead(&self) -> bool {
+        matches!(self.rests, Rests::Unproven(_)) && SEALED_OUTCOMES.contains(&self.outcome.as_str())
+    }
+
+    /// Whether the row is a verdict sealed executions established, which owes no native record of itself.
+    fn sealed(&self) -> bool {
+        matches!(self.rests, Rests::Sealed(_)) && SEALED_OUTCOMES.contains(&self.outcome.as_str())
     }
 }
 
@@ -3420,6 +3501,24 @@ fn confirmations(
     if mutants.is_empty() {
         return notes.absent("this run reports no new kill, wait or unconfirmed disposition");
     }
+    let asked: BTreeSet<&str> = match confirmed {
+        Some(confirmed) => confirmed
+            .confirms
+            .iter()
+            .map(|(_, confirm)| confirm.mutant.as_str())
+            .collect(),
+        None => BTreeSet::new(),
+    };
+    let mutants: Vec<&MutantRow> = mutants
+        .into_iter()
+        .filter(|mutant| !mutant.sealed() || asked.contains(mutant.id.as_str()))
+        .collect();
+    if mutants.is_empty() {
+        return notes.absent(
+            "every new kill this run reports rests on sealed executions, which owe no native \
+             confirmation, and the recording confirms none of them natively",
+        );
+    }
     let Some(confirmed) = confirmed else {
         notes.unaudited(
             "confirmations",
@@ -3566,7 +3665,12 @@ fn executions(
                 recorded.extend(outcomes.iter().copied());
             }
         }
-        if let Some(why) = contradicted(&mutant.outcome, &recorded) {
+        let why = if mutant.sealed() && recorded.is_empty() {
+            None
+        } else {
+            contradicted(&mutant.outcome, &recorded)
+        };
+        if let Some(why) = why {
             notes.violated(mutant.label(), why);
         } else if mutant.outcome == EQUIVALENT
             && !routing
@@ -3910,6 +4014,7 @@ impl<'a> Recording<'a> {
                     read_back_from: row
                         .get("reuse")
                         .and_then(|reuse| field(reuse, "source_run_id")),
+                    rests: required(row, "evidence", Rests::read)?,
                 })
             })
             .collect::<Result<Vec<_>, crate::route::ReadCauseError>>()?;
@@ -4294,15 +4399,16 @@ fn unsettled(document: &serde_json::Value) -> bool {
         })
 }
 
-/// Whether a mutation row is an answer: decided by a test, a model or the compiler, or accepted as it stands.
+/// Whether a mutation row is an answer: decided by a test, a model or the compiler, or accepted as it stands, and never a lead, which no sealed execution decided.
 fn answers(mutant: &MutantRow) -> bool {
-    matches!(
-        (mutant.outcome.as_str(), mutant.acceptance),
-        (
-            REJECTED | KILLED | "model-noticed" | "model-proved" | EQUIVALENT,
-            AcceptanceFact::Rejected | AcceptanceFact::Accepted
-        ) | (SURVIVED | UNREACHED, AcceptanceFact::Accepted)
-    )
+    !mutant.lead()
+        && matches!(
+            (mutant.outcome.as_str(), mutant.acceptance),
+            (
+                REJECTED | KILLED | "model-noticed" | "model-proved" | EQUIVALENT,
+                AcceptanceFact::Rejected | AcceptanceFact::Accepted
+            ) | (SURVIVED | UNREACHED, AcceptanceFact::Accepted)
+        )
 }
 
 /// A run that found a defect says DEFECT, whole or in part; whether this one named one.
@@ -4377,7 +4483,17 @@ fn answered_throughout(recording: &Recording<'_>, audit: &mut Audit, concluded: 
         }
     }
     for mutant in &recording.mutants {
-        if !answers(mutant) {
+        if mutant.lead() {
+            unsupported(
+                &mut notes,
+                &format!(
+                    "mutation {} ended as {} on no sealed execution, which is a lead and no \
+                     answer",
+                    mutant.label(),
+                    mutant.outcome
+                ),
+            );
+        } else if !answers(mutant) {
             unsupported(
                 &mut notes,
                 &format!(
@@ -4495,6 +4611,7 @@ fn findings(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Findings);
     let mutation_kinds = [
         SURVIVING_MUTANT,
+        UNPROVEN_MUTANT,
         WAITED_MUTANT,
         STEP_LIMIT_REACHED_MUTANT,
         FAILING_TEST,
@@ -4504,6 +4621,9 @@ fn findings(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
     for mutant in &recording.mutants {
         let expected = match (mutant.outcome.as_str(), mutant.acceptance) {
             (_, AcceptanceFact::Missing) => continue,
+            (_, AcceptanceFact::Rejected | AcceptanceFact::Accepted) if mutant.lead() => {
+                Some(UNPROVEN_MUTANT)
+            }
             (SURVIVED | UNREACHED, AcceptanceFact::Rejected) => Some(SURVIVING_MUTANT),
             (STEP_LIMIT_REACHED, AcceptanceFact::Rejected | AcceptanceFact::Accepted) => {
                 Some(STEP_LIMIT_REACHED_MUTANT)
@@ -4546,7 +4666,7 @@ fn findings(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
     for finding in &recording.findings {
         if matches!(
             finding.kind.as_str(),
-            SURVIVING_MUTANT | WAITED_MUTANT | STEP_LIMIT_REACHED_MUTANT
+            SURVIVING_MUTANT | UNPROVEN_MUTANT | WAITED_MUTANT | STEP_LIMIT_REACHED_MUTANT
         ) && !recording
             .mutants
             .iter()
@@ -4709,6 +4829,150 @@ fn routed_back(mutant: &MutantRow, routing: &crate::route::Routing, notes: &mut 
 }
 
 /// The columns of the accounting, against the records they summarise and against the verdict they carry.
+/// Whether every row rests on what its outcome can rest on, decided again from the evidence it names, with no lead accepted and every lead counted (ADR 0046).
+fn evidence(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
+    let mut notes = Notes::on(audit, Layer::Evidence);
+    for mutant in &recording.mutants {
+        if let Some(why) = misrested(mutant) {
+            notes.violated(mutant.label(), why);
+        }
+        if mutant.lead() && mutant.acceptance == AcceptanceFact::Accepted {
+            notes.violated(
+                mutant.label(),
+                format!(
+                    "a lead is accepted as {}, and an acceptance answers what the tests were \
+                     asked, which a lead says nothing of",
+                    mutant.outcome
+                ),
+            );
+        }
+    }
+    let leads = recording
+        .mutants
+        .iter()
+        .filter(|mutant| mutant.lead())
+        .count();
+    notes.tally(Column {
+        subject: "accounting.mutants.observers.unproven",
+        recorded: recording
+            .document
+            .get("accounting")
+            .and_then(|accounting| accounting.get("mutants"))
+            .and_then(|mutants| mutants.get("observers"))
+            .and_then(|observers| observers.get("unproven"))
+            .and_then(serde_json::Value::as_u64),
+        derived: size(leads),
+        records: "the rows no sealed execution decided",
+    });
+    notes.looked()
+}
+
+/// Why what `mutant` rests on cannot be what its outcome rests on, or nothing where it can.
+fn misrested(mutant: &MutantRow) -> Option<String> {
+    let outcome = mutant.outcome.as_str();
+    match (&mutant.rests, outcome) {
+        (Rests::Nothing, REJECTED) => None,
+        (Rests::Nothing, _) => Some(format!(
+            "outcome {outcome} rests on executions and the row names none"
+        )),
+        (Rests::Sealed(_) | Rests::Unproven(_), REJECTED) => Some(
+            "the compiler refused the mutation, so no execution was asked about it, and the \
+             row names evidence"
+                .to_owned(),
+        ),
+        (Rests::Unproven(reasons), _) => unreasoned(reasons),
+        (Rests::Sealed(executions), _) => {
+            sealed_against(executions, outcome, mutant.killed_by.as_deref())
+        }
+    }
+}
+
+/// Why `reasons` are not every reason a sealed run gives for no verdict, or nothing where they are.
+fn unreasoned(reasons: &[String]) -> Option<String> {
+    if reasons.is_empty() {
+        return Some(
+            "a row no sealed execution decided names no reason it has no verdict".to_owned(),
+        );
+    }
+    reasons
+        .iter()
+        .find(|reason| !REASONS.contains(&reason.as_str()))
+        .map(|reason| {
+            format!(
+                "a row no sealed execution decided names {reason:?}, which is no reason a sealed \
+                 run gives"
+            )
+        })
+}
+
+/// What sealed executions establish, decided again from what each came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Settled<'a> {
+    /// One detected the mutation, and this is the target whose execution did first.
+    Killed(&'a str),
+    /// Every one passed.
+    Survived,
+    /// None ran: nothing sealed reaches the mutation.
+    Unreached,
+    /// One established nothing, and none detected the mutation.
+    Nothing,
+}
+
+impl Settled<'_> {
+    /// What a reader is told it establishes.
+    const fn said(self) -> &'static str {
+        match self {
+            Self::Killed(_) => KILLED,
+            Self::Survived => SURVIVED,
+            Self::Unreached => UNREACHED,
+            Self::Nothing => "no verdict",
+        }
+    }
+}
+
+/// Why `outcome`, killed by `killed_by`, is not what `executions` establish, or nothing where it is.
+fn sealed_against(
+    executions: &[(String, String)],
+    outcome: &str,
+    killed_by: Option<&str>,
+) -> Option<String> {
+    let mut settled = if executions.is_empty() {
+        Settled::Unreached
+    } else {
+        Settled::Survived
+    };
+    for (target, came_to) in executions {
+        if DETECTIONS.contains(&came_to.as_str()) {
+            settled = Settled::Killed(target);
+            break;
+        }
+        if DOUBTS.contains(&came_to.as_str()) {
+            settled = Settled::Nothing;
+        } else if came_to != PASSED {
+            return Some(format!(
+                "a sealed execution of {target} came to {came_to:?}, which no sealed execution \
+                 comes to"
+            ));
+        }
+    }
+    match (outcome, settled) {
+        (KILLED, Settled::Killed(first)) => match killed_by {
+            Some(by) if by == first => None,
+            Some(by) => Some(format!(
+                "the kill names {by} and its sealed executions detected it first in {first}"
+            )),
+            None => Some(format!(
+                "the kill names no target and its sealed executions detected it first in {first}"
+            )),
+        },
+        (SURVIVED | EQUIVALENT, Settled::Survived) | (UNREACHED, Settled::Unreached) => None,
+        (_, settled) => Some(format!(
+            "outcome {outcome} rests on sealed executions that establish {}",
+            settled.said()
+        )),
+    }
+}
+
 fn accounting(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
     target_columns(recording, audit);
     mutant_columns(recording, audit);

@@ -10,10 +10,10 @@ use rust_mutants::id::HexDigest;
 use serde::{Deserialize, Serialize};
 
 /// The name of the shape.
-pub const SCHEMA: &str = "njutest-mutation-evidence-v2";
+pub const SCHEMA: &str = "njutest-mutation-evidence-v3";
 
 /// The directory records live in, below the store of answers.
-pub const LAYOUT: &str = "mutants-v2";
+pub const LAYOUT: &str = "mutants-v3";
 
 /// What one earlier run established about one mutant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +27,8 @@ pub struct Record {
     pub run_id: String,
     /// What it established.
     pub outcome: Outcome,
+    /// What that rests on: the sealed executions that established it, or every reason none did, which makes it a lead (ADR 0046).
+    pub evidence: rust_mutants::sealed::record::Evidence,
 }
 
 /// What an earlier run established about one mutant.
@@ -100,6 +102,8 @@ pub enum Refusal {
     },
     /// This run routes no target to the mutant, so the recorded survival is a universal claim over nothing.
     NothingRouted,
+    /// The record is a native lead, and this run's sealed executions decided the mutation (ADR 0046).
+    Superseded,
 }
 
 impl Refusal {
@@ -115,6 +119,7 @@ impl Refusal {
             Self::NotPassing { .. } => "not-passing",
             Self::TargetEntered { .. } => "target-entered",
             Self::NothingRouted => "nothing-routed",
+            Self::Superseded => "superseded",
         }
     }
 }
@@ -318,13 +323,18 @@ pub fn write(root: &Path, record: &Record) -> Result<PathBuf, StoreError> {
     Ok(path)
 }
 
-/// A record of what `run_id` established about `mutant`.
+/// A record of what `run_id` established about `mutant`, and what that rests on.
 #[must_use]
-pub fn record(mutant: HexDigest, run_id: &str, outcome: Outcome) -> Record {
+pub fn record(
+    mutant: HexDigest,
+    run_id: &str,
+    (outcome, evidence): (Outcome, rust_mutants::sealed::record::Evidence),
+) -> Record {
     Record {
         schema: SCHEMA.to_owned(),
         mutant,
         run_id: run_id.to_owned(),
         outcome,
+        evidence,
     }
 }

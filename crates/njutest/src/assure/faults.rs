@@ -422,6 +422,7 @@ fn prepared(
                         .map(|rule| rule.name.to_owned()),
                 )
                 .collect(),
+            sealing: rust_mutants::sealed::Sealing::Off,
             ..crate::assure::run::preparing(request)?
         },
         watch.cancel,

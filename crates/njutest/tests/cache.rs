@@ -88,6 +88,9 @@ fn report(run_id: &str, identity: &str) -> Report {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: String::new(),
+        evidence: njutest::testkit::reports::sealed_as(&njutest::report::Decided::Killed {
+            by: "demo/lib/demo".to_owned(),
+        }),
         outcome: njutest::report::Decided::Killed {
             by: "demo/lib/demo".to_owned(),
         },

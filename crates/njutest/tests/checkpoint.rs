@@ -36,6 +36,7 @@ fn mutant(id: &str) -> SavedMutant {
             by: "demo/lib/demo tests::works".to_owned(),
             before: Vec::new(),
         },
+        evidence: njutest::testkit::reports::sealed_kill("demo/lib/demo tests::works"),
         duration_ms: 3,
     }
 }
@@ -264,6 +265,7 @@ fn a_resumed_run_carries_only_kills_and_reads_nothing_else_as_one() {
             by: "pkg/lib/pkg one".to_owned(),
             before: Vec::new(),
         },
+        evidence: njutest::testkit::reports::sealed_kill("pkg/lib/pkg one"),
         duration_ms: 5,
     };
 
@@ -402,6 +404,49 @@ fn a_run_that_finished_leaves_nothing_of_its_checkpoint_behind() {
 }
 
 #[test]
+fn a_checkpoint_holds_only_a_kill_its_sealed_executions_establish() {
+    use rust_mutants::sealed::record::{Came, Doubt, Evidence, SealedRun};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let identity = "a".repeat(64);
+    let cases = [
+        (
+            Evidence::Unproven {
+                reasons: vec![Doubt::Native],
+            },
+            "a kill only a native run observed is a lead, which a successor judges again",
+        ),
+        (
+            njutest::testkit::reports::sealed_kill("demo/lib/other"),
+            "a kill whose first sealed detection is another target's names the wrong killer",
+        ),
+        (
+            Evidence::Sealed {
+                executions: vec![SealedRun {
+                    target: "demo/lib/demo tests::works".to_owned(),
+                    test: "tests::one".to_owned(),
+                    came_to: Came::Passed,
+                }],
+            },
+            "a kill its sealed executions call a survival is not one",
+        ),
+    ];
+    for (evidence, why) in cases {
+        let mut state = State::new(&identity);
+        state.attempts = 1;
+        let mut saved = mutant(&"b".repeat(64));
+        saved.evidence = evidence;
+        state.record_mutant(saved);
+        let error = write(dir.path(), &state).expect_err(why);
+        assert!(
+            error
+                .to_string()
+                .contains("that its sealed executions do not establish"),
+            "{why}: {error}"
+        );
+    }
+}
+
+#[test]
 fn a_stored_checkpoint_requires_an_attempt_and_unique_canonical_ids() {
     let dir = tempfile::tempdir().expect("tempdir");
     let identity = "a".repeat(64);
@@ -418,7 +463,7 @@ fn a_stored_checkpoint_requires_an_attempt_and_unique_canonical_ids() {
         ),
         (
             "mutants",
-            "[{\"id\":\"same\",\"disposition\":{\"kind\":\"killed\",\"by\":\"t\",\"before\":[]},\"duration_ms\":1},{\"id\":\"same\",\"disposition\":{\"kind\":\"killed\",\"by\":\"t\",\"before\":[]},\"duration_ms\":2}]",
+            "[{\"id\":\"same\",\"disposition\":{\"kind\":\"killed\",\"by\":\"t\",\"before\":[]},\"evidence\":{\"kind\":\"sealed\",\"executions\":[{\"target\":\"t\",\"test\":\"tests::one\",\"came_to\":\"panicked\"}]},\"duration_ms\":1},{\"id\":\"same\",\"disposition\":{\"kind\":\"killed\",\"by\":\"t\",\"before\":[]},\"evidence\":{\"kind\":\"sealed\",\"executions\":[{\"target\":\"t\",\"test\":\"tests::one\",\"came_to\":\"panicked\"}]},\"duration_ms\":2}]",
         ),
     ] {
         let (targets, mutants) = if member == "targets" {

@@ -79,6 +79,14 @@ pub enum RunInvariantError {
         /// The target whose answer should have been present.
         target: String,
     },
+    /// The engine gave a sealed verdict in the shape of an outcome no verdict has.
+    #[error("the engine gave {mutant} a sealed verdict of {outcome}, which no verdict is")]
+    SealedVerdictUnshaped {
+        /// The mutation.
+        mutant: String,
+        /// The outcome the verdict came as.
+        outcome: &'static str,
+    },
 }
 
 /// What one run was asked to do.
@@ -1025,6 +1033,13 @@ impl Journal {
         &mut self,
         judged: &mutation::Judged,
     ) -> Result<(), crate::checkpoint::CheckpointError> {
+        let Some(evidence) = judged
+            .evidence
+            .as_ref()
+            .filter(|evidence| evidence.class() == rust_mutants::sealed::record::Class::Sealed)
+        else {
+            return Ok(());
+        };
         let disposition = match &judged.disposition {
             mutation::Disposition::Killed { by } => crate::checkpoint::SavedDisposition::Killed {
                 by: by.clone(),
@@ -1049,6 +1064,7 @@ impl Journal {
         self.state.record_mutant(crate::checkpoint::SavedMutant {
             id: judged.id.clone(),
             disposition,
+            evidence: evidence.clone(),
             duration_ms: 0,
         });
         self.write()
@@ -1607,7 +1623,7 @@ pub fn preparing(request: &Request) -> Result<rust_mutants::session::PrepareOpti
             .then_some(request.config.execution.steps),
         skip_targets: request.config.execution.skip_targets.clone(),
         coverage: request.config.execution.coverage,
-        ..crate::assure::engine::switches()
+        ..crate::assure::engine::switches(request.config.mutation.sealing())
     })
 }
 
@@ -1726,6 +1742,7 @@ pub fn record(
             original: judged.original.clone(),
             replacement: judged.replacement.clone(),
             outcome: judged.disposition.decided(),
+            evidence: judged.evidence.clone(),
             accepted: mutation::answered_by(judged, accepted),
             reuse: crate::report::Reuse(judged.source_run_id.clone().map_or(
                 crate::report::Established::Here,

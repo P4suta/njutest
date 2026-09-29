@@ -148,6 +148,9 @@ fn populated_draft(vary: &dyn Fn(&mut BuildReport)) -> BuildReport {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: String::new(),
+        evidence: njutest::testkit::reports::sealed_as(&njutest::report::Decided::Killed {
+            by: "0123456789abcdef".to_owned(),
+        }),
         outcome: njutest::report::Decided::Killed {
             by: "0123456789abcdef".to_owned(),
         },
@@ -682,6 +685,7 @@ fn every_nullable_report_field_must_be_present_even_when_null() {
         "/report/builds/0/parts/0/targets/0/message",
         "/report/builds/0/parts/0/mutants/0/decision/killed_by",
         "/report/builds/0/parts/0/mutants/0/decision/step_boundary",
+        "/report/builds/0/parts/0/mutants/0/evidence",
         "/report/builds/0/parts/0/mutants/0/routing",
         "/report/builds/0/parts/0/mutants/0/routing/fallback",
         "/report/builds/0/parts/0/mutants/0/reuse/source_run_id",
@@ -901,9 +905,9 @@ fn every_survivor_and_affirmative_model_outcome_has_exactly_one_model_record() {
     ] {
         let refused = populated_varying(&|source| {
             source.contract = njutest::config::Contract::VerifiedV1;
-            source.mutants[0].outcome = outcome.clone();
             source.mutants[0].reuse = njutest::report::Reuse(njutest::report::Established::Here);
             answered_as_a_survivor(&mut source.mutants[0]);
+            njutest::testkit::reports::decide(&mut source.mutants[0], outcome.clone());
             source.accounting.mutants =
                 model_accounting(&outcome).expect("the model phase refuses any other row");
             if outcome == njutest::report::Decided::Survived {

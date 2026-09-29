@@ -283,9 +283,11 @@ fn a_mutation_that_stops_a_doctest_from_panicking_is_detected_sealed() {
     let evidence = &stopped[0]["evidence"];
     assert_eq!(evidence["kind"].as_str(), Some("sealed"), "{evidence}");
     assert_eq!(
-        evidence["executions"][0]["test"].as_str(),
-        Some("src/lib.rs - divide (line 25)"),
-        "{evidence}"
+        evidence["executions"][0]["test"]
+            .as_str()
+            .map(|test| test.replace('\\', "/")),
+        Some("src/lib.rs - divide (line 25)".to_owned()),
+        "rustdoc names a doctest by its file as the host spells it: {evidence}"
     );
     assert_eq!(
         evidence["executions"][0]["came_to"].as_str(),
@@ -321,12 +323,23 @@ fn what_only_an_example_the_sealed_target_ignores_reaches_is_unproven() {
         .iter()
         .find(|target| target["kind"].as_str() == Some("doc"))
         .expect("the documentation target");
+    let uncontrolled: Vec<(String, &str)> = documentation["sealed"]["uncontrolled"]
+        .as_array()
+        .expect("the uncontrolled tests")
+        .iter()
+        .map(|one| {
+            (
+                one["test"].as_str().expect("a test").replace('\\', "/"),
+                one["reason"].as_str().expect("a reason"),
+            )
+        })
+        .collect();
     assert_eq!(
-        documentation["sealed"]["uncontrolled"],
-        serde_json::json!([{ "test": "src/lib.rs - twice (line 8)", "reason": "not-held" }]),
+        uncontrolled,
+        [("src/lib.rs - twice (line 8)".to_owned(), "not-held")],
         "the report names the example the sealed build does not hold: {documentation}"
     );
-    let printed = njutest_devkit::process::strict_utf8(&output.stdout);
+    let printed = njutest_devkit::process::strict_utf8(&output.stdout).replace('\\', "/");
     assert!(
         printed.contains("SEALED") && printed.contains("src/lib.rs - twice (line 8) (not-held)"),
         "the run says which test it could not seal, where a reader of an unproven mutant \

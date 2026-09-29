@@ -23,7 +23,7 @@ use njutest::presentation::{
 };
 use njutest::report::{Decided, Established, MutantRecord, Outcome, Reuse, RunKind};
 use njutest::spec::{Specification, Subject, specified};
-use njutest::testkit::reports::{completed, routed, row};
+use njutest::testkit::reports::{asked, completed, routed, row};
 
 /// The same spot, in a project whose builds did not agree about it.
 fn across(mut spot: Spot, builds: &[(&str, Standing)]) -> Spot {
@@ -551,7 +551,10 @@ fn moved_reach() -> Specification {
         ("gt-to-ge", "n > 0", "n >= 0"),
         Decided::Survived,
     );
-    kept_off.routing = Some(routed(&[it], &[], &[(it, Outcome::Survived)]));
+    asked(
+        &mut kept_off,
+        routed(&[it], &[], &[(it, Outcome::Survived)]),
+    );
     let nothing = || njutest::report::drift::Moved {
         gained: std::collections::BTreeSet::new(),
         lost: std::collections::BTreeSet::new(),
@@ -593,11 +596,14 @@ fn specifications() -> Vec<(&'static str, Specification)> {
         ("gt-to-ge", "n > 0", "n >= 0"),
         Decided::Killed { by: it.to_owned() },
     );
-    noticed.routing = Some(routed(
-        &[lib, it, more],
-        &[],
-        &[(lib, Outcome::Survived), (it, Outcome::Killed)],
-    ));
+    asked(
+        &mut noticed,
+        routed(
+            &[lib, it, more],
+            &[],
+            &[(lib, Outcome::Survived), (it, Outcome::Killed)],
+        ),
+    );
     let refused = settle(
         1,
         5,
@@ -605,9 +611,15 @@ fn specifications() -> Vec<(&'static str, Specification)> {
         Decided::CompileRejected,
     );
     let mut partly = settle(2, 7, ("int-increment", "1", "2"), Decided::Survived);
-    partly.routing = Some(routed(&[lib], &[it], &[(lib, Outcome::Survived)]));
+    asked(
+        &mut partly,
+        routed(&[lib], &[it], &[(lib, Outcome::Survived)]),
+    );
     let mut removed = settle(3, 8, ("lt-to-le", "<", "<="), Decided::Survived);
-    removed.routing = Some(routed(&[], &[lib], &[]));
+    removed.evidence = Some(rust_mutants::sealed::record::Evidence::Unproven {
+        reasons: vec![rust_mutants::sealed::record::Doubt::NotSealed],
+    });
+    asked(&mut removed, routed(&[], &[lib], &[]));
     let mut accepted = settle(
         4,
         9,
@@ -629,18 +641,21 @@ fn specifications() -> Vec<(&'static str, Specification)> {
         ("gt-to-ge", "n > 0", "n >= 0"),
         Decided::Killed { by: it.to_owned() },
     );
-    debug.routing = Some(routed(
-        &[lib, it, more],
-        &[],
-        &[(lib, Outcome::Survived), (it, Outcome::Killed)],
-    ));
+    asked(
+        &mut debug,
+        routed(
+            &[lib, it, more],
+            &[],
+            &[(lib, Outcome::Survived), (it, Outcome::Killed)],
+        ),
+    );
     let mut release = row(
         0,
         ("src/lib.rs", "settle", 4),
         ("gt-to-ge", "n > 0", "n >= 0"),
         Decided::Survived,
     );
-    release.routing = Some(routed(&[lib, it], &[], &[]));
+    asked(&mut release, routed(&[lib, it], &[], &[]));
     release.reuse = Reuse(Established::ReadBackFrom(
         "20260923T000000Z-000009".to_owned(),
     ));
@@ -655,15 +670,18 @@ fn specifications() -> Vec<(&'static str, Specification)> {
         ),
         Decided::Survived,
     );
-    long.routing = Some(routed(
-        &[lib, it, more],
-        &[],
-        &[
-            (lib, Outcome::Survived),
-            (it, Outcome::Survived),
-            (more, Outcome::Survived),
-        ],
-    ));
+    asked(
+        &mut long,
+        routed(
+            &[lib, it, more],
+            &[],
+            &[
+                (lib, Outcome::Survived),
+                (it, Outcome::Survived),
+                (more, Outcome::Survived),
+            ],
+        ),
+    );
 
     let lexer = row(
         0,
@@ -683,7 +701,7 @@ fn specifications() -> Vec<(&'static str, Specification)> {
         ("return-default", "tokens.len()", "Default::default()"),
         Decided::Killed { by: it.to_owned() },
     );
-    read_kill.routing = Some(routed(&[it], &[], &[]));
+    asked(&mut read_kill, routed(&[it], &[], &[]));
     read_kill.reuse = Reuse(Established::ReadBackFrom(
         "20260923T000000Z-000009".to_owned(),
     ));

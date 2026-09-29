@@ -658,10 +658,13 @@ fn a_kill_that_names_no_target_at_all_is_refused_before_any_layer_reads_it() {
 #[test]
 fn a_kill_attributed_to_a_target_the_recording_does_not_carry_is_a_violation() {
     assert_eq!(
-        violations(&with(
-            serde_json::json!({ "mutants": [{ "decision": { "killed_by": "pkg/test/lib somebody_else" } }] })
-        )),
-        [KILLED]
+        violations(&with(serde_json::json!({ "mutants": [{
+            "decision": { "killed_by": "pkg/test/lib somebody_else" },
+            "evidence": { "executions": [{ "target": "pkg/test/lib somebody_else" }] }
+        }] }))),
+        [KILLED],
+        "the sealed executions and the kill name the same target, which the recording carries no \
+         record of"
     );
 }
 
@@ -3588,27 +3591,165 @@ fn every_rule_of_a_merge_is_refused_by_name_where_its_plant_breaks_it() {
 
 #[test]
 fn a_real_run_measured_in_two_shards_and_merged_is_re_decided_clean_shard_by_shard() {
-    let recorded = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/sharded-run");
-    let mut shards: Vec<std::path::PathBuf> = std::fs::read_dir(recorded.join("runs"))
-        .expect("the recorded shards")
-        .map(|entry| entry.expect("a readable shard").path())
-        .collect();
-    shards.sort();
-    let audit = gates::proofaudit_merged(
-        &checkers(),
-        &recorded.join("merged.json"),
-        &shards,
-        Some(&recorded.join("traces")),
-    )
-    .expect("a real merge is read with its shards");
-    assert_eq!(audit.violations(), 0, "{audit}");
-    assert_eq!(audit.mutants, 4, "{audit}");
-    assert!(
-        !audit
-            .remarks
-            .iter()
-            .any(|remark| remark.layer == Layer::Merge && remark.standing == Standing::Unaudited),
-        "every shard the merge names was given and re-decided: {audit}"
+    for (recording, sealed) in [("sharded-run", true), ("sharded-run-unsealed", false)] {
+        let recorded = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/testdata")
+            .join(recording);
+        let mut shards: Vec<std::path::PathBuf> = std::fs::read_dir(recorded.join("runs"))
+            .expect("the recorded shards")
+            .map(|entry| entry.expect("a readable shard").path())
+            .collect();
+        shards.sort();
+        let audit = gates::proofaudit_merged(
+            &checkers(),
+            &recorded.join("merged.json"),
+            &shards,
+            Some(&recorded.join("traces")),
+        )
+        .expect("a real merge is read with its shards");
+        assert_eq!(
+            audit.violations(),
+            0,
+            "{recording}: a run whose every kill rests on sealed executions ({sealed}) owes no \
+             native confirmation of them, and one whose every answer is a lead owes one for each: \
+             {audit}"
+        );
+        assert_eq!(audit.mutants, 4, "{recording}: {audit}");
+        assert!(
+            !audit.remarks.iter().any(
+                |remark| remark.layer == Layer::Merge && remark.standing == Standing::Unaudited
+            ),
+            "{recording}: every shard the merge names was given and re-decided: {audit}"
+        );
+    }
+}
+
+/// `document` with what its row at `index` rests on replaced by `evidence`.
+fn resting(
+    mut document: serde_json::Value,
+    index: usize,
+    evidence: serde_json::Value,
+) -> serde_json::Value {
+    if let Some(serde_json::Value::Object(row)) = document.pointer_mut(&format!("/mutants/{index}"))
+    {
+        row.insert("evidence".to_owned(), evidence);
+    }
+    document
+}
+
+/// What a lead rests on: a test that reaches the mutation ran only natively.
+fn lead() -> serde_json::Value {
+    serde_json::json!({ "kind": "unproven", "reasons": ["native"] })
+}
+
+/// The subjects `layer` found violated in `document`.
+fn violated_in(document: &serde_json::Value, layer: Layer) -> Vec<String> {
+    audited(document)
+        .remarks
+        .into_iter()
+        .filter(|remark| remark.layer == layer && remark.standing == Standing::Violated)
+        .map(|remark| remark.subject)
+        .collect()
+}
+
+#[test]
+fn a_verdict_its_sealed_executions_do_not_establish_is_a_violation() {
+    for (document, subject, why) in [
+        (
+            with(serde_json::json!({
+                "mutants": [{ "evidence": { "executions": [{ "came_to": "passed" }] } }]
+            })),
+            KILLED,
+            "a kill every sealed execution of which passed",
+        ),
+        (
+            with(serde_json::json!({
+                "mutants": [{ "evidence": { "executions": [{ "target": "pkg/test/other" }] } }]
+            })),
+            KILLED,
+            "a kill named for a target other than the one whose execution detected it first",
+        ),
+        (
+            with(serde_json::json!({
+                "mutants": [{}, { "evidence": { "executions": [{ "came_to": "unaccounted" }] } }]
+            })),
+            SURVIVED,
+            "a survival resting on a sealed execution that established nothing",
+        ),
+        (
+            resting(base(), 0, serde_json::Value::Null),
+            KILLED,
+            "a kill resting on no execution at all",
+        ),
+    ] {
+        assert_eq!(
+            violated_in(&document, Layer::Evidence),
+            [subject],
+            "{why} is a verdict nothing established (ADR 0046): {}",
+            audited(&document)
+        );
+    }
+}
+
+#[test]
+fn a_lead_answers_nothing_owes_an_unproven_finding_and_is_counted() {
+    let assured_over_a_lead = resting(
+        with(serde_json::json!({
+            "verdict": "SCOPE_ASSURED",
+            "accounting": { "mutants": { "accepted": 1, "observers": { "unproven": 1 } } },
+            "mutants": [{}, { "accepted": true }],
+            "findings": []
+        })),
+        0,
+        lead(),
+    );
+    assert_eq!(
+        violated_in(&assured_over_a_lead, Layer::Accounting),
+        ["verdict"],
+        "a kill only a native run observed is a lead, and an assurance over it claims an answer \
+         nothing established: {}",
+        audited(&assured_over_a_lead)
+    );
+    let named_as_a_survivor = resting(
+        with(serde_json::json!({
+            "accounting": { "mutants": { "observers": { "unproven": 1 } } }
+        })),
+        1,
+        lead(),
+    );
+    assert_eq!(
+        violated_in(&named_as_a_survivor, Layer::Findings),
+        [SURVIVED],
+        "a lead is named as unproven, not as a survival nothing noticed: {}",
+        audited(&named_as_a_survivor)
+    );
+    assert_eq!(violations(&named_as_a_survivor), [SURVIVED]);
+    let accepted = resting(
+        with(serde_json::json!({
+            "accounting": { "mutants": { "accepted": 1, "observers": { "unproven": 1 } } },
+            "mutants": [{}, { "accepted": true }],
+            "findings": [{ "kind": "unproven-mutant" }]
+        })),
+        1,
+        lead(),
+    );
+    assert_eq!(
+        violated_in(&accepted, Layer::Evidence),
+        [SURVIVED],
+        "an acceptance answers what the tests were asked, and a lead says nothing they were: {}",
+        audited(&accepted)
+    );
+    assert_eq!(violations(&accepted), [SURVIVED]);
+    let uncounted = resting(
+        with(serde_json::json!({ "findings": [{ "kind": "unproven-mutant" }] })),
+        1,
+        lead(),
+    );
+    assert_eq!(
+        violated_in(&uncounted, Layer::Evidence),
+        ["accounting.mutants.observers.unproven"],
+        "a report counts every row no sealed execution decided: {}",
+        audited(&uncounted)
     );
 }
 

@@ -108,6 +108,59 @@ fn a_control_runs_under_the_variables_the_launcher_and_the_arguments_it_is_given
 }
 
 #[test]
+fn a_one_thread_schedule_takes_the_place_of_the_thread_count_a_run_was_configured_with() {
+    let fixture = Fixture::copy("fixture-environment");
+    let session = Workspace::open(
+        fixture.root(),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(
+        &PrepareOptions {
+            harness_args: vec!["--test-threads=4".to_owned()],
+            ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
+        },
+        &Cancel::new(),
+    )
+    .expect("prepare");
+    let target = "environment/test/threads";
+    assert_eq!(
+        controlled(&session, target, &Perturbation::none()),
+        Outcome::Survived,
+        "{target} passes on the four threads it was configured with"
+    );
+    let one_thread = session
+        .control_perturbed(
+            &Request::new(String::new()).with_target(target),
+            Conditions {
+                observing: Observing::Nothing,
+                perturbation: &Perturbation {
+                    schedule: Schedule::OneThread,
+                    ..Perturbation::none()
+                },
+            },
+            &Cancel::new(),
+        )
+        .expect("the control runs")
+        .result;
+    assert_eq!(
+        (
+            one_thread.failed_tests.as_slice(),
+            one_thread.passed_tests.as_slice()
+        ),
+        (
+            ["a_waits_for_the_signal".to_owned()].as_slice(),
+            ["b_signals".to_owned()].as_slice()
+        ),
+        "the one thread takes the place of the four, so the test waiting for the other one \
+         waits in vain, rather than libtest refusing a thread count given twice: {}",
+        njutest_devkit::process::strict_utf8(&one_thread.output)
+    );
+    session.close().expect("close");
+}
+
+#[test]
 fn a_schedule_only_libtest_understands_is_refused_for_a_harness_that_is_not_libtest() {
     let fixture = Fixture::copy("fixture-custom-harness");
     let session = prepare(&fixture);

@@ -17,6 +17,7 @@ use njutest::report::{
     ObserverAccounting, Outcome, Position, Report, RunKind, SCHEMA, SeamRecord, TargetAccounting,
     TargetRecord, TargetStatus, UNAVAILABLE, Verdict,
 };
+use njutest::testkit::reports::decide;
 
 /// One field of a report, the words its refusal names it by, and how to leave it saying nothing.
 type Blank = (&'static str, &'static str, fn(&mut BuildReport));
@@ -37,7 +38,7 @@ fn counted(rows: &[MutantRecord]) -> MutantAccounting {
         let outcome = row.outcome.outcome();
         counts
             .observers
-            .counted(outcome.decision())
+            .counted(row.decision())
             .expect("a fixture's rows are countable");
         if row.accepted {
             counts.accepted += 1;
@@ -535,6 +536,9 @@ fn mutant(id: &str) -> MutantRecord {
         outcome: njutest::report::Decided::Killed {
             by: "core/lib/core one".to_owned(),
         },
+        evidence: njutest::testkit::reports::sealed_as(&njutest::report::Decided::Killed {
+            by: "core/lib/core one".to_owned(),
+        }),
         accepted: false,
         reuse: njutest::report::Reuse(njutest::report::Established::Here),
         blind_in: Vec::new(),
@@ -660,7 +664,7 @@ fn one_survivor_nobody_accepted_is_one_too_many() {
             },
             ..MutantAccounting::default()
         };
-        source.mutants[0].outcome = njutest::report::Decided::Survived;
+        decide(&mut source.mutants[0], njutest::report::Decided::Survived);
         source.mutants[0].accepted = true;
     })
     .expect("a survivor a reviewer accepted with a reason is one the run may still assure around");
@@ -677,7 +681,7 @@ fn one_survivor_nobody_accepted_is_one_too_many() {
             },
             ..MutantAccounting::default()
         };
-        source.mutants[0].outcome = njutest::report::Decided::Survived;
+        decide(&mut source.mutants[0], njutest::report::Decided::Survived);
         let displayed = source.mutants[0].display_id.clone();
         source.findings = vec![Finding::new(
             FindingKind::SurvivingMutant,
@@ -703,6 +707,106 @@ fn one_survivor_nobody_accepted_is_one_too_many() {
     );
 }
 
+/// A native lead: every reason no sealed execution established a verdict, which is that a test that reaches the mutation ran only natively.
+fn native() -> rust_mutants::sealed::record::Evidence {
+    rust_mutants::sealed::record::Evidence::Unproven {
+        reasons: vec![rust_mutants::sealed::record::Doubt::Native],
+    }
+}
+
+/// One way of changing a report, and why a report so changed is refused.
+type Varied = (fn(&mut BuildReport), &'static str);
+
+#[test]
+fn a_report_holding_a_lead_concludes_insufficient_and_says_it_is_unproven() {
+    let lead = completed(|source| {
+        source.mutants[0].evidence = Some(native());
+        required(source);
+    })
+    .expect("a report holding a lead is one a run may write, as long as it says so");
+    assert_eq!(
+        lead.verdict(),
+        Verdict::Insufficient,
+        "a kill only a native run observed is a lead, and a report that rests on one has \
+         established less than an assurance claims (ADR 0046)"
+    );
+    let conclusion = lead
+        .conclusion()
+        .expect("the checked report has a representable conclusion");
+    assert_eq!(
+        conclusion
+            .findings
+            .iter()
+            .map(|finding| finding.kind)
+            .collect::<Vec<_>>(),
+        vec![FindingKind::UnprovenMutant],
+        "and it names the mutation it has no verdict for"
+    );
+    assert_eq!(
+        conclusion.mutants[0].decision(),
+        njutest::report::Decision::Unproven
+    );
+
+    let unsaid = completed(|source| {
+        source.mutants[0].evidence = Some(native());
+        source.accounting.mutants = counted(&source.mutants);
+    })
+    .expect_err("a lead the findings do not name is a report hiding what it did not establish");
+    assert!(
+        unsaid
+            .to_string()
+            .contains("requires exactly one unproven-mutant finding"),
+        "{unsaid}"
+    );
+}
+
+#[test]
+fn a_row_rests_on_what_its_outcome_can_rest_on() {
+    let cases: [Varied; 4] = [
+        (
+            |source| {
+                decide(
+                    &mut source.mutants[0],
+                    njutest::report::Decided::CompileRejected,
+                );
+                source.mutants[0].evidence = Some(native());
+            },
+            "a mutation the compiler refused carries evidence",
+        ),
+        (
+            |source| source.mutants[0].evidence = None,
+            "outcome killed rests on executions and the row carries no evidence",
+        ),
+        (
+            |source| {
+                source.mutants[0].evidence =
+                    njutest::testkit::reports::sealed_as(&njutest::report::Decided::Survived);
+            },
+            "outcome killed rests on sealed executions that establish survived",
+        ),
+        (
+            |source| {
+                source.mutants[0].evidence =
+                    Some(njutest::testkit::reports::sealed_kill("core/lib/core two"));
+            },
+            "the kill names core/lib/core one and its sealed executions detected it first in \
+             core/lib/core two",
+        ),
+    ];
+    for (vary, why) in cases {
+        let refused = completed(|source| {
+            vary(source);
+            required(source);
+        })
+        .expect_err(why)
+        .to_string();
+        assert!(
+            refused.contains(why),
+            "a row is refused for resting on what its outcome cannot rest on: {refused}"
+        );
+    }
+}
+
 #[test]
 fn non_verdict_rows_can_never_be_hidden_behind_assurance_accounting() {
     let cases = [
@@ -724,7 +828,7 @@ fn non_verdict_rows_can_never_be_hidden_behind_assurance_accounting() {
     for outcome in cases {
         let name = outcome.name();
         let refused = completed(move |source| {
-            source.mutants[0].outcome = outcome;
+            decide(&mut source.mutants[0], outcome);
             let rows = source.mutants.clone();
             source.accounting.mutants = counted(&rows);
         })
@@ -746,9 +850,12 @@ fn an_acceptance_answers_only_the_row_that_carries_it() {
     let unanswered = completed(|source| {
         let mut accepted_equivalent = mutant(&"b".repeat(64));
         accepted_equivalent.catalog_index = njutest::report::CatalogIndex::new(1);
-        accepted_equivalent.outcome = njutest::report::Decided::Equivalent;
+        decide(
+            &mut accepted_equivalent,
+            njutest::report::Decided::Equivalent,
+        );
         accepted_equivalent.accepted = true;
-        source.mutants[0].outcome = njutest::report::Decided::Survived;
+        decide(&mut source.mutants[0], njutest::report::Decided::Survived);
         let rows = vec![source.mutants[0].clone(), accepted_equivalent];
         source.accounting.mutants = counted(&rows);
         source.mutants = rows;
@@ -765,9 +872,12 @@ fn an_acceptance_answers_only_the_row_that_carries_it() {
     let answered = completed(|source| {
         let mut accepted_equivalent = mutant(&"b".repeat(64));
         accepted_equivalent.catalog_index = njutest::report::CatalogIndex::new(1);
-        accepted_equivalent.outcome = njutest::report::Decided::Equivalent;
+        decide(
+            &mut accepted_equivalent,
+            njutest::report::Decided::Equivalent,
+        );
         accepted_equivalent.accepted = true;
-        source.mutants[0].outcome = njutest::report::Decided::Survived;
+        decide(&mut source.mutants[0], njutest::report::Decided::Survived);
         let rows = vec![source.mutants[0].clone(), accepted_equivalent];
         source.accounting.mutants = counted(&rows);
         source.mutants = rows;
@@ -1089,7 +1199,7 @@ fn refused() -> Vec<String> {
                 },
                 ..MutantAccounting::default()
             };
-            source.mutants[0].outcome = njutest::report::Decided::Survived;
+            decide(&mut source.mutants[0], njutest::report::Decided::Survived);
         })
         .expect_err("a survivor without its finding")
         .to_string(),
@@ -1242,27 +1352,34 @@ fn a_seam_finding_that_names_a_question_the_report_does_not_hold_is_refused() {
     assert_eq!(validate_for_persistence(&allowed), Vec::<Violation>::new());
 }
 
-/// The draft's one row decided as `outcome` by this run and routed by `routing`, with the counts and finding the row requires.
+/// The draft's one row decided as `outcome` by this run's native executions and routed by `routing`, which makes it a lead, with the counts and finding the row requires.
 fn answering(
     outcome: njutest::report::Decided,
     routing: Option<njutest::report::Routing>,
 ) -> impl FnOnce(&mut BuildReport) {
     move |source| {
         source.mutants[0].outcome = outcome;
+        source.mutants[0].evidence = Some(rust_mutants::sealed::record::Evidence::Unproven {
+            reasons: vec![rust_mutants::sealed::record::Doubt::Native],
+        });
         source.mutants[0].routing = routing;
-        source.accounting.mutants = counted(&source.mutants);
-        source.findings = source
-            .mutants
-            .iter()
-            .filter_map(|row| {
-                row.outcome
-                    .outcome()
-                    .required_finding(row.accepted)
-                    .map(|kind| Finding::new(kind, &row.display_id, "the finding the row requires"))
-            })
-            .collect();
-        source.verdict = source.concluded();
+        required(source);
     }
+}
+
+/// The counts, findings and verdict the draft's rows require.
+fn required(source: &mut BuildReport) {
+    source.accounting.mutants = counted(&source.mutants);
+    source.findings = source
+        .mutants
+        .iter()
+        .filter_map(|row| {
+            row.verdict()
+                .required_finding()
+                .map(|kind| Finding::new(kind, &row.display_id, "the finding the row requires"))
+        })
+        .collect();
+    source.verdict = source.concluded();
 }
 
 /// A route this run asked by, keeping `reaching` and recording `answered` in the order it asked.

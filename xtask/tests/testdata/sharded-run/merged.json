@@ -2,8 +2,8 @@
   "document_type": "complete",
   "report": {
     "schema": "njutest-assurance-report-v1",
-    "schema_version": 2,
-    "run_id": "20260926t022342806z-22ee70",
+    "schema_version": 3,
+    "run_id": "20260929t000329776z-00cf39",
     "run_kind": "full",
     "contract": "standard-v1",
     "tool": {
@@ -16,7 +16,7 @@
         "fixture-assured"
       ],
       "workspace_digest": "3a7fae75eade6b12b2536419baff5338b4dfe392875a10f077caf812aa98ea5d",
-      "configuration_digest": "aa84264c8d11deaaf64f68d66e0540f852464afa5d20c8c335558a4faa5194f9",
+      "configuration_digest": "886a21b1d04e5327eb29438d3104d1880fecb5cc3a9487f1a71a8a9d82a951c5",
       "git": {
         "available": false,
         "commit": "unavailable",
@@ -27,7 +27,7 @@
       }
     },
     "provenance": {
-      "identity": "f8c5c777021019263e36fc6ffe8547280b727ecbeb44f6bbfbdccff23e4a2762",
+      "identity": "c5b9a510745f8cd992d5100ec873774b5ffc295da21f88c7d64ef86e2fe864c1",
       "cached": false,
       "source_run_id": null
     },
@@ -46,14 +46,14 @@
       "kind": "merged",
       "sources": [
         {
-          "run_id": "20260926t022237531z-226292",
+          "run_id": "20260929t000318323z-00c0f2",
           "shard": {
             "index": 1,
             "of": 2
           }
         },
         {
-          "run_id": "20260926t022320117z-22ba39",
+          "run_id": "20260929t000324305z-00c796",
           "shard": {
             "index": 2,
             "of": 2
@@ -76,23 +76,23 @@
         },
         "parts": [
           {
-            "run_id": "20260926t022237531z-226292-b0000000000",
+            "run_id": "20260929t000318323z-00c0f2-b0000000000",
             "part": {
               "kind": "shard",
               "index": 1,
               "of": 2
             },
             "toolchain": {
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
-              "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
-              "target": "x86_64-unknown-linux-gnu",
-              "os": "linux",
-              "arch": "x86_64"
+              "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+              "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+              "target": "aarch64-apple-darwin",
+              "os": "macos",
+              "arch": "aarch64"
             },
             "timing": {
-              "started": "2026-09-26T02:22:37.531152244Z",
-              "finished": "2026-09-26T02:23:19.407329266Z",
-              "duration_ms": 41876
+              "started": "2026-09-29T00:03:18.32396Z",
+              "finished": "2026-09-29T00:03:24.274517Z",
+              "duration_ms": 5950
             },
             "accounting": {
               "targets": {
@@ -126,6 +126,7 @@
                   "proved": 0,
                   "unnoticed": 0,
                   "unreached": 0,
+                  "unproven": 0,
                   "waited": 0,
                   "errored": 0
                 }
@@ -166,7 +167,7 @@
                 "name": "fixture-assured/lib/fixture_assured",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 28,
+                "duration_ms": 33,
                 "message": null
               },
               {
@@ -174,7 +175,7 @@
                 "name": "fixture-assured/test/doubling",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 26,
+                "duration_ms": 30,
                 "message": null
               }
             ],
@@ -203,6 +204,16 @@
                   "outcome": "killed",
                   "killed_by": "fixture-assured/lib/fixture_assured",
                   "step_boundary": null
+                },
+                "evidence": {
+                  "kind": "sealed",
+                  "executions": [
+                    {
+                      "target": "fixture-assured/lib/fixture_assured",
+                      "test": "tests::is_positive_is_false_at_zero_and_below",
+                      "came_to": "panicked"
+                    }
+                  ]
                 },
                 "accepted": false,
                 "blind_in": [],
@@ -243,6 +254,16 @@
                   "outcome": "killed",
                   "killed_by": "fixture-assured/test/doubling",
                   "step_boundary": null
+                },
+                "evidence": {
+                  "kind": "sealed",
+                  "executions": [
+                    {
+                      "target": "fixture-assured/test/doubling",
+                      "test": "doubling_four_is_eight",
+                      "came_to": "panicked"
+                    }
+                  ]
                 },
                 "accepted": false,
                 "blind_in": [],
@@ -348,23 +369,23 @@
             ]
           },
           {
-            "run_id": "20260926t022320117z-22ba39-b0000000000",
+            "run_id": "20260929t000324305z-00c796-b0000000000",
             "part": {
               "kind": "shard",
               "index": 2,
               "of": 2
             },
             "toolchain": {
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
-              "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
-              "target": "x86_64-unknown-linux-gnu",
-              "os": "linux",
-              "arch": "x86_64"
+              "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+              "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+              "target": "aarch64-apple-darwin",
+              "os": "macos",
+              "arch": "aarch64"
             },
             "timing": {
-              "started": "2026-09-26T02:23:20.117431322Z",
-              "finished": "2026-09-26T02:23:41.475599768Z",
-              "duration_ms": 21358
+              "started": "2026-09-29T00:03:24.30583Z",
+              "finished": "2026-09-29T00:03:29.744954Z",
+              "duration_ms": 5439
             },
             "accounting": {
               "targets": {
@@ -398,6 +419,7 @@
                   "proved": 0,
                   "unnoticed": 0,
                   "unreached": 0,
+                  "unproven": 0,
                   "waited": 0,
                   "errored": 0
                 }
@@ -434,19 +456,19 @@
             "crashes": [],
             "targets": [
               {
-                "id": "f491db7e81bc24114916f323f607ff0e5f356316ed1934a798ed3d01579ab131",
-                "name": "fixture-assured/lib/fixture_assured",
-                "package": "fixture-assured",
-                "status": "passed",
-                "duration_ms": 27,
-                "message": null
-              },
-              {
                 "id": "0b5ea454999460c0a53634e86a9e7309570b188029bb88b3f0d443f4b0c8a293",
                 "name": "fixture-assured/test/doubling",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 26,
+                "duration_ms": 32,
+                "message": null
+              },
+              {
+                "id": "f491db7e81bc24114916f323f607ff0e5f356316ed1934a798ed3d01579ab131",
+                "name": "fixture-assured/lib/fixture_assured",
+                "package": "fixture-assured",
+                "status": "passed",
+                "duration_ms": 28,
                 "message": null
               }
             ],
@@ -475,6 +497,16 @@
                   "outcome": "killed",
                   "killed_by": "fixture-assured/lib/fixture_assured",
                   "step_boundary": null
+                },
+                "evidence": {
+                  "kind": "sealed",
+                  "executions": [
+                    {
+                      "target": "fixture-assured/lib/fixture_assured",
+                      "test": "tests::is_positive_is_false_at_zero_and_below",
+                      "came_to": "panicked"
+                    }
+                  ]
                 },
                 "accepted": false,
                 "blind_in": [],
@@ -515,6 +547,16 @@
                   "outcome": "killed",
                   "killed_by": "fixture-assured/test/doubling",
                   "step_boundary": null
+                },
+                "evidence": {
+                  "kind": "sealed",
+                  "executions": [
+                    {
+                      "target": "fixture-assured/test/doubling",
+                      "test": "doubling_four_is_eight",
+                      "came_to": "panicked"
+                    }
+                  ]
                 },
                 "accepted": false,
                 "blind_in": [],

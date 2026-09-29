@@ -291,6 +291,10 @@ pub struct Verify {
     /// Turns `[faults] inject` on for this run; it cannot turn it off.
     #[arg(long)]
     pub faults: bool,
+    /// Build nothing for the sealed target, so that every answer is a native lead and the run is `INSUFFICIENT`.
+    /// Turns `[mutation] seal` off for this run; it cannot turn it on.
+    #[arg(long)]
+    pub no_seal: bool,
     /// Judge only one part of the catalog, as `K/N`.
     /// Every part measures the whole baseline; `njutest merge` combines what they judged.
     #[arg(long, value_name = "K/N")]

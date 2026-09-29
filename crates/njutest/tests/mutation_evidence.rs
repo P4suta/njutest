@@ -82,11 +82,14 @@ fn a_kill_an_earlier_run_recorded_is_read_back_under_the_name_a_reader_reads() {
         &store::record(
             mutant(1),
             "20260909T000000Z-000001",
-            store::Outcome::Killed {
-                target: "id-one".to_owned(),
-                key: "k1".repeat(16),
-                before: Vec::new(),
-            },
+            (
+                store::Outcome::Killed {
+                    target: "id-one".to_owned(),
+                    key: "k1".repeat(16),
+                    before: Vec::new(),
+                },
+                rust_mutants::sealed::record::Evidence::not_sealed(),
+            ),
         ),
     )
     .expect("an earlier run's record");
@@ -124,9 +127,12 @@ fn a_run_that_cannot_resolve_every_target_a_route_names_believes_nothing() {
         &store::record(
             mutant(1),
             "20260909T000000Z-000001",
-            store::Outcome::Survived {
-                targets: BTreeMap::from([("id-one".to_owned(), "k1".repeat(16))]),
-            },
+            (
+                store::Outcome::Survived {
+                    targets: BTreeMap::from([("id-one".to_owned(), "k1".repeat(16))]),
+                },
+                rust_mutants::sealed::record::Evidence::not_sealed(),
+            ),
         ),
     )
     .expect("an earlier run's record");
@@ -173,9 +179,12 @@ fn what_is_recorded_is_what_the_next_run_can_check_and_nothing_else() {
         &held,
         &id(1),
         (&reaching(&["core/lib/core"]), &[], &[]),
-        &Disposition::Killed {
-            by: "core/lib/nobody".to_owned(),
-        },
+        (
+            &Disposition::Killed {
+                by: "core/lib/nobody".to_owned(),
+            },
+            &rust_mutants::sealed::record::Evidence::not_sealed(),
+        ),
     )
     .expect("an ineligible fact writes nothing successfully");
     assert!(
@@ -191,9 +200,12 @@ fn what_is_recorded_is_what_the_next_run_can_check_and_nothing_else() {
         &held,
         &id(2),
         (&reaching(&["core/lib/core", "core/lib/newcomer"]), &[], &[]),
-        &Disposition::Survived {
-            route: reaching(&["core/lib/core", "core/lib/newcomer"]),
-        },
+        (
+            &Disposition::Survived {
+                route: reaching(&["core/lib/core", "core/lib/newcomer"]),
+            },
+            &rust_mutants::sealed::record::Evidence::not_sealed(),
+        ),
     )
     .expect("an incomplete survival writes nothing successfully");
     assert!(
@@ -217,7 +229,10 @@ fn what_is_recorded_is_what_the_next_run_can_check_and_nothing_else() {
             &held,
             &mutant,
             (&reaching(&["core/lib/core"]), &[], &[]),
-            &disposition,
+            (
+                &disposition,
+                &rust_mutants::sealed::record::Evidence::not_sealed(),
+            ),
         )
         .expect("a non-cacheable disposition writes nothing successfully");
         assert!(
@@ -237,6 +252,45 @@ fn what_is_recorded_is_what_the_next_run_can_check_and_nothing_else() {
     recorded(dir.path(), &held);
 }
 
+/// What a run does not record, however well it can name its targets: a step boundary, which is no verdict, and a survival over no targets, which is none either.
+fn unrecorded(dir: &std::path::Path, held: &MutationOptions) {
+    keep(
+        held,
+        &id(8),
+        (&reaching(&["core/lib/core"]), &[], &[]),
+        (
+            &Disposition::StepLimitReached {
+                on: "core/lib/core".to_owned(),
+                boundary: StepBoundary::new(10, 11).expect("the first count beyond the allowance"),
+            },
+            &rust_mutants::sealed::record::Evidence::not_sealed(),
+        ),
+    )
+    .expect("a finite step boundary writes nothing successfully");
+    assert!(
+        store::read(dir, &mutant(8)).expect("readable").is_none(),
+        "crossing a verified step boundary without a matched control is deliberately not \
+         a verdict, so it can never enter the evidence store"
+    );
+    keep(
+        held,
+        &id(7),
+        (&reaching(&[]), &[], &[]),
+        (
+            &Disposition::Survived {
+                route: reaching(&[]),
+            },
+            &rust_mutants::sealed::record::Evidence::not_sealed(),
+        ),
+    )
+    .expect("an empty survival writes nothing successfully");
+    assert!(
+        store::read(dir, &mutant(7)).expect("readable").is_none(),
+        "and a survival over no targets at all is not a survival: nothing ran, so there \
+         is nothing for the next run to believe"
+    );
+}
+
 /// What a run does record, once it can name every target and check every key.
 fn recorded(root: &std::path::Path, held: &MutationOptions) {
     let dir = root;
@@ -244,18 +298,24 @@ fn recorded(root: &std::path::Path, held: &MutationOptions) {
         held,
         &id(5),
         (&reaching(&["core/lib/core"]), &[], &[]),
-        &Disposition::Killed {
-            by: "core/lib/core".to_owned(),
-        },
+        (
+            &Disposition::Killed {
+                by: "core/lib/core".to_owned(),
+            },
+            &rust_mutants::sealed::record::Evidence::not_sealed(),
+        ),
     )
     .expect("a named kill is preserved");
     keep(
         held,
         &id(6),
         (&reaching(&["core/lib/core", "core/test/wide"]), &[], &[]),
-        &Disposition::Survived {
-            route: reaching(&["core/lib/core", "core/test/wide"]),
-        },
+        (
+            &Disposition::Survived {
+                route: reaching(&["core/lib/core", "core/test/wide"]),
+            },
+            &rust_mutants::sealed::record::Evidence::not_sealed(),
+        ),
     )
     .expect("a complete survival is preserved");
     let survival = store::read(dir, &mutant(6))
@@ -273,35 +333,7 @@ fn recorded(root: &std::path::Path, held: &MutationOptions) {
          about with the key the next run checks each of them against: one key short and \
          the next run believes a claim over a set nobody answered for"
     );
-    keep(
-        held,
-        &id(8),
-        (&reaching(&["core/lib/core"]), &[], &[]),
-        &Disposition::StepLimitReached {
-            on: "core/lib/core".to_owned(),
-            boundary: StepBoundary::new(10, 11).expect("the first count beyond the allowance"),
-        },
-    )
-    .expect("a finite step boundary writes nothing successfully");
-    assert!(
-        store::read(dir, &mutant(8)).expect("readable").is_none(),
-        "crossing a verified step boundary without a matched control is deliberately not \
-         a verdict, so it can never enter the evidence store"
-    );
-    keep(
-        held,
-        &id(7),
-        (&reaching(&[]), &[], &[]),
-        &Disposition::Survived {
-            route: reaching(&[]),
-        },
-    )
-    .expect("an empty survival writes nothing successfully");
-    assert!(
-        store::read(dir, &mutant(7)).expect("readable").is_none(),
-        "and a survival over no targets at all is not a survival: nothing ran, so there \
-         is nothing for the next run to believe"
-    );
+    unrecorded(dir, held);
     let kept = store::read(dir, &mutant(5))
         .expect("readable")
         .expect("a kill worth keeping");
@@ -387,9 +419,12 @@ fn a_run_with_nowhere_to_read_or_write_evidence_neither_believes_nor_records() {
         &none,
         &id(1),
         (&reaching(&["core/lib/core"]), &[], &[]),
-        &Disposition::Killed {
-            by: "core/lib/core".to_owned(),
-        },
+        (
+            &Disposition::Killed {
+                by: "core/lib/core".to_owned(),
+            },
+            &rust_mutants::sealed::record::Evidence::not_sealed(),
+        ),
     )
     .expect("a disabled evidence store writes nothing successfully");
     assert!(
@@ -432,9 +467,12 @@ fn the_targets_a_route_answers_for_are_the_ones_it_names_whatever_shape_it_is() 
         &store::record(
             mutant(1),
             "20260909T000000Z-000001",
-            store::Outcome::Survived {
-                targets: BTreeMap::from([("id-two".to_owned(), "k2".repeat(16))]),
-            },
+            (
+                store::Outcome::Survived {
+                    targets: BTreeMap::from([("id-two".to_owned(), "k2".repeat(16))]),
+                },
+                rust_mutants::sealed::record::Evidence::not_sealed(),
+            ),
         ),
     )
     .expect("an earlier run's record");

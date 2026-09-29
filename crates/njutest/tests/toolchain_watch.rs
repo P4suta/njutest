@@ -379,9 +379,9 @@ fn stages_of(complained: &str, root: &std::path::Path) {
         .map(|event| event.payload.type_name())
         .collect();
     assert!(
-        kinds.contains(&"mutant-exec"),
-        "a run says what it started, or the minutes it spent belong to nothing a reader \
-         can name: {kinds:?}"
+        kinds.contains(&"mutant-exec") || kinds.contains(&"sealed-exec"),
+        "a run says what it started, natively or sealed, or the minutes it spent belong to \
+         nothing a reader can name: {kinds:?}"
     );
     let progressed: Vec<&str> = events
         .iter()
@@ -464,20 +464,42 @@ fn judged(events: &[njutest::trace::Event]) {
     );
 
     let execs = executions(events);
-    let started = execs.first().expect("a mutation this run started");
+    let sealed: Vec<&njutest::trace::SealedExecRecord> = events
+        .iter()
+        .filter_map(|event| njutest::testkit::payload::of(&event.payload).sealed_exec())
+        .collect();
     assert!(
-        !started.mutant.is_empty() && !started.target.is_empty() && !started.outcome.is_empty(),
-        "every execution says which mutation it was, what it ran against, and what came \
-         of it, or the count of executions is a number about nothing: {started:?}"
+        !execs.is_empty() || !sealed.is_empty(),
+        "a mutation this run started, natively or sealed"
     );
+    for started in &execs {
+        assert!(
+            !started.mutant.is_empty() && !started.target.is_empty() && !started.outcome.is_empty(),
+            "every execution says which mutation it was, what it ran against, and what came \
+             of it, or the count of executions is a number about nothing: {started:?}"
+        );
+    }
+    for started in &sealed {
+        assert!(
+            !started.mutant.is_empty()
+                && !started.target.is_empty()
+                && !started.test.is_empty()
+                && !started.came_to.is_empty(),
+            "a sealed execution says which mutation, which target's module, which test, and \
+             what the instance came to: {started:?}"
+        );
+    }
     assert!(
         !execs.iter().any(|exec| exec.alone),
         "and none of them was given the machine to itself, because none of them ran out \
          of time: a run that says it did that without a budget expiring is one whose \
          account of where the time went is wrong: {execs:?}"
     );
-    let against: std::collections::BTreeSet<&str> =
-        execs.iter().map(|exec| exec.target.as_str()).collect();
+    let against: std::collections::BTreeSet<&str> = execs
+        .iter()
+        .map(|exec| exec.target.as_str())
+        .chain(sealed.iter().map(|exec| exec.target.as_str()))
+        .collect();
     assert!(
         !against.contains("package-suite"),
         "and a mutation the measurement placed is put to the targets it placed rather \
@@ -1566,8 +1588,8 @@ fn part(root: &std::path::Path, dir: &std::path::Path, shard: &str) -> serde_jso
     );
     assert_eq!(
         code,
-        0,
-        "{shard}: {}",
+        njutest::cli::EXIT_INSUFFICIENT,
+        "{shard} assures nothing on its own: {}",
         njutest_devkit::process::strict_utf8(&complaints)
     );
     latest_report_of(root)
@@ -1910,7 +1932,7 @@ fn a_mutation_that_never_returns_is_stopped_measured_alone_and_reported_as_a_wai
     let (code, complained, root) = verified_in_process(
         "fixture-hang",
         dir.path(),
-        &["--trace", "--ui=plain"],
+        &["--trace", "--ui=plain", "--no-seal"],
         &[
             ("FIXTURE_HANG_MARKER", &paused.display().to_string()),
             ("FIXTURE_HANG_PAUSE_MS", "8000"),
@@ -1919,7 +1941,8 @@ fn a_mutation_that_never_returns_is_stopped_measured_alone_and_reported_as_a_wai
     assert_eq!(
         code, 2,
         "this fixture is slow once per mutation and bounded at a second, so every \
-         measurement of it runs out of time and every one is asked again: {complained}"
+         measurement of it runs out of time and every one is asked again, natively, which \
+         makes what each says a lead: {complained}"
     );
 
     let report = report_of(&root);

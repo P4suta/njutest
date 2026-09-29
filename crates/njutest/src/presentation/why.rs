@@ -141,6 +141,17 @@ fn stepped(step: &Step, telling: Telling) -> String {
             telling.painted(Style::Subject, target),
             telling.painted(Style::Keyword, outcome)
         ),
+        Step::Sealed {
+            target,
+            test,
+            came_to,
+        } => format!(
+            "{} {} {}  {}",
+            telling.painted(Style::Marker, "sealed"),
+            telling.painted(Style::Subject, target),
+            telling.painted(Style::Subject, test),
+            telling.painted(Style::Keyword, came_to)
+        ),
         Step::ReadBack { run } => format!(
             "{} {}",
             telling.painted(Style::Limitation, "read back from"),

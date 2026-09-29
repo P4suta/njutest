@@ -1026,7 +1026,7 @@ pub fn prepare(
         leaders: crate::orphan::Leaders::default(),
         mutant_timeout: options.mutant_timeout,
         mutant_steps: options.mutant_steps,
-        harness_args: options.harness_args.clone(),
+        harness_args: crate::libtest::Configured::new(options.harness_args.clone()),
         scratch_working_directory: options.scratch_working_directory,
         sealed,
         workspace,

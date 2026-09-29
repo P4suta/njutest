@@ -1259,9 +1259,6 @@ src/lib.rs  Ledger::settle
     - `1` => `2`  njutest explain src/lib.rs:Ledger::settle:int-increment@7
         pkg/lib/pkg ran it and did not notice; never-infected removed
           pkg/test/it
-    - `<` => `<=`  njutest explain src/lib.rs:Ledger::settle:lt-to-le@8
-        never-infected removed every target that reaches it (pkg/lib/pkg), so
-          nothing ran it; check the proof, not the tests
     - deleting `total += fee;`
       njutest explain src/lib.rs:Ledger::settle:delete-assignment@9
         nothing the suite runs executes it; a reviewer accepted it
@@ -1270,6 +1267,9 @@ src/lib.rs  Ledger::settle
       njutest explain src/lib.rs:Ledger::settle:mul-to-div@11
         the compiler renders it identically
   what the run could not tell
+    - `<` => `<=`  njutest explain src/lib.rs:Ledger::settle:lt-to-le@8
+        no sealed execution decided it (nothing was sealed to put it to), so
+          the native run's survived is a lead
     - `retry()` => `Default::default()`
       njutest explain src/lib.rs:Ledger::settle:return-default@12
         this machine stopped waiting for pkg/test/it
@@ -1297,13 +1297,6 @@ src/lib.rs  Ledger::settle
         pkg/lib/pkg ran it and did not
           notice; never-infected removed
           pkg/test/it
-    - `<` => `<=`
-      njutest explain src/lib.rs:Ledger::settle:lt-to-le@8
-        never-infected removed every
-          target that reaches it
-          (pkg/lib/pkg), so nothing ran
-          it; check the proof, not the
-          tests
     - deleting `total += fee;`
       njutest explain src/lib.rs:Ledger::settle:delete-assignment@9
         nothing the suite runs
@@ -1315,6 +1308,12 @@ src/lib.rs  Ledger::settle
         the compiler renders it
           identically
   what the run could not tell
+    - `<` => `<=`
+      njutest explain src/lib.rs:Ledger::settle:lt-to-le@8
+        no sealed execution decided it
+          (nothing was sealed to put it
+          to), so the native run's
+          survived is a lead
     - `retry()` =>
       `Default::default()`
       njutest explain src/lib.rs:Ledger::settle:return-default@12
@@ -1337,9 +1336,6 @@ src/lib.rs  Ledger::settle
     - `1` => [1;4;38;5;204m`2`[0m  [38;5;252mnjutest explain src/lib.rs:Ledger::settle:int-increment@7[0m
         pkg/lib/pkg ran it and did not notice; never-infected removed
           pkg/test/it
-    - `<` => [1;4;38;5;204m`<=`[0m  [38;5;252mnjutest explain src/lib.rs:Ledger::settle:lt-to-le@8[0m
-        never-infected removed every target that reaches it (pkg/lib/pkg), so
-          nothing ran it; check the proof, not the tests
     - deleting `total += fee;`
       [38;5;252mnjutest explain src/lib.rs:Ledger::settle:delete-assignment@9[0m
         nothing the suite runs executes it; a reviewer accepted it
@@ -1348,6 +1344,9 @@ src/lib.rs  Ledger::settle
       [38;5;252mnjutest explain src/lib.rs:Ledger::settle:mul-to-div@11[0m
         the compiler renders it identically
   [38;5;73mwhat the run could not tell[0m
+    - `<` => [1;4;38;5;204m`<=`[0m  [38;5;252mnjutest explain src/lib.rs:Ledger::settle:lt-to-le@8[0m
+        no sealed execution decided it (nothing was sealed to put it to), so
+          the native run's survived is a lead
     - `retry()` => [1;4;38;5;204m`Default::default()`[0m
       [38;5;252mnjutest explain src/lib.rs:Ledger::settle:return-default@12[0m
         this machine stopped waiting for pkg/test/it
@@ -1368,9 +1367,6 @@ src/lib.rs  Ledger::settle
     - `1` ⇢ `2`  njutest explain src/lib.rs:Ledger::settle:int-increment@7
         pkg/lib/pkg ran it and did not notice; never-infected removed
           pkg/test/it
-    - `<` ⇢ `<=`  njutest explain src/lib.rs:Ledger::settle:lt-to-le@8
-        never-infected removed every target that reaches it (pkg/lib/pkg), so
-          nothing ran it; check the proof, not the tests
     - deleting `total += fee;`
       njutest explain src/lib.rs:Ledger::settle:delete-assignment@9
         nothing the suite runs executes it; a reviewer accepted it
@@ -1378,6 +1374,9 @@ src/lib.rs  Ledger::settle
     - `x * 1` ⇢ `x / 1`  njutest explain src/lib.rs:Ledger::settle:mul-to-div@11
         the compiler renders it identically
   what the run could not tell
+    - `<` ⇢ `<=`  njutest explain src/lib.rs:Ledger::settle:lt-to-le@8
+        no sealed execution decided it (nothing was sealed to put it to), so
+          the native run's survived is a lead
     - `retry()` ⇢ `Default::default()`
       njutest explain src/lib.rs:Ledger::settle:return-default@12
         this machine stopped waiting for pkg/test/it

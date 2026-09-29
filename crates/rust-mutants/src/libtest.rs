@@ -376,5 +376,87 @@ fn counted(said: &str, noun: &str) -> Option<u32> {
     }
 }
 
+/// An option of libtest's own that an invocation sets itself, which the harness refuses to be given twice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum Own {
+    /// One test at a time, on one thread.
+    OneThread,
+    /// Every test's output as the test writes it.
+    Uncaptured,
+}
+
+impl Own {
+    /// How an invocation spells it.
+    #[must_use]
+    pub const fn spelled(self) -> &'static str {
+        match self {
+            Self::OneThread => "--test-threads=1",
+            Self::Uncaptured => "--nocapture",
+        }
+    }
+
+    /// How much of the configured arguments from `word` on sets this option.
+    fn takes(self, word: &str) -> Taken {
+        match self {
+            Self::OneThread if word == "--test-threads" => Taken::WordAndValue,
+            Self::OneThread if word.starts_with("--test-threads=") => Taken::Word,
+            Self::Uncaptured if word == "--nocapture" => Taken::Word,
+            Self::OneThread | Self::Uncaptured => Taken::Nothing,
+        }
+    }
+}
+
+/// How much of the configured arguments one occurrence of an option spans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Taken {
+    /// None of them: the word sets no option the invocation sets itself.
+    Nothing,
+    /// The word alone, which holds its value or takes none.
+    Word,
+    /// The word and the value after it.
+    WordAndValue,
+}
+
+/// The harness arguments a run was configured with, which reach a test binary only beside the options an invocation sets itself.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Configured(Vec<String>);
+
+impl Configured {
+    /// Holds `arguments` as a run was configured with them.
+    #[must_use]
+    pub const fn new(arguments: Vec<String>) -> Self {
+        Self(arguments)
+    }
+
+    /// The harness arguments of an invocation that sets `own` itself: those options, then every configured argument but one setting any of them, whose value the invocation's own replaces rather than repeats.
+    #[must_use]
+    pub fn beside(&self, own: &[Own]) -> Vec<String> {
+        let mut arguments: Vec<String> = own
+            .iter()
+            .map(|option| option.spelled().to_owned())
+            .collect();
+        let (mut value_follows, mut options_ended) = (false, false);
+        for word in &self.0 {
+            if std::mem::take(&mut value_follows) {
+                continue;
+            }
+            let taken = if options_ended {
+                None
+            } else {
+                own.iter().map(|option| option.takes(word)).max()
+            };
+            match taken {
+                Some(Taken::WordAndValue) => value_follows = true,
+                Some(Taken::Word) => {}
+                Some(Taken::Nothing) | None => {
+                    options_ended = options_ended || word == "--";
+                    arguments.push(word.clone());
+                }
+            }
+        }
+        arguments
+    }
+}
+
 #[cfg(test)]
 mod tests;

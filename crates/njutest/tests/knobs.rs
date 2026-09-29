@@ -10,7 +10,7 @@ use njutest::report::knobs::{
     Knob, KnobRecord, NotPut, Reach, Standing, Unsettled, found, limited,
 };
 use njutest::report::{Decided, FindingKind, MutantRecord, Outcome};
-use njutest::testkit::reports::{routed, row};
+use njutest::testkit::reports::{asked, routed, row};
 
 const ZONED: &str = "pkg/test/zoned";
 const OTHER: &str = "pkg/test/other";
@@ -31,14 +31,17 @@ fn rows(reaching: &[&str]) -> Vec<MutantRecord> {
         ("gt-to-ge", ">", ">="),
         Decided::Survived,
     );
-    routed_survivor.routing = Some(routed(
-        reaching,
-        &[],
-        &reaching
-            .iter()
-            .map(|one| (*one, Outcome::Survived))
-            .collect::<Vec<_>>(),
-    ));
+    asked(
+        &mut routed_survivor,
+        routed(
+            reaching,
+            &[],
+            &reaching
+                .iter()
+                .map(|one| (*one, Outcome::Survived))
+                .collect::<Vec<_>>(),
+        ),
+    );
     vec![
         routed_survivor,
         row(
