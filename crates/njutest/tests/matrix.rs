@@ -277,6 +277,75 @@ fn a_column_that_put_nothing_does_not_read_as_measured() {
     );
 }
 
+#[test]
+fn a_run_whose_baseline_did_not_build_measured_no_dimension() {
+    let failed = [njutest::report::Finding::new(
+        njutest::report::FindingKind::BuildFailure,
+        "demo",
+        "error[E0425]: cannot find function `undefined_function` in this scope",
+    )];
+    let evidence = Evidence {
+        mutations: (0, Vec::new()),
+        findings: &failed,
+        ..nothing()
+    };
+    for row in rows(&evidence) {
+        assert!(
+            matches!(row.column, Column::Unmeasured { .. }),
+            "a tree that did not build was asked and measured nothing, which is neither nothing \
+             to ask nor a dimension nobody asked about: {} is {:?}",
+            row.dimension.name(),
+            row.column
+        );
+    }
+}
+
+#[test]
+fn a_place_a_run_chose_not_to_mutate_is_a_hole_and_one_no_run_can_mutate_is_not() {
+    use rust_mutants::syntax::SkipReason;
+    let skipped = [
+        Limitation::new(
+            SkipReason::Configured,
+            "2 places were not mutated: configured",
+        ),
+        Limitation::new(
+            SkipReason::MacroInvocation,
+            "1 place was not mutated: macro-invocation",
+        ),
+    ];
+    let mutated = column(
+        &Evidence {
+            limitations: &skipped,
+            ..nothing()
+        },
+        Dimension::Mutation,
+    );
+    let Column::Measured {
+        holes,
+        speaks_not_about,
+        ..
+    } = &mutated
+    else {
+        panic!("a run that decided a mutation measured the column: {mutated:?}");
+    };
+    assert!(
+        holes.iter().any(|hole| hole.contains("configured"))
+            && !speaks_not_about
+                .iter()
+                .any(|class| class.contains("configured")),
+        "a place the configuration passed over is one another run could mutate, so it is open: \
+         {mutated:?}"
+    );
+    assert!(
+        speaks_not_about
+            .iter()
+            .any(|class| class.contains("macro-invocation"))
+            && !holes.iter().any(|hole| hole.contains("macro-invocation")),
+        "a place no run of the engine can mutate is a class the column does not speak about: \
+         {mutated:?}"
+    );
+}
+
 fn drawn(matrix: Vec<njutest::report::matrix::Row>) -> String {
     use njutest::presentation::{Headline, Terminal, Told, human};
     human::draw(

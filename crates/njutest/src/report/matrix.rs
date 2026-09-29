@@ -224,19 +224,31 @@ pub fn holes(rows: &[Row]) -> Vec<Finding> {
         .collect()
 }
 
-/// What the run established along `dimension`.
+/// What the run established along `dimension`: nothing at all where its baseline did not build.
 fn column(dimension: Dimension, evidence: &Evidence<'_>) -> Column {
+    if let Some(failed) = evidence
+        .findings
+        .iter()
+        .find(|finding| finding.kind == FindingKind::BuildFailure)
+    {
+        return Column::Unmeasured {
+            why: format!("the baseline did not build: {}", failed.detail),
+        };
+    }
     match dimension {
-        Dimension::Mutation => match &evidence.mutations {
-            (0, holes) if holes.is_empty() => Column::NothingToAsk {
-                why: "no measured file has anything to mutate".to_owned(),
-            },
-            (answered, holes) => measured(
-                *answered,
-                holes.clone(),
-                named(evidence.limitations, "skipped-"),
-            ),
-        },
+        Dimension::Mutation => {
+            let (chosen, unspoken) = skipped(evidence.limitations);
+            match &evidence.mutations {
+                (0, holes) if holes.is_empty() && chosen.is_empty() => Column::NothingToAsk {
+                    why: "no measured file has anything to mutate".to_owned(),
+                },
+                (answered, holes) => {
+                    let mut open = holes.clone();
+                    open.extend(chosen);
+                    measured(*answered, open, unspoken)
+                }
+            }
+        }
         Dimension::Repeatable => repeatable(evidence.knobs),
         Dimension::Fault => fault(evidence),
         Dimension::Schedule => schedule(evidence.concurrency, evidence.targets),
@@ -585,14 +597,41 @@ const fn weight(column: &Column) -> u8 {
     }
 }
 
-/// Every limitation whose name starts with `prefix`, by name.
-fn named(limitations: &[Limitation], prefix: &str) -> Vec<String> {
-    let mut names: Vec<String> = limitations
-        .iter()
-        .filter(|limitation| limitation.name.starts_with(prefix))
-        .map(|limitation| limitation.name.clone())
-        .collect();
-    names.sort();
-    names.dedup();
-    names
+/// The places a run did not mutate, placed by one exhaustive match over why: each passed over by a choice another run could make otherwise is a hole, and each no run of the engine can mutate is a class the column does not speak about.
+fn skipped(limitations: &[Limitation]) -> (Vec<String>, Vec<String>) {
+    use rust_mutants::syntax::SkipReason;
+    let mut chosen = Vec::new();
+    let mut unspoken = Vec::new();
+    for limitation in limitations {
+        match limitation.name.parse::<crate::limitation::Name>() {
+            Ok(crate::limitation::Name::Skipped(
+                SkipReason::Excluded | SkipReason::Annotated | SkipReason::Configured,
+            )) => chosen.push(format!(
+                "{}: {}, which another run could mutate",
+                limitation.name, limitation.detail
+            )),
+            Ok(crate::limitation::Name::Skipped(
+                SkipReason::ConstContext
+                | SkipReason::MacroInvocation
+                | SkipReason::CfgAttribute
+                | SkipReason::TestCode
+                | SkipReason::UnsupportedSite
+                | SkipReason::TestOnlyFile
+                | SkipReason::NoStdCrate
+                | SkipReason::IncludedExpression
+                | SkipReason::GeneratedOutsideWorkspace
+                | SkipReason::ForbiddenLints
+                | SkipReason::ConstFnBody
+                | SkipReason::LetCondition
+                | SkipReason::OpenRange
+                | SkipReason::UnstatedReturnType
+                | SkipReason::LoopValue,
+            )) => unspoken.push(limitation.name.clone()),
+            Ok(crate::limitation::Name::Runner(_) | crate::limitation::Name::Engine(_)) => {}
+            Err(unread) => chosen.push(format!("{unread}, which the column cannot place")),
+        }
+    }
+    unspoken.sort();
+    unspoken.dedup();
+    (chosen, unspoken)
 }

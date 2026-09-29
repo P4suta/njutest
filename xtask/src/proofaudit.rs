@@ -3301,6 +3301,29 @@ fn none_but_not_put(decided: &[String]) -> bool {
     !decided.is_empty() && decided.iter().all(|one| one == "not-put")
 }
 
+/// Whether a mutation was put and not decided, or a place was passed over by a choice another run could make otherwise.
+fn mutations_holed(recording: &Recording<'_>) -> bool {
+    recording.mutants.iter().any(|mutant| {
+        [
+            "waited",
+            "step-limit-reached",
+            "unconfirmed",
+            "errored",
+            "declined",
+        ]
+        .contains(&mutant.outcome.as_str())
+    }) || recording.part.limitations.iter().any(|row| {
+        field(row, "name").is_some_and(|name| {
+            [
+                "skipped-excluded",
+                "skipped-annotated",
+                "skipped-configured",
+            ]
+            .contains(&name.as_str())
+        })
+    })
+}
+
 /// Every dimension the flat part's records leave a hole, by name, read without any of the runner's code.
 fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
     let part = &recording.part;
@@ -3322,19 +3345,25 @@ fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
             .any(|row| field(row, "name").as_deref() == Some(name))
     };
     let mut holed = BTreeSet::new();
+    if recording
+        .findings
+        .iter()
+        .any(|finding| finding.kind == "build-failure")
+    {
+        holed.extend([
+            "mutation",
+            "repeatable",
+            "fault",
+            "schedule",
+            "wire",
+            "durable",
+        ]);
+        return holed;
+    }
     if schedules_holed(part) {
         holed.insert("schedule");
     }
-    if recording.mutants.iter().any(|mutant| {
-        [
-            "waited",
-            "step-limit-reached",
-            "unconfirmed",
-            "errored",
-            "declined",
-        ]
-        .contains(&mutant.outcome.as_str())
-    }) {
+    if mutations_holed(recording) {
         holed.insert("mutation");
     }
     if repeatable_holed(part, &state(part.knobs, "standing")) {
