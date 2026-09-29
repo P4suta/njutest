@@ -39,6 +39,8 @@ It advances no index and stores no verdict.
 - stable repair-candidate validation when a candidate is produced.
 
 `deep-v1` uses the expanded operator set and exploration limits, runs Miri on every crate with a non-empty soundness inventory and every crate that links one, and may add sanitizers.
+What the interpreter establishes is undefined behaviour, which it says in a diagnostic of its own.
+A test that fails under it without that diagnostic failed on what the interpreter withholds from a test, the environment variables cargo sets, the files and the clocks it is given natively, so it is neither a failing test nor a pass: it is a `not-measured` finding beside `miri-failed-isolated`.
 
 `whole-v1` asks every dimension: mutations, knobs, faults, seams, schedules and durability ([ADR 0033](adr/0033-every-dimension-or-a-hole.md)).
 It runs soundness as `deep-v1` does and puts every fault, every crash and every knob, and each dimension it did not establish — not asked, unmeasured, or measured with a hole — is a `dimension-not-measured` finding, so the run is not `ASSURED`.

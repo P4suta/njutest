@@ -132,14 +132,26 @@ fn what_the_interpreter_will_not_interpret_is_stated_and_never_read_as_a_pass() 
 }
 
 #[test]
-fn a_test_that_fails_under_the_interpreter_is_a_failing_test() {
+fn a_test_that_fails_under_the_interpreter_without_undefined_behaviour_is_not_measured() {
     let dir = tempfile::tempdir().expect("tempdir");
     let said = FAILED_RUN;
     let done = interpreted(said, 101, dir.path()).expect("ran");
+    assert!(done.executed, "{done:?}");
+    let kinds: Vec<FindingKind> = done.findings.iter().map(|one| one.kind).collect();
     assert_eq!(
-        done.findings.first().map(|one| one.kind),
-        Some(FindingKind::FailingTest)
+        kinds,
+        [FindingKind::NotMeasured],
+        "the interpreter withholds from a test the environment, the files and the clocks it is \
+         given natively, so a test that fails there without the interpreter saying it found \
+         undefined behaviour failed on the interpreter's limit, not the suite's: a DEFECT on it \
+         blames the suite, and a pass claims soundness nobody established: {done:?}"
     );
+    let limitations: Vec<&str> = done
+        .limitations
+        .iter()
+        .map(njutest::report::Limitation::name)
+        .collect();
+    assert_eq!(limitations, ["miri-failed-isolated"], "{done:?}");
 }
 
 #[test]
@@ -248,8 +260,9 @@ fn a_question_about_the_interpreter_nobody_answered_is_not_an_interpreter_that_i
     );
     assert_eq!(
         done.findings.first().map(|one| one.kind),
-        Some(FindingKind::FailingTest),
-        "what the interpreter's own run said is what is read, and it said a test failed: {done:?}"
+        Some(FindingKind::NotMeasured),
+        "what the interpreter's own run said is what is read, and it said a test failed without \
+         saying it found undefined behaviour: {done:?}"
     );
 }
 
@@ -531,9 +544,26 @@ fn what_the_interpreter_established_is_said_in_words_a_person_can_act_on() {
     let failing = interpreted(FAILED_RUN, 101, dir.path()).expect("an interpreter that ran");
     assert!(
         failing.findings.iter().any(|one| one.subject == "soundness"
-            && one.detail == "a test fails under the interpreter that passes without it"),
+            && one
+                .detail
+                .contains("on what it withholds rather than on undefined behaviour")
+            && one
+                .detail
+                .contains("nothing is claimed about the unsafe the suite holds")),
         "and a suite that fails only under the interpreter says that it is the \
-         interpreter that makes the difference: {failing:?}"
+         interpreter that makes the difference, and what is therefore not established: \
+         {failing:?}"
+    );
+    assert!(
+        failing
+            .limitations
+            .iter()
+            .any(|one| one.name() == "miri-failed-isolated"
+                && one.detail.contains(
+                    "withholds from a test the environment variables, files and \
+                                    clocks"
+                )),
+        "and the limitation says what the interpreter withholds: {failing:?}"
     );
 }
 
@@ -713,7 +743,7 @@ fn the_phase_comes_to_the_verdict_the_published_contract_gives_every_case() {
             .collect();
         let came = match (done.executed, kinds.as_slice(), limitations.as_slice()) {
             (true, [], []) => "passed",
-            (true, [FindingKind::FailingTest], []) => "failed",
+            (true, [FindingKind::NotMeasured], ["miri-failed-isolated"]) => "failed",
             (true, [FindingKind::UndefinedBehaviour], []) => "undefined",
             (true, [FindingKind::NotMeasured], ["miri-unsupported"]) => "unsupported",
             (false, [FindingKind::NotMeasured], ["miri-ran-no-test"]) => "ran-no-test",
