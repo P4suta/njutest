@@ -276,6 +276,8 @@ pub enum RefusalReason {
     OverlayFull,
     /// A wait on a clock of the time spent running, which only moves when the guest runs.
     CpuClockWait,
+    /// A name its directory holds only in another case, which a case-insensitive file system would answer from that name and the snapshot would not.
+    CaseOnly,
 }
 
 impl RefusalReason {
@@ -285,7 +287,7 @@ impl RefusalReason {
         match self {
             Self::Network | Self::Link | Self::CpuClockWait => Errno::Notsup,
             Self::Signal => Errno::Nosys,
-            Self::Escape => Errno::Notcapable,
+            Self::Escape | Self::CaseOnly => Errno::Notcapable,
             Self::OverlayFull => Errno::Nospc,
         }
     }
@@ -300,6 +302,7 @@ impl RefusalReason {
             Self::Escape => "escape",
             Self::OverlayFull => "overlay-full",
             Self::CpuClockWait => "cpu-clock-wait",
+            Self::CaseOnly => "case-only",
         }
     }
 }

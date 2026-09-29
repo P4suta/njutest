@@ -15,7 +15,7 @@ use crate::abi::{
 };
 use crate::invocation::{Laid, Preopens, WORKING_NAME};
 use crate::snapshot::{Body, NodeId, ROOT, Snapshot, inode_of};
-use crate::spelling::{Reading, Spelling};
+use crate::spelling::{Reading, Spelling, one_name};
 use crate::transcript::{OverlayEntry, RefusalReason};
 
 use super::FILE_TIME;
@@ -939,6 +939,9 @@ impl Filesystem {
                         node: *child,
                         place: Some((current, name.to_owned())),
                     })
+                }
+                None if entries.keys().any(|held| one_name(held, name)) => {
+                    Err(Fault::Refused(RefusalReason::CaseOnly))
                 }
                 None if last => Ok(Found::Absent {
                     parent: current,

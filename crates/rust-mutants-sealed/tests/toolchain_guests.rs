@@ -317,6 +317,43 @@ fn a_relative_path_is_read_from_the_working_directory_and_an_absolute_one_throug
 }
 
 #[test]
+fn a_name_the_snapshot_holds_only_in_another_case_is_refused_however_the_build_spelled_it() {
+    let runner = runner();
+    let module = runner
+        .prepare(&program_bytes())
+        .expect("the program is a WASI command");
+    for (root, path) in [
+        (SANDBOX, "Hello.txt".to_owned()),
+        (SANDBOX, format!("{SANDBOX}/LISTING/m.txt")),
+        (WINDOWS_SANDBOX, r"..\Listing\M.TXT".to_owned()),
+        (
+            WINDOWS_SANDBOX,
+            format!(r"{WINDOWS_SANDBOX}\DATA\hello.txt"),
+        ),
+    ] {
+        let transcript = run(
+            &module,
+            &in_working_directory(&["read", &path], root, "data"),
+        );
+        assert_eq!(
+            transcript.stop(),
+            SealedStop::Exited { code: 2 },
+            "{path}: {}",
+            stdout(&transcript)
+        );
+        assert_eq!(
+            transcript.refusals(),
+            [Refusal {
+                function: WasiFunction::PathOpen,
+                reason: RefusalReason::CaseOnly,
+                count: 1,
+            }],
+            "{path}"
+        );
+    }
+}
+
+#[test]
 fn an_absolute_path_no_other_preopen_names_is_read_from_the_working_directory() {
     let runner = runner();
     let module = runner
