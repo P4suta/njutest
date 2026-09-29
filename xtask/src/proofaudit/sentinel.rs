@@ -1584,7 +1584,10 @@ fn unobserved_repair_called_a_survival() -> Perturbation {
         document: with(json!({
             "drift": [moved(TARGET)],
             "mutants": [{}, { "catalog_index": 1 }],
-            "limitations": [{ "name": "reach-moved", "detail": TARGET }]
+            "limitations": [{
+                "name": "reach-moved",
+                "detail": format!("the reach of a target moved ({TARGET})")
+            }]
         })),
         events: Some(events),
         engine: Some(vec![

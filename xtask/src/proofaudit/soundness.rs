@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
-use super::{Audit, Decided, Layer, Notes, Recording, field, rows};
+use super::{Audit, Decided, Layer, Notes, Recording, field};
 
 /// What Miri's diagnostic says next when it has found unsoundness.
 pub const UNDEFINED: &str = "Undefined Behavior:";
@@ -118,40 +118,36 @@ impl Came {
     }
 }
 
-/// Whether `exec` is the interpreter run over the suite.
+/// Whether `exec` is the interpreter run over the suite; an exec whose command line does not read is not shown to be it.
 #[must_use]
 pub fn interprets(exec: &Value) -> bool {
-    words(exec).windows(2).any(|pair| pair == ["miri", "test"])
+    words(exec).is_some_and(|words| words.windows(2).any(|pair| pair == ["miri", "test"]))
 }
 
-/// Whether `exec` is the question a failed interpretation asks of the toolchain afterwards.
+/// Whether `exec` is the question a failed interpretation asks of the toolchain afterwards; an exec whose command line does not read is not shown to be it.
 fn asks_for_the_interpreter(exec: &Value) -> bool {
-    words(exec)
-        .windows(2)
-        .any(|pair| pair == ["miri", "--version"])
+    words(exec).is_some_and(|words| words.windows(2).any(|pair| pair == ["miri", "--version"]))
 }
 
-/// The words of `exec`'s command line.
-fn words(exec: &Value) -> Vec<&str> {
-    exec.get("argv")
-        .and_then(Value::as_array)
-        .map_or_else(Vec::new, |argv| {
-            argv.iter().filter_map(Value::as_str).collect()
-        })
+/// The words of `exec`'s command line, or nothing where it has none that is a list of words.
+fn words(exec: &Value) -> Option<Vec<&str>> {
+    exec.get("argv")?
+        .as_array()?
+        .iter()
+        .map(Value::as_str)
+        .collect()
 }
 
-/// How `exec` ended: `Some(code)` for a process that exited with one, and its `stopped` kind otherwise.
-fn ended(exec: &Value) -> (String, Option<i64>) {
-    let stopped = exec.get("stopped");
-    let kind = stopped
-        .and_then(|one| field(one, "kind"))
-        .unwrap_or_default();
+/// How `exec` ended: `Some(code)` for a process that exited with one, and its `stopped` kind otherwise; nothing where the exec does not say how it stopped.
+fn ended(exec: &Value) -> Option<(String, Option<i64>)> {
+    let stopped = exec.get("stopped")?;
+    let kind = field(stopped, "kind")?;
     let code = stopped
-        .and_then(|one| one.get("exit"))
+        .get("exit")
         .filter(|exit| field(exit, "kind").as_deref() == Some("code"))
         .and_then(|exit| exit.get("value"))
         .and_then(Value::as_i64);
-    (kind, code)
+    Some((kind, code))
 }
 
 /// What the interpretation `run` came to, with the toolchain's answer `probe` where it was asked, or nothing where what either said was not kept as text.
@@ -159,7 +155,7 @@ fn came(run: Said<'_>, probe: Option<Said<'_>>) -> Option<Came> {
     let Some(Kept::Whole(said)) = run.output else {
         return None;
     };
-    let (kind, code) = ended(run.exec);
+    let (kind, code) = ended(run.exec)?;
     let heard = Heard::of(said);
     if kind == "not-started" || heard.absent {
         return Some(Came::Absent);
@@ -189,9 +185,11 @@ enum Probed {
     Unread,
 }
 
-/// What the toolchain's answer `asked` says about its interpreter.
+/// What the toolchain's answer `asked` says about its interpreter; an answer that does not say how it stopped cannot be read either way.
 fn probed(asked: Said<'_>) -> Probed {
-    let (kind, code) = ended(asked.exec);
+    let Some((kind, code)) = ended(asked.exec) else {
+        return Probed::Unread;
+    };
     if kind == "not-started" {
         return Probed::Absent;
     }
@@ -542,12 +540,16 @@ impl Reported {
     fn of(recording: &Recording<'_>) -> Self {
         Self {
             executed: Interpreted::of(recording.document.pointer("/accounting/soundness/executed")),
-            claimed: rows(recording.document, "findings")
+            claimed: recording
+                .part
+                .findings
                 .iter()
                 .filter(|finding| field(finding, "subject").as_deref() == Some("soundness"))
                 .filter_map(|finding| field(finding, "kind"))
                 .collect(),
-            stated: rows(recording.document, "limitations")
+            stated: recording
+                .part
+                .limitations
                 .iter()
                 .filter_map(|limitation| field(limitation, "name"))
                 .filter(|name| name.starts_with("miri-"))

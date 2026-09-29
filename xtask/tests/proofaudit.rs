@@ -2420,6 +2420,112 @@ fn drift_violations(audit: &Audit) -> Vec<String> {
 }
 
 #[test]
+fn a_reach_moved_limitation_that_names_no_target_is_refused_rather_than_read_as_naming_none() {
+    let stated = |detail: String| {
+        let mut document = with(sentinel::drifted("moved"));
+        merge(
+            &mut document,
+            serde_json::json!({
+                "findings": [{}, {
+                    "kind": "unstable-baseline",
+                    "subject": TARGET,
+                    "detail": "moved",
+                    "position": null
+                }],
+                "limitations": [{ "name": "reach-moved", "detail": detail }]
+            }),
+        );
+        drift_violations(&with_engine(
+            document,
+            vec![
+                sentinel::touch("baseline", &[0]),
+                sentinel::touch("control", &[0, 1]),
+            ],
+        ))
+    };
+    assert!(
+        stated(format!("the reach of a target moved ({TARGET})"))
+            .iter()
+            .any(|said| said.contains("still rests on it")),
+        "a reach-moved limitation naming a target something rests on is refused"
+    );
+    let unlisted = stated("the reach of a target moved".to_owned());
+    assert!(
+        unlisted.iter().any(|said| said.contains("names no target")),
+        "a limitation whose detail has no closing list names nothing a reader can hold it to, \
+         which is not the same as naming no target something rests on: {unlisted:?}"
+    );
+}
+
+#[test]
+fn a_knob_limitation_that_names_no_target_is_refused_rather_than_read_as_naming_none() {
+    let mut planted = sentinel::clean();
+    merge(
+        &mut planted.document,
+        serde_json::json!({ "limitations": [{
+            "name": "knob-not-compared",
+            "detail": "the controls under timezone established nothing to compare"
+        }] }),
+    );
+    let laid = planted.lay().expect("the specimen is laid out");
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        .expect("a recording this audit can read");
+    assert!(
+        knob_violations(&audit)
+            .iter()
+            .any(|said| said.contains("names no target")),
+        "a knob limitation whose detail has no closing list names nothing a reader can hold it \
+         to: {audit}"
+    );
+}
+
+#[test]
+fn a_model_completion_the_contract_does_not_carry_is_refused() {
+    let mut verified = assured();
+    merge(
+        &mut verified,
+        serde_json::json!({ "contract": "verified-v1" }),
+    );
+    let mut verified = sentinel::complete_report(&verified).expect("a complete report");
+    *verified
+        .pointer_mut("/report/model_completion")
+        .expect("the report's model completion") = serde_json::json!({ "kind": "not-required" });
+    let mut standard = sentinel::complete_report(&base()).expect("a complete report");
+    *standard
+        .pointer_mut("/report/model_completion")
+        .expect("the report's model completion") = serde_json::json!({
+        "kind": "verified",
+        "batch": { "owner": RUN, "records": [] }
+    });
+    for (said, document) in [
+        ("verified-v1 with no model required", verified),
+        ("another contract with a verified batch", standard),
+    ] {
+        let audit = audited(&document);
+        assert!(
+            audit.violated(Layer::Model),
+            "{said}: a completion the contract does not carry is not a batch of no models: \
+             {audit}"
+        );
+    }
+}
+
+#[test]
+fn a_run_that_kept_no_recording_has_not_said_it_repaired_nothing() {
+    let run = run_directory(&with(sentinel::drifted("moved")));
+    let audit =
+        gates::proofaudit(&checkers(), run.path(), None).expect("a recording this audit can read");
+    assert!(
+        !matches!(
+            audit.coverage.get(&Layer::Repair),
+            Some(Coverage::Absent(_))
+        ),
+        "the report records a moved target and the run kept no recording of what it ran again, \
+         which is not a run that ran nothing again: {audit}"
+    );
+}
+
+#[test]
 fn a_control_that_reached_a_site_its_baseline_never_did_is_owed_an_unstable_baseline_finding() {
     let moved = vec![
         sentinel::touch("baseline", &[0]),
@@ -3229,6 +3335,48 @@ fn a_whole_run_owes_every_knob_the_schema_names_on_every_target_that_passed() {
                 .any(|remark| remark.detail.contains("timezone")),
         "a whole run that drops one knob's rows on every target reads as repeatable along a \
          knob it never put: {one_dropped}"
+    );
+}
+
+#[test]
+fn a_target_that_passed_under_a_blank_name_is_still_owed_every_knob() {
+    let rows: Vec<serde_json::Value> = schema_knobs()
+        .iter()
+        .map(|knob| {
+            serde_json::json!({
+                "target": TARGET,
+                "knob": knob,
+                "standing": { "state": "stable" }
+            })
+        })
+        .collect();
+    let mut document = base();
+    merge(
+        &mut document,
+        serde_json::json!({
+            "contract": "whole-v1",
+            "knobs": rows,
+            "targets": [{}, {
+                "id": "3f2a1b0c9d8e7f61",
+                "name": " ",
+                "package": "pkg",
+                "status": "passed",
+                "duration_ms": 5,
+                "message": null
+            }],
+            "accounting": { "targets": { "selected": 2, "passed": 2 } }
+        }),
+    );
+    let audit = audited(&document);
+    assert!(
+        audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Knobs
+                && remark.subject == " "
+                && remark.detail.contains("puts every knob")),
+        "a target that passed is owed every knob whatever its name is, and a blank one is not \
+         one the report may leave out: {audit}"
     );
 }
 
