@@ -70,7 +70,11 @@ const fn relevant_payload(payload: &Payload) -> RelevantPayload<'_> {
 }
 
 fn prepare(name: &str) -> Prepared {
-    let dir = njutest_devkit::paths::fixtures_dir().join(name);
+    prepare_at(njutest_devkit::paths::fixtures_dir().join(name))
+}
+
+/// The project at `dir`, located, read and checked as discovery reads it.
+fn prepare_at(dir: PathBuf) -> Prepared {
     let options = LocateOptions {
         cargo: Some(njutest_devkit::paths::cargo_binary()),
         ..LocateOptions::default()
@@ -459,6 +463,53 @@ fn every_file_a_test_program_compiles_records_its_entry_whatever_the_selection_l
             && !discovery.entered_only.contains_key("forbids/src/lib.rs"),
         "a crate that forbids what the runtime allows cannot carry it, so nothing of it is \
          instrumented: {:?} {:?}",
+        discovery.marked_only,
+        discovery.entered_only
+    );
+}
+
+#[test]
+fn a_file_a_crate_that_cannot_carry_the_runtime_compiles_is_never_instrumented_for_entry_alone() {
+    let project = tempfile::Builder::new()
+        .prefix("rust-mutants-barred-")
+        .tempdir()
+        .expect("tempdir");
+    let root = project.path().join("barred");
+    for (path, text) in [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"barred\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n",
+        ),
+        (
+            "Cargo.lock",
+            "version = 4\n\n[[package]]\nname = \"barred\"\nversion = \"0.1.0\"\n",
+        ),
+        (
+            "src/lib.rs",
+            "#[path = \"util.rs\"]\nmod util;\npub use util::twice;\n",
+        ),
+        (
+            "src/util.rs",
+            "pub fn twice(n: u32) -> u32 {\n    n * 2\n}\n",
+        ),
+        (
+            "tests/strict.rs",
+            "#![forbid(dead_code)]\n#[path = \"../src/util.rs\"]\nmod util;\n#[test]\nfn four() {\n    assert_eq!(util::twice(2), 4);\n}\n",
+        ),
+    ] {
+        let at = root.join(path);
+        std::fs::create_dir_all(at.parent().expect("a directory")).expect("the directory");
+        std::fs::write(at, text).expect("the file");
+    }
+    let prepared = prepare_at(root);
+    let mut opts = options();
+    opts.exclude = vec![Pattern::compile("src/util.rs").expect("pattern")];
+    let discovery = run(&prepared, &opts, &Recorder::disabled());
+    assert!(
+        !discovery.marked_only.contains("src/util.rs")
+            && !discovery.entered_only.contains_key("tests/strict.rs"),
+        "a test crate that forbids what the runtime allows compiles the excluded file too, so \
+         instrumenting it for entry alone would stop that crate compiling: {:?} {:?}",
         discovery.marked_only,
         discovery.entered_only
     );

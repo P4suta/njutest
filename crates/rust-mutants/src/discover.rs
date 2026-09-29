@@ -292,7 +292,7 @@ pub fn discover(
 ) -> Result<Discovery, DiscoverError> {
     let root = input.root;
     let assigner = assigned(input, options)?;
-    let unassigned = assigner.unassigned(input.metadata)?;
+    let (unassigned, barred) = assigner.unassigned(input.metadata)?;
     let assignments = assigner.assignments;
     let mut files = Vec::new();
     let mut candidates = Vec::new();
@@ -358,6 +358,7 @@ pub fn discover(
     configured_claims(&options.skips, (&configured, &anchored), trace, &mut claims);
     claims.sort_by(|one, other| (&one.path, one.line).cmp(&(&other.path, other.line)));
     let catalog = builder.build()?;
+    marked_only.retain(|path| !barred.contains(path));
     Ok(Discovery {
         files,
         candidates,
@@ -672,6 +673,9 @@ fn selected_members<'m>(
         .collect()
 }
 
+/// The files no assignment holds that a test program compiles, each with its package, and the files a unit that cannot carry the runtime compiled.
+type Unassigned = (BTreeMap<String, String>, BTreeSet<String>);
+
 /// Gives every file of every target its role, from the units that compiled the target, keeping the higher-priority role when targets disagree.
 struct Assigner<'a> {
     root: &'a Path,
@@ -746,8 +750,8 @@ impl Assigner<'_> {
         Ok(())
     }
 
-    /// Every file a unit of a member compiled that no assignment holds, with the package whose unit compiled it, less every file a unit that cannot carry the runtime compiled: one that runs in the compiler, or one of a crate that forbids what the runtime allows or has no `std` to lend it.
-    fn unassigned(&self, metadata: &Metadata) -> Result<BTreeMap<String, String>, DiscoverError> {
+    /// Every file a unit of a member compiled that no assignment holds, with the package whose unit compiled it, and apart from them every file a unit that cannot carry the runtime compiled: one that runs in the compiler, or one of a crate that forbids what the runtime allows or has no `std` to lend it, which neither set may instrument for entry alone.
+    fn unassigned(&self, metadata: &Metadata) -> Result<Unassigned, DiscoverError> {
         let mut found: BTreeMap<String, String> = BTreeMap::new();
         let mut barred: BTreeSet<String> = BTreeSet::new();
         for package in metadata.members() {
@@ -782,7 +786,7 @@ impl Assigner<'_> {
             }
         }
         found.retain(|path, _| !barred.contains(path) && !self.assignments.contains_key(path));
-        Ok(found)
+        Ok((found, barred))
     }
 
     /// Whether the crate `target` roots cannot carry the runtime: its root is outside the tree, has no `std` to lend it, or forbids a lint the runtime's module allows.
