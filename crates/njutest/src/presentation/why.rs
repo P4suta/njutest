@@ -150,6 +150,18 @@ fn stepped(step: &Step, telling: Telling) -> String {
             telling.painted(Style::Keyword, outcome),
             telling.painted(Style::Frame, &went(*fate))
         ),
+        Step::ObservableUnderFault { fault, target } => format!(
+            "{} {}  {} {}  {}",
+            telling.painted(Style::Marker, crate::report::faults::OBSERVABLE_UNDER_FAULT),
+            telling.painted(Style::Subject, fault),
+            telling.painted(Style::Frame, "told apart by"),
+            telling.painted(Style::Subject, target),
+            telling.painted(
+                Style::Frame,
+                "with the call at its own site failing: no equivalence, and no kill, since no \
+                 test makes that call fail"
+            )
+        ),
         Step::ReadBack { run } => format!(
             "{} {}",
             telling.painted(Style::Limitation, "read back from"),

@@ -2653,7 +2653,8 @@ fn a_control_that_reached_a_site_its_baseline_never_did_is_owed_an_unstable_base
         serde_json::json!({ "findings": [{}, {
             "kind": "unstable-baseline",
             "subject": TARGET,
-            "detail": "moved",
+            "detail": "moved: 1 mutation a proof removed its run of, and 0 mutations no test \
+                       reached, rest on it",
             "position": null
         }] }),
     );
@@ -3541,6 +3542,15 @@ fn a_control_that_entered_an_item_its_baseline_did_not_is_owed_the_finding() {
     );
 }
 fn repair_audit(repaired: &[&str], engine: Vec<serde_json::Value>) -> Vec<String> {
+    repair_audit_of(with(sentinel::drifted("moved")), repaired, engine)
+}
+
+/// The repair layer's violations over `document`, with the clean routes, a survived repair of each of `repaired` against the moved target, and `engine` as the one engine recording.
+fn repair_audit_of(
+    document: serde_json::Value,
+    repaired: &[&str],
+    engine: Vec<serde_json::Value>,
+) -> Vec<String> {
     let mut events = routes();
     for mutant in repaired {
         events.push(serde_json::json!({
@@ -3560,7 +3570,7 @@ fn repair_audit(repaired: &[&str], engine: Vec<serde_json::Value>) -> Vec<String
     }
     let laid = sentinel::Perturbation {
         name: "repair",
-        document: with(sentinel::drifted("moved")),
+        document,
         events: Some(events),
         engine: Some(engine),
         shards: Vec::new(),
@@ -4309,4 +4319,208 @@ fn a_kept_output_larger_than_the_runner_keeps_is_not_read_whole() {
 /// Every published schema, compiled.
 fn checkers() -> xtask::schemas::Checkers {
     xtask::schemas::Checkers::compiled().expect("the published schemas compile")
+}
+
+#[test]
+fn a_repair_is_allowed_every_disposition_its_own_execution_can_come_to() {
+    let allowed = |outcome: &str| {
+        xtask::repair::derived("survived", outcome, (0, None))
+            .unwrap_or_else(|refused| panic!("{outcome} is an outcome a run comes to: {refused}"))
+            .now
+    };
+    assert_eq!(
+        allowed("waited"),
+        ["waited", "unconfirmed"],
+        "a wait is confirmed as every wait is, and one whose confirmation does not reproduce is \
+         unconfirmed (ADR 0036 decision 1)"
+    );
+    assert_eq!(
+        allowed("not_run"),
+        ["declined", "errored"],
+        "a run whose every test declined to measure is `declined`, and any other run that did \
+         not run to an answer is an error (ADR 0043)"
+    );
+}
+
+#[test]
+fn a_repair_measured_again_alone_is_paired_with_the_touch_of_its_last_run() {
+    let mut engine = vec![
+        sentinel::touch("baseline", &[0]),
+        sentinel::touch("control", &[0, 1]),
+    ];
+    engine.push(repair_touch(&"b".repeat(64), &[0]));
+    engine.push(repair_touch(&"b".repeat(64), &[1]));
+    let said = repair_audit(&[SURVIVED], engine);
+    assert_eq!(
+        said,
+        Vec::<String>::new(),
+        "a repair whose first run waited is measured again alone, as every wait is, so two \
+         repair touches name it; the repair is decided by the last run, and so is the audit \
+         (ADR 0036 decision 2)"
+    );
+}
+
+#[test]
+fn a_lead_resting_on_a_moved_target_that_nothing_ran_again_is_a_violation() {
+    let mut document = with(sentinel::drifted("moved"));
+    let evidence = document
+        .pointer_mut("/mutants/1/evidence")
+        .expect("the survivor's evidence");
+    *evidence = serde_json::json!({ "kind": "unproven", "reasons": ["not-sealed"] });
+    let engine = vec![
+        sentinel::touch("baseline", &[0]),
+        sentinel::touch("control", &[0, 1]),
+    ];
+    let audit = with_engine(document, engine);
+    let said: Vec<String> = audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Repair && remark.standing == Standing::Violated)
+        .map(|remark| format!("{}: {}", remark.subject, remark.detail))
+        .collect();
+    assert!(
+        said.iter()
+            .any(|line| line.contains(SURVIVED) && line.contains("no repair ran it again")),
+        "the survivor is a lead its route did not put to the moved target, so it rested on that \
+         target's baseline and the repair owed it a run there (ADR 0036 decision 1): {said:?}\n\
+         {audit}"
+    );
+}
+
+#[test]
+fn repairs_out_of_the_order_the_repair_takes_are_a_violation() {
+    let moved = || {
+        vec![
+            sentinel::touch("baseline", &[0]),
+            sentinel::touch("control", &[0, 1]),
+        ]
+    };
+    let mut in_order = moved();
+    in_order.push(repair_touch(&"a".repeat(64), &[1]));
+    in_order.push(repair_touch(&"b".repeat(64), &[1]));
+    let mut indexed = with(sentinel::drifted("moved"));
+    merge(
+        &mut indexed,
+        serde_json::json!({ "mutants": [{ "catalog_index": 0 }, { "catalog_index": 1 }] }),
+    );
+    let said = repair_audit_of(indexed.clone(), &[KILLED, SURVIVED], in_order);
+    assert!(
+        !said.iter().any(|line| line.contains("out of the order")),
+        "mutation by mutation in catalog order is the order the repair takes: {said:?}"
+    );
+    let mut reversed = moved();
+    reversed.push(repair_touch(&"b".repeat(64), &[1]));
+    reversed.push(repair_touch(&"a".repeat(64), &[1]));
+    let said = repair_audit_of(indexed, &[SURVIVED, KILLED], reversed);
+    assert!(
+        said.iter().any(|line| line.contains("out of the order")),
+        "a repair of an earlier mutation after a later one is not what the run does: {said:?}"
+    );
+}
+
+#[test]
+fn an_unstable_baseline_finding_counts_what_the_rows_and_routes_leave_resting() {
+    let engine = || {
+        vec![
+            sentinel::touch("baseline", &[0]),
+            sentinel::touch("control", &[0, 1]),
+        ]
+    };
+    let found = |detail: &str| {
+        let mut document = with(sentinel::drifted("moved"));
+        merge(
+            &mut document,
+            serde_json::json!({ "findings": [{}, {
+                "kind": "unstable-baseline",
+                "subject": TARGET,
+                "detail": detail,
+                "position": null
+            }] }),
+        );
+        drift_violations(&with_engine(document, engine()))
+    };
+    let counted = |detail: &[String]| {
+        detail
+            .iter()
+            .any(|line| line.contains("does not say what the rows and repairs leave resting"))
+    };
+    let right = found(
+        "pkg/test/lib reached something ... is unfounded: 1 mutation a proof removed its run \
+         of, and 0 mutations no test reached, rest on it. Make what the suite reaches \
+         independent of order, time and earlier processes, and run again",
+    );
+    assert!(!counted(&right), "{right:?}");
+    let wrong = found(
+        "pkg/test/lib reached something ... is unfounded: 3 mutations a proof removed its run \
+         of, and 0 mutations no test reached, rest on it. Make what the suite reaches \
+         independent of order, time and earlier processes, and run again",
+    );
+    assert!(
+        counted(&wrong),
+        "one survivor its route kept off the moved target rests on it, and a finding that \
+         counts three is not what the rows say (ADR 0036 decision 3): {wrong:?}"
+    );
+}
+
+#[test]
+fn a_reach_moved_limitation_counts_the_dispositions_the_repairs_replaced() {
+    let stated = |again: &str| {
+        let mut events = routes();
+        events.push(serde_json::json!({
+            "type": "mutant-exec",
+            "mutant": {
+                "mutant": SURVIVED, "target": TARGET, "args": [], "outcome": "survived",
+                "duration_ms": 5
+            }
+        }));
+        events.push(serde_json::json!({
+            "type": "repair",
+            "repair": {
+                "mutant": SURVIVED, "target": TARGET,
+                "was": "survived", "now": "survived", "reached": "reached"
+            }
+        }));
+        let mut document = with(sentinel::drifted("moved"));
+        merge(
+            &mut document,
+            serde_json::json!({ "limitations": [{
+                "name": "reach-moved",
+                "detail": format!(
+                    "a target reached something on an original-code control that it did not \
+                     reach on its baseline, so what it reaches is not a function of the target; \
+                     {again} that rested on its baseline were run again against it, and \
+                     nothing this run concludes stands on the moved record ({TARGET})"
+                )
+            }] }),
+        );
+        let laid = sentinel::Perturbation {
+            name: "reach-moved",
+            document,
+            events: Some(events),
+            engine: Some(vec![
+                sentinel::touch("baseline", &[0]),
+                sentinel::touch("control", &[0, 1]),
+                repair_touch(&"b".repeat(64), &[1]),
+            ]),
+            shards: Vec::new(),
+            outputs: Vec::new(),
+            beside: Vec::new(),
+            kept: None,
+        }
+        .lay()
+        .expect("the specimen is laid out");
+        let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+            .expect("a recording this audit can read");
+        drift_violations(&audit)
+            .into_iter()
+            .any(|line| line.contains("does not count the"))
+    };
+    assert!(
+        !stated("1 disposition"),
+        "the one repair that reached the site replaced the one disposition resting there"
+    );
+    assert!(
+        stated("2 dispositions"),
+        "and a limitation that counts two is not what the repairs say (ADR 0036 decision 3)"
+    );
 }

@@ -84,6 +84,22 @@ fn part(fixture: &Fixture) -> serde_json::Value {
     whole["report"]["builds"][0]["parts"][0].clone()
 }
 
+/// The runner's recording of the run the index points at, read back.
+fn recording(fixture: &Fixture) -> Vec<njutest::trace::Event> {
+    let run = njutest::app::reports::pointed_at(&fixture.root, njutest::app::reports::Index::Any)
+        .expect("the index is readable")
+        .expect("the index names a run");
+    let stream = fixture
+        .root
+        .join(".njutest/trace")
+        .join(run.as_str())
+        .join(njutest::trace::FILE_NAME);
+    njutest::trace::read_events(std::io::BufReader::new(
+        std::fs::File::open(&stream).expect("the recording"),
+    ))
+    .expect("the recording reads back")
+}
+
 fn decisions(part: &serde_json::Value) -> Vec<(u64, String)> {
     let mut decided: Vec<(u64, String)> = part["faults"]
         .as_array()
@@ -168,6 +184,41 @@ fn a_run_asked_for_faults_says_which_failed_calls_the_suite_noticed() {
             "waited": 0, "undecided": 0, "not_put": 2
         }),
         "{part}"
+    );
+}
+
+#[test]
+fn a_faulted_session_compares_no_reach_and_runs_nothing_again() {
+    let fixture = fixture("fixture-faulted");
+    let output = verify(&fixture, &["--faults", "--trace"]);
+    let events = recording(&fixture);
+    let faulted = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event.payload,
+                njutest::trace::Payload::FaultRoute { .. }
+                    | njutest::trace::Payload::FaultExec { .. }
+            )
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "the run put faults: {}",
+                njutest_devkit::process::strict_utf8(&output.stderr)
+            )
+        });
+    let compared: Vec<&str> = events
+        .iter()
+        .skip(faulted)
+        .map(|event| event.payload.type_name())
+        .filter(|kind| matches!(*kind, "drift" | "repair"))
+        .collect();
+    assert!(
+        compared.is_empty(),
+        "a faulted session judges faults and nothing else: its touch and drift records are \
+         never compared with the baseline's, so it owes no target a control of its own and runs \
+         no disposition again, and the recording holds none of either after its first fault \
+         (ADR 0032 decision 3): {compared:?}"
     );
 }
 
@@ -312,6 +363,37 @@ fn a_tree_every_run_writes_into_is_not_broken_by_a_fault() {
         named(&part, "limitations", "name", "fault-no-site").len(),
         1,
         "no measured file of it has a `?`, so there was no call to fail, and the run says so: {part}"
+    );
+}
+
+#[test]
+fn why_names_a_survivor_the_suite_tells_apart_under_a_fault_observable_under_fault() {
+    let fixture = fixture("fixture-faulted");
+    let output = verify(&fixture, &["--faults", "--trace"]);
+    let part = part(&fixture);
+    let survivor = part["beside"][0]["mutant"]
+        .as_str()
+        .unwrap_or_else(|| {
+            panic!(
+                "the run holds evidence beside a fault: {part}\n{}",
+                njutest_devkit::process::strict_utf8(&output.stderr)
+            )
+        })
+        .to_owned();
+    let fault = part["beside"][0]["fault"]
+        .as_str()
+        .expect("the evidence names its fault")
+        .to_owned();
+    let why = asked(&fixture, &["why", "mutation", &survivor]);
+    let page = njutest_devkit::process::strict_utf8(&why.stdout);
+    assert!(
+        page.contains("observable-under-fault")
+            && page.contains(&fault)
+            && page.contains("fixture-faulted/test/calls"),
+        "the page of the survivor names the evidence by its name, with the fault at its own \
+         call and the target that told it apart, so a reader learns that it is no equivalence \
+         and which failure no test makes (ADR 0032 decision 6): {page}\n{}",
+        njutest_devkit::process::strict_utf8(&why.stderr)
     );
 }
 

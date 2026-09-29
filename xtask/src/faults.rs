@@ -66,6 +66,8 @@ pub struct Faulted {
     pub rejected: Vec<String>,
     /// Every fault a path the phase left written was tied to: run alone it wrote the path while its test passed, and its test alone without it did not.
     pub attributed: Vec<String>,
+    /// Every path the phase left written that a fault was run alone to tie, with whether that run tied it, in recording order.
+    pub writes: Vec<(String, bool)>,
     /// Every site decision, in recording order.
     pub sites: Vec<Site>,
     /// Every survivor told apart beside a fault, in recording order.
@@ -180,6 +182,7 @@ fn held(faulted: &mut Faulted, kind: &str, event: &Value) -> bool {
             let tied = flag("faulted")?
                 && flag("passed")?
                 && text(record, "unfaulted")? == "did-not-write";
+            faulted.writes.push((text(record, "path")?, tied));
             if tied {
                 faulted.attributed.push(fault);
             }
@@ -391,6 +394,24 @@ pub enum FaultContradictionError {
         "the run says something read the failure it made, and every target that reached it has a run again that dropped every failure unread"
     )]
     UnnoticedThoughAbsorbed,
+    /// A fault said to be unnoticed or absorbed that a target reaching it was never asked about.
+    #[error(
+        "the run says every test that reached it passed with the call failing, and the recording holds no run of it on {target}, which reaches it"
+    )]
+    UnnoticedUnasked {
+        /// The first reaching target, in name order, with no run of it.
+        target: String,
+    },
+    /// A fault said to be noticed by a target where the judging, which stops at the first target that notices in name order, would have stopped earlier or never asked one before it.
+    #[error(
+        "the run says {by} noticed it, and {first} comes before it in name order and noticed it too or was never asked"
+    )]
+    NoticedNotFirst {
+        /// The target named.
+        by: String,
+        /// The target before it the judging would have stopped at or had to ask.
+        first: String,
+    },
     /// A fault said not to have been put that the recording holds no refusal of.
     #[error("the run says the compiler refused it, and the recording holds no refusal of it")]
     NotPutWithoutRefusal,
@@ -416,6 +437,8 @@ impl crate::error::Coded for FaultContradictionError {
             | Self::NotPutWithoutRefusal
             | Self::AbsorbedUnborne { .. }
             | Self::UnnoticedThoughAbsorbed
+            | Self::UnnoticedUnasked { .. }
+            | Self::NoticedNotFirst { .. }
             | Self::Unknown { .. }
             | Self::NoticedByNoOne => crate::error::XtCode::FaultContradicted,
         }
@@ -428,9 +451,10 @@ impl crate::error::Coded for FaultContradictionError {
 /// The [`FaultContradictionError`] the executions hold.
 pub fn supports(site: &Site, evidence: &Evidence<'_>) -> Result<(), FaultContradictionError> {
     let (execs, controls) = (evidence.execs.as_slice(), evidence.controls.as_slice());
-    let ran = !execs.is_empty();
-    let failed = execs.iter().find(|one| one.outcome != "survived");
-    let bounded = execs
+    let asked: Vec<&&Exec> = execs.iter().filter(|one| one.role == FIRST).collect();
+    let ran = !asked.is_empty();
+    let failed = asked.iter().find(|one| one.outcome != "survived");
+    let bounded = asked
         .iter()
         .any(|one| one.outcome == "waited" || one.outcome == "step_limit_reached");
     match site.decision.as_str() {
@@ -438,6 +462,9 @@ pub fn supports(site: &Site, evidence: &Evidence<'_>) -> Result<(), FaultContrad
             let Some(by) = site.by.clone() else {
                 return Err(FaultContradictionError::NoticedByNoOne);
             };
+            if let Some(first) = before(evidence, &by) {
+                return Err(FaultContradictionError::NoticedNotFirst { by, first });
+            }
             let failed_as = |role: &str| {
                 execs
                     .iter()
@@ -462,23 +489,24 @@ pub fn supports(site: &Site, evidence: &Evidence<'_>) -> Result<(), FaultContrad
         "unnoticed" | "absorbed" if !ran => Err(FaultContradictionError::NothingRan {
             decision: site.decision.clone(),
         }),
-        "unnoticed" | "absorbed" => match (failed, site.decision.as_str()) {
-            (Some(one), _) => Err(FaultContradictionError::NotAllPassed {
+        "unnoticed" | "absorbed" => match (failed, unasked(evidence), site.decision.as_str()) {
+            (Some(one), _, _) => Err(FaultContradictionError::NotAllPassed {
                 outcome: one.outcome.clone(),
             }),
-            (None, "absorbed") => match unborne(evidence) {
+            (None, Some(target), _) => Err(FaultContradictionError::UnnoticedUnasked { target }),
+            (None, None, "absorbed") => match unborne(evidence) {
                 Some(target) => Err(FaultContradictionError::AbsorbedUnborne { target }),
                 None => Ok(()),
             },
-            (None, _) if absorbed_everywhere(evidence) => {
+            (None, None, _) if absorbed_everywhere(evidence) => {
                 Err(FaultContradictionError::UnnoticedThoughAbsorbed)
             }
-            (None, _) => Ok(()),
+            (None, None, _) => Ok(()),
         },
         "undecided" if ran && failed.is_none() => {
             Err(FaultContradictionError::UndecidedThoughPassed { runs: execs.len() })
         }
-        "unreached" | "not-put" if ran => Err(FaultContradictionError::RanThough {
+        "unreached" | "not-put" if !execs.is_empty() => Err(FaultContradictionError::RanThough {
             decision: site.decision.clone(),
             runs: execs.len(),
         }),
@@ -496,6 +524,57 @@ pub fn supports(site: &Site, evidence: &Evidence<'_>) -> Result<(), FaultContrad
             decision: other.to_owned(),
         }),
     }
+}
+
+/// The role of the execution that asks a target about a fault, which is the only one a decision about the suite rests on: a confirmation asks again, and an attribution run ties a write rather than asking.
+const FIRST: &str = "first";
+
+/// The first target that reached a fault, in name order, that no execution asked, where the recording holds its route.
+fn unasked(evidence: &Evidence<'_>) -> Option<String> {
+    let mut targets: Vec<&String> = evidence.reaching?.iter().collect();
+    targets.sort();
+    targets
+        .into_iter()
+        .find(|target| !asked_on(evidence, target))
+        .cloned()
+}
+
+/// The first target reaching a fault before `by` in name order that the judging would have stopped at, because it noticed the fault too, or had to ask and did not, where the recording holds the route.
+fn before(evidence: &Evidence<'_>, by: &str) -> Option<String> {
+    let mut targets: Vec<&String> = evidence
+        .reaching?
+        .iter()
+        .filter(|target| target.as_str() < by)
+        .collect();
+    targets.sort();
+    targets
+        .into_iter()
+        .find(|target| !asked_on(evidence, target) || noticed_on(evidence, target))
+        .cloned()
+}
+
+/// Whether an execution asked `target` about the fault.
+fn asked_on(evidence: &Evidence<'_>, target: &str) -> bool {
+    evidence
+        .execs
+        .iter()
+        .any(|one| one.role == FIRST && one.target == target)
+}
+
+/// Whether `target` noticed the fault: it failed under it, passed on the unchanged program, and failed under it again.
+fn noticed_on(evidence: &Evidence<'_>, target: &str) -> bool {
+    let failed_as = |role: &str| {
+        evidence
+            .execs
+            .iter()
+            .any(|one| one.target == target && one.outcome == "killed" && one.role == role)
+    };
+    failed_as(FIRST)
+        && evidence
+            .controls
+            .iter()
+            .any(|one| one.target == target && one.passed)
+        && failed_as("confirmation")
 }
 
 /// The first target that reached a fault, in name order, with no run again that bears out that its failure went nowhere, or the empty name where the recording holds no route.

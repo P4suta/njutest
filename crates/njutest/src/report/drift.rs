@@ -253,7 +253,7 @@ pub fn resting(records: &[MutantRecord], target: &str) -> (usize, usize) {
     (discharged, unreached)
 }
 
-/// The `reach-moved` limitation for every moved target nothing rests on any more, each with how many dispositions were decided again against it (ADR 0036).
+/// The `reach-moved` limitation for every moved target nothing rests on any more, each with how many dispositions were run again against it, an answer or a hole (ADR 0036).
 #[must_use]
 pub fn repaired(
     drift: &[Drift],
@@ -274,8 +274,8 @@ pub fn repaired(
                 &format!(
                     "a target reached something on an original-code control that it did not \
                      reach on its baseline, so what it reaches is not a function of the target; \
-                     {again} {} that rested on its baseline {} decided again by running against \
-                     it, and nothing this run concludes stands on the moved record ({target})",
+                     {again} {} that rested on its baseline {} run again against it, and \
+                     nothing this run concludes stands on the moved record ({target})",
                     if again == 1 {
                         "disposition"
                     } else {

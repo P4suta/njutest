@@ -273,3 +273,93 @@ fn a_failure_said_to_go_nowhere_is_held_to_the_runs_again_that_bear_it_out() {
          every failure unread, and unnoticed is refused only where such runs say absorbed"
     );
 }
+
+/// What a site decided `decision`, noticed by `by` where it was, says against a route reaching `reaching` and the executions `execs`, each confirmed where it failed with the original code passing and the failure repeating.
+fn judged(
+    (decision, by): (&str, Option<&str>),
+    reaching: &[String],
+    execs: &[Exec],
+) -> Result<(), FaultContradictionError> {
+    let controls: Vec<Control> = execs
+        .iter()
+        .filter(|one| one.role == "first" && one.outcome == "killed")
+        .map(|one| Control {
+            fault: "cccc".to_owned(),
+            target: one.target.clone(),
+            passed: true,
+        })
+        .collect();
+    supports(
+        &site(decision, by),
+        &Evidence {
+            execs: execs.iter().collect(),
+            controls: controls.iter().collect(),
+            reaching: Some(reaching),
+            ..Evidence::default()
+        },
+    )
+}
+
+/// `execs` with a confirmation of every failure that came to `killed` again.
+fn with_confirmations(mut execs: Vec<Exec>) -> Vec<Exec> {
+    let again: Vec<Exec> = execs
+        .iter()
+        .filter(|one| one.outcome == "killed")
+        .map(|one| Exec {
+            role: "confirmation".to_owned(),
+            ..one.clone()
+        })
+        .collect();
+    execs.extend(again);
+    execs
+}
+
+#[test]
+fn a_fault_nobody_noticed_was_put_to_every_target_that_reaches_it_and_only_its_own_runs_count() {
+    let reaching = ["a".to_owned(), "b".to_owned()];
+    assert_eq!(
+        judged(("unnoticed", None), &reaching, &ran(&[("a", "survived")])),
+        Err(FaultContradictionError::UnnoticedUnasked {
+            target: "b".to_owned()
+        }),
+        "`unnoticed` says every test that reached the site passed under it, and b reached it \
+         and was never asked (ADR 0032 decision 5)"
+    );
+    let mut attributed = ran(&[("a", "survived"), ("b", "survived")]);
+    attributed.push(Exec {
+        fault: "cccc".to_owned(),
+        target: "a".to_owned(),
+        outcome: "killed".to_owned(),
+        role: "attribution".to_owned(),
+    });
+    assert_eq!(
+        judged(("unnoticed", None), &reaching, &attributed),
+        Ok(()),
+        "a run alone to tie a write to the fault is not one of the runs that asked the suite"
+    );
+}
+
+#[test]
+fn a_fault_is_noticed_by_the_first_target_in_name_order_that_notices_it() {
+    let reaching = ["a".to_owned(), "b".to_owned()];
+    let both = with_confirmations(ran(&[("a", "killed"), ("b", "killed")]));
+    assert_eq!(
+        judged(("noticed", Some("b")), &reaching, &both),
+        Err(FaultContradictionError::NoticedNotFirst {
+            by: "b".to_owned(),
+            first: "a".to_owned()
+        }),
+        "the judging stops at the first target that notices, in name order, so a noticed by b \
+         where a noticed first is not what the run did"
+    );
+    let skipped = with_confirmations(ran(&[("b", "killed")]));
+    assert_eq!(
+        judged(("noticed", Some("b")), &reaching, &skipped),
+        Err(FaultContradictionError::NoticedNotFirst {
+            by: "b".to_owned(),
+            first: "a".to_owned()
+        }),
+        "and a reaching target before it that was never asked could have been the first"
+    );
+    assert_eq!(judged(("noticed", Some("a")), &reaching, &both), Ok(()));
+}

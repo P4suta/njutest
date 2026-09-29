@@ -155,6 +155,13 @@ pub enum Step {
         /// What the record counted, where there was one it could read.
         fate: Option<rust_mutants::fate::Fate>,
     },
+    /// A target told it from the original only with the call at its own site failing beside it: evidence it is no equivalence, and never a kill (ADR 0032 decision 6).
+    ObservableUnderFault {
+        /// The fault at its own call.
+        fault: String,
+        /// The target that told it apart.
+        target: String,
+    },
     /// It was read back from an earlier run rather than established here.
     ReadBack {
         /// The run it came from.
@@ -320,6 +327,7 @@ fn followed(
         Payload::Model { model } if model.mutant() == id => {
             came_to = model_decision(model).or(came_to);
         }
+        Payload::Beside { beside } if beside.mutant == id => steps.push(observable(beside)),
         Payload::RunStart { .. }
         | Payload::FaultControl { .. }
         | Payload::FaultAttribution { .. }
@@ -356,6 +364,14 @@ fn followed(
         | Payload::RunEnd { .. } => {}
     }
     came_to
+}
+
+/// The step a survivor's evidence beside a fault is.
+fn observable(beside: &crate::report::faults::BesideRecord) -> Step {
+    Step::ObservableUnderFault {
+        fault: beside.fault.clone(),
+        target: beside.target.clone(),
+    }
 }
 
 /// What the sealed executions among `steps` establish: a kill by the first that detected the mutant, or a survival where every one passed; nothing where one names what this release does not spell.

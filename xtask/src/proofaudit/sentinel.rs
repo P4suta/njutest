@@ -697,6 +697,32 @@ fn faults_owing(clean: &Perturbation) -> Vec<Perturbation> {
             ..clean.clone()
         },
         Perturbation {
+            name: "a write no fault run alone was tied to that the report does not say",
+            document: with(json!({
+                "faults": [fault_site(&json!({ "decision": "unnoticed" }))],
+                "accounting": { "faults": { "sites": 1, "unnoticed": 1 } },
+                "findings": [{}, {
+                    "kind": "unnoticed-fault",
+                    "subject": FAULTED,
+                    "detail": "nothing noticed the call failing",
+                    "position": null
+                }]
+            })),
+            events: Some(
+                fault_recorded(&json!({ "decision": "unnoticed" }), "survived")
+                    .into_iter()
+                    .chain([json!({
+                        "type": "fault-attribution",
+                        "attribution": {
+                            "fault": FAULTED, "target": TARGET, "path": "stray.log",
+                            "faulted": true, "passed": true, "unfaulted": "wrote"
+                        }
+                    })])
+                    .collect(),
+            ),
+            ..clean.clone()
+        },
+        Perturbation {
             name: "a fault site the recording holds and the report dropped",
             events: Some(fault_recorded(
                 &json!({ "decision": "unnoticed" }),

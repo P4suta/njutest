@@ -82,7 +82,7 @@ pub const DRIFT_NOT_MEASURED: &str = "drift-not-measured";
 
 /// A run asked for faults could not put some, because the compiler refused them: their sites propagate an error type the engine does not make.
 pub const FAULT_NOT_PUT: &str = "fault-not-put";
-/// A target's reach moved and every disposition that rested on it was decided again against it, so nothing the run concludes stands on the moved record, but the suite's reach is still not a function of the target (ADR 0036).
+/// A target's reach moved and every disposition that rested on it was run again against it, so nothing the run concludes stands on the moved record, but the suite's reach is still not a function of the target (ADR 0036).
 pub const REACH_MOVED: &str = "reach-moved";
 
 /// A knob was asked for and not put on a target, so nothing is claimed about whether the target depends on what it sets.

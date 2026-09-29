@@ -827,17 +827,21 @@ fn non_verdict_rows_can_never_be_hidden_behind_assurance_accounting() {
     ];
     for outcome in cases {
         let name = outcome.name();
+        let mut part = sound_draft();
+        decide(&mut part.mutants[0], outcome.clone());
+        let rows = part.mutants.clone();
+        part.accounting.mutants = counted(&rows);
+        assert_eq!(
+            part.concluded(),
+            Verdict::Insufficient,
+            "aggregate counters copied from a kill cannot turn a {name} row into an answer"
+        );
         let refused = completed(move |source| {
             decide(&mut source.mutants[0], outcome);
             let rows = source.mutants.clone();
             source.accounting.mutants = counted(&rows);
         })
         .expect_err("a non-verdict row cannot be turned into an answer by any accounting");
-        assert!(
-            refused.to_string().contains("that row is not an answer"),
-            "aggregate counters copied from a kill cannot turn a {name} row into an \
-             answer: {refused}"
-        );
         assert!(
             refused.to_string().contains("requires exactly one"),
             "the row's required actionable finding cannot disappear: {refused}"

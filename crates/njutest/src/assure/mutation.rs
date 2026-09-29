@@ -252,7 +252,7 @@ pub struct Mutation {
     pub drift: Vec<Drift>,
     /// The SHA-256 of each file the catalog's mutants were read from, as the catalog read it.
     pub sources: BTreeMap<String, rust_mutants::id::HexDigest>,
-    /// How many dispositions resting on each moved target were decided again against it (ADR 0036).
+    /// How many dispositions resting on each moved target a run against it replaced, with an answer or a hole (ADR 0036).
     pub repaired: BTreeMap<String, usize>,
 }
 
@@ -456,8 +456,8 @@ pub struct Subject<'a> {
     pub perturbing: Perturbing,
 }
 
-/// What a catalog puts at each of its sites.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What a catalog puts at each of its sites, which every stage the two share routes on by an exhaustive match rather than a comparison.
+#[derive(Debug, Clone, Copy)]
 pub enum Perturbing {
     /// A change to the program, whose executions, routes, probes and controls every reader of mutations reads.
     Mutants,
@@ -601,8 +601,9 @@ pub fn run_resuming(
         ..Mutation::default()
     };
 
-    if subject.perturbing == Perturbing::Mutants {
-        record_probe(watch, session, baseline)?;
+    match subject.perturbing {
+        Perturbing::Mutants => record_probe(watch, session, baseline)?,
+        Perturbing::Faults => {}
     }
 
     let rejected: BTreeMap<&str, &str> = session
@@ -667,7 +668,10 @@ pub fn run_resuming(
     mutation.sources = session.catalog().sources().map_err(|refused| {
         rust_mutants::EngineError::from(rust_mutants::discover::DiscoverError::from(refused))
     })?;
-    drifted(&judging, &mut mutation)?;
+    match judging.subject.perturbing {
+        Perturbing::Mutants => drifted(&judging, &mut mutation)?,
+        Perturbing::Faults => {}
+    }
     phase.end();
     Ok(mutation)
 }
@@ -829,8 +833,9 @@ fn establish(
     let came = if let Some(saved) = state.and_then(|state| state.mutant(mutant.id.as_str())) {
         resumed(judging, mutant, saved)?
     } else if let Some(diagnostic) = rejected.get(mutant.id.as_str()) {
-        if judging.subject.perturbing == Perturbing::Faults {
-            record_rejection(watch, mutant, diagnostic);
+        match judging.subject.perturbing {
+            Perturbing::Faults => record_rejection(watch, mutant, diagnostic),
+            Perturbing::Mutants => {}
         }
         Came {
             disposition: Disposition::Rejected {
@@ -902,12 +907,7 @@ fn resumed(
         let claimed = (None, Outcome::Killed, executions.as_slice());
         return match again(judging, mutant, &route, claimed)? {
             PutAgain::Believed(came) => {
-                if judging.subject.perturbing == Perturbing::Mutants {
-                    judging.watch.trace.resumed(crate::trace::ResumedRecord {
-                        mutant: mutant.id.as_str().to_owned(),
-                        killed_by: by.clone(),
-                    });
-                }
+                traced_resumption(judging, mutant, by);
                 Ok(came)
             }
             PutAgain::Afresh(afresh) => {
@@ -920,12 +920,7 @@ fn resumed(
             }
         };
     }
-    if judging.subject.perturbing == Perturbing::Mutants {
-        judging.watch.trace.resumed(crate::trace::ResumedRecord {
-            mutant: mutant.id.as_str().to_owned(),
-            killed_by: by.clone(),
-        });
-    }
+    traced_resumption(judging, mutant, by);
     Ok(Came {
         disposition: inherited(saved),
         evidence: Some(saved.evidence.clone()),
@@ -935,6 +930,17 @@ fn resumed(
         )),
         source: None,
     })
+}
+
+/// Records that `mutant` inherits the kill of `by` from a checkpoint, where the run perturbs mutants rather than faults.
+fn traced_resumption(judging: &Judging<'_>, mutant: &Mutant, by: &str) {
+    match judging.subject.perturbing {
+        Perturbing::Mutants => judging.watch.trace.resumed(crate::trace::ResumedRecord {
+            mutant: mutant.id.as_str().to_owned(),
+            killed_by: by.to_owned(),
+        }),
+        Perturbing::Faults => {}
+    }
 }
 
 /// What a sealed verdict kept for one mutation comes to once the mutation is put again on this run's bench.
@@ -1460,13 +1466,17 @@ fn carried(
     exact: store::Refusal,
 ) -> Result<Consulted, crate::error::RunnerError> {
     let (session, options, watch) = (judging.subject.session, judging.options, judging.watch);
-    let carry = match options
-        .evidence
-        .as_ref()
-        .and_then(|evidence| evidence.carry.as_ref())
-    {
-        Some(carry) if judging.subject.perturbing == Perturbing::Mutants => carry,
-        Some(_) | None => return Ok(Consulted::Refused(exact)),
+    let carry = match (
+        judging.subject.perturbing,
+        options
+            .evidence
+            .as_ref()
+            .and_then(|evidence| evidence.carry.as_ref()),
+    ) {
+        (Perturbing::Mutants, Some(carry)) => carry,
+        (Perturbing::Mutants, None) | (Perturbing::Faults, Some(_) | None) => {
+            return Ok(Consulted::Refused(exact));
+        }
     };
     let Some(locus) = session.locus(mutant) else {
         return Ok(Consulted::Refused(exact));
@@ -1557,8 +1567,9 @@ fn carry_answer(
     else {
         return Ok(());
     };
-    if judging.subject.perturbing != Perturbing::Mutants || watch.cancel.is_cancelled() {
-        return Ok(());
+    match judging.subject.perturbing {
+        Perturbing::Mutants if !watch.cancel.is_cancelled() => {}
+        Perturbing::Mutants | Perturbing::Faults => return Ok(()),
     }
     let outcome = match disposition {
         Disposition::Killed { .. } => rust_mutants::outcomes::CacheOutcome::Killed,
@@ -2152,12 +2163,14 @@ type Judgement = (Disposition, Vec<crate::report::Answered>, Vec<MutantResult>);
 
 /// What each execution records of the items its process entered: the union a carried answer rests on where this run carries answers about mutations, and nothing otherwise.
 fn recording(judging: &Judging<'_>) -> rust_mutants::session::Recording {
-    let carries = judging.subject.perturbing == Perturbing::Mutants
-        && judging
+    let carries = match judging.subject.perturbing {
+        Perturbing::Mutants => judging
             .options
             .evidence
             .as_ref()
-            .is_some_and(|evidence| evidence.carry.is_some());
+            .is_some_and(|evidence| evidence.carry.is_some()),
+        Perturbing::Faults => false,
+    };
     if carries {
         rust_mutants::session::Recording::Items
     } else {
@@ -2218,11 +2231,23 @@ fn repair(
     measured: &Measured,
 ) -> Result<bool, crate::error::RunnerError> {
     let was = judged.disposition.name();
-    let (fact, reach) = against_reaching(judging, mutant, measured)?;
+    let rerouted = match &judged.disposition {
+        Disposition::Survived { route } => route.reached_by(target),
+        Disposition::Rejected { .. }
+        | Disposition::Killed { .. }
+        | Disposition::StepLimitReached { .. }
+        | Disposition::Waited { .. }
+        | Disposition::Unreached
+        | Disposition::Equivalent { .. }
+        | Disposition::Unconfirmed { .. }
+        | Disposition::Errored { .. }
+        | Disposition::Declined { .. } => judging.subject.session.route(mutant).reached_by(target),
+    };
+    let (fact, reach, ran) = against_reaching(judging, mutant, measured)?;
     let mut aggregation = Aggregation::new();
     let (now, answered) = match aggregation.observe(judging, (mutant, target), fact)? {
         Some(decided) => (decided, aggregation.answered),
-        None => aggregation.finish(judging, mutant, judging.subject.session.route(mutant))?,
+        None => aggregation.finish(judging, mutant, rerouted.clone())?,
     };
     let reached = match reach {
         rust_mutants::session::SiteReach::Reached => crate::trace::SiteReached::Reached,
@@ -2239,21 +2264,36 @@ fn repair(
         reached,
     });
     if replaced {
+        let asked_before = match judged.routing.take() {
+            Some(routing) => routing.answered,
+            None => Vec::new(),
+        };
+        let asked: Vec<crate::report::Answered> =
+            asked_before.into_iter().chain(answered).collect();
+        let evidence = match &judged.evidence {
+            Some(evidence) => evidence.clone(),
+            None => RestsOn::not_sealed(),
+        };
+        left_for_later(
+            judging,
+            mutant,
+            (&rerouted, &asked, std::slice::from_ref(&ran)),
+            (&now, &evidence),
+        )?;
+        judged.routing = Some(crate::report::Routing::of(&rerouted, asked));
+        judged.source_run_id = None;
         judged.disposition = now;
-        if let Some(routing) = judged.routing.as_mut() {
-            routing.reaching.push(target.to_owned());
-            routing.answered.extend(answered);
-        }
     }
     Ok(replaced)
 }
 
-/// What one mutation comes to against one target whose reach moved, run with its guards recording, and whether that run reached the mutation's site (ADR 0036).
+/// What one mutation comes to against one target whose reach moved, run with its guards recording, whether that run reached the mutation's site, and the execution that decided both (ADR 0036).
 fn against_reaching(
     judging: &Judging<'_>,
     mutant: &Mutant,
     measured: &Measured,
-) -> Result<(TargetFact, rust_mutants::session::SiteReach), crate::error::RunnerError> {
+) -> Result<(TargetFact, rust_mutants::session::SiteReach, MutantResult), crate::error::RunnerError>
+{
     let (session, options, watch) = (judging.subject.session, judging.options, judging.watch);
     let request = request_for(
         mutant.id.as_str(),
@@ -2292,7 +2332,7 @@ fn against_reaching(
             },
         )?;
     }
-    Ok((fact_of(request, Some(measured), &result), reach))
+    Ok((fact_of(request, Some(measured), &result), reach, result))
 }
 
 /// What one execution of a mutation against one target says, before the route aggregates every target.
@@ -2362,7 +2402,10 @@ fn confirm(
     } = judging
         .controls
         .ask(judging.subject, request, judging.watch)?;
-    let faulted = judging.subject.perturbing == Perturbing::Faults;
+    let faulted = match judging.subject.perturbing {
+        Perturbing::Faults => true,
+        Perturbing::Mutants => false,
+    };
     if faulted {
         judging
             .watch
@@ -2524,8 +2567,9 @@ impl Controls {
             Some(known) => known.clone(),
             None => {
                 let control = session.control(request, watch.cancel, Observing::Reach)?;
-                if subject.perturbing == Perturbing::Mutants {
-                    self.observe(request, &control.observed, watch)?;
+                match subject.perturbing {
+                    Perturbing::Mutants => self.observe(request, &control.observed, watch)?,
+                    Perturbing::Faults => {}
                 }
                 let original = if control.result.outcome() == Outcome::Survived {
                     Original::Passed
@@ -2536,8 +2580,8 @@ impl Controls {
                         tail(&control.result.output)
                     ))
                 };
-                if subject.perturbing == Perturbing::Mutants {
-                    watch.trace.control(crate::trace::ControlRecord {
+                match subject.perturbing {
+                    Perturbing::Mutants => watch.trace.control(crate::trace::ControlRecord {
                         target: request.target.clone(),
                         test: request.test.clone(),
                         asked_for: request.mutant.clone(),
@@ -2547,7 +2591,8 @@ impl Controls {
                                 detail: detail.clone(),
                             },
                         },
-                    });
+                    }),
+                    Perturbing::Faults => {}
                 }
                 let known = Answer {
                     original,

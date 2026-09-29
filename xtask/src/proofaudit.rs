@@ -34,6 +34,7 @@ pub const EXIT_UNAUDITED: u8 = 3;
 const KILLED: &str = "killed";
 const SURVIVED: &str = "survived";
 const UNREACHED: &str = "unreached";
+const DISCHARGED: &str = "discharged";
 const REJECTED: &str = "compile-rejected";
 const STEP_LIMIT_REACHED: &str = "step-limit-reached";
 const WAITED: &str = "waited";
@@ -48,6 +49,7 @@ const DIMENSION_NOT_MEASURED: &str = "dimension-not-measured";
 const CORRUPT_AFTER_CRASH: &str = "corrupt-after-crash";
 const BROKEN_UNDER_FAULT: &str = "broken-under-fault";
 const NOT_MEASURED_FINDING: &str = "not-measured";
+const UNATTRIBUTED_WRITE: &str = "fault-write-unattributed";
 /// Every finding kind that is something wrong with the code under test, as `docs/report-v1.md` marks them, which is what lets a run conclude DEFECT.
 pub const DEFECT_KINDS: [&str; 7] = [
     "build-failure",
@@ -1282,7 +1284,118 @@ fn drift(
     held_to_findings(recording, &resting, &mut notes);
     held_to_limitation(recording, &derived, &mut notes);
     held_to_repairs(recording, &resting, &mut notes);
+    if let Some(rerouted) = rerouted {
+        held_to_counts(recording, &derived, rerouted, &mut notes);
+    }
     notes.looked()
+}
+
+/// The counts the `unstable-baseline` finding and the `reach-moved` limitation give each moved target, re-derived from the rows, their routes and the repairs: how many survivors and how many unreached claims still rest on it, and how many dispositions resting on it a repair replaced (ADR 0036 decision 3).
+fn held_to_counts(
+    recording: &Recording<'_>,
+    derived: &BTreeMap<String, crate::drift::Standing>,
+    Rerouted { routing, repairs }: Rerouted<'_>,
+    notes: &mut Notes<'_>,
+) {
+    let moved = derived
+        .iter()
+        .filter(|(_, standing)| **standing == crate::drift::Standing::Moved)
+        .map(|(target, _)| target);
+    for target in moved {
+        let still = |outcome: &str| {
+            recording
+                .mutants
+                .iter()
+                .filter(|row| row.outcome == outcome)
+                .filter(|row| {
+                    !routing.routes.iter().any(|route| {
+                        route.names(&row.id, &row.display_id)
+                            && route.reaching.iter().any(|one| one == target)
+                    })
+                })
+                .filter(|row| {
+                    !repairs.iter().any(|repair| {
+                        repair.mutant == row.display_id
+                            && repair.target == *target
+                            && repair.reached == "reached"
+                    })
+                })
+                .count()
+        };
+        let counted = format!(
+            ": {} a proof removed its run of, and {} no test reached, rest on it",
+            mutations(still(SURVIVED)),
+            mutations(still(UNREACHED))
+        );
+        for detail in recording
+            .part
+            .findings
+            .iter()
+            .filter(|row| {
+                field(row, "kind").as_deref() == Some(UNSTABLE_BASELINE)
+                    && field(row, "subject").as_deref() == Some(target.as_str())
+            })
+            .filter_map(|row| field(row, "detail"))
+            .filter(|detail| !detail.contains(&counted))
+        {
+            notes.violated(
+                target,
+                format!(
+                    "the {UNSTABLE_BASELINE} finding about {target} does not say what the rows \
+                     and repairs leave resting on it, which is `{}`: {detail}",
+                    counted.trim_start_matches(": ")
+                ),
+            );
+        }
+        held_to_replaced(recording, (target, repairs), notes);
+    }
+}
+
+/// The `reach-moved` limitation about `target`, held to how many dispositions resting on it a repair replaced.
+fn held_to_replaced(
+    recording: &Recording<'_>,
+    (target, repairs): (&str, &[crate::repair::Repair]),
+    notes: &mut Notes<'_>,
+) {
+    let again = repairs
+        .iter()
+        .filter(|repair| repair.target == target)
+        .filter(|repair| repair.reached == "reached" || repair.now != repair.was)
+        .count();
+    let said = format!(
+        "; {again} {} that rested on its baseline",
+        if again == 1 {
+            "disposition"
+        } else {
+            "dispositions"
+        }
+    );
+    for detail in recording
+        .part
+        .limitations
+        .iter()
+        .filter(|row| field(row, "name").as_deref() == Some(REACH_MOVED))
+        .filter_map(|row| field(row, "detail"))
+        .filter(|detail| detail.ends_with(&format!("({target})")))
+        .filter(|detail| !detail.contains(&said))
+    {
+        notes.violated(
+            target,
+            format!(
+                "the {REACH_MOVED} limitation about {target} does not count the {again} \
+                 disposition(s) the repairs replaced there: {detail}"
+            ),
+        );
+    }
+}
+
+/// How many mutations, in the words a finding counts them in.
+fn mutations(count: usize) -> String {
+    if count == 1 {
+        "1 mutation".to_owned()
+    } else {
+        format!("{count} mutations")
+    }
 }
 
 /// How many dispositions still rest on each moved target: a survivor or an unreached claim whose route did not put the target to it, and which no repair against it that reached the site decided again; every one where the run kept no routing to tell.
@@ -1426,10 +1539,11 @@ fn repaired(
         );
         return notes.looked();
     };
-    if repairs.is_empty() {
-        return notes.absent("the run ran no disposition again against a target whose reach moved");
-    }
     let [Engine { touched, .. }] = engines else {
+        if repairs.is_empty() {
+            return notes
+                .absent("the run ran no disposition again against a target whose reach moved");
+        }
         notes.unaudited(
             "repair",
             format!(
@@ -1441,6 +1555,10 @@ fn repaired(
         return notes.looked();
     };
     let moved = crate::drift::standings(touched);
+    let owed = owed(recording, (repairs, routing), &moved, &mut notes);
+    if repairs.is_empty() && owed == 0 {
+        return notes.absent("the run ran no disposition again against a target whose reach moved");
+    }
     let paired = paired(recording, repairs, (routing, touched), &mut notes);
     for (at, repair) in repairs.iter().enumerate() {
         let before = repairs
@@ -1473,7 +1591,81 @@ fn repaired(
     notes.looked()
 }
 
-/// Each repair's last execution against its moved target, paired with the one engine repair touch record naming that mutation and target; a repair touch no repair names, or a repair two of them name, is a violation.
+/// How many dispositions rested on a moved target when the repair came to it, each of which it owes a run against that target, holding every such pair to a repair that names it and every repair to the order the repair takes: moved target by moved target in name order, mutation by mutation in catalog order (ADR 0036 decision 1).
+///
+/// A disposition rests on a target when it is a lead, its route did not put the target to it, and it was `survived` or `unreached` once every repair against an earlier target had replaced it.
+fn owed(
+    recording: &Recording<'_>,
+    (repairs, routing): (&[crate::repair::Repair], &crate::route::Routing),
+    moved: &BTreeMap<String, crate::drift::Standing>,
+    notes: &mut Notes<'_>,
+) -> usize {
+    let mut owed: Vec<(&str, &str)> = Vec::new();
+    let targets = moved
+        .iter()
+        .filter(|(_, standing)| **standing == crate::drift::Standing::Moved)
+        .map(|(target, _)| target);
+    for target in targets {
+        for row in recording
+            .mutants
+            .iter()
+            .filter(|row| matches!(row.rests, Rests::Unproven(_)))
+        {
+            let put = routing.routes.iter().any(|route| {
+                route.names(&row.id, &row.display_id)
+                    && route.reaching.iter().any(|one| one == target)
+            });
+            let of_it = || repairs.iter().filter(|one| one.mutant == row.display_id);
+            let then = match (
+                of_it().rev().find(|one| one.target < *target),
+                of_it().next(),
+            ) {
+                (Some(earlier), _) => earlier.now.as_str(),
+                (None, Some(first)) => first.was.as_str(),
+                (None, None) => row.outcome.as_str(),
+            };
+            if put || !matches!(then, SURVIVED | UNREACHED) {
+                continue;
+            }
+            owed.push((target.as_str(), row.display_id.as_str()));
+            if !of_it().any(|one| one.target == *target) {
+                notes.violated(
+                    &row.display_id,
+                    format!(
+                        "it was {then} on the word of the baseline of {target}, whose reach \
+                         moved, and no repair ran it again there"
+                    ),
+                );
+            }
+        }
+    }
+    let place = |repair: &crate::repair::Repair| {
+        (
+            repair.target.clone(),
+            recording
+                .mutants
+                .iter()
+                .find(|row| row.display_id == repair.mutant)
+                .and_then(|row| row.catalog_index),
+        )
+    };
+    for (earlier, later) in repairs.iter().zip(repairs.iter().skip(1)) {
+        if place(earlier) > place(later) {
+            notes.violated(
+                &later.mutant,
+                format!(
+                    "it was run again against {} after {} was against {}, out of the order the \
+                     repair takes: moved target by moved target in name order, and mutation by \
+                     mutation in catalog order",
+                    later.target, earlier.mutant, earlier.target
+                ),
+            );
+        }
+    }
+    owed.len()
+}
+
+/// Each repair's last execution against its moved target, paired with the last engine repair touch record naming that mutation and target, which is the quiet re-measurement's where a wait had one; a repair touch no repair names is a violation.
 fn paired<'a>(
     recording: &Recording<'_>,
     repairs: &[crate::repair::Repair],
@@ -1528,19 +1720,7 @@ fn paired<'a>(
                 touch.target == repair.target && touch.mutant.is_some() && touch.mutant == id
             })
             .collect();
-        match naming.as_slice() {
-            [] => pairs.push((exec, None)),
-            [one] => pairs.push((exec, Some(*one))),
-            several => notes.violated(
-                &repair.mutant,
-                format!(
-                    "{} repair touch records name it against {}, so which one its repair \
-                     reached through cannot be told",
-                    several.len(),
-                    repair.target
-                ),
-            ),
-        }
+        pairs.push((exec, naming.last().copied()));
     }
     pairs
 }
@@ -1576,8 +1756,13 @@ fn rested(
     }
     let (expected_was, by) = match before {
         Some(now) => (now, "the repair of it before this one made it"),
-        None if route.is_some_and(|route| route.granularity == UNREACHED) => {
-            (UNREACHED, "its route makes it")
+        None if route
+            .is_some_and(|route| route.reaching.is_empty() && route.granularity != DISCHARGED) =>
+        {
+            (
+                UNREACHED,
+                "its route reaches no target and a proof removed none, which makes it",
+            )
         }
         None => (SURVIVED, "its route makes it"),
     };
@@ -3043,6 +3228,7 @@ fn faults(
         return notes.looked();
     };
     broken(recording, faulted, &mut notes);
+    unattributed(recording, faulted, &mut notes);
     let recorded: BTreeMap<&str, &crate::faults::Site> = faulted
         .sites
         .iter()
@@ -3780,6 +3966,72 @@ fn broken(recording: &Recording<'_>, faulted: &crate::faults::Faulted, notes: &m
              finding says so"
                 .to_owned(),
         );
+    }
+}
+
+/// The `fault-write-unattributed` finding, owed wherever a path the phase left written was put to a fault run alone and no such run tied it, and naming every such path, and no path a run tied.
+fn unattributed(
+    recording: &Recording<'_>,
+    faulted: &crate::faults::Faulted,
+    notes: &mut Notes<'_>,
+) {
+    let tied: BTreeSet<&str> = faulted
+        .writes
+        .iter()
+        .filter(|(_, tied)| *tied)
+        .map(|(path, _)| path.as_str())
+        .collect();
+    let untied: BTreeSet<&str> = faulted
+        .writes
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .filter(|path| !tied.contains(path))
+        .collect();
+    let details: Vec<Option<String>> = recording
+        .part
+        .findings
+        .iter()
+        .filter(|row| {
+            field(row, "kind").as_deref() == Some(NOT_MEASURED_FINDING)
+                && field(row, "subject").as_deref() == Some(UNATTRIBUTED_WRITE)
+        })
+        .map(|row| field(row, "detail"))
+        .collect();
+    match details.as_slice() {
+        [] if untied.is_empty() => {}
+        [] => notes.violated(
+            UNATTRIBUTED_WRITE,
+            format!(
+                "the recording puts {} to a fault run alone and ties none of them, and the report \
+                 raises no {UNATTRIBUTED_WRITE} finding",
+                untied.iter().copied().collect::<Vec<&str>>().join(", ")
+            ),
+        ),
+        [None] => notes.violated(
+            UNATTRIBUTED_WRITE,
+            "the finding names no path it is about".to_owned(),
+        ),
+        [Some(detail)] => {
+            for path in untied.iter().filter(|path| !detail.contains(**path)) {
+                notes.violated(
+                    UNATTRIBUTED_WRITE,
+                    format!("no fault run alone tied {path}, and the finding does not name it"),
+                );
+            }
+            for path in tied.iter().filter(|path| detail.contains(**path)) {
+                notes.violated(
+                    UNATTRIBUTED_WRITE,
+                    format!("a fault run alone tied {path}, and the finding calls it unattributed"),
+                );
+            }
+        }
+        several => notes.violated(
+            UNATTRIBUTED_WRITE,
+            format!(
+                "the report raises {} {UNATTRIBUTED_WRITE} findings where one names every path",
+                several.len()
+            ),
+        ),
     }
 }
 
