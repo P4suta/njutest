@@ -127,17 +127,38 @@ fn cache_key(name: &str, parts: &[&str]) -> String {
 /// The flags every single-file guest is compiled with: optimized enough that recursion lives on the native stack.
 const PROGRAM_FLAGS: [&str; 6] = ["--edition", "2024", "-C", "opt-level=1", "--target", GUEST_TARGET];
 
+/// What every single-file guest is linked with so the host can start it in a directory, spelled as `rustc` takes a linker argument.
+fn start_flags() -> Vec<String> {
+    rust_mutants_sealed::START_LINK_ARGS
+        .iter()
+        .map(|argument| format!("-Clink-arg={argument}"))
+        .collect()
+}
+
 /// The guest program, compiled for `wasm32-wasip1` by the pinned `rustc`.
 fn program_bytes() -> Vec<u8> {
     let probe = tempfile::tempdir().expect("a scratch directory");
     let banner = toolchain_banner(probe.path());
-    let key = cache_key("program", &[PROGRAM, &banner, &PROGRAM_FLAGS.join(" ")]);
+    let key = cache_key(
+        "program",
+        &[
+            PROGRAM,
+            &banner,
+            &PROGRAM_FLAGS.join(" "),
+            &start_flags().join(" "),
+        ],
+    );
     cached(&key, |scratch| {
         let source = scratch.join("program.rs");
         std::fs::write(&source, PROGRAM).expect("the guest source can be written");
         let output = scratch.join("program.wasm");
         let mut command = pinned("rustc", scratch);
-        command.args(PROGRAM_FLAGS).arg("-o").arg(&output).arg(&source);
+        command
+            .args(PROGRAM_FLAGS)
+            .args(start_flags())
+            .arg("-o")
+            .arg(&output)
+            .arg(&source);
         succeeded(command, "rustc for the guest program");
         std::fs::read(&output).expect("rustc wrote the guest")
     })

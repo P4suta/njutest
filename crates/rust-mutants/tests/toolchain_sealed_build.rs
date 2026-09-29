@@ -756,6 +756,70 @@ fn a_test_that_keeps_files_where_tmpdir_names_passes_sealed_and_one_that_asks_st
     );
 }
 
+#[test]
+fn a_mutant_that_sends_a_test_to_an_absolute_path_meets_a_refusal_rather_than_the_package() {
+    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-absolute-path");
+    let session = rust_mutants::workspace::Workspace::open(
+        fixture.root(),
+        rust_mutants::testkit::opening::opening(
+            &njutest_devkit::paths::cargo_binary(),
+            fixture.temp(),
+        ),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(&every_rule(), &Cancel::new())
+    .expect("prepare");
+    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
+        .expect("the sealed runner starts");
+    let bench = session
+        .bench(&runner, &Cancel::new())
+        .expect("the bench is assembled");
+    let target = "fixture-absolute-path/test/reads";
+    let test = "the_setting_beside_the_manifest_is_read_by_a_relative_path";
+    let control = bench
+        .stations
+        .get(target)
+        .and_then(|station| station.controls.get(test))
+        .expect("the station holds the test");
+    assert!(
+        control.is_ok(),
+        "a relative path is read from the package's directory, where the guest starts: {control:?}"
+    );
+    let mut came_to = Vec::new();
+    for mutant in session.catalog().mutants() {
+        if !matches!(
+            mutant.candidate.rule.name,
+            "negate-condition" | "condition-to-true"
+        ) {
+            continue;
+        }
+        let said = bench
+            .put(target, test, mutant.id.as_str())
+            .expect("the host runs the execution");
+        came_to.push((mutant.candidate.rule.name, said));
+    }
+    assert_eq!(
+        came_to,
+        [
+            (
+                "negate-condition",
+                Some(rust_mutants_decision::evidence::Sealed::Doubted(
+                    rust_mutants_decision::evidence::Doubt::Refused
+                ))
+            ),
+            (
+                "condition-to-true",
+                Some(rust_mutants_decision::evidence::Sealed::Doubted(
+                    rust_mutants_decision::evidence::Doubt::Refused
+                ))
+            ),
+        ],
+        "`/setting.txt` names no place in the tree, so it is refused rather than read from the \
+         package's directory, where a file of that name lies and the machine's root holds none"
+    );
+}
+
 /// The options every preparation of a fixture below is made with, the one that records and the one that runs again alike.
 fn every_rule() -> rust_mutants::session::PrepareOptions {
     rust_mutants::session::PrepareOptions {

@@ -173,6 +173,16 @@ fn unfaulted_failures() -> Vec<(SealedError, String)> {
             "planted trap".to_owned(),
         ),
         (SealedError::Interrupted, "interrupted".to_owned()),
+        (
+            SealedError::StartUnexported { export: "chdir" },
+            "exports no `chdir`".to_owned(),
+        ),
+        (
+            SealedError::StartRefused {
+                path: "/guest/pkg".to_owned(),
+            },
+            "refused \"/guest/pkg\"".to_owned(),
+        ),
     ]
 }
 
@@ -208,7 +218,7 @@ fn faulted_failures() -> Vec<(SealedError, String)> {
                 directory,
                 fault,
             },
-            format!("\"pkg\" of the tree at \"/guest\" cannot be preopened: {fault}"),
+            format!("\"pkg\" of the tree at \"/guest\" cannot be started in: {fault}"),
         ));
     }
     for fault in memory_faults() {

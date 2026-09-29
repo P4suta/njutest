@@ -31,7 +31,10 @@ pub use error::{
 };
 pub use imports::{IMPORT_MODULE, WasiFunction};
 pub use interrupt::Interrupt;
-pub use invocation::{Arguments, ClockPolicy, Environment, Invocation, Limits, Preopen, Preopens};
+pub use invocation::{
+    Arguments, ClockPolicy, Environment, Invocation, Limits, Preopen, Preopens, START_LINK_ARGS,
+    Start,
+};
 pub use runner::{SealedModule, SealedRunner, WASMTIME_VERSION};
 pub use snapshot::{Snapshot, SnapshotBuilder};
 pub use transcript::{

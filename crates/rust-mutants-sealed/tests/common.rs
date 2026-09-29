@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use rust_mutants_sealed::{
     Arguments, ClockPolicy, Environment, Interrupt, Invocation, Limits, Preopen, Preopens,
-    SealedRunner, Snapshot, Transcript,
+    SealedRunner, Snapshot, Start, Transcript,
 };
 
 /// Every function of WASI preview1 and its signature in the text format, written from the specification rather than from the crate's table, so each checks the other.
@@ -167,13 +167,21 @@ pub fn tree(path: &str, snapshot: Snapshot) -> Preopen {
     }
 }
 
-/// The working directory `directory` of the tree preopened at `tree`.
+/// The root directory, the guest starting in `directory` of the tree preopened at `tree`.
 #[must_use]
-pub fn working(tree: &str, directory: &str) -> Preopen {
-    Preopen::Working {
-        tree: tree.to_owned(),
-        directory: directory.to_owned(),
+pub fn root_starting_in(tree: &str, directory: &str) -> Preopen {
+    Preopen::Root {
+        start: Some(Start {
+            tree: tree.to_owned(),
+            directory: directory.to_owned(),
+        }),
     }
+}
+
+/// The root directory, the guest starting in none of its own.
+#[must_use]
+pub const fn root() -> Preopen {
+    Preopen::Root { start: None }
 }
 
 /// An invocation with no arguments past the program name, the snapshot preopened at `/sandbox`.

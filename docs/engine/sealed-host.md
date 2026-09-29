@@ -23,7 +23,7 @@ An `Invocation` is one value holding everything the run is a function of:
 | --- | --- |
 | `arguments` | `args_get`, the program name first |
 | `environment` | `environ_get`, in the order of the names |
-| `preopens` | each `Preopen` as descriptors 3, 4, … in the order given: a read-only `Snapshot` at its guest path, which may be an absolute host path string, or the working directory `.` inside a tree given before it, as [the working directory](#the-working-directory) says |
+| `preopens` | each `Preopen` as descriptors 3, 4, … in the order given: a read-only `Snapshot` at its guest path, which may be an absolute host path string, or the root directory `/` and the directory the guest starts in, as [the root and the start](#the-root-and-the-start) say |
 | `seed` | the stream `random_get` draws from |
 | `fuel` | the budget every WebAssembly instruction and every host call spends |
 | `limits` | the most memory, standard output, standard error, and overlay the guest may hold |
@@ -80,25 +80,30 @@ A wait for a deadline past the end of virtual time is a wait nothing ends, so th
 A directory lists `.` and `..` and then its entries in the order of their names.
 Every file and directory reads the same metadata in every invocation: its times are zero until the guest sets them, its inode is a digest of its path, its device is the number of its preopen, and it has one link.
 
-## The working directory
+## The root and the start
 
-A `Preopen::Working` names a tree preopened before it and a directory inside that tree, and the guest is given it as `.`.
-wasi-libc, which every Rust guest resolves a path through, reads a preopen named `.` as the empty prefix, and gives a path to the preopen whose name is the longest prefix of it, so a path no other preopen names reaches the working directory.
-wasi-libc takes the leading `/` off a path before it matches one, so an absolute path no other preopen names reaches it too, as the relative path it becomes: a sealed guest's root directory is its working directory.
-Two preopens wasi-libc reads as one prefix, such as `/` and `.`, or `/a` and `a/`, are refused (`RS0004`).
-
-A relative path starts at the working directory and climbs with `..` as far as its tree's root, never past it.
-The working directory and its tree are one tree: what a path through one wrote, a path through the other reads, and the transcript reports it under the tree's guest path.
+A `Preopen::Root` gives the guest `/`.
+wasi-libc, which every Rust guest resolves a path through, gives a path to the preopen whose name is the longest prefix of it, after it takes the leading `/` off both, so the root, whose name is the empty prefix, receives every absolute path no tree's own preopen names, without its `/`.
+From the root, a path reaches a tree whose own spelling of an absolute path reads it as one below the tree's root, and of several, the one whose root is deepest.
+Every other path is refused with `notcapable` and recorded as an escape, and so is the root itself, which lists nothing and has no metadata: nothing a guest reaches through `/` is the machine's.
+Two preopens wasi-libc reads as one prefix, such as the root and a tree at `/` or `.`, or `/a` and `a/`, are refused (`RS0004`).
 
 A tree's guest path says how the build that made the guest spells a path into it.
 A guest path spelled from a drive's root, `X:\…` or `X:/…`, is a Windows tree: in every path into it `\` and `/` both separate names, and a path is read as Windows reads one, empty names and `.` dropped and each `..` taking back the name before it.
-Any other guest path is a POSIX tree, where `/` alone separates names and `..` climbs the directories walked.
+Any other guest path is a POSIX tree, where `/` alone separates names and `..` climbs the directories walked; from the root, a `..` would climb the machine's own directories, which decide natively where it lands, so it is refused.
 A Windows build bakes paths such as `env!("CARGO_MANIFEST_DIR")` into the guest as it spells them, and the guest's standard library, which knows `/` alone, takes them for relative ones and joins them with `/`.
-wasi-libc matches a preopen's name only where `/` or nothing follows it, so `C:\tree\pkg/data.txt` never reaches the tree preopened at `C:\tree`, and neither does `C:\tree/data.txt` where the tree was preopened at `C:\tree\`.
-The working directory of a Windows tree answers such a path: one whose names begin with the names of the tree's root resolves from the tree's root.
+wasi-libc matches a preopen's name only where `/` or nothing follows it, so `C:\tree\pkg/data.txt` never reaches the tree preopened at `C:\tree`, and it reaches the root.
+The root reads it as the Windows tree spells it: a path whose names begin with the names of the tree's root resolves from the tree's root, and it is read from the last of its names that begins a drive's root, since wasi-libc joins a path it took for a relative one onto the directory the guest started in, as Windows replaces one absolute path with another.
 The drive letter and every name of the tree's root are compared in either case, as NTFS compares a name: character by character, each in either case where its case is one other character, so a build that spelled the root in another case than the tree was read at still reaches it.
 A name below the root is walked exactly as spelled, as the snapshot holds it, and one it holds only in another case is refused, as in every tree.
 Any other absolute path, on another drive, below a root it does not spell, rooted without a drive, or on a drive without its root, names no place in the tree and is refused.
+
+The root's `start` names a directory of a tree preopened before it, and the host enters it before `_start`, through the guest's own C library, as cargo starts a test in its package's directory: it asks the guest's `malloc` for room, writes the directory there as the tree's build spells a path, and calls the guest's `chdir`.
+The calls run the guest's own code and spend its fuel, so a stop in them is the guest's stop, and a `chdir` that refuses the directory leaves the guest where it was not asked to start, which is no answer about it (`RS3006`).
+wasi-libc then makes every relative path absolute from that directory, so a relative path reaches its tree from the start and climbs with `..` as far as the tree's root, never past it, and never reaches the root: a relative path and an absolute one are two calls the host tells apart.
+A module that does not export `chdir` and `malloc`, both of type (i32) -> i32, cannot be started in a directory (`RS1006`); `START_LINK_ARGS`, `--undefined=chdir --export=chdir --export=malloc`, are the linker arguments that keep the C library's `chdir` and export both.
+Without a start, the guest's C library starts at `/`, so every relative path reaches the root and is refused.
+`std::env::current_dir()` reads the start as the C library keeps it: a POSIX directory as given, and a Windows one after a `/` of wasi-libc's own.
 
 ## What a run costs
 

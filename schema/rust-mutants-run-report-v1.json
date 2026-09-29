@@ -1159,7 +1159,8 @@
                   "native-unnamed",
                   "proc-macro",
                   "not-listed",
-                  "no-harness"
+                  "no-harness",
+                  "flags-unmerged"
                 ]
               },
               "remedy": {

@@ -8,7 +8,7 @@ use std::num::NonZeroU64;
 
 use crate::digest::{Encoder, SealedDigest};
 use crate::error::{EnvironmentFault, PreopenFault, SealedError, WorkingFault};
-use crate::snapshot::{NodeId, Snapshot};
+use crate::snapshot::Snapshot;
 use crate::spelling::Spelling;
 
 /// The arguments a guest reads, the program name first.
@@ -73,8 +73,8 @@ impl Environment {
     }
 }
 
-/// The name the guest's working directory is preopened by.
-pub(crate) const WORKING_NAME: &str = ".";
+/// The name the guest's root directory is preopened by.
+pub(crate) const ROOT_NAME: &str = "/";
 
 /// One directory a guest is given before it starts, as a descriptor numbered from 3 in the order given.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,14 +86,24 @@ pub enum Preopen {
         /// What the tree holds.
         snapshot: Snapshot,
     },
-    /// The guest's working directory, preopened as `.`: a directory of the tree preopened before it at `tree`.
-    Working {
-        /// The path of the tree it is in, as that tree's own preopen gives it.
-        tree: String,
-        /// The directory, as `/`-separated names below the tree's root, empty for the root itself.
-        directory: String,
+    /// The guest's root directory, `/`: an absolute path into a tree, spelled as that tree's build spells one, reaches the tree, and every other is refused as an escape.
+    Root {
+        /// The directory the guest starts in, where it starts in one.
+        start: Option<Start>,
     },
 }
+
+/// The directory a guest starts in: a directory of a tree preopened before the root, which the host enters through the guest's own `chdir` before `_start`, as cargo starts a test in its package's directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Start {
+    /// The path of the tree it is in, as that tree's own preopen gives it.
+    pub tree: String,
+    /// The directory, as `/`-separated names below the tree's root, empty for the root itself.
+    pub directory: String,
+}
+
+/// The linker arguments a guest is built with so that the host can start it in a directory: the C library's `chdir`, kept although nothing else calls it and exported, and its `malloc`, exported, which holds the path `chdir` is given.
+pub const START_LINK_ARGS: [&str; 3] = ["--undefined=chdir", "--export=chdir", "--export=malloc"];
 
 /// The directories a guest may reach, in the order their descriptors are numbered from 3.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,30 +121,24 @@ pub(crate) enum Laid {
         /// How a path into it is read, as its root is spelled.
         spelling: Spelling,
     },
-    /// A working directory.
-    Working {
-        /// The path of the tree it is in.
-        tree: String,
-        /// The directory, as given.
-        directory: String,
-        /// The tree it is in, as the index of the tree among the trees alone.
-        index: usize,
-        /// The directory's node.
-        node: NodeId,
+    /// The root directory.
+    Root {
+        /// The directory the guest starts in, as given, and the path its `chdir` is given, spelled as the tree's build spells one.
+        start: Option<(Start, String)>,
     },
 }
 
 impl Preopens {
-    /// The preopens, refusing a guest path the guest cannot be given and a working directory no tree holds.
+    /// The preopens, refusing a guest path the guest cannot be given and a directory to start in no tree holds.
     ///
     /// # Errors
-    /// [`SealedError::Preopen`] for an empty guest path, one holding NUL, or two wasi-libc reads as one place; [`SealedError::WorkingDirectory`] for a working directory that names no tree given before it, or no directory of it.
+    /// [`SealedError::Preopen`] for an empty guest path, one holding NUL, or two wasi-libc reads as one place; [`SealedError::WorkingDirectory`] for a directory to start in that names no tree given before the root, or no directory of it.
     pub fn new(preopens: Vec<Preopen>) -> Result<Self, SealedError> {
         let mut laid: Vec<Laid> = Vec::with_capacity(preopens.len());
         for preopen in preopens {
             let path = match &preopen {
                 Preopen::Tree { path, .. } => path.as_str(),
-                Preopen::Working { .. } => WORKING_NAME,
+                Preopen::Root { .. } => ROOT_NAME,
             };
             let fault = if path.is_empty() {
                 Some(PreopenFault::Empty)
@@ -163,24 +167,19 @@ impl Preopens {
                         spelling,
                     }
                 }
-                Preopen::Working { tree, directory } => {
-                    let (index, node) = match working(&laid, &tree, &directory) {
-                        Ok(found) => found,
-                        Err(fault) => {
-                            return Err(SealedError::WorkingDirectory {
-                                tree,
-                                directory,
-                                fault,
-                            });
-                        }
-                    };
-                    Laid::Working {
-                        tree,
-                        directory,
-                        index,
-                        node,
+                Preopen::Root { start: None } => Laid::Root { start: None },
+                Preopen::Root { start: Some(start) } => match entered(&laid, &start) {
+                    Ok(path) => Laid::Root {
+                        start: Some((start, path)),
+                    },
+                    Err(fault) => {
+                        return Err(SealedError::WorkingDirectory {
+                            tree: start.tree,
+                            directory: start.directory,
+                            fault,
+                        });
                     }
-                }
+                },
             };
             laid.push(next);
         }
@@ -191,6 +190,16 @@ impl Preopens {
     pub(crate) fn laid(&self) -> &[Laid] {
         &self.0
     }
+
+    /// The path the guest's `chdir` is given before `_start`, where the root names a directory to start in.
+    pub(crate) fn start(&self) -> Option<&str> {
+        self.0.iter().find_map(|laid| match laid {
+            Laid::Root {
+                start: Some((_start, path)),
+            } => Some(path.as_str()),
+            Laid::Root { start: None } | Laid::Tree { .. } => None,
+        })
+    }
 }
 
 impl Laid {
@@ -198,29 +207,39 @@ impl Laid {
     pub(crate) fn name(&self) -> &str {
         match self {
             Self::Tree { path, .. } => path,
-            Self::Working { .. } => WORKING_NAME,
+            Self::Root { .. } => ROOT_NAME,
         }
     }
 }
 
-/// The tree `laid` holds at `tree`, counting trees alone, and the node of its directory `directory`.
-fn working(laid: &[Laid], tree: &str, directory: &str) -> Result<(usize, NodeId), WorkingFault> {
-    let found = laid
-        .iter()
-        .filter_map(|earlier| match earlier {
-            Laid::Tree { path, snapshot, .. } => Some((path, snapshot)),
-            Laid::Working { .. } => None,
-        })
-        .enumerate()
-        .find(|(_at, (path, _snapshot))| *path == tree);
-    let Some((index, (_path, snapshot))) = found else {
+/// The path the guest's `chdir` is given for `start`, which names a directory of a tree `laid` holds: the tree's path and the directory's names, joined as the tree's build joins a path.
+fn entered(laid: &[Laid], start: &Start) -> Result<String, WorkingFault> {
+    let found = laid.iter().find_map(|earlier| match earlier {
+        Laid::Tree {
+            path,
+            snapshot,
+            spelling,
+        } if *path == start.tree => Some((path, snapshot, spelling)),
+        Laid::Tree { .. } | Laid::Root { .. } => None,
+    });
+    let Some((path, snapshot, spelling)) = found else {
         return Err(WorkingFault::NoTree);
     };
-    let names = names_of(directory).ok_or(WorkingFault::NotNames)?;
-    let node = snapshot
+    let names = names_of(&start.directory).ok_or(WorkingFault::NotNames)?;
+    snapshot
         .directory(&names)
         .ok_or(WorkingFault::NotADirectory)?;
-    Ok((index, node))
+    if names.is_empty() {
+        return Ok(path.clone());
+    }
+    Ok(match spelling {
+        Spelling::Posix => format!("{}/{}", path.trim_end_matches('/'), names.join("/")),
+        Spelling::Windows { .. } => format!(
+            "{}\\{}",
+            path.trim_end_matches(['\\', '/']),
+            names.join("\\")
+        ),
+    })
 }
 
 /// Where wasi-libc, which every Rust guest resolves a path through, puts a preopen named `path`: without its leading `/` and `./`, `.` alone as nothing, and without its trailing `/`.
@@ -231,7 +250,7 @@ fn place(path: &str) -> &str {
             rest = after;
         } else if let Some(after) = rest.strip_prefix("./") {
             rest = after;
-        } else if rest == WORKING_NAME {
+        } else if rest == "." {
             rest = "";
         } else {
             return rest.trim_end_matches('/');
@@ -239,7 +258,7 @@ fn place(path: &str) -> &str {
     }
 }
 
-/// The names of a working directory given as `/`-separated names, none where one is empty, `.`, `..` or holds NUL.
+/// The names of a directory to start in given as `/`-separated names, none where one is empty, `.`, `..` or holds NUL.
 fn names_of(directory: &str) -> Option<Vec<&str>> {
     if directory.is_empty() {
         return Some(Vec::new());
@@ -301,7 +320,7 @@ impl Invocation {
         module: &SealedDigest,
         configuration: &SealedDigest,
     ) -> SealedDigest {
-        let mut encoder = Encoder::new("rust-mutants-sealed/invocation/v2");
+        let mut encoder = Encoder::new("rust-mutants-sealed/invocation/v3");
         encoder.digest(configuration).digest(module);
         encoder.count(self.arguments.0.len());
         for argument in &self.arguments.0 {
@@ -317,10 +336,17 @@ impl Invocation {
                 Laid::Tree { path, snapshot, .. } => {
                     encoder.tag(b'T').text(path).digest(snapshot.digest());
                 }
-                Laid::Working {
-                    tree, directory, ..
+                Laid::Root { start: None } => {
+                    encoder.tag(b'R').tag(b'N');
+                }
+                Laid::Root {
+                    start: Some((start, _path)),
                 } => {
-                    encoder.tag(b'W').text(tree).text(directory);
+                    encoder
+                        .tag(b'R')
+                        .tag(b'S')
+                        .text(&start.tree)
+                        .text(&start.directory);
                 }
             }
         }

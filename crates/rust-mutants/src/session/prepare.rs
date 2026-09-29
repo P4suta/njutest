@@ -1075,6 +1075,10 @@ fn sealed_build(
     if !held {
         return Ok(SealedBuild::none(targets, Unsealed::TargetMissing));
     }
+    let flags = match sealed_flags(building)? {
+        Ok(flags) => flags,
+        Err(why) => return Ok(SealedBuild::none(targets, why)),
+    };
     let dir = workspace.build_dir().nested("sealed");
     let examples = targets
         .iter()
@@ -1086,13 +1090,13 @@ fn sealed_build(
         }
         compiled.push(compile(
             &workspace.driver(cancel),
-            &sealed_compile(building, &dir, kind),
+            &sealed_compile(building, (&dir, &flags), kind),
         )?);
     }
     let captured = sealed_doctests(
         building,
         targets,
-        &sealed_compile(building, &dir, CompileKind::SealedTests),
+        &sealed_compile(building, (&dir, &flags), CompileKind::SealedTests),
     )?;
     let sealed = SealedBuild::of(
         targets,
@@ -1111,12 +1115,59 @@ fn sealed_build(
     Ok(sealed)
 }
 
-/// How the sealed build compiles `kind` into `dir`: for the sealed target, with the features and profile the run asked for and the catalog its instrumentation reads.
+/// The flags the sealed build compiles with, or why which flags cargo would use for the sealed target is not known.
+///
+/// # Errors
+/// A toolchain that cannot say what the sealed target is.
+fn sealed_flags(
+    building: &Building<'_>,
+) -> Result<Result<crate::sealed::Flags, crate::sealed::Unsealed>, EngineError> {
+    use crate::sealed::TARGET;
+    let Building {
+        workspace,
+        cancel,
+        trace,
+        ..
+    } = *building;
+    let facts =
+        workspace
+            .toolchain
+            .target_facts(workspace.snapshot_root(), Some(TARGET), cancel)?;
+    let layered = crate::cargo::config::layered(
+        workspace.snapshot_root(),
+        crate::cargo::config::home(&workspace.base_env).as_deref(),
+    );
+    let linked = crate::sealed::start_linked();
+    let flags = crate::sealed::Flags::of(&workspace.base_env, &layered, &facts, &linked);
+    match &flags {
+        Ok(_flags) => trace.note(
+            "sealed-build",
+            &format!("every sealed module is linked with {}", linked.join(" ")),
+        ),
+        Err(why) => trace.note(
+            "sealed-build",
+            &format!(
+                "{}: which flags cargo compiles {TARGET} with is not known, so the sealed build \
+                 cannot link its modules with {}",
+                why.name(),
+                linked.join(" ")
+            ),
+        ),
+    }
+    Ok(flags)
+}
+
+/// How the sealed build compiles `kind` into `dir`: for the sealed target, with the features and profile the run asked for, the catalog its instrumentation reads, and `flags`.
 fn sealed_compile(
     building: &Building<'_>,
-    dir: &crate::cargo::BuildDir,
+    (dir, flags): (&crate::cargo::BuildDir, &crate::sealed::Flags),
     kind: CompileKind,
 ) -> CompileOptions {
+    let mut env = crate::vars::Variables::of([(
+        std::ffi::OsString::from(crate::instrument::COMPILED_CATALOG_ENV),
+        std::ffi::OsString::from(building.catalog.digest()),
+    )]);
+    env.overlay(&flags.environment());
     CompileOptions {
         kind,
         packages: building.options.packages.clone(),
@@ -1124,10 +1175,7 @@ fn sealed_compile(
         locked: building.workspace.locked,
         offline: building.workspace.offline,
         timeout: building.options.build_timeout,
-        env: crate::vars::Variables::of([(
-            std::ffi::OsString::from(crate::instrument::COMPILED_CATALOG_ENV),
-            std::ffi::OsString::from(building.catalog.digest()),
-        )]),
+        env,
         build: crate::cargo::BuildConfig {
             target: Some(crate::sealed::TARGET.to_owned()),
             ..building.options.build.clone()

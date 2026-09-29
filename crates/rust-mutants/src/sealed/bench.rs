@@ -12,7 +12,7 @@ use rust_mutants_decision::evidence::Sealed;
 use rust_mutants_decision::judgement::{Account, Ending, Harness, Observed, judged};
 use rust_mutants_sealed::{
     Arguments, ClockPolicy, Environment, Interrupt, Invocation, Limits, OverlayState, Preopen,
-    Preopens, RefusalReason, SealedError, SealedModule, SealedRunner, SealedStop, Snapshot,
+    Preopens, RefusalReason, SealedError, SealedModule, SealedRunner, SealedStop, Snapshot, Start,
     Transcript, TrapKind, WasiFunction,
 };
 
@@ -925,7 +925,7 @@ impl<'runner> Bench<'runner> {
         }))
     }
 
-    /// Every directory an instance of `station` is given: the tree, the records, its scratch, an empty `target_tmpdir` where cargo names one, what its build script wrote where one did, and its working directory where the tree holds it.
+    /// Every directory an instance of `station` is given: the tree, the records, its scratch, an empty `target_tmpdir` where cargo names one, what its build script wrote where one did, and the root, the instance starting in its package's directory where the tree holds it.
     fn preopens(
         &self,
         station: &Station<'_>,
@@ -961,12 +961,14 @@ impl<'runner> Bench<'runner> {
                 snapshot: built.snapshot.clone(),
             });
         }
-        if let Some(directory) = self.tree.within(&station.target.cwd) {
-            preopens.push(Preopen::Working {
+        let start = self
+            .tree
+            .within(&station.target.cwd)
+            .map(|directory| Start {
                 tree: self.tree.root.clone(),
                 directory,
             });
-        }
+        preopens.push(Preopen::Root { start });
         Preopens::new(preopens)
     }
 

@@ -19,21 +19,22 @@ Everything a native run observes is a lead: something a person may look into, ne
 ## A sealed run
 
 The engine builds the instrumented snapshot a second time, with `cargo test --no-run --target wasm32-wasip1 --keep-going`, into its own target directory.
-Each test binary becomes a WebAssembly command module.
+Each test binary becomes a WebAssembly command module, linked with `-C link-arg=--undefined=chdir -C link-arg=--export=chdir -C link-arg=--export=malloc` besides the flags cargo would compile the tree for the target with, so that the host can start it in a directory.
+Those are what the environment's `CARGO_ENCODED_RUSTFLAGS` or `RUSTFLAGS` give, and otherwise what the configuration gives the target, under its triple or a `cfg(…)` predicate that holds for it, and otherwise `build.rustflags`; rustdoc's flags are chosen the same way.
+Where which of them cargo would use is not known, because a configuration file could not be read or a predicate names what a target alone does not decide, nothing is sealed, `flags-unmerged`.
 Its tests are the ones `--list` names inside the host, given the harness arguments the run was configured with.
 
 Each test of each module runs in its own instance, as `<module> --exact <name> --test-threads=1 --nocapture` and then the harness arguments the run was configured with, less a thread count or a capture of their own, which libtest refuses to be given twice.
 The instance is new, the memory is the module's initial memory, the filesystem is the snapshot with nothing written, and the clock reads zero.
-Its working directory is its package's directory in the snapshot, where cargo runs a test and rustdoc a doctest, so a relative path reads what it reads natively.
+It starts in its package's directory in the snapshot, where cargo runs a test and rustdoc a doctest: the host enters it through the guest's own `chdir` before `_start`, so a relative path reads what it reads natively, and `std::env::current_dir()` names it.
 What a test writes for itself lands in directories the instance holds, each empty when it starts and written only to its overlay: `CARGO_TARGET_TMPDIR` at the path the build baked in, which for the sealed target is the target's own directory inside the target directory, and a home and a temporary directory, which `HOME` and `TMPDIR` name.
 What a target's build script wrote, its `OUT_DIR`, the instance holds as the build left it, at the path the build gave the target, so a test that reads it back at run time, through `std::env::var("OUT_DIR")` or `env!("OUT_DIR")`, reads what it reads natively; what a test writes there only its overlay holds, and the build's own directory is never touched.
 Each of these names reaches something sealed on every machine, and the same thing on each: the paths of `HOME`, `TMPDIR` and the scratch are the instance's own, and those of `CARGO_TARGET_TMPDIR` and `OUT_DIR` are the ones the build gave the target, read or made empty when the bench is assembled.
 The standard library of `wasm32-wasip1` has no temporary directory of its own, so `std::env::temp_dir()` panics there whatever `TMPDIR` says, and its home directory is none.
 Code that keeps its files where `TMPDIR` names, as a test that asks the environment does, works sealed, and what it made is gone with the instance.
 A panic of the standard library's own platform layer, `library/std/src/sys/`, as that one is, is a refusal of the sandbox rather than something the test observed: a test whose control fails after it has no control, for `refused`, and an execution that meets it where its control did not is doubted, `refused`, never a detection, since the same code passes natively, as `fixtures/fixture-temporary` shows.
-A path the build baked in, such as `env!("CARGO_MANIFEST_DIR")`, reaches the snapshot as the build spelled it, a Windows build's `C:\…` included, as [the sealed host](sealed-host.md#the-working-directory) says.
-Not yet: an absolute path no directory the instance holds names is read from the working directory rather than refused.
-wasi-libc resolves every path against its own working directory, `/`, and takes the leading `/` off before it matches a preopen, so such a path reaches the host as the relative path it becomes, the same call a relative one makes, and the host cannot refuse the one without the other; closing it needs the guest's own working directory set to its package's directory, so that `.` need not be preopened.
+A path the build baked in, such as `env!("CARGO_MANIFEST_DIR")`, reaches the snapshot as the build spelled it, a Windows build's `C:\…` included, as [the sealed host](sealed-host.md#the-root-and-the-start) says.
+Any other absolute path names no directory the instance holds, and is refused as an escape and recorded, never read from the package's directory, as `fixtures/fixture-absolute-path` shows: the guest's root directory reaches only what the instance holds.
 `--nocapture` keeps a panic's message on the stream the host records, where libtest's capture would hold it in memory the abort discards.
 
 A library's doctests seal too, as [Doctests](#doctests) says.
@@ -73,9 +74,9 @@ A refusal returns its error to the guest and is recorded in the transcript, so a
 | `fd_fdstat_get`, `fd_fdstat_set_flags`, `fd_fdstat_set_rights` | On the instance's descriptor table. |
 | `fd_filestat_get`, `path_filestat_get` | Fixed metadata: every timestamp one constant, the inode derived from the path, the size the overlay's. |
 | `fd_filestat_set_times`, `path_filestat_set_times` | Recorded in the overlay and read back; a time never set reads as the constant. |
-| `fd_prestat_get`, `fd_prestat_dir_name` | The snapshot, at the path the build knew it by; the directory the runtime's records land in; a scratch directory of the instance's own, whose empty `home` and `tmp` are what `HOME` and `TMPDIR` name; for a target cargo gives one, an empty directory at the `CARGO_TARGET_TMPDIR` the build baked in; for a target whose package has a build script, what the script wrote, at the `OUT_DIR` the build gave the target; and `.`, the test's working directory in the snapshot. |
+| `fd_prestat_get`, `fd_prestat_dir_name` | The snapshot, at the path the build knew it by; the directory the runtime's records land in; a scratch directory of the instance's own, whose empty `home` and `tmp` are what `HOME` and `TMPDIR` name; for a target cargo gives one, an empty directory at the `CARGO_TARGET_TMPDIR` the build baked in; for a target whose package has a build script, what the script wrote, at the `OUT_DIR` the build gave the target; and `/`, the root, which reaches each of these by its own spelling of an absolute path and refuses every other. |
 | `fd_readdir` | Entries in name order, with cookies that are their positions. |
-| `path_open`, `path_create_directory`, `path_remove_directory`, `path_rename`, `path_unlink_file` | Inside the snapshot, on the overlay: a relative path from the working directory, an absolute one below the snapshot's root as the build spelled it. A path outside it is refused, `ENOTCAPABLE`. A name its directory holds only in another case is refused, `ENOTCAPABLE`, since a file system that compares names in either case would have answered it from that name. |
+| `path_open`, `path_create_directory`, `path_remove_directory`, `path_rename`, `path_unlink_file` | Inside the snapshot, on the overlay: a relative path from the package's directory the test started in, an absolute one below the snapshot's root as the build spelled it. A path outside it is refused, `ENOTCAPABLE`. A name its directory holds only in another case is refused, `ENOTCAPABLE`, since a file system that compares names in either case would have answered it from that name. |
 | `path_readlink` | A link the snapshot holds. |
 | `path_link`, `path_symlink` | Refused, `ENOTSUP`. |
 | `sock_accept`, `sock_recv`, `sock_send`, `sock_shutdown` | Refused, `ENOTSUP`. |
@@ -163,6 +164,7 @@ Each is found, not listed: from the build, from the module's imports, and from t
 | Reason | Found by | To seal it |
 | --- | --- | --- |
 | The target is not installed | `rustc --print target-libdir --target wasm32-wasip1` names no directory | `rustup target add wasm32-wasip1` |
+| Which flags cargo compiles the sealed target with is not known, `flags-unmerged` | a cargo configuration file that does not read, or a `target.'cfg(…)'` table whose predicate names what a target alone does not decide | configure the flags of `wasm32-wasip1` under its own triple, or in `build.rustflags` |
 | The crate does not build for the target | the build's own error, per target with `--keep-going` | build its dependencies for `wasm32-wasip1`, or put what cannot build behind `cfg(not(target_family = "wasm"))` |
 | The module imports what the host does not provide | the import section | the named import, which is not part of `wasi_snapshot_preview1` |
 | A control does not pass sealed | the control | the control's own failure, which names the thread, process, socket or file it needed |

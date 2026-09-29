@@ -68,6 +68,43 @@ impl Spelling {
         }
     }
 
+    /// The names a path given to the guest's root directory walks below the root of the tree preopened at `root`, which this spells, with how many names that root is below the top of its file system; nothing where the path names no place in the tree.
+    ///
+    /// wasi-libc gives the root directory an absolute path without its leading `/`, and takes a path a Windows build spelled from a drive's root for a relative one, which it joins onto the directory the guest started in; so a Windows tree reads a path from the last name that begins a drive's root, as Windows reads an absolute path joined onto another, and a POSIX tree reads one whose `..` would climb the machine's directories as none of its own.
+    pub(crate) fn reach<'path>(
+        &self,
+        root: &str,
+        path: &'path str,
+    ) -> Option<(usize, Vec<&'path str>)> {
+        match self {
+            Self::Posix => {
+                let depth: Vec<&str> = root
+                    .split('/')
+                    .filter(|name| !name.is_empty() && *name != ".")
+                    .collect();
+                let mut names = Vec::new();
+                for name in path.split('/') {
+                    match name {
+                        "" | "." => {}
+                        ".." => return None,
+                        name => names.push(name),
+                    }
+                }
+                let within = depth.len() <= names.len()
+                    && depth.iter().zip(&names).all(|(root, name)| root == name);
+                if !within {
+                    return None;
+                }
+                let below = names.get(depth.len()..)?;
+                Some((depth.len(), below.to_vec()))
+            }
+            Self::Windows { names: depth, .. } => match self.read(from_last_drive(path)) {
+                Reading::Rooted(names) => Some((depth.len(), names)),
+                Reading::Relative(_) | Reading::Elsewhere => None,
+            },
+        }
+    }
+
     /// Whether `path` ends in a separator, which only a directory can.
     pub(crate) fn trailing(&self, path: &str) -> bool {
         match self {
@@ -84,6 +121,26 @@ fn drive_rooted(path: &str) -> Option<(u8, &str)> {
             path.get(2..).map(|rest| (*drive, rest))
         }
         _ => None,
+    }
+}
+
+/// `path` from the last of its names that begins a drive's root, `X:\` or `X:/`, or all of it where none does.
+fn from_last_drive(path: &str) -> &str {
+    let mut last = None;
+    let mut starts_a_name = true;
+    for (at, character) in path.char_indices() {
+        if starts_a_name
+            && path
+                .get(at..)
+                .is_some_and(|rest| drive_rooted(rest).is_some())
+        {
+            last = Some(at);
+        }
+        starts_a_name = matches!(character, '\\' | '/');
+    }
+    match last.and_then(|at| path.get(at..)) {
+        Some(from) => from,
+        None => path,
     }
 }
 

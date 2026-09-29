@@ -10,7 +10,7 @@ use rust_mutants_sealed::{
     SealedError, Snapshot, SnapshotBuilder, WorkingFault,
 };
 
-use crate::common::{command, invocation, run, runner, snapshot, tree, working};
+use crate::common::{command, invocation, root, root_starting_in, run, runner, snapshot, tree};
 
 #[test]
 fn an_argument_holding_nul_is_refused_by_its_place() {
@@ -64,22 +64,18 @@ fn a_guest_path_that_cannot_be_preopened_is_refused_by_what_is_wrong_with_it() {
             PreopenFault::Repeated,
         ),
         (
-            vec![tree("/", snapshot()), working("/", "")],
+            vec![tree("/", snapshot()), root_starting_in("/", "")],
+            PreopenFault::Repeated,
+        ),
+        (
+            vec![tree("/a", snapshot()), root(), tree(".", snapshot())],
             PreopenFault::Repeated,
         ),
         (
             vec![
                 tree("/a", snapshot()),
-                working("/a", ""),
-                tree(".", snapshot()),
-            ],
-            PreopenFault::Repeated,
-        ),
-        (
-            vec![
-                tree("/a", snapshot()),
-                working("/a", ""),
-                working("/a", "empty"),
+                root_starting_in("/a", ""),
+                root_starting_in("/a", "empty"),
             ],
             PreopenFault::Repeated,
         ),
@@ -96,43 +92,43 @@ fn a_guest_path_that_cannot_be_preopened_is_refused_by_what_is_wrong_with_it() {
 }
 
 #[test]
-fn a_working_directory_its_tree_does_not_hold_is_refused_by_what_is_wrong_with_it() {
+fn a_directory_to_start_in_its_tree_does_not_hold_is_refused_by_what_is_wrong_with_it() {
     let cases = [
-        (vec![working("/a", "")], WorkingFault::NoTree),
+        (vec![root_starting_in("/a", "")], WorkingFault::NoTree),
         (
-            vec![working("/a", ""), tree("/a", snapshot())],
+            vec![root_starting_in("/a", ""), tree("/a", snapshot())],
             WorkingFault::NoTree,
         ),
         (
-            vec![tree("/a", snapshot()), working("/b", "")],
+            vec![tree("/a", snapshot()), root_starting_in("/b", "")],
             WorkingFault::NoTree,
         ),
         (
-            vec![tree("/a", snapshot()), working("/a", "empty/")],
+            vec![tree("/a", snapshot()), root_starting_in("/a", "empty/")],
             WorkingFault::NotNames,
         ),
         (
-            vec![tree("/a", snapshot()), working("/a", "../empty")],
+            vec![tree("/a", snapshot()), root_starting_in("/a", "../empty")],
             WorkingFault::NotNames,
         ),
         (
-            vec![tree("/a", snapshot()), working("/a", "/empty")],
+            vec![tree("/a", snapshot()), root_starting_in("/a", "/empty")],
             WorkingFault::NotNames,
         ),
         (
-            vec![tree("/a", snapshot()), working("/a", ".")],
+            vec![tree("/a", snapshot()), root_starting_in("/a", ".")],
             WorkingFault::NotNames,
         ),
         (
-            vec![tree("/a", snapshot()), working("/a", "empty\0")],
+            vec![tree("/a", snapshot()), root_starting_in("/a", "empty\0")],
             WorkingFault::NotNames,
         ),
         (
-            vec![tree("/a", snapshot()), working("/a", "absent")],
+            vec![tree("/a", snapshot()), root_starting_in("/a", "absent")],
             WorkingFault::NotADirectory,
         ),
         (
-            vec![tree("/a", snapshot()), working("/a", "seen.txt")],
+            vec![tree("/a", snapshot()), root_starting_in("/a", "seen.txt")],
             WorkingFault::NotADirectory,
         ),
     ];
@@ -146,12 +142,13 @@ fn a_working_directory_its_tree_does_not_hold_is_refused_by_what_is_wrong_with_i
         }
     }
     for accepted in [
-        vec![tree("/a", snapshot()), working("/a", "")],
-        vec![tree("/a", snapshot()), working("/a", "empty")],
+        vec![tree("/a", snapshot()), root()],
+        vec![tree("/a", snapshot()), root_starting_in("/a", "")],
+        vec![tree("/a", snapshot()), root_starting_in("/a", "empty")],
         vec![
             tree("/a", snapshot()),
             tree("/b", snapshot()),
-            working("/b", "empty"),
+            root_starting_in("/b", "empty"),
         ],
     ] {
         let shown = format!("{accepted:?}");
@@ -159,9 +156,43 @@ fn a_working_directory_its_tree_does_not_hold_is_refused_by_what_is_wrong_with_i
     }
 }
 
+/// Every set of preopens that differs from the invocation's own, each in a way its digest has to tell apart, `other_tree` a snapshot other than its own.
+fn preopened_otherwise(other_tree: Snapshot) -> Vec<Vec<rust_mutants_sealed::Preopen>> {
+    vec![
+        vec![tree("/elsewhere", snapshot())],
+        vec![tree("/sandbox", other_tree)],
+        vec![tree("/sandbox", snapshot()), root()],
+        vec![
+            tree("/sandbox", snapshot()),
+            root_starting_in("/sandbox", ""),
+        ],
+        vec![
+            tree("/sandbox", snapshot()),
+            root_starting_in("/sandbox", "empty"),
+        ],
+        vec![
+            tree(r"C:\sandbox", snapshot()),
+            root_starting_in(r"C:\sandbox", ""),
+        ],
+        vec![
+            tree(r"c:\sandbox", snapshot()),
+            root_starting_in(r"c:\sandbox", ""),
+        ],
+        vec![
+            tree("C:/sandbox", snapshot()),
+            root_starting_in("C:/sandbox", ""),
+        ],
+    ]
+}
+
 #[test]
 fn every_input_moves_the_invocation_digest() {
-    let bytes = command(&[], "", "");
+    let bytes = command(
+        &[],
+        "(func (export \"malloc\") (param i32) (result i32) (i32.const 4096))
+         (func (export \"chdir\") (param i32) (result i32) (i32.const 0))",
+        "",
+    );
     let base = invocation();
     let digest = |asked: &Invocation| *run(&bytes, asked).invocation();
     let reference = digest(&base);
@@ -177,15 +208,7 @@ fn every_input_moves_the_invocation_digest() {
         .file("seen.txt", b"changed".to_vec())
         .and_then(SnapshotBuilder::build)
         .expect("valid");
-    for preopens in [
-        vec![tree("/elsewhere", snapshot())],
-        vec![tree("/sandbox", other_tree)],
-        vec![tree("/sandbox", snapshot()), working("/sandbox", "")],
-        vec![tree("/sandbox", snapshot()), working("/sandbox", "empty")],
-        vec![tree(r"C:\sandbox", snapshot()), working(r"C:\sandbox", "")],
-        vec![tree(r"c:\sandbox", snapshot()), working(r"c:\sandbox", "")],
-        vec![tree("C:/sandbox", snapshot()), working("C:/sandbox", "")],
-    ] {
+    for preopens in preopened_otherwise(other_tree) {
         let mut changed = base.clone();
         changed.preopens = Preopens::new(preopens).expect("valid");
         variants.push(changed);
@@ -222,8 +245,8 @@ fn every_input_moves_the_invocation_digest() {
     assert_eq!(
         distinct.len(),
         variants.len(),
-        "two inputs that differ, the working directory and the spelling of a tree's root among \
-         them, share a digest"
+        "two inputs that differ, the root, the directory the guest starts in and the spelling of a \
+         tree's root among them, share a digest"
     );
     let other_module = command(&["sched_yield"], "", "(drop (call $sched_yield))");
     assert_ne!(*run(&other_module, &base).invocation(), reference);

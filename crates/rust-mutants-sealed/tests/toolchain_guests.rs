@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 use proptest::prelude::{ProptestConfig, any, prop, prop_assert_eq, proptest};
 use rust_mutants_sealed::{
     Arguments, ClockPolicy, Environment, Invocation, Limits, OverlayEntry, OverlayState, Preopen,
-    Preopens, Refusal, RefusalReason, SealedModule, SealedRunner, SealedStop, Snapshot, Transcript,
-    TrapKind, WasiFunction,
+    Preopens, Refusal, RefusalReason, SealedModule, SealedRunner, SealedStop, Snapshot, Start,
+    Transcript, TrapKind, WasiFunction,
 };
 
 include!("support/guests.rs");
@@ -238,19 +238,21 @@ fn tree_at(root: &str) -> Preopen {
     }
 }
 
-/// The working directory `directory` of the tree preopened at `root`.
-fn working_in(root: &str, directory: &str) -> Preopen {
-    Preopen::Working {
-        tree: root.to_owned(),
-        directory: directory.to_owned(),
+/// The root directory, the guest starting in `directory` of the tree preopened at `root`.
+fn starting_in(root: &str, directory: &str) -> Preopen {
+    Preopen::Root {
+        start: Some(Start {
+            tree: root.to_owned(),
+            directory: directory.to_owned(),
+        }),
     }
 }
 
-/// An invocation of the program with `arguments`, the snapshot preopened at `root` and its working directory at `directory`.
+/// An invocation of the program with `arguments`, the snapshot preopened at `root`, the guest starting in its `directory`.
 fn in_working_directory(arguments: &[&str], root: &str, directory: &str) -> Invocation {
     let mut asked = invocation(arguments);
-    asked.preopens = Preopens::new(vec![tree_at(root), working_in(root, directory)])
-        .expect("the tree and its working directory are valid");
+    asked.preopens = Preopens::new(vec![tree_at(root), starting_in(root, directory)])
+        .expect("the tree and the root are valid");
     asked
 }
 
@@ -268,6 +270,25 @@ fn printed(
         stderr(&transcript)
     );
     stdout(&transcript)
+}
+
+#[test]
+fn the_guest_starts_in_its_directory_as_its_own_c_library_keeps_one() {
+    let runner = runner();
+    let module = runner
+        .prepare(&program_bytes())
+        .expect("the program is a WASI command");
+    assert_eq!(
+        printed(&module, &["cwd"], (SANDBOX, "data")),
+        format!("{SANDBOX}/data\n"),
+        "a test asking where it runs is told its package's directory, as natively"
+    );
+    assert_eq!(
+        printed(&module, &["cwd"], (WINDOWS_SANDBOX, "data")),
+        format!("/{WINDOWS_SANDBOX}\\data\n"),
+        "wasi-libc keeps a directory a Windows build spelled after a `/` of its own, since it \
+         took the drive's root for a relative path"
+    );
 }
 
 #[test]
@@ -404,17 +425,37 @@ fn a_file_made_where_a_variable_names_is_written_read_and_removed_leaving_nothin
 }
 
 #[test]
-fn an_absolute_path_no_other_preopen_names_is_read_from_the_working_directory() {
+fn an_absolute_path_no_tree_holds_is_refused_as_an_escape_wherever_the_guest_starts() {
     let runner = runner();
     let module = runner
         .prepare(&program_bytes())
         .expect("the program is a WASI command");
-    assert_eq!(
-        printed(&module, &["read", "/listing/m.txt"], (SANDBOX, "")),
-        "m",
-        "wasi-libc strips the root off a path before it matches a preopen, so `/listing/m.txt` \
-         is `listing/m.txt` from the working directory"
-    );
+    for (path, directory) in [
+        ("/listing/m.txt", ""),
+        ("/m.txt", "listing"),
+        ("/etc/passwd", "data"),
+    ] {
+        let transcript = run(
+            &module,
+            &in_working_directory(&["read", path], SANDBOX, directory),
+        );
+        assert_eq!(
+            transcript.stop(),
+            SealedStop::Exited { code: 2 },
+            "{path} from {directory:?} names no place in the tree, so it is not read from the \
+             working directory, whose names it happens to share: {}",
+            stdout(&transcript)
+        );
+        assert_eq!(
+            transcript.refusals(),
+            [Refusal {
+                function: WasiFunction::PathOpen,
+                reason: RefusalReason::Escape,
+                count: 1,
+            }],
+            "{path} is refused as a path outside every preopen is, and recorded"
+        );
+    }
 }
 
 #[test]

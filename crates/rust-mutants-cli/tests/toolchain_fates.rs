@@ -254,6 +254,11 @@ fn fixture_2021() {
 }
 
 #[test]
+fn fixture_absolute_path() {
+    holds("fixture-absolute-path");
+}
+
+#[test]
 fn fixture_annotated() {
     holds("fixture-annotated");
 }

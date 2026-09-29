@@ -40,6 +40,8 @@ pub enum Unsealed {
     NotListed,
     /// The target has no libtest harness: it answers by its exit code alone, which no sealed execution can tell from a test that exited early.
     NoHarness,
+    /// Which flags cargo compiles the sealed target with is not known, so the link arguments the host needs cannot be added to them: the configuration could not be read, or a `cfg(…)` table's predicate names what a target alone does not decide.
+    FlagsUnmerged,
 }
 
 impl Unsealed {
@@ -56,6 +58,7 @@ impl Unsealed {
             Self::ProcMacro => "proc-macro",
             Self::NotListed => "not-listed",
             Self::NoHarness => "no-harness",
+            Self::FlagsUnmerged => "flags-unmerged",
         }
     }
 
@@ -89,8 +92,123 @@ impl Unsealed {
                 "give the target libtest's harness, which `harness = false` takes away, so that each \
                  of its tests says how it ended"
             }
+            Self::FlagsUnmerged => {
+                "configure the flags of wasm32-wasip1 under its own triple, or in build.rustflags, \
+                 rather than under a cfg(…) predicate cargo alone decides, and keep every cargo \
+                 configuration file readable"
+            }
         }
     }
+}
+
+/// The compiler and rustdoc flags a sealed build uses, each encoded as cargo reads `CARGO_ENCODED_RUSTFLAGS`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Flags {
+    /// What every sealed module is compiled with.
+    pub compile: Vec<String>,
+    /// What every doctest built for the sealed target is compiled with.
+    pub document: Vec<String>,
+}
+
+impl Flags {
+    /// The flags the sealed build uses: what the tree already compiles and documents the sealed target with, as cargo would choose them from `env` and the configuration `layered`, judged against the sealed target's `facts`, and then `linked`, each a linker argument every sealed module needs.
+    ///
+    /// # Errors
+    /// [`Unsealed::FlagsUnmerged`] where the configuration could not be read, a flag variable is not text, or a `cfg(…)` table's predicate is not one `facts` decide, so that which flags cargo would use is not known.
+    pub fn of(
+        env: &crate::vars::Variables,
+        layered: &crate::cargo::config::Layered,
+        facts: &crate::facts::Facts,
+        linked: &[String],
+    ) -> Result<Self, Unsealed> {
+        if layered.unreadable {
+            return Err(Unsealed::FlagsUnmerged);
+        }
+        let mut compile_targeted: Option<Vec<String>> = None;
+        let mut document_targeted: Option<Vec<String>> = None;
+        for targeted in &layered.targets {
+            let applies = if targeted.key == TARGET {
+                true
+            } else if let Some(rest) = targeted.key.strip_prefix("cfg(") {
+                let predicate = rest.strip_suffix(')').ok_or(Unsealed::FlagsUnmerged)?;
+                crate::facts::Predicate::parse(predicate)
+                    .map_err(|_undecided| Unsealed::FlagsUnmerged)?
+                    .holds(facts)
+            } else {
+                false
+            };
+            if !applies {
+                continue;
+            }
+            if let Some(flags) = &targeted.rustflags {
+                compile_targeted
+                    .get_or_insert_with(Vec::new)
+                    .extend(flags.iter().cloned());
+            }
+            if let Some(flags) = &targeted.rustdocflags {
+                document_targeted
+                    .get_or_insert_with(Vec::new)
+                    .extend(flags.iter().cloned());
+            }
+        }
+        let inherited = |names| {
+            crate::cargo::config::inherited_as(env, names)
+                .map_err(|_not_text| Unsealed::FlagsUnmerged)
+        };
+        let mut compile = match inherited((
+            crate::cargo::config::ENCODED_RUSTFLAGS,
+            crate::cargo::config::RUSTFLAGS,
+        ))? {
+            Some(flags) => flags,
+            None => compile_targeted.unwrap_or_else(|| layered.build.clone()),
+        };
+        let mut document = match inherited((ENCODED_RUSTDOCFLAGS, RUSTDOCFLAGS))? {
+            Some(flags) => flags,
+            None => document_targeted.unwrap_or_else(|| layered.build_doc.clone()),
+        };
+        compile.extend(linked.iter().cloned());
+        document.extend(linked.iter().cloned());
+        Ok(Self { compile, document })
+    }
+
+    /// The environment a sealed build adds for these flags: each in its encoded variable, and its plain one empty.
+    #[must_use]
+    pub fn environment(&self) -> crate::vars::Variables {
+        let separator = crate::cargo::config::SEPARATOR.to_string();
+        crate::vars::Variables::of([
+            (
+                std::ffi::OsString::from(crate::cargo::config::ENCODED_RUSTFLAGS),
+                std::ffi::OsString::from(self.compile.join(&separator)),
+            ),
+            (
+                std::ffi::OsString::from(crate::cargo::config::RUSTFLAGS),
+                std::ffi::OsString::new(),
+            ),
+            (
+                std::ffi::OsString::from(ENCODED_RUSTDOCFLAGS),
+                std::ffi::OsString::from(self.document.join(&separator)),
+            ),
+            (
+                std::ffi::OsString::from(RUSTDOCFLAGS),
+                std::ffi::OsString::new(),
+            ),
+        ])
+    }
+}
+
+/// The variable cargo reads rustdoc's flags from in their encoded form, before [`RUSTDOCFLAGS`].
+pub const ENCODED_RUSTDOCFLAGS: &str = "CARGO_ENCODED_RUSTDOCFLAGS";
+
+/// The plain form of rustdoc's flags.
+pub const RUSTDOCFLAGS: &str = "RUSTDOCFLAGS";
+
+/// The linker arguments every sealed module is built with so the host can start it in its package's directory, spelled as `rustc` takes one.
+#[must_use]
+pub fn start_linked() -> Vec<String> {
+    rust_mutants_sealed::START_LINK_ARGS
+        .iter()
+        .map(|argument| format!("-Clink-arg={argument}"))
+        .collect()
 }
 
 /// Whether a preparation builds the sealed modules beside the native build.
