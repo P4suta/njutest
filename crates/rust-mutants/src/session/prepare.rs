@@ -763,16 +763,14 @@ fn gated(
 ) -> Result<Gated, EngineError> {
     let pristine_phase = trace.phase("pristine");
     let checked = gate(workspace, options, cancel)?;
-    let read = Digested {
-        closure: super::Closure {
-            digest: closure_of(workspace, &checked)?,
-            units: unit_sources(workspace, &checked)?,
-            carrying: super::Carrying::fresh(),
-        },
-        inputs: inputs_of(workspace, &checked)?,
-        manifests: manifests_of(workspace)?,
-        compilation: crate::cargo::Compilation::of(&checked),
+    let closure = super::Closure {
+        digest: closure_of(workspace, &checked)?,
+        units: unit_sources(workspace, &checked)?,
+        carrying: super::Carrying::fresh(),
     };
+    let inputs = inputs_of(workspace, &checked)?;
+    let manifests = manifests_of(workspace)?;
+    let compilation = crate::cargo::Compilation::of(&checked);
     pristine_phase.end();
     let discover_phase = trace.phase("discover");
     let discovery = discover::discover(
@@ -792,7 +790,16 @@ fn gated(
         trace,
     )?;
     discover_phase.end();
-    Ok(Gated { discovery, read })
+    Ok(Gated {
+        discovery,
+        read: Digested {
+            closure,
+            inputs,
+            manifests,
+            compilation,
+            units: checked.units,
+        },
+    })
 }
 
 /// What the gate established: what there is to mutate, and everything the build read.
@@ -801,12 +808,48 @@ struct Gated {
     read: Digested,
 }
 
+/// The bytes every file of `sources` is compiled from: its pristine bytes, but for a file that reads a Rust source of the tree as text, whose include now reads the source as it was copied, in bytes of the same length on the same lines, so every position of the pristine file holds in it.
+///
+/// # Errors
+/// What [`Workspace::keep_includes_verbatim`] refuses, and a rewritten file that cannot be read back or has another length.
+fn compiled(
+    workspace: &mut Workspace,
+    units: &[crate::cargo::Unit],
+    sources: &BTreeMap<String, Vec<u8>>,
+) -> Result<BTreeMap<String, Vec<u8>>, EngineError> {
+    let kept = workspace.keep_includes_verbatim(units)?;
+    let mut compiled = sources.clone();
+    for one in &kept {
+        let Some(bytes) = compiled.get_mut(&one.reader) else {
+            continue;
+        };
+        let now = std::fs::read(workspace.snapshot_root().join(&one.reader)).map_err(|source| {
+            SessionError::WriteFailed {
+                path: one.reader.clone(),
+                source,
+            }
+        })?;
+        if now.len() != bytes.len() {
+            return Err(SessionError::IncludeUnkept {
+                source: crate::verbatim::VerbatimError::Misplaced {
+                    path: one.reader.clone(),
+                    line: one.line,
+                },
+            }
+            .into());
+        }
+        *bytes = now;
+    }
+    Ok(compiled)
+}
+
 /// What the build read, as digests a later run or a selection compares against, what each unit read, and what it compiled.
 struct Digested {
     closure: super::Closure,
     inputs: crate::select::Inputs,
     manifests: String,
     compilation: crate::cargo::Compilation,
+    units: Vec<crate::cargo::Unit>,
 }
 
 /// Every unit the pristine build compiled, named without a package id, with each file it read under the root or the target directory spelled by its class.
@@ -894,25 +937,34 @@ fn env_value(value: Option<&str>, portable: impl Fn(&str) -> String) -> String {
     )
 }
 
-/// The pristine sources, selected placements, and complete-catalog indices one preparation must validate.
-type SelectionPlan = (
-    BTreeMap<String, Vec<u8>>,
-    BTreeMap<String, Vec<Placement>>,
-    BTreeSet<u32>,
-);
+/// What one preparation must validate: the pristine bytes of every mutable file, the bytes each is compiled from, the placements selected in each, and the complete-catalog indices to validate.
+#[derive(Debug)]
+struct Plan {
+    sources: BTreeMap<String, Vec<u8>>,
+    compiled: BTreeMap<String, Vec<u8>>,
+    placements: BTreeMap<String, Vec<Placement>>,
+    eligible: BTreeSet<u32>,
+}
 
+/// Plans the tree from what discovery found, and points every include of a Rust source the build's `units` compiled at the source as it was copied.
 fn selection_plan(
-    workspace: &Workspace,
-    discovery: &discover::Discovery,
+    workspace: &mut Workspace,
+    (discovery, units): (&discover::Discovery, &[crate::cargo::Unit]),
     options: &PrepareOptions,
     trace: &crate::trace::Recorder,
-) -> Result<SelectionPlan, EngineError> {
+) -> Result<Plan, EngineError> {
     let phase = trace.phase("plan");
     let (sources, placements) = plan_tree(workspace.snapshot_root(), discovery)?;
     let eligible = eligible(discovery, &sources, options.validation_filter.as_ref())?;
     let placements = selected_placements(placements, &eligible);
+    let compiled = compiled(workspace, units, &sources)?;
     phase.end();
-    Ok((sources, placements, eligible))
+    Ok(Plan {
+        sources,
+        compiled,
+        placements,
+        eligible,
+    })
 }
 
 /// Runs validation as one traced phase.
@@ -952,31 +1004,29 @@ pub fn prepare(
     let trace = workspace.trace.clone();
     let phase = trace.phase("prepare");
     let Gated { discovery, read } = gated(&workspace, options, cancel, &trace)?;
-    let (sources, placements, eligible) = selection_plan(&workspace, &discovery, options, &trace)?;
+    let plan = selection_plan(&mut workspace, (&discovery, &read.units), options, &trace)?;
     let asking = crate::prove::Asking {
         workspace: &workspace,
         discovery: &discovery,
-        sources: &sources,
+        sources: &plan.compiled,
         options,
     };
     let remembered = remembering(options, &read.closure.digest, &read.manifests, &workspace);
-    let (established, reached) = layers(&asking, &eligible, remembered.as_ref(), cancel)?;
+    let (established, reached) = layers(&asking, &plan.eligible, remembered.as_ref(), cancel)?;
 
     let instrumented = validated(
         &Establishing {
             workspace: &workspace,
             discovery: &discovery,
-            sources: &sources,
-            placements: &placements,
+            plan: &plan,
             established: &established,
-            eligible: &eligible,
             options,
         },
         cancel,
         &trace,
     )?;
 
-    let written_by_a_test = resealed(&mut workspace, &sources)?;
+    let written_by_a_test = resealed(&mut workspace, &plan.sources)?;
     let ((targets, scratch, verified), apparatus, sealed) = built(&Building {
         workspace: &workspace,
         cancel,
@@ -1005,13 +1055,13 @@ pub fn prepare(
         files: discovery.files,
         skips: crate::validate::passed_over(discovery.skips, &instrumented.validated.rejections)?,
         claims: discovery.claims,
-        sources: prepared_sources(sources)?,
+        sources: prepared_sources(plan.sources)?,
         packages,
         items,
         proofs: established.proofs,
         reached,
         validated: instrumented.validated,
-        eligible,
+        eligible: plan.eligible,
         targets,
         scratch,
         verified,
@@ -1307,14 +1357,10 @@ struct Establishing<'a> {
     workspace: &'a Workspace,
     /// What there is to mutate, with the catalog every guard names.
     discovery: &'a discover::Discovery,
-    /// The pristine bytes of every mutable file.
-    sources: &'a BTreeMap<String, Vec<u8>>,
-    /// The mutants placed in each file.
-    placements: &'a BTreeMap<String, Vec<Placement>>,
+    /// The pristine bytes of every mutable file, the bytes each is compiled from, the mutants placed in each, and the catalog indices this preparation will validate and place.
+    plan: &'a Plan,
     /// What the proof layers established about them: the branch proofs, and which guards may compare their two branches.
     established: &'a crate::prove::Established,
-    /// The catalog indices this preparation will validate and place.
-    eligible: &'a BTreeSet<u32>,
     /// What the run was asked to prepare.
     options: &'a PrepareOptions,
 }
@@ -1328,18 +1374,17 @@ fn establish(
     let Establishing {
         workspace,
         discovery,
-        sources,
-        placements,
+        plan,
         established,
-        eligible,
         options,
     } = *asking;
-    let items = cataloged_items(discovery, sources)?;
+    let eligible = &plan.eligible;
+    let items = cataloged_items(discovery, &plan.sources)?;
     let mut writer = TreeCompiler {
         first_items: &items.first,
         workspace,
-        sources,
-        placements,
+        sources: &plan.compiled,
+        placements: &plan.placements,
         catalog: &discovery.catalog,
         cancel,
         timeout: Workspace::timeout(options.build_timeout),

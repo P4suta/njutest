@@ -719,3 +719,61 @@ fn every_line_a_real_run_records_is_on_the_published_engine_trace_schema() {
         );
     }
 }
+
+#[test]
+fn a_source_the_build_reads_as_text_is_read_as_it_was_written_and_the_trace_says_where() {
+    let fixture = Fixture::copy("fixture-reads-its-source");
+    let output = against(&fixture, &["run", "--trace", "--tier", "all", "--no-seal"]);
+    assert!(
+        matches!(output.status.code(), Some(0 | 2)),
+        "a test that compares its crate's source with the text as written passes with nothing \
+         active, so the run measures rather than refusing the target: {}",
+        stderr(&output)
+    );
+    let run = only_run(&reports(&fixture));
+    let events = recorded(&run.join("trace"));
+    let kept: Vec<&str> = events
+        .iter()
+        .filter(|event| {
+            event
+                .pointer("/payload/note/kind")
+                .and_then(serde_json::Value::as_str)
+                == Some(rust_mutants::verbatim::NOTE)
+        })
+        .filter_map(|event| event.pointer("/payload/note/detail")?.as_str())
+        .collect();
+    assert_eq!(
+        kept,
+        [
+            "src/lib.rs:9 reads src/twice.rs as it was copied, from src/.0, not as the run \
+             rewrites it",
+            "src/lib.rs:12 reads src/twice.rs as it was copied, from src/.0, not as the run \
+             rewrites it",
+            "tests/source.rs:25 reads src/twice.rs as it was copied, from tests/.0, not as the \
+             run rewrites it",
+        ],
+        "each include of a Rust source of the tree, by a path beside it, by the package's \
+         directory, and from a test, reads the source as it was copied"
+    );
+    let document: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(run.join("run-report-v1.json")).expect("the report"),
+    )
+    .expect("the report is a document");
+    let fates: Vec<(String, String)> = document["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .map(|row| {
+            (
+                row["path"].as_str().expect("a path").to_owned(),
+                row["outcome"].as_str().expect("an outcome").to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        fates,
+        vec![("src/twice.rs".to_owned(), "killed".to_owned()); 4],
+        "every mutation of the module the others read is put to the tests, which read it as \
+         written: {document}"
+    );
+}

@@ -3,6 +3,7 @@
 
 //! The public entry point: a read-only source tree, copied.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -381,6 +382,16 @@ pub enum SessionError {
         beside: Vec<String>,
         /// What changed.
         changes: Vec<crate::apparatus::Change>,
+    },
+    /// An include of a Rust source of the tree could not be pointed at the source as it was copied, so the build would read what the run rewrites.
+    #[error(
+        "{}: an include of a Rust source could not be pointed at the source as it was copied: {source}",
+        error::INSTRUMENT_SOURCE_MISMATCH.code
+    )]
+    IncludeUnkept {
+        /// What stopped it.
+        #[source]
+        source: crate::verbatim::VerbatimError,
     },
     /// The instrumented tree could not be written.
     #[error("{}: cannot write {path} into the snapshot: {source}", error::SESSION_WRITE_FAILED.code)]
@@ -834,7 +845,8 @@ impl SessionError {
             | Self::ScratchUnreadable { .. }
             | Self::WorkspacePathNotUtf8 { .. }
             | Self::CatalogTextNotUtf8 { .. } => error::SESSION_WRITE_FAILED,
-            Self::SelectionSourceMissing { .. }
+            Self::IncludeUnkept { .. }
+            | Self::SelectionSourceMissing { .. }
             | Self::SelectionSourceNotUtf8 { .. }
             | Self::SelectionPositionInvalid { .. }
             | Self::EvidencePathOutside { .. }
@@ -1153,6 +1165,61 @@ impl Workspace {
     /// Returns a snapshot walk or read failure rather than treating an unreadable tree as unchanged.
     pub fn changes(&self) -> Result<Vec<snapshot::Drift>, snapshot::SnapshotError> {
         self.snapshot.redigest()
+    }
+
+    /// Points every include of a Rust source of the tree in `units`' sources at that source as it was copied, records what that rewrote as the copy's own, and says each include in the trace.
+    ///
+    /// # Errors
+    /// What [`crate::verbatim::keep`] refuses, and a rewritten file the snapshot cannot record.
+    pub(crate) fn keep_includes_verbatim(
+        &mut self,
+        units: &[crate::cargo::Unit],
+    ) -> Result<Vec<crate::verbatim::Kept>, crate::EngineError> {
+        let root = self.snapshot.root().to_path_buf();
+        let relative = |path: &Path| match path.strip_prefix(&root) {
+            Ok(inside) => match crate::id::slashed(inside) {
+                Ok(named) => Some(named),
+                Err(_unnameable) => None,
+            },
+            Err(_outside) => None,
+        };
+        let packages: BTreeMap<&str, Option<String>> = self
+            .metadata
+            .packages
+            .iter()
+            .map(|package| (package.id.as_str(), relative(package.manifest_dir())))
+            .collect();
+        let mut sources: BTreeMap<String, Option<String>> = BTreeMap::new();
+        for unit in units {
+            let package = match packages.get(unit.package_id.as_str()) {
+                Some(directory) => directory.clone(),
+                None => None,
+            };
+            for source in &unit.sources {
+                if let Some(named) = relative(source) {
+                    sources.entry(named).or_insert_with(|| package.clone());
+                }
+            }
+        }
+        let kept = crate::verbatim::keep(&root, &sources)
+            .map_err(|source| SessionError::IncludeUnkept { source })?;
+        let rewritten: Vec<String> = kept
+            .iter()
+            .flat_map(|one| [one.reader.clone(), one.copy.clone()])
+            .collect::<BTreeSet<String>>()
+            .into_iter()
+            .collect();
+        self.snapshot.absorb(&rewritten)?;
+        for one in &kept {
+            self.trace.note(
+                crate::verbatim::NOTE,
+                &format!(
+                    "{}:{} reads {} as it was copied, from {}, not as the run rewrites it",
+                    one.reader, one.line, one.read, one.copy
+                ),
+            );
+        }
+        Ok(kept)
     }
 
     /// Makes the private tree as it stands now the baseline for later [`Self::changes`] checks.

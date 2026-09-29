@@ -1255,6 +1255,41 @@ impl Snapshot {
         self.state == State::Kept
     }
 
+    /// Records each of `rel_paths` as it stands now, a file of the copy the run wrote on purpose, so a later look at the tree does not take it for a change somebody else made.
+    ///
+    /// # Errors
+    /// A file that cannot be read.
+    pub fn absorb(&mut self, rel_paths: &[String]) -> Result<(), SnapshotError> {
+        for rel_path in rel_paths {
+            let (size, sha256) = hash_file(&path_of(&self.root, rel_path)).map_err(|source| {
+                SnapshotError::new(
+                    SnapshotErrorKind::Walk,
+                    rel_path.clone(),
+                    "cannot read the file the run wrote in the snapshot",
+                )
+                .with_source(source)
+            })?;
+            match self
+                .manifest
+                .iter_mut()
+                .find(|entry| entry.rel_path == *rel_path)
+            {
+                Some(entry) => {
+                    entry.size = size;
+                    entry.sha256 = sha256;
+                }
+                None => self.manifest.push(Entry {
+                    rel_path: rel_path.clone(),
+                    size,
+                    sha256,
+                }),
+            }
+        }
+        self.manifest.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+        self.workspace_digest = digest_of(&self.manifest, &self.passed_over)?;
+        Ok(())
+    }
+
     /// Re-walks the snapshot and reports every way it no longer matches the manifest, sorted by path.
     ///
     /// # Errors

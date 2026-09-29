@@ -161,6 +161,10 @@ Tightening an existing store directory to its owner, the system and the administ
 - A `#![no_std]` crate is measured: the runtime borrows `std` under a name of its own.
   A crate the host cannot lend `std` to — one supplying a `#[panic_handler]`, a `#[global_allocator]`, or `#![no_main]`, or written in edition 2015 — is `no-std-crate`.
 - A file another file pastes in with `include!` where an expression goes is `included-expression`: it is a fragment rather than a program.
+- A Rust source of the tree that the build reads as text is read as it was copied, not as the run rewrites it.
+  Each `include_str!` or `include_bytes!` that names one, by a literal path or by `concat!(env!("CARGO_MANIFEST_DIR"), "…")`, is pointed at a copy of the source beside the file that reads it, a hidden file named `.0`, `.1` and so on, and the trace says so with a `verbatim` note for each.
+  The reading file keeps its length and its lines, so every position in it is the one the tree has.
+  Three readings are not pointed: an include whose path is computed any other way, a program that reads its own source while it runs, and a directory listing, which sees the copies beside the file that reads them.
 - The equivalence layer is off by default and proves almost nothing on a project that leaves `[profile.test] opt-level` at cargo's default of zero,
   where two mutations the compiler would render identically at any optimisation level are still two different sets of instructions.
   It is a fact about the profile the tests run under rather than about the mutation,
