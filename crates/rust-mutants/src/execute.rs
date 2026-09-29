@@ -9,6 +9,10 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use rust_mutants_decision::confinement::{
+    CONFINED_HOME, Escape, GIT_GLOBAL_CONFIG, RUNTIME_UNDER_HOME,
+};
+
 use crate::cargo::{
     CargoError, CargoErrorKind, CompileKind, CompileOptions, Driver, Message, Package, Target,
     compile,
@@ -2067,22 +2071,17 @@ fn confinement_held(
     let Some(home) = &scratch.home else {
         return Ok(());
     };
-    for (name, under) in CONFINED_HOME {
-        let expected = home.join(under);
-        let found = env.var(name);
-        if found != Some(expected.as_os_str()) {
-            return Err(ConfinementError::Escaped {
-                name,
-                found: found.map(std::ffi::OsStr::to_owned),
-                expected,
-            });
-        }
-    }
-    match env.var(GIT_GLOBAL_CONFIG) {
-        Some(found) => Err(ConfinementError::GitGlobal {
-            found: found.to_owned(),
-        }),
+    match rust_mutants_decision::confinement::escape(
+        |name| env.var(name).map(std::ffi::OsStr::to_owned),
+        |under| home.join(under).into_os_string(),
+    ) {
         None => Ok(()),
+        Some(Escape::Escaped { name, under, found }) => Err(ConfinementError::Escaped {
+            name,
+            found,
+            expected: home.join(under),
+        }),
+        Some(Escape::GitGlobal { found }) => Err(ConfinementError::GitGlobal { found }),
     }
 }
 
@@ -2413,27 +2412,8 @@ pub enum Home {
     Given,
 }
 
-/// The variables a confined home replaces, each as a path under the execution's home, in the order they are set.
-const CONFINED_HOME: [(&str, &str); 9] = [
-    ("HOME", ""),
-    ("XDG_CONFIG_HOME", ".config"),
-    ("XDG_CACHE_HOME", ".cache"),
-    ("XDG_STATE_HOME", ".local/state"),
-    ("XDG_DATA_HOME", ".local/share"),
-    ("XDG_RUNTIME_DIR", RUNTIME_UNDER_HOME),
-    ("USERPROFILE", ""),
-    ("APPDATA", "AppData/Roaming"),
-    ("LOCALAPPDATA", "AppData/Local"),
-];
-
-/// Where a confined home keeps the runtime directory, which only its owner may enter.
-const RUNTIME_UNDER_HOME: &str = ".local/run";
-
 /// The homes a build needs where they are, each with the directory it defaults to under the home the run was given.
 const PINNED_HOMES: [(&str, &str); 2] = [("CARGO_HOME", ".cargo"), ("RUSTUP_HOME", ".rustup")];
-
-/// The variable naming the file git reads a user's global configuration from in place of `~/.gitconfig`.
-const GIT_GLOBAL_CONFIG: &str = "GIT_CONFIG_GLOBAL";
 
 /// A fresh 128-bit nonce in lowercase hexadecimal, which ties a notice the runtime publishes to exactly one execution.
 ///

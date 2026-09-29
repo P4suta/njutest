@@ -6,6 +6,7 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+pub mod confinement;
 pub mod evidence;
 pub mod judgement;
 pub mod shape;
