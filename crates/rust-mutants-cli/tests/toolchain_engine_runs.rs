@@ -59,9 +59,7 @@ fn committed(name: &str) -> PathBuf {
 fn recorded(fixture: &Fixture) -> PathBuf {
     let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command.env_clear();
-    command.envs(njutest_devkit::paths::environment_for_a_toolchain_run(&[
-        "RUSTUP_TOOLCHAIN",
-    ]));
+    command.envs(njutest_devkit::paths::environment_for_a_toolchain_run(&[]));
     command.env("NO_COLOR", "1");
     command.envs(njutest_devkit::paths::temporary_directory(fixture.temp()));
     command.env("XDG_CACHE_HOME", fixture.cache());

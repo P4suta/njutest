@@ -36,9 +36,7 @@ impl Workspace {
     fn new() -> Self {
         let workspace = Self {
             project: Project::fresh(),
-            environment: xtask::environment::Environment::of(environment_for_a_toolchain_run(&[
-                "RUSTUP_TOOLCHAIN",
-            ])),
+            environment: xtask::environment::Environment::of(environment_for_a_toolchain_run(&[])),
         };
         workspace.write(
             "Cargo.toml",

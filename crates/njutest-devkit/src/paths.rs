@@ -461,7 +461,9 @@ pub const ALSO_ON_THIS_PLATFORM: [&str; 13] = [
 #[cfg(not(windows))]
 pub const ALSO_ON_THIS_PLATFORM: [&str; 0] = [];
 
-/// The least of the parent's environment a nested run of either product needs, and the names `also` adds.
+/// The least of the parent's environment a nested run of either product needs, the names `also` adds, and the toolchain this repository pins.
+///
+/// A copied fixture is outside the checkout rustup reads the pin from, and the pinned toolchain holds the sealed target every machine that checks this repository installs, where a default toolchain may not.
 #[must_use]
 pub fn environment_for_a_toolchain_run(
     also: &[&str],
@@ -480,9 +482,19 @@ pub fn environment_for_a_toolchain_run(
     if let Some(cache) = compilation_cache() {
         kept.push((std::ffi::OsString::from(WRAPPER), cache));
     }
+    if let Some(pinned) = pinned_toolchain() {
+        kept.retain(|(name, _value)| !same_name(name, std::ffi::OsStr::new(TOOLCHAIN)));
+        kept.push((
+            std::ffi::OsString::from(TOOLCHAIN),
+            std::ffi::OsString::from(pinned),
+        ));
+    }
     kept.push(jobs());
     kept
 }
+
+/// The variable rustup reads the toolchain to run from.
+const TOOLCHAIN: &str = "RUSTUP_TOOLCHAIN";
 
 /// The variable a compiler wrapper is named in, which two different things use.
 const WRAPPER: &str = "RUSTC_WRAPPER";
@@ -653,8 +665,9 @@ fn holds_a_standard_library(libdir: &Path) -> std_io::Result<bool> {
     Ok(false)
 }
 
-/// The toolchain `rust-toolchain.toml` pins, which is the one a missing target is installed for.
-fn pinned_toolchain() -> Option<String> {
+/// The toolchain `rust-toolchain.toml` pins, which is the one a missing target is installed for and every nested run of a test uses.
+#[must_use]
+pub fn pinned_toolchain() -> Option<String> {
     let channel = toolchain_setting("channel")?;
     Some(channel.strip_prefix('"')?.strip_suffix('"')?.to_owned())
 }
