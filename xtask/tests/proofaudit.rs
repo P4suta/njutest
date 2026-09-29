@@ -937,6 +937,23 @@ fn a_sealed_detection_by_a_target_a_proof_discharged_is_a_violation() {
 }
 
 #[test]
+fn a_recording_of_no_routes_leaves_the_proofs_unaudited_whatever_ran_sealed() {
+    let unrouted = sentinel::Perturbation {
+        events: Some(Vec::new()),
+        ..sentinel::clean()
+    };
+
+    let said = said_by(Layer::Proofs, &unrouted);
+
+    assert_eq!(
+        said,
+        [(Standing::Unaudited, "route".to_owned())],
+        "a sealed execution is no route, and a layer with no route to hold to a kill has \
+         re-decided nothing"
+    );
+}
+
+#[test]
 fn a_route_widened_to_everything_whose_only_execution_is_sealed_ran_something() {
     let said = said_by(Layer::Proofs, &sentinel::widened_and_run_sealed());
 

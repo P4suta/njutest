@@ -4622,11 +4622,12 @@ fn proofs(
             noticed.push(Noticed { mutant, by: ran });
         }
     }
-    if removed.is_empty() && executed.at_all.is_empty() {
+    if removed.is_empty() && executed.natively.is_empty() {
         notes.unaudited(
             "route",
-            "the recording holds no routing decision and no mutation execution, so there is \
-             nothing to hold a layer to"
+            "the recording holds no routing decision and no native mutation execution, so \
+             there is nothing to hold a layer to; a sealed execution is put where its own \
+             control reached, which no route decides"
                 .to_owned(),
         );
         return notes.looked();
