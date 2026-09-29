@@ -58,8 +58,8 @@ Floating-point NaNs are canonicalized.
 | `poll_oneoff` | every descriptor is ready at once; where no descriptor is asked about, the clocks move straight to the earliest deadline and the call returns |
 | `random_get` | SHA-256 of the seed and a block counter, so the bytes are a function of the seed and of how many were read before |
 | `fd_write`, `fd_read` on 1, 2, 0 | standard output and standard error are kept as far as their caps and counted past them; standard input is at its end |
-| `path_open`, `fd_read`, `fd_pread`, `fd_seek`, `fd_tell`, `fd_filestat_get`, `path_filestat_get`, `fd_readdir` | the snapshot, as the overlay has changed it |
-| `fd_write`, `fd_pwrite`, `fd_filestat_set_size`, `fd_allocate`, `path_create_directory`, `path_rename`, `path_unlink_file`, `path_remove_directory`, `fd_filestat_set_times`, `path_filestat_set_times` | written into the invocation's own overlay, which later calls in the same invocation see and no other invocation does |
+| `path_open`, `fd_read`, `fd_pread`, `fd_seek`, `fd_tell`, `fd_filestat_get`, `path_filestat_get`, `fd_readdir` | the snapshot, as the overlay has changed it; a name its directory holds only in another case is refused with `notcapable` and recorded, `case-only` |
+| `fd_write`, `fd_pwrite`, `fd_filestat_set_size`, `fd_allocate`, `path_create_directory`, `path_rename`, `path_unlink_file`, `path_remove_directory`, `fd_filestat_set_times`, `path_filestat_set_times` | written into the invocation's own overlay, which later calls in the same invocation see and no other invocation does; a name made, renamed to or removed that its directory holds only in another case is refused, `case-only` |
 | `fd_close`, `fd_renumber`, `fd_fdstat_get`, `fd_fdstat_set_flags`, `fd_fdstat_set_rights`, `fd_prestat_get`, `fd_prestat_dir_name`, `fd_advise`, `fd_sync`, `fd_datasync` | the descriptor table, which gives out the lowest free number |
 | `path_readlink` | nothing is a symbolic link: `inval` for a path that exists, `noent` for one that does not |
 | `proc_exit` | ends the invocation as `Exited` |
