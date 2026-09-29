@@ -147,6 +147,29 @@ fn opening_refuses_metadata_that_is_not_its_document() {
 }
 
 #[test]
+fn the_copy_is_spelled_with_no_separator_after_its_root() {
+    let fixture = Fixture::copy("fixture-simple");
+    let script = toolchain_answers().answering(
+        Invocation::new("cargo", &["metadata"]).printing(&metadata_document(fixture.root())),
+    );
+    let (opened, installed_toolchain) = opened(&fixture, &script);
+    assert_eq!(
+        result_state(&opened),
+        Returned,
+        "the workspace opens: {opened:?}"
+    );
+    let Ok(workspace) = opened else { return };
+    drop(installed_toolchain);
+    let root = njutest_devkit::paths::utf8(workspace.snapshot_root());
+    let guest_path = format!("{root}/src/lib.rs");
+    assert!(
+        !guest_path.contains("//") && !guest_path.contains("\\/"),
+        "a sealed guest reaches a file of the copy by the root its build baked in and the path \
+         below it, joined by one separator: {guest_path}"
+    );
+}
+
+#[test]
 fn opening_copies_the_tree_and_asks_the_toolchain_in_the_copy() {
     let fixture = Fixture::copy("fixture-simple");
     let script = toolchain_answers().answering(

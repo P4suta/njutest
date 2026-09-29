@@ -162,8 +162,7 @@ impl Tree {
         let snapshot = builder
             .build()
             .map_err(|source| BenchError::Snapshot { source })?;
-        let spelled: PathBuf = root.components().collect();
-        let root = match spelled.to_str() {
+        let root = match root.to_str() {
             Some(root) => root.to_owned(),
             None => {
                 return Err(BenchError::EnvironmentNotText {
