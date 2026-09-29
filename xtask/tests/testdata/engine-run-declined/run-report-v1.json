@@ -3,12 +3,12 @@
   "schema_version": 4,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260929t001909914z",
-    "started_at": "2026-09-29T00:19:09.914052Z",
-    "finished_at": "2026-09-29T00:19:13.917635Z",
-    "duration_ms": 1614,
+    "id": "20260929t045938360z",
+    "started_at": "2026-09-29T04:59:38.360522Z",
+    "finished_at": "2026-09-29T04:59:42.141341Z",
+    "duration_ms": 1375,
     "interrupted": false,
-    "exit_code": 2,
+    "exit_code": 1,
     "shard": null,
     "jobs": {
       "asked": "auto",
@@ -17,8 +17,8 @@
   },
   "workspace": {
     "root_name": "fixture-declines",
-    "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "d46c2cfa60a6156d577ebd89744f5cc35f281057be9f748349b5f2e55c1bad94",
+    "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "workspace_digest": "33bdae9a29b926e42808eba33fa81bdcab3349ef06791e2f675bfbe585183f4a",
     "catalog_digest": "f91d0075316f556332ce70a1567c14e96df7e6d652f986acc99893aae8540149",
     "platform": {
       "os": "darwin",
@@ -40,9 +40,9 @@
     "refused": 0,
     "skipped": 51,
     "executed": 20,
-    "killed": 4,
-    "survived": 4,
-    "unproven": 12,
+    "killed": 7,
+    "survived": 13,
+    "unproven": 0,
     "step_limit_reached": 0,
     "waited": 0,
     "inconclusive": 0,
@@ -51,15 +51,15 @@
     "unreached": 0,
     "declined": 9,
     "expected": 0,
-    "unproven_killed": 3,
-    "unproven_survived": 9,
+    "unproven_killed": 0,
+    "unproven_survived": 0,
     "unproven_unreached": 0,
     "unproven_discharged": 0
   },
   "score": {
-    "detected": 4,
-    "decided": 8,
-    "value": 0.5
+    "detected": 7,
+    "decided": 20,
+    "value": 0.35
   },
   "targets": [
     {
@@ -71,20 +71,7 @@
       "sealed": {
         "state": "sealed",
         "remedy": null,
-        "uncontrolled": [
-          {
-            "test": "tests::counts_what_it_shares",
-            "reason": "declined"
-          },
-          {
-            "test": "tests::doubles_what_it_shares",
-            "reason": "declined"
-          },
-          {
-            "test": "tests::halves_what_it_shares",
-            "reason": "declined"
-          }
-        ]
+        "uncontrolled": []
       }
     },
     {
@@ -115,7 +102,7 @@
       }
     }
   ],
-  "established_tests": 8,
+  "established_tests": 4,
   "mutants": [
     {
       "index": 0,
@@ -138,7 +125,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 25,
+      "duration_ms": 32,
       "tests_run": 3,
       "killed_by": [],
       "signal": null,
@@ -184,8 +171,7 @@
       "evidence": {
         "kind": "unproven",
         "reasons": [
-          "native",
-          "test-absent"
+          "declined"
         ]
       }
     },
@@ -256,8 +242,7 @@
       "evidence": {
         "kind": "unproven",
         "reasons": [
-          "native",
-          "test-absent"
+          "declined"
         ]
       }
     },
@@ -280,9 +265,9 @@
       "replacement": "true",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": 0,
-      "duration_ms": 27,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 20,
       "tests_run": 3,
       "killed_by": [],
       "signal": null,
@@ -297,9 +282,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::counts_what_it_shares",
@@ -313,10 +296,23 @@
       "unreached": false,
       "source_run_id": null,
       "evidence": {
-        "kind": "unproven",
-        "reasons": [
-          "native",
-          "test-absent"
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::counts_what_it_shares",
+            "came_to": "passed"
+          },
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::doubles_what_it_shares",
+            "came_to": "passed"
+          },
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::halves_what_it_shares",
+            "came_to": "passed"
+          }
         ]
       }
     },
@@ -341,7 +337,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 31,
+      "duration_ms": 35,
       "tests_run": 3,
       "killed_by": [],
       "signal": null,
@@ -387,8 +383,7 @@
       "evidence": {
         "kind": "unproven",
         "reasons": [
-          "native",
-          "test-absent"
+          "declined"
         ]
       }
     },
@@ -413,7 +408,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 29,
+      "duration_ms": 34,
       "tests_run": 3,
       "killed_by": [],
       "signal": null,
@@ -459,8 +454,7 @@
       "evidence": {
         "kind": "unproven",
         "reasons": [
-          "native",
-          "test-absent"
+          "declined"
         ]
       }
     },
@@ -485,7 +479,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 25,
+      "duration_ms": 35,
       "tests_run": 3,
       "killed_by": [],
       "signal": null,
@@ -531,8 +525,7 @@
       "evidence": {
         "kind": "unproven",
         "reasons": [
-          "native",
-          "test-absent"
+          "declined"
         ]
       }
     },
@@ -614,8 +607,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": 0,
-      "duration_ms": 26,
+      "exit_code": -1,
+      "duration_ms": 23,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -624,12 +617,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::adds_ten",
-          "why": "this machine cannot add"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -637,9 +625,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::adds_ten"
@@ -651,9 +637,13 @@
       "unreached": false,
       "source_run_id": null,
       "evidence": {
-        "kind": "unproven",
-        "reasons": [
-          "unaccounted"
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::adds_ten",
+            "came_to": "declined"
+          }
         ]
       }
     },
@@ -678,7 +668,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 7,
+      "duration_ms": 24,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -735,7 +725,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 6,
+      "duration_ms": 12,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -792,7 +782,7 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": 0,
+      "exit_code": -1,
       "duration_ms": 27,
       "tests_run": 1,
       "killed_by": [
@@ -802,12 +792,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::adds_ten",
-          "why": "this machine cannot add"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -815,9 +800,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::adds_ten"
@@ -829,9 +812,13 @@
       "unreached": false,
       "source_run_id": null,
       "evidence": {
-        "kind": "unproven",
-        "reasons": [
-          "unaccounted"
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::adds_ten",
+            "came_to": "declined"
+          }
         ]
       }
     },
@@ -856,7 +843,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 8,
+      "duration_ms": 12,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -914,6 +901,188 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
+      "duration_ms": 32,
+      "tests_run": 1,
+      "killed_by": [],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": "declined",
+      "declined": [
+        {
+          "test": "tests::doubles_what_it_shares",
+          "why": "this machine cannot share blocks"
+        }
+      ],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-declines/lib/fixture_declines"
+        ],
+        "discharged": [],
+        "executed": [
+          "fixture-declines/lib/fixture_declines"
+        ],
+        "tests": {
+          "fixture-declines/lib/fixture_declines": [
+            "tests::doubles_what_it_shares"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "evidence": {
+        "kind": "unproven",
+        "reasons": [
+          "declined"
+        ]
+      }
+    },
+    {
+      "index": 13,
+      "id": "0a92963efc1f9adcbf66187e5bc9462aed835fa3e4e7331e81c959401b0e9676",
+      "display_id": "0a92963efc1f9adcbf66",
+      "path": "src/lib.rs",
+      "package": "fixture-declines",
+      "family": "arithmetic",
+      "rule": "mul-to-div",
+      "item": "shared",
+      "rule_version": 1,
+      "line": 18,
+      "column": 11,
+      "start_byte": 583,
+      "end_byte": 584,
+      "source_digest": "42342b3e64fbd6df99f7e6537ed0c66a12457413e85c494bb7dced2ef9bd3f71",
+      "original": "*",
+      "replacement": "/",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-declines/lib/fixture_declines",
+      "exit_code": -1,
+      "duration_ms": 24,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::doubles_what_it_shares"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-declines/lib/fixture_declines"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-declines/lib/fixture_declines": [
+            "tests::doubles_what_it_shares"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::doubles_what_it_shares",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 14,
+      "id": "94cc3fecec01cebf7e2169fad77d32dc4a6067b8afbebf4f44c1f7c66e748dca",
+      "display_id": "94cc3fecec01cebf7e21",
+      "path": "src/lib.rs",
+      "package": "fixture-declines",
+      "family": "literal",
+      "rule": "int-increment",
+      "item": "shared",
+      "rule_version": 1,
+      "line": 18,
+      "column": 13,
+      "start_byte": 585,
+      "end_byte": 586,
+      "source_digest": "42342b3e64fbd6df99f7e6537ed0c66a12457413e85c494bb7dced2ef9bd3f71",
+      "original": "3",
+      "replacement": "4",
+      "outcome": "not_run",
+      "step_notice": null,
+      "target": "fixture-declines/lib/fixture_declines",
+      "exit_code": 0,
+      "duration_ms": 35,
+      "tests_run": 1,
+      "killed_by": [],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": "declined",
+      "declined": [
+        {
+          "test": "tests::doubles_what_it_shares",
+          "why": "this machine cannot share blocks"
+        }
+      ],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-declines/lib/fixture_declines"
+        ],
+        "discharged": [],
+        "executed": [
+          "fixture-declines/lib/fixture_declines"
+        ],
+        "tests": {
+          "fixture-declines/lib/fixture_declines": [
+            "tests::doubles_what_it_shares"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "evidence": {
+        "kind": "unproven",
+        "reasons": [
+          "declined"
+        ]
+      }
+    },
+    {
+      "index": 15,
+      "id": "cfb5c0cc9372f02bc0c3d67d758a86823a788afcd32447111b0a64ae6d0f48d2",
+      "display_id": "cfb5c0cc9372f02bc0c3",
+      "path": "src/lib.rs",
+      "package": "fixture-declines",
+      "family": "literal",
+      "rule": "int-decrement",
+      "item": "shared",
+      "rule_version": 1,
+      "line": 18,
+      "column": 13,
+      "start_byte": 585,
+      "end_byte": 586,
+      "source_digest": "42342b3e64fbd6df99f7e6537ed0c66a12457413e85c494bb7dced2ef9bd3f71",
+      "original": "3",
+      "replacement": "2",
+      "outcome": "not_run",
+      "step_notice": null,
+      "target": "fixture-declines/lib/fixture_declines",
+      "exit_code": 0,
       "duration_ms": 31,
       "tests_run": 1,
       "killed_by": [],
@@ -950,191 +1119,7 @@
       "evidence": {
         "kind": "unproven",
         "reasons": [
-          "native",
-          "test-absent"
-        ]
-      }
-    },
-    {
-      "index": 13,
-      "id": "0a92963efc1f9adcbf66187e5bc9462aed835fa3e4e7331e81c959401b0e9676",
-      "display_id": "0a92963efc1f9adcbf66",
-      "path": "src/lib.rs",
-      "package": "fixture-declines",
-      "family": "arithmetic",
-      "rule": "mul-to-div",
-      "item": "shared",
-      "rule_version": 1,
-      "line": 18,
-      "column": 11,
-      "start_byte": 583,
-      "end_byte": 584,
-      "source_digest": "42342b3e64fbd6df99f7e6537ed0c66a12457413e85c494bb7dced2ef9bd3f71",
-      "original": "*",
-      "replacement": "/",
-      "outcome": "killed",
-      "step_notice": null,
-      "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": -1,
-      "duration_ms": 30,
-      "tests_run": 1,
-      "killed_by": [
-        "tests::doubles_what_it_shares"
-      ],
-      "signal": null,
-      "retried": false,
-      "lingered": false,
-      "not_run_reason": null,
-      "declined": [],
-      "route": {
-        "granularity": "test",
-        "fallback": null,
-        "reaching": [
-          "fixture-declines/lib/fixture_declines"
-        ],
-        "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
-        "tests": {
-          "fixture-declines/lib/fixture_declines": [
-            "tests::doubles_what_it_shares"
-          ]
-        }
-      },
-      "identical": "not-measured",
-      "expected": false,
-      "unreached": false,
-      "source_run_id": null,
-      "evidence": {
-        "kind": "unproven",
-        "reasons": [
-          "native",
-          "test-absent"
-        ]
-      }
-    },
-    {
-      "index": 14,
-      "id": "94cc3fecec01cebf7e2169fad77d32dc4a6067b8afbebf4f44c1f7c66e748dca",
-      "display_id": "94cc3fecec01cebf7e21",
-      "path": "src/lib.rs",
-      "package": "fixture-declines",
-      "family": "literal",
-      "rule": "int-increment",
-      "item": "shared",
-      "rule_version": 1,
-      "line": 18,
-      "column": 13,
-      "start_byte": 585,
-      "end_byte": 586,
-      "source_digest": "42342b3e64fbd6df99f7e6537ed0c66a12457413e85c494bb7dced2ef9bd3f71",
-      "original": "3",
-      "replacement": "4",
-      "outcome": "not_run",
-      "step_notice": null,
-      "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": 0,
-      "duration_ms": 29,
-      "tests_run": 1,
-      "killed_by": [],
-      "signal": null,
-      "retried": false,
-      "lingered": false,
-      "not_run_reason": "declined",
-      "declined": [
-        {
-          "test": "tests::doubles_what_it_shares",
-          "why": "this machine cannot share blocks"
-        }
-      ],
-      "route": {
-        "granularity": "test",
-        "fallback": null,
-        "reaching": [
-          "fixture-declines/lib/fixture_declines"
-        ],
-        "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
-        "tests": {
-          "fixture-declines/lib/fixture_declines": [
-            "tests::doubles_what_it_shares"
-          ]
-        }
-      },
-      "identical": "not-measured",
-      "expected": false,
-      "unreached": false,
-      "source_run_id": null,
-      "evidence": {
-        "kind": "unproven",
-        "reasons": [
-          "native",
-          "test-absent"
-        ]
-      }
-    },
-    {
-      "index": 15,
-      "id": "cfb5c0cc9372f02bc0c3d67d758a86823a788afcd32447111b0a64ae6d0f48d2",
-      "display_id": "cfb5c0cc9372f02bc0c3",
-      "path": "src/lib.rs",
-      "package": "fixture-declines",
-      "family": "literal",
-      "rule": "int-decrement",
-      "item": "shared",
-      "rule_version": 1,
-      "line": 18,
-      "column": 13,
-      "start_byte": 585,
-      "end_byte": 586,
-      "source_digest": "42342b3e64fbd6df99f7e6537ed0c66a12457413e85c494bb7dced2ef9bd3f71",
-      "original": "3",
-      "replacement": "2",
-      "outcome": "not_run",
-      "step_notice": null,
-      "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": 0,
-      "duration_ms": 29,
-      "tests_run": 1,
-      "killed_by": [],
-      "signal": null,
-      "retried": false,
-      "lingered": false,
-      "not_run_reason": "declined",
-      "declined": [
-        {
-          "test": "tests::doubles_what_it_shares",
-          "why": "this machine cannot share blocks"
-        }
-      ],
-      "route": {
-        "granularity": "test",
-        "fallback": null,
-        "reaching": [
-          "fixture-declines/lib/fixture_declines"
-        ],
-        "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
-        "tests": {
-          "fixture-declines/lib/fixture_declines": [
-            "tests::doubles_what_it_shares"
-          ]
-        }
-      },
-      "identical": "not-measured",
-      "expected": false,
-      "unreached": false,
-      "source_run_id": null,
-      "evidence": {
-        "kind": "unproven",
-        "reasons": [
-          "native",
-          "test-absent"
+          "declined"
         ]
       }
     },
@@ -1159,7 +1144,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 33,
+      "duration_ms": 35,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -1195,8 +1180,7 @@
       "evidence": {
         "kind": "unproven",
         "reasons": [
-          "native",
-          "test-absent"
+          "declined"
         ]
       }
     },
@@ -1219,21 +1203,16 @@
       "replacement": "Default::default()",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": 0,
-      "duration_ms": 35,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 17,
       "tests_run": 2,
       "killed_by": [],
       "signal": null,
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::counts_what_it_shares",
-          "why": "this machine cannot share blocks"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -1241,9 +1220,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::counts_what_it_shares",
@@ -1256,10 +1233,18 @@
       "unreached": false,
       "source_run_id": null,
       "evidence": {
-        "kind": "unproven",
-        "reasons": [
-          "native",
-          "test-absent"
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::counts_what_it_shares",
+            "came_to": "set-aside"
+          },
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::counts_without_looking",
+            "came_to": "passed"
+          }
         ]
       }
     },
@@ -1282,21 +1267,16 @@
       "replacement": "-",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": 0,
-      "duration_ms": 35,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 33,
       "tests_run": 2,
       "killed_by": [],
       "signal": null,
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::counts_what_it_shares",
-          "why": "this machine cannot share blocks"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -1304,9 +1284,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::counts_what_it_shares",
@@ -1319,10 +1297,18 @@
       "unreached": false,
       "source_run_id": null,
       "evidence": {
-        "kind": "unproven",
-        "reasons": [
-          "native",
-          "test-absent"
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::counts_what_it_shares",
+            "came_to": "set-aside"
+          },
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::counts_without_looking",
+            "came_to": "passed"
+          }
         ]
       }
     },
@@ -1345,21 +1331,16 @@
       "replacement": "2",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": 0,
-      "duration_ms": 28,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 44,
       "tests_run": 2,
       "killed_by": [],
       "signal": null,
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::counts_what_it_shares",
-          "why": "this machine cannot share blocks"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -1367,9 +1348,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::counts_what_it_shares",
@@ -1382,10 +1361,18 @@
       "unreached": false,
       "source_run_id": null,
       "evidence": {
-        "kind": "unproven",
-        "reasons": [
-          "native",
-          "test-absent"
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::counts_what_it_shares",
+            "came_to": "set-aside"
+          },
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::counts_without_looking",
+            "came_to": "passed"
+          }
         ]
       }
     },
@@ -1408,21 +1395,16 @@
       "replacement": "0",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": 0,
-      "duration_ms": 35,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 17,
       "tests_run": 2,
       "killed_by": [],
       "signal": null,
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::counts_what_it_shares",
-          "why": "this machine cannot share blocks"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -1430,9 +1412,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::counts_what_it_shares",
@@ -1445,10 +1425,18 @@
       "unreached": false,
       "source_run_id": null,
       "evidence": {
-        "kind": "unproven",
-        "reasons": [
-          "native",
-          "test-absent"
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::counts_what_it_shares",
+            "came_to": "set-aside"
+          },
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::counts_without_looking",
+            "came_to": "passed"
+          }
         ]
       }
     },
@@ -1473,7 +1461,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": -1,
-      "duration_ms": 16,
+      "duration_ms": 27,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -1533,7 +1521,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": -1,
-      "duration_ms": 15,
+      "duration_ms": 14,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -1593,7 +1581,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": -1,
-      "duration_ms": 21,
+      "duration_ms": 34,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -1653,7 +1641,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": -1,
-      "duration_ms": 9,
+      "duration_ms": 17,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -1711,21 +1699,16 @@
       "replacement": "Default::default()",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/test/elsewhere",
-      "exit_code": 0,
-      "duration_ms": 34,
-      "tests_run": 1,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 18,
+      "tests_run": 2,
       "killed_by": [],
       "signal": null,
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::halves_what_it_shares",
-          "why": "this machine cannot share blocks"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -1734,10 +1717,7 @@
           "fixture-declines/test/elsewhere"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines",
-          "fixture-declines/test/elsewhere"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::halves_what_it_shares"
@@ -1749,10 +1729,18 @@
       "unreached": false,
       "source_run_id": null,
       "evidence": {
-        "kind": "unproven",
-        "reasons": [
-          "native",
-          "test-absent"
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::halves_what_it_shares",
+            "came_to": "set-aside"
+          },
+          {
+            "target": "fixture-declines/test/elsewhere",
+            "test": "halves_without_looking",
+            "came_to": "passed"
+          }
         ]
       }
     },
@@ -1775,21 +1763,16 @@
       "replacement": "*",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/test/elsewhere",
-      "exit_code": 0,
-      "duration_ms": 30,
-      "tests_run": 1,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 15,
+      "tests_run": 2,
       "killed_by": [],
       "signal": null,
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::halves_what_it_shares",
-          "why": "this machine cannot share blocks"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -1798,10 +1781,7 @@
           "fixture-declines/test/elsewhere"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines",
-          "fixture-declines/test/elsewhere"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::halves_what_it_shares"
@@ -1813,10 +1793,18 @@
       "unreached": false,
       "source_run_id": null,
       "evidence": {
-        "kind": "unproven",
-        "reasons": [
-          "native",
-          "test-absent"
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::halves_what_it_shares",
+            "came_to": "set-aside"
+          },
+          {
+            "target": "fixture-declines/test/elsewhere",
+            "test": "halves_without_looking",
+            "came_to": "passed"
+          }
         ]
       }
     },
@@ -1839,21 +1827,16 @@
       "replacement": "3",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/test/elsewhere",
-      "exit_code": 0,
-      "duration_ms": 31,
-      "tests_run": 1,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 20,
+      "tests_run": 2,
       "killed_by": [],
       "signal": null,
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::halves_what_it_shares",
-          "why": "this machine cannot share blocks"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -1862,10 +1845,7 @@
           "fixture-declines/test/elsewhere"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines",
-          "fixture-declines/test/elsewhere"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::halves_what_it_shares"
@@ -1877,10 +1857,18 @@
       "unreached": false,
       "source_run_id": null,
       "evidence": {
-        "kind": "unproven",
-        "reasons": [
-          "native",
-          "test-absent"
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::halves_what_it_shares",
+            "came_to": "set-aside"
+          },
+          {
+            "target": "fixture-declines/test/elsewhere",
+            "test": "halves_without_looking",
+            "came_to": "passed"
+          }
         ]
       }
     },
@@ -1903,21 +1891,16 @@
       "replacement": "1",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/test/elsewhere",
-      "exit_code": 0,
-      "duration_ms": 28,
-      "tests_run": 1,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 27,
+      "tests_run": 2,
       "killed_by": [],
       "signal": null,
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::halves_what_it_shares",
-          "why": "this machine cannot share blocks"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -1926,10 +1909,7 @@
           "fixture-declines/test/elsewhere"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines",
-          "fixture-declines/test/elsewhere"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::halves_what_it_shares"
@@ -1941,10 +1921,18 @@
       "unreached": false,
       "source_run_id": null,
       "evidence": {
-        "kind": "unproven",
-        "reasons": [
-          "native",
-          "test-absent"
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::halves_what_it_shares",
+            "came_to": "set-aside"
+          },
+          {
+            "target": "fixture-declines/test/elsewhere",
+            "test": "halves_without_looking",
+            "came_to": "passed"
+          }
         ]
       }
     }
@@ -1961,19 +1949,14 @@
   "expectations": [],
   "findings": [
     {
-      "kind": "unproven-mutant",
+      "kind": "surviving-mutant",
       "mutant": "c94ede243aa5305d04b6466027973905ae658f3928dbb77eb90d4b88c342517c",
-      "detail": "no sealed execution established a verdict about c94ede243aa5305d04b6 (a test that reaches it ran only natively; a test that reaches it natively is not in the sealed build), so the native run's survived is a lead and not a verdict"
+      "detail": "no test noticed c94ede243aa5305d04b6; 3 tests ran and passed"
     },
     {
       "kind": "surviving-mutant",
       "mutant": "77b5f87a1e3470368cca2483b355d305fc2fbad18e68a5a78f17cd27e8cc72a6",
       "detail": "no test noticed 77b5f87a1e3470368cca; 1 test ran and passed"
-    },
-    {
-      "kind": "unproven-mutant",
-      "mutant": "7ddf31d0c1226ceff9572d4b21467c94345afdc3f095927c3e34a090e6caa9ee",
-      "detail": "no sealed execution established a verdict about 7ddf31d0c1226ceff957 (a harness's account disagreed with what the host saw), so the native run's killed is a lead and not a verdict"
     },
     {
       "kind": "surviving-mutant",
@@ -1986,59 +1969,49 @@
       "detail": "no test noticed 5318aa447b30bd517a09; 1 test ran and passed"
     },
     {
-      "kind": "unproven-mutant",
-      "mutant": "8915c5b33738e3f766dfc94acfd953915dc84a80b8d571dd611bb6b5fbb655a4",
-      "detail": "no sealed execution established a verdict about 8915c5b33738e3f766df (a harness's account disagreed with what the host saw), so the native run's killed is a lead and not a verdict"
-    },
-    {
       "kind": "surviving-mutant",
       "mutant": "4fc79dcb59b0ee2b57fce185da66028a8a18f7d7ece70d5175fd4344d19727fa",
       "detail": "no test noticed 4fc79dcb59b0ee2b57fc; 1 test ran and passed"
     },
     {
-      "kind": "unproven-mutant",
-      "mutant": "0a92963efc1f9adcbf66187e5bc9462aed835fa3e4e7331e81c959401b0e9676",
-      "detail": "no sealed execution established a verdict about 0a92963efc1f9adcbf66 (a test that reaches it ran only natively; a test that reaches it natively is not in the sealed build), so the native run's killed is a lead and not a verdict"
-    },
-    {
-      "kind": "unproven-mutant",
+      "kind": "surviving-mutant",
       "mutant": "e2ab59dce0e720689cddaf20633d82d16d9547da35148b2b7ca0b8ab04457677",
-      "detail": "no sealed execution established a verdict about e2ab59dce0e720689cdd (a test that reaches it ran only natively; a test that reaches it natively is not in the sealed build), so the native run's survived is a lead and not a verdict"
+      "detail": "no test noticed e2ab59dce0e720689cdd; 2 tests ran and passed"
     },
     {
-      "kind": "unproven-mutant",
+      "kind": "surviving-mutant",
       "mutant": "1d156789e19023eb0b636148f03842a2d512bd0d19c1a14e1af5409ae0a6c8e1",
-      "detail": "no sealed execution established a verdict about 1d156789e19023eb0b63 (a test that reaches it ran only natively; a test that reaches it natively is not in the sealed build), so the native run's survived is a lead and not a verdict"
+      "detail": "no test noticed 1d156789e19023eb0b63; 2 tests ran and passed"
     },
     {
-      "kind": "unproven-mutant",
+      "kind": "surviving-mutant",
       "mutant": "0a36bf72756a9a5e69cc66644df5c0f9cc6826fe0caa8941d7e359e6bc6f84c6",
-      "detail": "no sealed execution established a verdict about 0a36bf72756a9a5e69cc (a test that reaches it ran only natively; a test that reaches it natively is not in the sealed build), so the native run's survived is a lead and not a verdict"
+      "detail": "no test noticed 0a36bf72756a9a5e69cc; 2 tests ran and passed"
     },
     {
-      "kind": "unproven-mutant",
+      "kind": "surviving-mutant",
       "mutant": "3c8d4380a7f5ca1d2714fa23108e4824346e2448447a6694eb947e027dae97e8",
-      "detail": "no sealed execution established a verdict about 3c8d4380a7f5ca1d2714 (a test that reaches it ran only natively; a test that reaches it natively is not in the sealed build), so the native run's survived is a lead and not a verdict"
+      "detail": "no test noticed 3c8d4380a7f5ca1d2714; 2 tests ran and passed"
     },
     {
-      "kind": "unproven-mutant",
+      "kind": "surviving-mutant",
       "mutant": "bfa43f4caf8aee3905d29b0cfcdd8d791f1cbbce7914b90b7d7ee4300b36cde9",
-      "detail": "no sealed execution established a verdict about bfa43f4caf8aee3905d2 (a test that reaches it ran only natively; a test that reaches it natively is not in the sealed build), so the native run's survived is a lead and not a verdict"
+      "detail": "no test noticed bfa43f4caf8aee3905d2; 2 tests ran and passed"
     },
     {
-      "kind": "unproven-mutant",
+      "kind": "surviving-mutant",
       "mutant": "59f23e307f7b13d4ecf5c4cbffe13a13c6d361636b93074f376ac11bf89bbaf9",
-      "detail": "no sealed execution established a verdict about 59f23e307f7b13d4ecf5 (a test that reaches it ran only natively; a test that reaches it natively is not in the sealed build), so the native run's survived is a lead and not a verdict"
+      "detail": "no test noticed 59f23e307f7b13d4ecf5; 2 tests ran and passed"
     },
     {
-      "kind": "unproven-mutant",
+      "kind": "surviving-mutant",
       "mutant": "b58d7f6bd85ceb0493244310df6ccdd06f690a8d7cdc7c5e0809f6a8424f2ddb",
-      "detail": "no sealed execution established a verdict about b58d7f6bd85ceb049324 (a test that reaches it ran only natively; a test that reaches it natively is not in the sealed build), so the native run's survived is a lead and not a verdict"
+      "detail": "no test noticed b58d7f6bd85ceb049324; 2 tests ran and passed"
     },
     {
-      "kind": "unproven-mutant",
+      "kind": "surviving-mutant",
       "mutant": "8d51aaa1107600b45728b2761cc22f60cbd9983b4dc6ff41fd45f0ae5d449f79",
-      "detail": "no sealed execution established a verdict about 8d51aaa1107600b45728 (a test that reaches it ran only natively; a test that reaches it natively is not in the sealed build), so the native run's survived is a lead and not a verdict"
+      "detail": "no test noticed 8d51aaa1107600b45728; 2 tests ran and passed"
     }
   ],
   "facts": [

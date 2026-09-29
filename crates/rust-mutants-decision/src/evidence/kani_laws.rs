@@ -18,20 +18,22 @@ fn symbolic_sealability() -> Sealability {
 
 fn symbolic_execution() -> Execution {
     let index = kani::any::<u8>();
-    kani::assume(index < 12);
+    kani::assume(index < 14);
     match index {
         0 => Execution::Native,
         1 => Execution::Sealed(Sealed::Passed),
-        2 => Execution::Sealed(Sealed::Detected(Detection::Panicked)),
-        3 => Execution::Sealed(Sealed::Detected(Detection::Failed)),
-        4 => Execution::Sealed(Sealed::Detected(Detection::Trapped)),
-        5 => Execution::Sealed(Sealed::Detected(Detection::FuelExceeded)),
-        6 => Execution::Sealed(Sealed::Detected(Detection::MemoryExceeded)),
-        7 => Execution::Sealed(Sealed::Detected(Detection::Declined)),
-        8 => Execution::Sealed(Sealed::Doubted(Doubt::ExitedEarly)),
-        9 => Execution::Sealed(Sealed::Doubted(Doubt::StackOverflow)),
-        10 => Execution::Sealed(Sealed::Doubted(Doubt::Refused)),
-        _ => Execution::Sealed(Sealed::Doubted(Doubt::Unaccounted)),
+        2 => Execution::Sealed(Sealed::SetAside),
+        3 => Execution::Sealed(Sealed::Detected(Detection::Panicked)),
+        4 => Execution::Sealed(Sealed::Detected(Detection::Failed)),
+        5 => Execution::Sealed(Sealed::Detected(Detection::Trapped)),
+        6 => Execution::Sealed(Sealed::Detected(Detection::FuelExceeded)),
+        7 => Execution::Sealed(Sealed::Detected(Detection::MemoryExceeded)),
+        8 => Execution::Sealed(Sealed::Detected(Detection::Declined)),
+        9 => Execution::Sealed(Sealed::Doubted(Doubt::ExitedEarly)),
+        10 => Execution::Sealed(Sealed::Doubted(Doubt::StackOverflow)),
+        11 => Execution::Sealed(Sealed::Doubted(Doubt::Refused)),
+        12 => Execution::Sealed(Sealed::Doubted(Doubt::Unaccounted)),
+        _ => Execution::Sealed(Sealed::Doubted(Doubt::Unmatched)),
     }
 }
 
@@ -49,7 +51,8 @@ fn symbolic_executions() -> ([Execution; LONGEST], usize) {
 const fn detected(execution: Execution) -> Option<Detection> {
     match execution {
         Execution::Sealed(Sealed::Detected(how)) => Some(how),
-        Execution::Sealed(Sealed::Passed | Sealed::Doubted(_)) | Execution::Native => None,
+        Execution::Sealed(Sealed::Passed | Sealed::Doubted(_) | Sealed::SetAside)
+        | Execution::Native => None,
     }
 }
 
@@ -131,14 +134,23 @@ fn survival_is_universal_over_sealed_passes() {
     let sealability = symbolic_sealability();
     let (executions, length) = symbolic_executions();
     let given = &executions[..length];
-    let every_sealed_pass = given
+    let every_sealed_pass_or_set_aside = given.iter().all(|execution| {
+        matches!(
+            execution,
+            Execution::Sealed(Sealed::Passed | Sealed::SetAside)
+        )
+    });
+    let one_passed = given
         .iter()
-        .all(|execution| *execution == Execution::Sealed(Sealed::Passed));
+        .any(|execution| *execution == Execution::Sealed(Sealed::Passed));
     let said = standing(sealability, given);
     let survived =
         matches!(said, Standing::Established(verdict) if verdict.found() == Found::Survived);
     kani::assert(
-        survived == (sealability == Sealability::Answerable && length > 0 && every_sealed_pass),
+        survived
+            == (sealability == Sealability::Answerable
+                && every_sealed_pass_or_set_aside
+                && one_passed),
         "njutest-law-assertion:survival-iff-every-sealed-pass",
     );
     let unreached =
@@ -153,7 +165,35 @@ fn survival_is_universal_over_sealed_passes() {
 }
 
 #[kani::proof]
-#[kani::unwind(8)]
+#[kani::unwind(4)]
+fn a_mutant_every_test_of_which_declined_as_its_control_did_measured_nothing() {
+    let sealability = symbolic_sealability();
+    let length = kani::any::<usize>();
+    kani::assume(length >= 1 && length <= LONGEST);
+    let executions = [Execution::Sealed(Sealed::SetAside); LONGEST];
+    let said = standing(sealability, &executions[..length]);
+    kani::assert(
+        sealability != Sealability::Answerable
+            || said == Standing::Unproven(super::Doubts::of(Reason::Declined)),
+        "njutest-law-assertion:all-set-aside-unproven-declined",
+    );
+    kani::assert(
+        !matches!(said, Standing::Established(_)),
+        "njutest-law-assertion:set-aside-alone-never-a-verdict",
+    );
+    kani::cover!(
+        sealability == Sealability::Answerable,
+        "njutest-law-branch:answerable"
+    );
+    kani::cover!(
+        sealability != Sealability::Answerable,
+        "njutest-law-branch:otherwise"
+    );
+    kani::cover!(true, "njutest-law-reached");
+}
+
+#[kani::proof]
+#[kani::unwind(11)]
 fn an_unproven_standing_names_a_reason() {
     let sealability = symbolic_sealability();
     let (executions, length) = symbolic_executions();

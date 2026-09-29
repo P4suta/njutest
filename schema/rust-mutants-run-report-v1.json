@@ -716,7 +716,9 @@
                             "exited-early",
                             "stack-overflow",
                             "refused",
-                            "unaccounted"
+                            "unaccounted",
+                            "unmatched",
+                            "set-aside"
                           ]
                         }
                       }
@@ -746,7 +748,9 @@
                         "exited-early",
                         "stack-overflow",
                         "refused",
-                        "unaccounted"
+                        "unaccounted",
+                        "declined",
+                        "unmatched"
                       ]
                     }
                   }
@@ -1181,7 +1185,7 @@
                         "stack-overflow",
                         "refused",
                         "unaccounted",
-                        "declined",
+                        "unmatched",
                         "unbuilt",
                         "not-held"
                       ]

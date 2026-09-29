@@ -96,7 +96,7 @@ Both are read, and they must agree.
 
 A panic's trap with the standard library's message for a failed allocation is a memory bound, not a panic.
 A test that declines to measure ([ADR 0043](../adr/0043-a-test-may-decline-to-measure.md)) under the mutant, where its control measured, is detected: declined, whatever its ending, since the mutant changed what the test did.
-A test whose control declined has no control to hold it to, so no mutant is put to it.
+A test whose control declined is still put every mutant its control reached, as a native run asks it: where it declines again in its control's words it measured nothing and is `set-aside`; in other words, it is detected: declined; where the mutant makes it measure instead, what it measured is the answer, but for a fuel or memory bound it runs past, which no control of its own set, so that is doubted: `unmatched`.
 
 A doctest has no libtest account to ask: rustdoc's `main` runs it, and returns only where it returned, so the ending alone decides.
 Its failure status is `ExitCode::FAILURE`, which `main` reports a doctest's error with.
@@ -137,9 +137,9 @@ A report that does not account for every claim the capture gave out, or a merged
 2. If any sealed execution detected it, it is killed, by the first that did.
 3. Otherwise, every reason there is none is collected: a test that ran only natively, a test that reaches the mutant natively and is not in the sealed build, a test that reaches it natively whose sealed control does not reach its guard, and every doubted execution.
    If there is any, it is unproven, and it says all of them.
-4. Otherwise, with no test reaching it, it is unreached; with every test that reaches it passed, it survived.
+4. Otherwise, with no test reaching it, it is unreached; with every test that reaches it passed or set aside, and at least one passed, it survived; with every one set aside, nothing measured it, and it is unproven for `declined`.
 
-A survival is universal and a kill existential, as [ADR 0007](../adr/0007-survived-evidence-is-universal.md) says of every survival.
+A survival is universal and a kill existential, as [ADR 0007](../adr/0007-survived-evidence-is-universal.md) says of every survival; a test set aside for declining as its control did is left out of both, as [ADR 0043](../adr/0043-a-test-may-decline-to-measure.md) leaves it out of a native run's.
 A native execution never contributes to a verdict: a mutant whose only executions are native is unproven, and says so.
 
 ## What cannot be sealed, and how to seal it

@@ -9,6 +9,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Accepted, 2026-09-26.
 Implemented in the engine by `decline::{Declines, held, storable}`, `MutantConclusion::{Declined, DeclinedUnderTheMutant}`, `NotRunReason::Declined`, the run report's `declined` rows and count, the `declined` lists of the `verify` and `mutant-exec` trace records, and engine-audit's recording layer; njutest records such a mutation as `declined`, a hole a `not-measured` finding names with each test and its words, which a target that measured and noticed nothing outweighs, and proofaudit holds each to executions that measured nothing.
+In a sealed run ([ADR 0046](0046-a-verdict-is-what-a-sealed-run-observed.md)) a control that declines holds its words: a test that declines again in them is `Sealed::SetAside`, left out of the kill and the survival alike, one that declines otherwise is `Detection::Declined`, and a bound it runs past is `Doubt::Unmatched`, since no control of its own set it; `docs/engine/sealed.md` says how each decides a standing.
 
 ## Context
 

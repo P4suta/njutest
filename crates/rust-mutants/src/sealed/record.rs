@@ -142,6 +142,10 @@ pub enum Came {
     Refused,
     /// The harness's account disagreed with what the host saw.
     Unaccounted,
+    /// The test's control declined, and the execution ran past a bound no control of its own set.
+    Unmatched,
+    /// The test declined to measure in the words its control declined in, and is set aside.
+    SetAside,
 }
 
 /// The row a verdict gives a mutant: its outcome, and why it was not run where it was not.
@@ -170,6 +174,8 @@ impl Came {
             Self::StackOverflow => "stack-overflow",
             Self::Refused => "refused",
             Self::Unaccounted => "unaccounted",
+            Self::Unmatched => "unmatched",
+            Self::SetAside => "set-aside",
         }
     }
 
@@ -204,6 +210,8 @@ impl Came {
             Self::Unaccounted => {
                 Sealed::Doubted(rust_mutants_decision::evidence::Doubt::Unaccounted)
             }
+            Self::Unmatched => Sealed::Doubted(rust_mutants_decision::evidence::Doubt::Unmatched),
+            Self::SetAside => Sealed::SetAside,
         }
     }
 
@@ -223,7 +231,9 @@ impl Came {
                 rust_mutants_decision::evidence::Doubt::StackOverflow => Self::StackOverflow,
                 rust_mutants_decision::evidence::Doubt::Refused => Self::Refused,
                 rust_mutants_decision::evidence::Doubt::Unaccounted => Self::Unaccounted,
+                rust_mutants_decision::evidence::Doubt::Unmatched => Self::Unmatched,
             },
+            Sealed::SetAside => Self::SetAside,
         }
     }
 }
@@ -261,6 +271,10 @@ pub enum Doubt {
     Refused,
     /// A harness's account of its one test disagreed with what the host observed.
     Unaccounted,
+    /// Every test that reaches the mutant declined to measure, as its control did (ADR 0043).
+    Declined,
+    /// A test whose control declined ran past a bound no control of its own set.
+    Unmatched,
 }
 
 impl Doubt {
@@ -274,6 +288,8 @@ impl Doubt {
             Reason::StackOverflow => Self::StackOverflow,
             Reason::Refused => Self::Refused,
             Reason::Unaccounted => Self::Unaccounted,
+            Reason::Declined => Self::Declined,
+            Reason::Unmatched => Self::Unmatched,
         }
     }
 
@@ -298,6 +314,10 @@ impl Doubt {
             Self::StackOverflow => "a test's stack overflowed",
             Self::Refused => "a test met a refusal of the sandbox its control did not",
             Self::Unaccounted => "a harness's account disagreed with what the host saw",
+            Self::Declined => "every test that reaches it declined to measure, as its control did",
+            Self::Unmatched => {
+                "a test whose control declined ran past a bound no control of its own set"
+            }
         }
     }
 }

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use super::{Account, Ending, Harness, Observed, judged};
-use crate::evidence::{Doubt, Sealed};
+use crate::evidence::{Detection, Doubt, Sealed};
 
 fn symbolic_ending() -> Ending {
     let index = kani::any::<u8>();
@@ -46,6 +46,7 @@ fn symbolic_observed() -> Observed {
         ending: symbolic_ending(),
         harness: symbolic_harness(),
         beyond_control: kani::any(),
+        matched: kani::any(),
     }
 }
 
@@ -104,11 +105,39 @@ fn an_ending_no_two_hosts_decide_alike_is_never_a_verdict() {
 }
 
 #[kani::proof]
+fn a_bound_no_control_of_the_tests_own_set_is_never_a_detection() {
+    let observed = symbolic_observed();
+    kani::assume(!observed.beyond_control && !observed.matched);
+    let said = judged(observed);
+    kani::assert(
+        !matches!(
+            said,
+            Sealed::Detected(Detection::FuelExceeded | Detection::MemoryExceeded)
+        ),
+        "njutest-law-assertion:unmatched-bound-never-detects",
+    );
+    let bounded = matches!(
+        observed.ending,
+        Ending::FuelExhausted | Ending::MemoryExhausted
+    );
+    if bounded {
+        kani::assert(
+            said == Sealed::Doubted(Doubt::Unmatched),
+            "njutest-law-assertion:unmatched-bound-doubted",
+        );
+    }
+    kani::cover!(bounded, "njutest-law-branch:bounded");
+    kani::cover!(!bounded, "njutest-law-branch:unbounded");
+    kani::cover!(true, "njutest-law-reached");
+}
+
+#[kani::proof]
 fn a_doctest_that_should_panic_is_detected_only_by_not_failing() {
     let observed = Observed {
         ending: symbolic_ending(),
         harness: Harness::ShouldPanic,
         beyond_control: false,
+        matched: true,
     };
     let detected = matches!(judged(observed), Sealed::Detected(_));
     kani::assert(

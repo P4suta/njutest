@@ -2017,7 +2017,9 @@
                     "exited-early",
                     "stack-overflow",
                     "refused",
-                    "unaccounted"
+                    "unaccounted",
+                    "unmatched",
+                    "set-aside"
                   ]
                 }
               }

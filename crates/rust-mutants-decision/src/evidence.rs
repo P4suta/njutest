@@ -31,6 +31,8 @@ pub enum Doubt {
     Refused,
     /// The harness's account of its one test disagreed with what the host observed.
     Unaccounted,
+    /// The test's control declined to measure, so no bound its control stayed within holds the execution, which ran past one (ADR 0043).
+    Unmatched,
 }
 
 /// What a sealed execution of one test, with the mutant active, came to.
@@ -42,6 +44,8 @@ pub enum Sealed {
     Detected(Detection),
     /// The execution established neither.
     Doubted(Doubt),
+    /// The test declined to measure in the words its control declined in, so it measured nothing either way and is set aside (ADR 0043).
+    SetAside,
 }
 
 /// What the one execution of one test that reaches the mutant established.
@@ -85,6 +89,10 @@ pub enum Reason {
     Unaccounted,
     /// A test reaches the mutant natively and its sealed control does not reach the mutant's guard.
     ReachDiffers,
+    /// Every test that reaches the mutant declined to measure, as its control did (ADR 0043).
+    Declined,
+    /// A test whose control declined ran past a bound no control of its own set.
+    Unmatched,
 }
 
 impl Reason {
@@ -96,26 +104,29 @@ impl Reason {
             Doubt::StackOverflow => Self::StackOverflow,
             Doubt::Refused => Self::Refused,
             Doubt::Unaccounted => Self::Unaccounted,
+            Doubt::Unmatched => Self::Unmatched,
         }
     }
 
-    const fn bit(self) -> u8 {
+    const fn bit(self) -> u16 {
         match self {
-            Self::Native => 0b000_0001,
-            Self::GuardAbsent => 0b000_0010,
-            Self::TestAbsent => 0b000_0100,
-            Self::ExitedEarly => 0b000_1000,
-            Self::StackOverflow => 0b001_0000,
-            Self::Refused => 0b010_0000,
-            Self::Unaccounted => 0b100_0000,
-            Self::ReachDiffers => 0b1000_0000,
+            Self::Native => 0b00_0000_0001,
+            Self::GuardAbsent => 0b00_0000_0010,
+            Self::TestAbsent => 0b00_0000_0100,
+            Self::ExitedEarly => 0b00_0000_1000,
+            Self::StackOverflow => 0b00_0001_0000,
+            Self::Refused => 0b00_0010_0000,
+            Self::Unaccounted => 0b00_0100_0000,
+            Self::ReachDiffers => 0b00_1000_0000,
+            Self::Declined => 0b01_0000_0000,
+            Self::Unmatched => 0b10_0000_0000,
         }
     }
 }
 
 /// Every reason a mutant has no verdict, as a set that is never empty.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Doubts(u8);
+pub struct Doubts(u16);
 
 impl Doubts {
     const fn of(reason: Reason) -> Self {
@@ -143,7 +154,7 @@ pub enum Found {
         /// How it detected the mutant.
         how: Detection,
     },
-    /// Every test that reaches it passed, sealed, with it active.
+    /// Every test that reaches it passed, sealed, with it active, but for those that declined to measure as their controls did, and at least one measured.
     Survived,
     /// No test reaches it, and the sealed build holds its guard.
     Unreached,
@@ -170,11 +181,12 @@ pub enum Standing {
     Unproven(Doubts),
 }
 
-/// What a pass over the executions has established so far: the first detection, and every doubt.
+/// What a pass over the executions has established so far: the first detection, every doubt, and whether any execution measured rather than being set aside.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Pass {
     killed: Option<(usize, Detection)>,
     doubts: Option<Doubts>,
+    measured: bool,
 }
 
 impl Pass {
@@ -188,6 +200,7 @@ impl Pass {
         Self {
             killed: None,
             doubts,
+            measured: false,
         }
     }
 
@@ -199,21 +212,33 @@ impl Pass {
         Self {
             killed: self.killed,
             doubts: Some(doubts),
+            measured: self.measured,
+        }
+    }
+
+    const fn measuring(self) -> Self {
+        Self {
+            measured: true,
+            ..self
         }
     }
 
     const fn after(self, by: usize, execution: Execution) -> Self {
         match execution {
-            Execution::Sealed(Sealed::Passed) => self,
+            Execution::Sealed(Sealed::SetAside) => self,
+            Execution::Sealed(Sealed::Passed) => self.measuring(),
             Execution::Sealed(Sealed::Detected(how)) => match self.killed {
-                Some(_) => self,
+                Some(_) => self.measuring(),
                 None => Self {
                     killed: Some((by, how)),
                     doubts: self.doubts,
+                    measured: true,
                 },
             },
-            Execution::Sealed(Sealed::Doubted(doubt)) => self.doubting(Reason::of(doubt)),
-            Execution::Native => self.doubting(Reason::Native),
+            Execution::Sealed(Sealed::Doubted(doubt)) => {
+                self.doubting(Reason::of(doubt)).measuring()
+            }
+            Execution::Native => self.doubting(Reason::Native).measuring(),
         }
     }
 }
@@ -238,14 +263,22 @@ pub fn standing(sealability: Sealability, executions: &[Execution]) -> Standing 
         Pass {
             killed: None,
             doubts: Some(doubts),
+            ..
         } => Standing::Unproven(doubts),
         Pass {
             killed: None,
             doubts: None,
+            ..
         } if executions.is_empty() => Standing::Established(Verdict(Found::Unreached)),
         Pass {
             killed: None,
             doubts: None,
+            measured: false,
+        } => Standing::Unproven(Doubts::of(Reason::Declined)),
+        Pass {
+            killed: None,
+            doubts: None,
+            measured: true,
         } => Standing::Established(Verdict(Found::Survived)),
     }
 }

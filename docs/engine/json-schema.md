@@ -130,7 +130,7 @@ A mutation every target of which a proof removed is a lead, since the proof read
 An `unmatched-skip` is a `rust-mutants: skip` marker that hid nothing, which is a claim about code that has moved or gone.
 
 A mutant's `evidence` says what its verdict rests on ([ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md)).
-A target's `sealed` says where the reasons come from: `state` is `sealed` where the target has sealed tests, or the reason it has none, with `remedy` saying what to do about it; `uncontrolled` names each test its native baseline ran that has no sealed control, and why — what its control came to, `declined`, `unbuilt`, or `not-held` where the sealed build does not hold it.
+A target's `sealed` says where the reasons come from: `state` is `sealed` where the target has sealed tests, or the reason it has none, with `remedy` saying what to do about it; `uncontrolled` names each test its native baseline ran that has no sealed control, and why — what its control came to, `unbuilt`, or `not-held` where the sealed build does not hold it; a test whose control declined to measure has a control, which holds its words (ADR 0043).
 A route to a target that is not sealed, or to one of its uncontrolled tests, is what `test-absent` in a mutant's `evidence` is.
 `sealed` lists the sealed executions that established it, in the order they ran, each with its target, its test, and what it came to; a reader decides the verdict again from them, and refuses a report whose outcome is not that verdict.
 `unproven` lists every reason there is no verdict, and the outcome beside it is a lead.

@@ -203,6 +203,8 @@ pub struct Control {
     pub reached: BTreeSet<u32>,
     refusals: BTreeSet<(WasiFunction, RefusalReason)>,
     sandbox: BTreeSet<&'static str>,
+    /// The words it declined to measure in, where it declined (ADR 0043): it passed having measured nothing, and bounds nothing a mutant's execution is held to.
+    pub declined: Option<Vec<u8>>,
 }
 
 /// Why a listed test has no control a mutant can be judged against.
@@ -212,8 +214,6 @@ pub enum Uncontrolled {
     Detected(rust_mutants_decision::evidence::Detection),
     /// Its control established nothing, for this reason.
     Doubted(rust_mutants_decision::evidence::Doubt),
-    /// Its control declined to measure on the sealed host (ADR 0043), so it passed having measured nothing.
-    Declined,
     /// It runs natively and did not build for the sealed target.
     Unbuilt,
     /// It runs natively and the sealed build does not hold it.
@@ -227,7 +227,6 @@ impl Uncontrolled {
         match self {
             Self::Detected(how) => super::record::Came::of(Sealed::Detected(how)).name(),
             Self::Doubted(why) => super::record::Came::of(Sealed::Doubted(why)).name(),
-            Self::Declined => "declined",
             Self::Unbuilt => "unbuilt",
             Self::Unsealed => "not-held",
         }
@@ -615,17 +614,24 @@ impl<'runner> Bench<'runner> {
         else {
             return Ok(None);
         };
-        let budget = control
-            .fuel
-            .saturating_mul(FUEL_FACTOR)
-            .saturating_add(FUEL_FLOOR);
+        let budget = match control.declined {
+            Some(_) => CONTROL_FUEL,
+            None => control
+                .fuel
+                .saturating_mul(FUEL_FACTOR)
+                .saturating_add(FUEL_FLOOR),
+        };
         let asking = run.asking(test, &self.harness);
         let invocation = self.invocation(station, asking, (Some(mutant), budget))?;
         let transcript = self.invoke(station, module, &invocation)?;
-        if written(&transcript, DECLINE_LOG).is_some_and(|notice| !notice.is_empty()) {
-            return Ok(Some(Sealed::Detected(
-                rust_mutants_decision::evidence::Detection::Declined,
-            )));
+        match (declined(&transcript), control.declined.as_deref()) {
+            (Some(said), Some(before)) if said == before => return Ok(Some(Sealed::SetAside)),
+            (Some(_), Some(_) | None) => {
+                return Ok(Some(Sealed::Detected(
+                    rust_mutants_decision::evidence::Detection::Declined,
+                )));
+            }
+            (None, Some(_) | None) => {}
         }
         Ok(Some(judged(observed(
             &transcript,
@@ -693,9 +699,7 @@ impl<'runner> Bench<'runner> {
             Sealed::Passed => {}
             Sealed::Detected(how) => return Ok(Err(Uncontrolled::Detected(how))),
             Sealed::Doubted(why) => return Ok(Err(Uncontrolled::Doubted(why))),
-        }
-        if written(&transcript, DECLINE_LOG).is_some_and(|notice| !notice.is_empty()) {
-            return Ok(Err(Uncontrolled::Declined));
+            Sealed::SetAside => return Ok(Err(unread)),
         }
         let reached = match written(&transcript, TOUCH_LOG).map(std::str::from_utf8) {
             None => BTreeSet::new(),
@@ -710,6 +714,7 @@ impl<'runner> Bench<'runner> {
             reached,
             refusals: refusals(&transcript),
             sandbox: sandbox(&transcript),
+            declined: declined(&transcript).map(<[u8]>::to_vec),
         }))
     }
 
@@ -852,6 +857,7 @@ fn observed(
         ending,
         harness,
         beyond_control,
+        matched: control.is_none_or(|control| control.declined.is_none()),
     }
 }
 
@@ -898,6 +904,11 @@ fn sandbox(transcript: &Transcript) -> BTreeSet<&'static str> {
 }
 
 /// The bytes an instance left at `path` of the records it was given, where it wrote any.
+/// The words the test declined to measure in, where it wrote any (ADR 0043).
+fn declined(transcript: &Transcript) -> Option<&[u8]> {
+    written(transcript, DECLINE_LOG).filter(|notice| !notice.is_empty())
+}
+
 fn written<'transcript>(
     transcript: &'transcript Transcript,
     path: &str,

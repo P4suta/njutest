@@ -1847,10 +1847,19 @@ pub const DETECTIONS: [&str; 6] = [
 ];
 
 /// What a sealed execution comes to where it established nothing, which no execution beside it can make a verdict of but a detection.
-pub const DOUBTS: [&str; 4] = ["exited-early", "stack-overflow", "refused", "unaccounted"];
+pub const DOUBTS: [&str; 5] = [
+    "exited-early",
+    "stack-overflow",
+    "refused",
+    "unaccounted",
+    "unmatched",
+];
+
+/// What a sealed execution comes to where the test declined to measure in the words its control declined in, which measures nothing and is set aside (ADR 0043).
+pub const SET_ASIDE: &str = "set-aside";
 
 /// Every reason a sealed run gives for establishing no verdict.
-pub const REASONS: [&str; 9] = [
+pub const REASONS: [&str; 11] = [
     "not-sealed",
     "native",
     "guard-absent",
@@ -1860,6 +1869,8 @@ pub const REASONS: [&str; 9] = [
     "stack-overflow",
     "refused",
     "unaccounted",
+    "declined",
+    "unmatched",
 ];
 
 /// The three distinct facts a report can state about row-local review acceptance.
@@ -5208,14 +5219,20 @@ fn sealed_against(
     } else {
         Settled::Survived
     };
+    let mut measured = false;
     for SealedRun {
         target, came_to, ..
     } in executions
     {
         if DETECTIONS.contains(&came_to.as_str()) {
             settled = Settled::Killed(target);
+            measured = true;
             break;
         }
+        if came_to == SET_ASIDE {
+            continue;
+        }
+        measured = true;
         if DOUBTS.contains(&came_to.as_str()) {
             settled = Settled::Nothing;
         } else if came_to != PASSED {
@@ -5224,6 +5241,9 @@ fn sealed_against(
                  comes to"
             ));
         }
+    }
+    if !measured && !executions.is_empty() {
+        settled = Settled::Nothing;
     }
     match (outcome, settled) {
         (KILLED, Settled::Killed(first)) => match killed_by {

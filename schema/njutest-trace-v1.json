@@ -383,7 +383,7 @@
                 "mutant": { "type": "string", "minLength": 1 },
                 "target": { "type": "string", "minLength": 1 },
                 "test": { "type": "string", "minLength": 1 },
-                "came_to": { "enum": ["passed", "panicked", "failed", "trapped", "fuel-exceeded", "memory-exceeded", "declined", "exited-early", "stack-overflow", "refused", "unaccounted"] }
+                "came_to": { "enum": ["passed", "panicked", "failed", "trapped", "fuel-exceeded", "memory-exceeded", "declined", "exited-early", "stack-overflow", "refused", "unaccounted", "unmatched", "set-aside"] }
               }
             }
           }

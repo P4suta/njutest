@@ -704,7 +704,7 @@ pub(super) fn exit(report: &Report, audit: &mut Audit) -> Decided {
     notes.looked()
 }
 
-/// Every verdict a row says sealed executions established, decided again from the executions it records: a detection kills, and the first ends them; with none, every one passing survives and none at all is unreached; a doubt establishes nothing.
+/// Every verdict a row says sealed executions established, decided again from the executions it records: a detection kills, and the first ends them; with none, every one passing or set aside survives where one passed, and none at all is unreached; a doubt establishes nothing, and neither do executions every one of which was set aside.
 pub(super) fn sealed(report: &Report, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Sealed);
     for row in &report.mutants {
@@ -750,6 +750,18 @@ pub(super) fn sealed(report: &Report, audit: &mut Audit) -> Decided {
                 (KILLED, None)
             }
             None if executions.is_empty() => (NOT_RUN, Some(UNREACHED)),
+            None if executions
+                .iter()
+                .all(|run| run.came_to.said() == Said::SetAside) =>
+            {
+                notes.violated(
+                    row.label(),
+                    "the row rests on sealed executions every one of which declined to measure \
+                     as its control did; a mutant nothing measured has no verdict (ADR 0043)"
+                        .to_owned(),
+                );
+                continue;
+            }
             None => (SURVIVED, None),
         };
         let said = row.not_run_reason.map(super::NotRunReason::as_str);

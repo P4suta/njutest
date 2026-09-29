@@ -61,15 +61,25 @@ pub struct Observed {
     pub harness: Harness,
     /// Whether the execution met a refusal of the sandbox, or the standard library's message for an unsupported operation or a failed allocation, that its control did not.
     pub beyond_control: bool,
+    /// Whether its fuel and memory bounds are ones its control stayed within, which a control that declined to measure never set.
+    pub matched: bool,
 }
 
 /// What one sealed execution came to.
 ///
-/// A failure that followed a refusal its control did not meet is how the run measured, never a verdict (ADR 0023); otherwise the ending decides, read as the harness that ran the test decides a pass, and libtest's account is asked only where the ending alone cannot say.
+/// A failure that followed a refusal its control did not meet is how the run measured, never a verdict (ADR 0023), and a bound no control of the test's own set says nothing when it is run past; otherwise the ending decides, read as the harness that ran the test decides a pass, and libtest's account is asked only where the ending alone cannot say.
 #[must_use]
 pub const fn judged(observed: Observed) -> Sealed {
     if observed.beyond_control {
         return Sealed::Doubted(Doubt::Refused);
+    }
+    if !observed.matched
+        && matches!(
+            observed.ending,
+            Ending::FuelExhausted | Ending::MemoryExhausted
+        )
+    {
+        return Sealed::Doubted(Doubt::Unmatched);
     }
     match observed.harness {
         Harness::Libtest(account) => accounted(observed.ending, account),

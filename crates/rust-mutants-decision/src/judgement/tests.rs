@@ -20,11 +20,14 @@ fn every_observation() -> Vec<Observed> {
     for ending in Ending::ALL {
         for harness in every_harness() {
             for beyond_control in [false, true] {
-                every.push(Observed {
-                    ending,
-                    harness,
-                    beyond_control,
-                });
+                for matched in [true, false] {
+                    every.push(Observed {
+                        ending,
+                        harness,
+                        beyond_control,
+                        matched,
+                    });
+                }
             }
         }
     }
@@ -34,6 +37,21 @@ fn every_observation() -> Vec<Observed> {
 fn by_the_table(observed: Observed) -> Sealed {
     if observed.beyond_control {
         return Sealed::Doubted(Doubt::Refused);
+    }
+    if !observed.matched {
+        match observed.ending {
+            Ending::FuelExhausted | Ending::MemoryExhausted => {
+                return Sealed::Doubted(Doubt::Unmatched);
+            }
+            Ending::Returned
+            | Ending::ExitedZero
+            | Ending::ExitedFailure
+            | Ending::ExitedOther
+            | Ending::Panicked
+            | Ending::Aborted
+            | Ending::Trapped
+            | Ending::StackOverflow => {}
+        }
     }
     match (observed.harness, observed.ending) {
         (Harness::Libtest(Account::Passed) | Harness::Doctest, Ending::Returned)

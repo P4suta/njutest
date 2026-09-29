@@ -74,6 +74,10 @@ pub(crate) enum Harness {
         rename = "judgement::kani_laws::a_doctest_that_should_panic_is_detected_only_by_not_failing"
     )]
     JudgedShouldPanic,
+    #[serde(
+        rename = "judgement::kani_laws::a_bound_no_control_of_the_tests_own_set_is_never_a_detection"
+    )]
+    JudgedUnmatched,
     #[serde(rename = "evidence::kani_laws::native_executions_alone_never_establish_a_verdict")]
     NativeAlone,
     #[serde(rename = "evidence::kani_laws::a_sealed_detection_establishes_the_first_kill")]
@@ -82,6 +86,10 @@ pub(crate) enum Harness {
     UniversalSurvival,
     #[serde(rename = "evidence::kani_laws::an_unproven_standing_names_a_reason")]
     UnprovenReason,
+    #[serde(
+        rename = "evidence::kani_laws::a_mutant_every_test_of_which_declined_as_its_control_did_measured_nothing"
+    )]
+    DeclinedAlone,
     #[serde(rename = "evidence::kani_laws::the_order_of_the_executions_does_not_change_the_class")]
     OrderIndependent,
     #[serde(rename = "instrument::runtime::kani_laws::a_counting_checkpoint_counts")]
@@ -133,13 +141,15 @@ impl Harness {
     const fn ceiling(self) -> u64 {
         match self {
             Self::JudgedPass => 5_200,
-            Self::JudgedRefusal | Self::JudgedUndecidable => 4_900,
+            Self::JudgedRefusal | Self::JudgedUndecidable => 5_000,
             Self::JudgedShouldPanic => 2_600,
+            Self::JudgedUnmatched => 5_300,
+            Self::DeclinedAlone => 12_100,
             Self::NativeAlone => 13_000,
-            Self::FirstKill => 34_000,
-            Self::UniversalSurvival => 30_000,
-            Self::UnprovenReason => 31_000,
-            Self::OrderIndependent => 39_000,
+            Self::FirstKill => 34_700,
+            Self::UniversalSurvival => 35_100,
+            Self::UnprovenReason => 34_900,
+            Self::OrderIndependent => 42_400,
             Self::CountingCounts => 1_800,
             Self::CountingNeverStops | Self::DormantCheckpoint => 1_300,
             Self::CountingUnreachable => 5_800,
@@ -172,6 +182,12 @@ impl Harness {
             }
             Self::JudgedShouldPanic => {
                 "judgement::kani_laws::a_doctest_that_should_panic_is_detected_only_by_not_failing"
+            }
+            Self::JudgedUnmatched => {
+                "judgement::kani_laws::a_bound_no_control_of_the_tests_own_set_is_never_a_detection"
+            }
+            Self::DeclinedAlone => {
+                "evidence::kani_laws::a_mutant_every_test_of_which_declined_as_its_control_did_measured_nothing"
             }
             Self::NativeAlone => {
                 "evidence::kani_laws::native_executions_alone_never_establish_a_verdict"
@@ -235,10 +251,12 @@ impl Harness {
             | Self::JudgedRefusal
             | Self::JudgedUndecidable
             | Self::JudgedShouldPanic
+            | Self::JudgedUnmatched
             | Self::NativeAlone
             | Self::FirstKill
             | Self::UniversalSurvival
             | Self::UnprovenReason
+            | Self::DeclinedAlone
             | Self::OrderIndependent => ("rust_mutants_decision", "rust-mutants-decision"),
             Self::CountingCounts
             | Self::CountingNeverStops
@@ -266,11 +284,13 @@ impl Harness {
             Self::JudgedPass
             | Self::JudgedRefusal
             | Self::JudgedUndecidable
-            | Self::JudgedShouldPanic => "crates/rust-mutants-decision/src/judgement/kani_laws.rs",
+            | Self::JudgedShouldPanic
+            | Self::JudgedUnmatched => "crates/rust-mutants-decision/src/judgement/kani_laws.rs",
             Self::NativeAlone
             | Self::FirstKill
             | Self::UniversalSurvival
             | Self::UnprovenReason
+            | Self::DeclinedAlone
             | Self::OrderIndependent => "crates/rust-mutants-decision/src/evidence/kani_laws.rs",
             Self::CountingCounts
             | Self::CountingNeverStops
@@ -298,6 +318,16 @@ impl Harness {
             Self::JudgedPass => JUDGED_PASS_COVERS,
             Self::JudgedUndecidable => JUDGED_UNDECIDABLE_COVERS,
             Self::JudgedShouldPanic => JUDGED_SHOULD_PANIC_COVERS,
+            Self::JudgedUnmatched => &[
+                "njutest-law-branch:bounded",
+                "njutest-law-branch:unbounded",
+                REACHED_COVER,
+            ],
+            Self::DeclinedAlone => &[
+                "njutest-law-branch:answerable",
+                "njutest-law-branch:otherwise",
+                REACHED_COVER,
+            ],
             Self::NativeAlone => NATIVE_ALONE_COVERS,
             Self::FirstKill => FIRST_KILL_COVERS,
             Self::UniversalSurvival => UNIVERSAL_SURVIVAL_COVERS,
@@ -362,6 +392,14 @@ impl Harness {
             Self::JudgedShouldPanic => {
                 &["njutest-law-assertion:should-panic-detected-iff-not-failing"]
             }
+            Self::JudgedUnmatched => &[
+                "njutest-law-assertion:unmatched-bound-never-detects",
+                "njutest-law-assertion:unmatched-bound-doubted",
+            ],
+            Self::DeclinedAlone => &[
+                "njutest-law-assertion:all-set-aside-unproven-declined",
+                "njutest-law-assertion:set-aside-alone-never-a-verdict",
+            ],
             Self::NativeAlone => &["njutest-law-assertion:native-alone-unproven"],
             Self::FirstKill => &[
                 "njutest-law-assertion:first-sealed-detection-kills",

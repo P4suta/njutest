@@ -112,7 +112,9 @@
                           "exited-early",
                           "stack-overflow",
                           "refused",
-                          "unaccounted"
+                          "unaccounted",
+                          "unmatched",
+                          "set-aside"
                         ]
                       }
                     }
@@ -142,7 +144,9 @@
                       "exited-early",
                       "stack-overflow",
                       "refused",
-                      "unaccounted"
+                      "unaccounted",
+                      "declined",
+                      "unmatched"
                     ]
                   }
                 }

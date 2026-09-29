@@ -759,14 +759,17 @@ enum Came {
     StackOverflow,
     Refused,
     Unaccounted,
+    Unmatched,
+    SetAside,
 }
 
-/// What one sealed execution says about a verdict: it passed, it detected the mutant, or it established neither.
+/// What one sealed execution says about a verdict: it passed, it detected the mutant, it established neither, or it measured nothing, declining as its control did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Said {
     Passed,
     Detected,
     Doubted,
+    SetAside,
 }
 
 impl Came {
@@ -784,6 +787,8 @@ impl Came {
             Self::StackOverflow => "stack-overflow",
             Self::Refused => "refused",
             Self::Unaccounted => "unaccounted",
+            Self::Unmatched => "unmatched",
+            Self::SetAside => "set-aside",
         }
     }
 
@@ -796,9 +801,12 @@ impl Came {
             | Self::FuelExceeded
             | Self::MemoryExceeded
             | Self::Declined => Said::Detected,
-            Self::ExitedEarly | Self::StackOverflow | Self::Refused | Self::Unaccounted => {
-                Said::Doubted
-            }
+            Self::ExitedEarly
+            | Self::StackOverflow
+            | Self::Refused
+            | Self::Unaccounted
+            | Self::Unmatched => Said::Doubted,
+            Self::SetAside => Said::SetAside,
         }
     }
 }

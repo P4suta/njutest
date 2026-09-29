@@ -247,11 +247,13 @@ const fn sealed_outcome(came_to: rust_mutants::sealed::record::Came) -> Outcome 
         rust_mutants::sealed::record::Came::ExitedEarly
         | rust_mutants::sealed::record::Came::StackOverflow
         | rust_mutants::sealed::record::Came::Refused
-        | rust_mutants::sealed::record::Came::Unaccounted => Outcome::Errored,
+        | rust_mutants::sealed::record::Came::Unaccounted
+        | rust_mutants::sealed::record::Came::Unmatched => Outcome::Errored,
+        rust_mutants::sealed::record::Came::SetAside => Outcome::Declined,
     }
 }
 
-/// What one target answered, of two of its sealed executions: a detection outweighs a doubt, which outweighs a pass.
+/// What one target answered, of two of its sealed executions: a detection outweighs a doubt, which outweighs a pass, which outweighs a test set aside for declining as its control did.
 const fn stronger_answer(held: Outcome, came_to: Outcome) -> Outcome {
     if said_of(came_to) > said_of(held) {
         came_to
@@ -260,17 +262,17 @@ const fn stronger_answer(held: Outcome, came_to: Outcome) -> Outcome {
     }
 }
 
-/// How much one sealed answer says about the mutation: a detection, then a doubt, then a pass.
+/// How much one sealed answer says about the mutation: a detection, then a doubt, then a pass, then a decline.
 const fn said_of(answer: Outcome) -> u8 {
     match answer {
-        Outcome::Killed => 2,
-        Outcome::Errored => 1,
+        Outcome::Killed => 3,
+        Outcome::Errored => 2,
+        Outcome::Survived => 1,
         Outcome::CompileRejected
         | Outcome::ModelNoticed
         | Outcome::ModelProved
         | Outcome::StepLimitReached
         | Outcome::Waited
-        | Outcome::Survived
         | Outcome::Unreached
         | Outcome::Equivalent
         | Outcome::Unconfirmed

@@ -422,7 +422,11 @@ fn every_way_a_sealed_execution_ends_and_every_reason_it_decides_nothing_is_one_
     };
     assert_eq!(
         published("/$defs/evidence/oneOf/0/properties/executions/items/properties/came_to/enum"),
-        read(&[&["passed"], &proofaudit::DETECTIONS, &proofaudit::DOUBTS]),
+        read(&[
+            &["passed", proofaudit::SET_ASIDE],
+            &proofaudit::DETECTIONS,
+            &proofaudit::DOUBTS
+        ]),
         "the evidence layer decides a sealed verdict again from what each execution came to, \
          so a way of ending the schema adds is one it reads the day it arrives"
     );

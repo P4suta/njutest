@@ -17,7 +17,11 @@ enum Read {
 }
 
 fn every_execution() -> Vec<Execution> {
-    let mut every = vec![Execution::Native, Execution::Sealed(Sealed::Passed)];
+    let mut every = vec![
+        Execution::Native,
+        Execution::Sealed(Sealed::Passed),
+        Execution::Sealed(Sealed::SetAside),
+    ];
     every.extend(
         Detection::ALL
             .iter()
@@ -31,7 +35,9 @@ fn every_execution() -> Vec<Execution> {
     for execution in &every {
         match execution {
             Execution::Native
-            | Execution::Sealed(Sealed::Passed | Sealed::Detected(_) | Sealed::Doubted(_)) => {}
+            | Execution::Sealed(
+                Sealed::Passed | Sealed::Detected(_) | Sealed::Doubted(_) | Sealed::SetAside,
+            ) => {}
         }
     }
     every
@@ -62,6 +68,7 @@ const fn doubt_reason(doubt: Doubt) -> Reason {
         Doubt::StackOverflow => Reason::StackOverflow,
         Doubt::Refused => Reason::Refused,
         Doubt::Unaccounted => Reason::Unaccounted,
+        Doubt::Unmatched => Reason::Unmatched,
     }
 }
 
@@ -85,7 +92,7 @@ fn read_by_the_rules(sealability: Sealability, executions: &[Execution]) -> Read
         let reason = match execution {
             Execution::Native => Some(Reason::Native),
             Execution::Sealed(Sealed::Doubted(doubt)) => Some(doubt_reason(*doubt)),
-            Execution::Sealed(Sealed::Passed | Sealed::Detected(_)) => None,
+            Execution::Sealed(Sealed::Passed | Sealed::Detected(_) | Sealed::SetAside) => None,
         };
         if let Some(reason) = reason
             && !reasons.contains(&reason)
@@ -99,6 +106,11 @@ fn read_by_the_rules(sealability: Sealability, executions: &[Execution]) -> Read
     }
     if executions.is_empty() {
         Read::Unreached
+    } else if executions
+        .iter()
+        .all(|execution| *execution == Execution::Sealed(Sealed::SetAside))
+    {
+        Read::Unproven(vec![Reason::Declined])
     } else {
         Read::Survived
     }
