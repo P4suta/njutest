@@ -57,6 +57,58 @@ const ORDER_INDEPENDENT_COVERS: &[&str] = &[
     "njutest-law-branch:three",
     REACHED_COVER,
 ];
+const SWAP_REGROUPS_COVERS: &[&str] = &[
+    "njutest-law-branch:regrouped",
+    "njutest-law-branch:kept",
+    REACHED_COVER,
+];
+const CLAIM_LOCATED_COVERS: &[&str] = &[
+    "njutest-law-branch:named",
+    "njutest-law-branch:nothing",
+    "njutest-law-branch:several",
+    "njutest-law-branch:counted",
+    REACHED_COVER,
+];
+const CLAIM_MOVED_COVERS: &[&str] = &[
+    "njutest-law-branch:moved",
+    "njutest-law-branch:stayed",
+    REACHED_COVER,
+];
+const DECLINE_HELD_COVERS: &[&str] = &[
+    "njutest-law-branch:detected",
+    "njutest-law-branch:set-aside",
+    REACHED_COVER,
+];
+const DECLINE_CONCLUDED_COVERS: &[&str] = &[
+    "njutest-law-branch:errored",
+    "njutest-law-branch:declined-under-the-mutant",
+    "njutest-law-branch:declined",
+    "njutest-law-branch:survived",
+    REACHED_COVER,
+];
+const CONFINEMENT_COVERS: &[&str] = &[
+    "njutest-law-branch:confined",
+    "njutest-law-branch:escaped",
+    REACHED_COVER,
+];
+const ATTEMPT_LEDGER_ASSERTIONS: &[&str] = &[
+    "njutest-law-assertion:attempt-retry-constructs",
+    "njutest-law-assertion:attempt-count-closed",
+    "njutest-law-assertion:attempt-retried-derived",
+    "njutest-law-assertion:attempt-result-derived",
+];
+const CANCELLATION_BEFORE_RETRY_ASSERTIONS: &[&str] = &[
+    "njutest-law-assertion:pre-retry-cancel-final",
+    "njutest-law-assertion:pre-retry-cancel-single",
+    "njutest-law-assertion:pre-retry-count-one",
+    "njutest-law-assertion:pre-retry-result-retained",
+];
+const EQUAL_OUTCOMES_ASSERTIONS: &[&str] = &[
+    "njutest-law-assertion:tie-forward-present",
+    "njutest-law-assertion:tie-reverse-present",
+    "njutest-law-assertion:tie-forward-canonical",
+    "njutest-law-assertion:tie-reverse-canonical",
+];
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, njutest_macros::AllVariants,
@@ -92,6 +144,26 @@ pub(crate) enum Harness {
     DeclinedAlone,
     #[serde(rename = "evidence::kani_laws::the_order_of_the_executions_does_not_change_the_class")]
     OrderIndependent,
+    #[serde(rename = "swap::kani_laws::a_swap_regroups_as_the_reference_reads")]
+    SwapRegroups,
+    #[serde(rename = "swap::kani_laws::operators_bind_as_the_reference_ranks")]
+    SwapBinding,
+    #[serde(rename = "claim::kani_laws::a_locator_names_what_its_count_says")]
+    ClaimLocated,
+    #[serde(rename = "claim::kani_laws::a_line_narrows_only_a_choice")]
+    ClaimNarrows,
+    #[serde(rename = "claim::kani_laws::a_claim_moved_only_off_its_line")]
+    ClaimMoved,
+    #[serde(rename = "decline::kani_laws::a_decline_is_held_to_the_baselines")]
+    DeclineHeld,
+    #[serde(rename = "decline::kani_laws::a_survival_concludes_as_the_rules_say")]
+    DeclineConcluded,
+    #[serde(rename = "confinement::kani_laws::one_changed_name_is_the_escape")]
+    ConfinementOneName,
+    #[serde(rename = "confinement::kani_laws::a_given_git_identity_is_an_escape")]
+    ConfinementGit,
+    #[serde(rename = "confinement::kani_laws::the_first_escape_is_the_one_named")]
+    ConfinementFirst,
     #[serde(rename = "instrument::runtime::kani_laws::a_counting_checkpoint_counts")]
     CountingCounts,
     #[serde(rename = "instrument::runtime::kani_laws::a_counting_checkpoint_never_stops")]
@@ -150,6 +222,16 @@ impl Harness {
             Self::UniversalSurvival => 35_100,
             Self::UnprovenReason => 34_900,
             Self::OrderIndependent => 42_400,
+            Self::SwapRegroups => 5_350,
+            Self::SwapBinding => 4_900,
+            Self::ClaimLocated => 1_900,
+            Self::ClaimNarrows => 200,
+            Self::ClaimMoved => 1_400,
+            Self::DeclineHeld => 88_000,
+            Self::DeclineConcluded => 93_000,
+            Self::ConfinementOneName => 46_500,
+            Self::ConfinementGit => 42_000,
+            Self::ConfinementFirst => 57_000,
             Self::CountingCounts => 1_800,
             Self::CountingNeverStops | Self::DormantCheckpoint => 1_300,
             Self::CountingUnreachable => 5_800,
@@ -200,6 +282,16 @@ impl Harness {
             Self::OrderIndependent => {
                 "evidence::kani_laws::the_order_of_the_executions_does_not_change_the_class"
             }
+            Self::SwapRegroups => "swap::kani_laws::a_swap_regroups_as_the_reference_reads",
+            Self::SwapBinding => "swap::kani_laws::operators_bind_as_the_reference_ranks",
+            Self::ClaimLocated => "claim::kani_laws::a_locator_names_what_its_count_says",
+            Self::ClaimNarrows => "claim::kani_laws::a_line_narrows_only_a_choice",
+            Self::ClaimMoved => "claim::kani_laws::a_claim_moved_only_off_its_line",
+            Self::DeclineHeld => "decline::kani_laws::a_decline_is_held_to_the_baselines",
+            Self::DeclineConcluded => "decline::kani_laws::a_survival_concludes_as_the_rules_say",
+            Self::ConfinementOneName => "confinement::kani_laws::one_changed_name_is_the_escape",
+            Self::ConfinementGit => "confinement::kani_laws::a_given_git_identity_is_an_escape",
+            Self::ConfinementFirst => "confinement::kani_laws::the_first_escape_is_the_one_named",
             Self::CountingCounts => "instrument::runtime::kani_laws::a_counting_checkpoint_counts",
             Self::CountingNeverStops => {
                 "instrument::runtime::kani_laws::a_counting_checkpoint_never_stops"
@@ -257,7 +349,17 @@ impl Harness {
             | Self::UniversalSurvival
             | Self::UnprovenReason
             | Self::DeclinedAlone
-            | Self::OrderIndependent => ("rust_mutants_decision", "rust-mutants-decision"),
+            | Self::OrderIndependent
+            | Self::SwapRegroups
+            | Self::SwapBinding
+            | Self::ClaimLocated
+            | Self::ClaimNarrows
+            | Self::ClaimMoved
+            | Self::DeclineHeld
+            | Self::DeclineConcluded
+            | Self::ConfinementOneName
+            | Self::ConfinementGit
+            | Self::ConfinementFirst => ("rust_mutants_decision", "rust-mutants-decision"),
             Self::CountingCounts
             | Self::CountingNeverStops
             | Self::CountingUnreachable
@@ -292,6 +394,18 @@ impl Harness {
             | Self::UnprovenReason
             | Self::DeclinedAlone
             | Self::OrderIndependent => "crates/rust-mutants-decision/src/evidence/kani_laws.rs",
+            Self::SwapRegroups | Self::SwapBinding => {
+                "crates/rust-mutants-decision/src/swap/kani_laws.rs"
+            }
+            Self::ClaimLocated | Self::ClaimNarrows | Self::ClaimMoved => {
+                "crates/rust-mutants-decision/src/claim/kani_laws.rs"
+            }
+            Self::DeclineHeld | Self::DeclineConcluded => {
+                "crates/rust-mutants-decision/src/decline/kani_laws.rs"
+            }
+            Self::ConfinementOneName | Self::ConfinementGit | Self::ConfinementFirst => {
+                "crates/rust-mutants-decision/src/confinement/kani_laws.rs"
+            }
             Self::CountingCounts
             | Self::CountingNeverStops
             | Self::CountingUnreachable
@@ -333,6 +447,12 @@ impl Harness {
             Self::UniversalSurvival => UNIVERSAL_SURVIVAL_COVERS,
             Self::UnprovenReason => &["njutest-law-branch:unproven", REACHED_COVER],
             Self::OrderIndependent => ORDER_INDEPENDENT_COVERS,
+            Self::SwapRegroups => SWAP_REGROUPS_COVERS,
+            Self::ClaimLocated => CLAIM_LOCATED_COVERS,
+            Self::ClaimMoved => CLAIM_MOVED_COVERS,
+            Self::DeclineHeld => DECLINE_HELD_COVERS,
+            Self::DeclineConcluded => DECLINE_CONCLUDED_COVERS,
+            Self::ConfinementOneName | Self::ConfinementGit => CONFINEMENT_COVERS,
             Self::ActiveCheckpoint => &[
                 "njutest-law-branch:advance",
                 "njutest-law-branch:boundary",
@@ -380,7 +500,10 @@ impl Harness {
             | Self::Killed
             | Self::Associative
             | Self::Commutative
-            | Self::JudgedRefusal => &[REACHED_COVER],
+            | Self::JudgedRefusal
+            | Self::SwapBinding
+            | Self::ClaimNarrows
+            | Self::ConfinementFirst => &[REACHED_COVER],
         }
     }
 
@@ -411,6 +534,16 @@ impl Harness {
             ],
             Self::UnprovenReason => &["njutest-law-assertion:unproven-names-a-reason"],
             Self::OrderIndependent => &["njutest-law-assertion:class-order-independent"],
+            Self::SwapRegroups => &["njutest-law-assertion:regroups-as-the-reference-reads"],
+            Self::SwapBinding => &["njutest-law-assertion:binds-as-the-reference-ranks"],
+            Self::ClaimLocated => &["njutest-law-assertion:located-as-the-count-says"],
+            Self::ClaimNarrows => &["njutest-law-assertion:narrows-only-several"],
+            Self::ClaimMoved => &["njutest-law-assertion:moved-iff-another-line"],
+            Self::DeclineHeld => &["njutest-law-assertion:held-names-the-first-unmade"],
+            Self::DeclineConcluded => &["njutest-law-assertion:concluded-as-the-rules-say"],
+            Self::ConfinementOneName => &["njutest-law-assertion:escapes-by-the-one-name"],
+            Self::ConfinementGit => &["njutest-law-assertion:git-global-escapes"],
+            Self::ConfinementFirst => &["njutest-law-assertion:first-escape-named"],
             Self::DormantCheckpoint => &["njutest-law-assertion:dormant-inert"],
             Self::Activation => &["njutest-law-assertion:activation-idempotent"],
             Self::ActiveCheckpoint => &[
@@ -423,29 +556,14 @@ impl Harness {
                 "njutest-law-assertion:duration-sum-exact",
                 "njutest-law-assertion:duration-overflow-refused",
             ],
-            Self::AttemptLedger => &[
-                "njutest-law-assertion:attempt-retry-constructs",
-                "njutest-law-assertion:attempt-count-closed",
-                "njutest-law-assertion:attempt-retried-derived",
-                "njutest-law-assertion:attempt-result-derived",
-            ],
-            Self::CancellationBeforeRetry => &[
-                "njutest-law-assertion:pre-retry-cancel-final",
-                "njutest-law-assertion:pre-retry-cancel-single",
-                "njutest-law-assertion:pre-retry-count-one",
-                "njutest-law-assertion:pre-retry-result-retained",
-            ],
+            Self::AttemptLedger => ATTEMPT_LEDGER_ASSERTIONS,
+            Self::CancellationBeforeRetry => CANCELLATION_BEFORE_RETRY_ASSERTIONS,
             Self::CancelledRetry => &[
                 "njutest-law-assertion:cancelled-retry-constructs",
                 "njutest-law-assertion:cancelled-retry-not-run",
                 "njutest-law-assertion:cancelled-retry-retained",
             ],
-            Self::EqualOutcomes => &[
-                "njutest-law-assertion:tie-forward-present",
-                "njutest-law-assertion:tie-reverse-present",
-                "njutest-law-assertion:tie-forward-canonical",
-                "njutest-law-assertion:tie-reverse-canonical",
-            ],
+            Self::EqualOutcomes => EQUAL_OUTCOMES_ASSERTIONS,
             Self::Killed => &[
                 "njutest-law-assertion:killed-right-absorbing",
                 "njutest-law-assertion:killed-left-absorbing",
