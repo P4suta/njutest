@@ -7,8 +7,13 @@
 #![forbid(unsafe_code)]
 
 pub mod answered;
+pub mod claim;
+pub mod confinement;
+pub mod decline;
 pub mod evidence;
 pub mod group;
 pub mod judgement;
 pub mod said;
+pub mod shape;
 pub mod stall;
+pub mod swap;

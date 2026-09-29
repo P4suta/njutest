@@ -3,7 +3,7 @@
 
 //! A test's decline is believed only where the process it names ran whole, and only as the baseline made it (ADR 0043).
 
-use rust_mutants::decline::{Decline, Declines, Held, Unbelieved, held};
+use rust_mutants::decline::{Decline, Declines, Unbelieved};
 use rust_mutants::execute::Reading;
 
 fn names(tests: &[&str]) -> Vec<String> {
@@ -121,30 +121,6 @@ fn a_notice_the_engine_cannot_hold_to_the_tests_that_ran_is_not_believed() {
             "every refusal says why: {because:?}"
         );
     }
-}
-
-#[test]
-fn only_a_decline_the_baseline_made_in_the_same_words_is_set_aside() {
-    let baseline = [decline("tests::a", "cannot share blocks")];
-    assert_eq!(
-        held(&[decline("tests::a", "cannot share blocks")], &baseline),
-        Held::SetAside(vec![decline("tests::a", "cannot share blocks")])
-    );
-    assert_eq!(held(&[], &baseline), Held::SetAside(Vec::new()));
-    assert_eq!(
-        held(&[decline("tests::b", "cannot add")], &baseline),
-        Held::Detected {
-            by: decline("tests::b", "cannot add")
-        },
-        "a test that measured in the baseline and declined under the mutation was changed by it"
-    );
-    assert_eq!(
-        held(&[decline("tests::a", "cannot share either")], &baseline),
-        Held::Detected {
-            by: decline("tests::a", "cannot share either")
-        },
-        "other words are another decline"
-    );
 }
 
 #[test]

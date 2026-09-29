@@ -240,6 +240,7 @@ Four forms.
 **Form E** for any expression in value position:
 `__rm::value!(if __rm::active(5) { a - b } else { a + b })` — both branches unify to one type, so `Default::default()` is inferred from the original.
 `value!` expands to exactly its expression: it gives the parser one grouped expression without a function-call type-inference boundary, a temporary scope, or lint-producing parentheses.
+A value that opens a block — one that begins with a brace, an attribute or a label, or with `if`, `match`, `loop`, `while`, `for`, `unsafe`, `const` or `async` — ends a statement at its own closing brace, so its Form E guard is the chain itself, which ends where the value did, rather than a `value!` call around it; which values open a block is `rust_mutants_decision::shape::opens_a_block`.
 **Form S** for a statement: `if __rm::active(7) { x -= step; } else { x += step; }`, the original bytes in the `else` so lines are kept.
 **Form M** for a match arm that has no guard, which is the one shape that adds syntax rather than replacing it: the site is the pattern, kept verbatim, and the guard is written after it — `0 if (__rm::active(9) && (false) || !(__rm::active(9)) && (true)) =>`, where the branch that keeps the arm is the guard it did without.
 A position where wrapping would move a value out of place — an assignment target, a borrow operand, a method receiver, a scrutinee —

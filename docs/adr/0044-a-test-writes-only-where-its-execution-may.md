@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 ## Status
 
 Accepted, 2026-09-26, after review by njutest-bottleneck-optimization; amended the same day after review by phase-0a-0b-baseline-controls.
-Implemented by `execute::Scratch`, which lays out and makes an execution's directories, `confine`, the check `confinement_held`, the baseline's `given_home` fallback, and the `unconfined-target` limitation.
+Implemented by `execute::Scratch`, which lays out and makes an execution's directories, `confine`, the check `confinement_held`, whose rule and table of confined names are `rust_mutants_decision::confinement`, the baseline's `given_home` fallback, and the `unconfined-target` limitation.
 
 ## Context
 
