@@ -1233,11 +1233,11 @@ impl Held {
 #[must_use]
 pub fn revision_of(directory: &Path, environment: &Environment) -> String {
     let ask = |arguments: &[&str]| {
-        let mut git = Command::new("git");
+        let mut git = crate::repository::git(directory);
         for name in environment.beginning("GIT_") {
             git.env_remove(name);
         }
-        answer(git.args(arguments).current_dir(directory)).unwrap_or_else(|| "-".to_owned())
+        answer(git.args(arguments)).unwrap_or_else(|| "-".to_owned())
     };
     format!(
         "{} {}",

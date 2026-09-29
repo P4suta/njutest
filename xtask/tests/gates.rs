@@ -678,9 +678,8 @@ fn a_gate_reads_what_the_repository_holds_and_never_what_a_build_left_in_it()
 -> Result<(), TestError> {
     let root = tempfile::tempdir()?;
     xtask::repository::init(root.path())?;
-    let initialised = std::process::Command::new("git")
+    let initialised = xtask::repository::git(root.path())
         .args(["init", "--quiet"])
-        .current_dir(root.path())
         .status()?;
     require(initialised.success(), "git init")?;
     std::fs::write(root.path().join(".gitignore"), "target/\n")?;
@@ -730,9 +729,7 @@ fn a_gate_lists_the_tree_itself_rather_than_asking_a_file_system_monitor() -> Re
         ),
     )?;
     std::fs::set_permissions(&monitor, std::fs::Permissions::from_mode(0o755))?;
-    let configured = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root.path())
+    let configured = xtask::repository::git(root.path())
         .args(["config", "core.fsmonitor"])
         .arg(&monitor)
         .status()?;

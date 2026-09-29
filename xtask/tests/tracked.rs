@@ -9,18 +9,15 @@
 )]
 
 use std::path::Path;
-use std::process::Command;
 
 use xtask::gates;
 
 /// Runs git in `root` with nothing in the environment pointing it at another repository.
 fn git(root: &Path, arguments: &[&str]) -> std::process::Output {
-    let mut command = Command::new("git");
-    command.arg("-C").arg(root).args(arguments);
-    for variable in gates::REDIRECTING_GIT {
-        command.env_remove(variable);
-    }
-    command.output().expect("git runs")
+    xtask::repository::git(root)
+        .args(arguments)
+        .output()
+        .expect("git runs")
 }
 
 /// A repository whose index holds `files`, each added past any ignore rule.

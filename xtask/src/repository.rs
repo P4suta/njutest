@@ -199,7 +199,14 @@ pub fn entries(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
 #[must_use]
 pub fn git(dir: &Path) -> std::process::Command {
     let mut git = std::process::Command::new("git");
-    git.args(["-c", "core.fsmonitor=false"]).arg("-C").arg(dir);
+    git.args([
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.untrackedCache=false",
+    ])
+    .arg("-C")
+    .arg(dir);
     for variable in REDIRECTING_GIT {
         git.env_remove(variable);
     }

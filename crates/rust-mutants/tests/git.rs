@@ -444,9 +444,8 @@ fn a_workspace_below_the_checkout_sees_only_its_own_files_by_its_own_paths() {
     asked.repo.write("ws/src/kept.rs", "pub fn k() {}\n");
     asked.repo.write("other/src/lib.rs", "pub fn g() {}\n");
     asked.repo.commit();
-    let Ok(base) = std::process::Command::new("git")
+    let Ok(base) = njutest_devkit::repo::git(asked.repo.root())
         .args(["rev-parse", "HEAD"])
-        .current_dir(asked.repo.root())
         .output()
     else {
         panic!("git names the first commit");

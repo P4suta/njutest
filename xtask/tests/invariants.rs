@@ -308,7 +308,7 @@ fn a_layer_that_held_at_the_base_may_not_open_and_a_decision_may_only_leave_by_a
 
 /// Runs `git` in `root`, for a test's own scratch repository, seeing none of the user's Git configuration.
 fn git(root: &std::path::Path, args: &[&str]) {
-    let mut command = std::process::Command::new("git");
+    let mut command = xtask::repository::git(root);
     for (name, _) in std::env::vars_os() {
         if name.as_encoded_bytes().starts_with(b"GIT_") {
             command.env_remove(name);
@@ -316,8 +316,6 @@ fn git(root: &std::path::Path, args: &[&str]) {
     }
     let status = command
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .arg("-C")
-        .arg(root)
         .args(args)
         .output()
         .expect("git runs");

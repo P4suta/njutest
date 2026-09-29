@@ -12,6 +12,7 @@ use syn::visit::Visit;
 use super::cfg_conditions::{CfgScope, CfgTruth, CfgWorld, cfg_constant, item_attributes};
 
 mod ffi;
+mod git_doors;
 mod signals;
 
 const OWNED_TRAIT_OBJECT_REMEDY: &str = "use an enum for a closed set of implementations, or a \
@@ -208,6 +209,12 @@ const RAW_TREE_WALK_REMEDY: &str = "read the repository through \
     `crate::repository::entries`; a gate that walks the filesystem reads what a build, a \
     run or a report left beside the tree, and one that a concurrent build rewrites fails the gate \
     for a reason that is no finding";
+const RAW_GIT_REMEDY: &str = "start git through a door that reads the tree itself: \
+    `rust_mutants::git` in shipped code, `njutest_devkit::repo::git` in a test, \
+    `xtask::repository::git` in a gate. Each says `core.fsmonitor=false` and \
+    `core.untrackedCache=false`, because a git started as the user configured it may answer \
+    from a file-system monitor that has not seen a write yet, and a file list it gives is then \
+    the daemon's say-so rather than the tree";
 const BARE_SHELL_REMEDY: &str = "a POSIX `sh` is on every Unix and on no Windows search path \
     this repository can count on, so a program named `sh` outside `#[cfg(unix)]` is a precondition \
     nobody states: a test takes its shell from `njutest_devkit::paths::posix_sh()`, which says what \
@@ -330,6 +337,7 @@ declare_kinds! {
     RawEnvironment => "raw-environment",
     RawProcessEnd => "raw-process-end",
     DefaultedAbsence => "defaulted-absence",
+    RawGit => "raw-git",
 }
 
 impl Kind {
@@ -372,6 +380,7 @@ impl Kind {
             Self::WrappingCounter => WRAPPING_COUNTER_REMEDY,
             Self::UncheckedCast => UNCHECKED_CAST_REMEDY,
             Self::UnsafeOutsideFfi => UNSAFE_OUTSIDE_FFI_REMEDY,
+            Self::RawGit => RAW_GIT_REMEDY,
             Self::UnownedSpawn => UNOWNED_SPAWN_REMEDY,
             Self::RawGroupSignal => RAW_GROUP_SIGNAL_REMEDY,
             Self::UnboundedChannel => UNBOUNDED_CHANNEL_REMEDY,
@@ -674,6 +683,9 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     }
     if ffi::held(file) {
         scan.found.extend(ffi::found(&parsed, file));
+    }
+    if git_doors::held(file) {
+        scan.found.extend(git_doors::found(&parsed, file));
     }
     scan.found.extend(implied_cfgs(&parsed, file));
     if file != SHELL_FINDER {
