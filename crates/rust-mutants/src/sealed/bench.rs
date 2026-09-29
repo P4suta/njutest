@@ -16,7 +16,7 @@ use rust_mutants_sealed::{
     Transcript, TrapKind, WasiFunction,
 };
 
-use super::doctest::{Expects, Listed, NO_SUCH_INDEX, RUN_ONE, listed};
+use super::doctest::{Expects, Listed, NO_SUCH_INDEX, RUN_ONE, printed};
 use super::{SealedBuild, Unsealed};
 use crate::execute::TestTarget;
 use crate::libtest::{Asked, Configured, Own, account};
@@ -609,7 +609,7 @@ impl<'runner> Bench<'runner> {
         Ok(Some(station))
     }
 
-    /// The doctests the merged binary `module` of `station` holds, in index order, where it named them all when it ran them in one instance and holds no doctest past the last it named.
+    /// The doctests the merged binary `module` of `station` holds, in index order from the first, where it holds no doctest past the last it announced: every one, where it named them all when it ran them in one instance, or each it finished and the one that stopped the instance, where one did.
     fn merged(
         &self,
         station: &Station<'_>,
@@ -628,12 +628,25 @@ impl<'runner> Bench<'runner> {
             transcript.stop(),
             SealedStop::Returned | SealedStop::Exited { code: 101 }
         );
-        let Some(listed) = listed(transcript.stdout().bytes()).filter(|_| ended) else {
+        let stopped_inside =
+            transcript.stop() != SealedStop::Returned && transcript.stdout().truncated() == 0;
+        let Some(printed) = printed(transcript.stdout().bytes()) else {
             return Ok(None);
         };
+        let listed = match printed.stopped {
+            None if printed.whole && ended => printed.finished,
+            Some(stopped) if stopped_inside => [printed.finished, vec![stopped]].concat(),
+            None | Some(_) => return Ok(None),
+        };
+        let Ok(announced) = usize::try_from(printed.announced) else {
+            return Ok(None);
+        };
+        if listed.len() > announced {
+            return Ok(None);
+        }
         let past = Asking {
             arguments: Vec::new(),
-            index: Some(listed.len()),
+            index: Some(announced),
         };
         let beyond = self.invoke(
             station,

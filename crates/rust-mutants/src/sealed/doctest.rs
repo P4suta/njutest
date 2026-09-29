@@ -454,14 +454,44 @@ pub struct Listed {
     pub ignored: bool,
 }
 
-/// The doctests a merged binary's own harness names when it runs every one of them in one instance, in index order, where it announced them, filtered none out, and closed.
+/// What a merged binary's own harness printed of the doctests it ran in one instance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Printed {
+    /// How many doctests it announced it would run.
+    pub announced: u32,
+    /// Each doctest it finished, in index order.
+    pub finished: Vec<Listed>,
+    /// The doctest it began after those and never finished, where it stopped inside one.
+    pub stopped: Option<Listed>,
+    /// Whether it finished every doctest it announced, filtered none out, and closed with counts that agree.
+    pub whole: bool,
+}
+
+/// The doctest a result line of a merged binary's harness names.
+fn listing(name: &str, ignored: bool) -> Listed {
+    match name.strip_suffix(SHOULD_PANIC) {
+        Some(name) => Listed {
+            name: name.to_owned(),
+            expects: Expects::Panic,
+            ignored,
+        },
+        None => Listed {
+            name: name.to_owned(),
+            expects: Expects::Return,
+            ignored,
+        },
+    }
+}
+
+/// What a merged binary's own harness printed when it ran its doctests in one instance, where it announced them and began none after one it never finished.
 #[must_use]
-pub fn listed(stdout: &[u8]) -> Option<Vec<Listed>> {
+pub fn printed(stdout: &[u8]) -> Option<Printed> {
     let Ok(text) = std::str::from_utf8(stdout) else {
         return None;
     };
     let mut announced = None;
-    let mut names = Vec::new();
+    let mut finished = Vec::new();
+    let mut stopped = None;
     let mut summary = None;
     for line in text.lines() {
         if announced.is_none() {
@@ -476,31 +506,41 @@ pub fn listed(stdout: &[u8]) -> Option<Vec<Listed>> {
             .strip_prefix("test ")
             .and_then(|rest| rest.split_once(" ... "))
         {
-            let ignored = word.starts_with("ignored");
-            names.push(match name.strip_suffix(SHOULD_PANIC) {
-                Some(name) => Listed {
-                    name: name.to_owned(),
-                    expects: Expects::Panic,
-                    ignored,
-                },
-                None => Listed {
-                    name: name.to_owned(),
-                    expects: Expects::Return,
-                    ignored,
-                },
-            });
+            if stopped.is_some() {
+                return None;
+            }
+            if word.is_empty() {
+                stopped = Some(listing(name, false));
+            } else {
+                finished.push(listing(name, word.starts_with("ignored")));
+            }
         }
     }
-    let (announced, summary) = (announced?, summary?);
-    let accounted = summary
-        .passed
-        .checked_add(summary.failed)?
-        .checked_add(summary.ignored)?
-        .checked_add(summary.measured)?;
-    let Ok(listed) = u32::try_from(names.len()) else {
-        return None;
-    };
-    (listed == announced && accounted == announced && summary.filtered_out == 0).then_some(names)
+    let announced = announced?;
+    let whole = stopped.is_none()
+        && summary.is_some_and(|summary| {
+            let accounted = summary
+                .passed
+                .checked_add(summary.failed)
+                .and_then(|sum| sum.checked_add(summary.ignored))
+                .and_then(|sum| sum.checked_add(summary.measured));
+            let listed = u32::try_from(finished.len()).is_ok_and(|listed| listed == announced);
+            listed && accounted == Some(announced) && summary.filtered_out == 0
+        });
+    Some(Printed {
+        announced,
+        finished,
+        stopped,
+        whole,
+    })
+}
+
+/// The doctests a merged binary's own harness names when it runs every one of them in one instance, in index order, where it announced them, filtered none out, and closed.
+#[must_use]
+pub fn listed(stdout: &[u8]) -> Option<Vec<Listed>> {
+    printed(stdout)
+        .filter(|printed| printed.whole)
+        .map(|printed| printed.finished)
 }
 
 #[cfg(test)]

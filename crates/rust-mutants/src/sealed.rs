@@ -76,7 +76,7 @@ impl Unsealed {
             }
             Self::DoctestsUnaccounted => {
                 "run `cargo test --doc --target wasm32-wasip1` to see what rustdoc reported of the \
-                 doctests, or which doctest stops a merged binary that runs them all"
+                 doctests, or what a merged binary printed before it announced them"
             }
             Self::ProcMacro => {
                 "a procedural macro runs in the compiler, so what only its own tests reach rests on \

@@ -3,7 +3,9 @@
 
 use std::path::PathBuf;
 
-use super::{Alone, Captured, Expects, Held, Listed, Uncaptured, captured, listed};
+use super::{
+    Alone, Captured, Expects, Held, Listed, Printed, Uncaptured, captured, listed, printed,
+};
 
 const EDITION_2021: &str = "
 running 6 tests
@@ -302,4 +304,38 @@ fn a_listing_that_filtered_a_doctest_out_or_did_not_close_names_nothing() {
     assert_eq!(listed(unclosed.as_bytes()), None);
     let short = ALL_IN_ONE.replace("running 5 tests", "running 6 tests");
     assert_eq!(listed(short.as_bytes()), None);
+}
+
+const STOPPED: &str = "
+running 3 tests
+test src/lib.rs - after (line 8) ... ok
+test src/lib.rs - double (line 17) ... ";
+
+#[test]
+fn a_merged_binary_stopped_inside_a_doctest_names_each_it_finished_and_the_one_it_stopped_in() {
+    let returning = |name: &str| Listed {
+        name: name.to_owned(),
+        expects: Expects::Return,
+        ignored: false,
+    };
+    assert_eq!(
+        printed(STOPPED.as_bytes()),
+        Some(Printed {
+            announced: 3,
+            finished: vec![returning("src/lib.rs - after (line 8)")],
+            stopped: Some(returning("src/lib.rs - double (line 17)")),
+            whole: false,
+        })
+    );
+    assert_eq!(
+        listed(STOPPED.as_bytes()),
+        None,
+        "a listing that stopped names only the doctests before the one it stopped in"
+    );
+    let resumed = format!("{STOPPED}\ntest src/lib.rs - half (line 27) ... ok\n");
+    assert_eq!(
+        printed(resumed.as_bytes()),
+        None,
+        "a harness that began another doctest after one it never finished is not one run in order"
+    );
 }
