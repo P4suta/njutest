@@ -3832,20 +3832,21 @@ fn two_repairs(second_was: &str) -> Vec<String> {
 }
 
 #[test]
-fn a_second_repair_starts_from_what_the_first_one_made_it() {
-    let said = two_repairs("survived");
+fn every_repair_starts_from_what_the_route_made_it_whatever_another_made_of_it() {
+    let said = two_repairs("unreached");
     assert!(
         !said
             .iter()
             .any(|line| line.contains("the repair says it was")),
-        "the second repair was what the first one made it, not what its route did: {said:?}"
+        "each run again starts from the disposition the route made, so the order the moved \
+         targets come in decides nothing (ADR 0036 decision 1): {said:?}"
     );
-    let said = two_repairs("unreached");
+    let said = two_repairs("survived");
     assert!(
-        said.iter()
-            .any(|line| line.contains("the repair of it before this one made it survived")),
-        "a second repair that starts from the route rather than the first repair is refused: \
-         {said:?}"
+        said.iter().any(|line| line.contains(
+            "its route reaches no target and a proof removed none, which makes it unreached"
+        )),
+        "a second repair that starts from what the first one made it is refused: {said:?}"
     );
 }
 
@@ -4563,6 +4564,75 @@ fn a_lead_resting_on_a_moved_target_that_nothing_ran_again_is_a_violation() {
         "the survivor is a lead its route did not put to the moved target, so it rested on that \
          target's baseline and the repair owed it a run there (ADR 0036 decision 1): {said:?}\n\
          {audit}"
+    );
+}
+
+#[test]
+fn a_hole_one_moved_target_left_does_not_excuse_a_run_against_the_next() {
+    const OTHER: &str = "pkg/test/other";
+    let mut document = with(sentinel::drifted("moved"));
+    if let Some(drift) = document.pointer_mut("/drift") {
+        *drift = serde_json::json!([sentinel::moved(TARGET), sentinel::moved(OTHER)]);
+    }
+    if let Some(evidence) = document.pointer_mut("/mutants/1/evidence") {
+        *evidence = serde_json::json!({ "kind": "unproven", "reasons": ["not-sealed"] });
+    }
+    let of_other = |mut touch: serde_json::Value| {
+        merge(
+            &mut touch,
+            serde_json::json!({ "touch": { "target": OTHER } }),
+        );
+        touch
+    };
+    let engine = vec![
+        sentinel::touch("baseline", &[0]),
+        sentinel::touch("control", &[0, 1]),
+        of_other(sentinel::touch("baseline", &[0])),
+        of_other(sentinel::touch("control", &[0, 1])),
+        repair_touch(&"b".repeat(64), &[0]),
+    ];
+    let mut events = routes();
+    events.push(serde_json::json!({
+        "type": "mutant-exec",
+        "mutant": {
+            "mutant": SURVIVED, "target": TARGET, "args": [], "outcome": "waited",
+            "duration_ms": 5
+        }
+    }));
+    events.push(serde_json::json!({
+        "type": "repair",
+        "repair": {
+            "mutant": SURVIVED, "target": TARGET,
+            "was": "survived", "now": "waited", "reached": "not-reached"
+        }
+    }));
+    let laid = sentinel::Perturbation {
+        name: "a hole left by one moved target and the next never asked",
+        document,
+        events: Some(events),
+        engine: Some(engine),
+        shards: Vec::new(),
+        outputs: Vec::new(),
+        beside: Vec::new(),
+        kept: None,
+    }
+    .lay()
+    .expect("the specimen is laid out");
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        .expect("a recording this audit can read");
+    let said: Vec<String> = audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Repair && remark.standing == Standing::Violated)
+        .map(|remark| format!("{}: {}", remark.subject, remark.detail))
+        .collect();
+    assert!(
+        said.iter().any(|line| line.contains(SURVIVED)
+            && line.contains(OTHER)
+            && line.contains("no repair ran it again")),
+        "the lead rested on both moved targets before any repair, so it is owed a run against \
+         each whatever the run against the first made of it, and a hole there asks nothing of \
+         the target that comes after it in name order (ADR 0036 decision 1): {said:?}\n{audit}"
     );
 }
 

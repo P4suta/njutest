@@ -1560,30 +1560,23 @@ fn repaired(
         return notes.absent("the run ran no disposition again against a target whose reach moved");
     }
     let paired = paired(recording, repairs, (routing, touched), &mut notes);
-    for (at, repair) in repairs.iter().enumerate() {
-        let before = repairs
-            .get(..at)
-            .and_then(|earlier| earlier.iter().rev().find(|one| one.mutant == repair.mutant))
-            .map(|earlier| earlier.now.as_str());
-        one_repair(
-            recording,
-            (repair, before, &moved, routing),
-            &paired,
-            &mut notes,
-        );
+    for repair in repairs {
+        one_repair(recording, (repair, &moved, routing), &paired, &mut notes);
     }
     for row in &recording.mutants {
-        if let Some(last) = repairs
+        let of_it: Vec<&crate::repair::Repair> = repairs
             .iter()
-            .rev()
-            .find(|one| one.mutant == row.display_id)
-            && row.outcome.replace('_', "-") != last.now
+            .filter(|one| one.mutant == row.display_id)
+            .collect();
+        if let Some(joined) = crate::repair::joined(&of_it)
+            && row.outcome.replace('_', "-") != joined
         {
             notes.violated(
                 &row.display_id,
                 format!(
-                    "the last repair of {} made it {}, and the report says {}",
-                    row.display_id, last.now, row.outcome
+                    "the runs of {} again against the moved targets it rested on come to {joined} \
+                     together, and the report says {}",
+                    row.display_id, row.outcome
                 ),
             );
         }
@@ -1591,9 +1584,9 @@ fn repaired(
     notes.looked()
 }
 
-/// How many dispositions rested on a moved target when the repair came to it, each of which it owes a run against that target, holding every such pair to a repair that names it and every repair to the order the repair takes: moved target by moved target in name order, mutation by mutation in catalog order (ADR 0036 decision 1).
+/// How many dispositions rested on a moved target, each of which the repair owes a run against that target, holding every such pair to a repair that names it and every repair to the order the repair takes: mutation by mutation in catalog order, moved target by moved target in name order (ADR 0036 decision 1).
 ///
-/// A disposition rests on a target when it is a lead, its route did not put the target to it, and it was `survived` or `unreached` once every repair against an earlier target had replaced it.
+/// A disposition rests on a target when it is a lead, its route did not put the target to it, and it was `survived` or `unreached` before any repair; it is owed a run against every such target, whatever a run against another made of it, until one against a target earlier in name order kills it.
 fn owed(
     recording: &Recording<'_>,
     (repairs, routing): (&[crate::repair::Repair], &crate::route::Routing),
@@ -1616,15 +1609,12 @@ fn owed(
                     && route.reaching.iter().any(|one| one == target)
             });
             let of_it = || repairs.iter().filter(|one| one.mutant == row.display_id);
-            let then = match (
-                of_it().rev().find(|one| one.target < *target),
-                of_it().next(),
-            ) {
-                (Some(earlier), _) => earlier.now.as_str(),
-                (None, Some(first)) => first.was.as_str(),
-                (None, None) => row.outcome.as_str(),
+            let then = match of_it().next() {
+                Some(first) => first.was.as_str(),
+                None => row.outcome.as_str(),
             };
-            if put || !matches!(then, SURVIVED | UNREACHED) {
+            let killed_before = of_it().any(|one| one.target < *target && one.now == KILLED);
+            if put || killed_before || !matches!(then, SURVIVED | UNREACHED) {
                 continue;
             }
             owed.push((target.as_str(), row.display_id.as_str()));
@@ -1641,12 +1631,12 @@ fn owed(
     }
     let place = |repair: &crate::repair::Repair| {
         (
-            repair.target.clone(),
             recording
                 .mutants
                 .iter()
                 .find(|row| row.display_id == repair.mutant)
                 .and_then(|row| row.catalog_index),
+            repair.target.clone(),
         )
     };
     for (earlier, later) in repairs.iter().zip(repairs.iter().skip(1)) {
@@ -1655,8 +1645,8 @@ fn owed(
                 &later.mutant,
                 format!(
                     "it was run again against {} after {} was against {}, out of the order the \
-                     repair takes: moved target by moved target in name order, and mutation by \
-                     mutation in catalog order",
+                     repair takes: mutation by mutation in catalog order, and moved target by \
+                     moved target in name order",
                     later.target, earlier.mutant, earlier.target
                 ),
             );
@@ -1725,9 +1715,9 @@ fn paired<'a>(
     pairs
 }
 
-/// Whether a repair's disposition rested on its target: the target moved, the route did not put it, and what it was is what the last earlier repair of it made it, or its route where none did.
+/// Whether a repair's disposition rested on its target: the target moved, the route did not put it, and what it was is what its route made it before any repair, which every run of it again starts from.
 fn rested(
-    (repair, before): (&crate::repair::Repair, Option<&str>),
+    repair: &crate::repair::Repair,
     (moved, routing): (
         &BTreeMap<String, crate::drift::Standing>,
         &crate::route::Routing,
@@ -1754,17 +1744,15 @@ fn rested(
             ),
         );
     }
-    let (expected_was, by) = match before {
-        Some(now) => (now, "the repair of it before this one made it"),
-        None if route
-            .is_some_and(|route| route.reaching.is_empty() && route.granularity != DISCHARGED) =>
-        {
-            (
-                UNREACHED,
-                "its route reaches no target and a proof removed none, which makes it",
-            )
-        }
-        None => (SURVIVED, "its route makes it"),
+    let (expected_was, by) = if route
+        .is_some_and(|route| route.reaching.is_empty() && route.granularity != DISCHARGED)
+    {
+        (
+            UNREACHED,
+            "its route reaches no target and a proof removed none, which makes it",
+        )
+    } else {
+        (SURVIVED, "its route makes it")
     };
     if repair.was != expected_was {
         notes.violated(
@@ -1780,9 +1768,8 @@ fn rested(
 /// One repair held to what its target, route, last execution and touch record decide.
 fn one_repair(
     recording: &Recording<'_>,
-    (repair, before, moved, routing): (
+    (repair, moved, routing): (
         &crate::repair::Repair,
-        Option<&str>,
         &BTreeMap<String, crate::drift::Standing>,
         &crate::route::Routing,
     ),
@@ -1790,7 +1777,7 @@ fn one_repair(
     notes: &mut Notes<'_>,
 ) {
     let subject = &repair.mutant;
-    rested((repair, before), (moved, routing), notes);
+    rested(repair, (moved, routing), notes);
     let Some((last, touch)) = paired
         .iter()
         .rev()
