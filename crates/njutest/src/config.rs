@@ -990,14 +990,17 @@ impl Config {
                 .and_then(|table| table.get(key))
                 .is_some()
         };
-        let every: Vec<crate::report::knobs::Knob> = crate::report::knobs::Knob::ALL.to_vec();
         let refused = if said("faults", "inject") && !self.faults.inject {
             Some("[faults] inject = false")
         } else if said("durability", "crash") && !self.durability.crash {
             Some("[durability] crash = false")
         } else if said("schedules", "explore") && self.schedules.explore == 0 {
             Some("[schedules] explore = 0")
-        } else if said("repeatable", "knobs") && self.repeatable.knobs != every {
+        } else if said("repeatable", "knobs")
+            && !crate::report::knobs::Knob::ALL
+                .iter()
+                .all(|knob| self.repeatable.knobs.contains(knob))
+        {
             Some("[repeatable] knobs naming fewer than every knob")
         } else {
             None

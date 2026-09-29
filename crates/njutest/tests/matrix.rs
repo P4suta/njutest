@@ -142,9 +142,13 @@ fn a_whole_contract_puts_every_fault_and_knob_and_refuses_a_document_that_says_n
         njutest::report::knobs::Knob::ALL.to_vec(),
         "and every knob"
     );
+    assert!(whole.durability.crash, "whole-v1 puts every crash");
+    assert!(whole.schedules.explore > 0, "and explores schedules");
     for contradiction in [
         "[faults]\ninject = false\n",
         "[repeatable]\nknobs = [\"timezone\"]\n",
+        "[durability]\ncrash = false\n",
+        "[schedules]\nexplore = 0\n",
     ] {
         let refused = njutest::config::Config::parse(
             &format!("version = 1\ncontract = \"whole-v1\"\n{contradiction}"),
@@ -155,6 +159,29 @@ fn a_whole_contract_puts_every_fault_and_knob_and_refuses_a_document_that_says_n
             "a document that asks not to measure a dimension is not a whole run: {contradiction}"
         );
     }
+}
+
+#[test]
+fn a_whole_contract_accepts_every_knob_named_in_any_order() {
+    let path = std::path::Path::new(".njutest.toml");
+    let mut every: Vec<&str> = njutest::report::knobs::Knob::ALL
+        .into_iter()
+        .map(njutest::report::knobs::Knob::name)
+        .collect();
+    every.reverse();
+    let named = every
+        .iter()
+        .map(|name| format!("\"{name}\""))
+        .collect::<Vec<String>>()
+        .join(", ");
+    let parsed = njutest::config::Config::parse(
+        &format!("version = 1\ncontract = \"whole-v1\"\n[repeatable]\nknobs = [{named}]\n"),
+        path,
+    );
+    assert!(
+        parsed.is_ok(),
+        "a document naming every knob asks every knob, whatever order it names them in: {parsed:?}"
+    );
 }
 
 const fn nothing() -> Evidence<'static> {
