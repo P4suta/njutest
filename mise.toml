@@ -190,6 +190,10 @@ description = "Run the generated-harness and strict-result protocol suite with t
 depends = ["kani:laws"]
 run = "env -u RUSTFLAGS NJUTEST_REAL_KANI=1 cargo test --locked --workspace --all-features --lib real_kani_068 -- --test-threads=1"
 
+[tasks.wasi-testsuite]
+description = "Run every preview1 test of WebAssembly/wasi-testsuite on the sealed host, the pinned commit fetched once into the user cache, each held to the result crates/rust-mutants/tests/wasi-testsuite.toml names"
+run = 'cargo xtask wasi-testsuite --cache "${XDG_CACHE_HOME:-$HOME/.cache}/njutest/wasi-testsuite"'
+
 [tasks."kani:laws"]
 description = "Prove and independently audit the production laws with the pinned Kani 0.68 installation, reading back the proof of identical inputs"
 run = 'cargo xtask kani-laws --cache "${XDG_CACHE_HOME:-$HOME/.cache}/njutest/kani-laws"'
@@ -374,6 +378,7 @@ run = [
   "mise run check:cross",
   "mise run check:release",
   "mise run test:slow",
+  "mise run wasi-testsuite",
 ]
 
 [tasks.bench]

@@ -380,6 +380,26 @@ jobs:
       - name: Exercise generated harnesses and the retained-result protocol with real Kani
         run: mise run kani:verified
 
+  # The sealed host held to the official WASI preview1 conformance suite, at the commit `crates/rust-mutants/tests/wasi-testsuite.toml` pins.
+  # The suite is fetched with git from GitHub, which the job's `CARGO_NET_OFFLINE` leaves alone: it keeps only cargo off the network.
+  wasi-testsuite:
+    name: wasi-testsuite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - name: Fetch the locked dependency graph
+        env:
+          CARGO_NET_OFFLINE: "false"
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path fuzz/Cargo.toml
+      - name: Run every preview1 test of WebAssembly/wasi-testsuite on the sealed host
+        run: mise run wasi-testsuite
+
   action-smoke:
     name: action-smoke
     runs-on: ubuntu-24.04
@@ -495,6 +515,7 @@ jobs:
         book,
         soundness,
         kani-verified,
+        wasi-testsuite,
         action-smoke,
         action-smoke-rust-mutants,
       ]

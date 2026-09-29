@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # The sealed host
 
-**Status: implemented, and not yet read by the engine.** `crates/rust-mutants-sealed` runs a WebAssembly guest compiled for `wasm32-wasip1`; a later change has the engine run each test of an instrumented snapshot through it.
+**Status: implemented, and held to the official WASI preview1 conformance suite.** `crates/rust-mutants-sealed` runs a WebAssembly guest compiled for `wasm32-wasip1`, and the engine runs each test of an instrumented snapshot through it, as [sealed execution](sealed.md) says.
 
 A sealed invocation is a pure function of content-addressed inputs.
 The same module, run with the same invocation under the same configuration, gives a transcript that is the same byte for byte, down to its digest.
@@ -148,3 +148,19 @@ That is why the configuration digest names the target and its CPU features: two 
 `cargo nextest run -p rust-mutants-sealed` runs the suite: hand-written WebAssembly commands, one for each host call, and the laws over generated inputs.
 `toolchain_guests` compiles Rust guests with the toolchain `rust-toolchain.toml` pins, for `wasm32-wasip1`, which the same file installs; a test that finds the target missing fails and names `rustup target add wasm32-wasip1 --toolchain 1.98.0`.
 It keeps compiled guests under `target/tmp/sealed-guests`, each under the digest of its sources, the compiler, and its flags.
+
+### The official conformance suite
+
+`cargo xtask wasi-testsuite` holds the host to [WebAssembly/wasi-testsuite](https://github.com/WebAssembly/wasi-testsuite): every one of its preview1 tests, prebuilt from AssemblyScript, C and Rust, at the commit `crates/rust-mutants/tests/wasi-testsuite.toml` pins.
+The command fetches that commit once into a cache, `target/wasi-testsuite` of the workspace or the directory `--cache` names, and verifies it by its id every time it runs: its `HEAD` is the commit, and nothing of its tree is changed, added or ignored beside it.
+It then runs the harness, the module `wasi_testsuite` of `rust-mutants`' suite, which runs each test on this host exactly as a sealed test instance runs: the engine's fuel, limits, clock and seed, the test's root preopened at `/` as the suite's own runners preopen it, its arguments and environment as its JSON gives them, and standard input at its end.
+A test passes where it ends with the exit code its JSON names, zero where it names none, and writes exactly the output it names.
+
+The expectations name every test with what the host must give: `pass`, or `refused`, for a test that fails because the host refuses what it asks by design.
+Each names every refusal the host records while the test runs, and a refused one also how the test then ends and the row of the import table above that documents the refusal; a test of the harness holds every such row to this page, listing the function and answering it as the reason says.
+The command fails on a test that ends otherwise, on a test the file does not name, and on a name the suite does not hold, so a test added upstream is caught when the pin moves.
+At the pinned commit 63 tests pass and 9 are refused.
+Three of the 63 pass past a refusal: one tests for the answer an escaping path is given, and two skip what they test once a symbolic link cannot be made.
+Of the 9, two call `sock_shutdown`, which the host refuses with every socket call, and seven make a hard or symbolic link, which it refuses too.
+A result that is neither a pass nor a refusal the import table documents is a defect of the host, fixed with a test of its own in this crate so that it is held without the suite.
+`mise run wasi-testsuite` runs the command with its cache in the user's cache directory, and the CI job of the same name runs that task.

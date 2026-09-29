@@ -235,6 +235,13 @@ fn expected_ci_steps(job: &str) -> Vec<(&'static str, CiCommand)> {
                 Task("kani:verified"),
             ),
         ],
+        "wasi-testsuite" => vec![
+            ("Fetch the locked dependency graph", fetch),
+            (
+                "Run every preview1 test of WebAssembly/wasi-testsuite on the sealed host",
+                Task("wasi-testsuite"),
+            ),
+        ],
         _ => panic!("locally answerable CI job {job} has no step-command correspondence"),
     }
 }
@@ -312,7 +319,7 @@ fn every_locally_answerable_ci_step_runs_its_mise_command() {
 ///
 /// `None` is a job this machine cannot answer, with the reason it cannot.
 /// The list is the whole of what a push has to wait for CI to find out, so adding to it is a decision rather than an omission.
-const GATED: [(&str, Option<&str>); 11] = [
+const GATED: [(&str, Option<&str>); 12] = [
     ("test", Some("mise run test")),
     ("lint", Some("mise run lint")),
     ("deny", Some("mise run deny")),
@@ -322,6 +329,7 @@ const GATED: [(&str, Option<&str>); 11] = [
     ("coverage", None),
     ("soundness", None),
     ("kani-verified", Some("mise run kani:verified")),
+    ("wasi-testsuite", Some("mise run wasi-testsuite")),
     ("action-smoke", None),
     ("action-smoke-rust-mutants", None),
 ];

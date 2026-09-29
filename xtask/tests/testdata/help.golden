@@ -1,0 +1,60 @@
+Repository gates
+
+Usage: xtask <COMMAND>
+
+Commands:
+  devgates          The seam ratchet (ADR 0001): production code against `xtask/seam_allowlist.txt`
+  lints             Lossy Rust shapes this repository does not write
+  deps              Dependency direction between the workspace crates
+  fixtures          Conventions of the independent fixture projects under fixtures/
+  release-check     Version consistency between the workspace and the release manifest
+  milestones        Every milestone named in the documentation resolves to one roadmap row
+  adrs              Every decision record has one number, carries it in its heading, is listed once
+                    in the book under it, and is named only as it is
+  invariants        Every critical decision has a row saying what holds it at every layer, each
+                    naming what the tree defines, and every hole is one somebody owns
+  ratchets          Everything that may shrink and never grow, held to where this change meets
+                    `origin/main`
+  surfaces          Every crate declares what its visibility means; incidental APIs are compiled
+                    privately
+  reached           Every public function of an incidental surface is reached by something that
+                    ships
+  waivers           A second opinion, by body shape alone, on every catch-all the ledger waives
+  tracked           Nothing a build writes is committed: no tracked path lies under a directory
+                    named `target`
+  skipped           Every skipped target in the mutation configuration is a target Cargo declares
+  claims            Every claim of `.rust-mutants.toml` names as many mutations as it says, asked of
+                    the engine's own locator
+  fuzz-clippy       Clippy every independent fuzz target under the root workspace lint policy
+  docflows          Every workflow the documentation shows passes actionlint against this
+                    repository's own actions
+  receipt           Run the engine over a package, sealed, and write the receipt of one module's
+                    mutants for a registry decision (docs/invariants.md)
+  kani-laws         Prove every production law with Kani, or read back the proof of exactly these
+                    inputs, and audit it either way
+  kani-laws-audit   Fail closed unless Kani's raw law export proves every assertion reachable and
+                    every cover satisfiable
+  wasi-testsuite    Run every preview1 test of WebAssembly/wasi-testsuite on the sealed host as a
+                    sealed test instance runs, and fail unless each ends as
+                    crates/rust-mutants/tests/wasi-testsuite.toml says
+  proofaudit        Whether a completed run's verdicts are the ones its own recording supports (ADR
+                    0004)
+  engine-audit      Whether a completed engine run's report is the one its own rows, recording, and
+                    ledger support (ADR 0004)
+  report-diff       What changed between two stored assurance reports
+  sbom              What a release is made of, as a `CycloneDX` document
+  bundle            The release archive of one target, holding every shipped binary where `cargo
+                    binstall` reads it, and its SHA-256
+  coverage-ratchet  Enforce the region-coverage floors recorded in this tree
+  remote-check      The whole suite of this commit on the other machines, before it is pushed
+  all               Every repository-tree gate, in order
+  slot              Runs a command once this machine's lane for it is free, and holds the lane until
+                    the command ends
+  pre-push          The pre-push hook: the exact commit being pushed, checked in this repository's
+                    one reusable tree
+  tidy              Runs a command with a temporary directory of its own, and fails naming whatever
+                    the command left in it (ADR 0006)
+  help              Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
