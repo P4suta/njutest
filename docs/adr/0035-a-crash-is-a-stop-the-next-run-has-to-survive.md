@@ -23,8 +23,8 @@ What holds, as the tree stands on 2026-09-29:
 What stands between it and acceptance:
 
 - The amendment: every crash runs natively in three rounds; nothing starts an instance from another's overlay, a crash record does not say it was sealed, and the sealed build the crash session makes is read by nothing.
-- Decision 2: the stop is `std::process::exit`, which flushes standard output, runs the C runtime's exit handlers and, on glibc, the calling thread's thread-local destructors, so "no flush after it" does not hold for state kept there, and no test holds that nothing after the call is written.
-  The standard library has no safe exit that skips them, and an `unsafe` call to `_exit` in the generated runtime would stop every crate that forbids `unsafe_code` from compiling; in a sealed run the host can take the overlay at the notice, which is the amendment's work.
+- Decision 2: a native stop is `std::process::exit`, and what it still does after the write — the flush of standard output, the C runtime's exit handlers and streams, and on glibc the calling thread's thread-local destructors — is stated in [the limitations](../limitations.md#what-a-run-asks-of-a-program-that-keeps-state), since the standard library has no safe exit that skips them and an `unsafe` call to `_exit` in the generated runtime would stop every crate that forbids `unsafe_code` from compiling.
+  The sealed stop, which the host can take at the notice with nothing after it, is the amendment's work, and no test yet holds that nothing after the call is written.
 - Decision 2: no toolchain run puts a crash a child process reaches; the classification is held by unit tests of the runner and the audit.
 - The runner and the audit are never run together on a real recording, and no toolchain run puts a crash after `copy`, `remove_file`, `sync_all`, `sync_data`, `set_len` or `flush`.
 
