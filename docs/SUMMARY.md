@@ -92,3 +92,4 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0044 A test writes only where its execution may](adr/0044-a-test-writes-only-where-its-execution-may.md)
 - [0045 Rust is read on a thread that ends with it](adr/0045-rust-is-read-on-a-thread-that-ends-with-it.md)
 - [0046 A verdict is what a sealed run observed](adr/0046-a-verdict-is-what-a-sealed-run-observed.md)
+- [0047 A const fn is mutated where nothing evaluates it early](adr/0047-a-const-fn-is-mutated-where-nothing-evaluates-it-early.md)
