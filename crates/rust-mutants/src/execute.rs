@@ -931,7 +931,7 @@ pub struct StepLimitNotice {
 /// A computation that enters either without re-entering an instrumented function or closure can therefore end only by itself or by the wall-clock supervisor, whose outcome is [`crate::outcome::Outcome::Waited`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StepBoundaryScope {
-    /// Non-const function entries, loop bodies, async blocks, and every closure invocation in mutable workspace source.
+    /// Non-const function entries, loop bodies, async blocks, and every closure invocation in every workspace file that carries the runtime, test code included.
     InstrumentedWorkspaceSource,
 }
 

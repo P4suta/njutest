@@ -129,7 +129,8 @@ Both `unwind` (the nonzero loop-unwind bound) and `timeout` (the verifier proces
 and they are not interchangeable.
 `timeout` is a clock, and what a clock measures is partly the machine: two runs of one catalogue on one commit can disagree about the same mutation because one was on a busy laptop.
 A mutation a bound expires on is `waited`, which establishes nothing — neither that the tests noticed nor that they did not — so it is not counted in the score.
-`steps` is how many times the mutation's own guard may be taken; the guard sits where the mutation is, so a loop whose condition was mutated takes it once an iteration and the number is the same everywhere.
+`steps` is how many boundaries of the workspace's instrumented source an execution may pass once the mutation's guard has first been taken: function entries, loop turns, async blocks and closure invocations, test code included, as [the contract](assurance-contract.md#what-a-step-counts) says.
+A loop the mutation keeps going passes one a turn wherever it is, in the code under test or in a test, so the number is the same everywhere.
 Crossing the allowance is `step-limit-reached`: a nonce-correlated fact that this execution reached the first count outside the configured bound.
 It is **not** a detection.
 A finite computation on the original code can cross the same count, so without a matched control the run has established neither that the mutation diverges nor that it survives.

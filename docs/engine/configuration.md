@@ -76,7 +76,7 @@ A mutation a bound expires on is `waited`, and `waited` establishes nothing —
 neither that the tests noticed nor that they did not.
 
 `steps` is a process-wide count of instrumented workspace boundaries after the selected guard first activates: non-const function entries, loop bodies, async blocks, and every closure invocation, including expression-body closures called back repeatedly by an iterator.
-Re-evaluating the same guard activates the count only once; later boundaries spend it, whichever instrumented source file contains them.
+Re-evaluating the same guard activates the count only once; later boundaries spend it, whichever instrumented source file contains them, a test's own among them.
 The number is the same on every machine at every job count under every load.
 Spending the allowance is `step_limit_reached`: an exact execution fact, but not proof that the program would never have ended.
 A long finite computation can cross the same number.
@@ -289,8 +289,8 @@ Finding any of them already set normally ends the command with `RM0006`: nothing
 `RUST_MUTANTS_DELAY` is `<index>@<ms>`, set only on a control with nothing active: each operating-system thread of the test process sleeps `<ms>` the first time it reaches the guard of `<index>`, and never again.
 The flag is per thread, so a thread a pool or the harness reuses across tests pauses only for the first test that reaches the guard on it, and a thread spawned after another paused gets its own pause.
 
-`RUST_MUTANTS_STEPS` is how many times the active mutant's guard may be taken.
-At the first take past it, the runtime atomically publishes a notice carrying the fresh nonce, catalog, mutant, allowance and exact `N + 1` count, then parks.
+`RUST_MUTANTS_STEPS` is how many boundaries of the instrumented workspace, test code included, an execution may pass once the active mutant's guard has been taken.
+At the first boundary past it, the runtime atomically publishes a notice carrying the fresh nonce, catalog, mutant, allowance and exact `N + 1` count, then parks.
 The supervisor stops its declared platform process set and accepts `step_limit_reached` only when every field matches this execution.
 A missing,
 malformed, mismatched or replayed notice fails closed as a protocol error.

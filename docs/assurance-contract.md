@@ -389,6 +389,15 @@ Settled by running the targets the route widened to, so the claim is recorded as
 A record this run cannot resolve to the targets its own baseline saw pass is neither believed nor written, because half of a set is a smaller claim wearing the same name.
 A mutant the premise of `unreached` holds for is a claim about the code and is reused by nothing.
 
+#### What a step counts
+
+A step is one boundary of the workspace's instrumented source that a mutated execution passes once the mutation's guard has first been taken: a function's entry, a loop's turn, an async block, a closure's invocation, in any process of the execution.
+Test code is counted with the code it tests.
+Every file of a member a test program compiles carries the checkpoints, a `#[test]` function, a `#[cfg(test)]` module, an integration test, a benchmark and an example among them, because a mutation can keep a test's own loop from ending as surely as a loop of the code under test, and the count is what stops either the same way on every machine.
+What cannot carry the runtime counts nothing, and neither does a dependency: a procedural macro, a build script, a crate without `std` or one that forbids what the runtime allows, a file pasted in as an expression; there the clock is the only bound.
+The allowance is `[execution] steps`, sized against what an ordinary execution of the same tests spends, and that floor is a count of the same boundaries, test code included.
+`a_loop_in_test_code_a_mutation_keeps_going_is_counted_like_any_other` in `crates/rust-mutants-cli/tests/toolchain_hang.rs` holds it: a stride of zero leaves a loop in an integration test spinning, and the count stops it at exactly one past the allowance.
+
 #### A bound that expired
 
 A bound that expired is not a proof about the mutant.

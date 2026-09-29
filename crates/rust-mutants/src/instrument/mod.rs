@@ -352,7 +352,7 @@ pub struct FileOutput {
     /// The name the runtime module took.
     pub module: String,
     /// Whether anything was rewritten.
-    /// Every mutable file receives control-flow checkpoints, including one with no mutant of its own, so a mutation in another file cannot escape its process-wide step allowance here.
+    /// Every file of a member a test program compiles receives control-flow checkpoints, test code and a file with no mutant of its own included, so a mutation in another file cannot escape its process-wide step allowance here.
     pub instrumented: bool,
 }
 
