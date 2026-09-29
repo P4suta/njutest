@@ -62,6 +62,25 @@ fn no_allowed_directory_leaves_the_tree_where_it_has_always_been() {
 }
 
 #[test]
+fn a_placed_root_is_spelled_without_a_trailing_separator() {
+    for (root, allowed) in [
+        ("/w", vec![]),
+        ("/p/proj", vec!["/p/lib"]),
+        ("/t/nested/proj", vec!["/t/lib"]),
+        ("/a/b/c/proj", vec!["/a/lib", "/a/b/other"]),
+    ] {
+        let placement = placed(root, &allowed);
+        let spelled = placement.root().as_os_str().to_str().expect("a UTF-8 root");
+        assert!(
+            !spelled.ends_with('/'),
+            "{spelled}: two paths that differ by a trailing separator are equal as paths and \
+             different as strings, and a build bakes the root in as a string \
+             (`CARGO_MANIFEST_DIR`), which is the string the sealed host reaches the tree by"
+        );
+    }
+}
+
+#[test]
 fn every_relative_path_between_the_tree_and_what_it_reads_is_the_one_it_had() {
     for (root, allowed) in [
         ("/p/proj", vec!["/p/lib"]),
