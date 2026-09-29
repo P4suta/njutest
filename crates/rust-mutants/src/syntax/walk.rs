@@ -1217,7 +1217,7 @@ impl<'a> Walker<'a> {
     /// The edit that swaps `binary`'s operator for `replacement`, written so the text reads back as exactly that swap: the same operands, grouped as they were.
     /// A swap that binds as tightly as the operator it replaces cannot regroup anything and is the token alone; any other is held to the file's tree, and nothing is proposed where no writing keeps it.
     fn swap(&self, binary: &syn::ExprBinary, replacement: &str) -> Option<(Span, String)> {
-        use super::regroup::{Binding, Side, regroups};
+        use super::regroup::{Side, binding, regroups};
         let op = self.span(&binary.op);
         let new = match self.parsing.read::<BinOp>(replacement) {
             Ok(new) => new,
@@ -1227,7 +1227,7 @@ impl<'a> Walker<'a> {
                 return None;
             }
         };
-        let (was, now) = (Binding::of(&binary.op)?, Binding::of(&new)?);
+        let (was, now) = (binding(&binary.op)?, binding(&new)?);
         let token = (op, replacement.to_owned());
         if was == now {
             return Some(token);

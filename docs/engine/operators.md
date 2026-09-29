@@ -84,6 +84,10 @@ It stays out of three places another rule already asks about: the whole of an `i
 which are the swaps'.
 Every one of those places carries the other rule's decision, so leaving it is not silence.
 
+An operator swap edits the operator, and the operands beside it only where the new operator binds otherwise:
+an operand is parenthesized where reading it bare beside the new operator would group it otherwise, as the Rust reference's precedence and associativity say, which `rust_mutants_decision::swap::regroups` decides.
+The file with the swap made must then read back as its own tree with that one operator replaced, or no swap is proposed.
+
 A method swap edits the method's identifier and nothing else.
 It reads no type, so `is_none` on a receiver that has no such method is a mutation the compiler refuses, which is where acceptance is settled ([ADR 0008](../adr/0008-compiler-validated-acceptance-and-the-type-witness-pass.md)):
 proposing it costs a `cargo check` diagnostic and never a wrong answer.
