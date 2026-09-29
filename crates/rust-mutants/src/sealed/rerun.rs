@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rust_mutants_sealed::{Interrupt, SealedRunner};
 
 use super::bench::{Bench, BenchError, Controlled, Tree, Uncontrolled};
-use super::record::Came;
+use super::record::{Came, SealedRun};
 use super::{SealedBuild, Unsealed};
 use crate::catalog::Mutant;
 use crate::libtest::Configured;
@@ -106,6 +106,95 @@ pub enum Reproduction {
         /// The first that came to something else.
         first: Reran,
     },
+}
+
+/// Where the sealed executions a kept verdict about one mutant recorded and the ones this run's bench made of it first part, in the order they ran.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Departed {
+    /// The place, counted from one.
+    pub at: usize,
+    /// The execution the verdict recorded there, where it recorded that many.
+    pub kept: Option<SealedRun>,
+    /// The execution this run's bench made there, where it made that many.
+    pub now: Option<SealedRun>,
+}
+
+/// The kind of the trace note that names where a kept sealed verdict's executions first parted from this run's.
+pub const UNREPRODUCED: &str = "unreproduced";
+
+impl Departed {
+    /// Where `now`, the executions this run's bench made of a mutant, first part from `kept`, the ones a kept verdict about it recorded; nothing where each came to what it recorded, in the same order.
+    #[must_use]
+    pub fn of(kept: &[SealedRun], now: &[SealedRun]) -> Option<Self> {
+        let longest = kept.len().max(now.len());
+        (1..=longest)
+            .zip(0..longest)
+            .find(|(_, index)| kept.get(*index) != now.get(*index))
+            .map(|(at, index)| Self {
+                at,
+                kept: kept.get(index).cloned(),
+                now: now.get(index).cloned(),
+            })
+    }
+
+    /// That every one of `kept` came to what it recorded, and they establish no verdict now.
+    #[must_use]
+    pub const fn unestablished(kept: &[SealedRun]) -> Self {
+        Self {
+            at: kept.len(),
+            kept: None,
+            now: None,
+        }
+    }
+}
+
+impl std::fmt::Display for Departed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let at = self.at;
+        match (&self.kept, &self.now) {
+            (Some(kept), Some(now)) if kept.target == now.target && kept.test == now.test => {
+                write!(
+                    f,
+                    "execution {at}, {} test {}, is kept as {} and came to {} when put again",
+                    kept.target,
+                    kept.test,
+                    kept.came_to.name(),
+                    now.came_to.name()
+                )
+            }
+            (Some(kept), Some(now)) => write!(
+                f,
+                "execution {at} is kept as {} test {}, which came to {}, and this run's bench put {} \
+                 test {} there, which came to {}",
+                kept.target,
+                kept.test,
+                kept.came_to.name(),
+                now.target,
+                now.test,
+                now.came_to.name()
+            ),
+            (Some(kept), None) => write!(
+                f,
+                "execution {at}, {} test {}, is kept as {} and this run's bench could not make it \
+                 again",
+                kept.target,
+                kept.test,
+                kept.came_to.name()
+            ),
+            (None, Some(now)) => write!(
+                f,
+                "the verdict is kept with fewer executions than this run's bench made, which went \
+                 on at execution {at} to {} test {}, which came to {}",
+                now.target,
+                now.test,
+                now.came_to.name()
+            ),
+            (None, None) => write!(
+                f,
+                "all {at} executions came to what they are kept as, and they establish no verdict now"
+            ),
+        }
+    }
 }
 
 /// Why `target` has no station, as `unsealed` says: the reason it has no sealed module, or that this build has no such target.

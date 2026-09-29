@@ -1648,7 +1648,7 @@ fn serially<O: Observer>(
     Ok(judged)
 }
 
-/// What one mutant is: what an earlier run of this exact tree established, or what this run measures.
+/// What one mutant is: a sealed verdict an earlier run of this exact tree established, once its executions come out the same again, or what this run measures.
 fn one_mutant(
     session: &Session,
     mutant: &Mutant,
@@ -1656,26 +1656,49 @@ fn one_mutant(
     cancel: &Cancel,
 ) -> Result<Judged, EngineError> {
     let stored = reuse(session, mutant, options, cancel)?;
-    let unproven = match (bench, stored) {
-        (_, Some(one)) if one.evidence.class() == crate::sealed::record::Class::Sealed => {
-            return Ok(one);
-        }
-        (None, Some(one)) => return Ok(one),
-        (None, None) => None,
-        (Some(bench), stored) => match sealed_verdict(session, mutant, bench)? {
-            Sealing::Established(judged) => {
-                keep(mutant, options, (&judged, &[]))?;
-                return Ok(*judged);
-            }
-            Sealing::Unproven(evidence) => match stored {
-                Some(mut one) => {
-                    one.evidence = evidence;
-                    return Ok(one);
+    let (sealing, lead) = match stored {
+        Some(one) => match &one.evidence {
+            crate::sealed::record::Evidence::Sealed { executions } => {
+                match sealed_again(
+                    session,
+                    mutant,
+                    bench,
+                    (one.source_run_id.as_deref(), executions),
+                )? {
+                    Again::Reproduced(judged) => return Ok(*judged),
+                    Again::Departed(departed, sealing) => {
+                        unreproduced(session, mutant, &departed);
+                        (Some(sealing), None)
+                    }
+                    Again::Interrupted => {
+                        return Ok(unexecuted(mutant, NotRunReason::Interrupted));
+                    }
                 }
-                None => Some(evidence),
+            }
+            crate::sealed::record::Evidence::Unproven { .. } => match bench {
+                Some(bench) => (Some(sealed_verdict(session, mutant, bench)?), Some(one)),
+                None => return Ok(one),
             },
-            Sealing::Interrupted => return Ok(unexecuted(mutant, NotRunReason::Interrupted)),
         },
+        None => match bench {
+            Some(bench) => (Some(sealed_verdict(session, mutant, bench)?), None),
+            None => (None, None),
+        },
+    };
+    let unproven = match sealing {
+        None => None,
+        Some(Sealing::Established(judged)) => {
+            keep(mutant, options, (&judged, &[]))?;
+            return Ok(*judged);
+        }
+        Some(Sealing::Unproven(evidence)) => match lead {
+            Some(mut one) => {
+                one.evidence = evidence;
+                return Ok(one);
+            }
+            None => Some(evidence),
+        },
+        Some(Sealing::Interrupted) => return Ok(unexecuted(mutant, NotRunReason::Interrupted)),
     };
     let (mut established, asked) = execute(session, mutant, options, cancel)?;
     if let Some(evidence) = unproven {
@@ -1770,19 +1793,118 @@ pub fn sealed_verdict(
 ) -> Result<Sealing, EngineError> {
     let started = Instant::now();
     let route = session.route(mutant);
-    let file = session.snapshot_root().join(&mutant.candidate.path);
-    let answer =
-        match crate::sealed::standing::answer((bench, session.sealed()), mutant, &file, &route) {
-            Ok(answer) => answer,
-            Err(crate::sealed::bench::BenchError::Interrupted) => return Ok(Sealing::Interrupted),
-            Err(error) => return Err(error.into()),
+    let Some(answer) = answered(session, mutant, bench, &route)? else {
+        return Ok(Sealing::Interrupted);
+    };
+    sealing(session, mutant, (&route, answer, started), None)
+}
+
+/// What putting a mutant again to this run's bench came to, where a kept sealed verdict answered for it (ADR 0046, decision 7).
+#[derive(Debug)]
+pub enum Again {
+    /// Every execution came to what the verdict kept, in the order it ran, and they establish it again: the row they give the mutant, naming the run whose verdict they reproduced.
+    Reproduced(Box<Judged>),
+    /// They first parted from the verdict where this says, and this is what they establish now.
+    Departed(crate::sealed::rerun::Departed, Sealing),
+    /// The run was interrupted during one of them, which says nothing about the mutant.
+    Interrupted,
+}
+
+/// Puts `mutant` again to this run's `bench`, and says whether it comes to `kept`, the executions run `source`'s verdict rests on (ADR 0046, decision 7).
+///
+/// # Errors
+/// A host that cannot run an execution, or an environment that is not text.
+pub fn sealed_again(
+    session: &Session,
+    mutant: &Mutant,
+    bench: Option<&crate::sealed::bench::Bench<'_>>,
+    (source, kept): (Option<&str>, &[crate::sealed::record::SealedRun]),
+) -> Result<Again, EngineError> {
+    let Some(bench) = bench else {
+        let departed = match crate::sealed::rerun::Departed::of(kept, &[]) {
+            Some(departed) => departed,
+            None => crate::sealed::rerun::Departed::unestablished(kept),
         };
+        let nothing = crate::sealed::record::Evidence::not_sealed();
+        return Ok(Again::Departed(departed, Sealing::Unproven(nothing)));
+    };
+    let started = Instant::now();
+    let route = session.route(mutant);
+    let Some(answer) = answered(session, mutant, bench, &route)? else {
+        return Ok(Again::Interrupted);
+    };
+    let made: Vec<crate::sealed::record::SealedRun> = answer
+        .puts
+        .iter()
+        .map(crate::sealed::record::SealedRun::of)
+        .collect();
+    let established = matches!(
+        answer.standing,
+        rust_mutants_decision::evidence::Standing::Established(_)
+    );
+    let departed = match crate::sealed::rerun::Departed::of(kept, &made) {
+        Some(departed) => Some(departed),
+        None if established => None,
+        None => Some(crate::sealed::rerun::Departed::unestablished(kept)),
+    };
+    if let Some(departed) = departed {
+        let now = sealing(session, mutant, (&route, answer, started), None)?;
+        return Ok(Again::Departed(departed, now));
+    }
+    Ok(
+        match sealing(session, mutant, (&route, answer, started), source)? {
+            Sealing::Established(judged) => Again::Reproduced(judged),
+            now @ Sealing::Unproven(_) => {
+                Again::Departed(crate::sealed::rerun::Departed::unestablished(kept), now)
+            }
+            Sealing::Interrupted => Again::Interrupted,
+        },
+    )
+}
+
+/// Records in the trace that the kept sealed verdict about `mutant` was not believed, and where its executions first parted from this run's.
+fn unreproduced(session: &Session, mutant: &Mutant, departed: &crate::sealed::rerun::Departed) {
+    session.trace().note(
+        crate::sealed::rerun::UNREPRODUCED,
+        &format!("{}: {departed}", mutant.display_id),
+    );
+}
+
+/// What `bench` establishes about `mutant`, which `route` reaches natively, or nothing where the run was interrupted during one of its executions.
+fn answered(
+    session: &Session,
+    mutant: &Mutant,
+    bench: &crate::sealed::bench::Bench<'_>,
+    route: &crate::session::Route,
+) -> Result<Option<crate::sealed::standing::Answer>, EngineError> {
+    let file = session.snapshot_root().join(&mutant.candidate.path);
+    match crate::sealed::standing::answer((bench, session.sealed()), mutant, &file, route) {
+        Ok(answer) => Ok(Some(answer)),
+        Err(crate::sealed::bench::BenchError::Interrupted) => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// What `answer`, which `route` led to and which began at `started`, establishes about `mutant`, recorded in the trace, and naming `source` as the run whose verdict it reproduced, where it reproduced one.
+fn sealing(
+    session: &Session,
+    mutant: &Mutant,
+    (route, answer, started): (
+        &crate::session::Route,
+        crate::sealed::standing::Answer,
+        Instant,
+    ),
+    source: Option<&str>,
+) -> Result<Sealing, EngineError> {
     let evidence = crate::sealed::record::Evidence::of(&answer);
     let rust_mutants_decision::evidence::Standing::Established(verdict) = answer.standing else {
         return Ok(Sealing::Unproven(evidence));
     };
+    let source_run_id = source.map(str::to_owned);
     if session.trace().is_enabled() {
-        session.trace().route(route.record(mutant, Vec::new()));
+        let mut record = route.record(mutant, Vec::new());
+        record.reused.clone_from(&source_run_id);
+        session.trace().route(record);
         for put in &answer.puts {
             session.trace().sealed_exec(crate::trace::SealedExecRecord {
                 mutant: mutant.display_id.to_string(),
@@ -1818,10 +1940,10 @@ pub fn sealed_verdict(
         signal: None,
         retried: false,
         lingered: false,
-        source_run_id: None,
+        source_run_id,
         expected: false,
         not_run_reason,
-        route: Some(crate::report::run::route_document(&route, Vec::new())),
+        route: Some(crate::report::run::route_document(route, Vec::new())),
         measured: true,
         identical: CodegenIdentity::NotMeasured,
         declined: Vec::new(),
