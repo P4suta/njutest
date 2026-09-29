@@ -837,8 +837,23 @@ pub struct RepairRecord {
     pub was: String,
     /// The outcome it has now: what the run decided, or what it had where the run did not reach the site.
     pub now: String,
-    /// Whether the run's own record shows the mutation's site reached.
+    /// Whether the run's own record shows the mutation's site reached: for a sealed repair, whether a sealed execution of the target was put.
     pub reached: SiteReached,
+    /// What ran it again: a native execution, or the sealed bench and what it established.
+    pub by: RepairedBy,
+}
+
+/// What ran a disposition resting on a moved target again (ADR 0036 decision 1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum RepairedBy {
+    /// A lead: a native execution against the target, with its reach recorded.
+    Native,
+    /// A sealed verdict: the mutation put again on the sealed bench with the moved targets counted among those reaching it natively, and what that put established.
+    Sealed {
+        /// The sealed executions that re-established the verdict, or every reason none did, which makes the disposition a lead the native run then judges.
+        evidence: rust_mutants::sealed::record::Evidence,
+    },
 }
 
 /// Whether a run's own record shows the site of the mutation it ran reached.

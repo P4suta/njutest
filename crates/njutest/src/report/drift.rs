@@ -238,19 +238,17 @@ pub fn found(drift: &[Drift], records: &[MutantRecord]) -> Vec<Finding> {
         .collect()
 }
 
-/// How many of `records` a proof decided on `target`'s baseline: survivors whose route did not put them to it, and mutations no test reached, each of which says it reached nothing.
+/// How many of `records` a proof decided on `target`'s baseline: survivors, and mutations no test reached, whose route did not put them to it; a sealed verdict put again with `target` counted among those reaching it names it in its route and rests on it no longer (ADR 0036 decision 1).
 #[must_use]
 pub fn resting(records: &[MutantRecord], target: &str) -> (usize, usize) {
-    let discharged = records
-        .iter()
-        .filter(|record| record.outcome.outcome() == Outcome::Survived)
-        .filter(|record| rests_on(record.routing.as_ref(), target))
-        .count();
-    let unreached = records
-        .iter()
-        .filter(|record| record.outcome.outcome() == Outcome::Unreached)
-        .count();
-    (discharged, unreached)
+    let count = |outcome: Outcome| {
+        records
+            .iter()
+            .filter(|record| record.outcome.outcome() == outcome)
+            .filter(|record| rests_on(record.routing.as_ref(), target))
+            .count()
+    };
+    (count(Outcome::Survived), count(Outcome::Unreached))
 }
 
 /// How many dispositions resting on one target whose reach moved a part ran again against it and replaced, with an answer or a hole (ADR 0036).

@@ -4,13 +4,14 @@
 //! The files that read a run's recordings and reports to re-decide them, the runner's and the engine's files that decide what a run established, and the calls the `defaulted-absence` lint refuses in all of them because they supply a value where the input gave none.
 
 /// The files that read a run's recordings and reports to re-decide them, by path or by directory.
-pub const AUDIT_READERS: [&str; 10] = [
+pub const AUDIT_READERS: [&str; 11] = [
     "xtask/src/proofaudit.rs",
     "xtask/src/proofaudit/",
     "xtask/src/engineaudit/",
     "xtask/src/route.rs",
     "xtask/src/wire.rs",
     "xtask/src/drift.rs",
+    "xtask/src/repair.rs",
     "xtask/src/crashes.rs",
     "xtask/src/faults.rs",
     "xtask/src/knobs.rs",

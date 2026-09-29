@@ -25,7 +25,7 @@ pub use event::{
     Event, ExecRecord, Expected, FaultAttributionRecord, FaultControlRecord, FaultExecRecord,
     FaultFateRecord, FaultRejectedRecord, FaultRole, FaultRouteRecord, MutantExecRecord,
     NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RepairRecord,
-    ResumedRecord, ReuseRule, RouteRecord, RunAccounting, RunRecord, SealedExecRecord,
+    RepairedBy, ResumedRecord, ReuseRule, RouteRecord, RunAccounting, RunRecord, SealedExecRecord,
     SentinelRecord, SiteReached, StartRecord, Unfaulted, WireExchangeRecord, WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
