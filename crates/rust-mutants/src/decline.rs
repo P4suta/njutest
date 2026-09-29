@@ -229,27 +229,6 @@ fn attributed(lines: &[&str], passed: &[String]) -> Declines {
     Declines::Read { declined, quoted }
 }
 
-/// What one execution's declines leave of it, held to the declines the run's baseline made of the same target.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Held {
-    /// Every decline is one the baseline made, in the same words: these tests are set aside.
-    SetAside(Vec<Decline>),
-    /// A test declined where the baseline's did not, or gave other words: the mutation changed what the test did, which is a detection.
-    Detected {
-        /// The test, and the words it gave under the mutation.
-        by: Decline,
-    },
-}
-
-/// `declined`, one execution's believed declines, held to `baseline`, the declines the baseline made in the same target.
-#[must_use]
-pub fn held(declined: &[Decline], baseline: &[Decline]) -> Held {
-    match declined.iter().find(|one| !baseline.contains(one)) {
-        Some(by) => Held::Detected { by: by.clone() },
-        None => Held::SetAside(declined.to_vec()),
-    }
-}
-
 /// A decline conclusion that disagrees with the process and baseline evidence.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("decline conclusion {decided:?} disagrees with the process notice or baseline")]

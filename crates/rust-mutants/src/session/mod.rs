@@ -25,6 +25,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
+pub use rust_mutants_decision::claim::Edit;
+use rust_mutants_decision::claim::Located;
+use rust_mutants_decision::decline::Concluded;
+
 use crate::EngineError;
 use crate::catalog::{Catalog, Mutant};
 use crate::discover::{self, DiscoverOptions, FileReport, SkipClaim};
@@ -104,10 +108,13 @@ impl Locator {
     /// Whether this names `edit`, wherever it sits: the one reading of a locator's path, rule, original and item, which a claim and a name on a command line both take.
     #[must_use]
     pub fn names_edit(&self, edit: &Edit<'_>) -> bool {
-        edit.path == self.path
-            && edit.rule == self.rule
-            && (self.original.is_empty() || edit.original == self.original.as_bytes())
-            && edit.item.is_some_and(|item| names(item, &self.item))
+        rust_mutants_decision::claim::Wanted {
+            path: &self.path,
+            item: &self.item,
+            rule: &self.rule,
+            original: &self.original,
+        }
+        .names(edit)
     }
 
     /// How a claim written as this locator is named to a reader: every field that tells it apart from another, the line included.
@@ -176,24 +183,6 @@ pub enum LocateError {
     },
 }
 
-/// Whether an item path is the one a locator names, which a suffix says.
-fn names(item: &str, wanted: &str) -> bool {
-    item == wanted || item.ends_with(&format!("::{wanted}"))
-}
-
-/// What a mutation edits, as a locator reads it apart from where it sits: the file, the rule, the bytes it replaces, and the item it is in where one is known.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Edit<'a> {
-    /// The workspace-relative path with forward slashes.
-    pub path: &'a str,
-    /// The rule's name.
-    pub rule: &'a str,
-    /// The bytes the edit replaces.
-    pub original: &'a [u8],
-    /// The item it is in, when one is known.
-    pub item: Option<&'a str>,
-}
-
 /// The ones of `edits` a locator names, which a run and a check of the claims before one both ask here.
 ///
 /// # Errors
@@ -209,7 +198,7 @@ pub fn locate<'a, T>(
         .map(|(one, _)| one)
         .collect();
     let narrowed: Vec<T> = match locator.line {
-        Some(line) if matching.len() > 1 => matching
+        Some(line) if rust_mutants_decision::claim::narrows(matching.len()) => matching
             .into_iter()
             .filter(|one| line_of(one) == Some(line))
             .collect(),
@@ -224,17 +213,14 @@ pub fn locate<'a, T>(
             })
             .collect()
     };
-    match (narrowed.len(), locator.count) {
-        (0, _) => Err(LocateError::Nothing),
-        (held, Some(wanted)) if usize::try_from(wanted).is_ok_and(|wanted| held == wanted) => {
-            Ok(narrowed)
-        }
-        (_, Some(wanted)) => Err(LocateError::Counted {
+    match rust_mutants_decision::claim::located(narrowed.len(), locator.count) {
+        Located::Nothing => Err(LocateError::Nothing),
+        Located::Named => Ok(narrowed),
+        Located::Counted { wanted } => Err(LocateError::Counted {
             wanted,
             display_ids: labelled(&narrowed),
         }),
-        (1, None) => Ok(narrowed),
-        (_, None) => Err(LocateError::Several {
+        Located::Several => Err(LocateError::Several {
             display_ids: labelled(&narrowed),
         }),
     }
@@ -1136,27 +1122,29 @@ impl Session {
         if result.conclusion != MutantConclusion::Survived {
             return result;
         }
-        let decided = match &result.declines {
+        let believed = match &result.declines {
             crate::decline::Declines::Unbelieved { because } => {
                 self.workspace.trace.note(
                     crate::decline::DECLINE_NOTICE_FILE,
                     &format!("{target}: {}", because.said()),
                 );
-                MutantConclusion::Errored
+                None
             }
-            crate::decline::Declines::Read { declined, .. } => {
-                match crate::decline::held(declined, self.declined_in_baseline(target)) {
-                    crate::decline::Held::Detected { by } => {
-                        MutantConclusion::DeclinedUnderTheMutant { by }
-                    }
-                    crate::decline::Held::SetAside(tests)
-                        if !tests.is_empty() && tests.len() == result.passed_tests.len() =>
-                    {
-                        MutantConclusion::Declined { tests }
-                    }
-                    crate::decline::Held::SetAside(_) => MutantConclusion::Survived,
-                }
+            crate::decline::Declines::Read { declined, .. } => Some(declined.as_slice()),
+        };
+        let decided = match rust_mutants_decision::decline::concluded(
+            believed,
+            self.declined_in_baseline(target),
+            result.passed_tests.len(),
+        ) {
+            Concluded::Errored => MutantConclusion::Errored,
+            Concluded::DeclinedUnderTheMutant { by } => {
+                MutantConclusion::DeclinedUnderTheMutant { by: by.clone() }
             }
+            Concluded::Declined => MutantConclusion::Declined {
+                tests: result.declines.believed().to_vec(),
+            },
+            Concluded::Survived => MutantConclusion::Survived,
         };
         if let Err(error) = crate::decline::checked_decision(
             &result.declines,
@@ -3194,10 +3182,10 @@ pub fn resolve_claims(
             ),
         )
         .map(|found| {
-            let moved = locator.line.zip(found.first()).and_then(|(from, first)| {
-                let to = first.found.position.line;
-                (to != from).then_some((from, to))
-            });
+            let moved = rust_mutants_decision::claim::moved(
+                locator.line,
+                found.first().map(|first| first.found.position.line),
+            );
             (found.iter().map(label).collect::<Vec<_>>(), moved)
         })
     };
