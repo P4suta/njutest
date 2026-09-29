@@ -143,12 +143,14 @@ fn the_engine_ledger_of_this_repository_is_one_the_reader_accepts() {
         config.project.packages,
         vec![
             "rust-mutants".to_owned(),
+            "rust-mutants-decision".to_owned(),
             "rust-mutants-cli".to_owned(),
             "njutest".to_owned(),
             "xtask".to_owned(),
         ],
-        "the ledger measures every package of this workspace: the engine, the command line it \
-         ships behind, the runner built on it, and the audit that re-decides its runs. A \
+        "the ledger measures every package of this workspace: the engine, the decisions it rests \
+         on, the command line it ships behind, the runner built on it, and the audit that \
+         re-decides its runs. A \
          repository that says it measures itself and leaves half of itself out is one whose \
          scope does not match its claim"
     );
