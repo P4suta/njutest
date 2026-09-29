@@ -74,6 +74,8 @@ pub enum SealedCode {
     RuntimeFailed,
     /// A trap this version cannot classify.
     TrapUnclassified,
+    /// A guest stopped because whoever ran it stopped.
+    Interrupted,
     /// A host that broke an invariant of its own.
     HostInvariant,
 }
@@ -171,6 +173,11 @@ impl SealedCode {
                 code: "RS3004",
                 summary: "the guest stopped with a trap this version cannot classify",
                 remedy: "this is a defect in this tool: every trap of the pinned wasmtime has a kind, so report the message",
+            },
+            Self::Interrupted => ErrorCode {
+                code: "RS3005",
+                summary: "the guest was stopped because whoever ran it stopped, as an interrupted run does; nothing about the guest follows from it",
+                remedy: "nothing is wrong with the guest or the host: run it again to measure it",
             },
             Self::HostInvariant => ErrorCode {
                 code: "RS9001",
@@ -316,6 +323,9 @@ pub enum SealedError {
         /// How long the guest was allowed.
         limit: Duration,
     },
+    /// The guest was stopped because whoever ran it stopped.
+    #[error("the guest was interrupted; nothing about the guest follows from it")]
+    Interrupted,
     /// The runtime failed outside the guest.
     #[error("the runtime failed outside the guest while {during}: {source}")]
     Runtime {
@@ -365,6 +375,7 @@ impl SealedError {
             Self::Link { .. } => SealedCode::HostUnlinked,
             Self::WatchdogUnavailable { .. } => SealedCode::WatchdogUnavailable,
             Self::WatchdogExpired { .. } => SealedCode::WatchdogExpired,
+            Self::Interrupted => SealedCode::Interrupted,
             Self::Runtime { .. } => SealedCode::RuntimeFailed,
             Self::TrapUnclassified { .. } => SealedCode::TrapUnclassified,
             Self::HostInvariant { .. } => SealedCode::HostInvariant,

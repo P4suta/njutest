@@ -1227,7 +1227,7 @@ pub fn run<O: Observer>(
         used: options.jobs.resolve(),
     };
     let runner = sealed_runner(session)?;
-    let (bench, answering) = benched(session, runner.as_ref())?;
+    let (bench, answering) = benched(session, runner.as_ref(), cancel)?;
     observer.starting(count(places.len())?, width);
     let judged = if width.used == 1 {
         serially(
@@ -1674,6 +1674,7 @@ fn one_mutant(
                 }
                 None => Some(evidence),
             },
+            Sealing::Interrupted => return Ok(unexecuted(mutant, NotRunReason::Interrupted)),
         },
     };
     let (mut established, asked) = execute(session, mutant, options, cancel)?;
@@ -1685,28 +1686,35 @@ fn one_mutant(
     Ok(established)
 }
 
-/// What sealed executions establish about one mutant: a verdict, or the evidence of why there is none.
+/// What sealed executions establish about one mutant: a verdict, the evidence of why there is none, or nothing, where the run was interrupted before they finished.
 #[derive(Debug)]
 pub enum Sealing {
     /// The row the verdict gives the mutant.
     Established(Box<Judged>),
     /// No verdict, and every reason why.
     Unproven(crate::sealed::record::Evidence),
+    /// The run was interrupted during one of them, which says nothing about the mutant.
+    Interrupted,
 }
 
 /// What sealed executions establish about `mutant` now, alone: its row where they establish a verdict, and nothing where the session sealed nothing to put it to or they establish none.
 ///
 /// # Errors
-/// A host that cannot start or run an execution, or a tree that cannot be read into one.
-pub fn sealed_now(session: &Session, mutant: &Mutant) -> Result<Option<Judged>, EngineError> {
+/// A host that cannot start or run an execution, a tree that cannot be read into one, or [`EngineError::Interrupted`] where `cancel` was raised before they established anything.
+pub fn sealed_now(
+    session: &Session,
+    mutant: &Mutant,
+    cancel: &Cancel,
+) -> Result<Option<Judged>, EngineError> {
     let Some(runner) = sealed_runner(session)? else {
         return Ok(None);
     };
-    let bench = session.bench(&runner)?;
-    Ok(match sealed_verdict(session, mutant, &bench)? {
-        Sealing::Established(judged) => Some(*judged),
-        Sealing::Unproven(_) => None,
-    })
+    let bench = session.bench(&runner, cancel)?;
+    match sealed_verdict(session, mutant, &bench)? {
+        Sealing::Established(judged) => Ok(Some(*judged)),
+        Sealing::Unproven(_) => Ok(None),
+        Sealing::Interrupted => Err(EngineError::Interrupted),
+    }
 }
 
 /// The host every sealed execution of `session` runs on, when it built a sealed module to run.
@@ -1732,6 +1740,7 @@ pub fn sealed_runner(
 fn benched<'runner>(
     session: &Session,
     runner: Option<&'runner rust_mutants_sealed::SealedRunner>,
+    cancel: &Cancel,
 ) -> Result<
     (
         Option<crate::sealed::bench::Bench<'runner>>,
@@ -1745,7 +1754,7 @@ fn benched<'runner>(
             crate::sealed::bench::Answering::unassembled(session.sealed()),
         ));
     };
-    let bench = session.bench(runner)?;
+    let bench = session.bench(runner, cancel)?;
     let answering = bench.answering();
     Ok((Some(bench), answering))
 }
@@ -1762,7 +1771,12 @@ pub fn sealed_verdict(
     let started = Instant::now();
     let route = session.route(mutant);
     let file = session.snapshot_root().join(&mutant.candidate.path);
-    let answer = crate::sealed::standing::answer((bench, session.sealed()), mutant, &file, &route)?;
+    let answer =
+        match crate::sealed::standing::answer((bench, session.sealed()), mutant, &file, &route) {
+            Ok(answer) => answer,
+            Err(crate::sealed::bench::BenchError::Interrupted) => return Ok(Sealing::Interrupted),
+            Err(error) => return Err(error.into()),
+        };
     let evidence = crate::sealed::record::Evidence::of(&answer);
     let rust_mutants_decision::evidence::Standing::Established(verdict) = answer.standing else {
         return Ok(Sealing::Unproven(evidence));

@@ -621,7 +621,7 @@ pub fn run_resuming(
     let bench = match &runner {
         Some(runner) => {
             let sealing = watch.trace.phase("mutation-seal");
-            let bench = session.bench(runner)?;
+            let bench = session.bench(runner, watch.cancel)?;
             sealing.end();
             Some(bench)
         }
@@ -1035,6 +1035,7 @@ fn sealed(
             )?))
         }
         rust_mutants::run::Sealing::Unproven(evidence) => Ok(Sealed::Lead(evidence)),
+        rust_mutants::run::Sealing::Interrupted => Err(crate::error::RunnerError::Interrupted),
     }
 }
 

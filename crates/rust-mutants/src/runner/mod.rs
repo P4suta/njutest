@@ -103,6 +103,15 @@ impl Cancel {
         self.own.load(Ordering::SeqCst) || self.above.iter().any(|flag| flag.load(Ordering::SeqCst))
     }
 
+    /// Every flag whose raising cancels this one, its own first, for what checks them without this type.
+    #[must_use]
+    pub fn flags(&self) -> Vec<Arc<AtomicBool>> {
+        std::iter::once(&self.own)
+            .chain(&self.above)
+            .map(Arc::clone)
+            .collect()
+    }
+
     /// The flag itself, so a composition root can raise it from a signal handler.
     /// This crate never installs one: a signal is the process's business, not a library's.
     #[must_use]

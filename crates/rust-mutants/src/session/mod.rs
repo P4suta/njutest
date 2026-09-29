@@ -1001,13 +1001,14 @@ impl Session {
         &self.sealed
     }
 
-    /// Every sealed module of this session prepared on `runner`, listed, and each test's control run in the instrumented tree (ADR 0046).
+    /// Every sealed module of this session prepared on `runner`, listed, and each test's control run in the instrumented tree (ADR 0046), every execution stopping when `cancel` is raised.
     ///
     /// # Errors
-    /// A file of the tree or a module that cannot be read, an environment that is not text, or a host that cannot run what it is given.
+    /// A file of the tree or a module that cannot be read, an environment that is not text, a host that cannot run what it is given, or [`EngineError::Interrupted`].
     pub fn bench<'runner>(
         &self,
         runner: &'runner rust_mutants_sealed::SealedRunner,
+        cancel: &Cancel,
     ) -> Result<crate::sealed::bench::Bench<'runner>, EngineError> {
         let tree = crate::sealed::bench::Tree::read(
             self.workspace.snapshot_root(),
@@ -1034,7 +1035,7 @@ impl Session {
             })
             .collect();
         Ok(crate::sealed::bench::Bench::assemble(
-            runner,
+            (runner, rust_mutants_sealed::Interrupt::of(cancel.flags())),
             (&self.sealed, &natives),
             (tree, &self.harness_args),
             (self.catalog.digest(), bounds),

@@ -172,6 +172,7 @@ fn unfaulted_failures() -> Vec<(SealedError, String)> {
             },
             "planted trap".to_owned(),
         ),
+        (SealedError::Interrupted, "interrupted".to_owned()),
     ]
 }
 

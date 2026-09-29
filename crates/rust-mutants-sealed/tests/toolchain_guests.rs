@@ -78,7 +78,7 @@ fn invocation(arguments: &[&str]) -> Invocation {
 /// The transcript of `invocation`, which must be an answer about the guest.
 fn run(module: &SealedModule<'_>, invocation: &Invocation) -> Transcript {
     module
-        .invoke(invocation)
+        .invoke(invocation, &rust_mutants_sealed::Interrupt::of(Vec::new()))
         .expect("the invocation is an answer about the guest")
 }
 

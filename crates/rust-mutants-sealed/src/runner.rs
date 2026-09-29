@@ -18,6 +18,7 @@ use crate::digest::{Encoder, SealedDigest};
 use crate::error::{Invariant, RuntimeStep, SealedError};
 use crate::host::{BYTE_FUEL, CALL_FUEL, FILE_TIME, Host, HostStop, RESOLUTION, TABLE_ELEMENTS};
 use crate::imports::{IMPORT_MODULE, WasiFunction};
+use crate::interrupt::Interrupt;
 use crate::invocation::Invocation;
 use crate::transcript::{KEPT_REQUESTS, Parts, SealedStop, Transcript, TrapClass, classify};
 use crate::validate;
@@ -248,22 +249,34 @@ impl SealedModule<'_> {
         &self.digest
     }
 
-    /// Runs the module's `_start` once in a fresh instance, as `invocation` says.
+    /// Runs the module's `_start` once in a fresh instance, as `invocation` says, until it ends or `interrupt` is raised.
     ///
     /// # Errors
-    /// [`SealedError::WatchdogExpired`] where the wall clock ran out, and any failure of the runtime or the host that is not an answer about the guest.
-    pub fn invoke(&self, invocation: &Invocation) -> Result<Transcript, SealedError> {
+    /// [`SealedError::WatchdogExpired`] where the wall clock ran out, [`SealedError::Interrupted`] where `interrupt` was raised, and any failure of the runtime or the host that is not an answer about the guest.
+    pub fn invoke(
+        &self,
+        invocation: &Invocation,
+        interrupt: &Interrupt,
+    ) -> Result<Transcript, SealedError> {
+        if interrupt.raised() {
+            return Err(SealedError::Interrupted);
+        }
         let digest = invocation.digest(&self.digest, &self.runner.configuration);
         let watchdog = self.runner.watchdog;
         let deadline = Instant::now().checked_add(watchdog);
-        let host = Host::new(invocation, deadline).map_err(broken)?;
+        let host = Host::new(invocation, (deadline, interrupt.clone())).map_err(broken)?;
         let mut store = Store::new(&self.runner.engine, host);
         store.limiter(|host| &mut host.limiter);
         store
             .set_fuel(invocation.fuel)
             .map_err(|source| runtime(RuntimeStep::Fuel, source))?;
         store.set_epoch_deadline(1);
+        let stopping = interrupt.clone();
         store.epoch_deadline_callback(move |mut context| {
+            if stopping.raised() {
+                context.data_mut().stop = Some(HostStop::Interrupted);
+                return Err(wasmtime::Error::msg("the guest was interrupted"));
+            }
             if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 context.data_mut().stop = Some(HostStop::WatchdogExpired);
                 return Err(wasmtime::Error::msg("the wall-clock watchdog expired"));
@@ -330,6 +343,7 @@ fn stopped(
         Some(HostStop::WatchdogExpired) => {
             return Err(SealedError::WatchdogExpired { limit: watchdog });
         }
+        Some(HostStop::Interrupted) => return Err(SealedError::Interrupted),
         Some(HostStop::Broken(invariant)) => return Err(broken(invariant)),
         None => {}
     }

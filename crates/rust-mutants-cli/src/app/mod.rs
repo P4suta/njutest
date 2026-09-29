@@ -1023,7 +1023,7 @@ fn one(
     let found = session.resolve(&request.mutant)?.clone();
     if request.target.is_none()
         && request.test.is_none()
-        && let Some(judged) = run::sealed_now(session, &found)?
+        && let Some(judged) = run::sealed_now(session, &found, cancel)?
     {
         write(stdout, &report::sealed(&judged, &found))?;
         return Ok(report::sealed_exit_code(judged.outcome));
@@ -1519,7 +1519,7 @@ fn replay(
             request = request.test(Some(test.clone()));
         }
     }
-    if let Some(judged) = run::sealed_now(session, &found)? {
+    if let Some(judged) = run::sealed_now(session, &found, cancel)? {
         let now = judged
             .not_run_reason
             .map_or_else(|| judged.outcome.name(), run::NotRunReason::name);

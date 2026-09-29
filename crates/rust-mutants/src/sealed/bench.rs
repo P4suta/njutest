@@ -11,9 +11,9 @@ use std::time::Duration;
 use rust_mutants_decision::evidence::Sealed;
 use rust_mutants_decision::judgement::{Account, Ending, Harness, Observed, judged};
 use rust_mutants_sealed::{
-    Arguments, ClockPolicy, Environment, Invocation, Limits, OverlayState, Preopen, Preopens,
-    RefusalReason, SealedError, SealedModule, SealedRunner, SealedStop, Snapshot, Transcript,
-    TrapKind, WasiFunction,
+    Arguments, ClockPolicy, Environment, Interrupt, Invocation, Limits, OverlayState, Preopen,
+    Preopens, RefusalReason, SealedError, SealedModule, SealedRunner, SealedStop, Snapshot,
+    Transcript, TrapKind, WasiFunction,
 };
 
 use super::doctest::{Expects, Listed, NO_SUCH_INDEX, RUN_ONE, listed};
@@ -109,6 +109,9 @@ pub enum BenchError {
         /// What the host said about it.
         source: SealedError,
     },
+    /// The run was interrupted while a sealed execution ran, which says nothing about what it ran.
+    #[error("{}: the run was interrupted during a sealed execution", crate::error::INTERRUPTED.code)]
+    Interrupted,
 }
 
 impl BenchError {
@@ -122,6 +125,7 @@ impl BenchError {
             Self::TreeUnreadable { .. } | Self::Snapshot { .. } => {
                 crate::error::SEALED_TREE_UNREADABLE
             }
+            Self::Interrupted => crate::error::INTERRUPTED,
         }
     }
 }
@@ -370,6 +374,7 @@ pub struct Bench<'runner> {
     harness: Configured,
     catalog: String,
     bounds: crate::touch::Bounds,
+    interrupt: Interrupt,
 }
 
 /// `path`, read and prepared on `runner` as a module of `target`.
@@ -389,12 +394,12 @@ fn prepared<'runner>(
 }
 
 impl<'runner> Bench<'runner> {
-    /// Prepares every module of `sealed` on `runner`, lists its tests and runs each one's control inside `tree`, every libtest invocation given the harness arguments `harness` as the native ones are, less the options it sets itself, and holds each station to every test its target's native baseline in `natives` ran.
+    /// Prepares every module of `sealed` on `runner`, lists its tests and runs each one's control inside `tree`, every libtest invocation given the harness arguments `harness` as the native ones are, less the options it sets itself, and holds each station to every test its target's native baseline in `natives` ran; every execution, then and later, stops when `interrupt` is raised.
     ///
     /// # Errors
-    /// A module that cannot be read, an environment that is not text, or a host that cannot run what it is given.
+    /// A module that cannot be read, an environment that is not text, a host that cannot run what it is given, or [`BenchError::Interrupted`].
     pub fn assemble(
-        runner: &'runner SealedRunner,
+        (runner, interrupt): (&'runner SealedRunner, Interrupt),
         (sealed, natives): (&SealedBuild, &BTreeMap<String, Ran>),
         (tree, harness): (Tree, &Configured),
         (catalog, bounds): (&str, crate::touch::Bounds),
@@ -406,6 +411,7 @@ impl<'runner> Bench<'runner> {
             harness: harness.clone(),
             catalog: catalog.to_owned(),
             bounds,
+            interrupt,
         };
         for (id, module) in &sealed.modules {
             let program = match module
@@ -561,7 +567,7 @@ impl<'runner> Bench<'runner> {
             arguments: Vec::new(),
             index: None,
         };
-        let transcript = invoke(
+        let transcript = self.invoke(
             station,
             module,
             &self.invocation(station, all, (None, CONTROL_FUEL))?,
@@ -577,7 +583,7 @@ impl<'runner> Bench<'runner> {
             arguments: Vec::new(),
             index: Some(listed.len()),
         };
-        let beyond = invoke(
+        let beyond = self.invoke(
             station,
             module,
             &self.invocation(station, past, (None, CONTROL_FUEL))?,
@@ -615,7 +621,7 @@ impl<'runner> Bench<'runner> {
             .saturating_add(FUEL_FLOOR);
         let asking = run.asking(test, &self.harness);
         let invocation = self.invocation(station, asking, (Some(mutant), budget))?;
-        let transcript = invoke(station, module, &invocation)?;
+        let transcript = self.invoke(station, module, &invocation)?;
         if written(&transcript, DECLINE_LOG).is_some_and(|notice| !notice.is_empty()) {
             return Ok(Some(Sealed::Doubted(
                 rust_mutants_decision::evidence::Doubt::Unaccounted,
@@ -628,6 +634,27 @@ impl<'runner> Bench<'runner> {
         ))))
     }
 
+    /// What `module` of `station` did under `invocation`, unless the run was interrupted first.
+    fn invoke(
+        &self,
+        station: &Station<'_>,
+        module: &SealedModule<'_>,
+        invocation: &Invocation,
+    ) -> Result<Transcript, BenchError> {
+        module
+            .invoke(invocation, &self.interrupt)
+            .map_err(|source| {
+                if matches!(source, SealedError::Interrupted) {
+                    BenchError::Interrupted
+                } else {
+                    BenchError::Host {
+                        target: station.target.id().to_owned(),
+                        source,
+                    }
+                }
+            })
+    }
+
     fn listed(
         &self,
         station: &Station<'_>,
@@ -638,7 +665,7 @@ impl<'runner> Bench<'runner> {
             index: None,
         };
         let invocation = self.invocation(station, asking, (None, CONTROL_FUEL))?;
-        let transcript = invoke(station, module, &invocation)?;
+        let transcript = self.invoke(station, module, &invocation)?;
         if transcript.stop() != SealedStop::Returned {
             return Ok(None);
         }
@@ -656,7 +683,7 @@ impl<'runner> Bench<'runner> {
             run.asking(name, &self.harness),
             (None, CONTROL_FUEL),
         )?;
-        let transcript = invoke(station, module, &invocation)?;
+        let transcript = self.invoke(station, module, &invocation)?;
         let came_to = judged(observed(&transcript, (name, run), None));
         let unread = Uncontrolled::Doubted(rust_mutants_decision::evidence::Doubt::Unaccounted);
         if holds(transcript.stderr().bytes(), NO_SUCH_INDEX) {
@@ -761,20 +788,6 @@ impl<'runner> Bench<'runner> {
             },
         })
     }
-}
-
-/// What `module` of `station` did under `invocation`.
-fn invoke(
-    station: &Station<'_>,
-    module: &SealedModule<'_>,
-    invocation: &Invocation,
-) -> Result<Transcript, BenchError> {
-    module
-        .invoke(invocation)
-        .map_err(|source| BenchError::Host {
-            target: station.target.id().to_owned(),
-            source,
-        })
 }
 
 /// The seed of every instance of `target`, the same for its control and for every mutant's execution.

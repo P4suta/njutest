@@ -14,8 +14,8 @@ use std::num::NonZeroU64;
 use std::time::Duration;
 
 use rust_mutants_sealed::{
-    Arguments, ClockPolicy, Environment, Invocation, Limits, Preopen, Preopens, SealedRunner,
-    Snapshot, Transcript,
+    Arguments, ClockPolicy, Environment, Interrupt, Invocation, Limits, Preopen, Preopens,
+    SealedRunner, Snapshot, Transcript,
 };
 
 /// Every function of WASI preview1 and its signature in the text format, written from the specification rather than from the crate's table, so each checks the other.
@@ -202,6 +202,12 @@ pub fn invocation() -> Invocation {
     }
 }
 
+/// An interrupt nothing raises, for an invocation nobody stops.
+#[must_use]
+pub const fn uninterrupted() -> Interrupt {
+    Interrupt::of(Vec::new())
+}
+
 /// The transcript of `bytes` run as `invocation`, which must be an answer about the guest.
 ///
 /// # Panics
@@ -211,7 +217,7 @@ pub fn run(bytes: &[u8], invocation: &Invocation) -> Transcript {
     runner()
         .prepare(bytes)
         .expect("the command is valid")
-        .invoke(invocation)
+        .invoke(invocation, &uninterrupted())
         .expect("the invocation is an answer about the guest")
 }
 

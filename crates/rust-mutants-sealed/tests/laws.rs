@@ -6,7 +6,7 @@
 use proptest::prelude::{ProptestConfig, any, prop, prop_assert_eq, prop_assert_ne, proptest};
 use rust_mutants_sealed::{Arguments, SealedStop};
 
-use crate::common::{command, invocation, runner};
+use crate::common::{command, invocation, runner, uninterrupted};
 
 /// A command that reads everything an invocation varies and writes a file it insists is new.
 fn reader() -> Vec<u8> {
@@ -52,8 +52,8 @@ proptest! {
         let mut arguments = vec!["command".to_owned()];
         arguments.extend(words.iter().map(|word| format!("w{word}")));
         asked.arguments = Arguments::new(arguments).expect("valid arguments");
-        let first = module.invoke(&asked).expect("an answer about the guest");
-        let second = module.invoke(&asked).expect("an answer about the guest");
+        let first = module.invoke(&asked, &uninterrupted()).expect("an answer about the guest");
+        let second = module.invoke(&asked, &uninterrupted()).expect("an answer about the guest");
         prop_assert_eq!(first.digest(), second.digest());
         prop_assert_eq!(&first, &second);
     }
@@ -65,7 +65,7 @@ proptest! {
         let mut asked = invocation();
         asked.seed = seed;
         for _ in 0..3 {
-            let transcript = module.invoke(&asked).expect("an answer about the guest");
+            let transcript = module.invoke(&asked, &uninterrupted()).expect("an answer about the guest");
             prop_assert_eq!(transcript.stop(), SealedStop::Returned);
             prop_assert_eq!(transcript.overlay().len(), 1);
         }
@@ -79,8 +79,8 @@ proptest! {
         one.seed = seed;
         let mut other = invocation();
         other.seed = seed ^ 1;
-        let first = module.invoke(&one).expect("an answer about the guest");
-        let second = module.invoke(&other).expect("an answer about the guest");
+        let first = module.invoke(&one, &uninterrupted()).expect("an answer about the guest");
+        let second = module.invoke(&other, &uninterrupted()).expect("an answer about the guest");
         prop_assert_ne!(first.stdout(), second.stdout());
         prop_assert_ne!(first.invocation(), second.invocation());
     }

@@ -1116,7 +1116,17 @@ pub enum EngineError {
     Sentinel(#[from] crate::sentinel::SentinelError),
     /// A sealed execution could not be set up or run.
     #[error(transparent)]
-    Sealed(#[from] crate::sealed::bench::BenchError),
+    Sealed(crate::sealed::bench::BenchError),
+}
+
+impl From<crate::sealed::bench::BenchError> for EngineError {
+    fn from(error: crate::sealed::bench::BenchError) -> Self {
+        if matches!(error, crate::sealed::bench::BenchError::Interrupted) {
+            Self::Interrupted
+        } else {
+            Self::Sealed(error)
+        }
+    }
 }
 
 impl EngineError {

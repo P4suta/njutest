@@ -31,6 +31,7 @@ An `Invocation` is one value holding everything the run is a function of:
 
 The runner's own watchdog is not an input.
 It is a wall-clock backstop, and when it fires the invocation ends in `RS3002`, an error, never in a stop a caller could read as an answer about the guest.
+Neither is the `Interrupt` a caller passes beside the invocation: raised, it ends the invocation in `RS3005` at the guest's next epoch or host call, and one raised before the invocation starts is refused without starting it.
 
 ## What a module must be
 

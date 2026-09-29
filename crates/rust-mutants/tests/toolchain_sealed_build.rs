@@ -307,7 +307,9 @@ fn every_mutant_a_fixture_kills_natively_is_detected_by_a_sealed_execution_of_a_
     .expect("prepare");
     let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
         .expect("the sealed runner starts");
-    let bench = session.bench(&runner).expect("the bench is assembled");
+    let bench = session
+        .bench(&runner, &Cancel::new())
+        .expect("the bench is assembled");
     for (target, station) in &bench.stations {
         for (test, control) in &station.controls {
             assert!(
@@ -370,7 +372,9 @@ fn every_mutant_of_a_sealable_fixture_stands_on_sealed_executions_alone() {
     .expect("prepare");
     let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
         .expect("the sealed runner starts");
-    let bench = session.bench(&runner).expect("the bench is assembled");
+    let bench = session
+        .bench(&runner, &Cancel::new())
+        .expect("the bench is assembled");
     let mut killed = 0_usize;
     let mut other = Vec::new();
     for mutant in session.catalog().mutants() {
@@ -411,6 +415,65 @@ fn every_mutant_of_a_sealable_fixture_stands_on_sealed_executions_alone() {
 }
 
 #[test]
+fn a_run_cancelled_once_its_bench_stands_decides_no_mutant_a_sealed_test_would() {
+    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-simple");
+    let session = rust_mutants::workspace::Workspace::open(
+        fixture.root(),
+        rust_mutants::testkit::opening::opening(
+            &njutest_devkit::paths::cargo_binary(),
+            fixture.temp(),
+        ),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(
+        &rust_mutants::session::PrepareOptions {
+            sealing: Sealing::On,
+            ..rust_mutants::session::PrepareOptions::new(rust_mutants::rule::Tier::All)
+        },
+        &Cancel::new(),
+    )
+    .expect("prepare");
+    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
+        .expect("the sealed runner starts");
+    let cancel = Cancel::new();
+    let bench = session
+        .bench(&runner, &cancel)
+        .expect("the bench is assembled");
+    cancel.cancel();
+    let mut interrupted = 0_usize;
+    let mut decided = Vec::new();
+    for mutant in session.catalog().mutants() {
+        if !session.accepted().contains(&mutant.index) {
+            continue;
+        }
+        match rust_mutants::run::sealed_verdict(&session, mutant, &bench)
+            .expect("an interruption is no failure of the host")
+        {
+            rust_mutants::run::Sealing::Interrupted => interrupted += 1,
+            rust_mutants::run::Sealing::Established(judged)
+                if judged.not_run_reason == Some(rust_mutants::run::NotRunReason::Unreached) => {}
+            sealing @ (rust_mutants::run::Sealing::Established(_)
+            | rust_mutants::run::Sealing::Unproven(_)) => {
+                decided.push((mutant.display_id.to_string(), sealing));
+            }
+        }
+    }
+    assert!(
+        decided.is_empty() && interrupted >= 12,
+        "once the run is cancelled no mutant is put to a sealed test, so only one no control \
+         reached is decided; {interrupted} were interrupted, and these were decided: {decided:?}"
+    );
+    assert!(
+        matches!(
+            session.bench(&runner, &cancel),
+            Err(rust_mutants::EngineError::Interrupted)
+        ),
+        "a bench asked for once the run is cancelled runs no control"
+    );
+}
+
+#[test]
 fn a_sealed_control_passes_under_every_harness_option_a_run_may_be_configured_with() {
     let fixture = njutest_devkit::fixture::Fixture::copy("fixture-simple");
     let session = rust_mutants::workspace::Workspace::open(
@@ -437,7 +500,9 @@ fn a_sealed_control_passes_under_every_harness_option_a_run_may_be_configured_wi
     .expect("prepare");
     let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
         .expect("the sealed runner starts");
-    let bench = session.bench(&runner).expect("the bench is assembled");
+    let bench = session
+        .bench(&runner, &Cancel::new())
+        .expect("the bench is assembled");
     assert!(
         bench
             .stations
@@ -514,7 +579,9 @@ fn a_test_that_reads_the_tree_by_a_path_its_build_gave_it_passes_its_control_sea
     .expect("prepare");
     let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
         .expect("the sealed runner starts");
-    let bench = session.bench(&runner).expect("the bench is assembled");
+    let bench = session
+        .bench(&runner, &Cancel::new())
+        .expect("the bench is assembled");
     let failed: Vec<String> = bench
         .stations
         .iter()

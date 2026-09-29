@@ -276,4 +276,5 @@ A guest that exits, traps, runs out of fuel or out of memory is not an error: th
 | `RS3002` | The wall-clock watchdog stopped the guest; nothing about the guest follows from it. | the fuel budget, not the watchdog, bounds a guest: run it again on a machine less loaded, or with a longer watchdog |
 | `RS3003` | The runtime failed outside the guest: an instantiation, a fuel account, or a memory reservation the host could not complete. | this machine could not give the guest what its limits allow; the message says which, and nothing about the guest follows from it |
 | `RS3004` | The guest stopped with a trap this version cannot classify. | this is a defect in this tool: every trap of the pinned wasmtime has a kind, so report the message |
+| `RS3005` | The guest was stopped because whoever ran it stopped, as an interrupted run does; nothing about the guest follows from it. | nothing is wrong with the guest or the host: run it again to measure it |
 | `RS9001` | The host broke an invariant of its own. | this is a defect in this tool; the message says which invariant, so report it |

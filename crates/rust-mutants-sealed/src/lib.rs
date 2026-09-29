@@ -14,6 +14,7 @@ mod digest;
 mod error;
 mod host;
 mod imports;
+mod interrupt;
 mod invocation;
 mod random;
 mod runner;
@@ -29,6 +30,7 @@ pub use error::{
     RuntimeStep, SealedCode, SealedError, SnapshotFault, WorkingFault, error_codes,
 };
 pub use imports::{IMPORT_MODULE, WasiFunction};
+pub use interrupt::Interrupt;
 pub use invocation::{Arguments, ClockPolicy, Environment, Invocation, Limits, Preopen, Preopens};
 pub use runner::{SealedModule, SealedRunner, WASMTIME_VERSION};
 pub use snapshot::{Snapshot, SnapshotBuilder};

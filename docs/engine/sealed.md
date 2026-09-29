@@ -9,7 +9,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 A run seals by default: it builds the instrumented tree for `wasm32-wasip1`, lists each module's tests and runs each one's control on the host, puts every mutant to the tests whose controls reached it, and writes the verdict they establish, with its `evidence`, into the report.
 [The standing of a mutant](#the-standing-of-a-mutant) is `rust_mutants_decision::evidence::standing` and [the judgement of one execution](#judging-one-execution) is `rust_mutants_decision::judgement::judged`, both held to their rules by exhaustive comparisons and Kani.
 `--no-seal`, or `[mutation] seal = false`, builds nothing for the sealed target, and then every answer is a lead.
-Not yet: a sealed verdict is kept in the outcome store and read back under its key, but `verify` does not yet run a stored report's sealed executions again; a mutant that makes a test decline where its control did not is a doubt rather than the detection ADR 0043 makes it; an interrupt waits for the instance it lands in.
+Not yet: a sealed verdict is kept in the outcome store and read back under its key, but `verify` does not yet run a stored report's sealed executions again; a mutant that makes a test decline where its control did not is a doubt rather than the detection ADR 0043 makes it.
 
 A verdict is what a sealed run observed.
 A sealed run is the instrumented snapshot, built for `wasm32-wasip1`, with each test run alone in a fresh WebAssembly instance on a host that answers every question the same way every time.
@@ -73,6 +73,7 @@ A refusal returns its error to the guest and is recorded in the transcript, so a
 
 The engine starts instances from one compiled module, which stays in memory; a run compiles each module once.
 A wall-clock watchdog stands behind every instance in case the host itself stops, and what it stops is the run, with an error, never a test with a verdict.
+An interrupted run stops the instance it is in at the next epoch or host call, and every mutant it had not decided is `not_run` for `interrupted`, as a native run's are.
 
 ## Judging one execution
 

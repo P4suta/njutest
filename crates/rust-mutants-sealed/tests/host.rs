@@ -9,14 +9,16 @@
 )]
 
 use std::num::NonZeroU64;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use rust_mutants_sealed::{
-    OverlayState, Preopens, Refusal, RefusalReason, SealedError, SealedRunner, SealedStop,
-    TrapKind, WasiFunction,
+    Interrupt, OverlayState, Preopens, Refusal, RefusalReason, SealedError, SealedRunner,
+    SealedStop, TrapKind, WasiFunction,
 };
 
-use crate::common::{command, emitted, invocation, run, snapshot, tree};
+use crate::common::{command, emitted, invocation, run, runner, snapshot, tree, uninterrupted};
 
 #[test]
 fn a_socket_call_is_answered_notsup_and_recorded_as_a_refusal() {
@@ -755,10 +757,10 @@ fn one_module_answers_the_same_on_many_threads_at_once() {
          (call $emit (i32.const 100) (i32.const 32))
          (call $emit (i32.const 200) (i32.const 8))",
     );
-    let runner = crate::common::runner();
+    let runner = runner();
     let module = runner.prepare(&bytes).expect("the command is valid");
     let alone = module
-        .invoke(&invocation())
+        .invoke(&invocation(), &uninterrupted())
         .expect("an answer about the guest");
     std::thread::scope(|scope| {
         let workers: Vec<_> = (0..4)
@@ -766,7 +768,11 @@ fn one_module_answers_the_same_on_many_threads_at_once() {
                 let module = &module;
                 njutest_devkit::thread::ScopedThread::launch(scope, move || {
                     (0..8)
-                        .map(|_run| module.invoke(&invocation()).expect("an answer"))
+                        .map(|_run| {
+                            module
+                                .invoke(&invocation(), &uninterrupted())
+                                .expect("an answer")
+                        })
                         .collect::<Vec<_>>()
                 })
             })
@@ -786,10 +792,48 @@ fn the_watchdog_stops_a_runaway_guest_as_an_error_and_never_as_a_stop() {
     let module = runner.prepare(&bytes).expect("the command is valid");
     let mut endless = invocation();
     endless.fuel = u64::MAX;
-    match module.invoke(&endless) {
+    match module.invoke(&endless, &uninterrupted()) {
         Err(SealedError::WatchdogExpired { limit }) => {
             assert_eq!(limit, Duration::from_millis(100));
         }
         other => panic!("the watchdog is an error, not an answer: {other:?}"),
     }
+}
+
+#[test]
+fn an_interrupt_stops_a_runaway_guest_as_an_error_before_its_watchdog_would() {
+    let bytes = command(&[], "", "(loop $again (br $again))");
+    let runner = SealedRunner::new(Duration::from_secs(5)).expect("the runner starts");
+    let module = runner.prepare(&bytes).expect("the command is valid");
+    let mut endless = invocation();
+    endless.fuel = u64::MAX;
+    let raised = Arc::new(AtomicBool::new(false));
+    let interrupt = Interrupt::of(vec![Arc::clone(&raised)]);
+    let answer = std::thread::scope(|scope| {
+        let stopping = njutest_devkit::thread::ScopedThread::launch(scope, || {
+            std::thread::sleep(Duration::from_millis(50));
+            raised.store(true, Ordering::SeqCst);
+        });
+        let answer = module.invoke(&endless, &interrupt);
+        stopping.join().expect("the caller stops");
+        answer
+    });
+    assert!(
+        matches!(answer, Err(SealedError::Interrupted)),
+        "a raised interrupt stops the guest at its next epoch, as an error that says nothing \
+         about the guest, and not the watchdog five seconds later: {answer:?}"
+    );
+}
+
+#[test]
+fn a_guest_interrupted_before_it_starts_is_never_run() {
+    let bytes = command(&[], "", "(loop $again (br $again))");
+    let runner = runner();
+    let module = runner.prepare(&bytes).expect("the command is valid");
+    let raised = Interrupt::of(vec![Arc::new(AtomicBool::new(true))]);
+    let answer = module.invoke(&invocation(), &raised);
+    assert!(
+        matches!(answer, Err(SealedError::Interrupted)),
+        "an invocation asked after its caller stopped is refused, not started: {answer:?}"
+    );
 }

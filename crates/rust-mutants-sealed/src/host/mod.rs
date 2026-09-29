@@ -18,6 +18,7 @@ use wasmtime::{Caller, Val};
 use crate::abi::{CLOCK_REALTIME, Errno, RIGHTS_FD_WRITE};
 use crate::error::Invariant;
 use crate::imports::WasiFunction;
+use crate::interrupt::Interrupt;
 use crate::invocation::{ClockPolicy, Invocation};
 use crate::random::RandomStream;
 use crate::transcript::{Captured, Denials, OverlayEntry, Refusal, RefusalReason};
@@ -55,6 +56,8 @@ pub(crate) enum HostStop {
     FuelExhausted,
     /// The wall-clock watchdog expired.
     WatchdogExpired,
+    /// Whoever ran the guest stopped.
+    Interrupted,
     /// The host broke an invariant of its own.
     Broken(Invariant),
 }
@@ -135,6 +138,8 @@ pub(crate) struct Host {
     pub(crate) stop: Option<HostStop>,
     /// When the watchdog expires, where it does.
     deadline: Option<Instant>,
+    /// What stops the guest when whoever runs it stops.
+    interrupt: Interrupt,
 }
 
 /// What the host hands the runner once the guest has stopped.
@@ -157,10 +162,10 @@ pub(crate) struct Ended {
 }
 
 impl Host {
-    /// The host for `invocation`, the watchdog expiring at `deadline` where it does.
+    /// The host for `invocation`, the watchdog expiring at `deadline` where it does, and every call refused once `interrupt` is raised.
     pub(crate) fn new(
         invocation: &Invocation,
-        deadline: Option<Instant>,
+        (deadline, interrupt): (Option<Instant>, Interrupt),
     ) -> Result<Self, Invariant> {
         let arguments = invocation
             .arguments
@@ -192,6 +197,7 @@ impl Host {
             memory: None,
             stop: None,
             deadline,
+            interrupt,
         })
     }
 
@@ -457,7 +463,10 @@ pub(crate) fn call(
                     Ok(()) => stop,
                     Err(_unmetered) => HostStop::Broken(Invariant::Width),
                 },
-                HostStop::Exited { .. } | HostStop::WatchdogExpired | HostStop::Broken(_) => stop,
+                HostStop::Exited { .. }
+                | HostStop::WatchdogExpired
+                | HostStop::Interrupted
+                | HostStop::Broken(_) => stop,
             };
             caller.data_mut().stop = Some(stop);
             Err(wasmtime::Error::msg("the sealed host stopped the guest"))
@@ -471,6 +480,9 @@ fn answer(
     caller: &mut Caller<'_, Host>,
     params: &Params<'_>,
 ) -> Result<Errno, HostStop> {
+    if caller.data().interrupt.raised() {
+        return Err(HostStop::Interrupted);
+    }
     if caller
         .data()
         .deadline
