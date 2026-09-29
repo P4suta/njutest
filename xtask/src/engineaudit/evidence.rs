@@ -1014,13 +1014,18 @@ fn infection_discharges(
     }
 }
 
-/// A discharged pair that then ran is a proof the run contradicted.
+/// A discharged pair that then ran natively is a proof the run contradicted; a sealed execution is put where its own control reached, which a discharge does not decide.
 fn never_ran(claims: &[Discharged], routing: &crate::route::Routing, notes: &mut Notes<'_>) {
     for claim in claims {
         if routing
-            .execs
+            .executions()
             .iter()
-            .any(|exec| exec.mutant == claim.mutant && exec.target == claim.target)
+            .any(|execution| match execution {
+                crate::route::Execution::Native(exec) => {
+                    exec.mutant == claim.mutant && exec.target == claim.target
+                }
+                crate::route::Execution::Sealed(_) => false,
+            })
         {
             notes.violated(
                 "discharge",

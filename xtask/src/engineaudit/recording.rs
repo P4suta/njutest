@@ -391,7 +391,7 @@ fn routed(report: &Report, recorded: &CheckedRecording, notes: &mut Notes<'_>) {
     let routing = &recorded.routing;
     let tests = baseline_tests(&recorded.events);
     let excused = baseline_declines(&recorded.events, notes);
-    if routing.routes.is_empty() && routing.execs.is_empty() {
+    if routing.routes.is_empty() && routing.executions().is_empty() {
         notes.unaudited(
             "route",
             "the recording holds no routing decision and no execution, so nothing holds a row \
@@ -445,7 +445,14 @@ fn routed(report: &Report, recorded: &CheckedRecording, notes: &mut Notes<'_>) {
             );
             continue;
         };
-        let execs: Vec<&crate::route::Exec> = routing.execs_for(&row.id, &row.display_id).collect();
+        let mut execs: Vec<&crate::route::Exec> = Vec::new();
+        let mut sealed: Vec<&crate::route::Sealed> = Vec::new();
+        for execution in routing.executions_for(&row.id, &row.display_id) {
+            match execution {
+                crate::route::Execution::Native(exec) => execs.push(exec),
+                crate::route::Execution::Sealed(one) => sealed.push(one),
+            }
+        }
         reported_route(row, route, notes);
         ran_in_order(row, route, &execs, notes);
         named_its_tests(row, &execs, &tests, notes);
@@ -453,7 +460,7 @@ fn routed(report: &Report, recorded: &CheckedRecording, notes: &mut Notes<'_>) {
         declined(row, &execs, &excused, notes);
         reached(row, route, &execs, notes);
         discharged(row, route, &execs, notes);
-        sealed_recorded(row, routing, notes);
+        sealed_recorded(row, &sealed, notes);
     }
 }
 
@@ -937,14 +944,12 @@ fn retried(row: &Row, execs: &[&crate::route::Exec], notes: &mut Notes<'_>) {
 }
 
 /// Every sealed execution a row rests on, against the sealed executions the recording holds for its mutant: the same target, test and ending, and no other (ADR 0046).
-fn sealed_recorded(row: &Row, routing: &crate::route::Routing, notes: &mut Notes<'_>) {
+fn sealed_recorded(row: &Row, sealed: &[&crate::route::Sealed], notes: &mut Notes<'_>) {
     let super::Resting::Sealed { executions } = &row.evidence else {
         return;
     };
-    let recorded: Vec<(&str, &str, &str)> = routing
-        .sealed
+    let recorded: Vec<(&str, &str, &str)> = sealed
         .iter()
-        .filter(|one| one.mutant == row.display_id || one.mutant == row.id)
         .map(|one| (one.target.as_str(), one.test.as_str(), one.came_to.as_str()))
         .collect();
     let rests_on: Vec<(&str, &str, &str)> = executions
