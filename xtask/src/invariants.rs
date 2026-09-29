@@ -9,7 +9,7 @@ use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use syn::ext::IdentExt as _;
 use syn::visit::Visit;
 
-use crate::cfg_conditions::{CfgScope, CfgWorld, item_attributes};
+use super::cfg_conditions::{CfgScope, CfgWorld, item_attributes};
 
 /// One layer a critical decision is held at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, njutest_macros::AllVariants)]
