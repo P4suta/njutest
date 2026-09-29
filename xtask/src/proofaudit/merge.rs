@@ -31,6 +31,8 @@ pub enum MergeRule {
     Models,
     /// Each shard, re-decided against its own recording, holds.
     Shards,
+    /// The record stream kept beside the merge says of each dimension what every part's records establish.
+    Dimensions,
 }
 
 impl MergeRule {
@@ -47,6 +49,7 @@ impl MergeRule {
             Self::Identity => "identity",
             Self::Models => "models",
             Self::Shards => "shards",
+            Self::Dimensions => "dimensions",
         }
     }
 }
@@ -196,8 +199,8 @@ pub fn audited(
 /// A document that is not JSON or is off its schema, a report that is not a merge, a shard given twice, and a shard the report was not merged from.
 pub fn merged_with(
     checkers: &crate::schemas::Checkers,
-    path: &str,
-    text: &str,
+    super::Reported { path, text }: super::Reported<'_>,
+    kept: Option<&str>,
     shards: &[AuditedShard],
 ) -> Result<Audit, AuditError> {
     let Document::Complete(merged) = read(checkers, path, text)? else {
@@ -239,6 +242,7 @@ pub fn merged_with(
             ),
         }
     }
+    dimensioned(&merged, kept, &mut notes);
     let Decided(()) = notes.looked();
     let whole = shards.len() == sources.len();
     for layer in Layer::ALL
@@ -300,6 +304,163 @@ fn given(path: &str, sources: &[Source], shards: &[AuditedShard]) -> Result<(), 
         }
     }
     Ok(())
+}
+
+/// Every list of `merged` a matrix is read off: what each part decided from every part, and what every part's shared baseline holds from each build's first part.
+struct Lists {
+    targets: Vec<Value>,
+    findings: Vec<Value>,
+    limitations: Vec<Value>,
+    knobs: Vec<Value>,
+    concurrency: Vec<Value>,
+    faults: Vec<Value>,
+    crashes: Vec<Value>,
+    seams: Vec<Value>,
+    unsettled: bool,
+    found: Vec<(String, String)>,
+}
+
+impl Lists {
+    /// What every part of `merged` holds, or the first list a part does not hold, by name.
+    fn of(merged: &Complete) -> Result<Self, String> {
+        let list = |part: &Value, name: &str| -> Result<Vec<Value>, String> {
+            part.get(name)
+                .and_then(Value::as_array)
+                .cloned()
+                .ok_or_else(|| format!("a part holds no {name} list"))
+        };
+        let text = |row: &Value, pointer: &str| -> Result<String, String> {
+            row.pointer(pointer)
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| format!("a row holds no {pointer}"))
+        };
+        let mut lists = Self {
+            targets: Vec::new(),
+            findings: Vec::new(),
+            limitations: Vec::new(),
+            knobs: Vec::new(),
+            concurrency: Vec::new(),
+            faults: Vec::new(),
+            crashes: Vec::new(),
+            seams: Vec::new(),
+            unsettled: false,
+            found: Vec::new(),
+        };
+        for build in &merged.builds {
+            let baseline = build
+                .parts
+                .first()
+                .ok_or_else(|| format!("the build {} holds no part", build.name))?;
+            lists.targets.extend(list(baseline, "targets")?);
+            lists.concurrency.extend(list(baseline, "concurrency")?);
+            lists.seams.extend(list(baseline, "seams")?);
+            for part in &build.parts {
+                lists.limitations.extend(list(part, "limitations")?);
+                lists.knobs.extend(list(part, "knobs")?);
+                lists.faults.extend(list(part, "faults")?);
+                lists.crashes.extend(list(part, "crashes")?);
+                for finding in list(part, "findings")? {
+                    lists
+                        .found
+                        .push((text(&finding, "/kind")?, text(&finding, "/subject")?));
+                    lists.findings.push(finding);
+                }
+                for mutant in list(part, "mutants")? {
+                    let outcome = text(&mutant, "/decision/outcome")?;
+                    let rests = mutant
+                        .get("evidence")
+                        .and_then(super::Rests::read)
+                        .ok_or_else(|| {
+                            "a row holds evidence in no shape a run writes".to_owned()
+                        })?;
+                    let lead = matches!(rests, super::Rests::Unproven(_))
+                        && super::SEALED_OUTCOMES.contains(&outcome.as_str());
+                    lists.unsettled = lists.unsettled || super::undecided(&outcome, lead);
+                }
+            }
+        }
+        Ok(lists)
+    }
+
+    /// The same lists, as the matrix's re-derivation reads them.
+    fn held(&self) -> super::Held<'_> {
+        super::Held {
+            part: super::Part {
+                targets: &self.targets,
+                findings: &self.findings,
+                limitations: &self.limitations,
+                drift: &[],
+                knobs: &self.knobs,
+                concurrency: &self.concurrency,
+                faults: &self.faults,
+                beside: &[],
+                crashes: &self.crashes,
+                seams: &self.seams,
+            },
+            unsettled: self.unsettled,
+            findings: self
+                .found
+                .iter()
+                .map(|(kind, subject)| (kind.as_str(), subject.as_str()))
+                .collect(),
+        }
+    }
+}
+
+/// Whether the record stream `kept` beside `merged` says of each dimension what every part's records establish, and names each one a `whole-v1` merge leaves a hole, re-derived without the runner's code (ADR 0033); a merged document stores no column, so where no stream was kept nothing was said to hold.
+fn dimensioned(merged: &Complete, kept: Option<&str>, notes: &mut Notes<'_>) {
+    let Some(kept) = kept else {
+        return;
+    };
+    let lists = match Lists::of(merged) {
+        Ok(lists) => lists,
+        Err(why) => {
+            broke(notes, MergeRule::Dimensions, "dimensions", &why);
+            return;
+        }
+    };
+    let holed = super::holed_dimensions(&lists.held());
+    let said = super::Said::of(kept);
+    for (dimension, why) in super::columns_disagree(&said, &holed) {
+        broke(notes, MergeRule::Dimensions, dimension, &why);
+    }
+    let whole = merged.contract.as_str() == Some("whole-v1");
+    for dimension in super::DIMENSIONS {
+        let owed = whole && holed.contains(dimension);
+        let named = said.named.contains(dimension);
+        if owed != named {
+            broke(
+                notes,
+                MergeRule::Dimensions,
+                dimension,
+                &format!(
+                    "the record stream {} a dimension-not-measured finding about it, and a merge \
+                     under {} whose parts' records {} it a hole owes {}",
+                    if named { "holds" } else { "holds no" },
+                    merged.contract,
+                    if holed.contains(dimension) {
+                        "leave"
+                    } else {
+                        "do not leave"
+                    },
+                    if owed { "one" } else { "none" }
+                ),
+            );
+        }
+    }
+    for extra in said
+        .named
+        .iter()
+        .filter(|name| !super::DIMENSIONS.contains(&name.as_str()))
+    {
+        broke(
+            notes,
+            MergeRule::Dimensions,
+            extra,
+            "the record stream names a dimension no matrix has",
+        );
+    }
 }
 
 /// A violation of `rule` about `subject`.

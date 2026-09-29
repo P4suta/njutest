@@ -22,6 +22,9 @@ use sha2::Digest as _;
 /// The document a completed run leaves in its directory.
 pub const REPORT_FILE: &str = "njutest-assurance-report-v1.json";
 
+/// The record stream a completed run keeps beside its document.
+pub const LINES_FILE: &str = "njutest-assurance-report-v1.lines";
+
 /// The exit code a run directory that could not be read earns, kept apart from the audit's own so that "I could not look" never reads as "I looked and found nothing".
 pub const EXIT_UNREADABLE: u8 = 2;
 
@@ -655,7 +658,7 @@ pub fn audit_with(
             Layer::Drift => drift(&recording, (&engines, rerouted), &mut audit),
             Layer::Repair => repaired(&recording, (&engines, rerouted), &mut audit),
             Layer::Faults => faults(&recording, faulted.as_ref(), &mut audit),
-            Layer::Dimensions => dimensions(&recording, &mut audit),
+            Layer::Dimensions => dimensions(&recording, run, &mut audit),
             Layer::Crashes => crashes(&recording, crashed.as_ref(), &mut audit),
             Layer::Knobs => knobs::audited(&recording, &engines, &mut audit),
             Layer::Concurrency => concurrency(&recording, &engines, &mut audit),
@@ -3211,9 +3214,22 @@ fn crash_accounting(
     }
 }
 
-/// The dimensions a `whole-v1` run did not establish, re-derived from the flat part's records and held to its `dimension-not-measured` findings in both directions (ADR 0033).
-fn dimensions(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
+/// The dimensions a `whole-v1` run did not establish, re-derived from the flat part's records and held to its `dimension-not-measured` findings in both directions, and every column the record stream kept in `run` says, re-derived the same way (ADR 0033).
+fn dimensions(recording: &Recording<'_>, run: Option<&Path>, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Dimensions);
+    match kept_stream(run) {
+        Ok(Some(kept)) => {
+            let holed = holed_dimensions(&Held::of(recording));
+            for (dimension, why) in columns_disagree(&Said::of(&kept), &holed) {
+                notes.violated(dimension, why);
+            }
+        }
+        Ok(None) => {}
+        Err(error) => notes.unaudited(
+            "dimensions",
+            format!("the record stream kept beside the report could not be read: {error}"),
+        ),
+    }
     let named: BTreeSet<&str> = recording
         .findings
         .iter()
@@ -3230,7 +3246,7 @@ fn dimensions(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
         }
         return notes.looked();
     }
-    let holed = holed_dimensions(recording);
+    let holed = holed_dimensions(&Held::of(recording));
     for dimension in holed.difference(&named) {
         notes.violated(
             dimension,
@@ -3301,32 +3317,183 @@ fn none_but_not_put(decided: &[String]) -> bool {
     !decided.is_empty() && decided.iter().all(|one| one == "not-put")
 }
 
-/// Whether a mutation was put and not decided, or a place was passed over by a choice another run could make otherwise.
-fn mutations_holed(recording: &Recording<'_>) -> bool {
-    recording.mutants.iter().any(|mutant| {
-        [
-            "waited",
-            "step-limit-reached",
-            "unconfirmed",
-            "errored",
-            "declined",
-        ]
-        .contains(&mutant.outcome.as_str())
-    }) || recording.part.limitations.iter().any(|row| {
-        field(row, "name").is_some_and(|name| {
-            [
-                "skipped-excluded",
-                "skipped-annotated",
-                "skipped-configured",
-            ]
-            .contains(&name.as_str())
-        })
-    })
+/// What the record stream `kept` says of each dimension: whether its one `DIMENSION` record leaves it a hole, and which dimensions its findings name.
+struct Said {
+    columns: Vec<(String, Result<bool, String>)>,
+    named: BTreeSet<String>,
 }
 
-/// Every dimension the flat part's records leave a hole, by name, read without any of the runner's code.
-fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
-    let part = &recording.part;
+impl Said {
+    /// Every `DIMENSION` record and `dimension-not-measured` finding of `kept`.
+    fn of(kept: &str) -> Self {
+        let mut said = Self {
+            columns: Vec::new(),
+            named: BTreeSet::new(),
+        };
+        for line in kept.lines() {
+            let fields: Vec<&str> = line.split('\t').collect();
+            match fields.as_slice() {
+                ["DIMENSION", dimension, state, rest @ ..] => {
+                    said.columns
+                        .push(((*dimension).to_owned(), holed_by(state, rest)));
+                }
+                ["FINDING", "dimension-not-measured", subject, ..] => {
+                    said.named.insert((*subject).to_owned());
+                }
+                _ => {}
+            }
+        }
+        said
+    }
+}
+
+/// Whether a `DIMENSION` record in `state` with the counts `rest` leaves its dimension a hole, or why the record cannot say.
+fn holed_by(state: &str, rest: &[&str]) -> Result<bool, String> {
+    let count = |name: &str| -> Result<u64, String> {
+        let value = rest
+            .iter()
+            .find_map(|field| field.strip_prefix(name))
+            .ok_or_else(|| format!("a measured column with no {name} count"))?;
+        value
+            .parse::<u64>()
+            .map_err(|error| format!("a measured column whose {name} count is {value:?}: {error}"))
+    };
+    match state {
+        "unmeasured" | "not-asked" => Ok(true),
+        "nothing-to-ask" => Ok(false),
+        "measured" => {
+            let (catalogued, answered, holes) =
+                (count("catalogued=")?, count("answered=")?, count("holes=")?);
+            if answered.checked_add(holes) != Some(catalogued) {
+                return Err(format!(
+                    "{answered} answered and {holes} holes are not the {catalogued} catalogued"
+                ));
+            }
+            Ok(holes > 0)
+        }
+        other => Err(format!("a column in no state a matrix has: {other}")),
+    }
+}
+
+/// Every dimension whose `DIMENSION` records in `said` are not the one record saying what `holed` says of it, with why.
+fn columns_disagree(said: &Said, holed: &BTreeSet<&'static str>) -> Vec<(&'static str, String)> {
+    let mut disagree = Vec::new();
+    for dimension in DIMENSIONS {
+        let records: Vec<&Result<bool, String>> = said
+            .columns
+            .iter()
+            .filter(|(name, _holed)| name == dimension)
+            .map(|(_name, holed)| holed)
+            .collect();
+        let derived = holed.contains(dimension);
+        match records.as_slice() {
+            [Ok(stated)] if *stated == derived => {}
+            [Ok(stated)] => disagree.push((
+                dimension,
+                format!(
+                    "the record stream says the column {} a hole, and the records say it {}",
+                    if *stated { "is" } else { "is not" },
+                    if derived { "is" } else { "is not" }
+                ),
+            )),
+            [Err(why)] => disagree.push((dimension, why.clone())),
+            _ => disagree.push((
+                dimension,
+                format!(
+                    "the record stream holds {} DIMENSION record(s) for it, where a matrix has one",
+                    records.len()
+                ),
+            )),
+        }
+    }
+    disagree
+}
+
+/// The record stream kept in the run directory `run`, or nothing where no run directory was named or it keeps none; a symbolic link is refused rather than followed.
+///
+/// # Errors
+/// Why a stream that is there could not be read.
+pub fn kept_stream(run: Option<&Path>) -> Result<Option<String>, std::io::Error> {
+    let Some(run) = run else {
+        return Ok(None);
+    };
+    let path = run.join(LINES_FILE);
+    match std::fs::symlink_metadata(&path) {
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(source),
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "a kept record stream must not be a symbolic link",
+        )),
+        Ok(_file) => std::fs::read_to_string(&path).map(Some),
+    }
+}
+
+/// Every dimension of the matrix, by the name a record and a finding spell it by.
+pub const DIMENSIONS: [&str; 6] = [
+    "mutation",
+    "repeatable",
+    "fault",
+    "schedule",
+    "wire",
+    "durable",
+];
+
+/// What a matrix is re-derived from: the lists of a flat part, or of every part of a merge, whether some mutation was put and not decided, and each finding's kind and subject.
+struct Held<'a> {
+    part: Part<'a>,
+    unsettled: bool,
+    findings: Vec<(&'a str, &'a str)>,
+}
+
+/// Whether a mutation that came to `outcome` was put and not decided: an outcome no run decides, or a lead no sealed execution established.
+fn undecided(outcome: &str, lead: bool) -> bool {
+    lead || [
+        "waited",
+        "step-limit-reached",
+        "unconfirmed",
+        "errored",
+        "declined",
+    ]
+    .contains(&outcome)
+}
+
+impl<'a> Held<'a> {
+    /// What the flat part of `recording` holds.
+    fn of(recording: &'a Recording<'a>) -> Self {
+        Self {
+            part: recording.part,
+            unsettled: recording
+                .mutants
+                .iter()
+                .any(|mutant| undecided(&mutant.outcome, mutant.lead())),
+            findings: recording
+                .findings
+                .iter()
+                .map(|finding| (finding.kind.as_str(), finding.subject.as_str()))
+                .collect(),
+        }
+    }
+}
+
+/// Whether a mutation was put and not decided, or a place was passed over by a choice another run could make otherwise.
+fn mutations_holed(held: &Held<'_>) -> bool {
+    held.unsettled
+        || held.part.limitations.iter().any(|row| {
+            field(row, "name").is_some_and(|name| {
+                [
+                    "skipped-excluded",
+                    "skipped-annotated",
+                    "skipped-configured",
+                ]
+                .contains(&name.as_str())
+            })
+        })
+}
+
+/// Every dimension the records `held` leave a hole, by name, read without any of the runner's code.
+fn holed_dimensions(held: &Held<'_>) -> BTreeSet<&'static str> {
+    let part = &held.part;
     let state = |rows: &[serde_json::Value], field: &str| -> Vec<String> {
         rows.iter()
             .filter_map(|row| row.get(field))
@@ -3345,35 +3512,28 @@ fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
             .any(|row| field(row, "name").as_deref() == Some(name))
     };
     let mut holed = BTreeSet::new();
-    if recording
+    if held
         .findings
         .iter()
-        .any(|finding| finding.kind == "build-failure")
+        .any(|(kind, _subject)| *kind == "build-failure")
     {
-        holed.extend([
-            "mutation",
-            "repeatable",
-            "fault",
-            "schedule",
-            "wire",
-            "durable",
-        ]);
+        holed.extend(DIMENSIONS);
         return holed;
     }
     if schedules_holed(part) {
         holed.insert("schedule");
     }
-    if mutations_holed(recording) {
+    if mutations_holed(held) {
         holed.insert("mutation");
     }
     if repeatable_holed(part, &state(part.knobs, "standing")) {
         holed.insert("repeatable");
     }
     let faults = state(part.faults, "decision");
-    let unmeasured = recording
+    let unmeasured = held
         .findings
         .iter()
-        .any(|finding| finding.subject == "fault-baseline-not-measured");
+        .any(|(_kind, subject)| *subject == "fault-baseline-not-measured");
     if unmeasured
         || (faults.is_empty() && !limited("fault-no-site"))
         || none_but_not_put(&faults)
@@ -3384,10 +3544,10 @@ fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
         holed.insert("fault");
     }
     let crashes = state(part.crashes, "decision");
-    let crashed_unmeasured = recording
+    let crashed_unmeasured = held
         .findings
         .iter()
-        .any(|finding| finding.subject == "crash-baseline-not-measured");
+        .any(|(_kind, subject)| *subject == "crash-baseline-not-measured");
     if crashed_unmeasured
         || (crashes.is_empty() && !limited("crash-no-site"))
         || none_but_not_put(&crashes)

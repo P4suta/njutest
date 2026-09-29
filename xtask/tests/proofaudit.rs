@@ -2448,6 +2448,7 @@ fn with_engine(document: serde_json::Value, engine: Vec<serde_json::Value>) -> A
         engine: Some(engine),
         shards: Vec::new(),
         outputs: Vec::new(),
+        kept: None,
     }
     .lay()
     .expect("the specimen is laid out");
@@ -2668,6 +2669,7 @@ fn a_complete_report_is_re_decided_as_the_one_build_it_measured_whole() {
         engine: sentinel::clean().engine,
         shards: Vec::new(),
         outputs: Vec::new(),
+        kept: None,
     }
     .lay()
     .expect("the specimen is laid out");
@@ -3503,6 +3505,7 @@ fn repair_audit(repaired: &[&str], engine: Vec<serde_json::Value>) -> Vec<String
         engine: Some(engine),
         shards: Vec::new(),
         outputs: Vec::new(),
+        kept: None,
     }
     .lay()
     .expect("the specimen is laid out");
@@ -3620,6 +3623,7 @@ fn two_repairs(second_was: &str) -> Vec<String> {
         engine: Some(engine),
         shards: Vec::new(),
         outputs: Vec::new(),
+        kept: None,
     }
     .lay()
     .expect("the specimen is laid out");
@@ -3716,6 +3720,66 @@ fn a_merged_report_is_held_to_every_shard_it_names_and_says_which_it_could_not_s
     let error =
         gates::proofaudit(&checkers(), alone.path(), None).expect_err("two parts are not one");
     assert!(matches!(error, AuditError::Unprojected { .. }), "{error}");
+}
+
+/// A record stream whose every column says there was nothing to ask.
+fn established_everywhere() -> String {
+    xtask::proofaudit::DIMENSIONS
+        .iter()
+        .map(|dimension| format!("DIMENSION\t{dimension}\tnothing-to-ask\tplanted\n"))
+        .collect::<Vec<String>>()
+        .concat()
+}
+
+#[test]
+fn a_kept_stream_whose_column_the_records_contradict_is_refused() {
+    let mut planted = sentinel::clean();
+    planted.kept = Some(established_everywhere());
+    let laid = planted.lay().expect("the specimen is laid out");
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        .expect("a recording this audit can read");
+    assert!(
+        audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Dimensions
+                && remark.standing == Standing::Violated
+                && remark
+                    .detail
+                    .contains("the record stream says the column is not a hole")),
+        "a column the stream calls established and the part's records leave open is refused: \
+         {audit}"
+    );
+}
+
+#[test]
+fn a_merged_stream_that_calls_a_dimension_established_where_the_parts_leave_it_open_is_refused() {
+    let laid = laid_sharded(&sharded());
+    let established = established_everywhere();
+    std::fs::write(
+        laid.run().join("njutest-assurance-report-v1.lines"),
+        format!("{established}FINDING\tdimension-not-measured\tmutation\tplanted\n"),
+    )
+    .expect("the kept stream is laid beside the merged report");
+    let shards: Vec<std::path::PathBuf> =
+        laid.shards().into_iter().map(Path::to_path_buf).collect();
+    let audit = gates::proofaudit_merged(&checkers(), laid.run(), &shards, laid.traces())
+        .expect("the merge is read with its shards");
+    let said: Vec<String> = audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Merge && remark.standing == Standing::Violated)
+        .map(|remark| format!("{}: {}", remark.subject, remark.detail))
+        .collect();
+    assert!(
+        said.iter()
+            .any(|line| line.starts_with("fault: dimensions:"))
+            && said
+                .iter()
+                .any(|line| line.starts_with("mutation: dimensions:")),
+        "a merge's record stream is held to what every part's records establish of each \
+         dimension, and a standard-v1 merge names none of them: {said:?}\n{audit}"
+    );
 }
 
 #[test]
