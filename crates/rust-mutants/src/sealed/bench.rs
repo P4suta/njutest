@@ -218,6 +218,70 @@ impl Tree {
     }
 }
 
+/// The directory a target's build script wrote, `OUT_DIR`, as the build left it, at the path the build gave the target.
+#[derive(Debug, Clone)]
+struct Built {
+    path: String,
+    snapshot: Snapshot,
+}
+
+impl Built {
+    /// What `target`'s build script left in its `OUT_DIR`, or nothing where no build script ran for it.
+    ///
+    /// # Errors
+    /// A directory that cannot be listed, a file that cannot be read, or a name that is not text.
+    fn of(target: &TestTarget) -> Result<Option<Self>, BenchError> {
+        let Some(out_dir) = target.cargo_env.var("OUT_DIR") else {
+            return Ok(None);
+        };
+        let not_text = |name: String| BenchError::EnvironmentNotText {
+            target: target.id().to_owned(),
+            name,
+        };
+        let root = Path::new(out_dir);
+        let path = root
+            .to_str()
+            .ok_or_else(|| not_text(root.display().to_string()))?
+            .to_owned();
+        let unreadable = |path: &Path| {
+            let path = path.to_path_buf();
+            move |source| BenchError::TreeUnreadable { path, source }
+        };
+        let snapshot = |source| BenchError::Snapshot { source };
+        let mut builder = Snapshot::builder();
+        let mut pending = vec![(root.to_path_buf(), String::new())];
+        while let Some((directory, relative)) = pending.pop() {
+            for entry in std::fs::read_dir(&directory).map_err(unreadable(&directory))? {
+                let entry = entry.map_err(unreadable(&directory))?;
+                let file_name = entry.file_name();
+                let name = file_name
+                    .to_str()
+                    .ok_or_else(|| not_text(entry.path().display().to_string()))?;
+                let below = if relative.is_empty() {
+                    name.to_owned()
+                } else {
+                    format!("{relative}/{name}")
+                };
+                let path = entry.path();
+                if std::fs::metadata(&path)
+                    .map_err(unreadable(&path))?
+                    .is_dir()
+                {
+                    builder = builder.directory(&below).map_err(snapshot)?;
+                    pending.push((path, below));
+                } else {
+                    let bytes = std::fs::read(&path).map_err(unreadable(&path))?;
+                    builder = builder.file(&below, bytes).map_err(snapshot)?;
+                }
+            }
+        }
+        Ok(Some(Self {
+            path,
+            snapshot: builder.build().map_err(snapshot)?,
+        }))
+    }
+}
+
 /// How one test's control ran: what a mutant's execution of the same test is judged against.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Control {
@@ -360,6 +424,7 @@ pub struct Station<'runner> {
     holdings: Vec<Holding<'runner>>,
     target: TestTarget,
     program: String,
+    built: Option<Built>,
     /// Each test the native baseline ran, and its control, or why it has none.
     pub controls: BTreeMap<String, Result<Control, Uncontrolled>>,
 }
@@ -547,6 +612,7 @@ impl<'runner> Bench<'runner> {
             holdings: Vec::new(),
             target: module.target.clone(),
             program,
+            built: Built::of(&module.target)?,
             controls: BTreeMap::new(),
         };
         let Some(tests) = self.listed(&station, &module_of)? else {
@@ -597,6 +663,7 @@ impl<'runner> Bench<'runner> {
             holdings: Vec::new(),
             target: doctests.target.clone(),
             program: "rust_out.wasm".to_owned(),
+            built: Built::of(&doctests.target)?,
             controls: BTreeMap::new(),
         };
         let mut held = Vec::new();
@@ -858,7 +925,7 @@ impl<'runner> Bench<'runner> {
         }))
     }
 
-    /// Every directory an instance of `station` is given: the tree, the records, its scratch, an empty `target_tmpdir` where cargo names one, and its working directory where the tree holds it.
+    /// Every directory an instance of `station` is given: the tree, the records, its scratch, an empty `target_tmpdir` where cargo names one, what its build script wrote where one did, and its working directory where the tree holds it.
     fn preopens(
         &self,
         station: &Station<'_>,
@@ -886,6 +953,12 @@ impl<'runner> Bench<'runner> {
             preopens.push(Preopen::Tree {
                 path,
                 snapshot: Snapshot::builder().build()?,
+            });
+        }
+        if let Some(built) = &station.built {
+            preopens.push(Preopen::Tree {
+                path: built.path.clone(),
+                snapshot: built.snapshot.clone(),
             });
         }
         if let Some(directory) = self.tree.within(&station.target.cwd) {

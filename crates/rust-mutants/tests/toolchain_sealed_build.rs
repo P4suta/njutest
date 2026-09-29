@@ -659,6 +659,48 @@ fn a_test_that_writes_where_cargo_gives_an_integration_test_to_write_passes_its_
     );
 }
 
+#[test]
+fn a_test_that_reads_where_its_build_script_wrote_passes_its_control_sealed() {
+    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-build-script");
+    let session = rust_mutants::workspace::Workspace::open(
+        fixture.root(),
+        rust_mutants::testkit::opening::opening(
+            &njutest_devkit::paths::cargo_binary(),
+            fixture.temp(),
+        ),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(
+        &rust_mutants::session::PrepareOptions {
+            sealing: Sealing::On,
+            ..rust_mutants::session::PrepareOptions::new(rust_mutants::rule::Tier::All)
+        },
+        &Cancel::new(),
+    )
+    .expect("prepare");
+    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
+        .expect("the sealed runner starts");
+    let bench = session
+        .bench(&runner, &Cancel::new())
+        .expect("the bench is assembled");
+    let station = bench
+        .stations
+        .get("fixture-build-script/lib/fixture_build_script")
+        .expect("the unit tests have a station");
+    let failed: Vec<String> = station
+        .controls
+        .iter()
+        .filter(|(_test, control)| control.is_err())
+        .map(|(test, control)| format!("{test}: {control:?}"))
+        .collect();
+    assert!(
+        failed.is_empty() && station.controls.len() == 3,
+        "a test that reads, through OUT_DIR, what its build script wrote there passes its control \
+         sealed, as it does natively: {failed:#?}"
+    );
+}
+
 /// The options every preparation of a fixture below is made with, the one that records and the one that runs again alike.
 fn every_rule() -> rust_mutants::session::PrepareOptions {
     rust_mutants::session::PrepareOptions {
