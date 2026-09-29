@@ -806,6 +806,7 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                     )),
                 }),
                 left: vec!["count".to_owned()],
+                unnamed: None,
                 failed: Vec::new(),
             },
         },

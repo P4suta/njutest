@@ -471,16 +471,26 @@ impl Kept {
     }
 
     /// Every file and directory the run left in its temporary directory, a directory named with a trailing `/`, relative to it, and under its own home, named from `~/`, in path order; the engine keeps its own files beside them and leaves out what it made for the home, so every one of them is the run's, and each is what the next run over them is given.
+    /// Where the run left an entry whose name is not text, what it left cannot be named, and that entry is what it answers.
     ///
     /// # Errors
     /// [`SessionError::ScratchUnreadable`] where the directory could not be walked.
-    pub fn left(&self) -> Result<Vec<String>, EngineError> {
-        let mut found: Vec<String> = walked(self.0.tmp())?
-            .into_iter()
-            .map(|(relative, _file)| relative)
-            .collect();
+    pub fn left(&self) -> Result<Left, EngineError> {
+        let mut found: Vec<String> = match walked(self.0.tmp())? {
+            Walked::Entries(entries) => entries
+                .into_iter()
+                .map(|(relative, _file)| relative)
+                .collect(),
+            Walked::Unnamed(entry) => return Ok(Left::Unnamed(entry)),
+        };
         if let Some((home, made)) = self.0.made_in_home() {
-            for (relative, file) in walked(home)? {
+            let entries = match walked(home)? {
+                Walked::Entries(entries) => entries,
+                Walked::Unnamed(entry) => {
+                    return Ok(Left::Unnamed(format!("{HOME_LEFT}{entry}")));
+                }
+            };
+            for (relative, file) in entries {
                 let engines = match (made.get(&relative), file) {
                     (Some(None), None) => true,
                     (Some(Some(digest)), Some(path)) => {
@@ -500,19 +510,37 @@ impl Kept {
             }
         }
         found.sort();
-        Ok(found)
+        Ok(Left::Named(found))
     }
+}
+
+/// What a stopped run left in its scratch, as the next run over it is given it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Left {
+    /// Every file and directory it left, each named as [`Kept::left`] says, in path order.
+    Named(Vec<String>),
+    /// It left an entry whose name is not text, so what it left cannot be named: the entry, relative to its scratch as [`Kept::left`] places it, its name spelled without loss.
+    Unnamed(String),
 }
 
 /// How what a run left under its own home is named among what it left, before the path under the home.
 const HOME_LEFT: &str = "~/";
 
-/// Every file and directory under `root`, relative to it, a directory named with a trailing `/`, each file with its path.
+/// What a walk of a scratch found.
+enum Walked {
+    /// Every file and directory, relative to the root, a directory named with a trailing `/`, each file with its path.
+    Entries(Vec<(String, Option<PathBuf>)>),
+    /// The first entry whose path below the root is not text, spelled without loss.
+    Unnamed(String),
+}
+
+/// Every file and directory under `root`, or the first entry whose path below it is not text.
 ///
 /// # Errors
 /// [`SessionError::ScratchUnreadable`] where the directory could not be walked.
-fn walked(root: &std::path::Path) -> Result<Vec<(String, Option<PathBuf>)>, EngineError> {
+fn walked(root: &std::path::Path) -> Result<Walked, EngineError> {
     let mut found = Vec::new();
+    let mut unnamed: Option<Vec<u8>> = None;
     let mut pending = vec![root.to_path_buf()];
     while let Some(directory) = pending.pop() {
         let entries =
@@ -535,24 +563,25 @@ fn walked(root: &std::path::Path) -> Result<Vec<(String, Option<PathBuf>)>, Engi
             let Ok(relative) = path.strip_prefix(root) else {
                 continue;
             };
-            let relative = crate::id::slashed(relative).map_err(|_not_utf8| {
-                SessionError::ScratchUnreadable {
-                    path: path.clone(),
-                    source: std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "a path left in the scratch is not UTF-8",
-                    ),
+            let Ok(named) = crate::id::slashed(relative) else {
+                let bytes = relative.as_os_str().as_encoded_bytes().to_vec();
+                if unnamed.as_ref().is_none_or(|first| bytes < *first) {
+                    unnamed = Some(bytes);
                 }
-            })?;
+                continue;
+            };
             if kind.is_dir() {
-                found.push((format!("{relative}/"), None));
+                found.push((format!("{named}/"), None));
                 pending.push(path);
             } else {
-                found.push((relative, Some(path)));
+                found.push((named, Some(path)));
             }
         }
     }
-    Ok(found)
+    Ok(match unnamed {
+        Some(bytes) => Walked::Unnamed(crate::telling::LosslessBytes::new(&bytes).to_string()),
+        None => Walked::Entries(found),
+    })
 }
 
 /// A fresh nonce a crash notice must carry to be this execution's.
@@ -4248,6 +4277,42 @@ mod tests {
         for tier in Tier::ALL {
             assert_eq!(PrepareOptions::new(tier).tier, tier);
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_stop_that_left_a_name_that_is_not_text_answers_that_name_rather_than_failing() {
+        use std::os::unix::ffi::OsStrExt as _;
+        let own = tempfile::tempdir().expect("a directory of the execution's own");
+        let scratch = crate::execute::Scratch::made(
+            own.path(),
+            crate::execute::Home::Confined,
+            &crate::vars::Variables::empty(),
+        )
+        .expect("the scratch");
+        std::fs::write(scratch.tmp().join("count"), "count=1").expect("a file named in text");
+        std::fs::write(
+            scratch
+                .tmp()
+                .join(std::ffi::OsStr::from_bytes(b"torn-\xff")),
+            "",
+        )
+        .expect("a file whose name is not text, which Linux keeps");
+        let kept = super::Kept(
+            scratch,
+            super::Stop(true),
+            super::Notice {
+                mutant: String::new(),
+                catalog: String::new(),
+                nonce: String::new(),
+                read: None,
+            },
+        );
+        assert_eq!(
+            kept.left().expect("the scratch walks"),
+            super::Left::Unnamed("bytes:746f726e2dff".to_owned()),
+            "what the stop left cannot be named, and the name that could not is what it answers"
+        );
     }
 
     fn result(conclusion: MutantConclusion, duration: Duration) -> MutantResult {

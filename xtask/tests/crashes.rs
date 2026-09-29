@@ -43,6 +43,7 @@ fn run(test: &str, stage: &str, ended: &str, files: &[&str]) -> Step {
             Issued { read, ..issued }
         }),
         left,
+        unnamed: None,
         failed,
     })
 }
@@ -281,6 +282,48 @@ fn a_stop_in_a_child_the_test_started_leaves_the_crash_undecided_whatever_the_pa
 }
 
 #[test]
+fn a_stop_that_left_an_entry_whose_name_is_not_text_is_undecided_and_only_a_stop_names_one() {
+    let Step::Ran(stopped) = run("t", "crash", "stopped", &[]) else {
+        panic!("a run is a run");
+    };
+    let unnamed = Run {
+        unnamed: Some("bytes:746f726e2dff".to_owned()),
+        ..stopped
+    };
+    assert_eq!(
+        decision(&[asks_t(), Step::Ran(unnamed.clone())]),
+        Ok(("undecided".to_owned(), "pkg/test/it::t".to_owned())),
+        "what the stop left cannot be named, so no next run was asked and nothing is said of \
+         whether it could start over it"
+    );
+    assert!(
+        decision(&[
+            asks_t(),
+            Step::Ran(Run {
+                left: vec!["count".to_owned()],
+                ..unnamed.clone()
+            })
+        ])
+        .is_err(),
+        "a stop that named what it left and an entry it could not is a record no run makes"
+    );
+    let Step::Ran(passed) = run("t", "crash", "passed", &[]) else {
+        panic!("a run is a run");
+    };
+    assert!(
+        decision(&[
+            asks_t(),
+            Step::Ran(Run {
+                unnamed: unnamed.unnamed,
+                ..passed
+            })
+        ])
+        .is_err(),
+        "a run that did not stop left nothing, named or not"
+    );
+}
+
+#[test]
 fn a_nonce_is_one_run_s_and_a_second_run_carrying_it_is_refused() {
     let ids = std::collections::BTreeMap::from([
         ("dddd".to_owned(), "d".repeat(64)),
@@ -354,7 +397,7 @@ fn once_a_stop_wrote_into_the_tree_every_later_crash_is_left_alone() {
 fn a_recorded_run_that_carries_no_issue_is_read_as_one_that_was_not_crashed() {
     let line = |issued: &str| {
         format!(
-            "{{\"seq\":1,\"timestamp\":\"2026-09-06T00:00:00Z\",\"elapsed_ms\":0,\"payload\":{{\"type\":\"crash-exec\",\"crash\":{{\"crash\":\"dddddddddddddddddddd\",\"target\":\"pkg/test/it\",\"test\":\"t\",\"stage\":\"next\",\"exit_code\":0,\"outcome\":\"survived\",\"noticed\":false,\"issued\":{issued},\"left\":[],\"failed\":[]}}}}}}\n"
+            "{{\"seq\":1,\"timestamp\":\"2026-09-06T00:00:00Z\",\"elapsed_ms\":0,\"payload\":{{\"type\":\"crash-exec\",\"crash\":{{\"crash\":\"dddddddddddddddddddd\",\"target\":\"pkg/test/it\",\"test\":\"t\",\"stage\":\"next\",\"exit_code\":0,\"outcome\":\"survived\",\"noticed\":false,\"issued\":{issued},\"left\":[],\"unnamed\":null,\"failed\":[]}}}}}}\n"
         )
     };
     let checkers = xtask::schemas::Checkers::compiled().expect("the published schemas compile");
