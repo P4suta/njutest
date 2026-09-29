@@ -1554,7 +1554,7 @@ pub struct Grounds {
     pub asked: bool,
     /// Why each mutation row that is not an answer is not one.
     pub unanswered: Vec<String>,
-    /// Whether a reach moved or a knob shook where the findings about it are raised only once the parts are merged.
+    /// Whether a part of a divided catalog saw a reach move or a knob shake, whose findings are raised only once the parts are merged; a whole report's are raised over the whole catalog, so it is never unsettled (ADR 0036 decisions 3 and 4).
     pub unsettled: bool,
 }
 
@@ -1579,7 +1579,8 @@ impl Grounds {
                 .iter()
                 .filter_map(|row| unanswered(&row.id, row.verdict()))
                 .collect(),
-            unsettled: super::moved(&report.drift) || super::knobs::shaken(&report.knobs),
+            unsettled: report.scope.shard.is_some()
+                && (super::moved(&report.drift) || super::knobs::shaken(&report.knobs)),
         }
     }
 }

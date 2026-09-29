@@ -1510,6 +1510,23 @@ pub mod reports {
         )
     }
 
+    /// One build's report of run `run` holding `rows` and `drift`, among the configured `builds`, with the findings the records raise and the verdict it concludes, as [`completed_with_drift`] makes each.
+    ///
+    /// # Errors
+    /// [`UnmadeReportError`] as [`completed`] refuses.
+    pub fn measured_with_drift(
+        run: &str,
+        kind: RunKind,
+        (rows, drift): (Vec<MutantRecord>, Vec<crate::report::drift::Drift>),
+        builds: &[String],
+    ) -> Result<BuildReport, UnmadeReportError> {
+        let mut report = measured(run, kind, rows, builds)?;
+        report.drift = drift;
+        super::raise_what_the_records_decide(&mut report);
+        report.verdict = report.concluded();
+        Ok(report)
+    }
+
     /// The report [`completed`] makes, with each build also recording what its controls established about each target's baseline reach.
     ///
     /// # Errors
@@ -1535,10 +1552,7 @@ pub mod reports {
             .collect();
         let mut measured_builds = Vec::with_capacity(builds.len());
         for (at, (name, rows, drift)) in builds.into_iter().enumerate() {
-            let mut report = measured(&format!("{run}-{at}"), kind, rows, &order)?;
-            report.drift = drift;
-            super::raise_what_the_records_decide(&mut report);
-            report.verdict = report.concluded();
+            let report = measured_with_drift(&format!("{run}-{at}"), kind, (rows, drift), &order)?;
             measured_builds.push((
                 name.to_owned(),
                 rust_mutants::cargo::BuildConfig::default().selection(),

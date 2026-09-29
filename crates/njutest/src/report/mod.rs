@@ -4991,28 +4991,21 @@ impl BuildReport {
         Ok(())
     }
 
-    /// What these observations support.
+    /// What these observations support, by the one function every verdict of a report is drawn from.
     #[must_use]
     pub fn concluded(&self) -> Verdict {
-        if self.findings.iter().any(|finding| finding.kind.is_defect()) {
-            return Verdict::Defect;
-        }
-        if !self.findings.is_empty() {
-            return Verdict::Insufficient;
-        }
-        let observed = self.accounting.targets.passed > 0;
-        let asked = self.accounting.mutants.executed > 0;
-        if !observed || !asked || moved(&self.drift) || knobs::shaken(&self.knobs) {
-            return Verdict::Insufficient;
-        }
-        if self.scope.shard.is_some() {
-            return Verdict::Partial;
-        }
-        match self.run_kind {
-            RunKind::Full => Verdict::Assured,
-            RunKind::Changed => Verdict::ChangeAssured,
-            RunKind::Scoped => Verdict::ScopeAssured,
-        }
+        let part = self.scope.shard.is_some();
+        concluded_from(&Basis {
+            run_kind: self.run_kind,
+            part,
+            findings: &self.findings,
+            answered: self
+                .mutants
+                .iter()
+                .all(|row| answers(row.decision(), row.verdict())),
+            observed: self.accounting.targets.passed > 0 && self.accounting.mutants.executed > 0,
+            unsettled: part && (moved(&self.drift) || knobs::shaken(&self.knobs)),
+        })
     }
 
     /// Whether a limitation of this name is stated.
@@ -6707,35 +6700,69 @@ impl ReportDocument {
 }
 
 fn shard_verdict(builds: &ShardBuildLedger, global_findings: &[Finding]) -> Verdict {
-    if global_findings
+    let findings: Vec<Finding> = global_findings
+        .iter()
+        .chain(builds.iter().flat_map(|build| build.source.findings.iter()))
+        .cloned()
+        .collect();
+    concluded_from(&Basis {
+        run_kind: RunKind::Full,
+        part: true,
+        findings: &findings,
+        answered: builds.iter().all(|build| {
+            build
+                .source
+                .mutants
+                .iter()
+                .all(|row| answers(row.decision(), row.verdict()))
+        }),
+        observed: builds.iter().all(|build| {
+            build.source.accounting.targets.passed > 0
+                && build.source.accounting.mutants.executed > 0
+        }),
+        unsettled: builds
+            .iter()
+            .any(|build| moved(&build.source.drift) || knobs::shaken(&build.source.knobs)),
+    })
+}
+
+/// What a report's verdict is drawn from, whichever report holds it: one build's, a part's, or the projection of every build.
+struct Basis<'a> {
+    run_kind: RunKind,
+    part: bool,
+    findings: &'a [Finding],
+    answered: bool,
+    observed: bool,
+    /// Whether a part of a divided catalog saw a reach move or a knob shake, whose findings only the merge raises over what every part holds (ADR 0036 decision 4).
+    unsettled: bool,
+}
+
+/// Whether a row decided `decision` and judged by `verdict` answers its mutation: a model's decision, or a row whose verdict is an answer.
+const fn answers(decision: Decision, verdict: RowVerdict) -> bool {
+    matches!(decision, Decision::ModelNoticed | Decision::ModelProved) || verdict.answered()
+}
+
+/// The one verdict every report draws from its basis: a defect decides it; a finding, a mutation nothing answered, or a run that measured or asked nothing leaves it insufficient; and otherwise a part is partial and a whole run assures what it was asked.
+///
+/// A target whose reach moved is read here only by a part: in a whole report what still rests on it is an `unstable-baseline` finding, and one nothing rests on is the limitation `reach-moved` (ADR 0036 decision 3).
+fn concluded_from(basis: &Basis<'_>) -> Verdict {
+    if basis
+        .findings
         .iter()
         .any(|finding| finding.kind.is_defect())
-        || builds
-            .iter()
-            .flat_map(|build| build.source.findings.iter())
-            .any(|finding| finding.kind.is_defect())
     {
         return Verdict::Defect;
     }
-    let answered = builds.iter().all(|build| {
-        build
-            .source
-            .mutants
-            .iter()
-            .all(|row| row.verdict().answered())
-    });
-    let observed = builds.iter().all(|build| {
-        build.source.accounting.targets.passed > 0 && build.source.accounting.mutants.executed > 0
-    });
-    let no_findings =
-        global_findings.is_empty() && builds.iter().all(|build| build.source.findings.is_empty());
-    let steady = builds
-        .iter()
-        .all(|build| !moved(&build.source.drift) && !knobs::shaken(&build.source.knobs));
-    if answered && observed && no_findings && steady {
-        Verdict::Partial
-    } else {
-        Verdict::Insufficient
+    if !basis.answered || !basis.observed || !basis.findings.is_empty() || basis.unsettled {
+        return Verdict::Insufficient;
+    }
+    if basis.part {
+        return Verdict::Partial;
+    }
+    match basis.run_kind {
+        RunKind::Full => Verdict::Assured,
+        RunKind::Changed => Verdict::ChangeAssured,
+        RunKind::Scoped => Verdict::ScopeAssured,
     }
 }
 
@@ -6773,37 +6800,25 @@ fn concluded_from_projection(projection: ConclusionProjection<'_>) -> Verdict {
         mutants,
         findings,
     } = projection;
-    if findings.iter().any(|finding| finding.kind.is_defect()) {
-        return Verdict::Defect;
-    }
-    let all_answered = mutants.iter().all(|mutant| {
-        if matches!(
-            mutant.decision,
-            Decision::ModelNoticed | Decision::ModelProved
-        ) {
-            return true;
-        }
-        mutant.by_build.iter().all(|fact| fact.verdict().answered())
-    });
-    let all_observed = builds.iter().all(|build| {
-        build.baseline().accounting.targets.passed > 0
-            && build
-                .parts
-                .iter()
-                .any(|part| part.accounting.mutants.executed > 0)
-    });
-    let no_findings = findings.is_empty();
-    if !all_answered || !all_observed || !no_findings {
-        return Verdict::Insufficient;
-    }
-    if shard.is_some() {
-        return Verdict::Partial;
-    }
-    match run_kind {
-        RunKind::Full => Verdict::Assured,
-        RunKind::Changed => Verdict::ChangeAssured,
-        RunKind::Scoped => Verdict::ScopeAssured,
-    }
+    concluded_from(&Basis {
+        run_kind,
+        part: shard.is_some(),
+        findings,
+        answered: mutants.iter().all(|mutant| {
+            matches!(
+                mutant.decision,
+                Decision::ModelNoticed | Decision::ModelProved
+            ) || mutant.by_build.iter().all(|fact| fact.verdict().answered())
+        }),
+        observed: builds.iter().all(|build| {
+            build.baseline().accounting.targets.passed > 0
+                && build
+                    .parts
+                    .iter()
+                    .any(|part| part.accounting.mutants.executed > 0)
+        }),
+        unsettled: false,
+    })
 }
 
 fn projected_mutants(builds: &BuildLedger) -> Vec<ProjectedMutant> {
