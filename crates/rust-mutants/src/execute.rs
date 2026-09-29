@@ -1108,8 +1108,8 @@ impl StepProtocolFailure {
 pub struct Observation {
     /// Its single terminal fact.
     pub stopped: Stopped,
-    /// Whether the process itself was refused by its runtime for carrying another catalog: it exited with the refusal's code and said so, which a test relaying a child's refusal does not.
-    pub stale_catalog: bool,
+    /// Whether the process's own runtime ended it because the run could not be done as asked, which is the apparatus and never the program: it exited with the status the runtime reserves for that and said so in the runtime's words, which a test relaying a child's refusal does not.
+    pub refused: bool,
 }
 
 impl Observation {
@@ -1117,12 +1117,33 @@ impl Observation {
         let stopped = observed_stop(result, step);
         Self {
             stopped,
-            stale_catalog: matches!(
-                result.termination,
-                Termination::Exited(ProcessExit::Code(crate::instrument::STALE_CATALOG_EXIT))
-            ) && said(&result.output, crate::instrument::STALE_CATALOG_MARKER),
+            refused: refused(result),
         }
     }
+}
+
+/// Whether the runtime ended the process for the apparatus: built from another catalog, unable to write what its guards reached, or named a fault it does not hold or a step protocol it could not keep.
+fn refused(result: &RunResult) -> bool {
+    let ended = |status: i32| {
+        matches!(
+            result.termination,
+            Termination::Exited(ProcessExit::Code(code)) if code == status
+        )
+    };
+    let recorded = |status: i32, known: fn(&str) -> bool| {
+        ended(status)
+            && stop_record(&result.output)
+                .is_some_and(|(said, check, _os)| said == status && known(check))
+    };
+    (ended(crate::instrument::STALE_CATALOG_EXIT)
+        && said(&result.output, crate::instrument::STALE_CATALOG_MARKER))
+        || recorded(crate::instrument::TOUCH_UNAVAILABLE_EXIT, touch_stop_check)
+        || recorded(STEP_PROTOCOL_EXIT, step_stop_check)
+}
+
+/// Whether `check` is one the runtime ends a process with when it cannot record what its guards reached.
+fn touch_stop_check(check: &str) -> bool {
+    check.starts_with("touch: ") || check.starts_with("orphan: ")
 }
 
 /// Whether `output` holds `needle`.
@@ -1579,42 +1600,44 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
 
 /// What the generated runtime said on its way out of a failed step protocol: its final complete line with a check this release recognizes, or that it said nothing this release reads.
 fn stated(output: &[u8]) -> StepProtocolFailure {
-    let said = output.strip_suffix(b"\n").and_then(|complete| {
-        let line = complete.rsplit(|byte| *byte == b'\n').next()?;
-        let line = match std::str::from_utf8(line) {
-            Ok(line) => line,
-            Err(_not_a_runtime_line) => return None,
-        };
-        let line = line.strip_suffix('\r').unwrap_or(line);
-        let mut fields = line
-            .strip_prefix(STOP_SCHEMA)?
-            .strip_prefix('\t')?
-            .split('\t');
-        let (status, check, os, rest) = (
-            fields.next()?,
-            fields.next()?,
-            fields.next()?,
-            fields.next(),
-        );
-        if status != STEP_PROTOCOL_EXIT.to_string() || rest.is_some() || !step_stop_check(check) {
-            return None;
+    match stop_record(output) {
+        Some((STEP_PROTOCOL_EXIT, check, os)) if step_stop_check(check) => {
+            StepProtocolFailure::Stated {
+                check: check.to_owned(),
+                os,
+            }
         }
-        let code = match os.parse::<i32>() {
-            Ok(code) => code,
-            Err(_not_an_os_code) => return None,
-        };
-        if code.to_string() != os {
-            return None;
-        }
-        Some(StepProtocolFailure::Stated {
-            check: check.to_owned(),
-            os: code,
-        })
-    });
-    match said {
-        Some(stated) => stated,
-        None => StepProtocolFailure::Publication {},
+        Some(_) | None => StepProtocolFailure::Publication {},
     }
+}
+
+/// The runtime's stop record, where it is the final complete line of `output`: the status it ended the process with, the check that failed, and the operating system's code, each spelled canonically.
+fn stop_record(output: &[u8]) -> Option<(i32, &str, i32)> {
+    let complete = output.strip_suffix(b"\n")?;
+    let line = complete.rsplit(|byte| *byte == b'\n').next()?;
+    let line = match std::str::from_utf8(line) {
+        Ok(line) => line,
+        Err(_not_a_runtime_line) => return None,
+    };
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    let mut fields = line
+        .strip_prefix(STOP_SCHEMA)?
+        .strip_prefix('\t')?
+        .split('\t');
+    let (status, check, os, rest) = (
+        fields.next()?,
+        fields.next()?,
+        fields.next()?,
+        fields.next(),
+    );
+    if rest.is_some() {
+        return None;
+    }
+    let canonical = |field: &str| match field.parse::<i32>() {
+        Ok(number) if number.to_string() == field => Some(number),
+        Ok(_) | Err(_) => None,
+    };
+    Some((canonical(status)?, check, canonical(os)?))
 }
 
 fn step_stop_check(check: &str) -> bool {
@@ -1684,7 +1707,7 @@ pub fn outcome_of(
         Stopped::StepLimitReached { .. } => return Outcome::StepLimitReached,
         Stopped::Exited { exit } => *exit,
     };
-    if observed.stale_catalog {
+    if observed.refused {
         return Outcome::Errored;
     }
     let code = match exit {
@@ -3482,6 +3505,127 @@ mod tests {
         );
     }
 
+    /// A binary of one guard at catalog index 0 that reaches it, run with `env` and with no step protocol, as a result the way a supervisor reads one.
+    fn reaching_one_guard(directory: &Path, name: &str, env: &[(&str, &str)]) -> RunResult {
+        let span = crate::span::Span::new(0, 1).expect("a span");
+        let placement = crate::instrument::Placement {
+            index: 0,
+            id: MUTANT_A.to_owned(),
+            edit: span,
+            original: b"a".to_vec(),
+            replacement: b"b".to_vec(),
+            hint: crate::syntax::SiteHint {
+                form: crate::syntax::Form::S,
+                site: span,
+                site_text: "a".to_owned(),
+                super_depth: 0,
+            },
+            carried: false,
+        };
+        let module = crate::instrument::render(&crate::instrument::Rendering {
+            module: "__rm",
+            catalog_digest: CATALOG_A,
+            placements: std::slice::from_ref(&placement),
+            markers: &[],
+            first_item: 0,
+            item_count: 0,
+            newline: "\n",
+            watched: "/unwatched-runtime-stop",
+        })
+        .expect("render generated runtime");
+        let source = directory.join(format!("{name}.rs"));
+        std::fs::write(
+            &source,
+            format!("{module}\nfn main() {{ let _reached = __rm::active(0); }}\n"),
+        )
+        .expect("write generated source");
+        let built = Command::new("rustc")
+            .args(["--edition", "2024", "--crate-type", "bin"])
+            .arg("--out-dir")
+            .arg(directory)
+            .arg(&source)
+            .output()
+            .expect("rustc runs");
+        assert!(built.status.success(), "{:?}", built.stderr);
+        let mut command =
+            Command::new(directory.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)));
+        command
+            .env(crate::instrument::WATCHED_ENV, "/unwatched-runtime-stop")
+            .env_remove(crate::instrument::STEPS_ENV)
+            .env_remove(STEP_STATE_ENV);
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let ran = command.output().expect("run generated runtime");
+        let code = ran
+            .status
+            .code()
+            .expect("the runtime ends the process with a status");
+        let mut ended = result(Termination::Exited(ProcessExit::Code(code)));
+        ended.output = ran.stderr;
+        ended
+    }
+
+    #[test]
+    fn a_process_its_runtime_ended_for_the_apparatus_is_never_a_kill() {
+        let directory = returned!(tempfile::tempdir(), "tempdir");
+        let log = directory.path().join("absent").join("touch.log");
+        let unrecorded = reaching_one_guard(
+            directory.path(),
+            "unrecorded",
+            &[
+                (
+                    crate::instrument::TOUCH_ENV,
+                    log.to_str().expect("a UTF-8 temporary path"),
+                ),
+                (crate::instrument::CATALOG_ENV, CATALOG_A),
+            ],
+        );
+        let said = std::str::from_utf8(&unrecorded.output).expect("the runtime speaks UTF-8");
+        assert!(
+            matches!(
+                unrecorded.termination,
+                Termination::Exited(ProcessExit::Code(crate::instrument::TOUCH_UNAVAILABLE_EXIT))
+            ),
+            "{:?}: {said}",
+            unrecorded.termination
+        );
+        assert_eq!(
+            outcome_of(&Observation::of(&unrecorded, None), None, (true, &[])),
+            Outcome::Errored,
+            "a process that could not write what its guards reached was stopped by the run's \
+             own apparatus, and reading its status as a failing test makes a kill of a \
+             recording that failed: {said}"
+        );
+        let unknown = reaching_one_guard(
+            directory.path(),
+            "unknown",
+            &[
+                (crate::instrument::ACTIVE_ENV, MUTANT_A),
+                (crate::instrument::CATALOG_ENV, CATALOG_A),
+                (crate::instrument::FAULT_ENV, MUTANT_B),
+            ],
+        );
+        assert!(
+            matches!(
+                unknown.termination,
+                Termination::Exited(ProcessExit::Code(STEP_PROTOCOL_EXIT))
+            ),
+            "a process named a fault its tree does not hold stops rather than run the \
+             mutation alone (ADR 0032 decision 6)"
+        );
+        assert_eq!(
+            unknown.output,
+            format!("{STOP_SCHEMA}\t{STEP_PROTOCOL_EXIT}\tunstated\t0\n").into_bytes(),
+            "and says so in the runtime's own words"
+        );
+        assert_eq!(
+            outcome_of(&Observation::of(&unknown, None), None, (true, &[])),
+            Outcome::Errored,
+            "and that stop is the apparatus refusing the request, never the mutation's kill"
+        );
+    }
+
     #[test]
     fn rustlib_target_discovery_distinguishes_support_directories_from_targets() {
         let sysroot = returned!(tempfile::tempdir(), "sysroot");
@@ -4060,7 +4204,7 @@ mod tests {
         let exited = result(Termination::Exited(ProcessExit::Code(95)));
         let observed = Observation {
             stopped: observed_stop(&exited, Some(&step)),
-            stale_catalog: false,
+            refused: false,
         };
 
         assert_eq!(

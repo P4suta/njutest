@@ -24,14 +24,16 @@ The engine's `outcome_of` is one implementation of it, held to every row by a te
   `clean` when it says `ok`, counts none failed, and something ran;
   `failing` for any other line;
   `none` when there was no line.
-- `stale`: `yes` when the process refused, with the runtime's own exit code and its own words, to run against a catalog other than the one it was built with.
+- `refused`: `yes` when the process's own runtime ended it, with the status it reserves for that and its own words, because the run could not be done as asked:
+  it was built from a catalog other than the one named, it could not write what its guards reached, or it was named a fault its tree does not hold.
+  That is the apparatus and never the program, so it is never a kill, however the process exited.
 
 ## The table
 
 The first row that matches decides.
 A cell matches the word it holds, any of several words separated by `, `, or anything at all when it holds `*`.
 
-| stopped | exit | harness | named | summary | stale | verdict |
+| stopped | exit | harness | named | summary | refused | verdict |
 | --- | --- | --- | --- | --- | --- | --- |
 | not-started, wait-failed, step-protocol-failed | * | * | * | * | * | errored |
 | step-limit-reached | * | * | * | * | * | step_limit_reached |

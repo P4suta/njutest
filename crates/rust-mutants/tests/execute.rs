@@ -138,7 +138,7 @@ const fn result(exit_code: i32) -> Observation {
         stopped: Stopped::Exited {
             exit: ProcessExit::Code(exit_code),
         },
-        stale_catalog: false,
+        refused: false,
     }
 }
 
@@ -148,14 +148,14 @@ const fn signalled(signal: i32) -> Observation {
         stopped: Stopped::Exited {
             exit: ProcessExit::Signal(signal),
         },
-        stale_catalog: false,
+        refused: false,
     }
 }
 
 const fn stopped(stopped: Stopped) -> Observation {
     Observation {
         stopped,
-        stale_catalog: false,
+        refused: false,
     }
 }
 
@@ -788,7 +788,7 @@ fn a_runtime_that_named_another_catalog_is_an_error_however_the_process_exited()
         stopped: Stopped::Exited {
             exit: ProcessExit::Code(101),
         },
-        stale_catalog: said.contains(rust_mutants::instrument::STALE_CATALOG_MARKER),
+        refused: said.contains(rust_mutants::instrument::STALE_CATALOG_MARKER),
     };
 
     assert_eq!(
@@ -1016,7 +1016,7 @@ fn a_custom_harness_that_exits_zero_survived_and_one_that_exits_nonzero_killed()
                 stopped: Stopped::Exited {
                     exit: ProcessExit::Code(exit_code),
                 },
-                stale_catalog: false,
+                refused: false,
             },
             None,
             (false, &[]),
@@ -1039,7 +1039,7 @@ fn a_libtest_target_that_printed_no_summary_is_undecided_rather_than_survived() 
             stopped: Stopped::Exited {
                 exit: ProcessExit::Code(0),
             },
-            stale_catalog: false,
+            refused: false,
         },
         None,
         (true, &[]),
@@ -1502,7 +1502,7 @@ struct Reading {
 fn every_reading() -> Vec<Reading> {
     let mut readings = Vec::new();
     for (stop, exit, stopped) in every_stop() {
-        for stale in [false, true] {
+        for refused in [false, true] {
             for (harness, named) in [(false, false), (true, false), (true, true)] {
                 let summaries: &[Option<Summary>] =
                     if harness { &every_summary() } else { &[None] };
@@ -1514,11 +1514,11 @@ fn every_reading() -> Vec<Reading> {
                             if harness { "yes" } else { "no" },
                             if named { "yes" } else { "no" },
                             summary_word(*summary),
-                            if stale { "yes" } else { "no" },
+                            if refused { "yes" } else { "no" },
                         ],
                         observed: Observation {
                             stopped: stopped.clone(),
-                            stale_catalog: stale,
+                            refused,
                         },
                         summary: *summary,
                         harness,

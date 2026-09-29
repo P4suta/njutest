@@ -2199,15 +2199,41 @@ impl Session {
             crash: None,
             fate: None,
         };
-        let mut exec = ExecRequest::new(target)
-            .with_args(self.arguments(request, &[]))
-            .with_timeout(Some(timeout))
-            .with_scratch(scratch)
-            .in_scratch(self.scratch_working_directory);
-        if let Some(test) = &request.test {
-            exec = exec.with_test(test.clone());
-        }
-        let result = self.observed(&exec, &context, (cancel, None))?;
+        let in_scratch = |scratch: execute::Scratch| {
+            let exec = ExecRequest::new(target)
+                .with_args(self.arguments(request, &[]))
+                .with_timeout(Some(timeout))
+                .with_scratch(scratch)
+                .in_scratch(self.scratch_working_directory);
+            match &request.test {
+                Some(test) => exec.with_test(test.clone()),
+                None => exec,
+            }
+        };
+        let result = self.observed(&in_scratch(scratch), &context, (cancel, None))?;
+        let unrecorded = result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT;
+        let result = if unrecorded {
+            self.workspace.trace.note(
+                crate::touch::UNRECORDED,
+                &format!(
+                    "{}: a mutation run again against it could not write what its guards \
+                     reached, so it is run again with nothing to record and whether it reached \
+                     the site is not known",
+                    target.id()
+                ),
+            );
+            let again = in_scratch(self.exec_scratch(self.home_of(target.id()))?);
+            self.observed(
+                &again,
+                &Context {
+                    touch: None,
+                    ..context
+                },
+                (cancel, None),
+            )?
+        } else {
+            result
+        };
         self.record_mutant_exec(Executed {
             mutant,
             target,
@@ -2216,6 +2242,9 @@ impl Session {
             source,
             alone: false,
         })?;
+        if unrecorded {
+            return Ok((result, SiteReach::Unrecorded));
+        }
         let reach = self.site_reach(target, &log, (mutant.index, mutant.id.as_str(), &result))?;
         Ok((result, reach))
     }
