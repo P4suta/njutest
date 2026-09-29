@@ -4732,10 +4732,12 @@ pub struct CandidateRecord {
 
 /// One thing a report cannot claim, and why.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, try_from = "StatedLimitation")]
 pub struct Limitation {
-    /// The stable name a reader can grep for.
-    #[serde(deserialize_with = "limitation_name")]
+    /// Which limitation it is, which every reader of it places by an exhaustive match.
+    #[serde(skip)]
+    named: crate::limitation::Name,
+    /// The stable name a reader can grep for, which is always `named`'s.
     name: String,
     /// One sentence saying what is not claimed.
     pub detail: String,
@@ -4748,24 +4750,43 @@ impl Limitation {
         &self.name
     }
 
+    /// Which limitation it is.
+    #[must_use]
+    pub const fn named(&self) -> crate::limitation::Name {
+        self.named
+    }
+
     /// A limitation named `name`.
     #[must_use]
     pub fn new(name: impl Into<crate::limitation::Name>, detail: &str) -> Self {
+        let named = name.into();
         Self {
-            name: name.into().name(),
+            named,
+            name: named.name(),
             detail: detail.to_owned(),
         }
     }
 }
 
-fn limitation_name<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let name = String::deserialize(deserializer)?;
-    name.parse::<crate::limitation::Name>()
-        .map(crate::limitation::Name::name)
-        .map_err(serde::de::Error::custom)
+/// A limitation as a document spells it, before its name is known to be one this release can state.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StatedLimitation {
+    name: String,
+    detail: String,
+}
+
+impl TryFrom<StatedLimitation> for Limitation {
+    type Error = crate::limitation::NameError;
+
+    fn try_from(stated: StatedLimitation) -> Result<Self, Self::Error> {
+        let named = stated.name.parse::<crate::limitation::Name>()?;
+        Ok(Self {
+            named,
+            name: named.name(),
+            detail: stated.detail,
+        })
+    }
 }
 
 /// When a run happened and how long it took.

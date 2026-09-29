@@ -645,6 +645,21 @@ fn verdict_enums(value: &serde_json::Value, found: &mut Vec<String>) {
 }
 
 #[test]
+fn a_limitation_no_release_can_state_is_refused_before_any_layer_places_it() {
+    for name in ["skipped-fictional", "a-limitation-no-release-states"] {
+        assert!(
+            off_schema(&with(serde_json::json!({ "limitations": [{
+                "name": name,
+                "detail": "a class nobody wrote down"
+            }] }))),
+            "the runner's own reader refuses a report naming {name}, so no column of the runner \
+             ever places it; an audit that read it would place it by a rule of its own, and \
+             the dimensions layer would decide what the runner never did"
+        );
+    }
+}
+
+#[test]
 fn a_kill_that_names_no_target_at_all_is_refused_before_any_layer_reads_it() {
     assert!(
         off_schema(&with(

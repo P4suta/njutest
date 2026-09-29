@@ -700,6 +700,19 @@ fn every_closed_set_the_schema_declares_is_one_this_release_produces() {
     ));
     rows.push(("/$defs/knob", names(&njutest::report::knobs::Knob::ALL)));
     rows.push((
+        "/$defs/limitation/properties/name",
+        njutest::limitation::ALL
+            .into_iter()
+            .chain(rust_mutants::limitation::ALL)
+            .map(ToOwned::to_owned)
+            .chain(
+                rust_mutants::syntax::SkipReason::ALL
+                    .into_iter()
+                    .map(|reason| format!("skipped-{}", reason.name())),
+            )
+            .collect(),
+    ));
+    rows.push((
         "/$defs/knobStanding/oneOf/4/properties/why",
         names(&njutest::report::drift::Unmeasured::ALL),
     ));
