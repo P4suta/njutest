@@ -54,6 +54,9 @@ It is a fact about the program's uses of the function — a `const` item, a `sta
   Where one evaluates a function the tree wrote without its `const`, that build fails with the same `E0015`, and the run refuses or names it as it would any failing baseline or unsealable build; [limitations](../limitations.md#places-a-run-passed-over) says so and names the marker that keeps a function `const`.
 - A mutant in a `const fn` carries no branch proof, comparison or probe, so every test that reaches it runs it.
   A proof about such a site would need the witness tree to learn the same `E0015`s validation does, in rounds of its own.
+  It cannot apply as the witness tree is built: a witness is a call to a plain function, which the `const` of the function around it refuses, and the tree is checked before validation says which functions lose their `const`, so a witness put there is refused by the compiler as surely as it is left out by the pass.
+  Applying it would take witnesses the compiler takes in a `const fn`, and body markers that follow each round's constness, since a marker left in a function that gets its `const` back is an error outside every branch.
+  `a_condition_in_a_const_fn_is_put_no_question_and_so_discharges_nothing` in `crates/rust-mutants/tests/toolchain_proofs.rs` holds it on the pinned compiler: the same condition is vouched for in a function and nothing is in its `const fn` twin, with the pass's exclusion and without it.
 - The trace's `validate-round` gains `carried`, the errors a caller that goes without its `const` from the next round on accounts for, so a round that condemned nothing and still made progress says what it learned.
 - njutest makes no row of a candidate left out this way; its report states it as the limitation `skipped-evaluated-before-run`, as it states every skip reason.
 - `const-fn-body` is gone from the skip vocabulary, and `evaluated-before-run` is in its place, decided by the compiler rather than by the walk.

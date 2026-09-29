@@ -503,6 +503,100 @@ fn a_condition_the_compiler_takes_is_one_the_pass_vouches_for() {
 }
 
 #[test]
+fn a_condition_in_a_const_fn_is_put_no_question_and_so_discharges_nothing() {
+    let fixture = Fixture::copy("fixture-coverage");
+    let path = "src/lib.rs";
+    let source = "\
+// SPDX-FileCopyrightText: 2026 njutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! One condition of primitives twice: in a function, and in a `const fn`.
+
+/// `value`, or `limit` where it is greater.
+pub fn clamp(value: i32, limit: i32) -> i32 {
+    if value <= limit {
+        return value;
+    }
+    limit
+}
+
+/// The same, where the compiler may be asked for it before the program runs.
+pub const fn clamped(value: i32, limit: i32) -> i32 {
+    if value <= limit {
+        return value;
+    }
+    limit
+}
+";
+    let discovery = discovered(path, source);
+    let in_const_fn: std::collections::BTreeSet<u32> = discovery
+        .candidates
+        .iter()
+        .filter(|one| one.found.hint.const_fn.is_some())
+        .map(|one| {
+            let id = one.found.candidate.id().expect("an identity");
+            discovery
+                .catalog
+                .by_id(id.as_str())
+                .expect("cataloged")
+                .index
+        })
+        .collect();
+    assert!(
+        discovery
+            .candidates
+            .iter()
+            .any(|one| one.found.hint.const_fn.is_some()
+                && (one.found.branch.is_some() || one.found.comparable.is_some())),
+        "the syntax offers the const fn's condition the same claims as the function's"
+    );
+
+    let cancel = Cancel::new();
+    let workspace = Workspace::open(
+        fixture.root(),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
+        &cancel,
+    )
+    .expect("the workspace opens");
+    let sources = std::collections::BTreeMap::from([(path.to_owned(), source.as_bytes().to_vec())]);
+    let established = rust_mutants::prove::establish(
+        &rust_mutants::prove::Asking {
+            workspace: &workspace,
+            discovery: &discovery,
+            sources: &sources,
+            options: &PrepareOptions {
+                tier: Tier::All,
+                branch_proofs: true,
+                ..PrepareOptions::new(Tier::Balanced)
+            },
+        },
+        &cancel,
+        &rust_mutants::trace::Recorder::disabled(),
+    )
+    .expect("the pass runs");
+
+    assert!(
+        !established.proofs.is_empty() && !established.comparable.is_empty(),
+        "the function's condition is vouched for, so the pass ran: {established:?}"
+    );
+    let vouched: std::collections::BTreeSet<u32> = established
+        .proofs
+        .keys()
+        .chain(established.comparable.iter())
+        .chain(established.probed.keys())
+        .copied()
+        .collect();
+    assert!(
+        vouched.is_disjoint(&in_const_fn),
+        "a witness is a call to a plain fn, which a const fn's const refuses, and the witness \
+         tree is checked before validation says which const fns lose their const: nothing in one \
+         is asked, the compiler would refuse it if it were, and nothing in one is discharged by \
+         a proof: {established:?}"
+    );
+    workspace.close().expect("close");
+}
+
+#[test]
 fn a_widening_comparison_is_vouched_for_without_naming_a_body() {
     let fixture = Fixture::copy("fixture-ignored");
     let path = "src/lib.rs";
