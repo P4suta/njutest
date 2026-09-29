@@ -471,7 +471,7 @@ fn routed(crash: &str, asked: &[Asked], cursor: &mut Cursor<'_, '_>) -> Result<S
             let on = format!("{}::{test}", reaches.target);
             let stop = cursor.run(&reaches.target, test, "crash")?;
             if !stopped(stop) {
-                if stop.outcome == "survived" {
+                if stop.outcome == "survived" && !published(stop) {
                     continue;
                 }
                 return Ok(site("undecided", &on));
@@ -537,7 +537,12 @@ fn confirmed(
 
 /// Whether a run stopped at the call: the stop's exit status, and the runtime's notice that it made it.
 fn stopped(run: &Run) -> bool {
-    run.exit_code == CRASH_EXIT && run.issued.as_ref().is_some_and(Issued::published)
+    run.exit_code == CRASH_EXIT && published(run)
+}
+
+/// Whether the runtime published the notice `run` was issued, in whatever process of the test reached the call.
+fn published(run: &Run) -> bool {
+    run.issued.as_ref().is_some_and(Issued::published)
 }
 
 /// Every place a report's crash sites and the recorded steps disagree, each with the crash it is about.

@@ -259,6 +259,28 @@ fn a_report_that_drops_renames_or_softens_a_crash_disagrees_with_its_recording()
 }
 
 #[test]
+fn a_stop_in_a_child_the_test_started_leaves_the_crash_undecided_whatever_the_parent_did() {
+    let stopped = run("t", "crash", "stopped", &[]);
+    let Step::Ran(stopped) = stopped else {
+        panic!("a run is a run");
+    };
+    let tolerated = Step::Ran(Run {
+        exit_code: 0,
+        outcome: "survived".to_owned(),
+        noticed: false,
+        left: Vec::new(),
+        ..stopped
+    });
+    assert_eq!(
+        decision(&[asks_t(), tolerated]),
+        Ok(("undecided".to_owned(), "pkg/test/it::t".to_owned())),
+        "the runtime published this run's notice, so a process the test started stopped at the \
+         call; the test's own process did not, and a parent that tolerated its child's status is \
+         not a test that passed without reaching the call"
+    );
+}
+
+#[test]
 fn a_nonce_is_one_run_s_and_a_second_run_carrying_it_is_refused() {
     let ids = std::collections::BTreeMap::from([
         ("dddd".to_owned(), "d".repeat(64)),
