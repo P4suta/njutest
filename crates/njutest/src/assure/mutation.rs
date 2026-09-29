@@ -519,6 +519,17 @@ pub struct Carry {
     pub store: rust_mutants::carry::Store,
     /// What the engine and this runner decide an answer under.
     pub keyed: rust_mutants::outcomes::Keyed,
+    /// Where the run keeps what every answer it carries rests on.
+    pub kept: Keeping,
+}
+
+/// Where a run keeps the evidence an answer it carries rests on, which is what decides whether it may carry one (ADR 0041).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Keeping {
+    /// Beside the build's recording, where an audit reads every premise again.
+    Beside(PathBuf),
+    /// Nowhere, since the run keeps no recording: it files its answers for a later run and carries none.
+    Nowhere,
 }
 
 impl Evidence {
@@ -1473,6 +1484,10 @@ fn carried(
             return Ok(Consulted::Refused(exact));
         }
     };
+    match carry.kept {
+        Keeping::Beside(_) => {}
+        Keeping::Nowhere => return Ok(Consulted::Refused(exact)),
+    }
     let Some(locus) = session.locus(mutant) else {
         return Ok(Consulted::Refused(exact));
     };
