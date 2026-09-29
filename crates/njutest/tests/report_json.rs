@@ -971,6 +971,30 @@ fn the_document_matches_the_recorded_one() {
 }
 
 #[test]
+fn the_fuzz_seeds_of_the_answer_store_are_the_recorded_document_as_it_keeps_them() {
+    let seeds = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/seeds");
+    let report = populated();
+    let line = json::line(&report).expect("a sound report is one line");
+    njutest_devkit::golden::golden(
+        &seeds.join("carried_answers/one-answer.jsonl"),
+        format!("{line}\n").as_bytes(),
+    )
+    .expect("the answer store's seed is the recorded document as the store keeps it");
+    let run = report.run_id().to_owned();
+    assert_eq!(
+        line.matches(run.as_str()).count(),
+        1,
+        "the answer names its run once, so another run's answer differs from it only there"
+    );
+    let another = line.replace(run.as_str(), "20260906t091500z-fedcba");
+    njutest_devkit::golden::golden(
+        &seeds.join("carried_answers/two-answers.jsonl"),
+        format!("{line}\n{another}\n").as_bytes(),
+    )
+    .expect("the answer store's seed of two runs is the recorded document under both");
+}
+
+#[test]
 fn the_published_schema_accepts_a_populated_document() {
     let text = json::document(&populated()).expect("a sound report is written");
     let document: serde_json::Value = njutest_devkit::strictjson::decode_str(&text).expect("JSON");

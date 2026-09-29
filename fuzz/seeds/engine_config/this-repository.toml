@@ -18,7 +18,7 @@
 version = 1
 
 [project]
-packages = ["rust-mutants", "rust-mutants-cli", "njutest", "xtask"]
+packages = ["rust-mutants", "rust-mutants-decision", "rust-mutants-cli", "njutest", "xtask"]
 
 [mutation]
 tier = "all"
@@ -26,35 +26,17 @@ tier = "all"
 [execution]
 offline = true
 locked = true
-
-# A place the tests answer for by construction rather than by running.
+# Two targets a run of this workspace may not start.
+# It is not about processes:
 #
-# `Phase` ends its phase in `Drop`, so the explicit `end()` at the tail of a
-# function is there for a reader and not for the recording. That is the design
-# — a phase nobody can forget to close — and the invariant it rests on has a
-# test of its own: `trace.rs::a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest`
-# drops a guard without calling `end` and still finds the `phase-end`. An
-# acceptance whose reason is an invariant is only as good as the test on that
-# invariant, so the test is named here for whoever reads this next.
-[[mutation.expect]]
-path = "crates/rust-mutants/src/prove.rs"
-item = "establish"
-rule = "delete-call-statement"
-original = "phase.end();"
-line = 201
-reason = "Phase ends its phase on Drop, so the explicit end at the tail of establish changes no recording; a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest holds that"
-
-# The runner's own `Phase` is the same design and the same acceptance. Its
-# guard is held by `crates/njutest/tests/trace.rs`, which drops a phase
-# without calling `end` and still finds the `phase-end`. Two products reached
-# this shape separately, which is what a design being right looks like from
-# the outside.
-[[mutation.expect]]
-path = "crates/njutest/src/assure/baseline.rs"
-item = "observe"
-rule = "delete-call-statement"
-original = "phase.end();"
-reason = "the runner's Phase ends its phase on Drop, so the explicit end at the tail of observe changes no recording; a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest holds that"
+# `xtask/test/toolchain_gates` and `xtask/test/this_repository` hold the assertions whose subject is this repository, reached through `env!("CARGO_MANIFEST_DIR")`, which under measurement names the snapshot.
+# The snapshot is this repository as the engine rewrote it, guards and runtime and all,
+# and each private generated support module carries the exact `#[allow(dead_code, unused_qualifications)]` that its generated boundary needs,
+# while `cargo xtask lints` refuses every `#[allow]` in repository source; the runtime's statics are seams, its step error names no code, and the copy has no git.
+# So those tests fail on the instrumentation and would fail on it identically under every mutation.
+# A test whose subject is the tree it is compiled from cannot be measured by copying the tree, which is why they are a binary apart from xtask's suite.
+# `cargo xtask all` refuses a name here that no target of the workspace has, so a rename is caught where it lands.
+skip_targets = ["xtask/test/this_repository", "xtask/test/toolchain_gates"]
 
 # The language server reads a report and says what it holds. Four of its
 # survivors are places where the mutation names the same value the code does.
@@ -115,10 +97,10 @@ reason = "the restore that always follows attempts the same path with the same c
 
 [[mutation.expect]]
 path = "crates/rust-mutants/src/prove.rs"
-item = "establish"
+item = "checked_until_compiled"
 rule = "question-to-unwrap"
 original = "?"
-line = 151
+line = 246
 reason = "the restore on the line above runs first and reports the same condition, so this one is reached only when a write failed and putting it back did not, which no deterministic test can arrange; a fail-open the suite cannot reach rather than an equivalence, and a_source_the_pass_cannot_write_stops_it_rather_than_letting_it_vouch holds the contract"
 
 # What the rewrite refuses when it cannot be applied, which it never is.
@@ -132,10 +114,10 @@ reason = "the restore on the line above runs first and reports the same conditio
 # question nobody wrote.
 [[mutation.expect]]
 path = "crates/rust-mutants/src/instrument/witness.rs"
-item = "witness_file"
+item = "apply_plan"
 rule = "question-to-unwrap"
 original = "?"
-line = 204
+line = 189
 reason = "plan emits one rewrite per span, so the splices apply is handed never overlap and it never fails; two_claims_over_one_span_are_one_rewrite_rather_than_two holds that grouping, and this is an equivalence under it rather than an unreachable fail-open"
 
 # Which of the mutations a locator names is asked where its line has moved to.
@@ -154,21 +136,16 @@ rule = "first-to-last"
 original = "first"
 reason = "a locator with no count names one mutation and one with a count was narrowed by the line it carries, so the first and the last of what it names are written on the same line; a_locator_that_states_a_count_names_that_many_and_refuses_any_other_number and a_mutant_is_located_by_its_locator_and_a_moved_line_is_reported_not_guessed hold both halves"
 
-# Writing a checkpoint turns the state into text and then writes it, and the
-# first of those cannot fail: `State` is strings, numbers, and vectors of the
-# same, and `serde_json` refuses only a map whose keys are not strings or a
-# `Serialize` that returns an error of its own. Neither is reachable from this
-# type, and the type is what the invariant is about. The round trip is held by
-# `checkpoint.rs::what_an_interrupted_run_saved_is_what_the_next_one_reads`,
-# which writes a state and reads the same one back; if the type ever grows a
-# field that can refuse, that test is where it shows.
+# Writing a checkpoint turns the state into text and then writes it, and the first of those cannot fail: `State` is strings, numbers, enums of strings, and vectors of the same, the sealed executions each kill rests on among them, and `serde_json` refuses only a map whose keys are not strings or a `Serialize` that returns an error of its own.
+# Neither is reachable from this type, and the type is what the invariant is about.
+# The round trip is held by `checkpoint.rs::what_an_interrupted_run_saved_is_what_the_next_one_reads`, which writes a state and reads the same one back; if the type ever grows a field that can refuse, that test is where it shows.
 [[mutation.expect]]
 path = "crates/njutest/src/checkpoint.rs"
 item = "write"
 rule = "question-to-unwrap"
 original = "?"
-line = 256
-reason = "serialising a State cannot fail: it is strings, numbers and vectors of them, and what_an_interrupted_run_saved_is_what_the_next_one_reads holds the round trip that would show a field which can refuse"
+line = 348
+reason = "serialising a State cannot fail: it is strings, numbers, enums of strings and vectors of them, the sealed executions a kill rests on included, and what_an_interrupted_run_saved_is_what_the_next_one_reads holds the round trip that would show a field which can refuse"
 
 # `RunKind` derives `Default` with `#[default]` on `Full`, because a run
 # nobody narrowed looked at everything. So the fallback and the default are the
@@ -180,38 +157,6 @@ item = "kind_of"
 rule = "return-default"
 original = "RunKind::Full"
 reason = "Full is what RunKind derives Default as, because a run nobody narrowed looked at everything; a_new_report_names_the_schema_the_run_and_what_it_ran_on holds both names to the one value"
-
-# Where an edit is, in a file whose bytes are not text, which there are none of.
-#
-# A session keeps the pristine bytes of the files discovery parsed, and
-# discovery refuses a file that is not UTF-8 before it proposes anything in it
-# (`SyntaxError::NotUtf8`, held by `syntax.rs::a_file_that_does_not_parse_is_an_error_naming_the_line`).
-# So every source a session holds is text, and reading it as text cannot fail.
-# The guard stays because `sources` is a public map a caller may one day fill
-# itself, and answering with a position counted in replacement characters
-# would put a line number on bytes nobody has.
-[[mutation.expect]]
-path = "crates/rust-mutants/src/session/mod.rs"
-item = "position"
-rule = "question-to-unwrap"
-original = "?"
-line = 393
-reason = "discovery refuses a file that is not UTF-8 before anything is proposed in it, so every source a session holds is text; a_file_that_does_not_parse_is_an_error_naming_the_line holds that, and this is an equivalence under it rather than a fail-open the suite cannot reach"
-
-# The code a clean run exits with, which is the same number either way.
-#
-# `EXIT_DETECTED` is zero, and zero is what `u8::default()` is, so a run that
-# established detection for everything it executed exits with the same status
-# whichever of the two the code names. The constant is there so a reader of
-# `exit_code` sees which of the four codes this is rather than a bare literal.
-# `run.rs::the_exit_code_says_what_the_run_established_and_nothing_more` holds
-# the number for a run with no findings.
-[[mutation.expect]]
-path = "crates/rust-mutants/src/run.rs"
-item = "Run::exit_code"
-rule = "return-default"
-original = "EXIT_DETECTED"
-reason = "EXIT_DETECTED is zero and so is u8::default(), so a clean run exits with the same status either way; the_exit_code_says_what_the_run_established_and_nothing_more holds that number, and this is an equivalence under it rather than a fail-open the suite cannot reach"
 
 # Which way a run measures its mutants, which is two ways of one thing.
 #
@@ -234,21 +179,18 @@ path = "crates/rust-mutants/src/run.rs"
 item = "run"
 rule = "eq-to-neq"
 original = "=="
-line = 709
+line = 1232
 reason = "serially and the pool are two ways of doing one thing and a catalog answers the same either way; one_job_and_several_judge_a_catalog_the_same_way holds that by running one catalog both ways, and this is an equivalence under it rather than a fail-open the suite cannot reach"
 
-# A `Record` is strings and an enum of strings, so `serde_json::to_string` has
-# no failure to take: the `?` and an unwrap answer alike because the Err arm
-# does not exist for this type. `evidence_store.rs::a_record_says_what_shape_it_is_and_what_established_it`
-# renders both shapes of `Outcome` and reads them back, which is the invariant
-# this rests on.
+# A `Record` is strings, enums of strings, and the evidence it rests on, which is the same, so `serde_json::to_string` has no failure to take: the `?` and an unwrap answer alike because the Err arm does not exist for this type.
+# `evidence_store.rs::a_record_says_what_shape_it_is_and_what_established_it` renders both shapes of `Outcome` and reads them back, which is the invariant this rests on.
 [[mutation.expect]]
 path = "crates/njutest/src/evidence/store.rs"
 item = "write"
 rule = "question-to-unwrap"
 original = "?"
-line = 230
-reason = "a Record is strings and an enum of strings, so rendering it as JSON has no failure arm; a_record_says_what_shape_it_is_and_what_established_it renders both of its shapes and reads them back"
+line = 319
+reason = "a Record is strings, enums of strings and the evidence it rests on, which is the same, so rendering it as JSON has no failure arm; a_record_says_what_shape_it_is_and_what_established_it renders both of its shapes and reads them back"
 
 # The mutation phase's `Phase` is the third of the same design and the same
 # acceptance. `crates/njutest/tests/trace.rs` drops a phase without calling
@@ -260,3 +202,30 @@ item = "run_resuming"
 rule = "delete-call-statement"
 original = "phase.end();"
 reason = "the runner's Phase ends its phase on Drop, so the explicit end at the tail of run_resuming changes no recording; a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest holds that"
+
+# How much of a command fits on the line, which is the same line either way.
+#
+# The loop stops when the line has reached the width, and whatever it did not show is then cut to exactly that width and marked.
+# Letting one more argument on before cutting makes the line longer and the first `COMMAND_WIDTH` characters of it the same, and the mark goes on either way — because something was left over in one case and the characters ran over in the other.
+# `trace_command.rs::a_command_is_shown_by_its_own_name_and_cut_where_it_stops_being_readable` holds the width, the mark, and the beginning that survives the cut.
+[[mutation.expect]]
+path = "crates/njutest/src/app/trace.rs"
+item = "said"
+rule = "lt-to-le"
+original = "<"
+reason = "the line is cut to the width and marked whichever side of it the loop stopped on, so both render the same line; a_command_is_shown_by_its_own_name_and_cut_where_it_stops_being_readable holds the width, the mark and the beginning"
+
+# Whether the executions measured, as the first detection writes it.
+#
+# A pass over the executions reads `measured` only where no execution killed the mutant:
+# `standing` settles on the kill before it asks whether anything measured.
+# So what the first detection writes into `measured` decides nothing,
+# and `true` or `false` there give every sequence of executions the same standing;
+# `every_standing_up_to_three_executions_is_the_one_the_rules_give` holds every standing of up to three executions,
+# and the Kani law `a_sealed_detection_establishes_the_first_kill` holds it for every sequence the harness spans.
+[[mutation.expect]]
+path = "crates/rust-mutants-decision/src/evidence.rs"
+item = "Pass::after"
+rule = "true-to-false"
+original = "true"
+reason = "a pass over the executions reads measured only where no execution killed the mutant, so what the first detection writes into it gives every sequence the same standing; every_standing_up_to_three_executions_is_the_one_the_rules_give and a_sealed_detection_establishes_the_first_kill hold that"

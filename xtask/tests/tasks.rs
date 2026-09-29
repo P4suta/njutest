@@ -1042,7 +1042,12 @@ fn everything_that_runs_a_gate() -> String {
 #[test]
 fn nothing_that_runs_a_gate_turns_a_comparison_into_a_recording() {
     let running = everything_that_runs_a_gate();
-    for lever in ["UPDATE_GOLDEN", "UPDATE_FATES", "TRYBUILD"] {
+    for lever in [
+        "UPDATE_GOLDEN",
+        "UPDATE_FATES",
+        "UPDATE_ENGINE_RUNS",
+        "TRYBUILD",
+    ] {
         assert!(
             !running.contains(lever),
             "a task or a workflow setting {lever} turns 59 goldens from a comparison \

@@ -248,3 +248,102 @@ fn every_kept_crash_is_the_input_of_an_ordinary_test() {
          waits for: {untested:?}"
     );
 }
+
+/// Every seed that is a copy of a file of this repository, and the file it copies, which `UPDATE_GOLDEN=1` records it from again; the answer store's seeds are recorded from the report's document by `crates/njutest/tests/report_json.rs`.
+const COPIES: [(&str, &str); 6] = [
+    (
+        "fuzz/seeds/report_document/one-run.json",
+        "crates/njutest/tests/testdata/report.golden.json",
+    ),
+    (
+        "fuzz/seeds/engine_config/this-repository.toml",
+        ".rust-mutants.toml",
+    ),
+    (
+        "fuzz/seeds/trace_reader/one-run.jsonl",
+        "crates/rust-mutants/tests/testdata/trace/basic.golden",
+    ),
+    (
+        "fuzz/seeds/annotations/sign.rs",
+        "fixtures/fixture-baseline/src/lib.rs",
+    ),
+    (
+        "fuzz/seeds/discover_file/sign.rs",
+        "fixtures/fixture-baseline/src/lib.rs",
+    ),
+    (
+        "fuzz/seeds/discover_file/macros.rs",
+        "fixtures/fixture-macros/src/lib.rs",
+    ),
+];
+
+#[test]
+fn every_seed_that_copies_a_file_is_that_file_as_it_is_now() {
+    for (seed, source) in COPIES {
+        let now =
+            std::fs::read(root().join(source)).unwrap_or_else(|error| panic!("{source}: {error}"));
+        njutest_devkit::golden::golden(&root().join(seed), &now).unwrap_or_else(|error| {
+            panic!(
+                "{seed} is a copy of {source}, and a copy kept by hand goes stale: \
+                 UPDATE_GOLDEN=1 records it again\n{error}"
+            )
+        });
+    }
+}
+
+/// Every file below `directory` but a build's output, each with its bytes' length.
+fn files_below(directory: &Path, found: &mut Vec<(PathBuf, u64)>) {
+    for entry in directory_entries(directory) {
+        let kind = file_type(&entry);
+        if kind.is_dir() && file_name(&entry) != "target" && !file_name(&entry).starts_with('.') {
+            files_below(&entry.path(), found);
+        } else if kind.is_file() {
+            let length = entry
+                .metadata()
+                .unwrap_or_else(|error| panic!("{}: {error}", entry.path().display()))
+                .len();
+            found.push((entry.path(), length));
+        }
+    }
+}
+
+#[test]
+fn a_seed_the_same_as_a_file_of_this_repository_is_recorded_from_it() {
+    let mut elsewhere = Vec::new();
+    for directory in ["crates", "fixtures", "xtask", "docs"] {
+        files_below(&root().join(directory), &mut elsewhere);
+    }
+    let configuration = root().join(".rust-mutants.toml");
+    let length = std::fs::metadata(&configuration)
+        .unwrap_or_else(|error| panic!("{}: {error}", configuration.display()))
+        .len();
+    elsewhere.push((configuration, length));
+    let mut seeds = Vec::new();
+    files_below(&root().join("fuzz/seeds"), &mut seeds);
+    let recorded: BTreeSet<&str> = COPIES.iter().map(|(seed, _source)| *seed).collect();
+    let mut unrecorded = Vec::new();
+    for (seed, length) in &seeds {
+        let bytes =
+            std::fs::read(seed).unwrap_or_else(|error| panic!("{}: {error}", seed.display()));
+        let relative = seed
+            .strip_prefix(root())
+            .unwrap_or_else(|error| panic!("{}: {error}", seed.display()))
+            .to_str()
+            .unwrap_or_else(|| panic!("{} is not a path this ledger can name", seed.display()))
+            .to_owned();
+        let copied = elsewhere.iter().any(|(file, size)| {
+            size == length
+                && std::fs::read(file).unwrap_or_else(|error| panic!("{}: {error}", file.display()))
+                    == bytes
+        });
+        if copied && !recorded.contains(relative.as_str()) {
+            unrecorded.push(relative);
+        }
+    }
+    assert!(
+        unrecorded.is_empty(),
+        "these seeds are copies of files of this repository that nothing records again, so \
+         the first edit of the file leaves the seed saying what it used to: name each in \
+         COPIES with the file it copies: {unrecorded:?}"
+    );
+}

@@ -484,6 +484,7 @@ What the tests hold the engine to: the same candidates at the same lines and col
 and reports one failure that names the file and shows a unified diff.
 Without `UPDATE_GOLDEN=1` the comparison is read-only, and a missing file is a failure rather than a silent first recording.
 `TRYBUILD=overwrite` is the same switch for the compile-error goldens of the attribute macros.
+The fuzz seeds that copy something of this repository are goldens too, recorded by the same switch from what they copy, as [the fuzz README](../fuzz/README.md#seeds) says.
 
 ### Fixture projects
 

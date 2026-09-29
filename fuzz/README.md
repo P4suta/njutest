@@ -28,6 +28,10 @@ every seed to the reader its target uses. **A seed the reader refuses is not
 a seed**: the target returns on the first line and the run explores what it
 explored before. Writing these found two of mine that did exactly that.
 
+A seed that copies something of this repository is recorded from it, never kept by hand: a hand-kept copy of the report said for weeks that doctests are not routed to mutants, after the document had come to say they are routed by the file they are in.
+`xtask/tests/fuzz_ledger.rs` records each seed its `COPIES` names from the file it copies, `report_document` from the report's golden among them, and `crates/njutest/tests/report_json.rs` records `carried_answers` from the same document, one line per answer as the store keeps it; `UPDATE_GOLDEN=1` records them all again, and the diff is the review.
+The ledger also refuses a seed byte for byte the same as a file of the repository that `COPIES` does not name, so a copy is recorded from the day it is added.
+
 A target whose input is bytes rather than a document needs none.
 
 ## Regressions

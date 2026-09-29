@@ -205,13 +205,9 @@ reason = "the runner's Phase ends its phase on Drop, so the explicit end at the 
 
 # How much of a command fits on the line, which is the same line either way.
 #
-# The loop stops when the line has reached the width, and whatever it did not
-# show is then cut to exactly that width and marked. Letting one more argument
-# on before cutting makes the line longer and the first `COMMAND_WIDTH`
-# characters of it the same, and the mark goes on either way — because
-# something was left over in one case and the characters ran over in the other.
-# `trace_command.rs::a_command_is_shown_by_its_own_name_and_cut_where_it_stops_being_readable`
-# holds the width, the mark, and the beginning that survives the cut.
+# The loop stops when the line has reached the width, and whatever it did not show is then cut to exactly that width and marked.
+# Letting one more argument on before cutting makes the line longer and the first `COMMAND_WIDTH` characters of it the same, and the mark goes on either way — because something was left over in one case and the characters ran over in the other.
+# `trace_command.rs::a_command_is_shown_by_its_own_name_and_cut_where_it_stops_being_readable` holds the width, the mark, and the beginning that survives the cut.
 [[mutation.expect]]
 path = "crates/njutest/src/app/trace.rs"
 item = "said"
