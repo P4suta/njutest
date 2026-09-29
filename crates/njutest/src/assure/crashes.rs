@@ -6,7 +6,6 @@
 use std::collections::BTreeMap;
 
 use rust_mutants::catalog::Mutant;
-use rust_mutants::instrument::CRASH_EXIT;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::session::{Asked, Kept, Observing, Request as ExecRequest, Session, Stop};
 
@@ -230,8 +229,65 @@ enum Ran {
     Stopped(Kept),
     /// It passed without reaching the call's stop, so another test is asked.
     Passed,
+    /// A process it started stopped at the call, and its own process ended with this status.
+    Elsewhere(i32),
     /// It came to something else, which decides nothing either way.
     Other(Outcome, i32),
+}
+
+/// What one run of a test with the crash active came to, before what it left is read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Came {
+    /// It stopped at the call.
+    Stopped,
+    /// It passed without reaching the call's stop.
+    Passed,
+    /// A process it started stopped at the call, and its own process ended with this status.
+    Elsewhere(i32),
+    /// It came to something else.
+    Other(Outcome, i32),
+}
+
+/// What the runtime's notice says of one run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Noticed {
+    /// The engine verified the notice and the stop's status: the run's own process stopped at the call.
+    Stop,
+    /// Some process of the run published its notice, and the run's own process did not end with the stop's status.
+    Published,
+    /// No process of the run published it.
+    Nothing,
+}
+
+impl Noticed {
+    /// What `stop` and whether the notice was `published` say.
+    const fn of(stop: Stop, published: bool) -> Self {
+        if stop.noticed() {
+            Self::Stop
+        } else if published {
+            Self::Published
+        } else {
+            Self::Nothing
+        }
+    }
+}
+
+/// What a run whose notice says `noticed`, that ended with `exit_code` and came to `outcome`, came to.
+const fn came_to(noticed: Noticed, exit_code: i32, outcome: Outcome) -> Came {
+    match noticed {
+        Noticed::Stop => return Came::Stopped,
+        Noticed::Published => return Came::Elsewhere(exit_code),
+        Noticed::Nothing => {}
+    }
+    match outcome {
+        Outcome::Survived => Came::Passed,
+        other @ (Outcome::NotRun
+        | Outcome::Killed
+        | Outcome::StepLimitReached
+        | Outcome::Waited
+        | Outcome::Inconclusive
+        | Outcome::Errored) => Came::Other(other, exit_code),
+    }
 }
 
 /// One test a crash is put to.
@@ -261,36 +317,30 @@ impl Stopped<'_> {
         let (result, kept) = self
             .session
             .exec_keeping(&self.request(self.mutant.id.as_str()), self.watch.cancel)?;
-        if result.exit_code == CRASH_EXIT && kept.stop().noticed() {
-            let left = kept.left()?;
-            self.recorded(Recorded {
-                stage: "crash",
-                exit_code: result.exit_code,
-                outcome: result.outcome(),
-                stop: kept.stop(),
-                issued: Some(kept.notice()),
-                left: &left,
-                failed: &[],
-            });
-            return Ok(Ran::Stopped(kept));
-        }
+        let came = came_to(
+            Noticed::of(kept.stop(), kept.notice().published()),
+            result.exit_code,
+            result.outcome(),
+        );
+        let left = if came == Came::Stopped {
+            kept.left()?
+        } else {
+            Vec::new()
+        };
         self.recorded(Recorded {
             stage: "crash",
             exit_code: result.exit_code,
             outcome: result.outcome(),
             stop: kept.stop(),
             issued: Some(kept.notice()),
-            left: &[],
+            left: &left,
             failed: &[],
         });
-        Ok(match result.outcome() {
-            Outcome::Survived => Ran::Passed,
-            other @ (Outcome::NotRun
-            | Outcome::Killed
-            | Outcome::StepLimitReached
-            | Outcome::Waited
-            | Outcome::Inconclusive
-            | Outcome::Errored) => Ran::Other(other, result.exit_code),
+        Ok(match came {
+            Came::Stopped => Ran::Stopped(kept),
+            Came::Passed => Ran::Passed,
+            Came::Elsewhere(exit_code) => Ran::Elsewhere(exit_code),
+            Came::Other(outcome, exit_code) => Ran::Other(outcome, exit_code),
         })
     }
 
@@ -300,6 +350,16 @@ impl Stopped<'_> {
         let kept = match self.crashed()? {
             Ran::Stopped(kept) => kept,
             Ran::Passed => return Ok(None),
+            Ran::Elsewhere(exit_code) => {
+                return Ok(Some(CrashDecision::Undecided {
+                    on,
+                    why: format!(
+                        "a process the test started stopped at the call and the test's own \
+                         process ended with status {exit_code}, so the stop is not one the next \
+                         run's test made"
+                    ),
+                }));
+            }
             Ran::Other(outcome, exit_code) => {
                 return Ok(Some(CrashDecision::Undecided {
                     on,
@@ -485,4 +545,35 @@ fn prepared(
         },
         watch.cancel,
     )?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Came, Noticed, Outcome, came_to};
+    use rust_mutants::instrument::CRASH_EXIT;
+
+    #[test]
+    fn a_notice_published_by_a_process_the_test_started_is_a_stop_elsewhere() {
+        assert_eq!(
+            came_to(Noticed::Stop, CRASH_EXIT, Outcome::Killed),
+            Came::Stopped,
+            "the test's own process stopped at the call"
+        );
+        assert_eq!(
+            came_to(Noticed::Published, 0, Outcome::Survived),
+            Came::Elsewhere(0),
+            "a child published this run's notice and its parent tolerated the child's status: \
+             a stop happened where the next run's test did not make it, which is not a pass"
+        );
+        assert_eq!(
+            came_to(Noticed::Published, 101, Outcome::Killed),
+            Came::Elsewhere(101),
+            "and a parent that failed for losing its child stopped elsewhere as well"
+        );
+        assert_eq!(
+            came_to(Noticed::Nothing, 0, Outcome::Survived),
+            Came::Passed,
+            "a run that published nothing passed without reaching the stop"
+        );
+    }
 }

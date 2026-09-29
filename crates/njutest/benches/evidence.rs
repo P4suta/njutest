@@ -57,7 +57,7 @@ fn common() -> key::Common {
         platform: "x86_64-unknown-linux-gnu".to_owned(),
         engine: "e".repeat(64),
         environment: environment(20),
-        contract: "standard-v1".to_owned(),
+        contract: Contract::StandardV1,
         test_args: Vec::new(),
         build: rust_mutants::cargo::BuildConfig {
             features: vec!["default".to_owned()],

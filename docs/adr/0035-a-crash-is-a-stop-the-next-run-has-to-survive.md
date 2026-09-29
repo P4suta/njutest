@@ -11,15 +11,23 @@ Proposed, 2026-09-24.
 The dimension `durable` of the assurance matrix ([ADR 0033](0033-every-dimension-or-a-hole.md)).
 Amended by [ADR 0046](0046-a-verdict-is-what-a-sealed-run-observed.md): a sealed crash is confirmed in one round, the next instance starting from the crashed one's overlay.
 Implemented natively by `crash-after-write`, the runtime's crash notice, `njutest::assure::crashes` and the proofaudit `crashes` layer.
-What stands between it and acceptance, as a reading of the tree on 2026-09-29 found it:
+What holds, as the tree stands on 2026-09-29:
+
+| Decision | Held by |
+| --- | --- |
+| 1, a call that writes | discovery's `crash-after-write`, every writing call of which is a site in `syntax::every_call_that_writes_is_a_place_a_crash_is_put`; a call whose value is a future is refused by the compiler through the runtime's `Written` and is `not-put`, in `touch_runtime::a_stop_after_a_call_whose_value_is_a_future_is_one_the_compiler_refuses` |
+| 2, the stop, the notice and the child | the runtime's `crashed_after` and notice, the engine's `Stop`; a notice published by a process the test started, with the test's own process not stopped, is `undecided` in the runner's `Noticed` and in the audit's re-decision, in `assure::crashes::tests::a_notice_published_by_a_process_the_test_started_is_a_stop_elsewhere` and `crashes::a_stop_in_a_child_the_test_started_leaves_the_crash_undecided_whatever_the_parent_did`; one run per nonce in `crashes::a_nonce_is_one_run_s_and_a_second_run_carrying_it_is_refused` |
+| 3, the next run and its audit | `njutest::assure::crashes` and the proofaudit `crashes` layer, over the steps the recording keeps |
+
+What stands between it and acceptance:
 
 - The amendment: every crash runs natively in three rounds; nothing starts an instance from another's overlay, a crash record does not say it was sealed, and the sealed build the crash session makes is read by nothing.
 - Decision 2: the stop is `std::process::exit`, which flushes standard output, runs the C runtime's exit handlers and, on glibc, the calling thread's thread-local destructors, so "no flush after it" does not hold for state kept there, and no test holds that nothing after the call is written.
-- Decisions 1 and 2: a write that returns a future, `tokio::fs::write` or an asynchronous `write_all`, is a site at which `crashed_after` stops before the write happens, the case this record sets aside, and reads as `restarted`.
-- Decision 2: a child that reaches the crash is untested, and a parent that tolerates its child's status reads the run as passed; the audit's one-run-per-nonce rule is untested.
-- Decision 3: an entry of the crashed scratch whose name is not UTF-8 ends the phase rather than leaving the crash `undecided`, and a crash that wrote only to a home the run was given reads as `unshared`.
+  The standard library has no safe exit that skips them, and an `unsafe` call to `_exit` in the generated runtime would stop every crate that forbids `unsafe_code` from compiling; in a sealed run the host can take the overlay at the notice, which is the amendment's work.
+- Decision 2: no toolchain run puts a crash a child process reaches; the classification is held by unit tests of the runner and the audit.
+- Decision 3: an entry of the crashed scratch whose name is not UTF-8 ends the phase rather than leaving the crash `undecided`, because the engine's walk of what a stop left refuses the entry and the runner does not read that refusal as a run that could not be read; a crash that wrote only to a home the run was given reads as `unshared`.
 - Decision 5: a tree with no write call is known to have nothing to ask only after its crash build and baseline, and a baseline that fails there makes the column `unmeasured`.
-- The runner and the audit are never run together on a real recording; `copy`, `remove_file`, `sync_all`, `sync_data`, `set_len` and `flush` are never sites in a test.
+- The runner and the audit are never run together on a real recording, and no toolchain run puts a crash after `copy`, `remove_file`, `sync_all`, `sync_data`, `set_len` or `flush`.
 
 ## Context
 
@@ -38,6 +46,7 @@ The suite already is the check: a test that reads what the previous run left is 
 
 2. **A crash lets the call finish and then stops the process.** Under the crash, the call is evaluated and the process ends at once with its own exit status, with no destructor, flush or unwinding after it: what the call wrote is on disk, and nothing after it is.
    Stopping after the call rather than before it is the case that tears state: before it, the write never happened, which a program already has to be ready for.
+   A call whose value is a future has written nothing when it returns, so a stop after it would be a stop before the write: the compiler refuses it, and the crash is not put.
    Before it stops, the runtime publishes a notice naming this execution's nonce, the catalog and the crash, outside the scratch the test sees; the exit status alone is something a test can return, so a stop is the status and the notice together, and the engine keeps its own files beside the scratch rather than in it, so what the scratch holds is only what the test left.
    Only the engine says a run stopped: the value it hands back after verifying the notice is the one thing a stop can be recorded from, so a runner cannot record one it did not see.
    The recording keeps the evidence rather than the verdict: each crashed run's record carries what the engine issued it — the full mutation, the catalog, the nonce — and the notice it read back, and the audit decides the stop again from exactly that, holding the record's `noticed` to it, the mutation to the report's site, and every nonce to one run.

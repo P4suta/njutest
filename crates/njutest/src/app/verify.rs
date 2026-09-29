@@ -1156,7 +1156,7 @@ fn evidence_of(
             arguments.shard.clone(),
         )?
         .environment,
-        contract: format!("{:?}", config.contract).to_lowercase(),
+        contract: config.contract,
         test_args: harness_args(arguments, config),
         build: config.execution.build().selection(),
         timeout_ms: u64::try_from(config.execution.timeout.as_millis()).map_err(|_overflow| {

@@ -168,6 +168,17 @@ impl Default for Contract {
 impl Contract {
     const PROTOCOL_DEFAULT: Self = Self::WholeV1;
 
+    /// The name a document, a report and a key spell it by.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::StandardV1 => "standard-v1",
+            Self::DeepV1 => "deep-v1",
+            Self::VerifiedV1 => "verified-v1",
+            Self::WholeV1 => "whole-v1",
+        }
+    }
+
     /// Whether the soundness phase runs Miri, where an inventory alone would be a limitation.
     #[must_use]
     pub const fn runs_miri(self) -> bool {
@@ -927,16 +938,12 @@ impl Config {
     /// Returns a typed error when a `verified-v1` bound is absent or zero, or when another contract carries verifier-only keys.
     /// This rechecks public fields so a caller that constructs or mutates [`Config`] cannot bypass the same boundary enforced by [`Config::parse`].
     pub fn verified(&self) -> Result<Option<Verified>, VerificationError> {
-        match self.contract {
-            Contract::VerifiedV1 => self.verification.checked().map(Some),
-            Contract::StandardV1 | Contract::DeepV1 | Contract::WholeV1
-                if self.verification.is_empty() =>
-            {
-                Ok(None)
-            }
-            Contract::StandardV1 | Contract::DeepV1 | Contract::WholeV1 => {
-                Err(VerificationError::WrongContract)
-            }
+        if self.contract.proves_models() {
+            self.verification.checked().map(Some)
+        } else if self.verification.is_empty() {
+            Ok(None)
+        } else {
+            Err(VerificationError::WrongContract)
         }
     }
 
@@ -990,14 +997,17 @@ impl Config {
                 .and_then(|table| table.get(key))
                 .is_some()
         };
-        let every: Vec<crate::report::knobs::Knob> = crate::report::knobs::Knob::ALL.to_vec();
         let refused = if said("faults", "inject") && !self.faults.inject {
             Some("[faults] inject = false")
         } else if said("durability", "crash") && !self.durability.crash {
             Some("[durability] crash = false")
         } else if said("schedules", "explore") && self.schedules.explore == 0 {
             Some("[schedules] explore = 0")
-        } else if said("repeatable", "knobs") && self.repeatable.knobs != every {
+        } else if said("repeatable", "knobs")
+            && !crate::report::knobs::Knob::ALL
+                .iter()
+                .all(|knob| self.repeatable.knobs.contains(knob))
+        {
             Some("[repeatable] knobs naming fewer than every knob")
         } else {
             None

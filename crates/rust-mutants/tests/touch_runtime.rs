@@ -196,6 +196,54 @@ fn ran(name: &str, body: &str, touching: bool) -> String {
     }
 }
 
+/// Whether a program around the runtime whose `main` is `body` compiles, with what rustc said.
+fn compiles(name: &str, body: &str) -> (bool, String) {
+    let (module, _) = module();
+    let temporary = tempfile::tempdir().expect("a place to build");
+    let dir = temporary.path();
+    let source = dir.join(format!("{name}.rs"));
+    std::fs::write(&source, format!("{module}\nfn main() {{\n{body}\n}}\n")).expect("write");
+    let built = Command::new("rustc")
+        .args([
+            "--edition",
+            "2024",
+            "--crate-type",
+            "bin",
+            "--emit",
+            "metadata",
+        ])
+        .arg("--out-dir")
+        .arg(dir)
+        .arg(&source)
+        .output()
+        .expect("rustc runs");
+    (
+        built.status.success(),
+        exact_output(&built.stderr).to_owned(),
+    )
+}
+
+#[test]
+fn a_stop_after_a_call_whose_value_is_a_future_is_one_the_compiler_refuses() {
+    let (future, said) = compiles(
+        "stops_after_a_future",
+        &format!("let _written = {MODULE_STEM}::crashed_after(std::future::ready(()));"),
+    );
+    assert!(
+        !future,
+        "a call whose value is a future has written nothing when it returns, so a stop after \
+         it would stop before the write; the compiler refuses it and the crash is not put: {said}"
+    );
+    let (written, said) = compiles(
+        "stops_after_a_write",
+        &format!("let _written = {MODULE_STEM}::crashed_after(std::fs::write(\"x\", b\"y\"));"),
+    );
+    assert!(
+        written,
+        "a call that has written by the time it returns is one a stop can come after: {said}"
+    );
+}
+
 /// Builds a program around the runtime whose body makes the failures a fault makes, runs it asked to record what became of them, and returns each event it recorded.
 fn fated(name: &str, body: &str) -> Vec<String> {
     let (module, _) = module();

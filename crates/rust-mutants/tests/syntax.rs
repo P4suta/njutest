@@ -602,6 +602,51 @@ fn the_families_input_exercises_every_rule_and_matches_the_golden() {
 }
 
 #[test]
+fn every_call_that_writes_is_a_place_a_crash_is_put() {
+    let source = "pub fn keep(path: &std::path::Path, file: &mut std::fs::File) -> std::io::Result<()> {\n\
+                  \x20   std::fs::write(path, \"kept\")?;\n\
+                  \x20   std::fs::rename(path, path)?;\n\
+                  \x20   std::fs::copy(path, path)?;\n\
+                  \x20   std::fs::remove_file(path)?;\n\
+                  \x20   std::fs::create_dir_all(path)?;\n\
+                  \x20   std::fs::File::create(path)?;\n\
+                  \x20   std::io::Write::write_all(file, b\"kept\")?;\n\
+                  \x20   file.write_all(b\"kept\")?;\n\
+                  \x20   file.sync_all()?;\n\
+                  \x20   file.sync_data()?;\n\
+                  \x20   file.set_len(0)?;\n\
+                  \x20   file.flush()?;\n\
+                  \x20   Ok(())\n\
+                  }\n";
+    let found = discover_every_rule(source);
+    let crashed: Vec<&[u8]> = found
+        .candidates
+        .iter()
+        .filter(|one| one.candidate.rule.name == "crash-after-write")
+        .map(|one| one.candidate.original.as_slice())
+        .collect();
+    for call in [
+        "std::fs::write(path, \"kept\")",
+        "std::fs::rename(path, path)",
+        "std::fs::copy(path, path)",
+        "std::fs::remove_file(path)",
+        "std::fs::create_dir_all(path)",
+        "std::fs::File::create(path)",
+        "file.write_all(b\"kept\")",
+        "file.sync_all()",
+        "file.sync_data()",
+        "file.set_len(0)",
+        "file.flush()",
+    ] {
+        assert!(
+            crashed.contains(&call.as_bytes()),
+            "{call} writes a file a later run can read, so a crash is put just after it: {}",
+            render(&found).join("\n")
+        );
+    }
+}
+
+#[test]
 fn the_families_input_in_crlf_finds_the_same_candidates_at_the_same_places() {
     let root =
         njutest_devkit::paths::workspace_root().join("crates/rust-mutants/tests/testdata/syntax");

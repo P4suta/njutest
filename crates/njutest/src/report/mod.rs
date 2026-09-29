@@ -5960,7 +5960,7 @@ pub enum CompletionError {
     #[error("verified-v1 requires an exact post-lattice model batch")]
     ModelRequired,
     /// A non-model contract was given a model batch.
-    #[error("contract {contract:?} does not admit model evidence")]
+    #[error("contract {} does not admit model evidence", contract.name())]
     ModelForbidden {
         /// The contract that has no model phase.
         contract: crate::config::Contract,
@@ -6273,25 +6273,15 @@ impl Report {
     fn checked(report: Self) -> Result<Self, CompletionError> {
         validate_completion_shape(&report.run_id, &report.composition, &report.builds)?;
         reject_premature_model_outcomes(&report.builds)?;
-        match (&report.contract, &report.model_completion) {
-            (crate::config::Contract::VerifiedV1, ModelCompletion::Verified(batch)) => {
+        match (report.contract.proves_models(), &report.model_completion) {
+            (true, ModelCompletion::Verified(batch)) => {
                 validate_model_batch(&report.run_id, &report.builds, batch)?;
             }
-            (crate::config::Contract::VerifiedV1, ModelCompletion::NotRequired) => {
+            (true, ModelCompletion::NotRequired) => {
                 return Err(CompletionError::ModelRequired);
             }
-            (
-                crate::config::Contract::StandardV1
-                | crate::config::Contract::DeepV1
-                | crate::config::Contract::WholeV1,
-                ModelCompletion::NotRequired,
-            ) => {}
-            (
-                crate::config::Contract::StandardV1
-                | crate::config::Contract::DeepV1
-                | crate::config::Contract::WholeV1,
-                ModelCompletion::Verified(_),
-            ) => {
+            (false, ModelCompletion::NotRequired) => {}
+            (false, ModelCompletion::Verified(_)) => {
                 return Err(CompletionError::ModelForbidden {
                     contract: report.contract,
                 });
@@ -6931,12 +6921,12 @@ fn projected_findings(
         .map(|mutant| (mutant.id.as_str(), mutant.display_id.as_str()))
         .collect();
     let mut projected = global_findings.to_vec();
+    if contract.asks_every_dimension() {
+        projected.extend(matrix::holes(&pooled_matrix(builds)));
+    }
     for build in builds.iter() {
         let from = projected.len();
         projected.extend(catalog_of(build).findings);
-        if contract.asks_every_dimension() {
-            projected.extend(merged_matrix_findings(build));
-        }
         for part in build.parts.iter() {
             for finding in part
                 .findings
@@ -7020,12 +7010,6 @@ pub fn acceptances_the_catalog_resolves(
         .collect()
 }
 
-/// The dimension findings of a build, derived from every part's records rather than read from what a part stored, so a report cannot drop one (ADR 0033).
-fn merged_matrix_findings(build: &BuildEvidence) -> Vec<Finding> {
-    let owned = MatrixEvidence::of(&[build]);
-    matrix::holes(&matrix::rows(&owned.borrowed()))
-}
-
 /// Every record of one kind every part of every build holds, part by part.
 fn part_records<T: Clone>(builds: &BuildLedger, of: fn(&BuildPartEvidence) -> &[T]) -> Vec<T> {
     builds
@@ -7057,9 +7041,9 @@ fn pooled_matrix(builds: &BuildLedger) -> Vec<matrix::Row> {
         .collect()
 }
 
-/// Every record of some builds a matrix is read off, gathered from every part.
+/// Every record of some builds a matrix is read off: what each part decided from every part, and what every part's shared baseline holds once per build.
 struct MatrixEvidence {
-    mutations: (usize, usize),
+    mutations: (usize, Vec<String>),
     targets: Vec<TargetRecord>,
     knobs: Vec<knobs::KnobRecord>,
     faults: Vec<faults::FaultRecord>,
@@ -7074,18 +7058,11 @@ impl MatrixEvidence {
     /// What every part of `builds` holds.
     fn of(builds: &[&BuildEvidence]) -> Self {
         let parts = || builds.iter().flat_map(|build| build.parts.iter());
-        let holes = parts()
-            .flat_map(|part| part.mutants.iter())
-            .filter(|mutant| mutant.verdict().unsettled())
-            .count();
-        let answered = parts()
-            .flat_map(|part| part.mutants.iter())
-            .filter(|mutant| !mutant.verdict().unsettled())
-            .count();
         Self {
-            mutations: (answered, holes),
-            targets: parts()
-                .flat_map(|part| part.targets.iter().cloned())
+            mutations: matrix::mutations(parts().flat_map(|part| part.mutants.iter())),
+            targets: builds
+                .iter()
+                .flat_map(|build| build.baseline().targets.iter().cloned())
                 .collect(),
             knobs: knobs::combined(parts().flat_map(|part| part.knobs.iter())),
             faults: parts()
@@ -7094,15 +7071,25 @@ impl MatrixEvidence {
             crashes: parts()
                 .flat_map(|part| part.crashes.iter().cloned())
                 .collect(),
-            concurrency: parts()
-                .flat_map(|part| part.concurrency.iter().cloned())
+            concurrency: builds
+                .iter()
+                .flat_map(|build| build.baseline().concurrency.iter().cloned())
                 .collect(),
             seams: builds
                 .iter()
                 .flat_map(|build| build.baseline().seams.iter().cloned())
                 .collect(),
-            limitations: parts()
-                .flat_map(|part| part.limitations.iter().cloned())
+            limitations: builds
+                .iter()
+                .flat_map(|build| {
+                    let mut stated: Vec<Limitation> = Vec::new();
+                    for limitation in build.parts.iter().flat_map(|part| part.limitations.iter()) {
+                        if !stated.contains(limitation) {
+                            stated.push(limitation.clone());
+                        }
+                    }
+                    stated
+                })
                 .collect(),
             findings: parts()
                 .flat_map(|part| part.findings.iter().cloned())
@@ -7113,7 +7100,7 @@ impl MatrixEvidence {
     /// The same records, as the matrix reads them.
     fn borrowed(&self) -> matrix::Evidence<'_> {
         matrix::Evidence {
-            mutations: self.mutations,
+            mutations: self.mutations.clone(),
             targets: &self.targets,
             knobs: &self.knobs,
             faults: &self.faults,

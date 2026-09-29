@@ -180,20 +180,11 @@ pub fn identity(inputs: &Inputs) -> String {
                 .iter()
                 .map(|(name, value)| format!("{name}={value}")),
         )
-        .field("contract", contract_name(inputs.contract))
+        .field("contract", inputs.contract.name())
         .field("configuration", &inputs.configuration)
         .list("test-args", &inputs.test_args)
         .field("mode", inputs.mode.name())
         .list("mode-detail", inputs.mode.detail())
         .field("shard", inputs.shard.as_deref().unwrap_or_default());
     fields.finish()
-}
-
-const fn contract_name(contract: Contract) -> &'static str {
-    match contract {
-        Contract::StandardV1 => "standard-v1",
-        Contract::DeepV1 => "deep-v1",
-        Contract::VerifiedV1 => "verified-v1",
-        Contract::WholeV1 => "whole-v1",
-    }
 }

@@ -1187,6 +1187,7 @@ pub fn sharded_clean() -> Result<Perturbation, SpecimenError> {
         shards,
         outputs: Vec::new(),
         beside: Vec::new(),
+        kept: None,
     })
 }
 
@@ -1292,6 +1293,8 @@ pub struct Perturbation {
     pub outputs: Vec<(&'static str, &'static str)>,
     /// What the one configured build's engine kept beside its recording of the answers it carried, each by its file name.
     pub beside: Vec<(&'static str, Value)>,
+    /// The record stream the run kept beside its report, or nothing where it kept none.
+    pub kept: Option<String>,
 }
 
 /// The clean specimen every perturbation starts from, on which no layer may find anything.
@@ -1318,6 +1321,7 @@ pub fn clean() -> Perturbation {
         shards: Vec::new(),
         outputs: Vec::new(),
         beside: Vec::new(),
+        kept: None,
     }
 }
 
@@ -1363,6 +1367,9 @@ impl Perturbation {
     /// [`SpecimenError`] when either cannot be written.
     pub fn lay(&self) -> Result<Laid, SpecimenError> {
         let run = run_directory(&self.document)?;
+        if let Some(kept) = &self.kept {
+            written(&run.path().join(crate::proofaudit::LINES_FILE), kept)?;
+        }
         let trace = self
             .events
             .as_deref()
@@ -1861,6 +1868,7 @@ fn unobserved_repair_called_a_survival() -> Perturbation {
         shards: Vec::new(),
         outputs: Vec::new(),
         beside: Vec::new(),
+        kept: None,
     }
 }
 
@@ -1886,6 +1894,7 @@ pub fn merge_plant(
     let clean = sharded_clean()?;
     let mut document = clean.document.clone();
     let mut shards = clean.shards.clone();
+    let mut kept = clean.kept.clone();
     let name = match rule {
         MergeRule::Division => {
             shards.truncate(1);
@@ -1943,11 +1952,16 @@ pub fn merge_plant(
             "a merge that completes a model batch no merge can"
         }
         MergeRule::Shards => forged_alike(&mut document, &mut shards),
+        MergeRule::Dimensions => {
+            kept = Some(established_everywhere());
+            "a merge whose record stream calls every dimension established and names one open"
+        }
     };
     Ok(Perturbation {
         name,
         document,
         shards,
+        kept,
         ..clean
     })
 }
@@ -1961,6 +1975,17 @@ fn merge_plants() -> Vec<Perturbation> {
             Err(_unbuilt_is_refused_by_the_merge_gate) => None,
         })
         .collect()
+}
+
+/// A record stream whose every column says there was nothing to ask, beside a finding that names one of them open, which no `standard-v1` merge of the clean specimen's parts says.
+fn established_everywhere() -> String {
+    let mut kept = crate::proofaudit::DIMENSIONS
+        .iter()
+        .map(|dimension| format!("DIMENSION\t{dimension}\tnothing-to-ask\tplanted\n"))
+        .collect::<Vec<String>>()
+        .concat();
+    kept.push_str("FINDING\tdimension-not-measured\tmutation\tplanted\n");
+    kept
 }
 
 /// A kill reported as a survivor in the first shard and in the merged part it became, alike, which only re-deciding the shard against its recording can see.

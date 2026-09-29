@@ -184,6 +184,58 @@ fn completed(run: &str, measured: Vec<(String, BuildSelection, BuildReport)>) ->
         .expect("standard-v1 needs no model completion")
 }
 
+fn asking_every_dimension(mut report: BuildReport) -> BuildReport {
+    report.contract = njutest::config::Contract::WholeV1;
+    let rows = njutest::report::matrix::rows(&njutest::report::matrix::Evidence::of(&report));
+    report
+        .findings
+        .extend(njutest::report::matrix::holes(&rows));
+    report.verdict = report.concluded();
+    report
+}
+
+#[test]
+fn a_dimension_several_builds_leave_open_is_one_finding_of_the_run() {
+    let whole = completed(
+        "the-run",
+        vec![
+            (
+                "default".to_owned(),
+                build(),
+                asking_every_dimension(for_builds(
+                    report("r", &[("a", "killed")]),
+                    &["default", "release"],
+                )),
+            ),
+            (
+                "release".to_owned(),
+                build(),
+                asking_every_dimension(for_builds(
+                    report("r-1", &[("a", "killed")]),
+                    &["default", "release"],
+                )),
+            ),
+        ],
+    );
+    let conclusion = whole
+        .conclusion()
+        .expect("the checked whole has a representable conclusion");
+    let named: Vec<&str> = conclusion
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == njutest::report::FindingKind::DimensionNotMeasured)
+        .map(|finding| finding.subject.as_str())
+        .collect();
+    let mut once = named.clone();
+    once.sort_unstable();
+    once.dedup();
+    assert!(
+        !named.is_empty() && named.len() == once.len(),
+        "a column is one column however many builds fill it, so each dimension it leaves open \
+         is one finding: {named:?}"
+    );
+}
+
 #[test]
 fn a_mutation_only_one_build_noticed_is_a_mutation_the_run_did_not_notice() {
     let whole = completed(

@@ -342,7 +342,14 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     // A crash lets the call that writes finish and then stops the process
     // with nothing after it: no destructor, flush or unwinding, so what the
     // call wrote is on disk and nothing later is.
-    pub(crate) fn crashed_after<T>(_written: T) -> T {
+    // A call whose value is a future has written nothing when it returns,
+    // so a stop after it would stop before the write. Every value is
+    // `Written<()>` and a future is `Written<u8>` as well, so for a future
+    // the compiler cannot choose, refuses the stop, and the crash is not put.
+    pub(crate) trait Written<Which> {}
+    impl<T> Written<()> for T {}
+    impl<F: __rm_std::future::Future> Written<u8> for F {}
+    pub(crate) fn crashed_after<T: Written<Which>, Which>(_written: T) -> T {
         let _published = publish_crash_notice();
         stop(93, Why::said("crash"))
     }

@@ -1001,6 +1001,92 @@ fn a_shard_holds_evidence_about_its_survivor_beside_a_fault_another_shard_holds(
 }
 
 #[test]
+fn a_whole_run_that_established_every_dimension_is_assured() {
+    let established = |source: &mut BuildReport| {
+        source.contract = Contract::WholeV1;
+        source.knobs = njutest::report::knobs::Knob::ALL
+            .into_iter()
+            .map(|knob| njutest::report::knobs::KnobRecord {
+                target: "pkg/lib/pkg".to_owned(),
+                knob,
+                standing: njutest::report::knobs::Standing::Stable,
+            })
+            .collect();
+        source.concurrency = vec![njutest::report::concurrency::ConcurrencyRecord {
+            target: "pkg/lib/pkg".to_owned(),
+            standing: njutest::concurrency::proof::Standing::SingleThreaded,
+            explored: njutest::report::concurrency::Exploration::Unexplored {
+                why: njutest::report::concurrency::Unexplored::NotNeeded,
+            },
+        }];
+        source.limitations.push(Limitation::new(
+            njutest::limitation::Limitation::FaultNoSite,
+            "no measured file has a `?`",
+        ));
+        source.limitations.push(Limitation::new(
+            njutest::limitation::Limitation::CrashNoSite,
+            "no measured file calls anything that writes",
+        ));
+    };
+    let only = part_varying(
+        "only",
+        "1/1",
+        vec![row(0, &"a".repeat(64), "killed", false)],
+        &established,
+    );
+    let whole = whole("the-whole", &[only]);
+    let conclusion = whole.conclusion().expect("a representable conclusion");
+    let open: Vec<String> = conclusion
+        .matrix
+        .iter()
+        .filter_map(|row| row.column.hole(row.dimension))
+        .collect();
+    assert!(
+        open.is_empty(),
+        "every dimension is measured without a hole or has nothing to ask: {open:?}"
+    );
+    assert_eq!(
+        whole.verdict(),
+        Verdict::Assured,
+        "a strict contract that nothing can satisfy is a useless default, so a run that \
+         established every dimension is assured: {:?}",
+        conclusion.findings
+    );
+}
+
+#[test]
+fn a_binary_every_shard_ran_is_one_hole_of_the_merge_however_many_shards_ran_it() {
+    let whole = |source: &mut BuildReport| source.contract = Contract::WholeV1;
+    let one = part_varying(
+        "one",
+        "1/2",
+        vec![row(0, &"a".repeat(64), "killed", false)],
+        &whole,
+    );
+    let two = part_varying(
+        "two",
+        "2/2",
+        vec![row(1, &"b".repeat(64), "killed", false)],
+        &whole,
+    );
+    let conclusion = super_whole(&[one, two]);
+    let scheduled = conclusion
+        .matrix
+        .iter()
+        .find(|row| row.dimension == njutest::report::matrix::Dimension::Schedule)
+        .map(|row| row.column.clone());
+    assert!(
+        matches!(
+            &scheduled,
+            Some(njutest::report::matrix::Column::Measured { catalogued: 1, holes, .. })
+                if holes.len() == 1
+        ),
+        "the shards divide one catalog and share one baseline, so the binary each of them ran \
+         is one binary: {scheduled:?}"
+    );
+}
+
+#[test]
 fn a_merge_of_whole_parts_names_each_dimension_they_left_a_hole_once() {
     let whole = |source: &mut BuildReport| source.contract = Contract::WholeV1;
     let one = part_varying(

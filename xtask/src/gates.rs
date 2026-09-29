@@ -2702,7 +2702,21 @@ pub fn proofaudit_merged(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    proofaudit::merge::merged_with(checkers, &merged.label, &merged.text, &audited)
+    let kept = proofaudit::kept_stream(merged.run.as_deref()).map_err(|source| {
+        proofaudit::AuditError::Unreadable {
+            path: merged.label.clone(),
+            source,
+        }
+    })?;
+    proofaudit::merge::merged_with(
+        checkers,
+        proofaudit::Reported {
+            path: &merged.label,
+            text: &merged.text,
+        },
+        kept.as_deref(),
+        &audited,
+    )
 }
 
 /// An assurance document as the audit reads it: where it is, what it says, and the run directory holding it when one was named.
