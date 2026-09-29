@@ -43,6 +43,7 @@ fn every_nullable_v1_report_field_is_still_a_required_key() {
         "/mutants/0/route",
         "/mutants/0/route/fallback",
         "/mutants/0/source_run_id",
+        "/targets/0/sealed/remedy",
         "/findings/0/mutant",
     ] {
         let mut missing = exact.clone();

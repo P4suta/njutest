@@ -654,6 +654,8 @@ pub struct Run {
     pub duration: Duration,
     /// How wide the run measured: what was asked for, and how many at once that came to on this machine.
     pub width: Width,
+    /// How the sealed build answered for each target, by target identity.
+    pub answering: std::collections::BTreeMap<String, crate::sealed::bench::Answering>,
 }
 
 /// How wide a run measured, resolved once so the run and what it reports cannot disagree.
@@ -1225,10 +1227,7 @@ pub fn run<O: Observer>(
         used: options.jobs.resolve(),
     };
     let runner = sealed_runner(session)?;
-    let bench = match &runner {
-        Some(runner) => Some(session.bench(runner)?),
-        None => None,
-    };
+    let (bench, answering) = benched(session, runner.as_ref())?;
     observer.starting(count(places.len())?, width);
     let judged = if width.used == 1 {
         serially(
@@ -1269,6 +1268,7 @@ pub fn run<O: Observer>(
         shard: options.shard,
         duration: started.elapsed(),
         width,
+        answering,
     })
 }
 
@@ -1716,13 +1716,38 @@ pub fn sealed_now(session: &Session, mutant: &Mutant) -> Result<Option<Judged>, 
 pub fn sealed_runner(
     session: &Session,
 ) -> Result<Option<rust_mutants_sealed::SealedRunner>, EngineError> {
-    if session.sealed().modules.is_empty() {
+    if session.sealed().modules.is_empty() && session.sealed().doctests.is_empty() {
         return Ok(None);
     }
     match rust_mutants_sealed::SealedRunner::new(crate::sealed::bench::WATCHDOG) {
         Ok(runner) => Ok(Some(runner)),
         Err(source) => Err(crate::sealed::bench::BenchError::Runner { source }.into()),
     }
+}
+
+/// The bench `runner` assembles for `session`, where there is a runner, and how the sealed build answers for each target either way.
+///
+/// # Errors
+/// A module that cannot be read, an environment that is not text, or a host that cannot run what it is given.
+fn benched<'runner>(
+    session: &Session,
+    runner: Option<&'runner rust_mutants_sealed::SealedRunner>,
+) -> Result<
+    (
+        Option<crate::sealed::bench::Bench<'runner>>,
+        std::collections::BTreeMap<String, crate::sealed::bench::Answering>,
+    ),
+    EngineError,
+> {
+    let Some(runner) = runner else {
+        return Ok((
+            None,
+            crate::sealed::bench::Answering::unassembled(session.sealed()),
+        ));
+    };
+    let bench = session.bench(runner)?;
+    let answering = bench.answering();
+    Ok((Some(bench), answering))
 }
 
 /// Puts `mutant` to the sealed executions of every test whose control reached it, and judges it from them alone where they establish a verdict (ADR 0046).

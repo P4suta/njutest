@@ -43,6 +43,22 @@ pub enum Unsealed {
 }
 
 impl Unsealed {
+    /// The name a report spells it with.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::NotAsked => "not-asked",
+            Self::TargetMissing => "target-missing",
+            Self::NotBuilt => "not-built",
+            Self::DoctestsUnaccounted => "doctests-unaccounted",
+            Self::NotVerified => "not-verified",
+            Self::NativeUnnamed => "native-unnamed",
+            Self::ProcMacro => "proc-macro",
+            Self::NotListed => "not-listed",
+            Self::NoHarness => "no-harness",
+        }
+    }
+
     /// What to do so that what this names seals.
     #[must_use]
     pub const fn remedy(self) -> &'static str {

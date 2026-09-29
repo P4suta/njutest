@@ -676,6 +676,11 @@ fn the_lines_say_how_much_of_a_whole_run_this_one_did_not_do() {
             harness: true,
             tests: 4,
             limitations: Vec::new(),
+            sealed: rust_mutants_cli::report::run::SealedTargetDocument {
+                state: "sealed".to_owned(),
+                remedy: None,
+                uncontrolled: Vec::new(),
+            },
         },
         rust_mutants_cli::report::run::TargetDocument {
             id: "demo/test/parity".to_owned(),
@@ -683,6 +688,11 @@ fn the_lines_say_how_much_of_a_whole_run_this_one_did_not_do() {
             harness: true,
             tests: 2,
             limitations: Vec::new(),
+            sealed: rust_mutants_cli::report::run::SealedTargetDocument {
+                state: "sealed".to_owned(),
+                remedy: None,
+                uncontrolled: Vec::new(),
+            },
         },
     ];
     for mutant in &mut document.mutants {

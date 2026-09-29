@@ -315,6 +315,23 @@ fn what_only_an_example_the_sealed_target_ignores_reaches_is_unproven() {
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let document = report(&fixture);
+    let documentation = document["targets"]
+        .as_array()
+        .expect("the targets")
+        .iter()
+        .find(|target| target["kind"].as_str() == Some("doc"))
+        .expect("the documentation target");
+    assert_eq!(
+        documentation["sealed"]["uncontrolled"],
+        serde_json::json!([{ "test": "src/lib.rs - twice (line 8)", "reason": "not-held" }]),
+        "the report names the example the sealed build does not hold: {documentation}"
+    );
+    let printed = njutest_devkit::process::strict_utf8(&output.stdout);
+    assert!(
+        printed.contains("SEALED") && printed.contains("src/lib.rs - twice (line 8) (not-held)"),
+        "the run says which test it could not seal, where a reader of an unproven mutant \
+         looks for why: {printed}"
+    );
     for mutant in mutants_at(&document, 12) {
         let evidence = &mutant["evidence"];
         assert_eq!(evidence["kind"].as_str(), Some("unproven"), "{mutant}");

@@ -157,6 +157,7 @@ Each is found, not listed: from the build, from the module's imports, and from t
 | rustdoc's report does not account for the capture | a claim the report does not name, one out of order, or a merged binary that does not name its doctests | run `cargo test --doc --target wasm32-wasip1` to see what rustdoc reported |
 
 A mutant that no sealed test can answer for is unproven, and its native lead is still reported.
+The report says of every target which of these it is, as `targets[].sealed`, and names each test the native baseline ran that has no sealed control and why; the run's own output lists them under `SEALED`, each reason once with what to do about it.
 
 ## Exit codes
 

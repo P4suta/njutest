@@ -3,10 +3,10 @@
   "schema_version": 4,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260928t231951483z",
-    "started_at": "2026-09-28T23:19:51.483505Z",
-    "finished_at": "2026-09-28T23:19:55.276627Z",
-    "duration_ms": 1615,
+    "id": "20260929t001909914z",
+    "started_at": "2026-09-29T00:19:09.914052Z",
+    "finished_at": "2026-09-29T00:19:13.917635Z",
+    "duration_ms": 1614,
     "interrupted": false,
     "exit_code": 2,
     "shard": null,
@@ -18,7 +18,7 @@
   "workspace": {
     "root_name": "fixture-declines",
     "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "2bb000db44a7ebfc2588c1aeab190abb9e5f83fc692d2452ff3aab4ba518e518",
+    "workspace_digest": "d46c2cfa60a6156d577ebd89744f5cc35f281057be9f748349b5f2e55c1bad94",
     "catalog_digest": "f91d0075316f556332ce70a1567c14e96df7e6d652f986acc99893aae8540149",
     "platform": {
       "os": "darwin",
@@ -67,14 +67,37 @@
       "kind": "lib",
       "harness": true,
       "tests": 5,
-      "limitations": []
+      "limitations": [],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": [
+          {
+            "test": "tests::counts_what_it_shares",
+            "reason": "declined"
+          },
+          {
+            "test": "tests::doubles_what_it_shares",
+            "reason": "declined"
+          },
+          {
+            "test": "tests::halves_what_it_shares",
+            "reason": "declined"
+          }
+        ]
+      }
     },
     {
       "id": "fixture-declines/test/elsewhere",
       "kind": "test",
       "harness": true,
       "tests": 1,
-      "limitations": []
+      "limitations": [],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
     },
     {
       "id": "fixture-declines/doc/fixture_declines",
@@ -84,7 +107,12 @@
       "limitations": [
         "doctests-routed-by-file",
         "doctests-none"
-      ]
+      ],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
     }
   ],
   "established_tests": 8,
@@ -110,7 +138,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 35,
+      "duration_ms": 25,
       "tests_run": 3,
       "killed_by": [],
       "signal": null,
@@ -182,7 +210,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 35,
+      "duration_ms": 28,
       "tests_run": 3,
       "killed_by": [],
       "signal": null,
@@ -254,7 +282,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 35,
+      "duration_ms": 27,
       "tests_run": 3,
       "killed_by": [],
       "signal": null,
@@ -313,7 +341,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 29,
+      "duration_ms": 31,
       "tests_run": 3,
       "killed_by": [],
       "signal": null,
@@ -385,7 +413,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 28,
+      "duration_ms": 29,
       "tests_run": 3,
       "killed_by": [],
       "signal": null,
@@ -457,7 +485,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 35,
+      "duration_ms": 25,
       "tests_run": 3,
       "killed_by": [],
       "signal": null,
@@ -529,7 +557,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 9,
+      "duration_ms": 12,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -587,7 +615,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 33,
+      "duration_ms": 26,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -765,7 +793,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 29,
+      "duration_ms": 27,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -828,7 +856,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 9,
+      "duration_ms": 8,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -886,7 +914,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 33,
+      "duration_ms": 31,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -948,7 +976,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": -1,
-      "duration_ms": 35,
+      "duration_ms": 30,
       "tests_run": 1,
       "killed_by": [
         "tests::doubles_what_it_shares"
@@ -1007,7 +1035,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 36,
+      "duration_ms": 29,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -1069,7 +1097,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 31,
+      "duration_ms": 29,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -1131,7 +1159,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 35,
+      "duration_ms": 33,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -1319,7 +1347,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 31,
+      "duration_ms": 28,
       "tests_run": 2,
       "killed_by": [],
       "signal": null,
@@ -1382,7 +1410,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 33,
+      "duration_ms": 35,
       "tests_run": 2,
       "killed_by": [],
       "signal": null,
@@ -1445,7 +1473,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": -1,
-      "duration_ms": 24,
+      "duration_ms": 16,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -1505,7 +1533,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": -1,
-      "duration_ms": 23,
+      "duration_ms": 15,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -1565,7 +1593,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": -1,
-      "duration_ms": 23,
+      "duration_ms": 21,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -1625,7 +1653,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": -1,
-      "duration_ms": 11,
+      "duration_ms": 9,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -1685,7 +1713,7 @@
       "step_notice": null,
       "target": "fixture-declines/test/elsewhere",
       "exit_code": 0,
-      "duration_ms": 35,
+      "duration_ms": 34,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -1749,7 +1777,7 @@
       "step_notice": null,
       "target": "fixture-declines/test/elsewhere",
       "exit_code": 0,
-      "duration_ms": 32,
+      "duration_ms": 30,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -1813,7 +1841,7 @@
       "step_notice": null,
       "target": "fixture-declines/test/elsewhere",
       "exit_code": 0,
-      "duration_ms": 30,
+      "duration_ms": 31,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -1877,7 +1905,7 @@
       "step_notice": null,
       "target": "fixture-declines/test/elsewhere",
       "exit_code": 0,
-      "duration_ms": 29,
+      "duration_ms": 28,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,

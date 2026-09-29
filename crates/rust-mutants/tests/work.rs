@@ -43,7 +43,7 @@ fn document(targets: &[&str], rows: &[serde_json::Value]) -> RunDocument {
         "targets": targets
             .iter()
             .map(|id| serde_json::json!({
-                "id": id, "kind": "test", "harness": true, "tests": 1, "limitations": []
+                "id": id, "kind": "test", "harness": true, "tests": 1, "limitations": [], "sealed": {"state": "sealed", "remedy": null, "uncontrolled": []}
             }))
             .collect::<Vec<_>>(),
         "accounting": {

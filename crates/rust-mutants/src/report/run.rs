@@ -1099,8 +1099,11 @@ pub struct Meta<'a> {
     pub finished_at: Timestamp,
 }
 
-/// Every test target the run built, as documents.
-fn target_documents(session: &Session) -> Vec<TargetDocument> {
+/// Every test target the run built, as documents, each with how the sealed build answered for it in `answering`.
+fn target_documents(
+    session: &Session,
+    answering: &BTreeMap<String, crate::sealed::bench::Answering>,
+) -> Vec<TargetDocument> {
     session
         .targets()
         .iter()
@@ -1114,6 +1117,7 @@ fn target_documents(session: &Session) -> Vec<TargetDocument> {
                 .iter()
                 .map(|limitation| limitation.name().to_owned())
                 .collect(),
+            sealed: SealedTargetDocument::of(answering.get(target.id())),
         })
         .collect()
 }
@@ -1149,7 +1153,7 @@ pub fn document(
         },
         workspace: crate::report::catalog::workspace_document(session)?,
         selection,
-        targets: target_documents(session),
+        targets: target_documents(session, &run.answering),
         established_tests: session.established_tests()?,
         accounting: tally.into(),
         score: run.score()?.map(|score| ScoreDocument {
@@ -1311,6 +1315,58 @@ pub struct TargetDocument {
     pub tests: u32,
     /// What a run could not establish about it, each named.
     pub limitations: Vec<String>,
+    /// How the sealed build answers for it.
+    pub sealed: SealedTargetDocument,
+}
+
+/// How the sealed build answers for one target (ADR 0046).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SealedTargetDocument {
+    /// `sealed` where it has sealed tests, or the reason it has none.
+    pub state: String,
+    /// What to do so that it seals, where it has no sealed tests.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub remedy: Option<String>,
+    /// Each test its native baseline ran that has no sealed control, and why.
+    pub uncontrolled: Vec<UncontrolledDocument>,
+}
+
+/// One test a native baseline ran that has no sealed control.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UncontrolledDocument {
+    /// The test.
+    pub test: String,
+    /// Why it has no control: what its control came to, `declined`, `unbuilt`, or `not-held`.
+    pub reason: String,
+}
+
+impl SealedTargetDocument {
+    /// What `answering` says of a target, where the sealed build was given it at all.
+    #[must_use]
+    pub fn of(answering: Option<&crate::sealed::bench::Answering>) -> Self {
+        let unsealed = |why: crate::sealed::Unsealed| Self {
+            state: why.name().to_owned(),
+            remedy: Some(why.remedy().to_owned()),
+            uncontrolled: Vec::new(),
+        };
+        match answering {
+            Some(crate::sealed::bench::Answering::Station { uncontrolled }) => Self {
+                state: "sealed".to_owned(),
+                remedy: None,
+                uncontrolled: uncontrolled
+                    .iter()
+                    .map(|(test, why)| UncontrolledDocument {
+                        test: test.clone(),
+                        reason: why.name().to_owned(),
+                    })
+                    .collect(),
+            },
+            Some(crate::sealed::bench::Answering::Unsealed(why)) => unsealed(*why),
+            None => unsealed(crate::sealed::Unsealed::NotAsked),
+        }
+    }
 }
 
 /// One route, as a document, with the targets an execution of it actually ran.

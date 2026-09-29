@@ -1096,7 +1096,8 @@
           "kind",
           "harness",
           "limitations",
-          "tests"
+          "tests",
+          "sealed"
         ],
         "properties": {
           "id": {
@@ -1121,6 +1122,72 @@
             "description": "How many tests this target's baseline ran, which is what asking the whole of it about one mutation costs.",
             "type": "integer",
             "minimum": 0
+          },
+          "sealed": {
+            "description": "How the sealed build answers for this target: `sealed` with the tests its native baseline ran that have no sealed control, or the reason it has no sealed tests and what to do about it (ADR 0046).",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "state",
+              "remedy",
+              "uncontrolled"
+            ],
+            "properties": {
+              "state": {
+                "enum": [
+                  "sealed",
+                  "not-asked",
+                  "target-missing",
+                  "not-built",
+                  "doctests-unaccounted",
+                  "not-verified",
+                  "native-unnamed",
+                  "proc-macro",
+                  "not-listed",
+                  "no-harness"
+                ]
+              },
+              "remedy": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1
+              },
+              "uncontrolled": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "test",
+                    "reason"
+                  ],
+                  "properties": {
+                    "test": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "reason": {
+                      "enum": [
+                        "panicked",
+                        "failed",
+                        "trapped",
+                        "fuel-exceeded",
+                        "memory-exceeded",
+                        "exited-early",
+                        "stack-overflow",
+                        "refused",
+                        "unaccounted",
+                        "declined",
+                        "unbuilt",
+                        "not-held"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }

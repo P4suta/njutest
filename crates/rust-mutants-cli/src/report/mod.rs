@@ -636,12 +636,84 @@ pub fn lines(document: &run::RunDocument) -> Result<String, rust_mutants::work::
         }
     }
     text.push_str(&survivors(document));
+    text.push_str(&sealing(document));
     text.push('\n');
     text.push_str(&totals(document)?);
     if document.run.interrupted {
         text.push_str("\nINTERRUPTED  the run stopped before every mutant was executed\n");
     }
     Ok(text)
+}
+
+/// How many uncontrolled tests of one target the sealing section names before it counts the rest.
+const UNCONTROLLED_NAMED: usize = 3;
+
+/// Which targets have no sealed tests and why, and which tests the native baseline ran have no sealed control, which is where an unproven mutant's reasons come from; nothing where every target is sealed whole.
+fn sealing(document: &run::RunDocument) -> String {
+    let unsealed: Vec<&run::TargetDocument> = document
+        .targets
+        .iter()
+        .filter(|target| target.sealed.remedy.is_some())
+        .collect();
+    let uncontrolled: usize = document
+        .targets
+        .iter()
+        .map(|target| target.sealed.uncontrolled.len())
+        .sum();
+    if unsealed.is_empty() && uncontrolled == 0 {
+        return String::new();
+    }
+    let sealed = document
+        .targets
+        .iter()
+        .filter(|target| target.sealed.remedy.is_none())
+        .count();
+    let mut text = format!(
+        "\nSEALED    {sealed} of {} targets have sealed tests",
+        document.targets.len()
+    );
+    if uncontrolled > 0 {
+        let verb = if uncontrolled == 1 { "has" } else { "have" };
+        let written = write!(
+            text,
+            ", and {uncontrolled} of the tests they ran natively {verb} no sealed control"
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    text.push('\n');
+    let mut reasons: BTreeMap<(&str, &str), Vec<&str>> = BTreeMap::new();
+    for target in &unsealed {
+        if let Some(remedy) = &target.sealed.remedy {
+            reasons
+                .entry((target.sealed.state.as_str(), remedy.as_str()))
+                .or_default()
+                .push(target.id.as_str());
+        }
+    }
+    for ((state, remedy), ids) in &reasons {
+        let written = writeln!(text, "  {state}: {}\n    {remedy}", ids.join(", "));
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    for target in &document.targets {
+        let tests = &target.sealed.uncontrolled;
+        if tests.is_empty() {
+            continue;
+        }
+        let named: Vec<String> = tests
+            .iter()
+            .take(UNCONTROLLED_NAMED)
+            .map(|one| format!("{} ({})", one.test, one.reason))
+            .collect();
+        let rest = tests.iter().skip(UNCONTROLLED_NAMED).count();
+        let more = if rest > 0 {
+            format!(", and {rest} more")
+        } else {
+            String::new()
+        };
+        let written = writeln!(text, "  {}: {}{more}", target.id, named.join(", "));
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    text
 }
 
 /// How many separate gaps the survivors are, which is not how many survivors there are.

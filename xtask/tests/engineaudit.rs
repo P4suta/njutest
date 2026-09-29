@@ -1720,8 +1720,8 @@ fn a_target_the_route_keeps_that_the_record_says_reached_nothing_is_a_violation(
     let mut document = routed_by_test();
     let other = "demo/test/parity";
     document["targets"] = serde_json::json!([
-        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": []},
-        {"id": other, "kind": "test", "harness": true, "tests": 1, "limitations": []}
+        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": [], "sealed": {"state": "sealed", "remedy": null, "uncontrolled": []}},
+        {"id": other, "kind": "test", "harness": true, "tests": 1, "limitations": [], "sealed": {"state": "sealed", "remedy": null, "uncontrolled": []}}
     ]);
     document["mutants"][0]["route"]["reaching"] = serde_json::json!([TARGET, other]);
     let mut recorded = touched();
@@ -1739,9 +1739,9 @@ fn a_target_the_route_keeps_that_the_record_says_reached_nothing_is_a_violation(
 fn a_target_the_run_built_that_the_record_neither_names_nor_excuses_is_a_violation() {
     let mut document = routed_by_test();
     document["targets"] = serde_json::json!([
-        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": []},
+        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": [], "sealed": {"state": "sealed", "remedy": null, "uncontrolled": []}},
         {"id": "demo/test/parity", "kind": "test", "harness": true, "tests": 1,
-         "limitations": []}
+         "limitations": [], "sealed": {"state": "sealed", "remedy": null, "uncontrolled": []}}
     ]);
     let audit = with_record(&document, &touched());
     let said = violations(&audit, Layer::Touch);
@@ -1756,9 +1756,9 @@ fn a_target_the_run_built_that_the_record_neither_names_nor_excuses_is_a_violati
 fn a_target_the_record_excuses_is_accounted_for_rather_than_unnamed() {
     let mut document = routed_by_test();
     document["targets"] = serde_json::json!([
-        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": []},
+        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": [], "sealed": {"state": "sealed", "remedy": null, "uncontrolled": []}},
         {"id": "demo/doc/demo", "kind": "doc", "harness": true, "tests": 1,
-         "limitations": []}
+         "limitations": [], "sealed": {"state": "sealed", "remedy": null, "uncontrolled": []}}
     ]);
     let mut recorded = touched();
     recorded["limitations"] = serde_json::json!(["touch-not-recorded:demo/doc/demo"]);
@@ -1947,7 +1947,7 @@ fn record_of_three() -> serde_json::Value {
 fn a_route_the_guards_narrowed_by_a_comparison_is_re_decided_from_it() {
     let mut document = routed_by_test();
     document["targets"] = serde_json::json!([{ "id": TARGET, "kind": "lib", "harness": true, "tests": 3,
-                             "limitations": [] }]);
+                             "limitations": [], "sealed": {"state": "sealed", "remedy": null, "uncontrolled": []} }]);
     document["mutants"][1]["route"]["tests"][TARGET] =
         serde_json::json!(["tests::max_picks_the_larger"]);
     let recorded = record_of_three();

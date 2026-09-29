@@ -105,7 +105,8 @@ pub fn base() -> Value {
             "build": [], "mutant_steps": 50_000_000
         },
         "targets": [{
-            "id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": []
+            "id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": [],
+            "sealed": { "state": "sealed", "remedy": null, "uncontrolled": [] }
         }],
         "established_tests": 0,
         "accounting": {

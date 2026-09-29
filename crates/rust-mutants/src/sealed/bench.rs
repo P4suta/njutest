@@ -185,14 +185,54 @@ pub struct Control {
 /// Why a listed test has no control a mutant can be judged against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Uncontrolled {
-    /// Its control came to this rather than a pass.
-    Came(Sealed),
+    /// Its control detected something with nothing active: it fails sealed.
+    Detected(rust_mutants_decision::evidence::Detection),
+    /// Its control established nothing, for this reason.
+    Doubted(rust_mutants_decision::evidence::Doubt),
     /// Its control declined to measure on the sealed host (ADR 0043), so it passed having measured nothing.
     Declined,
     /// It runs natively and did not build for the sealed target.
     Unbuilt,
     /// It runs natively and the sealed build does not hold it.
     Unsealed,
+}
+
+impl Uncontrolled {
+    /// The name a report spells why with.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Detected(how) => super::record::Came::of(Sealed::Detected(how)).name(),
+            Self::Doubted(why) => super::record::Came::of(Sealed::Doubted(why)).name(),
+            Self::Declined => "declined",
+            Self::Unbuilt => "unbuilt",
+            Self::Unsealed => "not-held",
+        }
+    }
+}
+
+/// How the sealed build answers for one native target, as a run found it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Answering {
+    /// It has a station, and these tests its native baseline ran have no sealed control.
+    Station {
+        /// Each test with no control, by name, and why.
+        uncontrolled: Vec<(String, Uncontrolled)>,
+    },
+    /// It has no station, and why.
+    Unsealed(Unsealed),
+}
+
+impl Answering {
+    /// How a run that assembled no bench answers for each target `sealed` was given: each by why it has no module.
+    #[must_use]
+    pub fn unassembled(sealed: &SealedBuild) -> BTreeMap<String, Self> {
+        sealed
+            .unsealed
+            .iter()
+            .map(|(id, why)| (id.clone(), Self::Unsealed(*why)))
+            .collect()
+    }
 }
 
 /// What one target's native baseline ran, which its station has to hold.
@@ -403,6 +443,28 @@ impl<'runner> Bench<'runner> {
         Ok(bench)
     }
 
+    /// How the sealed build answers for each target it was given, by target identity.
+    #[must_use]
+    pub fn answering(&self) -> BTreeMap<String, Answering> {
+        let mut answering: BTreeMap<String, Answering> = self
+            .unsealed
+            .iter()
+            .map(|(id, why)| (id.clone(), Answering::Unsealed(*why)))
+            .collect();
+        for (id, station) in &self.stations {
+            let uncontrolled = station
+                .controls
+                .iter()
+                .filter_map(|(test, control)| match control {
+                    Ok(_) => None,
+                    Err(why) => Some((test.clone(), *why)),
+                })
+                .collect();
+            answering.insert(id.clone(), Answering::Station { uncontrolled });
+        }
+        answering
+    }
+
     /// The station of one library's captured doctests, or nothing where a merged binary did not name the doctests it holds.
     fn documented(
         &self,
@@ -573,14 +635,14 @@ impl<'runner> Bench<'runner> {
         )?;
         let transcript = invoke(station, module, &invocation)?;
         let came_to = judged(observed(&transcript, (name, run), None));
-        let unread = Uncontrolled::Came(Sealed::Doubted(
-            rust_mutants_decision::evidence::Doubt::Unaccounted,
-        ));
+        let unread = Uncontrolled::Doubted(rust_mutants_decision::evidence::Doubt::Unaccounted);
         if holds(transcript.stderr().bytes(), NO_SUCH_INDEX) {
             return Ok(Err(unread));
         }
-        if came_to != Sealed::Passed {
-            return Ok(Err(Uncontrolled::Came(came_to)));
+        match came_to {
+            Sealed::Passed => {}
+            Sealed::Detected(how) => return Ok(Err(Uncontrolled::Detected(how))),
+            Sealed::Doubted(why) => return Ok(Err(Uncontrolled::Doubted(why))),
         }
         if written(&transcript, DECLINE_LOG).is_some_and(|notice| !notice.is_empty()) {
             return Ok(Err(Uncontrolled::Declined));

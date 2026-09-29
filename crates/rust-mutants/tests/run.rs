@@ -81,6 +81,7 @@ const fn of(judged: Vec<Judged>) -> Run {
             asked: rust_mutants::run::Jobs::Auto,
             used: 1,
         },
+        answering: std::collections::BTreeMap::new(),
     }
 }
 
@@ -255,6 +256,7 @@ fn a_mutant_a_reviewer_expected_to_survive_is_not_a_finding_and_a_stale_claim_is
             asked: rust_mutants::run::Jobs::Auto,
             used: 1,
         },
+        answering: std::collections::BTreeMap::new(),
     };
     let kinds: Vec<FindingKind> = run.findings().iter().map(|f| f.kind).collect();
     assert_eq!(

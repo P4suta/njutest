@@ -3,10 +3,10 @@
   "schema_version": 4,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260928t231948805z",
-    "started_at": "2026-09-28T23:19:48.805574Z",
-    "finished_at": "2026-09-28T23:19:51.300593Z",
-    "duration_ms": 447,
+    "id": "20260929t001907070z",
+    "started_at": "2026-09-29T00:19:07.070386Z",
+    "finished_at": "2026-09-29T00:19:09.681343Z",
+    "duration_ms": 461,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -18,7 +18,7 @@
   "workspace": {
     "root_name": "fixture-unreached",
     "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "2c4ca86f91421b1140094a39908477cd3f86c876788d27be0dfc7253824f8be8",
+    "workspace_digest": "3d3ae766f3f664a4241d05968142f99da71eca450b7dda221f2c292f2475ee56",
     "catalog_digest": "03c20af27c9024062341116ff85836fcf3a0955215778abecd0001f5c374dd22",
     "platform": {
       "os": "darwin",
@@ -67,7 +67,12 @@
       "kind": "lib",
       "harness": true,
       "tests": 1,
-      "limitations": []
+      "limitations": [],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
     },
     {
       "id": "fixture-unreached/doc/fixture_unreached",
@@ -77,7 +82,12 @@
       "limitations": [
         "doctests-routed-by-file",
         "doctests-none"
-      ]
+      ],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
     }
   ],
   "established_tests": 0,
@@ -103,7 +113,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": -1,
-      "duration_ms": 15,
+      "duration_ms": 24,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -215,7 +225,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": -1,
-      "duration_ms": 27,
+      "duration_ms": 15,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -271,7 +281,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": -1,
-      "duration_ms": 23,
+      "duration_ms": 26,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -327,7 +337,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 9,
+      "duration_ms": 8,
       "tests_run": 0,
       "killed_by": [],
       "signal": null,
@@ -373,7 +383,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 3,
+      "duration_ms": 21,
       "tests_run": 0,
       "killed_by": [],
       "signal": null,
@@ -419,7 +429,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 15,
+      "duration_ms": 2,
       "tests_run": 0,
       "killed_by": [],
       "signal": null,

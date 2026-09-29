@@ -67,14 +67,24 @@
       "kind": "lib",
       "harness": true,
       "tests": 1,
-      "limitations": []
+      "limitations": [],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
     },
     {
       "id": "fixture-simple/test/parity",
       "kind": "test",
       "harness": true,
       "tests": 1,
-      "limitations": []
+      "limitations": [],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
     },
     {
       "id": "fixture-simple/doc/fixture_simple",
@@ -84,7 +94,12 @@
       "limitations": [
         "doctests-routed-by-file",
         "doctests-none"
-      ]
+      ],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
     }
   ],
   "established_tests": 0,

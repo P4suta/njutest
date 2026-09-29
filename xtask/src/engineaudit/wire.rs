@@ -277,6 +277,28 @@ struct Target {
     _tests: u64,
     #[serde(rename = "limitations")]
     _limitations: Vec<String>,
+    #[serde(rename = "sealed")]
+    _sealed: SealedTarget,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SealedTarget {
+    #[serde(rename = "state")]
+    _state: String,
+    #[serde(rename = "remedy", deserialize_with = "required_option")]
+    _remedy: Option<String>,
+    #[serde(rename = "uncontrolled")]
+    _uncontrolled: Vec<UncontrolledTest>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UncontrolledTest {
+    #[serde(rename = "test")]
+    _test: String,
+    #[serde(rename = "reason")]
+    _reason: String,
 }
 
 impl Target {
