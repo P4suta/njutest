@@ -85,13 +85,56 @@ fn test_files(tests: &Path) -> BTreeSet<String> {
         .collect()
 }
 
-/// The quoted file names after `marker` on each line of `text`.
-fn quoted_after(text: &str, marker: &str) -> Vec<String> {
-    text.lines()
-        .filter_map(|line| line.trim().strip_prefix(marker))
-        .filter_map(|rest| rest.split('"').nth(1))
-        .map(str::to_owned)
+/// Whether a manifest turns autotests off, and the path of every `[[test]]` it declares, read as the TOML it is.
+fn manifested(manifest: &str) -> (bool, Vec<String>) {
+    let table: toml::Table = toml::from_str(manifest).expect("a manifest is TOML");
+    let off = table
+        .get("package")
+        .and_then(|package| package.get("autotests"))
+        .and_then(toml::Value::as_bool)
+        == Some(false);
+    let paths = match table.get("test").and_then(toml::Value::as_array) {
+        Some(tests) => tests
+            .iter()
+            .filter_map(|test| test.get("path").and_then(toml::Value::as_str))
+            .map(str::to_owned)
+            .collect(),
+        None => Vec::new(),
+    };
+    (off, paths)
+}
+
+/// The file each module of a suite is compiled from, as its `#[path]` attribute names it.
+fn moduled(suite: &str) -> Vec<String> {
+    let file = njutest_devkit::lexed::file(suite).expect("a suite is Rust");
+    file.items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Mod(module) => module.attrs.iter().find_map(|attribute| {
+                match (&attribute.meta, attribute.path().is_ident("path")) {
+                    (syn::Meta::NameValue(pair), true) => match &pair.value {
+                        syn::Expr::Lit(syn::ExprLit {
+                            lit: syn::Lit::Str(text),
+                            ..
+                        }) => Some(text.value()),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }),
+            _ => None,
+        })
         .collect()
+}
+
+#[test]
+fn a_module_a_suite_only_mentions_in_a_comment_is_compiled_from_nothing() {
+    let suite = "#[path = \"kept.rs\"]\nmod kept;\n/*\n#[path = \"gone.rs\"]\nmod gone;\n*/\n";
+    assert_eq!(
+        moduled(suite),
+        ["kept.rs".to_owned()],
+        "a module inside a block comment is compiled by nothing, and a reader of lines counts it"
+    );
 }
 
 #[test]
@@ -101,15 +144,13 @@ fn every_test_file_is_compiled_by_the_suite_or_as_a_toolchain_binary() {
     for crate_dir in suited(&root) {
         let crate_dir = crate_dir.as_str();
         let manifest = read(&root.join(crate_dir).join("Cargo.toml"));
-        if !manifest
-            .lines()
-            .any(|line| line.trim() == "autotests = false")
-        {
+        let (autotests_off, paths) = manifested(&manifest);
+        if !autotests_off {
             refused.push(format!(
                 "{crate_dir}: autotests is not off, so every file is a binary"
             ));
         }
-        let declared: Vec<String> = quoted_after(&manifest, "path = ")
+        let declared: Vec<String> = paths
             .into_iter()
             .filter_map(|path| path.strip_prefix("tests/").map(str::to_owned))
             .collect();
@@ -117,7 +158,7 @@ fn every_test_file_is_compiled_by_the_suite_or_as_a_toolchain_binary() {
             refused.push(format!("{crate_dir}: no [[test]] compiles tests/suite.rs"));
         }
         let suite = read(&root.join(crate_dir).join("tests/suite.rs"));
-        let moduled: Vec<String> = quoted_after(&suite, "#[path = ");
+        let moduled: Vec<String> = moduled(&suite);
         let files = test_files(&root.join(crate_dir).join("tests"));
         for file in &files {
             let binary = declared.contains(file);
