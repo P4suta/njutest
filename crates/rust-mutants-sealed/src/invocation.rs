@@ -7,8 +7,9 @@ use std::collections::BTreeMap;
 use std::num::NonZeroU64;
 
 use crate::digest::{Encoder, SealedDigest};
-use crate::error::{EnvironmentFault, PreopenFault, SealedError};
-use crate::snapshot::Snapshot;
+use crate::error::{EnvironmentFault, PreopenFault, SealedError, WorkingFault};
+use crate::snapshot::{NodeId, Snapshot};
+use crate::spelling::Spelling;
 
 /// The arguments a guest reads, the program name first.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,25 +73,76 @@ impl Environment {
     }
 }
 
-/// The snapshots a guest may reach, each at its guest path, in the order their descriptors are numbered from 3.
+/// The name the guest's working directory is preopened by.
+pub(crate) const WORKING_NAME: &str = ".";
+
+/// One directory a guest is given before it starts, as a descriptor numbered from 3 in the order given.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Preopens(Vec<(String, Snapshot)>);
+pub enum Preopen {
+    /// A read-only snapshot the guest reaches at `path`.
+    Tree {
+        /// The path the guest names the tree by: its absolute path as the guest's build spells one, POSIX (`/…`) or Windows (`X:\…`).
+        path: String,
+        /// What the tree holds.
+        snapshot: Snapshot,
+    },
+    /// The guest's working directory, preopened as `.`: a directory of the tree preopened before it at `tree`.
+    Working {
+        /// The path of the tree it is in, as that tree's own preopen gives it.
+        tree: String,
+        /// The directory, as `/`-separated names below the tree's root, empty for the root itself.
+        directory: String,
+    },
+}
+
+/// The directories a guest may reach, in the order their descriptors are numbered from 3.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Preopens(Vec<Laid>);
+
+/// A preopen as the host lays it out: what was given, and what the host reads of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Laid {
+    /// A tree.
+    Tree {
+        /// The path the guest names it by.
+        path: String,
+        /// What it holds.
+        snapshot: Snapshot,
+        /// How a path into it is read, as its root is spelled.
+        spelling: Spelling,
+    },
+    /// A working directory.
+    Working {
+        /// The path of the tree it is in.
+        tree: String,
+        /// The directory, as given.
+        directory: String,
+        /// The tree it is in, as the index of the tree among the trees alone.
+        index: usize,
+        /// The directory's node.
+        node: NodeId,
+    },
+}
 
 impl Preopens {
-    /// The preopens, refusing a guest path the guest cannot be given.
+    /// The preopens, refusing a guest path the guest cannot be given and a working directory no tree holds.
     ///
     /// # Errors
-    /// [`SealedError::Preopen`] for an empty guest path, one holding NUL, or one given twice.
-    pub fn new(preopens: Vec<(String, Snapshot)>) -> Result<Self, SealedError> {
-        for (at, (path, _snapshot)) in preopens.iter().enumerate() {
+    /// [`SealedError::Preopen`] for an empty guest path, one holding NUL, or two wasi-libc reads as one place; [`SealedError::WorkingDirectory`] for a working directory that names no tree given before it, or no directory of it.
+    pub fn new(preopens: Vec<Preopen>) -> Result<Self, SealedError> {
+        let mut laid: Vec<Laid> = Vec::with_capacity(preopens.len());
+        for preopen in preopens {
+            let path = match &preopen {
+                Preopen::Tree { path, .. } => path.as_str(),
+                Preopen::Working { .. } => WORKING_NAME,
+            };
             let fault = if path.is_empty() {
                 Some(PreopenFault::Empty)
             } else if path.contains('\0') {
                 Some(PreopenFault::HoldsNul)
-            } else if preopens
+            } else if laid
                 .iter()
-                .take(at)
-                .any(|(earlier, _snapshot)| earlier == path)
+                .any(|earlier| place(earlier.name()) == place(path))
             {
                 Some(PreopenFault::Repeated)
             } else {
@@ -98,20 +150,105 @@ impl Preopens {
             };
             if let Some(fault) = fault {
                 return Err(SealedError::Preopen {
-                    path: path.clone(),
+                    path: path.to_owned(),
                     fault,
                 });
             }
+            let next = match preopen {
+                Preopen::Tree { path, snapshot } => {
+                    let spelling = Spelling::of(&path);
+                    Laid::Tree {
+                        path,
+                        snapshot,
+                        spelling,
+                    }
+                }
+                Preopen::Working { tree, directory } => {
+                    let (index, node) = match working(&laid, &tree, &directory) {
+                        Ok(found) => found,
+                        Err(fault) => {
+                            return Err(SealedError::WorkingDirectory {
+                                tree,
+                                directory,
+                                fault,
+                            });
+                        }
+                    };
+                    Laid::Working {
+                        tree,
+                        directory,
+                        index,
+                        node,
+                    }
+                }
+            };
+            laid.push(next);
         }
-        Ok(Self(preopens))
+        Ok(Self(laid))
     }
 
-    /// Every preopen, as its guest path and its snapshot.
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &Snapshot)> {
-        self.0
-            .iter()
-            .map(|(path, snapshot)| (path.as_str(), snapshot))
+    /// Every preopen, in descriptor order, as the host lays it out.
+    pub(crate) fn laid(&self) -> &[Laid] {
+        &self.0
     }
+}
+
+impl Laid {
+    /// The name the guest is given it by.
+    pub(crate) fn name(&self) -> &str {
+        match self {
+            Self::Tree { path, .. } => path,
+            Self::Working { .. } => WORKING_NAME,
+        }
+    }
+}
+
+/// The tree `laid` holds at `tree`, counting trees alone, and the node of its directory `directory`.
+fn working(laid: &[Laid], tree: &str, directory: &str) -> Result<(usize, NodeId), WorkingFault> {
+    let found = laid
+        .iter()
+        .filter_map(|earlier| match earlier {
+            Laid::Tree { path, snapshot, .. } => Some((path, snapshot)),
+            Laid::Working { .. } => None,
+        })
+        .enumerate()
+        .find(|(_at, (path, _snapshot))| *path == tree);
+    let Some((index, (_path, snapshot))) = found else {
+        return Err(WorkingFault::NoTree);
+    };
+    let names = names_of(directory).ok_or(WorkingFault::NotNames)?;
+    let node = snapshot
+        .directory(&names)
+        .ok_or(WorkingFault::NotADirectory)?;
+    Ok((index, node))
+}
+
+/// Where wasi-libc, which every Rust guest resolves a path through, puts a preopen named `path`: without its leading `/` and `./`, `.` alone as nothing, and without its trailing `/`.
+fn place(path: &str) -> &str {
+    let mut rest = path;
+    loop {
+        if let Some(after) = rest.strip_prefix('/') {
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix("./") {
+            rest = after;
+        } else if rest == WORKING_NAME {
+            rest = "";
+        } else {
+            return rest.trim_end_matches('/');
+        }
+    }
+}
+
+/// The names of a working directory given as `/`-separated names, none where one is empty, `.`, `..` or holds NUL.
+fn names_of(directory: &str) -> Option<Vec<&str>> {
+    if directory.is_empty() {
+        return Some(Vec::new());
+    }
+    let names: Vec<&str> = directory.split('/').collect();
+    names
+        .iter()
+        .all(|name| !name.is_empty() && *name != "." && *name != ".." && !name.contains('\0'))
+        .then_some(names)
 }
 
 /// The resource ceilings of an invocation.
@@ -145,7 +282,7 @@ pub struct Invocation {
     pub arguments: Arguments,
     /// The environment the guest reads.
     pub environment: Environment,
-    /// The read-only snapshots the guest may reach.
+    /// The directories the guest may reach.
     pub preopens: Preopens,
     /// The seed of the guest's random bytes.
     pub seed: u64,
@@ -164,7 +301,7 @@ impl Invocation {
         module: &SealedDigest,
         configuration: &SealedDigest,
     ) -> SealedDigest {
-        let mut encoder = Encoder::new("rust-mutants-sealed/invocation/v1");
+        let mut encoder = Encoder::new("rust-mutants-sealed/invocation/v2");
         encoder.digest(configuration).digest(module);
         encoder.count(self.arguments.0.len());
         for argument in &self.arguments.0 {
@@ -175,8 +312,17 @@ impl Invocation {
             encoder.text(name).text(value);
         }
         encoder.count(self.preopens.0.len());
-        for (path, snapshot) in &self.preopens.0 {
-            encoder.text(path).digest(snapshot.digest());
+        for laid in &self.preopens.0 {
+            match laid {
+                Laid::Tree { path, snapshot, .. } => {
+                    encoder.tag(b'T').text(path).digest(snapshot.digest());
+                }
+                Laid::Working {
+                    tree, directory, ..
+                } => {
+                    encoder.tag(b'W').text(tree).text(directory);
+                }
+            }
         }
         encoder
             .number(self.seed)

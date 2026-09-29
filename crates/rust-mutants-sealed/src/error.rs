@@ -48,6 +48,8 @@ pub enum SealedCode {
     SnapshotInvalid,
     /// A preopened guest path that cannot be given.
     PreopenInvalid,
+    /// A working directory no tree preopened before it holds.
+    WorkingDirectoryInvalid,
     /// Bytes that are not a WebAssembly binary.
     ModuleMalformed,
     /// A WebAssembly component rather than a core module.
@@ -102,8 +104,13 @@ impl SealedCode {
             },
             Self::PreopenInvalid => ErrorCode {
                 code: "RS0004",
-                summary: "a preopened guest path that is empty, holds a NUL byte, or is preopened twice",
-                remedy: "preopen each snapshot once, at a nonempty guest path without NUL bytes",
+                summary: "a preopened guest path that is empty, holds a NUL byte, or names the place another preopen names, as wasi-libc reads the two",
+                remedy: "preopen each snapshot once, at a nonempty guest path without NUL bytes; wasi-libc reads `/a`, `a` and `a/` as one place, and `/` as `.`, the working directory's",
+            },
+            Self::WorkingDirectoryInvalid => ErrorCode {
+                code: "RS0005",
+                summary: "a working directory that names no tree preopened before it, or a directory that tree does not hold",
+                remedy: "preopen the tree first, and name the directory by `/`-separated names below its root, or by nothing for the root itself",
             },
             Self::ModuleMalformed => ErrorCode {
                 code: "RS1001",
@@ -229,6 +236,18 @@ pub enum SealedError {
         /// What is wrong with it.
         fault: PreopenFault,
     },
+    /// A working directory that cannot be preopened.
+    #[error(
+        "the working directory {directory:?} of the tree at {tree:?} cannot be preopened: {fault}"
+    )]
+    WorkingDirectory {
+        /// The path of the tree it names.
+        tree: String,
+        /// The directory as given.
+        directory: String,
+        /// What is wrong with it.
+        fault: WorkingFault,
+    },
     /// Bytes the WebAssembly parser could not read.
     #[error("the bytes are not a WebAssembly binary: {source}")]
     ModuleMalformed {
@@ -335,6 +354,7 @@ impl SealedError {
             Self::EnvironmentVariable { .. } => SealedCode::EnvironmentInvalid,
             Self::SnapshotPath { .. } => SealedCode::SnapshotInvalid,
             Self::Preopen { .. } => SealedCode::PreopenInvalid,
+            Self::WorkingDirectory { .. } => SealedCode::WorkingDirectoryInvalid,
             Self::ModuleMalformed { .. } => SealedCode::ModuleMalformed,
             Self::ModuleComponent => SealedCode::ModuleComponent,
             Self::ModuleMemory { .. } => SealedCode::ModuleMemory,
@@ -404,7 +424,7 @@ pub enum PreopenFault {
     Empty,
     /// The path holds a NUL byte.
     HoldsNul,
-    /// The path is preopened twice.
+    /// The path names a place a preopen before it names, as wasi-libc reads a name.
     Repeated,
 }
 
@@ -413,7 +433,28 @@ impl fmt::Display for PreopenFault {
         f.write_str(match self {
             Self::Empty => "it is empty",
             Self::HoldsNul => "it holds a NUL byte",
-            Self::Repeated => "it is preopened twice",
+            Self::Repeated => "it names a place a preopen before it names",
+        })
+    }
+}
+
+/// What makes a working directory one that cannot be preopened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum WorkingFault {
+    /// No tree is preopened at the path it names before it.
+    NoTree,
+    /// The directory is not `/`-separated names, each neither empty, `.`, `..`, nor holding NUL.
+    NotNames,
+    /// The tree holds no directory at those names.
+    NotADirectory,
+}
+
+impl fmt::Display for WorkingFault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::NoTree => "no tree is preopened at that path before it",
+            Self::NotNames => "it is not a relative path of `/`-separated names",
+            Self::NotADirectory => "the tree holds no directory there",
         })
     }
 }

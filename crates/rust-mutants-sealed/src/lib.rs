@@ -18,6 +18,7 @@ mod invocation;
 mod random;
 mod runner;
 mod snapshot;
+mod spelling;
 mod transcript;
 mod validate;
 
@@ -25,10 +26,10 @@ pub use abi::Errno;
 pub use digest::SealedDigest;
 pub use error::{
     EntryFault, EnvironmentFault, ErrorCode, ImportFault, Invariant, MemoryFault, PreopenFault,
-    RuntimeStep, SealedCode, SealedError, SnapshotFault, error_codes,
+    RuntimeStep, SealedCode, SealedError, SnapshotFault, WorkingFault, error_codes,
 };
 pub use imports::{IMPORT_MODULE, WasiFunction};
-pub use invocation::{Arguments, ClockPolicy, Environment, Invocation, Limits, Preopens};
+pub use invocation::{Arguments, ClockPolicy, Environment, Invocation, Limits, Preopen, Preopens};
 pub use runner::{SealedModule, SealedRunner, WASMTIME_VERSION};
 pub use snapshot::{Snapshot, SnapshotBuilder};
 pub use transcript::{

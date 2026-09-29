@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use rust_mutants_sealed::{
     EntryFault, EnvironmentFault, ErrorCode, ImportFault, Invariant, MemoryFault, PreopenFault,
-    RuntimeStep, SealedCode, SealedError, SnapshotFault, error_codes,
+    RuntimeStep, SealedCode, SealedError, SnapshotFault, WorkingFault, error_codes,
 };
 
 use crate::common::runner;
@@ -197,6 +197,17 @@ fn faulted_failures() -> Vec<(SealedError, String)> {
         failures.push((
             SealedError::Preopen { path, fault },
             format!("\"/guest\" cannot be preopened: {fault}"),
+        ));
+    }
+    for fault in WorkingFault::ALL {
+        let (tree, directory) = ("/guest".to_owned(), "pkg".to_owned());
+        failures.push((
+            SealedError::WorkingDirectory {
+                tree,
+                directory,
+                fault,
+            },
+            format!("\"pkg\" of the tree at \"/guest\" cannot be preopened: {fault}"),
         ));
     }
     for fault in memory_faults() {

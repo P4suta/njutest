@@ -22,6 +22,8 @@ fn main() {
         "spin" => spin(rest),
         "random" => random(),
         "read" => read(rest),
+        "read-joined" => read_joined(rest),
+        "relay" => relay(rest),
         "populate" => populate(rest),
         "write" => write(rest),
         "stat" => stat(rest),
@@ -135,6 +137,22 @@ fn read(rest: &[String]) {
         Ok(contents) => print!("{contents}"),
         Err(error) => fail(&format!("{error}")),
     }
+}
+
+fn read_joined(rest: &[String]) {
+    let joined = std::path::Path::new(text(rest, 0)).join(text(rest, 1));
+    println!("{}", joined.display());
+    match std::fs::read_to_string(&joined) {
+        Ok(contents) => print!("{contents}"),
+        Err(error) => fail(&format!("{error}")),
+    }
+}
+
+fn relay(rest: &[String]) {
+    if let Err(error) = std::fs::write(text(rest, 0), text(rest, 2)) {
+        fail(&format!("{error}"));
+    }
+    read(rest.get(1..2).unwrap_or_default());
 }
 
 fn populate(rest: &[String]) {

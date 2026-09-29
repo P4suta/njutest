@@ -21,7 +21,7 @@ A fault replaces the call a `?` asks about with its failure, and only a run that
 ```fates --operator inject-error
 src/lib.rs:0:0 inject-error refused
 src/lib.rs:0:0 inject-error refused
-src/lib.rs:13:16 inject-error unproven
+src/lib.rs:13:16 inject-error killed
 src/lib.rs:22:18 inject-error killed
 src/lib.rs:33:16 inject-error survived
 ```

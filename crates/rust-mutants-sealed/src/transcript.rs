@@ -270,7 +270,7 @@ pub enum RefusalReason {
     Signal,
     /// A hard or symbolic link: the overlay holds files and directories only.
     Link,
-    /// A path leaving the directory it is resolved from, or an absolute one.
+    /// A path leaving what the directory it is resolved from may reach, or an absolute one that names no place inside it.
     Escape,
     /// A write the overlay has no room left for.
     OverlayFull,
