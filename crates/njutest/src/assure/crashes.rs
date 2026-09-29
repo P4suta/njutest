@@ -584,7 +584,10 @@ impl Stopped<'_> {
             stage: "crash",
             sealed: true,
             exit_code: None,
-            outcome: came.map_or(HALTED, SealedCame::name),
+            outcome: match came {
+                Some(came) => came.name(),
+                None => HALTED,
+            },
             stop: kept.stop(),
             issued: Some(kept.notice()),
             left: &Left::Named(left.clone()),
