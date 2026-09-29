@@ -8,10 +8,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use rust_mutants_sealed::{Interrupt, SealedRunner};
 
 use super::bench::{Bench, BenchError, Controlled, Tree, Uncontrolled};
-use super::record::Came;
+use super::record::{Came, SealedRun};
 use super::{SealedBuild, Unsealed};
 use crate::catalog::Mutant;
 use crate::libtest::Configured;
+use crate::outcome::Outcome;
 
 /// One sealed execution a report recorded: the mutant put, by full identity, the target whose module ran, the test, and what it came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,6 +107,142 @@ pub enum Reproduction {
         /// The first that came to something else.
         first: Reran,
     },
+}
+
+/// Why a kept sealed verdict about one mutant is not believed: where its executions first part from the ones this run's bench made of it, in the order they ran, or what they establish now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Departed {
+    /// The execution kept at the place `at`, counted from one, and the one this run's bench made there are not the same test coming to the same.
+    Differed {
+        /// The place.
+        at: usize,
+        /// The execution the verdict kept there.
+        kept: SealedRun,
+        /// The execution this run's bench made there.
+        now: SealedRun,
+    },
+    /// This run's bench made no execution at the place `at`, where the verdict kept one.
+    Unmade {
+        /// The place.
+        at: usize,
+        /// The execution the verdict kept there.
+        kept: SealedRun,
+    },
+    /// This run's bench made an execution at the place `at`, past every one the verdict kept.
+    Unkept {
+        /// The place.
+        at: usize,
+        /// The execution this run's bench made there.
+        now: SealedRun,
+    },
+    /// Each of this many came to what it was kept as, and they establish no verdict now.
+    Unestablished {
+        /// How many there are.
+        executions: usize,
+    },
+    /// Each came to what it was kept as, and they establish another verdict than the one kept.
+    Contradicted {
+        /// The verdict kept.
+        kept: Outcome,
+        /// The verdict they establish.
+        now: Outcome,
+    },
+}
+
+/// The kind of the trace note that names where a kept sealed verdict's executions first parted from this run's.
+pub const UNREPRODUCED: &str = "unreproduced";
+
+impl Departed {
+    /// Where `now`, the executions this run's bench made of a mutant, first part from `kept`, the ones a kept verdict about it recorded; nothing where each came to what it recorded, in the same order.
+    #[must_use]
+    pub fn of(kept: &[SealedRun], now: &[SealedRun]) -> Option<Self> {
+        let longest = kept.len().max(now.len());
+        (1..=longest).zip(0..longest).find_map(|(at, index)| {
+            match (kept.get(index), now.get(index)) {
+                (Some(was), Some(is)) if was == is => None,
+                (Some(was), Some(is)) => Some(Self::Differed {
+                    at,
+                    kept: was.clone(),
+                    now: is.clone(),
+                }),
+                (Some(was), None) => Some(Self::Unmade {
+                    at,
+                    kept: was.clone(),
+                }),
+                (None, Some(is)) => Some(Self::Unkept {
+                    at,
+                    now: is.clone(),
+                }),
+                (None, None) => None,
+            }
+        })
+    }
+
+    /// That every one of `kept` came to what it recorded, and they establish no verdict now.
+    #[must_use]
+    pub const fn unestablished(kept: &[SealedRun]) -> Self {
+        Self::Unestablished {
+            executions: kept.len(),
+        }
+    }
+}
+
+impl std::fmt::Display for Departed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Differed { at, kept, now }
+                if kept.target == now.target && kept.test == now.test =>
+            {
+                write!(
+                    f,
+                    "execution {at}, {} test {}, is kept as {} and came to {} when put again",
+                    kept.target,
+                    kept.test,
+                    kept.came_to.name(),
+                    now.came_to.name()
+                )
+            }
+            Self::Differed { at, kept, now } => write!(
+                f,
+                "execution {at} is kept as {} test {}, which came to {}, and this run's bench put \
+                 {} test {} there, which came to {}",
+                kept.target,
+                kept.test,
+                kept.came_to.name(),
+                now.target,
+                now.test,
+                now.came_to.name()
+            ),
+            Self::Unmade { at, kept } => write!(
+                f,
+                "execution {at}, {} test {}, is kept as {} and this run's bench could not make it \
+                 again",
+                kept.target,
+                kept.test,
+                kept.came_to.name()
+            ),
+            Self::Unkept { at, now } => write!(
+                f,
+                "the verdict is kept with fewer executions than this run's bench made, which went \
+                 on at execution {at} to {} test {}, which came to {}",
+                now.target,
+                now.test,
+                now.came_to.name()
+            ),
+            Self::Unestablished { executions } => write!(
+                f,
+                "all {executions} executions came to what they are kept as, and they establish no \
+                 verdict now"
+            ),
+            Self::Contradicted { kept, now } => write!(
+                f,
+                "the verdict is kept as {} and its executions, each of which came to what it is \
+                 kept as, establish {}",
+                kept.name(),
+                now.name()
+            ),
+        }
+    }
 }
 
 /// Why `target` has no station, as `unsealed` says: the reason it has no sealed module, or that this build has no such target.

@@ -98,7 +98,8 @@ pub struct SealedRun {
 }
 
 impl SealedRun {
-    fn of(put: &Put) -> Self {
+    /// `put`, as a report records it.
+    pub(crate) fn of(put: &Put) -> Self {
         Self {
             target: put.target.clone(),
             test: put.test.clone(),

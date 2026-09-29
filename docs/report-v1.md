@@ -180,7 +180,9 @@ A row read back from another run, or inherited from a checkpoint without a route
 For a kill this run established, `by` is therefore a second copy of the last answer's target; the rule keeps the two in step until a later schema stops storing both.
 
 Evidence consultation records either the source run it reused or one closed refusal: `nothing-recorded`, `unreadable`, `target-unknown`, `not-routed`,
-`key-changed`, `not-passing`, `target-entered`, `nothing-routed`, or `superseded`, which a lead an earlier run kept gets where this run's sealed executions decided the mutation.
+`key-changed`, `not-passing`, `target-entered`, `nothing-routed`, `superseded`, which a lead an earlier run kept gets where this run's sealed executions decided the mutation,
+or `unreproduced`, which a sealed verdict an earlier run kept gets where this run's sealed executions of the mutation did not come to what it recorded, in the order they ran, or did not establish the verdict it records ([reproducing a sealed verdict](engine/sealed.md#reproducing-a-sealed-verdict)).
+A row reused from a sealed verdict is one whose executions this run put again and saw come out the same.
 
 ## Drift
 

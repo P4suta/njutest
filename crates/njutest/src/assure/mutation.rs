@@ -827,7 +827,7 @@ fn establish(
         character_column: at.char_column,
     });
     let came = if let Some(saved) = state.and_then(|state| state.mutant(mutant.id.as_str())) {
-        resumed(judging, mutant, saved)
+        resumed(judging, mutant, saved)?
     } else if let Some(diagnostic) = rejected.get(mutant.id.as_str()) {
         if judging.subject.perturbing == Perturbing::Faults {
             record_rejection(watch, mutant, diagnostic);
@@ -887,23 +887,107 @@ enum Sealed {
     Lead(RestsOn),
 }
 
-/// The kill an interrupted run established with sealed executions, which a checkpoint holds and nothing else.
-fn resumed(judging: &Judging<'_>, mutant: &Mutant, saved: &crate::checkpoint::SavedMutant) -> Came {
+/// The kill an interrupted run established with sealed executions, which a checkpoint holds and nothing else, inherited once they come out the same again on this run's bench, and established afresh where they do not (ADR 0046, decision 7).
+///
+/// # Errors
+/// What stopped the executions, or the mutation established afresh, from running.
+fn resumed(
+    judging: &Judging<'_>,
+    mutant: &Mutant,
+    saved: &crate::checkpoint::SavedMutant,
+) -> Result<Came, crate::error::RunnerError> {
     let crate::checkpoint::SavedDisposition::Killed { by, before } = &saved.disposition;
+    let route = judging.subject.session.route(mutant);
+    if let RestsOn::Sealed { executions } = &saved.evidence {
+        let claimed = (None, Outcome::Killed, executions.as_slice());
+        return match again(judging, mutant, &route, claimed)? {
+            PutAgain::Believed(came) => {
+                if judging.subject.perturbing == Perturbing::Mutants {
+                    judging.watch.trace.resumed(crate::trace::ResumedRecord {
+                        mutant: mutant.id.as_str().to_owned(),
+                        killed_by: by.clone(),
+                    });
+                }
+                Ok(came)
+            }
+            PutAgain::Afresh(afresh) => {
+                let refused = Consulted::Refused(store::Refusal::Unreproduced);
+                record(judging, mutant, &route, &refused);
+                match afresh {
+                    Settled::Came(came) => Ok(came),
+                    Settled::Native(lead) => natively(judging, mutant, &route, lead),
+                }
+            }
+        };
+    }
     if judging.subject.perturbing == Perturbing::Mutants {
         judging.watch.trace.resumed(crate::trace::ResumedRecord {
             mutant: mutant.id.as_str().to_owned(),
             killed_by: by.clone(),
         });
     }
-    Came {
+    Ok(Came {
         disposition: inherited(saved),
         evidence: Some(saved.evidence.clone()),
         routing: Some(crate::report::Routing::of(
-            &judging.subject.session.route(mutant),
+            &route,
             through(before.iter().cloned(), by),
         )),
         source: None,
+    })
+}
+
+/// What a sealed verdict kept for one mutation comes to once the mutation is put again on this run's bench.
+enum PutAgain {
+    /// Its executions came to what it recorded, in the order they ran, and establish it again: the answer they give, naming the run that established it where another did.
+    Believed(Came),
+    /// They did not, and what the run settles on afresh from what they came to now.
+    Afresh(Settled),
+}
+
+/// What putting `mutant` again on this run's bench makes of the verdict `claimed` that `source` established, where another run did, resting on the sealed executions `kept` (ADR 0046, decision 7).
+///
+/// # Errors
+/// What stopped the executions from running, or an interruption.
+fn again(
+    judging: &Judging<'_>,
+    mutant: &Mutant,
+    route: &Route,
+    (source, claimed, kept): (
+        Option<&str>,
+        Outcome,
+        &[rust_mutants::sealed::record::SealedRun],
+    ),
+) -> Result<PutAgain, crate::error::RunnerError> {
+    match rust_mutants::run::sealed_again(
+        judging.subject.session,
+        mutant,
+        judging.bench,
+        (source, claimed, kept),
+    )? {
+        rust_mutants::run::Again::Reproduced(verdict) => {
+            traced(judging, mutant, kept);
+            let (disposition, answered) = decided_by(mutant, route, &verdict)?;
+            Ok(PutAgain::Believed(Came {
+                disposition,
+                evidence: Some(verdict.evidence),
+                routing: Some(crate::report::Routing::of(route, answered)),
+                source: source.map(str::to_owned),
+            }))
+        }
+        rust_mutants::run::Again::Departed(departed, now) => {
+            judging.watch.trace.note(
+                rust_mutants::sealed::rerun::UNREPRODUCED,
+                &format!("{}: {departed}", mutant.display_id),
+            );
+            Ok(PutAgain::Afresh(
+                match sealed_as(judging, mutant, route, now)? {
+                    Sealed::Verdict(came) => Settled::Came(came),
+                    Sealed::Lead(lead) => Settled::Native(lead),
+                },
+            ))
+        }
+        rust_mutants::run::Again::Interrupted => Err(crate::error::RunnerError::Interrupted),
     }
 }
 
@@ -933,7 +1017,7 @@ enum Settled {
     Native(RestsOn),
 }
 
-/// What the store and sealing settle about `mutant`, and what its route records of the store: a sealed answer read back, a verdict sealed now, which supersedes a lead the store kept, or a lead read back once sealing established nothing.
+/// What the store and sealing settle about `mutant`, and what its route records of the store: a sealed answer read back once its executions come out the same again, a verdict sealed now, which supersedes a lead the store kept and replaces a sealed answer that did not come out the same, or a lead read back once sealing established nothing.
 fn settled(
     judging: &Judging<'_>,
     mutant: &Mutant,
@@ -946,6 +1030,7 @@ fn settled(
         run_id,
         rule,
         evidence,
+        claimed,
     } = consulted
     else {
         let settled = match sealed(judging, mutant, route)? {
@@ -954,9 +1039,27 @@ fn settled(
         };
         return Ok((settled, consulted));
     };
-    let now = match evidence.class() {
-        rust_mutants::sealed::record::Class::Sealed => evidence.clone(),
-        rust_mutants::sealed::record::Class::Unproven => match sealed(judging, mutant, route)? {
+    let now = match &evidence {
+        RestsOn::Sealed { executions } => {
+            let kept = (Some(run_id.as_str()), claimed.into(), executions.as_slice());
+            return Ok(match again(judging, mutant, route, kept)? {
+                PutAgain::Believed(came) => (
+                    Settled::Came(came),
+                    Consulted::Believed {
+                        disposition,
+                        answered,
+                        run_id,
+                        rule,
+                        evidence,
+                        claimed,
+                    },
+                ),
+                PutAgain::Afresh(afresh) => {
+                    (afresh, Consulted::Refused(store::Refusal::Unreproduced))
+                }
+            });
+        }
+        RestsOn::Unproven { .. } => match sealed(judging, mutant, route)? {
             Sealed::Verdict(came) => {
                 return Ok((
                     Settled::Came(came),
@@ -980,6 +1083,7 @@ fn settled(
             run_id,
             rule,
             evidence,
+            claimed,
         },
     ))
 }
@@ -1023,21 +1127,22 @@ fn sealed(
     let Some(bench) = judging.bench else {
         return Ok(Sealed::Lead(RestsOn::not_sealed()));
     };
-    match rust_mutants::run::sealed_verdict(judging.subject.session, mutant, bench)? {
+    let now = rust_mutants::run::sealed_verdict(judging.subject.session, mutant, bench)?;
+    sealed_as(judging, mutant, route, now)
+}
+
+/// What `now`, what sealed executions of `mutant` establish, comes to: its verdict, kept for a later run with the executions recorded in the trace, or the lead it leaves.
+fn sealed_as(
+    judging: &Judging<'_>,
+    mutant: &Mutant,
+    route: &Route,
+    now: rust_mutants::run::Sealing,
+) -> Result<Sealed, crate::error::RunnerError> {
+    match now {
         rust_mutants::run::Sealing::Established(verdict) => {
             if let rust_mutants::sealed::record::Evidence::Sealed { executions } = &verdict.evidence
             {
-                for execution in executions {
-                    judging
-                        .watch
-                        .trace
-                        .sealed_exec(crate::trace::SealedExecRecord {
-                            mutant: mutant.display_id.to_string(),
-                            target: execution.target.clone(),
-                            test: execution.test.clone(),
-                            came_to: execution.came_to.name().to_owned(),
-                        });
-                }
+                traced(judging, mutant, executions);
             }
             Ok(Sealed::Verdict(verdict_of(
                 judging, mutant, route, *verdict,
@@ -1048,6 +1153,25 @@ fn sealed(
     }
 }
 
+/// Records in the trace each sealed execution of `mutant` that ran.
+fn traced(
+    judging: &Judging<'_>,
+    mutant: &Mutant,
+    executions: &[rust_mutants::sealed::record::SealedRun],
+) {
+    for execution in executions {
+        judging
+            .watch
+            .trace
+            .sealed_exec(crate::trace::SealedExecRecord {
+                mutant: mutant.display_id.to_string(),
+                target: execution.target.clone(),
+                test: execution.test.clone(),
+                came_to: execution.came_to.name().to_owned(),
+            });
+    }
+}
+
 /// The disposition a sealed verdict gives `mutant`, kept for a later run as any answer is, with each target its executions ran as the answers it gave.
 fn verdict_of(
     judging: &Judging<'_>,
@@ -1055,6 +1179,30 @@ fn verdict_of(
     route: &Route,
     verdict: rust_mutants::run::Judged,
 ) -> Result<Came, crate::error::RunnerError> {
+    let (disposition, answered) = decided_by(mutant, route, &verdict)?;
+    left_for_later(
+        judging,
+        mutant,
+        (route, &answered, &[]),
+        (&disposition, &verdict.evidence),
+    )?;
+    Ok(Came {
+        disposition,
+        evidence: Some(verdict.evidence),
+        routing: Some(crate::report::Routing::of(route, answered)),
+        source: None,
+    })
+}
+
+/// The disposition a sealed verdict gives `mutant`, which `route` reaches, and each target its executions ran as the answers it gave.
+///
+/// # Errors
+/// A verdict of an outcome no sealed execution establishes.
+fn decided_by(
+    mutant: &Mutant,
+    route: &Route,
+    verdict: &rust_mutants::run::Judged,
+) -> Result<(Disposition, Vec<crate::report::Answered>), crate::error::RunnerError> {
     let unshaped = || crate::assure::run::RunInvariantError::SealedVerdictUnshaped {
         mutant: mutant.display_id.to_string(),
         outcome: verdict.outcome.name(),
@@ -1081,19 +1229,10 @@ fn verdict_of(
             return Err(unshaped().into());
         }
     };
-    let answered = crate::report::sealed_answers(&verdict.evidence);
-    left_for_later(
-        judging,
-        mutant,
-        (route, &answered, &[]),
-        (&disposition, &verdict.evidence),
-    )?;
-    Ok(Came {
+    Ok((
         disposition,
-        evidence: Some(verdict.evidence),
-        routing: Some(crate::report::Routing::of(route, answered)),
-        source: None,
-    })
+        crate::report::sealed_answers(&verdict.evidence),
+    ))
 }
 
 /// Records what the infection layer measured for each target the baseline ran.
@@ -1222,6 +1361,8 @@ pub enum Consulted {
         rule: crate::trace::ReuseRule,
         /// What it rests on, which is read back only where sealed executions established it; a lead is read back only once this run's sealing establishes nothing (ADR 0046).
         evidence: RestsOn,
+        /// The verdict the store kept, which sealed executions it rests on must establish again before it is believed.
+        claimed: rust_mutants::outcomes::CacheOutcome,
     },
     /// A store was asked and this run may not believe what it holds.
     Refused(store::Refusal),
@@ -1272,7 +1413,7 @@ pub fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Consulte
             .cloned()
             .unwrap_or_else(|| target.clone())
     };
-    let (disposition, answered) = match &record.outcome {
+    let (disposition, answered, claimed) = match &record.outcome {
         store::Outcome::Killed { target, before, .. } => (
             Disposition::Killed { by: named(target) },
             through(
@@ -1282,6 +1423,7 @@ pub fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Consulte
                 }),
                 &named(target),
             ),
+            rust_mutants::outcomes::CacheOutcome::Killed,
         ),
         store::Outcome::Survived { .. } => (
             Disposition::Survived {
@@ -1294,6 +1436,7 @@ pub fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Consulte
                     outcome: Recorded::Survived,
                 })
                 .collect(),
+            rust_mutants::outcomes::CacheOutcome::Survived,
         ),
     };
     Consulted::Believed {
@@ -1302,6 +1445,7 @@ pub fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Consulte
         run_id: record.run_id,
         rule: crate::trace::ReuseRule::Exact,
         evidence: record.evidence,
+        claimed,
     }
 }
 
@@ -1371,6 +1515,7 @@ fn carried(
         run_id: record.run_id,
         rule: crate::trace::ReuseRule::Carried,
         evidence: RestsOn::not_sealed(),
+        claimed: record.outcome,
     })
 }
 

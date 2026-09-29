@@ -890,3 +890,185 @@ fn a_repeat_run_of_an_unchanged_tree_compiles_nothing_again() {
          unit it wrote a fingerprint for is work the last run had already done: {compiled:#?}"
     );
 }
+
+/// The newest run's report, and the directory it was stored in.
+fn newest(fixture: &Fixture) -> (std::path::PathBuf, serde_json::Value) {
+    let directory = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    );
+    let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
+    let document = njutest_devkit::strictjson::decode_str(&text).expect("the report is JSON");
+    (directory, document)
+}
+
+/// Every note a recording holds of `kind`, by what it says.
+fn notes(directory: &std::path::Path, kind: &str) -> Vec<String> {
+    let path = directory.join("trace.jsonl");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    text.lines()
+        .map(|line| {
+            njutest_devkit::strictjson::decode_str::<serde_json::Value>(line)
+                .expect("every line is an event")
+        })
+        .filter(|event| {
+            event.pointer("/payload/type") == Some(&serde_json::json!("note"))
+                && event.pointer("/payload/note/kind") == Some(&serde_json::json!(kind))
+        })
+        .map(|event| event["payload"]["note"]["detail"].to_string())
+        .collect()
+}
+
+#[test]
+fn a_stored_sealed_answer_is_believed_only_once_its_executions_come_out_the_same_again() {
+    use rust_mutants::sealed::record::{Came, Class, Evidence};
+    let fixture = Fixture::copy("fixture-simple");
+    measured(&fixture);
+    let store = rust_mutants::outcomes::Store::new(fixture.cache());
+    let mut record = store
+        .export()
+        .expect("the store the run left reads back whole")
+        .records
+        .into_iter()
+        .find(|record| {
+            record.outcome == rust_mutants::outcomes::CacheOutcome::Killed
+                && record.evidence.class() == Class::Sealed
+        })
+        .expect("the run kept a kill its sealed executions established");
+    let Evidence::Sealed { executions } = &mut record.evidence else {
+        panic!("a kill sealed executions established rests on them: {record:?}");
+    };
+    let killing = executions
+        .last_mut()
+        .expect("a sealed kill rests on the execution that detected it");
+    let came_to = killing.came_to;
+    killing.came_to = if came_to == Came::Failed {
+        Came::Panicked
+    } else {
+        Came::Failed
+    };
+    let (target, test, stored) = (
+        killing.target.clone(),
+        killing.test.clone(),
+        killing.came_to,
+    );
+    store
+        .put(&record)
+        .expect("the store files the record under the key its own inputs name");
+    assert!(
+        store
+            .get(&record.key(), &record.mutant)
+            .expect("the store reads the record back as the record it claims to be")
+            .is_some(),
+        "the record passes every check the store makes of what it reads"
+    );
+
+    let output = against(
+        &fixture,
+        &["run", "--offline", "--locked", "--ui", "quiet", "--trace"],
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let (run, document) = newest(&fixture);
+    let row = document["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .find(|row| row["id"] == record.mutant.as_str())
+        .expect("the run has a row for the mutant the record answers for");
+    assert!(
+        row["source_run_id"].is_null(),
+        "a stored sealed answer one of whose executions comes to something else when it is put \
+         again is not believed, and the run establishes the mutant afresh: {row}"
+    );
+    assert_eq!(
+        row["evidence"]["executions"]
+            .as_array()
+            .and_then(|executions| executions.last())
+            .map(|execution| execution["came_to"].clone()),
+        Some(serde_json::json!(came_to.name())),
+        "what the run established is what the execution comes to: {row}"
+    );
+    let said = notes(&run.join("trace"), "unreproduced");
+    let display = row["display_id"].as_str().expect("a display identity");
+    let note = said
+        .iter()
+        .find(|note| note.contains(display))
+        .unwrap_or_else(|| panic!("the recording names the answer it did not believe: {said:?}"));
+    for named in [
+        target.as_str(),
+        test.as_str(),
+        stored.name(),
+        came_to.name(),
+    ] {
+        assert!(
+            note.contains(named),
+            "the note names the execution that differed, what the store said it came to, and \
+             what it came to now; {named} is missing: {note}"
+        );
+    }
+}
+
+#[test]
+fn a_stored_sealed_answer_is_not_believed_where_its_executions_establish_another_verdict() {
+    use rust_mutants::outcomes::CacheOutcome;
+    use rust_mutants::sealed::record::Class;
+    let fixture = Fixture::copy("fixture-simple");
+    measured(&fixture);
+    let store = rust_mutants::outcomes::Store::new(fixture.cache());
+    let mut record = store
+        .export()
+        .expect("the store the run left reads back whole")
+        .records
+        .into_iter()
+        .find(|record| {
+            record.outcome == CacheOutcome::Killed && record.evidence.class() == Class::Sealed
+        })
+        .expect("the run kept a kill its sealed executions established");
+    record.outcome = CacheOutcome::Survived;
+    store
+        .put(&record)
+        .expect("the store files the record under the key its own inputs name");
+    assert!(
+        store
+            .get(&record.key(), &record.mutant)
+            .expect("the store reads the record back as the record it claims to be")
+            .is_some(),
+        "the record passes every check the store makes of what it reads"
+    );
+
+    let output = against(
+        &fixture,
+        &["run", "--offline", "--locked", "--ui", "quiet", "--trace"],
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let (run, document) = newest(&fixture);
+    let row = document["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .find(|row| row["id"] == record.mutant.as_str())
+        .expect("the run has a row for the mutant the record answers for");
+    assert_eq!(
+        row["outcome"], "killed",
+        "what the run reports is what the executions establish: {row}"
+    );
+    assert!(
+        row["source_run_id"].is_null(),
+        "a stored answer whose own sealed executions establish another verdict than it says is \
+         not believed, even where they come out the same, and the run establishes the mutant \
+         afresh: {row}"
+    );
+    let said = notes(&run.join("trace"), "unreproduced");
+    let display = row["display_id"].as_str().expect("a display identity");
+    let note = said
+        .iter()
+        .find(|note| note.contains(display))
+        .unwrap_or_else(|| panic!("the recording names the answer it did not believe: {said:?}"));
+    for named in ["survived", "killed"] {
+        assert!(
+            note.contains(named),
+            "the note names the verdict the store kept and the one its executions establish; \
+             {named} is missing: {note}"
+        );
+    }
+}

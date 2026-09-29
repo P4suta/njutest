@@ -189,7 +189,7 @@ path = "crates/njutest/src/evidence/store.rs"
 item = "write"
 rule = "question-to-unwrap"
 original = "?"
-line = 316
+line = 319
 reason = "a Record is strings, enums of strings and the evidence it rests on, which is the same, so rendering it as JSON has no failure arm; a_record_says_what_shape_it_is_and_what_established_it renders both of its shapes and reads them back"
 
 # The mutation phase's `Phase` is the third of the same design and the same

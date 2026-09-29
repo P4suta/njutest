@@ -312,6 +312,7 @@ pub fn every_refusal() -> Vec<crate::evidence::store::Refusal> {
         },
         Refusal::NothingRouted,
         Refusal::Superseded,
+        Refusal::Unreproduced,
     ];
     for one in &refusals {
         match one {
@@ -323,7 +324,8 @@ pub fn every_refusal() -> Vec<crate::evidence::store::Refusal> {
             | Refusal::NotPassing { .. }
             | Refusal::TargetEntered { .. }
             | Refusal::NothingRouted
-            | Refusal::Superseded => {}
+            | Refusal::Superseded
+            | Refusal::Unreproduced => {}
         }
     }
     refusals
