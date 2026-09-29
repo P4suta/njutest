@@ -178,6 +178,23 @@ fn unfaulted_failures() -> Vec<(SealedError, String)> {
             "exports no `chdir`".to_owned(),
         ),
         (
+            SealedError::RedirectUnexported {
+                export: "rust_mutants_sealed_temp_dir",
+            },
+            "export `rust_mutants_sealed_temp_dir`, which it does not have".to_owned(),
+        ),
+        (
+            SealedError::RedirectMismatched {
+                function: "_RNvNtCsX_3std3env8temp_dir".to_owned(),
+                export: "rust_mutants_sealed_temp_dir",
+            },
+            "_RNvNtCsX_3std3env8temp_dir cannot be answered".to_owned(),
+        ),
+        (
+            SealedError::RedirectUnread,
+            "code section cannot be rewritten".to_owned(),
+        ),
+        (
             SealedError::StartRefused {
                 path: "/guest/pkg".to_owned(),
             },

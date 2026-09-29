@@ -34,7 +34,7 @@ src/lib.rs:15:5 return-default survived
 src/lib.rs:15:19 string-to-empty survived
 src/lib.rs:16:36 string-to-empty survived
 src/lib.rs:17:29 string-to-empty survived
-src/lib.rs:22:5 return-default unproven
+src/lib.rs:22:5 return-default killed
 src/lib.rs:27:39 string-to-empty unproven
 src/lib.rs:28:16 false-to-true unreached
 src/lib.rs:30:5 return-true unproven

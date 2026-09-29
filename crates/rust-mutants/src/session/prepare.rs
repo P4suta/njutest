@@ -1129,6 +1129,19 @@ fn sealed_flags(
         trace,
         ..
     } = *building;
+    let root = workspace
+        .build_dir()
+        .nested("sealed")
+        .path()
+        .join("platform");
+    let object = match crate::sealed::platform::ready(&workspace.driver(cancel), &root)? {
+        crate::sealed::platform::Readied::Object(object) => object,
+        crate::sealed::platform::Readied::Unanswered(said) => {
+            trace.note("sealed-build", &format!("platform-unanswered: {said}"));
+            return Ok(Err(crate::sealed::Unsealed::PlatformUnanswered));
+        }
+    };
+    let linked = crate::sealed::platform::flags(&object);
     let facts =
         workspace
             .toolchain
@@ -1137,7 +1150,6 @@ fn sealed_flags(
         workspace.snapshot_root(),
         crate::cargo::config::home(&workspace.base_env).as_deref(),
     );
-    let linked = crate::sealed::start_linked();
     let flags = crate::sealed::Flags::of(&workspace.base_env, &layered, &facts, &linked);
     match &flags {
         Ok(_flags) => trace.note(

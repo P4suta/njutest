@@ -62,6 +62,8 @@ pub enum SealedCode {
     ModuleEntry,
     /// A module the host cannot start in a directory.
     ModuleUnstartable,
+    /// A module whose functions cannot be answered through the ones it exports.
+    ModuleUnredirected,
     /// A wasmtime that cannot be configured deterministically.
     EngineUnavailable,
     /// A module wasmtime refused to compile.
@@ -142,6 +144,11 @@ impl SealedCode {
                 code: "RS1005",
                 summary: "the module is not a WASI command: no `_start` function of type () -> (), no exported memory, or a start section",
                 remedy: "build a binary crate or a test harness for `wasm32-wasip1`, which exports `_start` and `memory`",
+            },
+            Self::ModuleUnredirected => ErrorCode {
+                code: "RS1007",
+                summary: "the module names a function to answer through one it exports, and does not export it, exports one of another type, or has a code section this version cannot rewrite",
+                remedy: "link the guest with the object and the exports the engine's sealed build adds, which answer the standard library's temporary and home directories; the message names what is missing",
             },
             Self::ModuleUnstartable => ErrorCode {
                 code: "RS1006",
@@ -299,6 +306,27 @@ pub enum SealedError {
         /// What is missing.
         fault: EntryFault,
     },
+    /// A module that names a function to redirect and does not export the one that answers it.
+    #[error(
+        "the module names a function to answer through its export `{export}`, which it does not have"
+    )]
+    RedirectUnexported {
+        /// The export it does not have.
+        export: &'static str,
+    },
+    /// A function whose type is not that of the export that is to answer it.
+    #[error(
+        "the module's {function} cannot be answered through its export `{export}`, whose type is another"
+    )]
+    RedirectMismatched {
+        /// The function, as the module's name section names it.
+        function: String,
+        /// The export.
+        export: &'static str,
+    },
+    /// A code section this version cannot rewrite.
+    #[error("the module's code section cannot be rewritten to answer a function through an export")]
+    RedirectUnread,
     /// A module that does not export what the host starts a guest in a directory through.
     #[error(
         "the module exports no `{export}` of type (i32) -> i32, which the host starts a guest in a directory through"
@@ -397,6 +425,9 @@ impl SealedError {
             Self::ModuleImport { .. } => SealedCode::ModuleImport,
             Self::ModuleEntry { .. } => SealedCode::ModuleEntry,
             Self::StartUnexported { .. } => SealedCode::ModuleUnstartable,
+            Self::RedirectUnexported { .. }
+            | Self::RedirectMismatched { .. }
+            | Self::RedirectUnread => SealedCode::ModuleUnredirected,
             Self::Engine { .. } => SealedCode::EngineUnavailable,
             Self::Compile { .. } => SealedCode::ModuleUncompiled,
             Self::Link { .. } => SealedCode::HostUnlinked,

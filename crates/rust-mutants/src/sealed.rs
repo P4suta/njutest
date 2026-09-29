@@ -42,6 +42,8 @@ pub enum Unsealed {
     NoHarness,
     /// Which flags cargo compiles the sealed target with is not known, so the link arguments the host needs cannot be added to them: the configuration could not be read, or a `cfg(…)` table's predicate names what a target alone does not decide.
     FlagsUnmerged,
+    /// The toolchain's standard library could not be made to answer the temporary and the home directory from the environment: the object that answers them did not build, or the probe linked with it did not answer as a standard library that reads `TMPDIR` and `HOME` does.
+    PlatformUnanswered,
 }
 
 impl Unsealed {
@@ -59,6 +61,7 @@ impl Unsealed {
             Self::NotListed => "not-listed",
             Self::NoHarness => "no-harness",
             Self::FlagsUnmerged => "flags-unmerged",
+            Self::PlatformUnanswered => "platform-unanswered",
         }
     }
 
@@ -96,6 +99,11 @@ impl Unsealed {
                 "configure the flags of wasm32-wasip1 under its own triple, or in build.rustflags, \
                  rather than under a cfg(…) predicate cargo alone decides, and keep every cargo \
                  configuration file readable"
+            }
+            Self::PlatformUnanswered => {
+                "the run's trace says why the toolchain's standard library did not answer its \
+                 temporary and home directories from TMPDIR and HOME; a toolchain whose \
+                 std::env::temp_dir and std::env::home_dir the probe finds and rewrites seals"
             }
         }
     }
@@ -427,6 +435,7 @@ fn sources_of(target: &TestTarget, units: &[Unit], packages: &[Package]) -> BTre
 
 pub mod bench;
 pub mod doctest;
+pub mod platform;
 pub mod record;
 pub mod rerun;
 pub mod standing;

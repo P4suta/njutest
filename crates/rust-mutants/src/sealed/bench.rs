@@ -506,7 +506,7 @@ pub struct Bench<'runner> {
     interrupt: Interrupt,
 }
 
-/// `path`, read and prepared on `runner` as a module of `target`.
+/// `path`, read, its standard library made to answer the temporary and the home directory from the environment, and prepared on `runner` as a module of `target`.
 fn prepared<'runner>(
     runner: &'runner SealedRunner,
     path: &Path,
@@ -516,10 +516,13 @@ fn prepared<'runner>(
         path: path.to_path_buf(),
         source,
     })?;
-    runner.prepare(&bytes).map_err(|source| BenchError::Host {
+    let host = |source| BenchError::Host {
         target: target.to_owned(),
         source,
-    })
+    };
+    let answering =
+        rust_mutants_sealed::redirected(&bytes, &super::platform::REDIRECTS).map_err(host)?;
+    runner.prepare(&answering.bytes).map_err(host)
 }
 
 impl<'runner> Bench<'runner> {

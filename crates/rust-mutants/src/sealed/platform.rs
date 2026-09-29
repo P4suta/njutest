@@ -1,0 +1,278 @@
+// SPDX-FileCopyrightText: 2026 njutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! What the sealed target's standard library answers for the temporary and the home directory, which its platform layer does not have: an object every sealed module is linked with, whose functions read `TMPDIR` and `HOME`, and the rewrite that makes the standard library's own functions answer through them (ADR 0046).
+
+use std::ffi::OsString;
+use std::num::NonZeroU64;
+use std::path::Path;
+
+use rust_mutants_sealed::{
+    Arguments, ClockPolicy, Environment, Interrupt, Invocation, Limits, Preopen, Preopens,
+    Redirect, SealedRunner, SealedStop, names_std_env, redirected,
+};
+
+use crate::cargo::{CargoError, CargoErrorKind, Driver};
+use crate::runner::{Bound, PROBE, Spec, run};
+use crate::trace::ExecRecord;
+
+/// The export that answers `std::env::temp_dir` in a sealed module.
+pub const TEMP_DIR: &str = "rust_mutants_sealed_temp_dir";
+
+/// The export that answers `std::env::home_dir` in a sealed module.
+pub const HOME_DIR: &str = "rust_mutants_sealed_home_dir";
+
+/// The source of the object every sealed module is linked with: what the standard library answers for the two directories on a POSIX system, read from the environment the instance is given.
+pub const SOURCE: &str = r#"//! What the sealed target's standard library answers for the temporary and the home directory.
+
+use std::path::PathBuf;
+
+#[unsafe(export_name = "rust_mutants_sealed_temp_dir")]
+pub fn temp_dir() -> PathBuf {
+    match std::env::var_os("TMPDIR") {
+        Some(directory) => PathBuf::from(directory),
+        None => PathBuf::from("/tmp"),
+    }
+}
+
+#[unsafe(export_name = "rust_mutants_sealed_home_dir")]
+pub fn home_dir() -> Option<PathBuf> {
+    match std::env::var_os("HOME") {
+        Some(home) if !home.is_empty() => Some(PathBuf::from(home)),
+        Some(_) | None => None,
+    }
+}
+"#;
+
+/// The source of the program a toolchain is probed with: it prints the two directories as its standard library answers them.
+pub const PROBE_SOURCE: &str = r#"fn main() {
+    println!("{}", std::env::temp_dir().display());
+    println!("{:?}", std::env::home_dir());
+}
+"#;
+
+/// What the probe prints where the standard library answers from the environment it is given.
+const PROBE_ANSWER: &str = "/probe/tmp\nSome(\"/probe/home\")\n";
+
+/// Every function of the standard library a sealed module is rewritten to answer through the object's.
+pub const REDIRECTS: [Redirect; 2] = [
+    Redirect {
+        names: |name| names_std_env(name, "temp_dir"),
+        export: TEMP_DIR,
+    },
+    Redirect {
+        names: |name| names_std_env(name, "home_dir"),
+        export: HOME_DIR,
+    },
+];
+
+/// The object a toolchain's sealed modules are linked with, or why its standard library could not be made to answer from the environment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Readied {
+    /// The object's path, which is text, as a flag carries it, and whose probe answered.
+    Object(String),
+    /// Why it could not be made or did not answer, in words.
+    Unanswered(String),
+}
+
+/// Every flag a sealed module is built with besides the tree's own: no optimisation and every name kept, the object and its exports, and the host's start.
+#[must_use]
+pub fn flags(object: &str) -> Vec<String> {
+    let mut flags = vec!["-Copt-level=0".to_owned(), "-Cstrip=none".to_owned()];
+    flags.extend(super::start_linked());
+    for export in [TEMP_DIR, HOME_DIR] {
+        flags.push(format!("-Clink-arg=--export={export}"));
+    }
+    flags.push(format!("-Clink-arg={object}"));
+    flags
+}
+
+/// The object for the toolchain `driver` runs, built and probed in a directory of `root` named by everything that makes it, unless that directory already holds one whose probe answered.
+///
+/// # Errors
+/// A `rustc` that could not be started, or a run that was cancelled.
+pub fn ready(driver: &Driver<'_>, root: &Path) -> Result<Readied, CargoError> {
+    let identity = crate::id::digest(
+        [
+            driver.toolchain.rustc_version().summary.as_str(),
+            SOURCE,
+            PROBE_SOURCE,
+            &super::start_linked().join(" "),
+        ]
+        .join("\0")
+        .as_bytes(),
+    );
+    let short = match identity.get(..16) {
+        Some(short) => short,
+        None => identity.as_str(),
+    };
+    let directory = root.join(short);
+    let object = directory.join("platform.o");
+    let Some(text) = object.to_str().map(str::to_owned) else {
+        return Ok(Readied::Unanswered(format!(
+            "{} is not text, which a flag cannot carry",
+            object.display()
+        )));
+    };
+    let answered = directory.join("answered");
+    let failed = |path: &Path, error: std::io::Error| {
+        CargoError::new(
+            CargoErrorKind::CommandFailed,
+            format!("{}: {error}", path.display()),
+        )
+    };
+    let held = |path: &Path| match std::fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.is_file()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(failed(path, error)),
+    };
+    if held(&object)? && held(&answered)? {
+        return Ok(Readied::Object(text));
+    }
+    std::fs::create_dir_all(&directory).map_err(|error| failed(&directory, error))?;
+    let source = directory.join("platform.rs");
+    std::fs::write(&source, SOURCE).map_err(|error| failed(&source, error))?;
+    let built = compiled(
+        driver,
+        &directory,
+        [
+            "--crate-type=lib",
+            "--crate-name=rust_mutants_sealed_platform",
+            "--emit=obj",
+            "-Copt-level=0",
+            "-Cdebuginfo=0",
+        ]
+        .map(OsString::from)
+        .to_vec(),
+        (&source, &object),
+    )?;
+    if let Some(said) = built {
+        return Ok(Readied::Unanswered(format!(
+            "the object did not build: {said}"
+        )));
+    }
+    let probe = directory.join("probe.rs");
+    std::fs::write(&probe, PROBE_SOURCE).map_err(|error| failed(&probe, error))?;
+    let module = directory.join("probe.wasm");
+    let mut arguments = vec![OsString::from("--crate-name=probe")];
+    arguments.extend(flags(&text).iter().map(OsString::from));
+    if let Some(said) = compiled(driver, &directory, arguments, (&probe, &module))? {
+        return Ok(Readied::Unanswered(format!(
+            "the probe did not build: {said}"
+        )));
+    }
+    let bytes = std::fs::read(&module).map_err(|error| failed(&module, error))?;
+    if let Some(said) = unanswered(&bytes) {
+        return Ok(Readied::Unanswered(said));
+    }
+    std::fs::write(&answered, PROBE_ANSWER).map_err(|error| failed(&answered, error))?;
+    Ok(Readied::Object(text))
+}
+
+/// What `rustc` said where it did not compile `source` into `output` for the sealed target with `arguments`, or nothing where it did.
+///
+/// # Errors
+/// A `rustc` that could not be started, or a run that was cancelled.
+fn compiled(
+    driver: &Driver<'_>,
+    directory: &Path,
+    arguments: Vec<OsString>,
+    (source, output): (&Path, &Path),
+) -> Result<Option<String>, CargoError> {
+    let mut argv = vec![
+        driver.toolchain.rustc().as_os_str().to_owned(),
+        OsString::from("--edition=2024"),
+        OsString::from("--target"),
+        OsString::from(super::TARGET),
+    ];
+    argv.extend(arguments);
+    argv.push(OsString::from("-o"));
+    argv.push(output.as_os_str().to_owned());
+    argv.push(source.as_os_str().to_owned());
+    let mut spec = Spec::new(argv, Bound::After(PROBE));
+    spec.dir = Some(directory.to_path_buf());
+    spec.env = driver.toolchain.env().cloned();
+    let result = run(&spec, driver.cancel);
+    driver.trace.exec_result(ExecRecord::of(&spec, &result));
+    if driver.cancel.is_cancelled() {
+        return Err(CargoError::new(
+            CargoErrorKind::Cancelled,
+            "the sealed target's platform object was cancelled",
+        ));
+    }
+    if result.succeeded() {
+        return Ok(None);
+    }
+    Ok(Some(
+        crate::telling::LosslessBytes::new(&result.output).to_string(),
+    ))
+}
+
+/// Why the probe module `bytes` does not answer the two directories from the environment, or nothing where it does.
+fn unanswered(bytes: &[u8]) -> Option<String> {
+    let rewritten = match redirected(bytes, &REDIRECTS) {
+        Ok(rewritten) if rewritten.counts.iter().all(|count| *count > 0) => rewritten.bytes,
+        Ok(rewritten) => {
+            return Some(format!(
+                "the probe holds no function of the standard library's to answer the temporary \
+                 and the home directory through, as the rewrite counted them: {:?}",
+                rewritten.counts
+            ));
+        }
+        Err(error) => return Some(format!("the probe could not be rewritten: {error}")),
+    };
+    let runner = match SealedRunner::new(super::bench::WATCHDOG) {
+        Ok(runner) => runner,
+        Err(error) => return Some(format!("the host could not start: {error}")),
+    };
+    let module = match runner.prepare(&rewritten) {
+        Ok(module) => module,
+        Err(error) => return Some(format!("the probe is not a module the host runs: {error}")),
+    };
+    let invocation = match probing() {
+        Ok(invocation) => invocation,
+        Err(error) => return Some(format!("the probe's invocation: {error}")),
+    };
+    match module.invoke(&invocation, &Interrupt::of(Vec::new())) {
+        Ok(transcript)
+            if transcript.stop() == SealedStop::Returned
+                && transcript.stdout().bytes() == PROBE_ANSWER.as_bytes() =>
+        {
+            None
+        }
+        Ok(transcript) => Some(format!(
+            "the probe ended {:?} having printed {}",
+            transcript.stop(),
+            crate::telling::LosslessBytes::new(transcript.stdout().bytes())
+        )),
+        Err(error) => Some(format!("the probe did not run: {error}")),
+    }
+}
+
+/// The invocation the probe runs with: the two directories named, and nothing else to reach.
+fn probing() -> Result<Invocation, rust_mutants_sealed::SealedError> {
+    Ok(Invocation {
+        arguments: Arguments::new(vec!["probe".to_owned()])?,
+        environment: Environment::new(vec![
+            ("TMPDIR".to_owned(), "/probe/tmp".to_owned()),
+            ("HOME".to_owned(), "/probe/home".to_owned()),
+        ])?,
+        preopens: Preopens::new(vec![Preopen::Root { start: None }])?,
+        seed: 0,
+        fuel: super::bench::CONTROL_FUEL,
+        limits: Limits {
+            memory: super::bench::MEMORY,
+            stdout: 1 << 16,
+            stderr: 1 << 16,
+            overlay: 0,
+        },
+        clock: ClockPolicy {
+            realtime_origin: 0,
+            monotonic_origin: 0,
+            nanos_per_fuel: NonZeroU64::MIN,
+        },
+    })
+}
+
+#[cfg(test)]
+mod tests;

@@ -1160,7 +1160,8 @@
                   "proc-macro",
                   "not-listed",
                   "no-harness",
-                  "flags-unmerged"
+                  "flags-unmerged",
+                  "platform-unanswered"
                 ]
               },
               "remedy": {
