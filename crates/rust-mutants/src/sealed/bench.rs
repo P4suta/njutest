@@ -338,13 +338,18 @@ impl Station<'_> {
             Some(ran) => ran,
         };
         let owed: BTreeSet<String> = ran.tests.iter().filter_map(|test| named(test)).collect();
-        self.controls.retain(|test, _| owed.contains(test));
-        for test in owed {
+        self.hold_to(&owed);
+        Ok(())
+    }
+
+    /// Holds this station to exactly `tests`: a control of any other test is dropped, and a test among them that none of its modules holds is uncontrolled.
+    pub(super) fn hold_to(&mut self, tests: &BTreeSet<String>) {
+        self.controls.retain(|test, _| tests.contains(test));
+        for test in tests {
             self.controls
-                .entry(test)
+                .entry(test.clone())
                 .or_insert(Err(Uncontrolled::Unsealed));
         }
-        Ok(())
     }
 
     /// The module that holds `test`, and how it runs.
@@ -359,6 +364,25 @@ impl Station<'_> {
         self.holdings
             .iter()
             .any(|holding| holding.tests.contains_key(test))
+    }
+}
+
+/// Which of the tests a module holds have their control run.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Controlled<'named> {
+    /// Every one it holds, which the native baseline then narrows to the suite's.
+    Every,
+    /// These alone, which recorded executions named.
+    Only(&'named BTreeSet<String>),
+}
+
+impl Controlled<'_> {
+    /// Whether the control of `test` is run.
+    fn asks(self, test: &str) -> bool {
+        match self {
+            Self::Every => true,
+            Self::Only(tests) => tests.contains(test),
+        }
     }
 }
 
@@ -403,46 +427,12 @@ impl<'runner> Bench<'runner> {
         (tree, harness): (Tree, &Configured),
         (catalog, bounds): (&str, crate::touch::Bounds),
     ) -> Result<Self, BenchError> {
-        let mut bench = Self {
-            stations: BTreeMap::new(),
-            unsealed: sealed.unsealed.clone(),
-            tree,
-            harness: harness.clone(),
-            catalog: catalog.to_owned(),
-            bounds,
-            interrupt,
-        };
+        let mut bench = Self::unassembled(interrupt, sealed, (tree, harness), (catalog, bounds));
         for (id, module) in &sealed.modules {
-            let program = match module
-                .target
-                .executable
-                .file_name()
-                .and_then(|name| name.to_str())
-            {
-                Some(program) => program.to_owned(),
-                None => "test".to_owned(),
-            };
-            let module_of = prepared(runner, &module.target.executable, id)?;
-            let mut station = Station {
-                holdings: Vec::new(),
-                target: module.target.clone(),
-                program,
-                controls: BTreeMap::new(),
-            };
-            let Some(tests) = bench.listed(&station, &module_of)? else {
+            let Some(mut station) = bench.station(runner, (id, module), Controlled::Every)? else {
                 bench.unsealed.insert(id.clone(), Unsealed::NotListed);
                 continue;
             };
-            let mut controls = BTreeMap::new();
-            for test in &tests {
-                let control = bench.control(&station, &module_of, (test, Run::Libtest))?;
-                controls.insert(test.clone(), control);
-            }
-            station.holdings.push(Holding {
-                module: module_of,
-                tests: tests.into_iter().map(|test| (test, Run::Libtest)).collect(),
-            });
-            station.controls = controls;
             match station.owes(natives.get(id), |test| Some(test.to_owned())) {
                 Ok(()) => {
                     bench.stations.insert(id.clone(), station);
@@ -453,7 +443,7 @@ impl<'runner> Bench<'runner> {
             }
         }
         for (id, doctests) in &sealed.doctests {
-            let Some(mut station) = bench.documented(runner, doctests)? else {
+            let Some(mut station) = bench.documented(runner, doctests, Controlled::Every)? else {
                 bench
                     .unsealed
                     .insert(id.clone(), Unsealed::DoctestsUnaccounted);
@@ -469,6 +459,64 @@ impl<'runner> Bench<'runner> {
             }
         }
         Ok(bench)
+    }
+
+    /// A bench with no station yet, every target `sealed` built no module for unsealed for the reason it gives, whose executions will run inside `tree` with `harness`, reading touch logs against `catalog` within `bounds`, and stop when `interrupt` is raised.
+    pub(super) fn unassembled(
+        interrupt: Interrupt,
+        sealed: &SealedBuild,
+        (tree, harness): (Tree, &Configured),
+        (catalog, bounds): (&str, crate::touch::Bounds),
+    ) -> Self {
+        Self {
+            stations: BTreeMap::new(),
+            unsealed: sealed.unsealed.clone(),
+            tree,
+            harness: harness.clone(),
+            catalog: catalog.to_owned(),
+            bounds,
+            interrupt,
+        }
+    }
+
+    /// The station of `module`, the sealed module of target `id`, prepared on `runner`: every test its harness lists, with the control of each `controlled` asks for; nothing where its harness does not list its tests.
+    ///
+    /// # Errors
+    /// A module that cannot be read, an environment that is not text, a host that cannot run what it is given, or [`BenchError::Interrupted`].
+    pub(super) fn station(
+        &self,
+        runner: &'runner SealedRunner,
+        (id, module): (&str, &super::Module),
+        controlled: Controlled<'_>,
+    ) -> Result<Option<Station<'runner>>, BenchError> {
+        let program = match module
+            .target
+            .executable
+            .file_name()
+            .and_then(|name| name.to_str())
+        {
+            Some(program) => program.to_owned(),
+            None => "test".to_owned(),
+        };
+        let module_of = prepared(runner, &module.target.executable, id)?;
+        let mut station = Station {
+            holdings: Vec::new(),
+            target: module.target.clone(),
+            program,
+            controls: BTreeMap::new(),
+        };
+        let Some(tests) = self.listed(&station, &module_of)? else {
+            return Ok(None);
+        };
+        for test in tests.iter().filter(|test| controlled.asks(test)) {
+            let control = self.control(&station, &module_of, (test, Run::Libtest))?;
+            station.controls.insert(test.clone(), control);
+        }
+        station.holdings.push(Holding {
+            module: module_of,
+            tests: tests.into_iter().map(|test| (test, Run::Libtest)).collect(),
+        });
+        Ok(Some(station))
     }
 
     /// How the sealed build answers for each target it was given, by target identity.
@@ -493,11 +541,12 @@ impl<'runner> Bench<'runner> {
         answering
     }
 
-    /// The station of one library's captured doctests, or nothing where a merged binary did not name the doctests it holds.
-    fn documented(
+    /// The station of one library's captured doctests, with the control of each `controlled` asks for, or nothing where a merged binary did not name the doctests it holds.
+    pub(super) fn documented(
         &self,
         runner: &'runner SealedRunner,
         doctests: &super::Doctests,
+        controlled: Controlled<'_>,
     ) -> Result<Option<Station<'runner>>, BenchError> {
         let id = doctests.target.id();
         let mut station = Station {
@@ -542,7 +591,11 @@ impl<'runner> Bench<'runner> {
             if shared || listed_twice {
                 return Ok(None);
             }
-            for (name, run) in &holding.tests {
+            for (name, run) in holding
+                .tests
+                .iter()
+                .filter(|(name, _)| controlled.asks(name))
+            {
                 let control = self.control(&station, &holding.module, (name, *run))?;
                 station.controls.insert(name.clone(), control);
             }

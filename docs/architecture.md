@@ -83,6 +83,8 @@ A survival is universal and is reused only when every target that reaches the mu
 A timeout keeps its finding.
 See [ADR 0007](adr/0007-survived-evidence-is-universal.md).
 
+A whole report is kept too, under the identity of everything it was about, and `verify` reissues it only once every sealed execution it rests on has run again and come out the same; the preparation that runs them again starts no test natively ([sealed execution](engine/sealed.md#reproducing-a-sealed-verdict)).
+
 ## Everything a run writes
 
 Every byte a run writes outside the repository goes below one scratch directory it makes for itself and removes when it ends, `njutest-run-*` under the configured temporary root, with an owner pair — an advisory lock held open for the whole run and an `njutest-temp-owner-v1` marker ([ADR 0006](adr/0006-every-temporary-directory-has-an-owner.md)).

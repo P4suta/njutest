@@ -1278,6 +1278,18 @@ impl Workspace {
         prepare(self, options, cancel)
     }
 
+    /// Prepares as [`Workspace::prepare`] does, the sealed build included, starting no test natively and measuring no coverage, for nothing but running recorded sealed executions again ([`crate::session::Rerunnable`]).
+    ///
+    /// # Errors
+    /// Every failure of the phases it runs.
+    pub fn prepare_to_rerun(
+        self,
+        options: &PrepareOptions,
+        cancel: &Cancel,
+    ) -> Result<crate::session::Rerunnable, crate::EngineError> {
+        crate::session::Rerunnable::prepared(self, options, cancel)
+    }
+
     /// Removes the snapshot, or preserves it when the workspace was opened with `keep_temp`, and reports what was preserved.
     ///
     /// # Errors

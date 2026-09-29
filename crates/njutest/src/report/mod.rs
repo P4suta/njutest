@@ -2635,6 +2635,17 @@ impl BuildEvidence {
         &self.name
     }
 
+    /// The exact Cargo inputs the build was made with.
+    #[must_use]
+    pub const fn selection(&self) -> &BuildSelection {
+        &self.configuration
+    }
+
+    /// Every mutation row the build judged, source by source in whole-or-shard order.
+    pub fn rows(&self) -> impl Iterator<Item = &MutantRecord> {
+        self.parts.iter().flat_map(|part| part.mutants.iter())
+    }
+
     /// The constructor-proved common baseline source.
     #[must_use]
     pub const fn baseline(&self) -> &BuildPartEvidence {

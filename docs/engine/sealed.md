@@ -9,7 +9,9 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 A run seals by default: it builds the instrumented tree for `wasm32-wasip1`, lists each module's tests and runs each one's control on the host, puts every mutant to the tests whose controls reached it, and writes the verdict they establish, with its `evidence`, into the report.
 [The standing of a mutant](#the-standing-of-a-mutant) is `rust_mutants_decision::evidence::standing` and [the judgement of one execution](#judging-one-execution) is `rust_mutants_decision::judgement::judged`, both held to their rules by exhaustive comparisons and Kani.
 `--no-seal`, or `[mutation] seal = false`, builds nothing for the sealed target, and then every answer is a lead.
-Not yet: a sealed verdict is kept in the outcome store and read back under its key, but `verify` does not yet run a stored report's sealed executions again.
+A report `verify` stored is reissued only once every sealed execution it rests on has run again and come out the same, as [Reproducing a sealed verdict](#reproducing-a-sealed-verdict) says.
+Not yet: a sealed verdict kept for one mutant, in the outcome store, in njutest's mutation evidence or among the answers carried across an edit, is still read back under its key without its executions running again.
+Nor is a sealed result cached by its digest: a report records what each sealed execution came to rather than the digest of its transcript, so running one again compares what it came to.
 
 A verdict is what a sealed run observed.
 A sealed run is the instrumented snapshot, built for `wasm32-wasip1`, with each test run alone in a fresh WebAssembly instance on a host that answers every question the same way every time.
@@ -178,8 +180,18 @@ A run that failed, or a command used wrongly, ends with a code of its own, which
 
 A sealed execution's digest covers the module, the host's version, wasmtime's version, the arguments, the environment, the snapshot, the seed, the clock policy, the fuel and the limits.
 The same digest gives the same transcript on any machine: fuel counts WebAssembly operators, not the host's instructions.
-`verify` runs a stored report's sealed executions again and compares; a stored report is affirmative only when they match.
-A sealed result is cached by its digest.
+So a stored verdict is run again rather than trusted, and never replayed ([ADR 0003](../adr/0003-no-replay-engine.md)).
+
+Before `njutest verify` reissues a report an earlier run of the same inputs stored, it runs every sealed execution the report rests on again, build by build, in the order they first ran.
+Each configured build is prepared as a run prepares it, the sealed build included, by `Workspace::prepare_to_rerun`, whose `Rerunnable` does nothing but run recorded executions again.
+It starts no test natively and measures no coverage: a recorded execution names its test, so no native baseline has to say which tests are the suite's, and no route has to choose them.
+The module of each target the executions name is listed, the control of each test they name runs first, and each execution is then put and judged against that control, by `Bench::put` and `judged` as every sealed execution is.
+
+The report is reissued only when every execution comes to what it recorded.
+The first that does not, or that cannot be made again because its mutant, its guard, its target's module, its test's control or its control's reach of the mutant is not there now, is named with `NJ8006` — the mutant, the target, the test, what the report recorded and what it came to now — and the run establishes everything again.
+A report that rests on no sealed execution, because every row is a lead or rests on no execution at all, affirms nothing sealed and is reissued as it is.
+The trace records the running again as a `rerun` phase with a `sealed-exec` for each execution that ran, and a `rerun-unmade` note for one that could not be made.
+What it costs is the preparation's builds, which the engine's build cache makes incremental, and one instance for each module listed, each control and each recorded execution; no test runs natively, no sentinel is planted, and nothing is routed.
 
 ## What sealing cannot see
 

@@ -5,12 +5,14 @@
 
 mod carry;
 pub(crate) mod prepare;
+mod rerun;
 mod route;
 mod verify;
 
 pub use carry::{Answered, Tree as CarriedTree};
 pub use prepare::{prepare, rewrite_needed};
 use prepare::{pristine, selection};
+pub use rerun::Rerunnable;
 use verify::verify;
 pub use verify::{Baseline, BaselineCacheError, Measured, Passing, Verified};
 
@@ -1010,14 +1012,7 @@ impl Session {
         runner: &'runner rust_mutants_sealed::SealedRunner,
         cancel: &Cancel,
     ) -> Result<crate::sealed::bench::Bench<'runner>, EngineError> {
-        let tree = crate::sealed::bench::Tree::read(
-            self.workspace.snapshot_root(),
-            self.workspace
-                .snapshot
-                .manifest()
-                .iter()
-                .map(|entry| entry.rel_path.as_str()),
-        )?;
+        let tree = self.sealed_tree()?;
         let bounds = self.touch_bounds()?;
         let natives = self
             .verified
@@ -1039,6 +1034,18 @@ impl Session {
             (&self.sealed, &natives),
             (tree, &self.harness_args),
             (self.catalog.digest(), bounds),
+        )?)
+    }
+
+    /// The instrumented tree as a sealed instance reads it, every file of the snapshot read now.
+    fn sealed_tree(&self) -> Result<crate::sealed::bench::Tree, EngineError> {
+        Ok(crate::sealed::bench::Tree::read(
+            self.workspace.snapshot_root(),
+            self.workspace
+                .snapshot
+                .manifest()
+                .iter()
+                .map(|entry| entry.rel_path.as_str()),
         )?)
     }
 

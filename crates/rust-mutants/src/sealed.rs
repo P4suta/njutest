@@ -309,6 +309,7 @@ fn sources_of(target: &TestTarget, units: &[Unit], packages: &[Package]) -> BTre
 pub mod bench;
 pub mod doctest;
 pub mod record;
+pub mod rerun;
 pub mod standing;
 
 #[cfg(test)]
