@@ -227,15 +227,22 @@ fn findings_of(fixture: &Fixture, kind: &str) -> Vec<serde_json::Value> {
 /// Whether a file named `name` is anywhere below `directory`.
 #[cfg(unix)]
 fn filed(directory: &Path, name: &str) -> bool {
-    std::fs::read_dir(directory)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .any(|entry| {
-            let path = entry.path();
-            path.file_name().is_some_and(|file| file == name)
-                || (path.is_dir() && filed(&path, name))
-        })
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) => panic!("{}: {error}", directory.display()),
+    };
+    for entry in entries {
+        let path = match entry {
+            Ok(entry) => entry.path(),
+            Err(error) => panic!("{}: {error}", directory.display()),
+        };
+        if path.file_name().is_some_and(|file| file == name)
+            || (path.is_dir() && filed(&path, name))
+        {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(unix)]
