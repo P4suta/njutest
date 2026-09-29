@@ -63,7 +63,10 @@ impl Walk<'_> {
             });
         }
         let nothing = BTreeMap::new();
-        let before = self.base_entries(base).unwrap_or(&nothing);
+        let before = match self.base_entries(base) {
+            Some(entries) => entries,
+            None => &nothing,
+        };
         let after = self.filesystem.entries(self.tree, live)?;
         let mut names: Vec<&String> = before.keys().chain(after.keys()).collect();
         names.sort();
