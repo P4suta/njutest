@@ -11,9 +11,9 @@ use std::time::Duration;
 use rust_mutants_decision::evidence::Sealed;
 use rust_mutants_decision::judgement::{Account, Ending, Harness, Observed, judged};
 use rust_mutants_sealed::{
-    Arguments, ClockPolicy, Environment, Interrupt, Invocation, Limits, OverlayState, Preopen,
-    Preopens, RefusalReason, SealedError, SealedModule, SealedRunner, SealedStop, Snapshot,
-    Transcript, TrapKind, WasiFunction,
+    Arguments, ClockPolicy, Environment, Interrupt, Invocation, Limits, OverlayEntry, OverlayState,
+    Preopen, Preopens, RefusalReason, SealedError, SealedModule, SealedRunner, SealedStop,
+    Snapshot, Transcript, TrapKind, WasiFunction,
 };
 
 use super::doctest::{Expects, Listed, NO_SUCH_INDEX, RUN_ONE, printed};
@@ -676,7 +676,7 @@ impl<'runner> Bench<'runner> {
         let transcript = self.invoke(
             station,
             module,
-            &self.invocation(station, all, (None, CONTROL_FUEL))?,
+            &self.invocation(station, all, (Active::Control, CONTROL_FUEL))?,
         )?;
         let ended = matches!(
             transcript.stop(),
@@ -711,7 +711,7 @@ impl<'runner> Bench<'runner> {
         let beyond = self.invoke(
             station,
             module,
-            &self.invocation(station, after, (None, CONTROL_FUEL))?,
+            &self.invocation(station, after, (Active::Control, CONTROL_FUEL))?,
         )?;
         let refused = matches!(
             beyond.stop(),
@@ -735,42 +735,142 @@ impl<'runner> Bench<'runner> {
         test: &str,
         mutant: &str,
     ) -> Result<Option<Sealed>, BenchError> {
-        let Some(station) = self.stations.get(target) else {
+        let Some(asked) = self.asked(target, test) else {
             return Ok(None);
         };
+        let invocation = asked.invocation(self, Active::Mutant(mutant))?;
+        let transcript = self.invoke(asked.station, asked.module, &invocation)?;
+        Ok(Some(asked.judged(&transcript)?))
+    }
+
+    /// Whether this bench answers for `test` of `target` at the guard `index`: its station holds the test, and the test's control passed and reached the guard.
+    #[must_use]
+    pub fn reaches(&self, target: &str, test: &str, index: u32) -> bool {
+        self.asked(target, test)
+            .is_some_and(|asked| asked.control.reached.contains(&index))
+    }
+
+    /// What `test` of `target` comes to with the crash `mutant` active, the runtime told to publish its notice under `nonce` at [`CRASH_NOTICE`], where the host halts it, or nothing where there is no control to judge it against (ADR 0035, amended by ADR 0046).
+    ///
+    /// # Errors
+    /// An environment that is not text, or a host that cannot run the invocation.
+    pub fn crash(
+        &self,
+        (target, test): (&str, &str),
+        (mutant, nonce): (&str, &str),
+    ) -> Result<Option<Crashed>, BenchError> {
+        let Some(asked) = self.asked(target, test) else {
+            return Ok(None);
+        };
+        let invocation = asked.invocation(self, Active::Crash { mutant, nonce })?;
+        let transcript = self.invoke(asked.station, asked.module, &invocation)?;
+        let ended = match transcript.stop() {
+            SealedStop::Halted => Crashing::Halted,
+            SealedStop::Returned
+            | SealedStop::Exited { .. }
+            | SealedStop::Trapped { .. }
+            | SealedStop::FuelExhausted
+            | SealedStop::MemoryExhausted => Crashing::Judged(asked.judged(&transcript)?),
+        };
+        let read = match written(&transcript, CRASH_NOTICE).map(<[u8]>::to_vec) {
+            Some(bytes) => match String::from_utf8(bytes) {
+                Ok(said) => Some(said),
+                Err(_not_text) => None,
+            },
+            None => None,
+        };
+        let left: Vec<OverlayEntry> = transcript
+            .overlay()
+            .iter()
+            .filter(|entry| inside(RECORDS, &entry.path).is_none())
+            .cloned()
+            .collect();
+        let named = left
+            .iter()
+            .map(|entry| self.named(asked.station, entry))
+            .collect();
+        Ok(Some(Crashed {
+            ended,
+            exit: match transcript.stop() {
+                SealedStop::Exited { code } => Some(code),
+                SealedStop::Returned
+                | SealedStop::Trapped { .. }
+                | SealedStop::FuelExhausted
+                | SealedStop::MemoryExhausted
+                | SealedStop::Halted => None,
+            },
+            read,
+            left,
+            named,
+        }))
+    }
+
+    /// What `test` of `target` comes to with nothing active, in a fresh instance started from everything `crashed` left but the runtime's own records, judged against its control, or nothing where there is no control to judge it against.
+    ///
+    /// # Errors
+    /// An environment that is not text, what `crashed` left that is no change of the instance's trees, or a host that cannot run the invocation.
+    pub fn after(
+        &self,
+        (target, test): (&str, &str),
+        crashed: &Crashed,
+    ) -> Result<Option<Sealed>, BenchError> {
+        let Some(asked) = self.asked(target, test) else {
+            return Ok(None);
+        };
+        let mut invocation = asked.invocation(self, Active::Next)?;
+        invocation.preopens =
+            invocation
+                .preopens
+                .after(&crashed.left)
+                .map_err(|source| BenchError::Host {
+                    target: target.to_owned(),
+                    source,
+                })?;
+        let transcript = self.invoke(asked.station, asked.module, &invocation)?;
+        Ok(Some(asked.judged(&transcript)?))
+    }
+
+    /// The station, control, module and run of `test` of `target`, where the bench has a control of it to judge an execution against.
+    fn asked<'a>(&'a self, target: &'a str, test: &'a str) -> Option<Answerable<'a>> {
+        let station = self.stations.get(target)?;
         let (Some(Ok(control)), Some((module, run))) =
             (station.controls.get(test), station.holding(test))
         else {
-            return Ok(None);
+            return None;
         };
-        let budget = match control.declined {
-            Some(_) => CONTROL_FUEL,
-            None => control
-                .fuel
-                .saturating_mul(FUEL_FACTOR)
-                .saturating_add(FUEL_FLOOR),
-        };
-        let asking = run.asking(test, &self.harness);
-        let invocation = self.invocation(station, asking, (Some(mutant), budget))?;
-        let transcript = self.invoke(station, module, &invocation)?;
-        match (declined(&transcript), control.declined.as_deref()) {
-            (Some(said), Some(before)) if said == before => return Ok(Some(Sealed::SetAside)),
-            (Some(_), Some(_) | None) => {
-                return Ok(Some(Sealed::Detected(
-                    rust_mutants_decision::evidence::Detection::Declined,
-                )));
-            }
-            (None, Some(_) | None) => {}
-        }
-        let observed = observed(&transcript, (test, run), Some(control));
-        let came_to = judged(observed);
-        if judgement_keeps_the_pass_rule(observed, came_to) {
-            Ok(Some(came_to))
-        } else {
-            Err(BenchError::JudgementContradicted {
-                target: target.to_owned(),
-                test: test.to_owned(),
+        Some(Answerable {
+            target,
+            test,
+            station,
+            control,
+            module,
+            run,
+        })
+    }
+
+    /// How `entry`, a change an instance of `station` made outside the runtime's records, is named among what a crash left: below its temporary directory relative to it, below its home from `~/`, below the tree from `./`, below `CARGO_TARGET_TMPDIR` from `$CARGO_TARGET_TMPDIR/`, a directory with a trailing `/`, and a removal after ` (removed)`.
+    fn named(&self, station: &Station<'_>, entry: &OverlayEntry) -> String {
+        let target_tmpdir = station
+            .target
+            .cargo_env
+            .for_process()
+            .find(|(name, _)| name.to_str() == Some(TARGET_TMPDIR))
+            .and_then(|(_, value)| value.to_str().map(ToOwned::to_owned));
+        let below = inside(SCRATCH_TMP, &entry.path)
+            .map(ToOwned::to_owned)
+            .or_else(|| inside(SCRATCH_HOME, &entry.path).map(|rest| format!("~/{rest}")))
+            .or_else(|| {
+                target_tmpdir.as_deref().and_then(|root| {
+                    inside(root, &entry.path).map(|rest| format!("$CARGO_TARGET_TMPDIR/{rest}"))
+                })
             })
+            .or_else(|| inside(&self.tree.root, &entry.path).map(|rest| format!("./{rest}")))
+            .unwrap_or_else(|| entry.path.clone());
+        match entry.state {
+            OverlayState::File { .. } => below,
+            OverlayState::Directory { .. } if below.ends_with('/') => below,
+            OverlayState::Directory { .. } => format!("{below}/"),
+            OverlayState::Removed => format!("{below} (removed)"),
         }
     }
 
@@ -804,7 +904,7 @@ impl<'runner> Bench<'runner> {
             arguments: [vec!["--list".to_owned()], self.harness.beside(&[])].concat(),
             index: None,
         };
-        let invocation = self.invocation(station, asking, (None, CONTROL_FUEL))?;
+        let invocation = self.invocation(station, asking, (Active::Control, CONTROL_FUEL))?;
         let transcript = self.invoke(station, module, &invocation)?;
         if transcript.stop() != SealedStop::Returned {
             return Ok(None);
@@ -821,7 +921,7 @@ impl<'runner> Bench<'runner> {
         let invocation = self.invocation(
             station,
             run.asking(name, &self.harness),
-            (None, CONTROL_FUEL),
+            (Active::Control, CONTROL_FUEL),
         )?;
         let transcript = self.invoke(station, module, &invocation)?;
         let came_to = judged(observed(&transcript, (name, run), None));
@@ -895,7 +995,7 @@ impl<'runner> Bench<'runner> {
         &self,
         station: &Station<'_>,
         asking: Asking,
-        (mutant, fuel): (Option<&str>, u64),
+        (active, fuel): (Active<'_>, u64),
     ) -> Result<Invocation, BenchError> {
         let id = station.target.id().to_owned();
         let mut arguments = vec![station.program.clone()];
@@ -918,11 +1018,24 @@ impl<'runner> Bench<'runner> {
             crate::decline::DECLINE_NOTICE_ENV.to_owned(),
             DECLINE_LOG.to_owned(),
         ));
-        let asked = match mutant {
-            Some(mutant) => (crate::instrument::ACTIVE_ENV, mutant),
-            None => (crate::instrument::TOUCH_ENV, TOUCH_LOG),
+        let (asked, halt): (Vec<(&str, &str)>, Option<String>) = match active {
+            Active::Control => (vec![(crate::instrument::TOUCH_ENV, TOUCH_LOG)], None),
+            Active::Mutant(mutant) => (vec![(crate::instrument::ACTIVE_ENV, mutant)], None),
+            Active::Crash { mutant, nonce } => (
+                vec![
+                    (crate::instrument::ACTIVE_ENV, mutant),
+                    (crate::instrument::CRASH_NOTICE_ENV, CRASH_NOTICE),
+                    (crate::instrument::CRASH_NONCE_ENV, nonce),
+                ],
+                Some(CRASH_NOTICE.to_owned()),
+            ),
+            Active::Next => (Vec::new(), None),
         };
-        variables.push((asked.0.to_owned(), asked.1.to_owned()));
+        variables.extend(
+            asked
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value.to_owned())),
+        );
         if let Some(index) = asking.index {
             variables.push((RUN_ONE.to_owned(), index.to_string()));
         }
@@ -954,9 +1067,115 @@ impl<'runner> Bench<'runner> {
                 monotonic_origin: 0,
                 nanos_per_fuel: NonZeroU64::MIN,
             },
-            halt: None,
+            halt,
         })
     }
+}
+
+/// Where a crashed instance publishes the notice of its stop, and where the host halts it: a file of the runtime's records, which the test does not see.
+pub const CRASH_NOTICE: &str = "/rust-mutants-sealed/crash-notice";
+
+/// What an instance runs with.
+#[derive(Debug, Clone, Copy)]
+enum Active<'a> {
+    /// Nothing, recording every guard it reaches: a control, or a listing.
+    Control,
+    /// A mutant.
+    Mutant(&'a str),
+    /// A crash, whose runtime publishes its notice under the nonce at [`CRASH_NOTICE`], where the host halts the instance.
+    Crash {
+        /// The mutation that puts the crash.
+        mutant: &'a str,
+        /// The nonce issued to this instance alone.
+        nonce: &'a str,
+    },
+    /// Nothing, over what a crash left: a next run.
+    Next,
+}
+
+/// One test a bench can judge an execution of: its station, its control, and the module and run that hold it.
+struct Answerable<'a> {
+    target: &'a str,
+    test: &'a str,
+    station: &'a Station<'a>,
+    control: &'a Control,
+    module: &'a SealedModule<'a>,
+    run: Run,
+}
+
+impl Answerable<'_> {
+    /// The invocation of this test with `active`, allowed its multiple of the control's fuel.
+    fn invocation(&self, bench: &Bench<'_>, active: Active<'_>) -> Result<Invocation, BenchError> {
+        let budget = match self.control.declined {
+            Some(_) => CONTROL_FUEL,
+            None => self
+                .control
+                .fuel
+                .saturating_mul(FUEL_FACTOR)
+                .saturating_add(FUEL_FLOOR),
+        };
+        bench.invocation(
+            self.station,
+            self.run.asking(self.test, &bench.harness),
+            (active, budget),
+        )
+    }
+
+    /// What an execution of this test that left `transcript` came to, judged against its control.
+    fn judged(&self, transcript: &Transcript) -> Result<Sealed, BenchError> {
+        match (declined(transcript), self.control.declined.as_deref()) {
+            (Some(said), Some(before)) if said == before => return Ok(Sealed::SetAside),
+            (Some(_), Some(_) | None) => {
+                return Ok(Sealed::Detected(
+                    rust_mutants_decision::evidence::Detection::Declined,
+                ));
+            }
+            (None, Some(_) | None) => {}
+        }
+        let observed = observed(transcript, (self.test, self.run), Some(self.control));
+        let came_to = judged(observed);
+        if judgement_keeps_the_pass_rule(observed, came_to) {
+            Ok(came_to)
+        } else {
+            Err(BenchError::JudgementContradicted {
+                target: self.target.to_owned(),
+                test: self.test.to_owned(),
+            })
+        }
+    }
+}
+
+/// How an instance a crash was put to ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Crashing {
+    /// The host halted it where its runtime published a notice: nothing it would have run after the call ran.
+    Halted,
+    /// It did not halt, and came to this, judged against the test's control.
+    Judged(Sealed),
+}
+
+/// What an instance a crash was put to came to, and what it left for a next instance to start over.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Crashed {
+    /// How it ended.
+    pub ended: Crashing,
+    /// The status it exited with, where it ended by exiting.
+    pub exit: Option<u32>,
+    /// The notice its runtime published at [`CRASH_NOTICE`], as the instance left it, or nothing where it left none that is text.
+    pub read: Option<String>,
+    /// Every change it made outside the runtime's records, in the order its overlay lists them.
+    left: Vec<OverlayEntry>,
+    /// Each of those changes, named as a crash's `left` names one.
+    pub named: Vec<String>,
+}
+
+/// Where `path` is below the directory `root`, where it is below it at all: empty for `root` itself.
+fn inside<'a>(root: &str, path: &'a str) -> Option<&'a str> {
+    let rest = path.strip_prefix(root.trim_end_matches('/'))?;
+    if rest.is_empty() {
+        return Some("");
+    }
+    rest.strip_prefix('/')
 }
 
 /// The seed of every instance of `target`, the same for its control and for every mutant's execution.

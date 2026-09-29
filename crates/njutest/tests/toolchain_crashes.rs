@@ -296,3 +296,172 @@ fn a_program_that_ends_with_the_stop_status_itself_is_not_decided_on_it() {
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
 }
+
+/// Every call that writes in fixture-durable-calls, by its line, the call, and what a crash just after it comes to.
+const CALLS: [(u64, &str, &str); 15] = [
+    (12, "fs::write of the copy beside", "restarted"),
+    (13, "fs::copy into place", "restarted"),
+    (14, "fs::remove_file of the copy beside", "restarted"),
+    (19, "File::create", "corrupt"),
+    (20, "write_all", "restarted"),
+    (21, "sync_data", "restarted"),
+    (22, "sync_all", "restarted"),
+    (33, "set_len", "corrupt"),
+    (34, "write_all after set_len", "restarted"),
+    (39, "File::create under a buffer", "corrupt"),
+    (40, "write_all into the buffer", "corrupt"),
+    (41, "flush", "restarted"),
+    (47, "fs::write beside a guard", "restarted"),
+    (55, "the guard's own fs::write", "restarted"),
+    (61, "fs::write a child process reaches", "undecided"),
+];
+
+/// The line of the one call no test of its own process reaches, which only a process a test starts does.
+const REACHED_BY_A_CHILD: u64 = 61;
+
+/// Each crash site of `part` by its line: the decision, the record's `sealed`, and the decision's `why`, `left` and `on`.
+fn crashed(part: &serde_json::Value) -> Vec<(u64, String, bool, serde_json::Value)> {
+    let mut sites: Vec<(u64, String, bool, serde_json::Value)> = part["crashes"]
+        .as_array()
+        .expect("a list of crashes")
+        .iter()
+        .map(|crash| {
+            (
+                crash["position"]["line"]
+                    .as_u64()
+                    .expect("every site says where it is"),
+                crash["decision"]["decision"]
+                    .as_str()
+                    .expect("a decision")
+                    .to_owned(),
+                crash["sealed"]
+                    .as_bool()
+                    .expect("every site says whether it was sealed"),
+                crash["decision"].clone(),
+            )
+        })
+        .collect();
+    sites.sort_by_key(|(line, ..)| *line);
+    sites
+}
+
+/// Every crash run the recording holds, as its crash, stage and whether it was sealed.
+fn crash_runs(events: &[njutest::trace::Event]) -> Vec<(String, String, bool)> {
+    events
+        .iter()
+        .filter_map(|event| {
+            if let njutest::trace::Payload::CrashExec { crash } = &event.payload {
+                Some((crash.crash.clone(), crash.stage.clone(), crash.sealed))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn a_crash_after_every_call_that_writes_is_decided_in_one_sealed_round() {
+    let fixture = fixture("fixture-durable-calls");
+    let output = verify(&fixture, &["--crashes", "--trace"]);
+    let part = part(&fixture);
+    let said = njutest_devkit::process::strict_utf8(&output.stderr);
+    let sites = crashed(&part);
+    for ((line, call, expected), (at, decision, sealed, recorded)) in CALLS.iter().zip(&sites) {
+        assert_eq!(
+            (at, decision.as_str(), *sealed),
+            (line, *expected, *line != REACHED_BY_A_CHILD),
+            "{call}: a crash just after it is {expected}, decided sealed wherever the test's \
+             control reached it sealed, and natively where only a process the test started \
+             reaches it: {recorded}\n{said}"
+        );
+    }
+    assert_eq!(sites.len(), CALLS.len(), "one site per call: {part}");
+    let child = sites
+        .iter()
+        .find(|(line, ..)| *line == REACHED_BY_A_CHILD)
+        .map(|(.., recorded)| recorded["why"].as_str().unwrap_or_default().to_owned());
+    assert!(
+        child
+            .as_deref()
+            .is_some_and(|why| why.starts_with("a process the test started stopped at the call")),
+        "a stop in the process the test started is not one the next run's test made: {child:?}"
+    );
+    let runs = crash_runs(&recording(&fixture));
+    assert!(
+        !runs
+            .iter()
+            .any(|(_, stage, sealed)| *sealed && stage == "fresh"),
+        "a sealed crash is decided in one round, with no fresh run to confirm it: {runs:?}"
+    );
+    for (crash, ..) in runs.iter().filter(|(_, _, sealed)| *sealed) {
+        let stops = runs
+            .iter()
+            .filter(|(held, stage, _)| held == crash && stage == "crash")
+            .count();
+        assert_eq!(
+            stops, 1,
+            "{crash}: one sealed stop decides it, since the same instance comes out the same"
+        );
+    }
+}
+
+#[test]
+fn a_sealed_crash_leaves_nothing_the_program_would_have_written_after_the_call() {
+    let fixture = fixture("fixture-durable-calls");
+    let output = verify(&fixture, &["--crashes"]);
+    let part = part(&fixture);
+    let left = |line: u64| {
+        crashed(&part)
+            .into_iter()
+            .find(|(at, _, sealed, _)| *at == line && *sealed)
+            .map(|(.., recorded)| recorded["left"].clone())
+    };
+    assert_eq!(
+        left(47),
+        Some(serde_json::json!([
+            "fixture-durable-calls/",
+            "fixture-durable-calls/guarded"
+        ])),
+        "the host halted the instance in the call that published the stop, so the guard that \
+         says it was dropped never ran: what the next instance starts over is what the call \
+         wrote and nothing after it\n{}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    assert_eq!(
+        left(55),
+        Some(serde_json::json!([
+            "fixture-durable-calls/",
+            "fixture-durable-calls/guarded",
+            "fixture-durable-calls/guarded.dropped"
+        ])),
+        "a stop just after the guard's own write left what the guard wrote"
+    );
+    let buffered = crashed(&part)
+        .into_iter()
+        .find(|(at, ..)| *at == 40)
+        .map(|(_, decision, sealed, _)| (decision, sealed));
+    assert_eq!(
+        buffered,
+        Some(("corrupt".to_owned(), true)),
+        "bytes a buffer held when the call returned never reach the file: no destructor \
+         flushes them after the halt, and the next instance reads an empty count"
+    );
+}
+
+#[test]
+fn a_crash_after_every_call_that_writes_is_decided_natively_where_nothing_is_sealed() {
+    let fixture = fixture("fixture-durable-calls");
+    let output = verify(&fixture, &["--crashes", "--no-seal"]);
+    let part = part(&fixture);
+    let said = njutest_devkit::process::strict_utf8(&output.stderr);
+    let sites = crashed(&part);
+    for ((line, call, expected), (at, decision, sealed, recorded)) in CALLS.iter().zip(&sites) {
+        assert_eq!(
+            (at, decision.as_str(), *sealed),
+            (line, *expected, false),
+            "{call}: a native run comes to what a sealed one does, in three rounds: \
+             {recorded}\n{said}"
+        );
+    }
+    assert_eq!(sites.len(), CALLS.len(), "one site per call: {part}");
+}

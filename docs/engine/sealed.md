@@ -214,6 +214,22 @@ Trusting the 9 kept kills, as a run did before, skipped those 9 executions.
 A kept lead is not a verdict, so nothing is run again for it: sealing is tried first, as for a mutant nothing was kept about.
 An answer carried across an edit ([carrying an answer](carry.md)) rests on native executions, so it is always such a lead.
 
+## Crashes
+
+A run asked for crashes ([ADR 0035](../adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)) seals its crash session as it seals its mutation session, and puts a crash to a test in a sealed instance wherever the bench answers for that test at the crash's guard: its station holds the test, and the test's control passed and reached the guard.
+The instance runs with the crash active, and the runtime told to publish its notice at `/rust-mutants-sealed/crash-notice`, a file of the records directory the test never sees, under a nonce issued to that instance alone.
+The runtime writes the notice beside that path and renames it into place, and the invocation's `halt` names the path, so the host ends the instance in that rename as `Halted` ([the sealed host](sealed-host.md#how-a-run-ends)).
+Nothing the guest would have run after the call runs: no destructor, no exit handler, and no flush of a buffer that still holds bytes.
+The engine says the instance stopped at the call only where the host halted it and the notice the overlay holds is exactly the one it issued; `Session::crash_sealed` makes that decision, and `Bench::crash` the instance.
+
+What the stop left is every change of its overlay outside the runtime's records, named as a native stop's are: below the temporary directory relative to it, below the home from `~/`, below the tree from `./`, below `CARGO_TARGET_TMPDIR` from `$CARGO_TARGET_TMPDIR/`, a directory with a trailing `/` and a removal with ` (removed)` after it.
+The next instance is the test with nothing active, in a fresh instance whose trees are those changes applied to the instance's own snapshots, by `Preopens::after`, with a records directory of its own; `Bench::after` runs it and judges it against the test's control, as [Judging one execution](#judging-one-execution) says.
+It passing is `restarted`, a detection is `corrupt`, with the test as the one failure, and anything else is `undecided`, since it establishes nothing either way.
+One round decides: the control is the fresh run a native round asks for, and the same crash comes out the same every time, so there is no second stop to confirm.
+
+A test with no sealed control, one that starts a process, a thread or a socket, or one the sealed build does not hold, is put the crash natively, as before, in three rounds.
+The report's crash record says `sealed: true` exactly where the decision rests on at least one run and every run it rests on was a sealed instance, and the recording's `crash-exec` says of each run whether it was one ([trace v1](../trace-v1.md)).
+
 ## What sealing cannot see
 
 - Memory corrupted through `unsafe`, which can write anything, including what the harness prints.

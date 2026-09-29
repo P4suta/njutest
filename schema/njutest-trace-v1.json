@@ -563,13 +563,14 @@
             "crash": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["crash", "target", "test", "stage", "exit_code", "outcome", "noticed", "issued", "left", "unnamed", "failed"],
+              "required": ["crash", "target", "test", "stage", "sealed", "exit_code", "outcome", "noticed", "issued", "left", "unnamed", "failed"],
               "properties": {
                 "crash": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
                 "target": { "type": "string", "minLength": 1 },
                 "test": { "type": "string", "minLength": 1 },
                 "stage": { "enum": ["crash", "next", "fresh"] },
-                "exit_code": { "type": "integer" },
+                "sealed": { "type": "boolean" },
+                "exit_code": { "oneOf": [{ "type": "null" }, { "type": "integer" }] },
                 "noticed": { "type": "boolean" },
                 "issued": {
                   "oneOf": [
@@ -587,7 +588,7 @@
                     }
                   ]
                 },
-                "outcome": { "enum": ["not_run", "killed", "survived", "step_limit_reached", "waited", "inconclusive", "errored"] },
+                "outcome": { "enum": ["not_run", "killed", "survived", "step_limit_reached", "waited", "inconclusive", "errored", "halted", "passed", "panicked", "failed", "trapped", "fuel-exceeded", "memory-exceeded", "declined", "exited-early", "stack-overflow", "refused", "unaccounted", "unmatched", "set-aside"] },
                 "left": { "type": "array", "items": { "type": "string" } },
                 "unnamed": { "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1 }] },
                 "failed": { "type": "array", "items": { "type": "string" } }

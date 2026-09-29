@@ -6,6 +6,11 @@
 use xtask::crashes::{Asked, Crashed, Issued, Run, Site, Step, Unmade, decided, disagreements};
 
 fn run(test: &str, stage: &str, ended: &str, files: &[&str]) -> Step {
+    ran(record(test, stage, ended, files))
+}
+
+/// The run `run` records, as a record rather than a step.
+fn record(test: &str, stage: &str, ended: &str, files: &[&str]) -> Run {
     let (exit_code, outcome) = match ended {
         "stopped" | "chose" => (93, "killed"),
         "passed" => (0, "survived"),
@@ -17,11 +22,12 @@ fn run(test: &str, stage: &str, ended: &str, files: &[&str]) -> Step {
     } else {
         (Vec::new(), files)
     };
-    Step::Ran(Run {
+    Run {
         target: "pkg/test/it".to_owned(),
         test: test.to_owned(),
         stage: stage.to_owned(),
-        exit_code,
+        sealed: false,
+        exit_code: Some(exit_code),
         outcome: outcome.to_owned(),
         noticed: ended == "stopped",
         issued: (stage == "crash").then(|| {
@@ -45,7 +51,12 @@ fn run(test: &str, stage: &str, ended: &str, files: &[&str]) -> Step {
         left,
         unnamed: None,
         failed,
-    })
+    }
+}
+
+/// `run` as the step a recording holds it as.
+fn ran(run: Run) -> Step {
+    Step::Ran(Box::new(run))
 }
 
 fn route(asked: &[(&str, Option<&[&str]>)]) -> Step {
@@ -67,6 +78,148 @@ fn asks_t() -> Step {
 fn decision(steps: &[Step]) -> Result<(String, String), Unmade> {
     decided("dddd", &steps.iter().collect::<Vec<_>>(), false)
         .map(|decided| (decided.site.decision, decided.site.on))
+}
+
+/// A sealed instance of `test` at `stage` that came to `outcome`, leaving `left` where it is a stop and failing `failed` where it is a next run.
+fn sealed(test: &str, stage: &str, outcome: &str, (left, failed): (&[&str], &[&str])) -> Step {
+    let native = record(
+        test,
+        stage,
+        if outcome == "halted" {
+            "stopped"
+        } else {
+            "passed"
+        },
+        &[],
+    );
+    ran(Run {
+        sealed: true,
+        exit_code: None,
+        outcome: outcome.to_owned(),
+        left: left.iter().map(|one| (*one).to_owned()).collect(),
+        failed: failed.iter().map(|one| (*one).to_owned()).collect(),
+        ..native
+    })
+}
+
+#[test]
+fn a_sealed_crash_is_decided_in_one_round_and_says_it_was_sealed() {
+    let one = |steps: &[Step]| {
+        decided("dddd", &steps.iter().collect::<Vec<_>>(), false)
+            .map(|decided| (decided.site.decision, decided.site.sealed))
+    };
+    let halted = sealed("t", "crash", "halted", (&["count"], &[]));
+    assert_eq!(
+        one(&[
+            asks_t(),
+            halted.clone(),
+            sealed("t", "next", "passed", (&[], &[]))
+        ]),
+        Ok(("restarted".to_owned(), true)),
+        "a next instance that passed over what the halt left restarts it"
+    );
+    assert_eq!(
+        one(&[
+            asks_t(),
+            halted.clone(),
+            sealed("t", "next", "panicked", (&[], &["t"]))
+        ]),
+        Ok(("corrupt".to_owned(), true)),
+        "a next instance that detected over what the halt left is corrupt, with no fresh run \
+         and no second stop, since the same instance comes out the same every time"
+    );
+    assert_eq!(
+        one(&[
+            asks_t(),
+            halted,
+            sealed("t", "next", "exited-early", (&[], &[]))
+        ]),
+        Ok(("undecided".to_owned(), true)),
+        "a next instance that established nothing decides nothing"
+    );
+    assert_eq!(
+        one(&[asks_t(), sealed("t", "crash", "halted", (&[], &[]))]),
+        Ok(("unshared".to_owned(), true)),
+        "a halt that left nothing leaves the next instance nothing to read"
+    );
+    assert_eq!(
+        one(&[
+            route(&[("pkg/test/it", Some(&["t", "u"]))]),
+            sealed("t", "crash", "passed", (&[], &[])),
+            run("u", "crash", "stopped", &["count"]),
+            run("u", "next", "passed", &[]),
+        ]),
+        Ok(("restarted".to_owned(), false)),
+        "a decision that rests on a native run as well is not a sealed one"
+    );
+}
+
+#[test]
+fn a_sealed_sequence_no_run_makes_is_refused() {
+    let halted = sealed("t", "crash", "halted", (&["count"], &[]));
+    let cases: Vec<(&str, Vec<Step>)> = vec![
+        (
+            "a native next run after a sealed halt",
+            vec![asks_t(), halted.clone(), run("t", "next", "passed", &[])],
+        ),
+        (
+            "a sealed next run after a native stop",
+            vec![
+                asks_t(),
+                run("t", "crash", "stopped", &["count"]),
+                sealed("t", "next", "passed", (&[], &[])),
+            ],
+        ),
+        (
+            "a sealed next run that detected and names no failure",
+            vec![
+                asks_t(),
+                halted.clone(),
+                sealed("t", "next", "failed", (&[], &[])),
+            ],
+        ),
+        (
+            "a sealed next run that passed and names a failure",
+            vec![
+                asks_t(),
+                halted.clone(),
+                sealed("t", "next", "passed", (&[], &["t"])),
+            ],
+        ),
+        (
+            "a sealed next run that halted",
+            vec![
+                asks_t(),
+                halted.clone(),
+                sealed("t", "next", "halted", (&[], &[])),
+            ],
+        ),
+        (
+            "a sealed run with an exit status",
+            vec![
+                asks_t(),
+                match sealed("t", "crash", "halted", (&["count"], &[])) {
+                    Step::Ran(run) => ran(Run {
+                        exit_code: Some(93),
+                        ..*run
+                    }),
+                    other => other,
+                },
+            ],
+        ),
+        (
+            "a corrupt sealed stop confirmed with a fresh run",
+            vec![
+                asks_t(),
+                halted,
+                sealed("t", "next", "panicked", (&[], &["t"])),
+                sealed("t", "fresh", "passed", (&[], &[])),
+            ],
+        ),
+    ];
+    for (case, steps) in cases {
+        assert!(decision(&steps).is_err(), "{case} is refused");
+    }
 }
 
 fn corrupted(again: &str) -> Vec<Step> {
@@ -225,6 +378,7 @@ fn a_report_that_drops_renames_or_softens_a_crash_disagrees_with_its_recording()
         on: "pkg/test/it::t".to_owned(),
         left: Vec::new(),
         failed: vec!["t".to_owned()],
+        sealed: false,
     };
     assert!(
         disagreements(std::slice::from_ref(&corrupt), &recorded).is_empty(),
@@ -265,12 +419,12 @@ fn a_stop_in_a_child_the_test_started_leaves_the_crash_undecided_whatever_the_pa
     let Step::Ran(stopped) = stopped else {
         panic!("a run is a run");
     };
-    let tolerated = Step::Ran(Run {
-        exit_code: 0,
+    let tolerated = ran(Run {
+        exit_code: Some(0),
         outcome: "survived".to_owned(),
         noticed: false,
         left: Vec::new(),
-        ..stopped
+        ..*stopped
     });
     assert_eq!(
         decision(&[asks_t(), tolerated]),
@@ -288,10 +442,10 @@ fn a_stop_that_left_an_entry_whose_name_is_not_text_is_undecided_and_only_a_stop
     };
     let unnamed = Run {
         unnamed: Some("bytes:746f726e2dff".to_owned()),
-        ..stopped
+        ..*stopped
     };
     assert_eq!(
-        decision(&[asks_t(), Step::Ran(unnamed.clone())]),
+        decision(&[asks_t(), ran(unnamed.clone())]),
         Ok(("undecided".to_owned(), "pkg/test/it::t".to_owned())),
         "what the stop left cannot be named, so no next run was asked and nothing is said of \
          whether it could start over it"
@@ -299,7 +453,7 @@ fn a_stop_that_left_an_entry_whose_name_is_not_text_is_undecided_and_only_a_stop
     assert!(
         decision(&[
             asks_t(),
-            Step::Ran(Run {
+            ran(Run {
                 left: vec!["count".to_owned()],
                 ..unnamed.clone()
             })
@@ -313,9 +467,9 @@ fn a_stop_that_left_an_entry_whose_name_is_not_text_is_undecided_and_only_a_stop
     assert!(
         decision(&[
             asks_t(),
-            Step::Ran(Run {
+            ran(Run {
                 unnamed: unnamed.unnamed,
-                ..passed
+                ..*passed
             })
         ])
         .is_err(),
@@ -397,7 +551,7 @@ fn once_a_stop_wrote_into_the_tree_every_later_crash_is_left_alone() {
 fn a_recorded_run_that_carries_no_issue_is_read_as_one_that_was_not_crashed() {
     let line = |issued: &str| {
         format!(
-            "{{\"seq\":1,\"timestamp\":\"2026-09-06T00:00:00Z\",\"elapsed_ms\":0,\"payload\":{{\"type\":\"crash-exec\",\"crash\":{{\"crash\":\"dddddddddddddddddddd\",\"target\":\"pkg/test/it\",\"test\":\"t\",\"stage\":\"next\",\"exit_code\":0,\"outcome\":\"survived\",\"noticed\":false,\"issued\":{issued},\"left\":[],\"unnamed\":null,\"failed\":[]}}}}}}\n"
+            "{{\"seq\":1,\"timestamp\":\"2026-09-06T00:00:00Z\",\"elapsed_ms\":0,\"payload\":{{\"type\":\"crash-exec\",\"crash\":{{\"crash\":\"dddddddddddddddddddd\",\"target\":\"pkg/test/it\",\"test\":\"t\",\"stage\":\"next\",\"sealed\":false,\"exit_code\":0,\"outcome\":\"survived\",\"noticed\":false,\"issued\":{issued},\"left\":[],\"unnamed\":null,\"failed\":[]}}}}}}\n"
         )
     };
     let checkers = xtask::schemas::Checkers::compiled().expect("the published schemas compile");
@@ -408,7 +562,7 @@ fn a_recorded_run_that_carries_no_issue_is_read_as_one_that_was_not_crashed() {
     assert!(
         matches!(
             read("null").steps.as_slice(),
-            [(_, Step::Ran(Run { issued: None, .. }))]
+            [(_, Step::Ran(run))] if run.issued.is_none()
         ),
         "`null` is a run nothing was issued, which is every run but a crashed one"
     );
@@ -425,10 +579,19 @@ fn a_reported_site_holds_what_its_decision_does_not_say_as_empty_and_refuses_ano
         xtask::crashes::site(&serde_json::json!({
             "display_id": "d".repeat(20),
             "decision": decision,
+            "sealed": false,
         }))
     };
     let unreached = site(serde_json::json!({ "decision": "unreached" }))
         .expect("an unreached site says no target, which is its shape");
+    assert_eq!(
+        xtask::crashes::site(&serde_json::json!({
+            "display_id": "d".repeat(20),
+            "decision": { "decision": "unreached" },
+        })),
+        None,
+        "a site that does not say whether it was sealed is not read as one that was not"
+    );
     assert!(
         unreached.on.is_empty() && unreached.left.is_empty() && unreached.failed.is_empty(),
         "a decision that does not say `on`, `left` or `failed` is held as saying none, as a site \

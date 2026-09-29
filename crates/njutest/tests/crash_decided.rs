@@ -15,6 +15,7 @@ fn record(decision: CrashDecision) -> CrashRecord {
         item: "save".to_owned(),
         position: None,
         decision,
+        sealed: false,
     }
 }
 

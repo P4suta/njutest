@@ -369,6 +369,11 @@ fn fixture_durable() {
 }
 
 #[test]
+fn fixture_durable_calls() {
+    holds("fixture-durable-calls");
+}
+
+#[test]
 fn fixture_edits() {
     holds("fixture-edits");
 }

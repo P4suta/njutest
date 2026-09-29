@@ -1124,7 +1124,8 @@
         "path",
         "item",
         "position",
-        "decision"
+        "decision",
+        "sealed"
       ],
       "properties": {
         "catalog_index": {
@@ -1156,6 +1157,10 @@
         },
         "decision": {
           "$ref": "#/$defs/crashDecision"
+        },
+        "sealed": {
+          "description": "Whether the decision rests on at least one run and every run it rests on was a sealed instance, decided in one round (ADR 0046).",
+          "type": "boolean"
         }
       }
     },
