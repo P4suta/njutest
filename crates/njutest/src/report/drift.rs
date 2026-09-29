@@ -253,13 +253,41 @@ pub fn resting(records: &[MutantRecord], target: &str) -> (usize, usize) {
     (discharged, unreached)
 }
 
-/// The `reach-moved` limitation for every moved target nothing rests on any more, each with how many dispositions were run again against it, an answer or a hole (ADR 0036).
-#[must_use]
+/// How many dispositions resting on one target whose reach moved a part ran again against it and replaced, with an answer or a hole (ADR 0036).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Repaired {
+    /// The target whose reach moved.
+    pub target: String,
+    /// How many dispositions the part ran again against it and replaced.
+    pub again: u32,
+}
+
+/// How many dispositions every part of `repaired` ran again against `target`, over each record naming it.
+///
+/// # Errors
+/// [`super::CountError`] where the sum does not fit the counter.
+fn ran_again(repaired: &[Repaired], target: &str) -> Result<u32, super::CountError> {
+    repaired
+        .iter()
+        .filter(|one| one.target == target)
+        .try_fold(0_u32, |sum, one| {
+            sum.checked_add(one.again)
+                .ok_or(super::CountError::Overflow {
+                    field: "repaired dispositions",
+                })
+        })
+}
+
+/// The `reach-moved` limitation for every moved target nothing rests on, counting what the `repaired` records ran again against it.
+///
+/// # Errors
+/// [`super::CountError`] where a target's count over the parts does not fit the counter.
 pub fn repaired(
     drift: &[Drift],
     records: &[MutantRecord],
-    counted: &BTreeMap<String, usize>,
-) -> Vec<Limitation> {
+    repaired: &[Repaired],
+) -> Result<Vec<Limitation>, super::CountError> {
     drift
         .iter()
         .filter_map(|one| match one {
@@ -268,11 +296,8 @@ pub fn repaired(
         })
         .filter(|target| resting(records, target) == (0, 0))
         .map(|target| {
-            let again = match counted.get(target) {
-                Some(again) => *again,
-                None => 0,
-            };
-            Limitation::new(
+            let again = ran_again(repaired, target)?;
+            Ok(Limitation::new(
                 crate::limitation::Limitation::ReachMoved,
                 &format!(
                     "a target reached something on an original-code control that it did not \
@@ -286,7 +311,7 @@ pub fn repaired(
                     },
                     if again == 1 { "was" } else { "were" }
                 ),
-            )
+            ))
         })
         .collect()
 }

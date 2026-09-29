@@ -33,6 +33,8 @@ pub enum MergeRule {
     Shards,
     /// The record stream kept beside the merge says of each dimension what every part's records establish.
     Dimensions,
+    /// The record stream kept beside the merge raises `unstable-baseline` about each target a part saw move that something still rests on, and states `reach-moved` about each one nothing rests on with what every part ran again against it (ADR 0036 decisions 3 and 4).
+    Moved,
 }
 
 impl MergeRule {
@@ -50,6 +52,7 @@ impl MergeRule {
             Self::Models => "models",
             Self::Shards => "shards",
             Self::Dimensions => "dimensions",
+            Self::Moved => "moved",
         }
     }
 }
@@ -243,6 +246,7 @@ pub fn merged_with(
         }
     }
     dimensioned(&merged, kept, &mut notes);
+    moved(&merged, kept, &mut notes);
     let Decided(()) = notes.looked();
     let whole = shards.len() == sources.len();
     for layer in Layer::ALL
@@ -331,6 +335,8 @@ enum Unlisted {
     Field(&'static str),
     /// A row whose evidence is in no shape a run writes.
     Evidence,
+    /// Repair counts over one target that no count holds.
+    Count,
 }
 
 impl Unlisted {
@@ -341,6 +347,7 @@ impl Unlisted {
             Self::List(name) => format!("a part holds no {name} list"),
             Self::Field(pointer) => format!("a row holds no {pointer}"),
             Self::Evidence => "a row holds evidence in no shape a run writes".to_owned(),
+            Self::Count => "the parts' repair counts over one target do not fit a count".to_owned(),
         }
     }
 }
@@ -482,6 +489,255 @@ fn dimensioned(merged: &Complete, kept: Option<&str>, notes: &mut Notes<'_>) {
             MergeRule::Dimensions,
             extra,
             "the record stream names a dimension no matrix has",
+        );
+    }
+}
+
+/// What the merge owes the record stream about one target a part saw move, re-derived from every part's drift, rows and repair counts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Owed {
+    /// Something still rests on it: the `unstable-baseline` finding, with the words that count what does.
+    Unstable(String),
+    /// Nothing does: the `reach-moved` limitation, with the words that count what every part ran again.
+    Repaired(String),
+}
+
+/// How many mutations, in the words a finding counts them in.
+fn mutations(count: usize) -> String {
+    if count == 1 {
+        "1 mutation".to_owned()
+    } else {
+        format!("{count} mutations")
+    }
+}
+
+/// Every part's records one build of a merge re-derives its moves from: the targets a part saw move, every row, and each part's repair count against each target.
+struct Moves {
+    moved: BTreeSet<String>,
+    rows: Vec<Value>,
+    repaired: Vec<(String, u64)>,
+}
+
+impl Moves {
+    /// What every part of `build` holds, or the first thing a part does not hold.
+    fn of(build: &Build) -> Result<Self, Unlisted> {
+        let list = |part: &Value, name: &'static str| -> Result<Vec<Value>, Unlisted> {
+            part.get(name)
+                .and_then(Value::as_array)
+                .cloned()
+                .ok_or(Unlisted::List(name))
+        };
+        let text = |record: &Value, name: &'static str| -> Result<String, Unlisted> {
+            record
+                .get(name)
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+                .ok_or(Unlisted::Field(name))
+        };
+        let mut moves = Self {
+            moved: BTreeSet::new(),
+            rows: Vec::new(),
+            repaired: Vec::new(),
+        };
+        for part in &build.parts {
+            for record in list(part, "drift")? {
+                if record.get("state").and_then(Value::as_str) == Some("moved") {
+                    moves.moved.insert(text(&record, "target")?);
+                }
+            }
+            for record in list(part, "repaired")? {
+                let again = record
+                    .get("again")
+                    .and_then(Value::as_u64)
+                    .ok_or(Unlisted::Field("again"))?;
+                moves.repaired.push((text(&record, "target")?, again));
+            }
+            moves.rows.extend(list(part, "mutants")?);
+        }
+        Ok(moves)
+    }
+
+    /// How many rows came to `outcome` and rest on `target`: every unreached one, and each survivor whose route did not put `target` to it.
+    fn resting(&self, target: &str, outcome: &str) -> usize {
+        self.rows
+            .iter()
+            .filter(|row| row.pointer("/decision/outcome").and_then(Value::as_str) == Some(outcome))
+            .filter(|row| {
+                outcome == "unreached"
+                    || !row
+                        .pointer("/routing/reaching")
+                        .and_then(Value::as_array)
+                        .is_some_and(|reaching| {
+                            reaching.iter().any(|one| one.as_str() == Some(target))
+                        })
+            })
+            .count()
+    }
+
+    /// What the merge owes about `target`, one of the moved.
+    fn owed(&self, target: &str) -> Result<Owed, Unlisted> {
+        let (survived, unreached) = (
+            self.resting(target, "survived"),
+            self.resting(target, "unreached"),
+        );
+        if survived > 0 || unreached > 0 {
+            return Ok(Owed::Unstable(format!(
+                ": {} a proof removed its run of, and {} no test reached, rest on it",
+                mutations(survived),
+                mutations(unreached)
+            )));
+        }
+        let again = self
+            .repaired
+            .iter()
+            .filter(|(named, _)| named == target)
+            .try_fold(0_u64, |sum, (_, again)| sum.checked_add(*again))
+            .ok_or(Unlisted::Count)?;
+        Ok(Owed::Repaired(format!(
+            "; {again} {} that rested on its baseline {} run again against it",
+            if again == 1 {
+                "disposition"
+            } else {
+                "dispositions"
+            },
+            if again == 1 { "was" } else { "were" }
+        )))
+    }
+}
+
+/// What the merge owes about each target a part of `merged` saw move, or what a part does not hold that it would be read from.
+fn owed_moves(merged: &Complete) -> Result<Vec<(String, Owed)>, Unlisted> {
+    let mut owed = Vec::new();
+    for build in &merged.builds {
+        let moves = Moves::of(build)?;
+        for target in &moves.moved {
+            owed.push((target.clone(), moves.owed(target)?));
+        }
+    }
+    Ok(owed)
+}
+
+/// What a record stream says about moved targets: each `unstable-baseline` finding's subject and detail, and each `reach-moved` limitation's detail.
+fn said_moves(kept: &str) -> (Vec<(String, String)>, Vec<String>) {
+    let mut found = Vec::new();
+    let mut stated = Vec::new();
+    for line in kept.lines() {
+        match line.split('\t').collect::<Vec<&str>>().as_slice() {
+            ["FINDING", "unstable-baseline", subject, detail, ..] => {
+                found.push(((*subject).to_owned(), (*detail).to_owned()));
+            }
+            ["LIMITATION", "reach-moved", detail, ..] => stated.push((*detail).to_owned()),
+            _ => {}
+        }
+    }
+    (found, stated)
+}
+
+/// Whether the record stream `kept` beside `merged` raises `unstable-baseline` and states `reach-moved` exactly where every part's drift, rows and repair counts decide, each counting what they count, re-derived without the runner's code (ADR 0036 decisions 3 and 4); where no stream was kept nothing was said to hold.
+fn moved(merged: &Complete, kept: Option<&str>, notes: &mut Notes<'_>) {
+    let Some(kept) = kept else {
+        return;
+    };
+    let owed = match owed_moves(merged) {
+        Ok(owed) => owed,
+        Err(why) => {
+            broke(notes, MergeRule::Moved, "moved", &why.said());
+            return;
+        }
+    };
+    let (found, stated) = said_moves(kept);
+    for (target, owing) in &owed {
+        held_to_owed((target, owing), (&found, &stated), notes);
+    }
+    for (subject, _) in &found {
+        if !owed.iter().any(|(target, _)| target == subject) {
+            broke(
+                notes,
+                MergeRule::Moved,
+                subject,
+                "the record stream raises unstable-baseline about it, and no part saw its reach \
+                 move",
+            );
+        }
+    }
+    for detail in &stated {
+        if !owed
+            .iter()
+            .any(|(target, _)| detail.ends_with(&format!("({target})")))
+        {
+            broke(
+                notes,
+                MergeRule::Moved,
+                "reach-moved",
+                &format!(
+                    "the record stream states reach-moved about a target no part saw move: \
+                     {detail}"
+                ),
+            );
+        }
+    }
+}
+
+/// Whether the record stream's `found` findings and `stated` limitations say of `target` exactly what `owing` owes, once, with its count, and not the other.
+fn held_to_owed(
+    (target, owing): (&str, &Owed),
+    (found, stated): (&[(String, String)], &[String]),
+    notes: &mut Notes<'_>,
+) {
+    let about = format!("({target})");
+    let finding: Vec<&String> = found
+        .iter()
+        .filter(|(subject, _)| subject == target)
+        .map(|(_, detail)| detail)
+        .collect();
+    let limitation: Vec<&String> = stated
+        .iter()
+        .filter(|detail| detail.ends_with(&about))
+        .collect();
+    let (said, counted, other, owed_name) = match owing {
+        Owed::Unstable(counted) => (
+            finding,
+            counted,
+            limitation.len(),
+            "the unstable-baseline finding",
+        ),
+        Owed::Repaired(counted) => (
+            limitation,
+            counted,
+            finding.len(),
+            "the reach-moved limitation",
+        ),
+    };
+    match said.as_slice() {
+        [one] if one.contains(counted.as_str()) => {}
+        [one] => broke(
+            notes,
+            MergeRule::Moved,
+            target,
+            &format!(
+                "the record stream holds {owed_name} about it without `{}`, which every part's \
+                 records count: {one}",
+                counted.trim_start_matches([':', ';', ' '])
+            ),
+        ),
+        others => broke(
+            notes,
+            MergeRule::Moved,
+            target,
+            &format!(
+                "a part saw its reach move, and the record stream holds {} of {owed_name} about \
+                 it where every part's records owe exactly one",
+                others.len()
+            ),
+        ),
+    }
+    if other > 0 {
+        broke(
+            notes,
+            MergeRule::Moved,
+            target,
+            "the record stream both raises unstable-baseline and states reach-moved about it, \
+             and every part's records decide one of them",
         );
     }
 }

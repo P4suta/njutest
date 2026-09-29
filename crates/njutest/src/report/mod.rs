@@ -1625,6 +1625,8 @@ pub struct BuildPartEvidence {
     limitations: Vec<Limitation>,
     /// Whether each target this source's baseline measured held its reach on a control.
     drift: Vec<drift::Drift>,
+    /// How many dispositions resting on each target this source saw move it ran again against it, one record per moved target in drift order.
+    repaired: Vec<drift::Repaired>,
     /// What each knob asked for established about each target whose baseline passed.
     knobs: Vec<knobs::KnobRecord>,
     /// Whether each test binary this source's baseline measured is proven to run one thread.
@@ -1657,6 +1659,7 @@ impl BuildPartEvidence {
             findings,
             limitations: report.limitations.clone(),
             drift: report.drift.clone(),
+            repaired: report.repaired.clone(),
             knobs: report.knobs.clone(),
             concurrency: report.concurrency.clone(),
         };
@@ -1686,6 +1689,7 @@ struct BuildPartEvidenceWire {
     findings: Vec<Finding>,
     limitations: Vec<Limitation>,
     drift: Vec<drift::Drift>,
+    repaired: Vec<drift::Repaired>,
     knobs: Vec<knobs::KnobRecord>,
     concurrency: Vec<concurrency::ConcurrencyRecord>,
 }
@@ -1714,6 +1718,7 @@ impl<'de> Deserialize<'de> for BuildPartEvidence {
             findings: wire.findings,
             limitations: wire.limitations,
             drift: wire.drift,
+            repaired: wire.repaired,
             knobs: wire.knobs,
             concurrency: wire.concurrency,
         };
@@ -1989,6 +1994,14 @@ pub enum PartLedgerError {
         /// Which.
         about: String,
     },
+    /// The repair counts are not one for each target the part saw move, in drift order, or count more dispositions than the part holds.
+    #[error("source {run_id} has repair records that are not its moved targets' own: {about}")]
+    RepairRecords {
+        /// The owning source.
+        run_id: rust_mutants::id::RunId,
+        /// Which.
+        about: String,
+    },
 }
 
 impl PartLedger {
@@ -2162,6 +2175,47 @@ fn validate_beside(part: &BuildPartEvidence) -> Result<(), PartLedgerError> {
 }
 
 /// Every knob asked for is put once on every target whose baseline passed, so the records of one part are one per knob and target, and every knob's are over one set of targets.
+/// Nothing, where `part` records one repair count for each target its drift says moved, in drift order, none counting more dispositions than the part holds (ADR 0036 decision 4).
+fn validate_repair_records(part: &BuildPartEvidence) -> Result<(), PartLedgerError> {
+    let refused = |about: String| PartLedgerError::RepairRecords {
+        run_id: part.run_id.clone(),
+        about,
+    };
+    let moved: Vec<&str> = part
+        .drift
+        .iter()
+        .filter_map(|one| match one {
+            drift::Drift::Moved { target, .. } => Some(target.as_str()),
+            drift::Drift::Held { .. } | drift::Drift::NotMeasured { .. } => None,
+        })
+        .collect();
+    let counted: Vec<&str> = part
+        .repaired
+        .iter()
+        .map(|one| one.target.as_str())
+        .collect();
+    if moved != counted {
+        return Err(refused(format!(
+            "the targets it saw move are {moved:?} and it counts repairs against {counted:?}"
+        )));
+    }
+    let held = part.mutants.len();
+    if let Some(over) = part
+        .repaired
+        .iter()
+        .find(|one| match usize::try_from(one.again) {
+            Ok(again) => again > held,
+            Err(_wider_than_memory) => true,
+        })
+    {
+        return Err(refused(format!(
+            "it ran {} dispositions again against {} and holds {held}",
+            over.again, over.target
+        )));
+    }
+    Ok(())
+}
+
 fn validate_knob_records(part: &BuildPartEvidence) -> Result<(), PartLedgerError> {
     let refused = |about: String| PartLedgerError::KnobRecords {
         run_id: part.run_id.clone(),
@@ -2283,6 +2337,7 @@ fn validate_part_evidence(part: &BuildPartEvidence) -> Result<(), PartLedgerErro
     validate_beside(part)?;
     validate_dimension_accounting(part)?;
     validate_knob_records(part)?;
+    validate_repair_records(part)?;
     validate_concurrency_records(part)?;
     let mut target_ids = BTreeSet::new();
     for target in &part.targets {
@@ -4935,6 +4990,8 @@ pub struct BuildReport {
     pub limitations: Vec<Limitation>,
     /// Whether each target its baseline measured reached, on an original-code control, what it reached on that baseline.
     pub drift: Vec<drift::Drift>,
+    /// How many dispositions resting on each target whose reach moved it ran again against it, one record per moved target in drift order (ADR 0036).
+    pub repaired: Vec<drift::Repaired>,
     /// What each knob asked for established about each target whose baseline passed.
     pub knobs: Vec<knobs::KnobRecord>,
     /// Whether each test binary its baseline measured is proven to run one thread.
@@ -4980,6 +5037,7 @@ impl BuildReport {
             findings: Vec::new(),
             limitations: Vec::new(),
             drift: Vec::new(),
+            repaired: Vec::new(),
             knobs: Vec::new(),
             concurrency: Vec::new(),
         }
@@ -6358,6 +6416,10 @@ impl Report {
         let mutants = projected_mutants_with_models(&self.builds, self.models());
         let findings =
             projected_findings(&self.builds, &self.global_findings, &mutants, self.contract);
+        let mut limitations = Vec::new();
+        for build in self.builds.iter() {
+            limitations.extend(stated_by(build)?);
+        }
         Ok(Conclusion {
             verdict: concluded_from_projection(ConclusionProjection {
                 run_kind: self.run_kind,
@@ -6399,7 +6461,7 @@ impl Report {
                 .collect(),
             mutants,
             findings,
-            limitations: self.builds.iter().flat_map(stated_by).collect(),
+            limitations,
             sources: self
                 .builds
                 .iter()
@@ -7151,7 +7213,10 @@ impl MatrixEvidence {
 }
 
 /// Every limitation `build` states: each its parts state, once however many parts state it, and what only the whole catalog decides.
-fn stated_by(build: &BuildEvidence) -> Vec<Limitation> {
+///
+/// # Errors
+/// [`CountError`] as [`catalog_of`] refuses.
+fn stated_by(build: &BuildEvidence) -> Result<Vec<Limitation>, CountError> {
     let mut stated: Vec<Limitation> = Vec::new();
     for limitation in build
         .parts
@@ -7160,6 +7225,7 @@ fn stated_by(build: &BuildEvidence) -> Vec<Limitation> {
         .filter(|limitation| {
             ![
                 crate::limitation::DRIFT_NOT_MEASURED,
+                crate::limitation::REACH_MOVED,
                 crate::limitation::KNOB_NOT_PUT,
                 crate::limitation::KNOB_NOT_COMPARED,
             ]
@@ -7171,7 +7237,17 @@ fn stated_by(build: &BuildEvidence) -> Vec<Limitation> {
         }
     }
     stated.extend(catalog_of(build).limitations);
-    stated
+    let repaired: Vec<drift::Repaired> = build
+        .parts
+        .iter()
+        .flat_map(|part| part.repaired.iter().cloned())
+        .collect();
+    stated.extend(drift::repaired(
+        &build.drift(),
+        &build.rows().cloned().collect::<Vec<MutantRecord>>(),
+        &repaired,
+    )?);
+    Ok(stated)
 }
 
 /// What only the whole catalog decides about `build`, over every part's records together, whether it was measured whole or in shards: the one place a conclusion gets it, so no producer can store it or forget it.

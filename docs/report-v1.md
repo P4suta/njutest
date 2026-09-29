@@ -197,6 +197,11 @@ The same holds for `hollow-target`, since which targets answered about a mutatio
 What only the whole catalog decides is one function, `report::whole_catalog`, called by a run that measured the catalog whole and by a merge over the combined records, so a catalog concludes the same whether it was measured whole or in shards.
 Every survived or unreached disposition that rested on a moved target is run again against it with its reach recorded, and replaced by what that run decides where it reached the site ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)); a moved target nothing rests on afterwards is stated as the limitation `reach-moved`, naming it and how many dispositions were run again.
 
+Every part also carries `repaired`: one `{ target, again }` for each target its drift records as `moved`, in drift order, saying how many dispositions the part ran again against that target and replaced, with an answer or a hole.
+A part whose `repaired` does not name exactly its moved targets, in that order, or counts more dispositions against one than the part holds, is not a v1 document.
+The count is the part's own, because only the run that ran them again knows it; a merge states `reach-moved` about a moved target nothing rests on over the combined records with the sum of every part's count for it, so a catalog measured in shards says what one measured whole says.
+`proofaudit` holds a merge's record stream to the same re-derivation: an `unstable-baseline` finding for each moved target something still rests on, counting what does, and a `reach-moved` limitation for each one nothing rests on, counting what every part ran again.
+
 ## Faults
 
 Every part carries `faults`, one record per site a fault was asked at, in catalog order, and empty unless the run was asked for faults ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).

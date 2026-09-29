@@ -1530,6 +1530,19 @@ pub mod reports {
         builds: &[String],
     ) -> Result<BuildReport, UnmadeReportError> {
         let mut report = measured(run, kind, rows, builds)?;
+        report.repaired = drift
+            .iter()
+            .filter_map(|one| match one {
+                crate::report::drift::Drift::Moved { target, .. } => {
+                    Some(crate::report::drift::Repaired {
+                        target: target.clone(),
+                        again: 0,
+                    })
+                }
+                crate::report::drift::Drift::Held { .. }
+                | crate::report::drift::Drift::NotMeasured { .. } => None,
+            })
+            .collect();
         report.drift = drift;
         super::raise_what_the_records_decide(&mut report);
         report.verdict = report.concluded();

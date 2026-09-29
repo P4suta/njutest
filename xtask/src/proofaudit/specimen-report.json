@@ -159,6 +159,7 @@
             "findings": [],
             "limitations": [],
             "drift": [],
+            "repaired": [],
             "knobs": [],
             "concurrency": []
           }

@@ -49,6 +49,38 @@ pub fn read(recorded: &crate::route::Checked<crate::schemas::RunnerLines>) -> Ve
     repairs
 }
 
+/// How a route ranks the holes a run can leave, weakest first, which is how the runs of one disposition again against several moved targets are joined.
+const HOLES: [&str; 4] = ["step-limit-reached", "waited", "unconfirmed", "errored"];
+
+/// What the runs `of_it` of one disposition again against the moved targets it rested on come to together, whatever order they ran in: a kill over the worst hole over a pass that reached the site over what any other run decided, and what it was where none decided anything; nothing where it was run again against none (ADR 0036 decision 1).
+#[must_use]
+pub fn joined(of_it: &[&Repair]) -> Option<String> {
+    let first = of_it.first()?;
+    let mut decided: Vec<&Repair> = of_it
+        .iter()
+        .copied()
+        .filter(|one| one.reached == "reached" || one.now != one.was)
+        .collect();
+    decided.sort_by(|left, right| left.target.cmp(&right.target));
+    if decided.iter().any(|one| one.now == "killed") {
+        return Some("killed".to_owned());
+    }
+    if let Some(worst) = HOLES
+        .iter()
+        .rev()
+        .find(|hole| decided.iter().any(|one| one.now == **hole))
+    {
+        return Some((*worst).to_owned());
+    }
+    if decided.iter().any(|one| one.now == "survived") {
+        return Some("survived".to_owned());
+    }
+    Some(match decided.first() {
+        Some(one) => one.now.clone(),
+        None => first.was.clone(),
+    })
+}
+
 /// What one repair's own evidence decides: whether its run reached the site, and the dispositions it may now carry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Derived {

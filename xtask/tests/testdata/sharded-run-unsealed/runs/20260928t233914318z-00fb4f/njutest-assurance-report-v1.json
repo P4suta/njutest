@@ -336,6 +336,7 @@
               "target": "fixture-assured/test/doubling"
             }
           ],
+          "repaired": [],
           "knobs": [],
           "concurrency": [
             {

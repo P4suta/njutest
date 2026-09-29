@@ -1709,10 +1709,10 @@ fn evidence_of(mutating: &Mutating<'_>) -> Result<Option<mutation::Evidence>, Ru
     let carry = keyed.usable().then(|| mutation::Carry {
         store: rust_mutants::carry::Store::new(root),
         keyed,
-        kept: request
-            .carried_evidence
-            .clone()
-            .map_or(mutation::Keeping::Nowhere, mutation::Keeping::Beside),
+        kept: match &request.carried_evidence {
+            Some(beside) => mutation::Keeping::Beside(beside.clone()),
+            None => mutation::Keeping::Nowhere,
+        },
     });
     Ok(Some(mutation::Evidence {
         root: root.clone(),
@@ -1785,6 +1785,7 @@ pub fn record(
         .collect();
     report.findings.extend(mutation.findings(accepted));
     report.drift.clone_from(&mutation.drift);
+    report.repaired.clone_from(&mutation.repaired);
     report.sources.clone_from(&mutation.sources);
     if report.scope.shard.is_none() {
         let whole = crate::report::whole_catalog(&report.drift, &report.knobs, &report.mutants);
@@ -1793,8 +1794,8 @@ pub fn record(
         report.limitations.extend(crate::report::drift::repaired(
             &report.drift,
             &report.mutants,
-            &mutation.repaired,
-        ));
+            &report.repaired,
+        )?);
     }
     for (reason, count) in &mutation.skips {
         report.limitations.push(Limitation::new(

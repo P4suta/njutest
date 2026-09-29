@@ -126,6 +126,7 @@ pub fn merge(
         findings: first_source.findings.clone(),
         limitations: first_source.limitations.clone(),
         drift: first_source.drift.clone(),
+        repaired: first_source.repaired.clone(),
         knobs: first_source.knobs.clone(),
         concurrency: first_source.concurrency.clone(),
     };
