@@ -419,6 +419,52 @@ fn selecting_packages_leaves_the_others_out_entirely() {
 }
 
 #[test]
+fn every_file_a_test_program_compiles_records_its_entry_whatever_the_selection_left_out() {
+    let prepared = prepare("fixture-workspace");
+    let discovery = run(&prepared, &options(), &Recorder::disabled());
+    assert_eq!(
+        discovery.entered_only,
+        [(
+            "crates/app/tests/cli.rs".to_owned(),
+            "fixture-app".to_owned()
+        )]
+        .into(),
+        "an integration test holds no mutation and every body of it runs, so it is \
+         instrumented for entry without a report naming it"
+    );
+    let mut opts = options();
+    opts.exclude = vec![Pattern::compile("crates/app/**").expect("pattern")];
+    let discovery = run(&prepared, &opts, &Recorder::disabled());
+    assert!(
+        discovery.marked_only.contains("crates/app/src/main.rs"),
+        "a file the configuration leaves out is still compiled into a test program and run: {:?}",
+        discovery.marked_only
+    );
+    let mut opts = options();
+    opts.packages = vec!["fixture-core".to_owned()];
+    let discovery = run(&prepared, &opts, &Recorder::disabled());
+    assert_eq!(
+        discovery
+            .entered_only
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["crates/app/src/main.rs", "crates/app/tests/cli.rs"],
+        "and so is every file of a member the selection left out"
+    );
+    let prepared = prepare("fixture-forbid");
+    let discovery = run(&prepared, &options(), &Recorder::disabled());
+    assert!(
+        !discovery.marked_only.contains("forbids/src/lib.rs")
+            && !discovery.entered_only.contains_key("forbids/src/lib.rs"),
+        "a crate that forbids what the runtime allows cannot carry it, so nothing of it is \
+         instrumented: {:?} {:?}",
+        discovery.marked_only,
+        discovery.entered_only
+    );
+}
+
+#[test]
 fn the_selection_limits_the_rules_across_the_workspace() {
     let prepared = prepare("fixture-workspace");
     let mut opts = options();

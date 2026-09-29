@@ -2491,8 +2491,8 @@ fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
 /// A report's rows by where their mutation is.
 type Rows = std::collections::BTreeMap<(u64, String, String, String), serde_json::Value>;
 
-/// Runs fixture-two-bodies, rewrites `from` as `to` in its library, runs it again with carrying and traced, and runs it once more without the store, holding every carried answer to the one running it gives; answers with what the carrying run stored and its trace.
-fn edited_pair(fixture: &Fixture, (from, to): (&str, &str)) -> (Rows, String) {
+/// Runs `fixture`, rewrites `from` as `to` in its file at `path`, runs it again with carrying and traced, and runs it once more without the store, holding every carried answer to the one running it gives; answers with what the carrying run stored and its trace.
+fn edited_pair(fixture: &Fixture, (path, from, to): (&str, &str, &str)) -> (Rows, String) {
     let asked = ["run", "--offline", "--locked", "--tier", "all", "--no-seal"];
     let first = against(fixture, &asked);
     assert!(
@@ -2500,9 +2500,9 @@ fn edited_pair(fixture: &Fixture, (from, to): (&str, &str)) -> (Rows, String) {
         "{}",
         stderr(&first)
     );
-    let source = fixture.root().join("src/lib.rs");
-    let text = std::fs::read_to_string(&source).expect("the library");
-    assert!(text.contains(from), "{from:?} is in the library");
+    let source = fixture.root().join(path);
+    let text = std::fs::read_to_string(&source).expect("the edited file");
+    assert!(text.contains(from), "{from:?} is in {path}");
     std::fs::write(&source, text.replace(from, to)).expect("the edit");
     let carried = against(
         fixture,
@@ -2578,6 +2578,7 @@ fn a_line_added_below_every_body_an_execution_entered_leaves_its_answer_carried(
     let (with_carry, trace) = edited_pair(
         &fixture,
         (
+            "src/lib.rs",
             "        assert!(super::over(10));",
             "        // ten is over the limit, and nine is not\n        assert!(super::over(10));",
         ),
@@ -2601,11 +2602,51 @@ fn a_line_added_below_every_body_an_execution_entered_leaves_its_answer_carried(
 }
 
 #[test]
+fn a_line_added_inside_an_integration_test_no_execution_entered_leaves_its_answers_carried() {
+    let fixture = Fixture::copy("fixture-integration-bodies");
+    let (with_carry, trace) = edited_pair(
+        &fixture,
+        (
+            "tests/apart.rs",
+            "    assert!(fixture_integration_bodies::over(10));",
+            "    // ten is over the limit, and nine is not\n    assert!(fixture_integration_bodies::over(10));",
+        ),
+    );
+    let total: Vec<&serde_json::Value> = with_carry
+        .iter()
+        .filter(|(place, _)| place.0 == 8)
+        .map(|(_, row)| row)
+        .collect();
+    let over: Vec<&serde_json::Value> = with_carry
+        .iter()
+        .filter(|(place, _)| place.0 == 13)
+        .map(|(_, row)| row)
+        .collect();
+    assert!(
+        !total.is_empty() && !over.is_empty(),
+        "the fixture mutates `total` and `over`: {with_carry:#?}"
+    );
+    assert!(
+        total.iter().all(|row| !row["source_run_id"].is_null()),
+        "a line added inside the last test of a file no mutation is in moves nothing an \
+         execution of a mutant of `total` entered, which is `total` and the test above the \
+         edit, so every such answer carries (refused: {:?}): {total:#?}",
+        refusal_words(&trace)
+    );
+    assert!(
+        over.iter().all(|row| row["source_run_id"].is_null()),
+        "and every execution of a mutant of `over` entered the test the line was added to, so \
+         each such answer runs again: {over:#?}"
+    );
+}
+
+#[test]
 fn a_line_added_above_a_body_an_execution_entered_refuses_its_answer_as_moved() {
     let fixture = Fixture::copy("fixture-two-bodies");
     let (rows, trace) = edited_pair(
         &fixture,
         (
+            "src/lib.rs",
             "    left + right\n",
             "    // the two counts, added\n    left + right\n",
         ),

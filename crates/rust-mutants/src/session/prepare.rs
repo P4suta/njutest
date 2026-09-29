@@ -1230,7 +1230,7 @@ fn narrowed(
     }
 }
 
-/// Every item of every mutable file, numbered in path order.
+/// Every item of every file the run instruments, numbered in path order, the files a report names before the ones it does not.
 fn cataloged_items(
     discovery: &discover::Discovery,
     sources: &BTreeMap<String, Vec<u8>>,
@@ -1238,12 +1238,19 @@ fn cataloged_items(
     let files: Vec<crate::instrument::ItemSource<'_>> = discovery
         .files
         .iter()
-        .filter_map(|file| {
+        .map(|file| (file.path.as_str(), file.package.as_str()))
+        .chain(
+            discovery
+                .entered_only
+                .iter()
+                .map(|(path, package)| (path.as_str(), package.as_str())),
+        )
+        .filter_map(|(path, package)| {
             sources
-                .get(&file.path)
+                .get(path)
                 .map(|source| crate::instrument::ItemSource {
-                    path: &file.path,
-                    package: &file.package,
+                    path,
+                    package,
                     source,
                 })
         })
@@ -1400,8 +1407,8 @@ fn resealed(
         .collect())
 }
 
-/// Reads every mutable file of the snapshot and pairs its candidates with their catalog entries.
-/// Files without a candidate are retained because a mutation activated elsewhere can enter their loops or functions later in the same process, and those boundaries share the same step allowance.
+/// Reads every file of the snapshot the run instruments and pairs its candidates with their catalog entries.
+/// Files without a candidate are retained because a mutation activated elsewhere can enter their loops or functions later in the same process, and those boundaries share the same step allowance, and because every body that runs records its entry (ADR 0041).
 type Planned = (BTreeMap<String, Vec<u8>>, BTreeMap<String, Vec<Placement>>);
 
 fn plan_tree(root: &Path, discovery: &discover::Discovery) -> Result<Planned, EngineError> {
@@ -1412,20 +1419,20 @@ fn plan_tree(root: &Path, discovery: &discover::Discovery) -> Result<Planned, En
         .collect();
     let mut sources: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut placements: BTreeMap<String, Vec<Placement>> = BTreeMap::new();
-    for file in &discovery.files {
-        if file.whole_file.is_some() && !discovery.marked_only.contains(&file.path) {
-            continue;
-        }
+    let instrumented = discovery
+        .files
+        .iter()
+        .filter(|file| file.whole_file.is_none() || discovery.marked_only.contains(&file.path))
+        .map(|file| &file.path)
+        .chain(discovery.entered_only.keys());
+    for path in instrumented {
         let source =
-            std::fs::read(root.join(&file.path)).map_err(|source| SessionError::WriteFailed {
-                path: file.path.clone(),
+            std::fs::read(root.join(path)).map_err(|source| SessionError::WriteFailed {
+                path: path.clone(),
                 source,
             })?;
-        sources.insert(file.path.clone(), source);
-        placements.insert(
-            file.path.clone(),
-            plan_file(&discovery.catalog, &file.path, &found)?,
-        );
+        sources.insert(path.clone(), source);
+        placements.insert(path.clone(), plan_file(&discovery.catalog, path, &found)?);
     }
     Ok((sources, placements))
 }

@@ -446,6 +446,11 @@ fn fixture_include() {
 }
 
 #[test]
+fn fixture_integration_bodies() {
+    holds("fixture-integration-bodies");
+}
+
+#[test]
 fn fixture_item_reach() {
     holds("fixture-item-reach");
 }
