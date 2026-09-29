@@ -223,6 +223,11 @@ const RAW_PROCESS_END_REMEDY: &str = "read how a process an assurance phase star
     `succeeded`, `timed_out` and `conventional_exit_code` each answer one question about the end \
     and leave every other ending to whoever forgot it, which is how a cancelled interpreter run \
     was reported as a toolchain with no interpreter";
+const DEFAULTED_ABSENCE_REMEDY: &str = "read the field its producer's schema requires and \
+    refuse the input where it is not there, or match on its absence and say what that means: \
+    the layer is unaudited, naming what was absent and where, or the record is not the shape a \
+    run writes. An audit reader that supplies a value its input never gave reads a record that \
+    lacks what the audit checks as one that says zero or nothing, and passes it";
 const RAW_READ_REMEDY: &str = "ask `crate::observe` what the path is. A reader of evidence that \
     touches the filesystem itself decides at its own call site what an I/O failure means, which is \
     how a lock file beside the profiles became a directory that could not be read and how running \
@@ -315,6 +320,7 @@ declare_kinds! {
     RawLexing => "raw-lexing",
     RawEnvironment => "raw-environment",
     RawProcessEnd => "raw-process-end",
+    DefaultedAbsence => "defaulted-absence",
 }
 
 impl Kind {
@@ -373,6 +379,7 @@ impl Kind {
             Self::LoneTemporaryVariable => LONE_TEMPORARY_VARIABLE_REMEDY,
             Self::ErrorName => ERROR_NAME_REMEDY,
             Self::RawProcessEnd => RAW_PROCESS_END_REMEDY,
+            Self::DefaultedAbsence => DEFAULTED_ABSENCE_REMEDY,
         }
     }
 }
@@ -664,6 +671,9 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     }
     if reads_into_the_map(file) {
         scan.found.extend(raw_lexings(&parsed, file));
+    }
+    if crate::defaulted::reads_for_an_audit(file) {
+        scan.found.extend(defaulted_absences(&parsed, file));
     }
     if !ENVIRONMENT_READERS
         .iter()
@@ -8407,6 +8417,111 @@ impl Visit<'_> for RawLexing<'_> {
         {
             self.note(last.ident.span());
         }
+        syn::visit::visit_macro(self, invocation);
+    }
+}
+
+/// Every call in an audit reader, outside code compiled only for tests, that answers for an absent value with one its input never gave.
+fn defaulted_absences(parsed: &syn::File, file: &str) -> Vec<Finding> {
+    let mut visitor = DefaultedAbsence {
+        file,
+        tests: 0,
+        found: Vec::new(),
+    };
+    visitor.visit_file(parsed);
+    visitor.found
+}
+
+/// How many enclosing items are compiled only for tests, and every defaulting call outside all of them.
+struct DefaultedAbsence<'a> {
+    file: &'a str,
+    tests: usize,
+    found: Vec<Finding>,
+}
+
+impl DefaultedAbsence<'_> {
+    fn within(&mut self, attributes: &[syn::Attribute], walk: impl FnOnce(&mut Self)) {
+        let tests = test_only(attributes);
+        if tests {
+            self.tests = self.tests.saturating_add(1);
+        }
+        walk(self);
+        if tests {
+            self.tests = self.tests.saturating_sub(1);
+        }
+    }
+
+    fn note(&mut self, span: proc_macro2::Span) {
+        if self.tests == 0 {
+            self.found.push(Finding {
+                kind: Kind::DefaultedAbsence,
+                file: self.file.to_owned(),
+                line: span.start().line,
+            });
+        }
+    }
+
+    /// Every defaulting call a macro's tokens make: a name of [`crate::defaulted::DEFAULTING`] right after a `.` or a `::`, at any depth, since syn leaves a macro's arguments as tokens.
+    fn tokens(&mut self, tokens: proc_macro2::TokenStream) {
+        let mut called = false;
+        for tree in tokens {
+            match tree {
+                proc_macro2::TokenTree::Group(group) => {
+                    self.tokens(group.stream());
+                    called = false;
+                }
+                proc_macro2::TokenTree::Punct(punct) => {
+                    called = matches!(punct.as_char(), '.' | ':');
+                }
+                proc_macro2::TokenTree::Ident(ident) => {
+                    if called && crate::defaulted::DEFAULTING.contains(&ident.to_string().as_str())
+                    {
+                        self.note(ident.span());
+                    }
+                    called = false;
+                }
+                proc_macro2::TokenTree::Literal(_) => called = false,
+            }
+        }
+    }
+}
+
+impl Visit<'_> for DefaultedAbsence<'_> {
+    fn visit_item(&mut self, item: &syn::Item) {
+        self.within(item_attributes(item), |walk| {
+            syn::visit::visit_item(walk, item);
+        });
+    }
+
+    fn visit_impl_item(&mut self, item: &syn::ImplItem) {
+        let attributes: &[syn::Attribute] = match item {
+            syn::ImplItem::Const(one) => &one.attrs,
+            syn::ImplItem::Fn(one) => &one.attrs,
+            syn::ImplItem::Type(one) => &one.attrs,
+            syn::ImplItem::Macro(one) => &one.attrs,
+            _ => &[],
+        };
+        self.within(attributes, |walk| syn::visit::visit_impl_item(walk, item));
+    }
+
+    fn visit_expr_method_call(&mut self, call: &syn::ExprMethodCall) {
+        if crate::defaulted::DEFAULTING.contains(&call.method.to_string().as_str()) {
+            self.note(call.method.span());
+        }
+        syn::visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_expr_path(&mut self, path: &syn::ExprPath) {
+        if let Some(last) = path.path.segments.last()
+            && crate::defaulted::DEFAULTING.contains(&last.ident.to_string().as_str())
+        {
+            self.note(last.ident.span());
+        }
+        syn::visit::visit_expr_path(self, path);
+    }
+
+    fn visit_macro(&mut self, invocation: &syn::Macro) {
+        self.tokens(invocation.tokens.clone());
         syn::visit::visit_macro(self, invocation);
     }
 }

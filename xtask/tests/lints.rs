@@ -1811,6 +1811,51 @@ fn the_engine_s_own_annotation_is_an_instruction_rather_than_an_account() {
     );
 }
 
+/// The lines `source`, laid at `file`, holds a value supplied where its input gave none on.
+fn defaulted_lines(file: &str, source: &str) -> Vec<usize> {
+    scan_source(file, source)
+        .expect("the source parses")
+        .into_iter()
+        .filter(|finding| finding.kind == Kind::DefaultedAbsence)
+        .map(|finding| finding.line)
+        .collect()
+}
+
+#[test]
+fn an_audit_reader_supplying_a_value_its_input_never_gave_is_refused_and_a_test_module_is_not() {
+    let source = "//! A reader.\n\
+                  fn read(v: Option<u8>) -> u8 { v.unwrap_or(0) }\n\
+                  fn mapped(v: Option<u8>) -> u8 { v.map_or(1, |x| x) }\n\
+                  fn all(v: Vec<Option<u8>>) -> Vec<u8> { v.into_iter().map(Option::unwrap_or_default).collect() }\n\
+                  #[cfg(test)] mod tests { fn t(v: Option<u8>) -> u8 { v.unwrap_or_default() } }\n";
+    assert_eq!(
+        defaulted_lines("xtask/src/proofaudit/knobs.rs", source),
+        [2, 3, 4],
+        "a value supplied where the input gave none is refused where the audit runs, and a test \
+         building its own specimen is not the audit"
+    );
+    assert_eq!(
+        defaulted_lines("crates/app/src/lib.rs", source),
+        Vec::<usize>::new(),
+        "outside the audit readers a default is somebody else's contract"
+    );
+}
+
+#[test]
+fn a_value_supplied_inside_a_macro_is_refused_like_one_outside() {
+    let source = "//! A reader.\n\
+                  fn say(v: Option<&str>) -> String { format!(\"{}\", v.unwrap_or(\"?\")) }\n\
+                  fn doc(v: Option<u8>) -> serde_json::Value { serde_json::json!({ \"n\": v.map_or(0, u8::from) }) }\n\
+                  fn check(v: Option<u8>) { assert!(v.map(Option::Some).unwrap_or_default().is_some()); }\n\
+                  fn named(unwrap_or: u8) -> String { format!(\"{unwrap_or}\") }\n";
+    assert_eq!(
+        defaulted_lines("xtask/src/route.rs", source),
+        [2, 3, 4],
+        "syn leaves a macro's arguments as tokens, so a value supplied inside format!, json! or \
+         assert! is read from the tokens; a name that is only a binding is not a call"
+    );
+}
+
 #[test]
 fn the_development_page_names_every_kind_this_gate_reports() {
     let page = std::fs::read_to_string(

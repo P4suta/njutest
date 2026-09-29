@@ -60,8 +60,6 @@ pub(crate) enum RepositoryGate {
     Surfaces,
     /// Every public function of an incidental surface is reached by something that ships.
     Reached,
-    /// No audit reader supplies more values its input never gave than its ceiling allows.
-    Defaulted,
     /// A second opinion, by body shape alone, on every catch-all the ledger waives.
     Waivers,
     /// Nothing a build writes is committed: no tracked path lies under a directory named `target`.
@@ -86,7 +84,6 @@ impl RepositoryGate {
             Self::Ratchets => ratchets(root),
             Self::Surfaces => surfaces(root),
             Self::Reached => reached(root),
-            Self::Defaulted => defaulted(root),
             Self::Waivers => waivers(root),
             Self::Tracked => tracked(root),
             Self::Skipped => skipped(root),
@@ -3493,49 +3490,6 @@ pub fn reached(root: &Path) -> Result<String, GateError> {
          under the ceiling of {ceiling}",
         only_tests.len()
     ))
-}
-
-/// Every audit reader supplies no more values its input never gave than `xtask/defaulted_ceiling.txt` allows it, and exactly that many.
-///
-/// # Errors
-/// Every file above or below its ceiling, and a source or ceiling that does not read.
-pub fn defaulted(root: &Path) -> Result<String, GateError> {
-    let mut counted = BTreeMap::new();
-    for file in rust_files_under(root, &root.join("xtask/src"))? {
-        let relative = file
-            .strip_prefix(root)
-            .map_err(|error| GateError(format!("{}: {error}", file.display())))?
-            .components()
-            .map(|part| {
-                part.as_os_str().to_str().ok_or_else(|| {
-                    GateError(format!("{}: a path that is not UTF-8", file.display()))
-                })
-            })
-            .collect::<Result<Vec<&str>, GateError>>()?
-            .join("/");
-        if !crate::defaulted::reads_for_an_audit(&relative) {
-            continue;
-        }
-        let text = std::fs::read_to_string(&file)
-            .map_err(|error| GateError(format!("{}: {error}", file.display())))?;
-        let count = crate::defaulted::defaulted_in(&text)
-            .map_err(|error| GateError(format!("{relative}: {error}")))?;
-        counted.insert(relative, count);
-    }
-    let ceiling = root.join("xtask/defaulted_ceiling.txt");
-    let written = std::fs::read_to_string(&ceiling)
-        .map_err(|error| GateError(format!("{}: {error}", ceiling.display())))?;
-    match crate::defaulted::held(&counted, &written) {
-        Ok(total) => Ok(format!(
-            "defaulted: {total} value(s) supplied where an audit reader's input gave none, each \
-             file at its ceiling"
-        )),
-        Err(refused) => Err(GateError(format!(
-            "defaulted: an audit reader holds a record to a schema and then answers for an absent \
-             field anyway:\n  {}",
-            refused.join("\n  ")
-        ))),
-    }
 }
 
 /// Every `.rs` file under `directory`, skipping anything built.

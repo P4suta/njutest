@@ -1,5 +1,0 @@
-# SPDX-FileCopyrightText: 2026 njutest contributors
-# SPDX-License-Identifier: MIT OR Apache-2.0
-#
-# How many values each audit reader supplies where its input gave none.
-# Each count may only fall, and the gate holds it to exactly what the file does.
