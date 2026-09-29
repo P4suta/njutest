@@ -11,6 +11,7 @@ use syn::visit::Visit;
 
 use super::cfg_conditions::{CfgScope, CfgTruth, CfgWorld, cfg_constant, item_attributes};
 
+mod ffi;
 mod signals;
 
 const OWNED_TRAIT_OBJECT_REMEDY: &str = "use an enum for a closed set of implementations, or a \
@@ -108,6 +109,12 @@ const UNCHECKED_CAST_REMEDY: &str = "use `TryFrom`, an exact pointer type, or a 
     constructor that can reject an unrepresentable value. `as` truncates integers and changes \
     pointer meaning without a failure branch, and host Clippy cannot inspect code behind another \
     target's cfg";
+const UNSAFE_OUTSIDE_FFI_REMEDY: &str = "move the foreign call into one of the modules \
+    `xtask/src/lints/ffi.rs` names, behind a safe function the rest of the tree calls, or name a \
+    new module there in the change that argues for it. Those modules are the whole of what the \
+    compiler does not vouch for, and each is held to checked conversions because a host build \
+    cannot read another target's cfg; an `unsafe` block or an `expect(unsafe_code)` anywhere \
+    else is a boundary nobody listed";
 const UNOWNED_SPAWN_REMEDY: &str = "construct threads and child processes only inside a named \
     owner that must join, kill, or reap them on every path. Raw `thread::spawn`, \
     `Builder::spawn`, and `Command::spawn` make cleanup an optional convention; scoped work must \
@@ -298,6 +305,7 @@ declare_kinds! {
     FabricatedOverflow => "fabricated-overflow",
     WrappingCounter => "wrapping-counter",
     UncheckedCast => "unchecked-cast",
+    UnsafeOutsideFfi => "unsafe-outside-ffi",
     UnownedSpawn => "unowned-spawn",
     RawGroupSignal => "raw-group-signal",
     UnboundedChannel => "unbounded-channel",
@@ -356,6 +364,7 @@ impl Kind {
             Self::FabricatedOverflow => FABRICATED_OVERFLOW_REMEDY,
             Self::WrappingCounter => WRAPPING_COUNTER_REMEDY,
             Self::UncheckedCast => UNCHECKED_CAST_REMEDY,
+            Self::UnsafeOutsideFfi => UNSAFE_OUTSIDE_FFI_REMEDY,
             Self::UnownedSpawn => UNOWNED_SPAWN_REMEDY,
             Self::RawGroupSignal => RAW_GROUP_SIGNAL_REMEDY,
             Self::UnboundedChannel => UNBOUNDED_CHANNEL_REMEDY,
@@ -545,10 +554,7 @@ fn filesystem_path_span(path: &syn::Path) -> Option<proc_macro2::Span> {
 }
 
 fn strict_conversions(file: &str) -> bool {
-    matches!(
-        file,
-        "crates/rust-mutants/src/runner/windows.rs" | "crates/rust-mutants/src/tempowner/lock.rs"
-    )
+    ffi::MODULES.contains(&file)
 }
 
 /// One thing found in one file.
@@ -657,6 +663,9 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     scan.found.extend(broad_expectations(&parsed, file));
     if signals::held(file) {
         scan.found.extend(signals::found(&parsed, file));
+    }
+    if ffi::held(file) {
+        scan.found.extend(ffi::found(&parsed, file));
     }
     scan.found.extend(implied_cfgs(&parsed, file));
     if file != SHELL_FINDER {

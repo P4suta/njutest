@@ -20,10 +20,11 @@ readme = "README.md"
 
 [workspace.lints.rust]
 # `deny`, not `forbid`: the process supervisor and the temporary-directory
-# owner need Windows FFI (Job Objects, LockFileEx) in exactly two modules,
-# whose individual FFI boundaries carry `#[expect(unsafe_code, reason = ...)]`.
-# Every crate that needs
-# none carries `#![forbid(unsafe_code)]` at its root.
+# owner call the platform (process groups, Job Objects, LockFileEx) in the
+# modules `xtask/src/lints/ffi.rs` names,
+# whose individual FFI boundaries carry `#[expect(unsafe_code, reason = ...)]`;
+# `cargo xtask lints` refuses `unsafe` anywhere else.
+# Every crate that needs none carries `#![forbid(unsafe_code)]` at its root.
 unsafe_code = "deny"
 non_ascii_idents = "deny"
 unexpected_cfgs = { level = "deny", check-cfg = ['cfg(kani)'] }

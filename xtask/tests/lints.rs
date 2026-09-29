@@ -188,6 +188,63 @@ fn cfg_excluded_platform_code_cannot_hide_an_unchecked_cast() {
 }
 
 #[test]
+fn unsafe_code_lives_only_in_the_modules_the_rule_names() {
+    const MODULES: [&str; 3] = [
+        "crates/rust-mutants/src/runner/unix.rs",
+        "crates/rust-mutants/src/runner/windows.rs",
+        "crates/rust-mutants/src/tempowner/lock.rs",
+    ];
+    let outside = |file: &str, source: &str| {
+        scan_source(file, source)
+            .expect("the source parses")
+            .iter()
+            .any(|finding| finding.kind.label() == "unsafe-outside-ffi")
+    };
+    for source in [
+        "fn f() { unsafe { g() } }",
+        "unsafe fn f() {}",
+        "trait Boundary { unsafe fn f(); }",
+        "unsafe trait Marker {}",
+        "unsafe impl Send for Handle {}",
+        "unsafe extern \"system\" { fn CloseHandle(handle: isize) -> i32; }",
+        "#[expect(unsafe_code, reason = \"one boundary\")]\nfn f() {}",
+        "#[cfg_attr(windows, expect(unsafe_code, reason = \"one boundary\"))]\nfn f() {}",
+        "#[warn(unsafe_code)]\nfn f() {}",
+        "macro_rules! boundary { ($call:expr) => { unsafe { $call } } }",
+        "fn f() { boundary!(unsafe { g() }); }",
+    ] {
+        for elsewhere in [
+            "crates/rust-mutants/src/capdir/mod.rs",
+            "crates/app/src/runner/windows.rs",
+            "crates/njutest/tests/reports_store.rs",
+            "xtask/src/lib.rs",
+            "fuzz/fuzz_targets/parse.rs",
+        ] {
+            assert!(
+                outside(elsewhere, source),
+                "unsafe code outside the named modules is one more boundary nobody listed: \
+                 {elsewhere}: {source}"
+            );
+        }
+        for module in MODULES {
+            assert!(
+                !outside(module, source),
+                "a named module is where the foreign boundary is allowed to be: {module}: {source}"
+            );
+        }
+    }
+    for module in MODULES {
+        assert!(
+            scan_source(module, "fn size(value: usize) -> u32 { value as u32 }")
+                .expect("the source parses")
+                .iter()
+                .any(|finding| finding.kind == Kind::UncheckedCast),
+            "the list that permits unsafe code is the list held to checked conversions: {module}"
+        );
+    }
+}
+
+#[test]
 #[expect(
     clippy::too_many_lines,
     reason = "the inline hostile-source corpus keeps each ownership proof and counterexample visible to the syntax gate"
@@ -842,14 +899,25 @@ fn an_expect_is_the_waiver_this_repository_writes() {
 
 #[test]
 fn an_expectation_cannot_waive_future_dead_or_unsafe_code_for_a_module() {
+    let in_a_named_module = |source: &str| {
+        scan_source("crates/rust-mutants/src/runner/windows.rs", source)
+            .expect("the source parses")
+            .into_iter()
+            .map(|finding| finding.kind)
+            .collect::<Vec<_>>()
+    };
     for source in [
         "//! A file.\n#![expect(dead_code, reason = \"one current item\")]\nfn unused() {}\n",
         "//! A file.\n#[cfg_attr(test, expect(unsafe_code, reason = \"one current block\"))]\nmod ffi {}\n",
     ] {
-        assert_eq!(kinds(source), [Kind::BroadExpectation], "{source}");
+        assert_eq!(
+            in_a_named_module(source),
+            [Kind::BroadExpectation],
+            "{source}"
+        );
     }
     assert_eq!(
-        kinds(
+        in_a_named_module(
             "//! A file.\nfn ffi() { #[expect(unsafe_code, reason = \"one FFI call\")] unsafe { std::ptr::read_volatile(&0); } }\n"
         ),
         [],
