@@ -30,6 +30,18 @@ const TOUCH_LOG: &str = "/rust-mutants-sealed/touch.log";
 /// Where a test that cannot measure on the sealed host says so, as ADR 0043 lets it.
 const DECLINE_LOG: &str = "/rust-mutants-sealed/decline-notice";
 
+/// Where an instance keeps what a test writes for itself: a directory of its own, which starts with an empty home and an empty temporary directory.
+pub const SCRATCH: &str = "/rust-mutants-scratch";
+
+/// The home an instance's `HOME` names, inside [`SCRATCH`].
+pub const SCRATCH_HOME: &str = "/rust-mutants-scratch/home";
+
+/// The temporary directory an instance's `TMPDIR` names, inside [`SCRATCH`].
+pub const SCRATCH_TMP: &str = "/rust-mutants-scratch/tmp";
+
+/// The directory cargo gives an integration test to write in, which a sealed instance holds, empty, at the path its build baked in.
+const TARGET_TMPDIR: &str = "CARGO_TARGET_TMPDIR";
+
 /// The fuel a control may spend: far past any test a person writes, and still a bound.
 pub const CONTROL_FUEL: u64 = 200_000_000_000;
 
@@ -823,6 +835,45 @@ impl<'runner> Bench<'runner> {
         }))
     }
 
+    /// Every directory an instance of `station` is given: the tree, the records, its scratch, an empty `target_tmpdir` where cargo names one, and its working directory where the tree holds it.
+    fn preopens(
+        &self,
+        station: &Station<'_>,
+        target_tmpdir: Option<String>,
+    ) -> Result<Preopens, SealedError> {
+        let scratch = Snapshot::builder()
+            .directory("home")?
+            .directory("tmp")?
+            .build()?;
+        let mut preopens = vec![
+            Preopen::Tree {
+                path: self.tree.root.clone(),
+                snapshot: self.tree.snapshot.clone(),
+            },
+            Preopen::Tree {
+                path: RECORDS.to_owned(),
+                snapshot: Snapshot::builder().build()?,
+            },
+            Preopen::Tree {
+                path: SCRATCH.to_owned(),
+                snapshot: scratch,
+            },
+        ];
+        if let Some(path) = target_tmpdir {
+            preopens.push(Preopen::Tree {
+                path,
+                snapshot: Snapshot::builder().build()?,
+            });
+        }
+        if let Some(directory) = self.tree.within(&station.target.cwd) {
+            preopens.push(Preopen::Working {
+                tree: self.tree.root.clone(),
+                directory,
+            });
+        }
+        Preopens::new(preopens)
+    }
+
     fn invocation(
         &self,
         station: &Station<'_>,
@@ -858,31 +909,21 @@ impl<'runner> Bench<'runner> {
         if let Some(index) = asking.index {
             variables.push((RUN_ONE.to_owned(), index.to_string()));
         }
+        let target_tmpdir = variables
+            .iter()
+            .find(|(name, _)| name == TARGET_TMPDIR)
+            .map(|(_, value)| value.clone());
+        variables.retain(|(name, _)| name != "HOME" && name != "TMPDIR");
+        variables.push(("HOME".to_owned(), SCRATCH_HOME.to_owned()));
+        variables.push(("TMPDIR".to_owned(), SCRATCH_TMP.to_owned()));
         let host = |source| BenchError::Host {
             target: id.clone(),
             source,
         };
-        let records = Snapshot::builder().build().map_err(host)?;
-        let mut preopens = vec![
-            Preopen::Tree {
-                path: self.tree.root.clone(),
-                snapshot: self.tree.snapshot.clone(),
-            },
-            Preopen::Tree {
-                path: RECORDS.to_owned(),
-                snapshot: records,
-            },
-        ];
-        if let Some(directory) = self.tree.within(&station.target.cwd) {
-            preopens.push(Preopen::Working {
-                tree: self.tree.root.clone(),
-                directory,
-            });
-        }
         Ok(Invocation {
             arguments: Arguments::new(arguments).map_err(host)?,
             environment: Environment::new(variables).map_err(host)?,
-            preopens: Preopens::new(preopens).map_err(host)?,
+            preopens: self.preopens(station, target_tmpdir).map_err(host)?,
             seed: seed(station.target.id()),
             fuel,
             limits: Limits {

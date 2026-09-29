@@ -346,6 +346,11 @@ fn fixture_doctest_refused() {
 }
 
 #[test]
+fn fixture_target_tmpdir() {
+    holds("fixture-target-tmpdir");
+}
+
+#[test]
 fn fixture_drifts() {
     holds("fixture-drifts");
 }

@@ -26,6 +26,8 @@ Its tests are the ones `--list` names inside the host, given the harness argumen
 Each test of each module runs in its own instance, as `<module> --exact <name> --test-threads=1 --nocapture` and then the harness arguments the run was configured with, less a thread count or a capture of their own, which libtest refuses to be given twice.
 The instance is new, the memory is the module's initial memory, the filesystem is the snapshot with nothing written, and the clock reads zero.
 Its working directory is its package's directory in the snapshot, where cargo runs a test and rustdoc a doctest, so a relative path reads what it reads natively.
+What a test writes for itself lands in directories the instance holds, each empty when it starts and written only to its overlay: `CARGO_TARGET_TMPDIR` at the path the build baked in, which for the sealed target is the target's own directory inside the target directory, and a home and a temporary directory, which `HOME` and `TMPDIR` name.
+The standard library of `wasm32-wasip1` has no temporary directory of its own, so `std::env::temp_dir()` panics there whatever `TMPDIR` says, and its home directory is none.
 A path the build baked in, such as `env!("CARGO_MANIFEST_DIR")`, reaches the snapshot as the build spelled it, a Windows build's `C:\…` included, as [the sealed host](sealed-host.md#the-working-directory) says.
 `--nocapture` keeps a panic's message on the stream the host records, where libtest's capture would hold it in memory the abort discards.
 
@@ -66,7 +68,7 @@ A refusal returns its error to the guest and is recorded in the transcript, so a
 | `fd_fdstat_get`, `fd_fdstat_set_flags`, `fd_fdstat_set_rights` | On the instance's descriptor table. |
 | `fd_filestat_get`, `path_filestat_get` | Fixed metadata: every timestamp one constant, the inode derived from the path, the size the overlay's. |
 | `fd_filestat_set_times`, `path_filestat_set_times` | Recorded in the overlay and read back; a time never set reads as the constant. |
-| `fd_prestat_get`, `fd_prestat_dir_name` | The snapshot, at the path the build knew it by; the directory the runtime's records land in; and `.`, the test's working directory in the snapshot. |
+| `fd_prestat_get`, `fd_prestat_dir_name` | The snapshot, at the path the build knew it by; the directory the runtime's records land in; a scratch directory of the instance's own, whose empty `home` and `tmp` are what `HOME` and `TMPDIR` name; for a target cargo gives one, an empty directory at the `CARGO_TARGET_TMPDIR` the build baked in; and `.`, the test's working directory in the snapshot. |
 | `fd_readdir` | Entries in name order, with cookies that are their positions. |
 | `path_open`, `path_create_directory`, `path_remove_directory`, `path_rename`, `path_unlink_file` | Inside the snapshot, on the overlay: a relative path from the working directory, an absolute one below the snapshot's root as the build spelled it. A path outside it is refused, `ENOTCAPABLE`. |
 | `path_readlink` | A link the snapshot holds. |

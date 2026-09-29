@@ -187,8 +187,9 @@ impl SealedBuild {
         (packages, target_dir): (&[Package], &Path),
     ) -> Result<Self, CargoError> {
         let mut modules = BTreeMap::new();
+        let laid_out = target_dir.join(TARGET);
         for build in compiled {
-            for target in crate::execute::targets_of(&build.messages, packages, target_dir)? {
+            for target in crate::execute::targets_of(&build.messages, packages, &laid_out)? {
                 if target.kind() == crate::execute::TargetKind::ProcMacro || !target.harness {
                     continue;
                 }
