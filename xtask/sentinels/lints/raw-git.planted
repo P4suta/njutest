@@ -10,3 +10,7 @@ fn program() -> &'static std::ffi::OsStr { std::ffi::OsStr::new("git") }
 fn ask() -> Spec { Spec::new(["git", "status"], Bound::Unbounded) }
 === spec-vec source xtask/src/gate.rs
 fn ask() -> Spec { Spec::new(vec!["git", "status"], Bound::Unbounded) }
+=== through-a-helper source xtask/src/gate.rs
+fn start(program: &str) -> std::process::Command { std::process::Command::new(program) } fn ask() -> std::process::Command { start("git") }
+=== through-a-method source xtask/src/gate.rs
+struct Tools; impl Tools { fn command(self, program: &str) -> std::process::Command { std::process::Command::new(program) } fn ask(self) -> std::process::Command { self.command("git") } }

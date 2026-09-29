@@ -3,6 +3,8 @@
 
 //! The files that start git, each asking it to read the tree itself rather than a file-system monitor or a cache that answers for it.
 
+use std::collections::BTreeSet;
+
 use syn::visit::Visit;
 
 use super::{Finding, Kind};
@@ -20,10 +22,13 @@ pub(super) fn held(file: &str) -> bool {
     !DOORS.contains(&file)
 }
 
-/// Every place `parsed` names git as the program it starts, each at its line.
+/// Every place `parsed` names git as the program it starts, each at its line: directly, or handed to a function or method of the file that starts the program one of its parameters names.
 pub(super) fn found(parsed: &syn::File, file: &str) -> Vec<Finding> {
+    let mut helpers = Helpers::default();
+    helpers.visit_file(parsed);
     let mut scan = Started {
         file,
+        helpers: &helpers.found,
         found: Vec::new(),
     };
     scan.visit_file(parsed);
@@ -32,7 +37,72 @@ pub(super) fn found(parsed: &syn::File, file: &str) -> Vec<Finding> {
 
 struct Started<'a> {
     file: &'a str,
+    helpers: &'a BTreeSet<String>,
     found: Vec<Finding>,
+}
+
+/// The functions and methods of a file that start the program a parameter of theirs names, found before any call is read.
+#[derive(Default)]
+struct Helpers {
+    within: Vec<(String, BTreeSet<String>)>,
+    found: BTreeSet<String>,
+}
+
+impl Helpers {
+    fn enter(&mut self, signature: &syn::Signature) {
+        let parameters = signature
+            .inputs
+            .iter()
+            .filter_map(|input| match input {
+                syn::FnArg::Typed(typed) => match &*typed.pat {
+                    syn::Pat::Ident(named) => Some(named.ident.to_string()),
+                    _ => None,
+                },
+                syn::FnArg::Receiver(_) => None,
+            })
+            .collect();
+        self.within.push((signature.ident.to_string(), parameters));
+    }
+}
+
+/// Whether `expression` is a bare name among `parameters`.
+fn one_of(expression: &syn::Expr, parameters: &BTreeSet<String>) -> bool {
+    match expression {
+        syn::Expr::Path(named) => named
+            .path
+            .get_ident()
+            .is_some_and(|ident| parameters.contains(&ident.to_string())),
+        syn::Expr::Reference(borrowed) => one_of(&borrowed.expr, parameters),
+        _ => false,
+    }
+}
+
+impl<'ast> Visit<'ast> for Helpers {
+    fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
+        self.enter(&node.sig);
+        syn::visit::visit_item_fn(self, node);
+        self.within.pop();
+    }
+
+    fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
+        self.enter(&node.sig);
+        syn::visit::visit_impl_item_fn(self, node);
+        self.within.pop();
+    }
+
+    fn visit_expr_call(&mut self, node: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(function) = &*node.func
+            && starts_a_program(&function.path)
+            && let Some((name, parameters)) = self.within.last()
+            && node
+                .args
+                .first()
+                .is_some_and(|program| one_of(program, parameters))
+        {
+            self.found.insert(name.clone());
+        }
+        syn::visit::visit_expr_call(self, node);
+    }
 }
 
 /// Whether `expression` is the string literal `git`.
@@ -108,11 +178,24 @@ impl<'ast> Visit<'ast> for Started<'_> {
     fn visit_expr_call(&mut self, node: &'ast syn::ExprCall) {
         if let syn::Expr::Path(function) = &*node.func
             && ((starts_a_program(&function.path) && node.args.first().is_some_and(names_git))
-                || (takes_an_argv(&function.path) && node.args.first().is_some_and(argv_of_git)))
+                || (takes_an_argv(&function.path) && node.args.first().is_some_and(argv_of_git))
+                || (function
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|last| self.helpers.contains(&last.ident.to_string()))
+                    && node.args.iter().any(names_git)))
         {
             self.note(node.paren_token.span.open());
         }
         syn::visit::visit_expr_call(self, node);
+    }
+
+    fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
+        if self.helpers.contains(&node.method.to_string()) && node.args.iter().any(names_git) {
+            self.note(node.paren_token.span.open());
+        }
+        syn::visit::visit_expr_method_call(self, node);
     }
 
     fn visit_macro(&mut self, node: &'ast syn::Macro) {

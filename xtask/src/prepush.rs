@@ -1026,12 +1026,21 @@ impl Tools<'_> {
         command
     }
 
+    /// Git in `here`, through the one door that has it read the tree itself rather than a file-system monitor that may not have seen a write yet.
+    fn git(self, here: &Path) -> Command {
+        let mut command = crate::repository::git(here);
+        for name in self.environment.beginning("GIT_") {
+            command.env_remove(name);
+        }
+        command
+    }
+
     fn output(
         self,
         here: &Path,
         arguments: &[&OsStr],
     ) -> Result<std::process::Output, PrePushError> {
-        self.command("git")
+        self.git(here)
             .args(arguments)
             .current_dir(here)
             .stdin(Stdio::null())
@@ -1082,7 +1091,7 @@ impl Tools<'_> {
     }
 
     fn restore(self, tree: &Path) -> Result<ExitStatus, PrePushError> {
-        self.command("git")
+        self.git(tree)
             .args(["restore", "--staged", "--worktree", ":/"])
             .current_dir(tree)
             .stdin(Stdio::null())

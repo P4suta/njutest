@@ -324,8 +324,20 @@ fn run(program: &str, arguments: &[&str], directory: &Path) -> Result<Output, Re
         })
 }
 
+/// What git says in `directory`, asked through the one door that has it read the tree itself.
+fn asked_git(directory: &Path, arguments: &[&str]) -> Result<Output, RemoteError> {
+    crate::repository::git(directory)
+        .args(arguments)
+        .current_dir(directory)
+        .output()
+        .map_err(|source| RemoteError::Start {
+            program: "git".to_owned(),
+            source,
+        })
+}
+
 fn git(directory: &Path, step: &'static str, arguments: &[&str]) -> Result<String, RemoteError> {
-    let output = run("git", arguments, directory)?;
+    let output = asked_git(directory, arguments)?;
     if !output.status.success() {
         return Err(RemoteError::Git { step });
     }
@@ -363,12 +375,8 @@ fn shared(root: &Path, answer: &[u8]) -> Vec<String> {
         .map(str::trim)
         .filter(|line| line.len() == 40 && line.bytes().all(|byte| byte.is_ascii_hexdigit()))
         .filter(|sha| {
-            run(
-                "git",
-                &["cat-file", "-e", &format!("{sha}^{{commit}}")],
-                root,
-            )
-            .is_ok_and(|output| output.status.success())
+            asked_git(root, &["cat-file", "-e", &format!("{sha}^{{commit}}")])
+                .is_ok_and(|output| output.status.success())
         })
         .map(ToOwned::to_owned)
         .collect()

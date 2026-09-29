@@ -47,38 +47,24 @@ impl Repository {
 
     fn new_from(check: &str, binary: &Path) -> Self {
         let directory = tempfile::tempdir().expect("a temporary repository");
-        command(directory.path(), "git", &["init", "--quiet"]);
-        command(
+        git_in(directory.path(), &["init", "--quiet"]);
+        git_in(directory.path(), &["config", "user.name", "pre-push-test"]);
+        git_in(
             directory.path(),
-            "git",
-            &["config", "user.name", "pre-push-test"],
-        );
-        command(
-            directory.path(),
-            "git",
             &["config", "user.email", "pre-push@example.invalid"],
         );
-        command(
-            directory.path(),
-            "git",
-            &["config", "commit.gpgsign", "false"],
-        );
+        git_in(directory.path(), &["config", "commit.gpgsign", "false"]);
         std::fs::write(
             directory.path().join(".gitignore"),
             "/target/\nlocal-only\n",
         )
         .expect("an ignored local-input name");
         std::fs::write(directory.path().join("tracked"), "before\n").expect("a tracked file");
-        command(directory.path(), "git", &["add", ".gitignore", "tracked"]);
-        command(
-            directory.path(),
-            "git",
-            &["commit", "--quiet", "-m", "fixture"],
-        );
+        git_in(directory.path(), &["add", ".gitignore", "tracked"]);
+        git_in(directory.path(), &["commit", "--quiet", "-m", "fixture"]);
         let head = String::from_utf8(
-            isolated("git")
+            git_in_the(directory.path())
                 .args(["rev-parse", "HEAD"])
-                .current_dir(directory.path())
                 .output()
                 .expect("git rev-parse")
                 .stdout,
@@ -157,9 +143,8 @@ impl Repository {
 
     fn link(&self, name: &str) -> (PathBuf, String) {
         let linked = self.scratch.path().join(name);
-        command(
+        git_in(
             self.directory.path(),
-            "git",
             &[
                 "worktree",
                 "add",
@@ -170,7 +155,7 @@ impl Repository {
             ],
         );
         std::fs::write(linked.join("tracked"), format!("{name}\n")).expect("a linked revision");
-        command(&linked, "git", &["commit", "--quiet", "-am", name]);
+        git_in(&linked, &["commit", "--quiet", "-am", name]);
         let head = object_id(&linked, "HEAD");
         (linked, head)
     }
@@ -358,9 +343,8 @@ fn update(local: &str, remote: &str, end: &str) -> String {
 
 fn symbolic_head(directory: &Path) -> String {
     String::from_utf8(
-        isolated("git")
+        git_in_the(directory)
             .args(["symbolic-ref", "--quiet", "HEAD"])
-            .current_dir(directory)
             .output()
             .expect("git symbolic-ref")
             .stdout,
@@ -372,9 +356,8 @@ fn symbolic_head(directory: &Path) -> String {
 
 fn object_id(directory: &Path, revision: &str) -> String {
     String::from_utf8(
-        isolated("git")
+        git_in_the(directory)
             .args(["rev-parse", revision])
-            .current_dir(directory)
             .output()
             .expect("git rev-parse")
             .stdout,
@@ -396,13 +379,24 @@ fn isolated(program: impl AsRef<std::ffi::OsStr>) -> Command {
     command
 }
 
-fn command(directory: &Path, program: &str, arguments: &[&str]) {
-    let status = isolated(program)
+/// Git in `directory` as a test starts it, reading the tree itself, with none of the `GIT_*` variables a hook hands down and none of the user's configuration.
+fn git_in_the(directory: &Path) -> Command {
+    let mut git = njutest_devkit::repo::git(directory);
+    for (name, _) in std::env::vars_os() {
+        if name.as_encoded_bytes().starts_with(b"GIT_") {
+            git.env_remove(name);
+        }
+    }
+    git.env("GIT_CONFIG_GLOBAL", "/dev/null");
+    git
+}
+
+fn git_in(directory: &Path, arguments: &[&str]) {
+    let status = git_in_the(directory)
         .args(arguments)
-        .current_dir(directory)
         .status()
         .expect("the fixture command");
-    assert!(status.success(), "{program} {arguments:?}: {status}");
+    assert!(status.success(), "git {arguments:?}: {status}");
 }
 
 fn executable(path: &Path) {
@@ -464,9 +458,8 @@ fn a_push_leaves_the_pushers_head_on_its_branch() {
     );
     std::fs::write(repository.directory.path().join("tracked"), "after\n")
         .expect("a second revision");
-    command(
+    git_in(
         repository.directory.path(),
-        "git",
         &["commit", "--quiet", "-am", "second"],
     );
     let second = object_id(repository.directory.path(), "HEAD");
@@ -498,10 +491,9 @@ fn an_existing_remote_ancestor_is_accepted() {
         Repository::new("case \"$*\" in 'run check'|'run check:cold') ;; *) exit 99 ;; esac");
     std::fs::write(repository.directory.path().join("tracked"), "after\n")
         .expect("a second revision");
-    command(repository.directory.path(), "git", &["add", "tracked"]);
-    command(
+    git_in(repository.directory.path(), &["add", "tracked"]);
+    git_in(
         repository.directory.path(),
-        "git",
         &["commit", "--quiet", "-m", "fast-forward"],
     );
     let local = object_id(repository.directory.path(), "HEAD");
@@ -516,10 +508,9 @@ fn a_ref_update_nothing_terminates_is_the_same_ref_update() {
         Repository::new("case \"$*\" in 'run check'|'run check:cold') ;; *) exit 99 ;; esac");
     std::fs::write(repository.directory.path().join("tracked"), "after\n")
         .expect("a second revision");
-    command(repository.directory.path(), "git", &["add", "tracked"]);
-    command(
+    git_in(repository.directory.path(), &["add", "tracked"]);
+    git_in(
         repository.directory.path(),
-        "git",
         &["commit", "--quiet", "-m", "fast-forward"],
     );
     let local = object_id(repository.directory.path(), "HEAD");
@@ -538,37 +529,29 @@ fn a_ref_update_nothing_terminates_is_the_same_ref_update() {
 #[test]
 fn a_non_fast_forward_update_is_refused_before_the_check() {
     let repository = Repository::new("exit 99");
-    command(
-        repository.directory.path(),
-        "git",
-        &["branch", "remote", "HEAD"],
-    );
+    git_in(repository.directory.path(), &["branch", "remote", "HEAD"]);
     std::fs::write(repository.directory.path().join("tracked"), "local\n")
         .expect("the local revision");
-    command(repository.directory.path(), "git", &["add", "tracked"]);
-    command(
+    git_in(repository.directory.path(), &["add", "tracked"]);
+    git_in(
         repository.directory.path(),
-        "git",
         &["commit", "--quiet", "-m", "local"],
     );
     let local = object_id(repository.directory.path(), "HEAD");
-    command(
+    git_in(
         repository.directory.path(),
-        "git",
         &["checkout", "--quiet", "remote"],
     );
     std::fs::write(repository.directory.path().join("tracked"), "remote\n")
         .expect("the remote revision");
-    command(repository.directory.path(), "git", &["add", "tracked"]);
-    command(
+    git_in(repository.directory.path(), &["add", "tracked"]);
+    git_in(
         repository.directory.path(),
-        "git",
         &["commit", "--quiet", "-m", "remote"],
     );
     let remote = object_id(repository.directory.path(), "HEAD");
-    command(
+    git_in(
         repository.directory.path(),
-        "git",
         &["checkout", "--quiet", "--detach", &local],
     );
 
@@ -788,6 +771,33 @@ fn a_cold_check_that_changes_the_commit_tree_is_refused() {
 }
 
 #[test]
+fn a_cold_check_that_changes_the_commit_tree_is_refused_whatever_a_file_monitor_says() {
+    let repository = Repository::new(ACCEPTS_THE_CHECK);
+    let monitor = repository.scratch.path().join("sees-nothing");
+    std::fs::write(&monitor, "#!/bin/sh\nprintf 'unchanged\\0'\n").expect("a file monitor");
+    executable(&monitor);
+    let monitor = monitor.to_str().expect("a path git can be told");
+    git_in(
+        repository.directory.path(),
+        &["config", "core.fsmonitor", monitor],
+    );
+
+    let failed = repository.push_with(
+        repository.directory.path(),
+        &update(&repository.head, &"0".repeat(40), "\n"),
+        &[("COLD_EDIT", "1".as_ref())],
+    );
+
+    assert!(
+        !failed.status.success(),
+        "a file monitor that has not seen a write, which is what one behind a loaded machine is, \
+         answered for the tree the check changed: {}",
+        stderr(&failed)
+    );
+    assert!(stderr(&failed).contains("isolated check changed the tree"));
+}
+
+#[test]
 fn a_cold_check_that_goes_quiet_is_stopped() {
     let repository = Repository::new(ACCEPTS_THE_CHECK);
     let failed = repository.push_with(
@@ -810,29 +820,22 @@ fn a_cold_check_that_goes_quiet_is_stopped() {
 #[test]
 fn a_commit_is_checked_again_once_its_base_has_moved() {
     let mut repository = Repository::new(ACCEPTS_THE_CHECK);
-    command(
-        repository.directory.path(),
-        "git",
-        &["branch", "base", "HEAD"],
-    );
+    git_in(repository.directory.path(), &["branch", "base", "HEAD"]);
     repository.base = Some("refs/heads/base".to_owned());
     let first = repository.push(&repository.head);
     assert!(first.status.success(), "{}", stderr(&first));
     let checked = repository.calls();
-    command(
+    git_in(
         repository.directory.path(),
-        "git",
         &["commit", "--quiet", "--allow-empty", "-m", "moved"],
     );
     let moved = object_id(repository.directory.path(), "HEAD");
-    command(
+    git_in(
         repository.directory.path(),
-        "git",
         &["branch", "-f", "base", &moved],
     );
-    command(
+    git_in(
         repository.directory.path(),
-        "git",
         &["checkout", "--quiet", "--detach", &repository.head],
     );
     let again = repository.push(&repository.head);
