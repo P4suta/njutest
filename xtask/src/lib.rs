@@ -40,6 +40,7 @@ pub mod milestones;
 pub mod modelaudit;
 pub mod prepush;
 pub mod proofaudit;
+pub mod receipt;
 pub mod release;
 pub mod remote;
 pub mod repair;
@@ -108,6 +109,16 @@ enum ExecutionGate {
         /// The actionlint to run; the lint lane is where it is installed, which keeps this gate out of `all`.
         #[arg(long, value_name = "PROGRAM", default_value = "actionlint")]
         actionlint: std::path::PathBuf,
+    },
+    /// Run the engine over a package, sealed, and write the receipt of one module's mutants for a registry decision (docs/invariants.md).
+    Receipt {
+        /// The registry decision the module decides.
+        decision: String,
+        /// The module, relative to the repository root.
+        module: String,
+        /// The package that holds it.
+        #[arg(long)]
+        package: String,
     },
     /// Prove every production law with Kani, or read back the proof of exactly these inputs, and audit it either way.
     KaniLaws {
@@ -272,6 +283,11 @@ fn run_execution(
             .map_err(|error| gates::GateError(error.coded())),
         ExecutionGate::Docflows { actionlint } => docflows::check(root, actionlint.as_os_str())
             .map_err(|error| gates::GateError(error.coded())),
+        ExecutionGate::Receipt {
+            decision,
+            module,
+            package,
+        } => receipt::write(root, process.cargo, (&decision, &package, &module)),
         ExecutionGate::KaniLaws { cache } => kanilaws::laws(root, process.cargo, &cache),
         ExecutionGate::KaniLawsAudit { export } => kaniaudit::audit(&export, root)
             .map(|()| format!("kani-laws: {} production harnesses, every assertion reachable, every cover satisfiable, and each within its ceiling", kanilaws::harnesses().len()))

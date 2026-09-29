@@ -52,7 +52,7 @@ impl Layer {
             Self::Types => Holder::TypeOrFunction,
             Self::SelfCheck => Holder::Reached,
             Self::Oracle | Self::Plant | Self::States => Holder::Test,
-            Self::Mutation => Holder::Definition,
+            Self::Mutation => Holder::Receipt,
         }
     }
 }
@@ -107,8 +107,8 @@ enum Holder {
     Reached,
     /// A test, a property test, or a kani harness.
     Test,
-    /// Any one definition, until rust-mutants writes a receipt of its run over the module that decides.
-    Definition,
+    /// A receipt of a sealed run of rust-mutants over the module that decides, which `receipt::held` holds to the module.
+    Receipt,
 }
 
 /// What a layer makes of the one definition a cell names.
@@ -129,7 +129,7 @@ impl Holder {
             Self::TypeOrFunction => "a type or a function",
             Self::Reached => "a function a production path reaches",
             Self::Test => "a test, a property test, or a kani harness",
-            Self::Definition => "any one definition",
+            Self::Receipt => "a receipt of a sealed mutation run under xtask/receipts",
         }
     }
 
@@ -138,9 +138,9 @@ impl Holder {
         match (self, kind) {
             (Self::TypeOrFunction, Kind::Type | Kind::Function)
             | (Self::Reached, Kind::Function)
-            | (Self::Test, Kind::Test | Kind::Property | Kind::Harness)
-            | (
-                Self::Definition,
+            | (Self::Test, Kind::Test | Kind::Property | Kind::Harness) => true,
+            (
+                Self::Receipt,
                 Kind::Type
                 | Kind::Trait
                 | Kind::Function
@@ -150,8 +150,8 @@ impl Holder {
                 | Kind::Module
                 | Kind::Constant
                 | Kind::Macro,
-            ) => true,
-            (
+            )
+            | (
                 Self::TypeOrFunction,
                 Kind::Trait
                 | Kind::Test
@@ -193,9 +193,7 @@ impl Holder {
             Self::Reached if !(definition.production && reached.contains(definition.name())) => {
                 Admission::Unreached
             }
-            Self::Reached | Self::TypeOrFunction | Self::Test | Self::Definition => {
-                Admission::Holds
-            }
+            Self::Reached | Self::TypeOrFunction | Self::Test | Self::Receipt => Admission::Holds,
         }
     }
 }
@@ -220,6 +218,17 @@ pub struct Row {
     pub cells: BTreeMap<Layer, Cell>,
     /// What the oracle cannot see.
     pub blind: String,
+}
+
+impl Row {
+    /// Every receipt its Mutation cell names.
+    pub fn receipts(&self) -> impl Iterator<Item = &str> {
+        let names = match self.cells.get(&Layer::Mutation) {
+            Some(Cell::Held(names)) => names.as_slice(),
+            Some(Cell::Open) | None => &[],
+        };
+        names.iter().map(String::as_str)
+    }
 }
 
 /// One hole in the registry, and who owns closing it.
@@ -294,6 +303,20 @@ pub struct Tree {
     pub definitions: Vec<Definition>,
     /// Every name a production path of a crate that ships references, which is what reaches a function.
     pub reached: BTreeSet<String>,
+    /// Every receipt a Mutation cell names, by its decision and its name, and whether it holds.
+    pub receipts: BTreeMap<(String, String), Receipted>,
+}
+
+/// Whether a receipt a Mutation cell names holds its decision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Receipted {
+    /// It holds.
+    Holds,
+    /// It does not, and why.
+    Refused {
+        /// What the receipt gate said.
+        why: String,
+    },
 }
 
 /// Why the registry and the tree do not hold together.
@@ -414,6 +437,18 @@ pub enum InvariantError {
         /// The layer's column.
         layer: &'static str,
     },
+    /// A Mutation cell names a receipt that does not hold the decision.
+    #[error(
+        "docs/invariants.md: {decision} is held at mutation by `{name}`, which does not hold: {why}"
+    )]
+    Unreceipted {
+        /// The decision.
+        decision: String,
+        /// The receipt the cell names.
+        name: String,
+        /// Why it does not hold.
+        why: String,
+    },
     /// A decision the base has is gone.
     #[error(
         "docs/invariants.md: {decision} is at the base and not here; keep its row, or rename it \
@@ -438,6 +473,7 @@ impl crate::error::Coded for InvariantError {
             | Self::Stale { .. }
             | Self::Unblind { .. }
             | Self::Reopened { .. }
+            | Self::Unreceipted { .. }
             | Self::Vanished { .. } => crate::error::XtCode::InvariantRegistry,
         }
     }
@@ -1040,7 +1076,14 @@ pub fn check(
                 Cell::Held(names) => {
                     held = held.saturating_add(1);
                     for name in names {
-                        refused.extend(resolution(row, *layer, name, tree));
+                        refused.extend(match layer {
+                            Layer::Mutation => receipted(row, name, tree),
+                            Layer::Types
+                            | Layer::SelfCheck
+                            | Layer::Oracle
+                            | Layer::Plant
+                            | Layer::States => resolution(row, *layer, name, tree),
+                        });
                     }
                 }
                 Cell::Open => {
@@ -1074,6 +1117,20 @@ pub fn check(
     } else {
         Err(refused)
     }
+}
+
+/// What is wrong with the receipt `name` holding `row` at mutation, if anything.
+fn receipted(row: &Row, name: &str, tree: &Tree) -> Option<InvariantError> {
+    let why = match tree.receipts.get(&(row.decision.clone(), name.to_owned())) {
+        Some(Receipted::Holds) => return None,
+        Some(Receipted::Refused { why }) => why.clone(),
+        None => "no receipt of that name was read".to_owned(),
+    };
+    Some(InvariantError::Unreceipted {
+        decision: row.decision.clone(),
+        name: name.to_owned(),
+        why,
+    })
 }
 
 /// What is wrong with `name` holding `row` at `layer`, if anything.

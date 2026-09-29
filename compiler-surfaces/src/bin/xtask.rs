@@ -20,9 +20,9 @@ mod product;
 pub(crate) use product::{
     Process, Streams, adrs, claims, concurrency, confined, confirm, crashes, defaulted, deps,
     devgates, drift, engineaudit, environment, error, faults, fixtures, gates, invariants,
-    kaniaudit, knobs, lanes, layers, lexed, lints, milestones, modelaudit, proofaudit, release,
-    repair, reportdiff, repository, route, run_from, sbom, schemas, sentinel, shapes, specimen,
-    strictjson, surface, wire, work,
+    kaniaudit, knobs, lanes, layers, lexed, lints, milestones, modelaudit, proofaudit, receipt,
+    release, repair, reportdiff, repository, route, run_from, sbom, schemas, sentinel, shapes,
+    specimen, strictjson, surface, wire, work,
 };
 
 #[path = "../../../xtask/src/main.rs"]

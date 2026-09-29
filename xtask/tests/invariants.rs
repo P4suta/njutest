@@ -51,6 +51,7 @@ fn names(list: &[&str]) -> Tree {
             })
             .collect(),
         reached: BTreeSet::new(),
+        receipts: std::collections::BTreeMap::new(),
     }
 }
 

@@ -56,6 +56,8 @@ mod milestones;
 mod pre_push;
 #[path = "proofaudit.rs"]
 mod proofaudit;
+#[path = "receipt.rs"]
+mod receipt;
 #[path = "release.rs"]
 mod release;
 #[path = "release_binaries.rs"]

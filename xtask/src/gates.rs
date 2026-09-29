@@ -2346,9 +2346,20 @@ pub fn invariants(root: &Path) -> Result<String, GateError> {
     for names in references(root, &declared)?.ships.into_values() {
         reached.extend(names);
     }
+    let mut receipts = BTreeMap::new();
+    for row in &rows {
+        for name in row.receipts() {
+            let held = match crate::receipt::held(root, name, &row.decision) {
+                Ok(_receipt) => crate::invariants::Receipted::Holds,
+                Err(refused) => crate::invariants::Receipted::Refused { why: refused.0 },
+            };
+            receipts.insert((row.decision.clone(), name.to_owned()), held);
+        }
+    }
     let tree = crate::invariants::Tree {
         definitions,
         reached,
+        receipts,
     };
     let (decisions, held) = crate::invariants::check(&rows, &gaps, &tree).map_err(|refused| {
         GateError(format!(
