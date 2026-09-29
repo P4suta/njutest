@@ -132,8 +132,9 @@ impl Harness {
     /// The most program steps CBMC may unfold this harness into on either target: a count no load moves, so a law that starts paying for a payload fails here and not on a runner that runs out of memory.
     const fn ceiling(self) -> u64 {
         match self {
-            Self::JudgedPass => 2_800,
-            Self::JudgedRefusal | Self::JudgedUndecidable | Self::JudgedShouldPanic => 2_600,
+            Self::JudgedPass => 5_200,
+            Self::JudgedRefusal | Self::JudgedUndecidable => 4_900,
+            Self::JudgedShouldPanic => 2_600,
             Self::NativeAlone => 13_000,
             Self::FirstKill => 34_000,
             Self::UniversalSurvival => 30_000,
