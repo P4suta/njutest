@@ -1215,6 +1215,9 @@ fn layers_of(name: &str) -> &'static [Layer] {
         | "a route narrowed by guards that kept no record"
         | "a test the guards say reached a mutation and the route dropped" => &[Layer::Trace],
         "a route that says a target ran that no execution ran" => &[Layer::Work],
+        "a row no sealed test reaches whose guard a sealed control reached" => {
+            &[Layer::Accounting, Layer::Findings, Layer::Proofs]
+        }
         "a body digest its bytes do not hash to, in the file the run measured"
         | "an item placed where its body does not start, in the file the run measured" => {
             &[Layer::Identity]
@@ -1273,11 +1276,12 @@ fn every_layer_is_silent_on_the_clean_run_and_loud_on_the_perturbations_that_are
 }
 
 /// The runs of three fixtures, recorded by the engine and committed beside this test.
-const SAMPLES: [(&str, usize, usize); 4] = [
+const SAMPLES: [(&str, usize, usize); 5] = [
     ("engine-run-simple", 13, 0),
     ("engine-run-rejected", 16, 4),
     ("engine-run-unreached", 8, 0),
     ("engine-run-declined", 29, 0),
+    ("engine-run-doctest", 12, 0),
 ];
 
 #[test]

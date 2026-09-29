@@ -2285,8 +2285,38 @@ impl Layer {
 /// The defects planted for the executions layer: outcomes no recorded execution came to, and verdicts resting on sealed executions their engine never recorded.
 fn executions_planted(clean: Perturbation) -> Vec<Perturbation> {
     let mut planted: Vec<Perturbation> = LIED_OUTCOMES.into_iter().filter_map(lie).collect();
+    planted.push(unreached_yet_reached(clean.clone()));
     planted.push(sealed_never_run(clean));
     planted
+}
+
+/// The planted defect of a sealed unreached verdict: a row no sealed test reaches, whose guard its engine recorded a sealed control reaching.
+fn unreached_yet_reached(clean: Perturbation) -> Perturbation {
+    let mut document = clean.document.clone();
+    merge(
+        &mut document,
+        json!({ "mutants": [{}, {
+            "catalog_index": 1,
+            "decision": { "outcome": "unreached", "killed_by": null, "step_boundary": null },
+            "evidence": { "kind": "sealed", "executions": [] }
+        }] }),
+    );
+    let mut engine = match document.get("mutants") {
+        Some(rows) => engine_of(rows),
+        None => Vec::new(),
+    };
+    engine.push(json!({
+        "type": "sealed-control",
+        "control": {
+            "target": TARGET, "test": "tests::one", "standing": "controlled", "reached": [1]
+        }
+    }));
+    Perturbation {
+        name: "a row no sealed test reaches whose guard a sealed control reached",
+        document,
+        engine: Some(engine),
+        ..clean
+    }
 }
 
 /// The planted defect of the sealed executions: verdicts resting on sealed executions their engine never recorded.

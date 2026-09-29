@@ -1175,6 +1175,25 @@ impl Layer {
                 Perturbation {
                     name: "a kill named by a test its target's baseline never ran",
                     events: killed_by_a_stranger(),
+                    ..clean.clone()
+                },
+                Perturbation {
+                    name: "a row no sealed test reaches whose guard a sealed control reached",
+                    document: with(json!({ "mutants": [{}, {
+                        "outcome": "not_run", "not_run_reason": "unreached", "unreached": true,
+                        "evidence": { "kind": "sealed", "executions": [] }
+                    }] })),
+                    events: inserted(
+                        7,
+                        json!({
+                            "timestamp": "2026-09-06T10:15:01Z", "elapsed_ms": 55,
+                            "type": "sealed-control",
+                            "control": {
+                                "target": TARGET, "test": "larger_works",
+                                "standing": "controlled", "reached": [1]
+                            }
+                        }),
+                    ),
                     ..clean
                 },
             ],

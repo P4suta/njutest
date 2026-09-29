@@ -2323,12 +2323,17 @@ fn a_run_whose_every_verdict_rests_on_no_execution_is_re_decided_rather_than_una
     }
     specimen.events = Some(events);
     specimen.engine = specimen.engine.map(|engine| {
-        engine
+        let mut kept: Vec<serde_json::Value> = engine
             .into_iter()
             .filter(|event| {
                 event.get("type").and_then(serde_json::Value::as_str) != Some("sealed-exec")
             })
-            .collect()
+            .collect();
+        kept.push(serde_json::json!({
+            "type": "sealed-control",
+            "control": { "target": "t1", "test": "tests::one", "standing": "controlled", "reached": [] }
+        }));
+        kept
     });
     let laid = specimen.lay().expect("the specimen is laid out");
     let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())

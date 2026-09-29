@@ -242,6 +242,19 @@ pub struct Sealed {
     pub came_to: String,
 }
 
+/// One sealed control: one test of one module run with nothing active, and every guard it reached.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SealedControl {
+    /// The target whose module ran.
+    pub target: String,
+    /// The test it ran.
+    pub test: String,
+    /// `controlled`, or why no mutant's execution can be judged against it.
+    pub standing: String,
+    /// Every guard it reached, by dense catalog index.
+    pub reached: Vec<u64>,
+}
+
 /// The routes and the executions of one recording, in the order they were written.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Routing {
@@ -251,6 +264,8 @@ pub struct Routing {
     pub execs: Vec<Exec>,
     /// Every sealed execution.
     pub sealed: Vec<Sealed>,
+    /// Every sealed control.
+    pub controls: Vec<SealedControl>,
     /// What the equivalence layer answered for each mutation it asked about, by display identity.
     pub equivalences: Vec<(String, String)>,
 }
@@ -315,6 +330,10 @@ pub(crate) fn from_events(events: &[Value]) -> Result<Routing, ReadError> {
             Some("sealed-exec") => {
                 let record = required(event, "sealed", Some).map_err(placed)?;
                 routing.sealed.push(sealed(record).map_err(placed)?);
+            }
+            Some("sealed-control") => {
+                let record = required(event, "control", Some).map_err(placed)?;
+                routing.controls.push(control(record).map_err(placed)?);
             }
             Some("note") => {
                 let noted = event.get("note");
@@ -439,6 +458,15 @@ fn sealed(record: &Value) -> Result<Sealed, ReadCauseError> {
     })
 }
 
+fn control(record: &Value) -> Result<SealedControl, ReadCauseError> {
+    Ok(SealedControl {
+        target: required(record, "target", owned)?,
+        test: required(record, "test", owned)?,
+        standing: required(record, "standing", owned)?,
+        reached: indices(record, "reached")?,
+    })
+}
+
 fn exec(record: &Value) -> Result<Exec, ReadCauseError> {
     Ok(Exec {
         mutant: named(record)?,
@@ -530,6 +558,21 @@ fn texts(value: &Value, key: &str) -> Result<Vec<String>, ReadCauseError> {
         .iter()
         .map(|entry| {
             owned(entry).ok_or_else(|| ReadCauseError::Absent {
+                field: format!("{key}[]"),
+            })
+        })
+        .collect()
+}
+
+/// The catalog indices of the array field `key`, which every line on its schema carries.
+///
+/// # Errors
+/// [`ReadCauseError::Absent`] where the field is not there, is not an array, or holds anything but indices.
+fn indices(value: &Value, key: &str) -> Result<Vec<u64>, ReadCauseError> {
+    required(value, key, Value::as_array)?
+        .iter()
+        .map(|entry| {
+            entry.as_u64().ok_or_else(|| ReadCauseError::Absent {
                 field: format!("{key}[]"),
             })
         })

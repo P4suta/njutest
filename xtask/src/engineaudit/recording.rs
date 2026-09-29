@@ -451,7 +451,7 @@ fn routed(report: &Report, recorded: &CheckedRecording, notes: &mut Notes<'_>) {
         named_its_tests(row, &execs, &tests, notes);
         answered(row, &execs, notes);
         declined(row, &execs, &excused, notes);
-        reached(row, route, &execs, notes);
+        reached(row, (route, &routing.controls), &execs, notes);
         discharged(row, route, &execs, notes);
         sealed_recorded(row, routing, notes);
     }
@@ -963,10 +963,10 @@ fn sealed_recorded(row: &Row, routing: &crate::route::Routing, notes: &mut Notes
     }
 }
 
-/// The route's granularity, against whether anything ran.
+/// The route's granularity, against whether anything ran, and a row nothing reaches, against the sealed controls where sealed executions decided it.
 fn reached(
     row: &Row,
-    route: &crate::route::Route,
+    (route, controls): (&crate::route::Route, &[crate::route::SealedControl]),
     execs: &[&crate::route::Exec],
     notes: &mut Notes<'_>,
 ) {
@@ -988,7 +988,9 @@ fn reached(
         ),
         _ => {}
     }
-    if row.unreached && route.granularity != UNREACHED {
+    if row.unreached && row.sealed() {
+        sealed_unreached(row, (route, controls), notes);
+    } else if row.unreached && route.granularity != UNREACHED {
         notes.violated(
             row.label(),
             format!(
@@ -998,6 +1000,60 @@ fn reached(
         );
     }
 }
+
+/// A row sealed executions call unreached, held to the sealed controls as the engine decides it (ADR 0046): no control reached its guard, and every target the native route reaches it through has a station every control of which the sealed build answered for.
+fn sealed_unreached(
+    row: &Row,
+    (route, controls): (&crate::route::Route, &[crate::route::SealedControl]),
+    notes: &mut Notes<'_>,
+) {
+    if let Some(control) = controls
+        .iter()
+        .find(|control| control.reached.contains(&row.index))
+    {
+        notes.violated(
+            row.label(),
+            format!(
+                "the row says no sealed test reaches this mutation, and the sealed control of \
+                 {} {} reached its guard",
+                control.target, control.test
+            ),
+        );
+        return;
+    }
+    for target in &route.reaching {
+        let held: Vec<&crate::route::SealedControl> = controls
+            .iter()
+            .filter(|control| control.target == *target)
+            .collect();
+        if held.is_empty() {
+            notes.violated(
+                row.label(),
+                format!(
+                    "the row says no sealed test reaches this mutation, the route says {target} \
+                     reaches it natively, and the recording holds no sealed control of \
+                     {target}; a reach no sealed control answered is not one the sealed build \
+                     decided"
+                ),
+            );
+        } else if let Some(uncontrolled) =
+            held.iter().find(|control| control.standing != CONTROLLED)
+        {
+            notes.violated(
+                row.label(),
+                format!(
+                    "the row says no sealed test reaches this mutation, and {target}'s test {} \
+                     has no control ({}), so the sealed build did not answer for every test the \
+                     native route reaches it through",
+                    uncontrolled.test, uncontrolled.standing
+                ),
+            );
+        }
+    }
+}
+
+/// What a sealed control's standing is where a mutant's execution can be judged against it.
+const CONTROLLED: &str = "controlled";
 
 /// Every target a proof removed, against the executions of the mutant it was removed from.
 fn discharged(

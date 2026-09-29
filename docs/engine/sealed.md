@@ -152,6 +152,10 @@ A report that does not account for every claim the capture gave out, or a merged
 A survival is universal and a kill existential, as [ADR 0007](../adr/0007-survived-evidence-is-universal.md) says of every survival; a test set aside for declining as its control did is left out of both, as [ADR 0043](../adr/0043-a-test-may-decline-to-measure.md) leaves it out of a native run's.
 A native execution never contributes to a verdict: a mutant whose only executions are native is unproven, and says so.
 
+"No test reaching it" is what the sealed controls say, which the trace records as one `sealed-control` event per test of every station, with every guard it reached.
+A target a native route names without naming its tests, as the documentation target is named for every library mutant because rustdoc's processes cannot be attributed natively, is answered by its station's controls: where every one of them is controlled and none reached the guard, the mutant is unreached, whatever the native route's granularity.
+The engine audit and proofaudit hold a sealed unreached row to those records: no recorded control reached its guard, and every target its native route names has a station every control of which was controlled.
+
 ## What cannot be sealed, and how to seal it
 
 Each is found, not listed: from the build, from the module's imports, and from the control.

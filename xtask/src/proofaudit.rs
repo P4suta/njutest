@@ -717,6 +717,10 @@ fn engine_evidence(
                 touched: crate::drift::read(&checked),
                 perturbed: crate::knobs::read(&checked),
                 sealed: sealed_runs(checked.events()),
+                controls: match crate::route::read(&checked) {
+                    Ok(routing) => Some(routing.controls),
+                    Err(_unreadable) => None,
+                },
             })
         })
         .collect()
@@ -1207,6 +1211,8 @@ struct Engine {
     perturbed: crate::knobs::Perturbations,
     /// Every sealed execution, as the mutant it ran and the execution, in the order recorded; nothing where one of them cannot be read.
     sealed: Option<Vec<(String, SealedRun)>>,
+    /// Every sealed control, in the order recorded; nothing where one of them cannot be read.
+    controls: Option<Vec<crate::route::SealedControl>>,
 }
 
 /// Each target and state the report's drift records name; a record that names no target or no state is not the shape a run writes it in, which is said.
@@ -4410,8 +4416,96 @@ fn executions(
             );
         }
     }
+    if held {
+        sealed_unreached(recording, (routing, engines), &mut notes);
+    }
     notes.looked()
 }
+
+/// Every row sealed executions call unreached, held to the sealed controls its engines recorded as the engine decides it (ADR 0046): no control reached its guard, and every target its route reaches it through natively has a station every control of which the sealed build answered for.
+fn sealed_unreached(
+    recording: &Recording<'_>,
+    (routing, engines): (&crate::route::Routing, &[Engine]),
+    notes: &mut Notes<'_>,
+) {
+    let mut controls: Vec<&crate::route::SealedControl> = Vec::new();
+    for engine in engines {
+        match &engine.controls {
+            Some(recorded) => controls.extend(recorded.iter()),
+            None => {
+                notes.unaudited(
+                    "sealed-control",
+                    "an engine recording holds a sealed control this audit cannot read, so no \
+                     sealed unreached verdict can be held to what its controls reached"
+                        .to_owned(),
+                );
+                return;
+            }
+        }
+    }
+    for mutant in recording.mutants.iter().filter(|mutant| {
+        mutant.outcome == UNREACHED
+            && matches!(&mutant.rests, Rests::Sealed(named) if named.is_empty())
+    }) {
+        let Some(index) = mutant.catalog_index else {
+            notes.violated(
+                mutant.label(),
+                "the report calls this mutation unreached on sealed evidence and names no catalog \
+                 index, so no sealed control can be held to it"
+                    .to_owned(),
+            );
+            continue;
+        };
+        if let Some(control) = controls
+            .iter()
+            .find(|control| control.reached.contains(&index))
+        {
+            notes.violated(
+                mutant.label(),
+                format!(
+                    "the report says no sealed test reaches this mutation, and the sealed control \
+                     of {} {} reached its guard",
+                    control.target, control.test
+                ),
+            );
+            continue;
+        }
+        let Some(route) = routing.route_of(&mutant.id, &mutant.display_id) else {
+            continue;
+        };
+        for target in &route.reaching {
+            let held: Vec<&&crate::route::SealedControl> = controls
+                .iter()
+                .filter(|control| control.target == *target)
+                .collect();
+            if held.is_empty() {
+                notes.violated(
+                    mutant.label(),
+                    format!(
+                        "the report says no sealed test reaches this mutation, its route says \
+                         {target} reaches it natively, and no engine recording holds a sealed \
+                         control of {target}"
+                    ),
+                );
+            } else if let Some(uncontrolled) = held
+                .iter()
+                .find(|control| control.standing != SEALED_CONTROLLED)
+            {
+                notes.violated(
+                    mutant.label(),
+                    format!(
+                        "the report says no sealed test reaches this mutation, and {target}'s \
+                         test {} has no control ({})",
+                        uncontrolled.test, uncontrolled.standing
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// What a sealed control's standing is where a mutant's execution can be judged against it.
+const SEALED_CONTROLLED: &str = "controlled";
 
 /// Why the executions of `mutant` do not bear out its outcome: the native ones `recorded`, and the sealed ones its engine recorded where the run kept an engine recording.
 fn misexecuted(

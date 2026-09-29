@@ -19,11 +19,12 @@ use rust_mutants::run::Exit;
 const UPDATE: &str = "UPDATE_ENGINE_RUNS";
 
 /// Each committed run, by the directory it is kept in, and the fixture it is a run of.
-const SAMPLES: [(&str, &str); 4] = [
+const SAMPLES: [(&str, &str); 5] = [
     ("engine-run-simple", "fixture-simple"),
     ("engine-run-rejected", "fixture-rejectable"),
     ("engine-run-unreached", "fixture-unreached"),
     ("engine-run-declined", "fixture-declines"),
+    ("engine-run-doctest", "fixture-doctest"),
 ];
 
 /// Every document a run left at the top of `directory`, by name, which is every document a committed run keeps: a list written here would miss the next one the engine learns to write.
