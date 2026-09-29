@@ -78,7 +78,11 @@ pub(super) fn audited(recording: &Recording<'_>, engines: &[Engine], audit: &mut
             );
             return notes.looked();
         }
-        [Engine { touched, perturbed }] => (touched, perturbed),
+        [
+            Engine {
+                touched, perturbed, ..
+            },
+        ] => (touched, perturbed),
         several => {
             notes.unaudited(
                 "knobs",

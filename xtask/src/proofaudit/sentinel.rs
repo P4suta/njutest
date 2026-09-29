@@ -1108,10 +1108,14 @@ fn shard_of((mutant, outcome): (&str, &str), index: u64) -> Result<Shard, Specim
     {
         events.extend(confirmation(id, "passed", Some("killed")));
     }
+    let mut engine = vec![touch("baseline", &[0, 1]), touch("control", &[0, 1])];
+    if let Some(rows) = flat.get("mutants") {
+        engine.extend(sealed_execs(rows));
+    }
     Ok(Shard {
         document: crate::specimen::shard(&flat, (&format!("{MERGED}-s{index}"), index, 2))?,
         events: Some(concluding(&flat, &events)),
-        engine: Some(vec![touch("baseline", &[0, 1]), touch("control", &[0, 1])]),
+        engine: Some(engine),
     })
 }
 
@@ -1455,13 +1459,44 @@ fn carried_past_its_killer(clean: Perturbation) -> Perturbation {
 
 /// The engine recording of the clean specimen: its build, its single-threaded baseline, one control, and one knob's control that held.
 fn clean_engine() -> Vec<Value> {
-    vec![
+    let mut engine = vec![
         built(),
         verified(&["--test-threads=1"]),
         touch("baseline", &[0, 1]),
         touch("control", &[0, 1]),
         perturbed("survived", &[], &recorded_reach(&[0, 1])),
-    ]
+    ];
+    engine.extend(sealed_execs(&mutated()));
+    engine
+}
+
+/// The engine's record of every sealed execution the mutation `rows` rest on, each under the row's display identity and its place among them.
+fn sealed_execs(rows: &Value) -> Vec<Value> {
+    let mut events = Vec::new();
+    let Some(rows) = rows.as_array() else {
+        return events;
+    };
+    for (index, row) in rows.iter().enumerate() {
+        let Some(executions) = row
+            .pointer("/evidence/executions")
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        for execution in executions {
+            events.push(json!({
+                "type": "sealed-exec",
+                "sealed": {
+                    "mutant": row.get("display_id"),
+                    "index": index,
+                    "target": execution.get("target"),
+                    "test": execution.get("test"),
+                    "came_to": execution.get("came_to"),
+                }
+            }));
+        }
+    }
+    events
 }
 
 /// The planted defect of the concurrency layer: a delayed guard whose control ran past its bound, recorded as a sample that passed.
@@ -1994,9 +2029,29 @@ impl Layer {
             Self::Concurrency => concurrency_planted(&clean),
             Self::Confirmations => confirmation_plants(),
             Self::Soundness => soundness_planted(&clean),
-            Self::Executions => LIED_OUTCOMES.into_iter().filter_map(lie).collect(),
+            Self::Executions => executions_planted(clean),
             Self::Evidence => evidence_planted(&clean),
         }
+    }
+}
+
+/// The defects planted for the executions layer: outcomes no recorded execution came to, and verdicts resting on sealed executions their engine never recorded.
+fn executions_planted(clean: Perturbation) -> Vec<Perturbation> {
+    let mut planted: Vec<Perturbation> = LIED_OUTCOMES.into_iter().filter_map(lie).collect();
+    planted.push(sealed_never_run(clean));
+    planted
+}
+
+/// The planted defect of the sealed executions: verdicts resting on sealed executions their engine never recorded.
+fn sealed_never_run(clean: Perturbation) -> Perturbation {
+    let engine = clean_engine()
+        .into_iter()
+        .filter(|event| event.get("type").and_then(Value::as_str) != Some("sealed-exec"))
+        .collect();
+    Perturbation {
+        name: "verdicts resting on sealed executions their engine never recorded",
+        engine: Some(engine),
+        ..clean
     }
 }
 

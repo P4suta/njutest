@@ -972,7 +972,7 @@ fn the_summary_line_says_what_was_re_decided_and_what_it_found() {
     let rendered = audited_with_routes(&base()).to_string();
     assert!(
         rendered.ends_with(&format!(
-            "proofaudit: {RUN}: 2 mutants and 1 target re-decided; 0 violations, 2 unaudited"
+            "proofaudit: {RUN}: 2 mutants and 1 target re-decided; 0 violations, 3 unaudited"
         )),
         "{rendered}"
     );
@@ -985,7 +985,7 @@ fn every_violation_is_a_line_of_its_own_before_the_summary() {
     let first = lines.next().unwrap_or_default();
     assert!(first.starts_with("violation: findings: "), "{rendered}");
     assert!(first.contains(SURVIVED), "{rendered}");
-    assert!(rendered.ends_with("1 violation, 2 unaudited"), "{rendered}");
+    assert!(rendered.ends_with("1 violation, 3 unaudited"), "{rendered}");
 }
 
 #[test]
@@ -3809,6 +3809,66 @@ fn a_real_run_measured_in_two_shards_and_merged_is_re_decided_clean_shard_by_sha
             "{recording}: every shard the merge names was given and re-decided: {audit}"
         );
     }
+}
+
+/// One shard of the recorded sharded run: its run directory, its report rewritten by `edit`, and its recordings.
+fn recorded_shard(edit: impl FnOnce(&mut serde_json::Value)) -> Audit {
+    let recorded = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/sharded-run");
+    let shard = "20260929t000318323z-00c0f2";
+    let text = std::fs::read_to_string(recorded.join("runs").join(shard).join(REPORT_FILE))
+        .expect("the recorded shard's report");
+    let mut report: serde_json::Value =
+        xtask::strictjson::from_str(&text).expect("the recorded report is JSON");
+    edit(&mut report);
+    let run = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        run.path().join(REPORT_FILE),
+        serde_json::to_string_pretty(&report).expect("the report serialises"),
+    )
+    .expect("the rewritten report");
+    gates::proofaudit(
+        &checkers(),
+        run.path(),
+        Some(&recorded.join("traces").join(shard)),
+    )
+    .expect("a recorded run is read")
+}
+
+#[test]
+fn every_sealed_execution_a_real_report_names_is_one_its_engine_recorded() {
+    let audit = recorded_shard(|_report| {});
+    assert_eq!(audit.violations(), 0, "{audit}");
+    assert!(
+        !audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Executions
+                && remark.standing == Standing::Unaudited),
+        "a run whose every verdict is sealed is held to the sealed executions its engine \
+         recorded, not left unaudited for want of a native one: {audit}"
+    );
+}
+
+#[test]
+fn a_sealed_execution_the_report_names_and_its_engine_never_ran_is_a_violation() {
+    let audit = recorded_shard(|report| {
+        if let Some(test) =
+            report.pointer_mut("/report/builds/0/source/mutants/0/evidence/executions/0/test")
+        {
+            *test = serde_json::json!("tests::a_test_nothing_ran");
+        }
+    });
+    let violated: Vec<&str> = audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Executions && remark.standing == Standing::Violated)
+        .map(|remark| remark.subject.as_str())
+        .collect();
+    assert_eq!(
+        violated,
+        ["754587d92aeadc857975"],
+        "a kill resting on a sealed execution its engine never recorded is a violation: {audit}"
+    );
 }
 
 /// `document` with what its row at `index` rests on replaced by `evidence`.

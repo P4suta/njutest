@@ -646,7 +646,7 @@ pub fn audit_with(
             Layer::Acceptances => acceptances(&recording, &mut audit),
             Layer::Reuse => reuse(&recording, routing.as_ref(), &mut audit),
             Layer::Proofs => proofs(&recording, rerouted, &mut audit),
-            Layer::Executions => executions(&recording, routing.as_ref(), &mut audit),
+            Layer::Executions => executions(&recording, (routing.as_ref(), &engines), &mut audit),
             Layer::Hollow => hollow(&recording, routing.as_ref(), &mut audit),
             Layer::Wire => wire(&recording, watched.as_ref(), &mut audit),
             Layer::Model => models(&recording, run, &mut audit),
@@ -690,7 +690,29 @@ fn engine_evidence(
             Ok(Engine {
                 touched: crate::drift::read(&checked),
                 perturbed: crate::knobs::read(&checked),
+                sealed: sealed_runs(checked.events()),
             })
+        })
+        .collect()
+}
+
+/// Every sealed execution `events` hold, as the mutant it ran and the execution, in the order they hold them, or nothing where one of them lacks a field.
+fn sealed_runs(events: &[serde_json::Value]) -> Option<Vec<(String, SealedRun)>> {
+    events
+        .iter()
+        .filter(|event| {
+            event.get("type").and_then(serde_json::Value::as_str) == Some("sealed-exec")
+        })
+        .map(|event| {
+            let sealed = event.get("sealed")?;
+            Some((
+                field(sealed, "mutant")?,
+                SealedRun {
+                    target: field(sealed, "target")?,
+                    test: field(sealed, "test")?,
+                    came_to: field(sealed, "came_to")?,
+                },
+            ))
         })
         .collect()
 }
@@ -1157,6 +1179,8 @@ struct Engine {
     touched: crate::drift::Touched,
     /// Every perturbed control.
     perturbed: crate::knobs::Perturbations,
+    /// Every sealed execution, as the mutant it ran and the execution, in the order recorded; nothing where one of them cannot be read.
+    sealed: Option<Vec<(String, SealedRun)>>,
 }
 
 /// Each target and state the report's drift records name; a record that names no target or no state is not the shape a run writes it in, which is said.
@@ -1755,13 +1779,24 @@ struct MutantRow {
     rests: Rests,
 }
 
+/// One sealed execution, as a report's evidence names it and an engine recording holds it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SealedRun {
+    /// The target whose module ran.
+    target: String,
+    /// The test it ran.
+    test: String,
+    /// What it came to.
+    came_to: String,
+}
+
 /// What a row says its decision rests on, as its `evidence` says it (ADR 0046).
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Rests {
     /// No execution: the compiler refused the mutation.
     Nothing,
-    /// The sealed executions it names, each as the target whose module ran and what it came to, in the order they ran.
-    Sealed(Vec<(String, String)>),
+    /// The sealed executions it names, in the order they ran.
+    Sealed(Vec<SealedRun>),
     /// No sealed execution established anything, for every reason it names.
     Unproven(Vec<String>),
 }
@@ -1777,7 +1812,13 @@ impl Rests {
                 .get("executions")?
                 .as_array()?
                 .iter()
-                .map(|execution| Some((field(execution, "target")?, field(execution, "came_to")?)))
+                .map(|execution| {
+                    Some(SealedRun {
+                        target: field(execution, "target")?,
+                        test: field(execution, "test")?,
+                        came_to: field(execution, "came_to")?,
+                    })
+                })
                 .collect::<Option<Vec<_>>>()
                 .map(Self::Sealed),
             "unproven" => evidence
@@ -3728,10 +3769,10 @@ fn confirmation_of(
 /// What the engine calls a step-limit outcome in the executions it records.
 const STEP_LIMIT_EXEC: &str = "step_limit_reached";
 
-/// Every mutation's reported outcome against the executions of it the recording holds, so a report cannot say a test noticed what every recorded execution says survived.
+/// Every mutation's reported outcome against the executions of it the recording holds, so a report cannot say a test noticed what every recorded execution says survived, nor rest on a sealed execution its engine never ran.
 fn executions(
     recording: &Recording<'_>,
-    routing: Option<&crate::route::Routing>,
+    (routing, engines): (Option<&crate::route::Routing>, &[Engine]),
     audit: &mut Audit,
 ) -> Decided {
     let mut notes = Notes::on(audit, Layer::Executions);
@@ -3744,10 +3785,20 @@ fn executions(
         );
         return notes.looked();
     };
-    if routing.execs.is_empty() {
+    let Some(sealed) = sealed_of(engines) else {
+        notes.unaudited(
+            "sealed-exec",
+            "an engine recording holds a sealed execution this audit cannot read, so no sealed \
+             verdict can be held to what ran"
+                .to_owned(),
+        );
+        return notes.looked();
+    };
+    if routing.execs.is_empty() && sealed.is_empty() {
         notes.unaudited(
             "mutant-exec",
-            "the recording holds no mutation execution, so no outcome can be held to what ran"
+            "the recording holds no mutation execution, native or sealed, so no outcome can be \
+             held to what ran"
                 .to_owned(),
         );
         return notes.looked();
@@ -3757,6 +3808,15 @@ fn executions(
         ran.entry(exec.mutant.as_str())
             .or_default()
             .push(exec.outcome.as_str());
+    }
+    let held = !engines.is_empty();
+    if !held && recording.mutants.iter().any(MutantRow::sealed) {
+        notes.unaudited(
+            "sealed-exec",
+            "the run kept no engine recording, so no sealed verdict can be held to the \
+             executions its engine ran"
+                .to_owned(),
+        );
     }
     for mutant in recording
         .mutants
@@ -3769,12 +3829,8 @@ fn executions(
                 recorded.extend(outcomes.iter().copied());
             }
         }
-        let why = if mutant.sealed() && recorded.is_empty() {
-            None
-        } else {
-            contradicted(&mutant.outcome, &recorded)
-        };
-        if let Some(why) = why {
+        let sealed_runs = held.then(|| sealed_of_row(&sealed, mutant));
+        if let Some(why) = misexecuted(mutant, &recorded, sealed_runs) {
             notes.violated(mutant.label(), why);
         } else if mutant.outcome == EQUIVALENT
             && !routing
@@ -3791,6 +3847,69 @@ fn executions(
         }
     }
     notes.looked()
+}
+
+/// Why the executions of `mutant` do not bear out its outcome: the native ones `recorded`, and the sealed ones its engine recorded where the run kept an engine recording.
+fn misexecuted(
+    mutant: &MutantRow,
+    recorded: &[&str],
+    sealed: Option<Vec<&SealedRun>>,
+) -> Option<String> {
+    match (&mutant.rests, mutant.sealed()) {
+        (Rests::Sealed(named), true) => {
+            if let Some(why) = sealed.and_then(|ran| unrecorded_sealed(named, ran)) {
+                return Some(why);
+            }
+            if recorded.is_empty() {
+                None
+            } else {
+                contradicted(&mutant.outcome, recorded)
+            }
+        }
+        (Rests::Nothing | Rests::Sealed(_) | Rests::Unproven(_), _) => {
+            contradicted(&mutant.outcome, recorded)
+        }
+    }
+}
+
+/// Every sealed execution every engine recording holds, by the mutant it ran, in the order recorded, or nothing where one recording holds one this audit cannot read.
+fn sealed_of(engines: &[Engine]) -> Option<BTreeMap<&str, Vec<&SealedRun>>> {
+    let mut sealed: BTreeMap<&str, Vec<&SealedRun>> = BTreeMap::new();
+    for engine in engines {
+        for (mutant, run) in engine.sealed.as_ref()? {
+            sealed.entry(mutant.as_str()).or_default().push(run);
+        }
+    }
+    Some(sealed)
+}
+
+/// The sealed executions the recordings hold of `mutant`, under either of its names.
+fn sealed_of_row<'a>(
+    sealed: &BTreeMap<&str, Vec<&'a SealedRun>>,
+    mutant: &MutantRow,
+) -> Vec<&'a SealedRun> {
+    let mut runs = Vec::new();
+    for key in [mutant.display_id.as_str(), mutant.id.as_str()] {
+        if let Some(recorded) = sealed.get(key) {
+            runs.extend(recorded.iter().copied());
+        }
+    }
+    runs
+}
+
+/// Why the sealed executions a row `named` are not the ones its engine `recorded`, in order, if they are not.
+fn unrecorded_sealed(named: &[SealedRun], recorded: Vec<&SealedRun>) -> Option<String> {
+    let said = |runs: &mut dyn Iterator<Item = &SealedRun>| {
+        runs.map(|run| format!("{} {} {}", run.target, run.test, run.came_to))
+            .collect::<Vec<_>>()
+    };
+    (!named.iter().eq(recorded.iter().copied())).then(|| {
+        format!(
+            "the report rests on the sealed executions {:?}, and its engine recorded {:?}",
+            said(&mut named.iter()),
+            said(&mut recorded.into_iter())
+        )
+    })
 }
 
 /// Why `reported` is not an outcome the executions `recorded` could have come to, if it is not.
@@ -5079,7 +5198,7 @@ impl Settled<'_> {
 
 /// Why `outcome`, killed by `killed_by`, is not what `executions` establish, or nothing where it is.
 fn sealed_against(
-    executions: &[(String, String)],
+    executions: &[SealedRun],
     outcome: &str,
     killed_by: Option<&str>,
 ) -> Option<String> {
@@ -5088,7 +5207,10 @@ fn sealed_against(
     } else {
         Settled::Survived
     };
-    for (target, came_to) in executions {
+    for SealedRun {
+        target, came_to, ..
+    } in executions
+    {
         if DETECTIONS.contains(&came_to.as_str()) {
             settled = Settled::Killed(target);
             break;
