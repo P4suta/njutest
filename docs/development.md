@@ -201,11 +201,19 @@ Its planted defect is a control a knob broke, recorded as `stable`.
 The `confirmations` layer holds every new `killed`, `waited`, or `unconfirmed` disposition to the control and second run its runner recording carries.
 It re-derives whether the original code passed the same target and test, whether the control was asked once and recorded before the confirmation, and whether the second run repeated the expected kill or wait.
 A disposition inherited from an interrupted checkpoint is left unaudited because its confirmation belongs to the interrupted run's recording, while one read back from an earlier report is audited there.
+A kill sealed executions established owes no native confirmation, since the `evidence` layer holds it to its own executions; a confirmation of one the recording does hold is audited like any other.
 Each of the layer's seven named rules has a planted defect the gate must find by that rule's name.
 
 The `executions` layer holds every mutation's reported outcome to the executions of it the recording holds: a `killed` or `unconfirmed` row needs a recorded execution that was killed, a `waited` or step-limited one a recorded execution that ended that way, a `survived` row no recorded execution that did anything but survive, an `unreached` or `compile-rejected` row no execution at all, an `equivalent` one the equivalence layer's `identical` answer, and none of the three that claim the programs agree a killed execution.
 Before it, a report that called its survivor killed, and made its columns, findings, and verdict agree, drew no violation from any layer.
 Its planted defects are that kind of lie, told consistently, and a law in `xtask/tests/sentinel.rs` reads every outcome the report schema allows and requires a planted lie for each (`proofaudit::sentinel::lie`) that some layer refuses, so an outcome added to the schema is audited against its executions the day it arrives.
+A verdict sealed executions established has no native execution to be held to, so a row that rests on them is held only to the native executions of it the recording does hold.
+
+The `evidence` layer holds every row to what its decision rests on ([ADR 0046](adr/0046-a-verdict-is-what-a-sealed-run-observed.md)), decided again from the evidence the row names.
+A mutation the compiler refused names no evidence, and every other row names some.
+Sealed executions establish exactly the outcome they stand under: a kill where one detected the mutation, by the target whose execution did first; a survival, or an equivalence, where every one passed; unreached where none ran; and nothing where one came to a doubt and none detected it.
+A lead, an outcome only a sealed execution establishes that none did, names every reason a sealed run gives for no verdict, is never accepted, and is counted in `accounting.mutants.observers.unproven`; the `findings` layer owes it an `unproven-mutant` finding, and the `accounting` layer counts it as no answer, so a run holding one assures nothing.
+The words for what a sealed execution came to and for why it established nothing are the audit's own, and a law in `xtask/tests/sentinel.rs` holds them to the ones the report schema publishes.
 
 The `soundness` layer re-derives what interpreting the suite came to from the interpreter's recorded run and the output the recording kept of it, and holds the report's `accounting.soundness.executed` and its findings about soundness to that in both directions.
 It reads that output as `schema/miri-output.json` publishes it, and the runner reads it the same way: each keeps its own copy of the markers, and a test in each crate holds that copy to the contract, so a marker changed in one reading and not the other fails a gate rather than a run.
@@ -252,7 +260,7 @@ Then every layer says how far it got in one `layer:` line: `re-decided`, `partly
 A layer returns a `Decided` that only those three outcomes make, and the audit calls every layer through an exhaustive match over `Layer`, so a layer cannot end without saying which.
 A merge's layers are re-decided only where every shard was given and none fell short.
 A summary line closes the report, and the exit code is 1 with violations, 3 with none and something left `unaudited`, 0 only when every layer was decided, and 2 when the run directory could not be read at all, so a step that reads only the code cannot take an audit that looked at part of a run for one that looked at all of it.
-Before it reads the run, `proofaudit` re-decides a clean synthetic run (`xtask::proofaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each of its twenty layers, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
+Before it reads the run, `proofaudit` re-decides a clean synthetic run (`xtask::proofaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each of its twenty-one layers, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
 
 ### A gate finds what was planted for it before it is believed
 

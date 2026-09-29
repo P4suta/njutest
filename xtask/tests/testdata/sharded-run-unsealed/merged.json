@@ -3,7 +3,7 @@
   "report": {
     "schema": "njutest-assurance-report-v1",
     "schema_version": 3,
-    "run_id": "20260929t000329776z-00cf39",
+    "run_id": "20260928t233919031z-0102d3",
     "run_kind": "full",
     "contract": "standard-v1",
     "tool": {
@@ -16,7 +16,7 @@
         "fixture-assured"
       ],
       "workspace_digest": "3a7fae75eade6b12b2536419baff5338b4dfe392875a10f077caf812aa98ea5d",
-      "configuration_digest": "886a21b1d04e5327eb29438d3104d1880fecb5cc3a9487f1a71a8a9d82a951c5",
+      "configuration_digest": "4ee080cbb0b8b1ccc5931fbd66eda5933c842cf1fe2e7844a95bde1eadaab6fb",
       "git": {
         "available": false,
         "commit": "unavailable",
@@ -27,7 +27,7 @@
       }
     },
     "provenance": {
-      "identity": "c5b9a510745f8cd992d5100ec873774b5ffc295da21f88c7d64ef86e2fe864c1",
+      "identity": "3422107903b677b6babfdc227ddab9d3fefd07da761eee3dfb455228ab6fcd3b",
       "cached": false,
       "source_run_id": null
     },
@@ -46,14 +46,14 @@
       "kind": "merged",
       "sources": [
         {
-          "run_id": "20260929t000318323z-00c0f2",
+          "run_id": "20260928t233909473z-00f5d2",
           "shard": {
             "index": 1,
             "of": 2
           }
         },
         {
-          "run_id": "20260929t000324305z-00c796",
+          "run_id": "20260928t233914318z-00fb4f",
           "shard": {
             "index": 2,
             "of": 2
@@ -76,7 +76,7 @@
         },
         "parts": [
           {
-            "run_id": "20260929t000318323z-00c0f2-b0000000000",
+            "run_id": "20260928t233909473z-00f5d2-b0000000000",
             "part": {
               "kind": "shard",
               "index": 1,
@@ -90,9 +90,9 @@
               "arch": "aarch64"
             },
             "timing": {
-              "started": "2026-09-29T00:03:18.32396Z",
-              "finished": "2026-09-29T00:03:24.274517Z",
-              "duration_ms": 5950
+              "started": "2026-09-28T23:39:09.473477Z",
+              "finished": "2026-09-28T23:39:14.287145Z",
+              "duration_ms": 4813
             },
             "accounting": {
               "targets": {
@@ -119,14 +119,14 @@
                 "reused_survived": 0,
                 "observers": {
                   "types": 0,
-                  "tests": 2,
+                  "tests": 0,
                   "model_noticed": 0,
                   "model_proved": 0,
                   "step_limit_reached": 0,
                   "proved": 0,
                   "unnoticed": 0,
                   "unreached": 0,
-                  "unproven": 0,
+                  "unproven": 2,
                   "waited": 0,
                   "errored": 0
                 }
@@ -163,16 +163,16 @@
             "crashes": [],
             "targets": [
               {
-                "id": "f491db7e81bc24114916f323f607ff0e5f356316ed1934a798ed3d01579ab131",
-                "name": "fixture-assured/lib/fixture_assured",
+                "id": "0b5ea454999460c0a53634e86a9e7309570b188029bb88b3f0d443f4b0c8a293",
+                "name": "fixture-assured/test/doubling",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 33,
+                "duration_ms": 35,
                 "message": null
               },
               {
-                "id": "0b5ea454999460c0a53634e86a9e7309570b188029bb88b3f0d443f4b0c8a293",
-                "name": "fixture-assured/test/doubling",
+                "id": "f491db7e81bc24114916f323f607ff0e5f356316ed1934a798ed3d01579ab131",
+                "name": "fixture-assured/lib/fixture_assured",
                 "package": "fixture-assured",
                 "status": "passed",
                 "duration_ms": 30,
@@ -206,13 +206,9 @@
                   "step_boundary": null
                 },
                 "evidence": {
-                  "kind": "sealed",
-                  "executions": [
-                    {
-                      "target": "fixture-assured/lib/fixture_assured",
-                      "test": "tests::is_positive_is_false_at_zero_and_below",
-                      "came_to": "panicked"
-                    }
+                  "kind": "unproven",
+                  "reasons": [
+                    "not-sealed"
                   ]
                 },
                 "accepted": false,
@@ -256,13 +252,9 @@
                   "step_boundary": null
                 },
                 "evidence": {
-                  "kind": "sealed",
-                  "executions": [
-                    {
-                      "target": "fixture-assured/test/doubling",
-                      "test": "doubling_four_is_eight",
-                      "came_to": "panicked"
-                    }
+                  "kind": "unproven",
+                  "reasons": [
+                    "not-sealed"
                   ]
                 },
                 "accepted": false,
@@ -287,7 +279,50 @@
                 }
               }
             ],
-            "findings": [],
+            "findings": [
+              {
+                "kind": "unproven-mutant",
+                "subject": "754587d92aeadc857975",
+                "detail": "no sealed execution established a verdict about return-true at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict",
+                "origin": {
+                  "scope": "source",
+                  "build": "default",
+                  "run_id": "20260928t233909473z-00f5d2-b0000000000",
+                  "part": {
+                    "kind": "shard",
+                    "index": 1,
+                    "of": 2
+                  }
+                },
+                "path": "src/lib.rs",
+                "position": {
+                  "line": 9,
+                  "column": 5,
+                  "character_column": 5
+                }
+              },
+              {
+                "kind": "unproven-mutant",
+                "subject": "e1a8798fb39e6bd01053",
+                "detail": "no sealed execution established a verdict about return-default at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict",
+                "origin": {
+                  "scope": "source",
+                  "build": "default",
+                  "run_id": "20260928t233909473z-00f5d2-b0000000000",
+                  "part": {
+                    "kind": "shard",
+                    "index": 1,
+                    "of": 2
+                  }
+                },
+                "path": "src/lib.rs",
+                "position": {
+                  "line": 15,
+                  "column": 5,
+                  "character_column": 5
+                }
+              }
+            ],
             "limitations": [
               {
                 "name": "git-metadata-unavailable",
@@ -369,7 +404,7 @@
             ]
           },
           {
-            "run_id": "20260929t000324305z-00c796-b0000000000",
+            "run_id": "20260928t233914318z-00fb4f-b0000000000",
             "part": {
               "kind": "shard",
               "index": 2,
@@ -383,9 +418,9 @@
               "arch": "aarch64"
             },
             "timing": {
-              "started": "2026-09-29T00:03:24.30583Z",
-              "finished": "2026-09-29T00:03:29.744954Z",
-              "duration_ms": 5439
+              "started": "2026-09-28T23:39:14.318102Z",
+              "finished": "2026-09-28T23:39:18.991144Z",
+              "duration_ms": 4673
             },
             "accounting": {
               "targets": {
@@ -412,14 +447,14 @@
                 "reused_survived": 0,
                 "observers": {
                   "types": 0,
-                  "tests": 2,
+                  "tests": 0,
                   "model_noticed": 0,
                   "model_proved": 0,
                   "step_limit_reached": 0,
                   "proved": 0,
                   "unnoticed": 0,
                   "unreached": 0,
-                  "unproven": 0,
+                  "unproven": 2,
                   "waited": 0,
                   "errored": 0
                 }
@@ -460,7 +495,7 @@
                 "name": "fixture-assured/test/doubling",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 32,
+                "duration_ms": 35,
                 "message": null
               },
               {
@@ -468,7 +503,7 @@
                 "name": "fixture-assured/lib/fixture_assured",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 28,
+                "duration_ms": 35,
                 "message": null
               }
             ],
@@ -499,13 +534,9 @@
                   "step_boundary": null
                 },
                 "evidence": {
-                  "kind": "sealed",
-                  "executions": [
-                    {
-                      "target": "fixture-assured/lib/fixture_assured",
-                      "test": "tests::is_positive_is_false_at_zero_and_below",
-                      "came_to": "panicked"
-                    }
+                  "kind": "unproven",
+                  "reasons": [
+                    "not-sealed"
                   ]
                 },
                 "accepted": false,
@@ -549,13 +580,9 @@
                   "step_boundary": null
                 },
                 "evidence": {
-                  "kind": "sealed",
-                  "executions": [
-                    {
-                      "target": "fixture-assured/test/doubling",
-                      "test": "doubling_four_is_eight",
-                      "came_to": "panicked"
-                    }
+                  "kind": "unproven",
+                  "reasons": [
+                    "not-sealed"
                   ]
                 },
                 "accepted": false,
@@ -580,7 +607,50 @@
                 }
               }
             ],
-            "findings": [],
+            "findings": [
+              {
+                "kind": "unproven-mutant",
+                "subject": "aaa2ce24eee3548cd283",
+                "detail": "no sealed execution established a verdict about gt-to-ge at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict",
+                "origin": {
+                  "scope": "source",
+                  "build": "default",
+                  "run_id": "20260928t233914318z-00fb4f-b0000000000",
+                  "part": {
+                    "kind": "shard",
+                    "index": 2,
+                    "of": 2
+                  }
+                },
+                "path": "src/lib.rs",
+                "position": {
+                  "line": 9,
+                  "column": 7,
+                  "character_column": 7
+                }
+              },
+              {
+                "kind": "unproven-mutant",
+                "subject": "9e156499bc852ea65db3",
+                "detail": "no sealed execution established a verdict about mul-to-div at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict",
+                "origin": {
+                  "scope": "source",
+                  "build": "default",
+                  "run_id": "20260928t233914318z-00fb4f-b0000000000",
+                  "part": {
+                    "kind": "shard",
+                    "index": 2,
+                    "of": 2
+                  }
+                },
+                "path": "src/lib.rs",
+                "position": {
+                  "line": 15,
+                  "column": 7,
+                  "character_column": 7
+                }
+              }
+            ],
             "limitations": [
               {
                 "name": "git-metadata-unavailable",
