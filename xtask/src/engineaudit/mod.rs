@@ -422,10 +422,10 @@ struct CheckedEvidence<'a> {
     shards: Vec<(&'a str, Report)>,
     ledger: Option<Ledger>,
     sites: bool,
-    reached: Option<Value>,
+    reached: Option<wire::Measurement>,
     catalog: Option<Value>,
     probe_logs: &'a [String],
-    touched: Option<Value>,
+    touched: Option<wire::Guarded>,
     skeletons: Option<Value>,
     carried: Option<Value>,
     root: Option<&'a std::path::Path>,
@@ -500,13 +500,13 @@ impl<'a> Evidence<'a> {
             sites: self.sites,
             reached: self
                 .reached
-                .map(|source| parse_typed_evidence(source, wire::validate_reached))
+                .map(|source| parse_typed_evidence(source, wire::read_reached))
                 .transpose()?,
             catalog: self.catalog.map(parse_evidence).transpose()?,
             probe_logs: &self.probe_logs,
             touched: self
                 .touched
-                .map(|source| parse_typed_evidence(source, wire::validate_touched))
+                .map(|source| parse_typed_evidence(source, wire::read_touched))
                 .transpose()?,
             skeletons: self.skeletons.map(parse_evidence).transpose()?,
             carried: self.carried.map(parse_evidence).transpose()?,
@@ -542,16 +542,16 @@ fn parse_evidence(source: Source<'_>) -> Result<Value, AuditError> {
     })
 }
 
-fn parse_typed_evidence(
+/// The evidence document at `source`, read in the exact owned shape `read` gives it.
+fn parse_typed_evidence<T>(
     source: Source<'_>,
-    validate: fn(&Value) -> Result<(), serde_json::Error>,
-) -> Result<Value, AuditError> {
+    read: fn(&Value) -> Result<T, serde_json::Error>,
+) -> Result<T, AuditError> {
     let value = parse_evidence(source)?;
-    validate(&value).map_err(|error| AuditError::MalformedEvidence {
+    read(&value).map_err(|error| AuditError::MalformedEvidence {
         path: source.path.to_owned(),
         source: error,
-    })?;
-    Ok(value)
+    })
 }
 
 /// What a layer hands back to show it said how far it got, which only [`Notes::looked`] and [`Notes::absent`] make.

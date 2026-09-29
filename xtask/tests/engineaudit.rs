@@ -2007,6 +2007,74 @@ fn a_branch_discharge_the_guards_contradict_is_a_violation() {
     );
 }
 
+/// `record` with the target's record of `kind` taken out, as a record that never kept it.
+fn without_kind(mut record: serde_json::Value, kind: &str) -> serde_json::Value {
+    let removed = record["targets"][TARGET]
+        .as_object_mut()
+        .expect("the target's record")
+        .remove(kind);
+    assert!(removed.is_some(), "the record kept {kind} to take out");
+    record
+}
+
+#[test]
+fn a_discharge_is_not_passed_by_a_record_that_never_kept_what_it_rests_on() {
+    for (proof, record, kind) in [
+        ("branch-never-taken", record_of_a_body(&[1]), "bodies"),
+        (
+            "never-infected",
+            record_of_a_comparison(&[0, 1]),
+            "infected",
+        ),
+    ] {
+        let audit = with_record(
+            &discharged_by_the_guards(proof),
+            &without_kind(record, kind),
+        );
+        assert!(
+            audit
+                .of(Layer::Proofs)
+                .iter()
+                .any(|remark| remark.to_string().contains(&format!("{proof}:"))),
+            "a record that keeps no {kind} for the target says nothing of what it entered or saw \
+             part, so the {proof} discharge is not passed as one it supports: {audit}"
+        );
+    }
+}
+
+#[test]
+fn a_route_is_not_passed_by_a_record_that_never_kept_what_reached() {
+    let mut document = routed_by_test();
+    document["mutants"][0]["route"]["reaching"] = serde_json::json!([]);
+    document["mutants"][0]["route"]["tests"] = serde_json::json!({});
+    let audit = with_record(&document, &without_kind(touched(), "reached"));
+    assert!(
+        audit.of(Layer::Touch).iter().any(|remark| {
+            remark.standing == Standing::Unaudited
+                && remark.subject == short(KILLED)
+                && remark.to_string().contains("reached")
+        }),
+        "a route that left the target out is not re-decided by a record that keeps nothing of \
+         what reached it: {audit}"
+    );
+}
+
+#[test]
+fn a_route_that_narrows_a_target_to_no_test_is_not_one_that_asks_every_test() {
+    let mut document = routed_by_test();
+    document["mutants"][0]["route"]["tests"][TARGET] = serde_json::json!([]);
+    let mut record = touched();
+    record["targets"][TARGET]["reached"]["loose"] = serde_json::json!([0]);
+    let audit = with_record(&document, &record);
+    assert!(
+        violations(&audit, Layer::Touch)
+            .iter()
+            .any(|said| said.contains("no test")),
+        "an absent entry asks every test, and an empty one asks none, which the record of a \
+         mutation every test reached contradicts: {audit}"
+    );
+}
+
 /// The same record with a third test, so a mutation two of them reached is a route through a filter rather than the whole target.
 fn record_of_three() -> serde_json::Value {
     let mut recorded = touched();

@@ -640,8 +640,10 @@ fn believed_beside(
             merge(
                 document,
                 json!({ "targets": {
-                    TARGET: { "reached": { "loose": [0, 1] }, "ran": [] },
-                    other: { "reached": { "loose": [0, 1] }, "ran": [] }
+                    TARGET: { "reached": { "loose": [0, 1] }, "bodies": {}, "infected": {},
+                              "entered": {}, "ran": [] },
+                    other: { "reached": { "loose": [0, 1] }, "bodies": {}, "infected": {},
+                             "entered": {}, "ran": [] }
                 } }),
             );
         }

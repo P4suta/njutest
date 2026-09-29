@@ -665,48 +665,19 @@ fn tests_of(filter: &[String]) -> std::collections::BTreeSet<&str> {
 /// Every item's file and body span, by the item index the guards' record names it by.
 type Spans = std::collections::BTreeMap<u64, (String, std::ops::Range<u64>)>;
 
-/// Why the guards' record gives no body span to read an item by.
-#[derive(Debug, Clone, Copy)]
-enum Unspanned {
-    /// The record lists no items.
-    NoItems,
-    /// An item of it lacks an index, a file or a body span.
-    ItemWithoutSpan,
-}
-
-impl Unspanned {
-    /// The refusal as a sentence.
-    const fn said(self) -> &'static str {
-        match self {
-            Self::NoItems => "the guards' record names no items",
-            Self::ItemWithoutSpan => {
-                "an item of the guards' record names no index, file or body span"
-            }
-        }
-    }
-}
-
-/// The body span of every item the guards' record names, by item index, or why that record cannot say.
-fn spans(touched: &serde_json::Value) -> Result<Spans, Unspanned> {
-    let Some(items) = touched.get("items").and_then(serde_json::Value::as_array) else {
-        return Err(Unspanned::NoItems);
-    };
-    let mut spans = std::collections::BTreeMap::new();
-    for item in items {
-        let span = (|| {
-            let body = item.get("body")?;
-            Some((
-                item.get("index")?.as_u64()?,
-                item.get("path")?.as_str()?.to_owned(),
-                body.get("start")?.as_u64()?..body.get("end")?.as_u64()?,
-            ))
-        })();
-        let Some((index, path, body)) = span else {
-            return Err(Unspanned::ItemWithoutSpan);
-        };
-        spans.insert(index, (path, body));
-    }
-    Ok(spans)
+/// The body span of every item the guards' record names, by item index, or nothing where the record keeps no item catalog.
+fn spans(touched: &super::wire::Guarded) -> Option<Spans> {
+    touched.items.as_ref().map(|items| {
+        items
+            .iter()
+            .map(|item| {
+                (
+                    item.index,
+                    (item.path.clone(), item.body.start..item.body.end),
+                )
+            })
+            .collect()
+    })
 }
 
 /// One cataloged item, as the guards' record and the carry evidence name it.
@@ -812,7 +783,7 @@ fn decoded<T: serde::de::DeserializeOwned>(
 /// The skeletons document as the shape this audit reads, and the guards' body spans where the run kept them; nothing where either says it is another document.
 fn documents(
     skeletons: &serde_json::Value,
-    touched: Option<&serde_json::Value>,
+    touched: Option<&super::wire::Guarded>,
     notes: &mut super::Notes<'_>,
 ) -> Option<(Skeletons, Option<Spans>)> {
     let skeletons = decoded::<Skeletons>(
@@ -832,9 +803,12 @@ fn documents(
     }
     match touched.map(spans) {
         None => Some((skeletons, None)),
-        Some(Ok(spans)) => Some((skeletons, Some(spans))),
-        Some(Err(why)) => {
-            notes.violated("touched-v1.json", why.said().to_owned());
+        Some(Some(spans)) => Some((skeletons, Some(spans))),
+        Some(None) => {
+            notes.violated(
+                "touched-v1.json",
+                "the guards' record keeps no item catalog".to_owned(),
+            );
             None
         }
     }
@@ -1393,11 +1367,11 @@ struct Held<'a> {
     bodies: std::collections::BTreeMap<NamedItem, (String, bool, Option<Place>)>,
     by_index: std::collections::BTreeMap<u64, (NamedItem, String)>,
     spans: &'a Spans,
-    touched: &'a serde_json::Value,
+    touched: &'a super::wire::Guarded,
 }
 
 impl<'a> Held<'a> {
-    fn of(skeletons: &Skeletons, touched: &'a serde_json::Value, spans: &'a Spans) -> Self {
+    fn of(skeletons: &Skeletons, touched: &'a super::wire::Guarded, spans: &'a Spans) -> Self {
         let mut units: Vec<String> = skeletons
             .units
             .iter()
@@ -1515,14 +1489,29 @@ fn planned_reach(
     let reaching = super::evidence::reaching_targets(held.touched, index);
     for planned in plan {
         let target = planned.target.as_str();
-        let Some(narrowed) = reaching.get(target) else {
-            notes.violated(
-                subject,
-                format!(
-                    "the plan runs {target}, which the guards' record says reaches nothing of it"
-                ),
-            );
-            continue;
+        let narrowed = match reaching.get(target) {
+            None => {
+                notes.violated(
+                    subject,
+                    format!(
+                        "the plan runs {target}, which the guards' record says reaches nothing \
+                         of it"
+                    ),
+                );
+                continue;
+            }
+            Some(Err(unkept)) => {
+                notes.unaudited(
+                    subject,
+                    format!(
+                        "the plan runs {target}, and the guards' record keeps no {} for it, so \
+                         whether it reaches this cannot be re-derived",
+                        unkept.word()
+                    ),
+                );
+                continue;
+            }
+            Some(Ok(narrowed)) => narrowed,
         };
         let filter: Option<std::collections::BTreeSet<String>> = planned
             .filter
