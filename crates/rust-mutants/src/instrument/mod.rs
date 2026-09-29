@@ -27,7 +27,7 @@ use crate::interval::{self, Item, Node};
 use crate::span::Span;
 use crate::splice::{Splice, apply, count_lines};
 use crate::syntax::branch::Marker;
-use crate::syntax::{Form, Found, SiteHint};
+use crate::syntax::{ConstFn, Form, Found, SiteHint};
 
 pub use runtime::{
     ACTIVE_ENV, CATALOG_ENV, COMPILED_CATALOG_ENV, CRASH_EXIT, CRASH_NONCE_ENV, CRASH_NOTICE_ENV,
@@ -222,14 +222,61 @@ pub struct Branch {
     pub span: Span,
 }
 
-/// What one file is rewritten with: the mutants, the shape they nest in, and the markers its branch proofs put in it.
+/// What one file is rewritten with: the mutants, the shape they nest in, the markers its branch proofs put in it, and the `const fn`s its guards need written without their `const`.
 #[derive(Debug, Clone, Copy)]
 struct Planted<'a> {
     /// Which of them nest inside which, so an outer guard renders the inner ones in its own original branch.
     forest: &'a interval::Forest<Placement>,
     /// The markers that can be written where they are.
     markers: &'a [Marker],
+    /// Every `const fn` of the file, by where its `const` is in the text being rewritten, with where it is in the pristine file and the mutants whose guards it holds when it is to be written without its `const`.
+    const_fns: &'a BTreeMap<Span, ConstKeyword>,
 }
+
+/// One `const fn` of a file being rewritten: where it is in the pristine file, and whether and why it loses its `const`.
+#[derive(Debug, Clone)]
+struct ConstKeyword {
+    /// The function, in the coordinates of the text being rewritten.
+    site: steps::ConstSite,
+    /// Where its `const` is in the pristine file, which names it from one round to the next.
+    origin: Span,
+    /// The mutants whose guards it holds, ascending.
+    mutants: Vec<u32>,
+    /// Whether the text writes it without its `const`: it holds a guard, or it calls a function that does.
+    blank: bool,
+}
+
+/// A `const fn` an instrumented text writes without its `const`, because it holds a guard or calls a function that does (ADR 0047).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Deconst {
+    /// Its own name.
+    pub name: String,
+    /// The last path segment of the type whose `impl` or `trait` holds it, or `None` for a function neither holds.
+    pub owner: Option<String>,
+    /// The bytes its `const` covers in the pristine file, which name it from one round to the next.
+    pub origin: Span,
+    /// The bytes its `const` covered in the instrumented text, which are blank there and lie inside the span a diagnostic gives its definition.
+    pub keyword: Span,
+    /// Every mutant whose guard it holds, ascending, which is none where it only calls a function that holds one.
+    pub mutants: Vec<u32>,
+}
+
+/// A `const fn` an instrumented text writes with its `const`, whose body is where the compiler refuses a call to a function written without one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Constant {
+    /// Its own name.
+    pub name: String,
+    /// The bytes its `const` covers in the pristine file, which name it from one round to the next.
+    pub origin: Span,
+    /// The bytes its body covers in the instrumented text, braces included.
+    pub body: Span,
+}
+
+/// The spaces a `const` is written as while its function holds a guard, as long as the keyword so that nothing after it moves.
+const UNCONST: &[u8; 5] = b"     ";
+
+/// The keyword a `const fn` is found by.
+const CONST: &[u8; 5] = b"const";
 
 /// One site an alternative is written for: where it is, its pristine text, and the guards carried into every alternative of it.
 #[derive(Clone, Copy)]
@@ -265,6 +312,8 @@ struct Rewritten {
     branches: Vec<Branch>,
     compared: BTreeSet<u32>,
     beside: BTreeSet<(u32, u32)>,
+    deconst: Vec<Deconst>,
+    constant: Vec<Constant>,
 }
 
 /// A rendered site: its text, where each alternative sits in it, and which of them the guard evaluates beside what it replaces.
@@ -294,6 +343,10 @@ pub struct FileOutput {
     pub marked: Vec<u32>,
     /// Every mutation whose branch in this text carries a fault's guard, with that fault, ascending: the only pairs a fault can be active beside.
     pub beside: Vec<(u32, u32)>,
+    /// Every `const fn` this text writes without its `const`, in file order.
+    pub deconst: Vec<Deconst>,
+    /// Every `const fn` this text writes with its `const`, in file order.
+    pub constant: Vec<Constant>,
     /// The name the runtime module took.
     pub module: String,
     /// Whether anything was rewritten.
@@ -525,6 +578,8 @@ pub struct Instrumenting<'a> {
     pub source: &'a [u8],
     /// The mutants placed in it, each behind a guard.
     pub placements: &'a [Placement],
+    /// Where the `const` is of every `const fn` holding no guard to be written without it all the same, because it calls a function that holds one (ADR 0047).
+    pub carriers: &'a [Span],
     /// The markers the branch proofs put at the first statement of the bodies they name.
     pub markers: &'a [Marker],
     /// Every mutant whose guard may compare its two branches, so a run records whether they ever differed.
@@ -546,6 +601,8 @@ struct Checkpointed {
     placements: Vec<Placement>,
     markers: Vec<Marker>,
     items: u32,
+    /// Every `const fn` of the file, by where its `const` is in the checkpointed text, and whether the rewrite takes it away.
+    const_fns: BTreeMap<Span, ConstKeyword>,
 }
 
 fn guards_of(placements: &[Placement]) -> Vec<Guard> {
@@ -572,6 +629,7 @@ fn checkpointed(
         path,
         source,
         placements,
+        carriers,
         markers,
         comparable: _comparable,
         probed: _probed,
@@ -625,13 +683,53 @@ fn checkpointed(
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let const_fns = unconsted(
+        path,
+        (
+            &mapped_const_fns(planted.const_fns, &offsets, path)?,
+            &placements,
+        ),
+        carriers,
+    )?;
     Ok(Checkpointed {
         source,
         module,
         placements,
         markers,
         items,
+        const_fns,
     })
+}
+
+/// Every `const fn` of a file in the coordinates of its checkpointed text, beside where its `const` is in the pristine file.
+fn mapped_const_fns(
+    sites: Vec<steps::ConstSite>,
+    offsets: &crate::splice::OffsetMap,
+    path: &str,
+) -> Result<Vec<(Span, steps::ConstSite)>, InstrumentError> {
+    sites
+        .into_iter()
+        .map(|site| {
+            let map = |span: Span| {
+                offsets.map_span(span).map_err(|error| {
+                    InstrumentError::new(
+                        InstrumentErrorKind::SiteConflict,
+                        path,
+                        format!(
+                            "a checkpoint cannot preserve the const fn {} at {span}: {error}",
+                            site.name
+                        ),
+                    )
+                })
+            };
+            let mapped = steps::ConstSite {
+                keyword: map(site.keyword)?,
+                body: map(site.body)?,
+                ..site.clone()
+            };
+            Ok((site.keyword, mapped))
+        })
+        .collect()
 }
 
 /// Rewrites one file so that every placed mutant lives in it behind a guard.
@@ -668,6 +766,7 @@ fn instrument_with(
         path,
         source,
         placements,
+        carriers: _carriers,
         markers: _original_markers,
         comparable,
         probed,
@@ -701,24 +800,22 @@ fn instrument_with(
     let markers = File::markable(&checkpointed.markers, &forest);
 
     let Rewritten {
-        mut text,
+        text,
         branches,
         compared,
         beside,
+        deconst,
+        constant,
     } = worker.rewrite(
         &checkpointed.source,
         &Planted {
             forest: &forest,
             markers: &markers,
+            const_fns: &checkpointed.const_fns,
         },
     )?;
-    if !text.is_empty() && !text.ends_with('\n') {
-        text.push('\n');
-    }
-    worker.reparsed(&text)?;
-    let runtime_at = text.len();
-    worker.append_runtime(
-        &mut text,
+    let (text, runtime_at) = worker.finished(
+        text,
         &Rendering {
             module: &worker.module,
             catalog_digest,
@@ -739,9 +836,80 @@ fn instrument_with(
         compared: compared.into_iter().collect(),
         marked: markers.iter().map(|marker| marker.index).collect(),
         beside: beside.into_iter().collect(),
+        deconst,
+        constant,
         module: worker.module,
         instrumented: true,
     })
+}
+
+/// The splice that writes each `const` the rewrite takes away as blanks.
+fn blanked(const_fns: &BTreeMap<Span, ConstKeyword>) -> impl Iterator<Item = Splice> + '_ {
+    const_fns
+        .iter()
+        .filter(|(_, held)| held.blank)
+        .map(|(keyword, _)| Splice {
+            span: *keyword,
+            original: CONST.to_vec(),
+            replacement: UNCONST.to_vec(),
+        })
+}
+
+/// Every `const fn` of the file, by where its `const` is in the checkpointed text, each to be written without it where a placement's guard sits in it or where it carries one that does, and with it otherwise.
+///
+/// # Errors
+/// [`InstrumentErrorKind::SourceMismatch`] for a guard said to sit in, or a carrier said to be, a `const fn` the file does not hold, which means the two were read from different trees.
+fn unconsted(
+    path: &str,
+    (sites, placements): (&[(Span, steps::ConstSite)], &[Placement]),
+    carriers: &[Span],
+) -> Result<BTreeMap<Span, ConstKeyword>, InstrumentError> {
+    let mut const_fns: BTreeMap<Span, ConstKeyword> = sites
+        .iter()
+        .map(|(origin, site)| {
+            (
+                site.keyword,
+                ConstKeyword {
+                    site: site.clone(),
+                    origin: *origin,
+                    mutants: Vec::new(),
+                    blank: false,
+                },
+            )
+        })
+        .collect();
+    let missing = |what: &str, at: Span| {
+        InstrumentError::new(
+            InstrumentErrorKind::SourceMismatch,
+            path,
+            format!("{what} a const fn at {at}, which the file does not hold"),
+        )
+    };
+    for placement in placements {
+        let Some(function) = &placement.hint.const_fn else {
+            continue;
+        };
+        let held = const_fns.get_mut(&function.keyword).ok_or_else(|| {
+            missing(
+                &format!("mutant {} is said to sit in", placement.index),
+                function.keyword,
+            )
+        })?;
+        held.mutants.push(placement.index);
+        held.blank = true;
+    }
+    for carrier in carriers {
+        let held = const_fns
+            .values_mut()
+            .find(|held| held.origin == *carrier)
+            .ok_or_else(|| missing("a carrier is said to be", *carrier))?;
+        held.blank = true;
+    }
+    for held in const_fns.values_mut() {
+        held.mutants.sort_unstable();
+        held.mutants.dedup();
+    }
+    Ok(const_fns)
 }
 
 /// The runtime module name `text` can take, or why its tokens could not be read.
@@ -792,6 +960,13 @@ fn mapped_placement(
         .as_bytes()
         .to_vec();
     let site_text = mapped_source(source, site, "site", path)?;
+    let const_fn = match &placement.hint.const_fn {
+        Some(function) => Some(ConstFn {
+            keyword: map(function.keyword)?,
+            ..function.clone()
+        }),
+        None => None,
+    };
     Ok(Placement {
         index: placement.index,
         id: placement.id.clone(),
@@ -803,6 +978,7 @@ fn mapped_placement(
             site,
             site_text: site_text.to_owned(),
             super_depth: placement.hint.super_depth,
+            const_fn,
         },
         carried: placement.carried,
     })
@@ -912,6 +1088,21 @@ impl File<'_> {
 
     fn error(&self, kind: InstrumentErrorKind, message: impl Into<String>) -> InstrumentError {
         InstrumentError::new(kind, self.path, message)
+    }
+
+    /// The rewritten text ended by a line break, read back through every identity macro, and followed by its runtime, with the offset the runtime starts at.
+    fn finished(
+        &self,
+        mut text: String,
+        rendering: &Rendering<'_>,
+    ) -> Result<(String, usize), InstrumentError> {
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        self.reparsed(&text)?;
+        let runtime_at = text.len();
+        self.append_runtime(&mut text, rendering)?;
+        Ok((text, runtime_at))
     }
 
     /// Appends the generated runtime after every source rewrite has kept its line boundary intact.
@@ -1140,7 +1331,11 @@ impl File<'_> {
     }
 
     fn rewrite(&self, source: &[u8], planted: &Planted<'_>) -> Result<Rewritten, InstrumentError> {
-        let Planted { forest, markers } = *planted;
+        let Planted {
+            forest,
+            markers,
+            const_fns,
+        } = *planted;
         let mut splices = Vec::new();
         let mut roots = Vec::new();
         let mut compared = BTreeSet::new();
@@ -1153,6 +1348,7 @@ impl File<'_> {
             roots.push((root.span, rendered));
         }
         splices.extend(markers.iter().map(|marker| self.marker(marker)));
+        splices.extend(blanked(const_fns));
         splices.sort_by_key(|splice| splice.span.start);
         let (rewritten, offsets) = apply(source, &splices).map_err(|error| {
             self.error(
@@ -1160,6 +1356,7 @@ impl File<'_> {
                 format!("the guards could not be applied: {error}"),
             )
         })?;
+        let (deconst, constant) = self.constness(const_fns, &offsets)?;
         let text = String::from_utf8(rewritten).map_err(|error| {
             self.error(
                 InstrumentErrorKind::SpliceFailed,
@@ -1203,7 +1400,48 @@ impl File<'_> {
             branches,
             compared,
             beside,
+            deconst,
+            constant,
         })
+    }
+
+    /// Every `const fn` of the file as the rewrite left it: those written without their `const`, with where the keyword landed, and those written with it, with where the body landed.
+    fn constness(
+        &self,
+        const_fns: &BTreeMap<Span, ConstKeyword>,
+        offsets: &crate::splice::OffsetMap,
+    ) -> Result<(Vec<Deconst>, Vec<Constant>), InstrumentError> {
+        let mut deconst = Vec::new();
+        let mut constant = Vec::new();
+        for (keyword, held) in const_fns {
+            let landed = |span: Span| {
+                offsets.map_span(span).map_err(|error| {
+                    self.error(
+                        InstrumentErrorKind::SpliceFailed,
+                        format!(
+                            "the const fn {} at byte {} has no exact rewritten place: {error}",
+                            held.site.name, keyword.start
+                        ),
+                    )
+                })
+            };
+            if held.blank {
+                deconst.push(Deconst {
+                    name: held.site.name.clone(),
+                    owner: held.site.owner.clone(),
+                    origin: held.origin,
+                    keyword: landed(*keyword)?,
+                    mutants: held.mutants.clone(),
+                });
+            } else {
+                constant.push(Constant {
+                    name: held.site.name.clone(),
+                    origin: held.origin,
+                    body: landed(held.site.body)?,
+                });
+            }
+        }
+        Ok((deconst, constant))
     }
 
     /// Renders one site: its alternatives, then its original branch with the sites nested inside it already rendered.

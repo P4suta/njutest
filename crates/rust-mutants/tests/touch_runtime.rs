@@ -510,6 +510,7 @@ fn an_expression_closure_reentered_by_an_external_iterator_spends_the_global_all
         path: "src/main.rs",
         source: source.as_bytes(),
         placements: scripted.placements(),
+        carriers: &[],
         markers: &[],
         comparable: &comparable,
         probed: &probed,

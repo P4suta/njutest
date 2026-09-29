@@ -980,11 +980,13 @@ impl Row {
     }
 }
 
-/// One refused candidate, as a reader sees it.
+/// One candidate the run left out, as a reader sees it.
 #[derive(Debug, Clone)]
 struct Refusal {
     index: u64,
     display_id: String,
+    /// Whether the compiler refused the edit, rather than evaluating the function it is in before the program runs.
+    refused: bool,
 }
 
 /// One claim a reviewer declared, as the run left it.

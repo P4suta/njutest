@@ -20,10 +20,8 @@ Every mutant the compiler takes here is killed. That is the point of it: a
 shape the walker reads wrongly, or a test that does not cover what it looks
 like it covers, shows up as a survivor rather than as silence somewhere else.
 
-Nothing here is an `unsupported-site` and nothing here is refused: every place
-the rules target is a place a guard can be written, and the return types the
-syntax cannot say have a default — `T` with no bound, `F::Output` — are stated
-as `unstated-return-type` rather than offered for the compiler to refuse.
+Nothing here is an `unsupported-site`: every place the rules target is a place a guard can be written, and the return types the syntax cannot say have a default — `T` with no bound, `F::Output` — are stated as `unstated-return-type` rather than offered for the compiler to refuse.
+The one candidate the compiler refuses is the return replacement of `Counter::new`, a `const fn` only the tests call and so mutated like any other ([ADR 0047](../../docs/adr/0047-a-const-fn-is-mutated-where-nothing-evaluates-it-early.md)): its return type is spelled `Self`, which the syntax cannot see has no `Default`.
 
 Both assertions about the counter are bounded with `take`. A mutation that
 stops the counter stopping has to fail rather than run for ever: an unbounded
@@ -39,6 +37,7 @@ for every candidate the compiler refused. The run is `rust-mutants run
 refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates
+src/lib.rs:0:0 return-default refused
 src/lib.rs:19:5 return-true killed
 src/lib.rs:19:11 le-to-lt killed
 src/lib.rs:24:5 return-ok-default killed
@@ -62,6 +61,7 @@ src/lib.rs:58:9 delete-assignment killed
 src/lib.rs:59:30 delete-match-arm killed
 src/lib.rs:59:30 remove-match-guard killed
 src/lib.rs:63:5 return-default killed
+src/lib.rs:76:20 int-increment killed
 src/lib.rs:82:9 return-true killed
 src/lib.rs:82:17 lt-to-le killed
 src/lib.rs:90:12 condition-to-false killed

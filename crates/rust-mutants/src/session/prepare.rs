@@ -1003,7 +1003,7 @@ pub fn prepare(
         item_refs,
         catalog: discovery.catalog,
         files: discovery.files,
-        skips: discovery.skips,
+        skips: crate::validate::passed_over(discovery.skips, &instrumented.validated.rejections)?,
         claims: discovery.claims,
         sources: prepared_sources(sources)?,
         packages,
@@ -1580,7 +1580,7 @@ impl TreeCompiler<'_> {
     fn instrument_one(
         &mut self,
         path: &str,
-        kept: &[Placement],
+        (kept, carriers): (&[Placement], &[crate::span::Span]),
     ) -> Result<(FileOutput, bool), ValidateError> {
         let source = self
             .sources
@@ -1592,6 +1592,7 @@ impl TreeCompiler<'_> {
             path,
             source,
             placements: kept,
+            carriers,
             markers: self.markers.get(path).map_or(&[], Vec::as_slice),
             comparable: self.comparable,
             probed: self.probed,
@@ -1640,7 +1641,11 @@ impl TreeCompiler<'_> {
 }
 
 impl Compile for TreeCompiler<'_> {
-    fn attempt(&mut self, condemned: &BTreeSet<u32>) -> Result<Attempt, ValidateError> {
+    fn attempt(
+        &mut self,
+        condemned: &BTreeSet<u32>,
+        constness: &crate::validate::Constness,
+    ) -> Result<Attempt, ValidateError> {
         let mut files: Vec<FileOutput> = Vec::new();
         let mut written: u32 = 0;
         let planned: Vec<(String, Vec<Placement>)> = self
@@ -1655,8 +1660,14 @@ impl Compile for TreeCompiler<'_> {
                 (path.clone(), kept)
             })
             .collect();
+        let carriers = constness.carriers_of(
+            planned
+                .iter()
+                .map(|(path, kept)| (path.as_str(), kept.as_slice())),
+        );
         for (path, kept) in planned {
-            let (file, changed) = self.instrument_one(&path, &kept)?;
+            let carried = carriers.get(&path).map_or(&[][..], Vec::as_slice);
+            let (file, changed) = self.instrument_one(&path, (&kept, carried))?;
             if changed {
                 written = written
                     .checked_add(1)

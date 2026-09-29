@@ -192,6 +192,10 @@ pub fn every_payload() -> Vec<Payload> {
                     code: Some("E0308".to_owned()),
                     said: "mismatched types".to_owned(),
                 }],
+                carried: vec![
+                    "error[E0015]: cannot call non-const function `bit` in constant functions"
+                        .to_owned(),
+                ],
                 unattributed: vec!["build failed".to_owned()],
             },
         },

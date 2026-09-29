@@ -98,6 +98,76 @@ fn every_nullable_v1_report_field_is_still_a_required_key() {
 }
 
 #[test]
+fn a_place_counted_as_evaluated_before_the_program_runs_is_a_candidate_left_out_for_it() {
+    let seed: serde_json::Value = njutest_devkit::strictjson::decode_str(include_str!(
+        "../../../fuzz/seeds/run_report/one-run.json"
+    ))
+    .expect("the current report seed");
+    let with = |reason: &str, counted: Option<u32>| {
+        let mut value = seed.clone();
+        replace(
+            &mut value,
+            "/rejections",
+            serde_json::json!([{
+                "index": 13, "id": "c".repeat(64), "display_id": "c".repeat(20),
+                "path": "src/lib.rs", "rule": "add-to-sub", "code": "E0015",
+                "diagnostic": "error[E0015]: cannot call non-const function `double` in constants",
+                "isolated": true, "reason": reason
+            }]),
+        );
+        let mut skips = value
+            .pointer("/skips")
+            .and_then(serde_json::Value::as_array)
+            .expect("the seed's skips")
+            .clone();
+        if let Some(count) = counted {
+            skips.push(serde_json::json!({
+                "reason": "evaluated-before-run", "path": "src/lib.rs", "count": count,
+                "explanation": "the function is evaluated before the program runs"
+            }));
+        }
+        let skipped = match counted {
+            Some(count) => count.checked_add(23).expect("a small count"),
+            None => 23,
+        };
+        replace(&mut value, "/skips", serde_json::Value::Array(skips));
+        replace(
+            &mut value,
+            "/accounting/skipped",
+            serde_json::json!(skipped),
+        );
+        let refused = u32::from(reason == "compiler-refused");
+        replace(
+            &mut value,
+            "/accounting/refused",
+            serde_json::json!(refused),
+        );
+        serde_json::from_value::<RunDocument>(value)
+            .expect("the current wire shape")
+            .validate()
+    };
+    assert!(
+        with("evaluated-before-run", Some(1)).is_ok(),
+        "a candidate of a function the compiler evaluates is a rejection for its identity and a \
+         skipped place for the count, and neither is a refusal"
+    );
+    assert!(
+        with("compiler-refused", None).is_ok(),
+        "a refusal is counted as refused and is no skipped place"
+    );
+    for (counted, left) in [(None, 1), (Some(2), 1)] {
+        assert!(
+            matches!(
+                with("evaluated-before-run", counted),
+                Err(DocumentError::PassedOver { left: l, .. }) if l == left
+            ),
+            "a report whose skips and rejections disagree about the places a function evaluated \
+             before the program runs holds is refused, whichever of the two is wrong: {counted:?}"
+        );
+    }
+}
+
+#[test]
 fn a_non_reusable_outcome_cannot_claim_cache_provenance() {
     let mut value: serde_json::Value = njutest_devkit::strictjson::decode_str(include_str!(
         "../../../fuzz/seeds/run_report/one-run.json"

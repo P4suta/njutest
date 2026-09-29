@@ -454,11 +454,11 @@ pub struct Finding {
 /// What a run counted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Tally {
-    /// How many candidate rows the run accounts for, excluding compiler refusals.
+    /// How many candidate rows the run accounts for, excluding every candidate validation left out.
     pub cataloged: u32,
     /// How many candidates the compiler refused.
     pub refused: u32,
-    /// How many places discovery passed over.
+    /// How many places the run passed over: what discovery decided, and what validation found evaluated before the program runs.
     pub skipped: u32,
     /// How many mutants an execution reached a verdict or a lead on.
     pub executed: u32,
@@ -496,7 +496,7 @@ pub struct Tally {
 }
 
 impl Tally {
-    /// What a run whose rows are `rows`, beside `refused` candidates the compiler refused and `skipped` places discovery passed over, counted: the one fold a run and a reader of its report both make.
+    /// What a run whose rows are `rows`, beside `refused` candidates the compiler refused and `skipped` places the run passed over, counted: the one fold a run and a reader of its report both make.
     ///
     /// # Errors
     /// Refuses a count past the durable `u32` report representation.
@@ -640,7 +640,7 @@ pub struct Run {
     pub judged: Vec<Judged>,
     /// The declared expectations, as the run left them.
     pub expectations: Vec<Verified>,
-    /// How many places discovery passed over.
+    /// How many places the run passed over: what discovery decided, and what validation found evaluated before the program runs.
     pub skipped: u32,
     /// How many candidates the compiler refused.
     pub refused: u32,
@@ -1262,7 +1262,7 @@ pub fn run<O: Observer>(
                 .checked_add(skip.count)
                 .ok_or(SessionError::RunCountOverflow)
         })?,
-        refused: count(session.rejections().len())?,
+        refused: count(session.refused().count())?,
         claims: session.claims().to_vec(),
         interrupted: interrupted || cancel.is_cancelled(),
         shard: options.shard,

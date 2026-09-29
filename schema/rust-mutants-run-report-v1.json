@@ -245,15 +245,17 @@
         "cataloged": {
           "type": "integer",
           "minimum": 0,
-          "description": "The number of candidate rows in mutants, excluding compiler refusals. A not_run/unselected row makes no compiler-acceptance claim."
+          "description": "The number of candidate rows in mutants, excluding every candidate validation left out. A not_run/unselected row makes no compiler-acceptance claim."
         },
         "refused": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "The rejections whose reason is compiler-refused."
         },
         "skipped": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "The sum of every skip record's count, the places validation found evaluated before the program runs included."
         },
         "executed": {
           "type": "integer",
@@ -791,7 +793,8 @@
           "rule",
           "code",
           "diagnostic",
-          "isolated"
+          "isolated",
+          "reason"
         ],
         "properties": {
           "index": {
@@ -826,6 +829,13 @@
           "isolated": {
             "type": "boolean",
             "description": "Whether the compiler refused it on its own, rather than only alongside another mutant."
+          },
+          "reason": {
+            "enum": [
+              "compiler-refused",
+              "evaluated-before-run"
+            ],
+            "description": "Why validation left it out. Only compiler-refused is counted as refused; evaluated-before-run is counted with the places passed over, under the skip reason of the same name (ADR 0047)."
           }
         }
       }

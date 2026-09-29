@@ -278,20 +278,21 @@ pub fn decisions(discovery: &Discovery, file: &str, line: Option<u32>) -> String
     text
 }
 
-/// What the compiler refused, with its own words.
+/// What validation left out, with the compiler's own words, and why where it was not a refusal.
 #[must_use]
 pub fn rejections(session: &Session) -> String {
     let mut text = String::new();
     for rejection in session.rejections() {
         let written = writeln!(
             text,
-            "{} {}  {}\n          {}",
+            "{} {}  {}\n          {}{}",
             match rejection.id.get(..20) {
                 Some(short) => short,
                 None => &rejection.id,
             },
             rejection.rule,
             rejection.path,
+            passed_over(rejection.reason),
             rejection.diagnostic.lines().next().unwrap_or_default()
         );
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
@@ -300,6 +301,26 @@ pub fn rejections(session: &Session) -> String {
         text.push_str("the compiler refused nothing\n");
     }
     text
+}
+
+/// The heading the candidates validation left out for `reason` are listed under.
+const fn left_out(reason: rust_mutants::validate::Condemnation) -> &'static str {
+    match reason {
+        rust_mutants::validate::Condemnation::CompilerRefused => "refused by the compiler",
+        rust_mutants::validate::Condemnation::EvaluatedBeforeRun => {
+            "in a const fn evaluated before the program runs, which keeps its const"
+        }
+    }
+}
+
+/// What a line about a candidate validation left out starts with, which is nothing for a refusal and the reason for anything else.
+const fn passed_over(reason: rust_mutants::validate::Condemnation) -> &'static str {
+    match reason {
+        rust_mutants::validate::Condemnation::CompilerRefused => "",
+        rust_mutants::validate::Condemnation::EvaluatedBeforeRun => {
+            "evaluated before the program runs, so it keeps its const: "
+        }
+    }
 }
 
 /// What preparation established, for a person.
@@ -312,7 +333,7 @@ pub fn catalog(session: &Session) -> String {
         session.workspace_digest(),
         session.catalog().digest(),
         session.accepted().len(),
-        session.rejections().len(),
+        session.refused().count(),
         session
             .skips()
             .iter()
@@ -326,9 +347,18 @@ pub fn catalog(session: &Session) -> String {
             debug_assert!(written.is_ok(), "writing to a String cannot fail");
         }
     }
-    if !session.rejections().is_empty() {
-        text.push_str("\nrefused by the compiler:\n");
-        for rejection in session.rejections() {
+    for reason in rust_mutants::validate::Condemnation::ALL {
+        let left: Vec<&rust_mutants::validate::Rejection> = session
+            .rejections()
+            .iter()
+            .filter(|rejection| rejection.reason == reason)
+            .collect();
+        if left.is_empty() {
+            continue;
+        }
+        let written = writeln!(text, "\n{}:", left_out(reason));
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        for rejection in left {
             let written = writeln!(
                 text,
                 "{}  {:<30}  {}  {}",

@@ -118,6 +118,7 @@ fn rejection(index: u32) -> RejectionDocument {
         code: Some("E0308".to_owned()),
         diagnostic: "the isolated candidate did not compile".to_owned(),
         isolated: true,
+        reason: rust_mutants::validate::Condemnation::CompilerRefused,
     }
 }
 

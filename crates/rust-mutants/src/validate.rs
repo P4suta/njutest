@@ -5,10 +5,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::cargo::{CargoError, Completion, Diagnostic, Message};
+use crate::cargo::{CargoError, Completion, Diagnostic, DiagnosticSpan, Message};
 use crate::catalog::Catalog;
 use crate::error::{self, ErrorCode};
-use crate::instrument::{FileOutput, InstrumentError};
+use crate::instrument::{Deconst, FileOutput, InstrumentError};
 use crate::runner::Cancel;
 use crate::span::Span;
 use crate::trace::{AttributionRecord, BisectRecord, Recorder, ValidateRoundRecord};
@@ -32,12 +32,86 @@ pub struct Attempt {
 
 /// Instrumenting the tree with a set of mutants left out, and compiling it.
 pub trait Compile {
-    /// Instruments the tree leaving out `condemned`, compiles it, and reports what the compiler said.
+    /// Instruments the tree leaving out `condemned`, writing without their `const` the `const fn`s that hold a guard and the ones `constness` says carry one, compiles it, and reports what the compiler said.
     ///
     /// # Errors
     /// Whatever stopped the attempt from happening at all.
     /// A tree that merely fails to compile is a successful attempt whose [`Attempt::completion`] is [`Completion::Refused`].
-    fn attempt(&mut self, condemned: &BTreeSet<u32>) -> Result<Attempt, ValidateError>;
+    fn attempt(
+        &mut self,
+        condemned: &BTreeSet<u32>,
+        constness: &Constness,
+    ) -> Result<Attempt, ValidateError>;
+}
+
+/// Where a `const fn` is: its file, and the bytes its `const` covers in the pristine file.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ConstFnAt {
+    /// The workspace-relative path.
+    pub path: String,
+    /// The bytes its `const` covers in the pristine file.
+    pub keyword: Span,
+}
+
+/// What validation has learned about which `const fn`s the tree may write without their `const` (ADR 0047).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Constness {
+    /// Every `const fn` the compiler evaluates before the program runs, which keeps its `const` and so holds no guard.
+    pub pinned: BTreeSet<ConstFnAt>,
+    /// Every call the compiler refused from a `const fn` to one written without its `const`, as the caller and the callee: the caller goes without its `const` too wherever the callee does.
+    pub calls: BTreeSet<(ConstFnAt, ConstFnAt)>,
+}
+
+impl Constness {
+    /// Every `const fn` to write without its `const` although it holds no guard, by file, for the placements of each file that an attempt keeps: every caller the compiler named of a function holding one of their guards, and their callers in turn, except the ones it evaluates before the program runs.
+    #[must_use]
+    pub fn carriers_of<'p>(
+        &self,
+        kept: impl IntoIterator<Item = (&'p str, &'p [crate::instrument::Placement])>,
+    ) -> BTreeMap<String, Vec<Span>> {
+        let holding: BTreeSet<ConstFnAt> = kept
+            .into_iter()
+            .flat_map(|(path, placements)| {
+                placements.iter().filter_map(move |placement| {
+                    placement.hint.const_fn.as_ref().map(|function| ConstFnAt {
+                        path: path.to_owned(),
+                        keyword: function.keyword,
+                    })
+                })
+            })
+            .collect();
+        self.carriers(&holding)
+    }
+
+    /// Every `const fn` to write without its `const` although it holds no guard, by file: every caller the compiler named of one of `holding`, and their callers in turn, except the ones it evaluates before the program runs.
+    #[must_use]
+    pub fn carriers(&self, holding: &BTreeSet<ConstFnAt>) -> BTreeMap<String, Vec<Span>> {
+        let mut unconst: BTreeSet<&ConstFnAt> = holding.iter().collect();
+        loop {
+            let reached: Vec<&ConstFnAt> = self
+                .calls
+                .iter()
+                .filter(|(caller, callee)| {
+                    unconst.contains(callee)
+                        && !unconst.contains(caller)
+                        && !self.pinned.contains(caller)
+                })
+                .map(|(caller, _)| caller)
+                .collect();
+            if reached.is_empty() {
+                break;
+            }
+            unconst.extend(reached);
+        }
+        let mut carriers: BTreeMap<String, Vec<Span>> = BTreeMap::new();
+        for function in unconst.into_iter().filter(|one| !holding.contains(*one)) {
+            carriers
+                .entry(function.path.clone())
+                .or_default()
+                .push(function.keyword);
+        }
+        carriers
+    }
 }
 
 /// Configures [`validate`].
@@ -55,7 +129,95 @@ impl Default for ValidateOptions {
     }
 }
 
-/// One candidate the compiler refused, with its own words.
+/// Why validation left a candidate out of the tree.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    njutest_macros::AllVariants,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum Condemnation {
+    /// The compiler refused the mutated program, which is a fact about the edit.
+    CompilerRefused,
+    /// The compiler evaluates the `const fn` the edit is in before the program runs, which is a fact about where the edit is (ADR 0047).
+    EvaluatedBeforeRun,
+}
+
+impl Condemnation {
+    /// The kebab-case name a report carries.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::CompilerRefused => "compiler-refused",
+            Self::EvaluatedBeforeRun => "evaluated-before-run",
+        }
+    }
+
+    /// The reason a place passed over this way is counted under, where it is counted as one rather than as a refusal.
+    #[must_use]
+    pub const fn skipped(self) -> Option<crate::syntax::SkipReason> {
+        match self {
+            Self::CompilerRefused => None,
+            Self::EvaluatedBeforeRun => Some(crate::syntax::SkipReason::EvaluatedBeforeRun),
+        }
+    }
+
+    /// Whether the compiler refused the edit itself, which is what a report's `refused` counts.
+    #[must_use]
+    pub const fn refused(self) -> bool {
+        self.skipped().is_none()
+    }
+}
+
+impl std::fmt::Display for Condemnation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// Every place `rejections` passed over rather than refused, counted by file under the reason it was passed over for, beside `skips`, in the order skips are reported in.
+///
+/// # Errors
+/// [`ValidateError::AccountingOverflow`] when one file's count does not fit.
+pub fn passed_over(
+    mut skips: Vec<crate::syntax::Skip>,
+    rejections: &[Rejection],
+) -> Result<Vec<crate::syntax::Skip>, ValidateError> {
+    let mut counted: BTreeMap<(crate::syntax::SkipReason, &str), u32> = BTreeMap::new();
+    for rejection in rejections {
+        let Some(reason) = rejection.reason.skipped() else {
+            continue;
+        };
+        let count = counted
+            .entry((reason, rejection.path.as_str()))
+            .or_insert(0);
+        *count = checked_add(*count, 1, "places passed over in one file")?;
+    }
+    skips.extend(
+        counted
+            .into_iter()
+            .map(|((reason, path), count)| crate::syntax::Skip {
+                reason,
+                path: path.to_owned(),
+                count,
+            }),
+    );
+    skips.sort();
+    Ok(skips)
+}
+
+/// The code the compiler refuses a call in a constant context with, whose message names the function it would have to evaluate before the program runs.
+pub const EVALUATED_CODE: &str = "E0015";
+
+/// One candidate validation left out, with the compiler's own words.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rejection {
     /// The mutant's dense catalog index.
@@ -76,6 +238,8 @@ pub struct Rejection {
     pub diagnostic: String,
     /// Whether the compiler refused it on its own, rather than only alongside another mutant.
     pub isolated: bool,
+    /// Why it was left out.
+    pub reason: Condemnation,
 }
 
 /// What validation established.
@@ -94,8 +258,16 @@ pub struct Validated {
 /// What one round's diagnostics said.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Attributed {
-    /// The mutants an error was inside of.
+    /// The mutants an error was inside of, or whose `const fn` an error said the compiler evaluates.
     pub condemned: BTreeSet<u32>,
+    /// The condemned whose first error said the compiler evaluates their `const fn` before the program runs, which the next round writes with its `const` again.
+    pub evaluated: BTreeSet<u32>,
+    /// Every `const fn` an error said the compiler evaluates before the program runs, which keeps its `const` from now on.
+    pub pinned: BTreeSet<ConstFnAt>,
+    /// Every call from a `const fn` an error refused because the callee was written without its `const`, as the caller and the callee.
+    pub calls: BTreeSet<(ConstFnAt, ConstFnAt)>,
+    /// The errors a caller written without its `const` from the next round on accounts for, rendered.
+    pub carried: Vec<String>,
     /// The errors no branch accounts for, rendered.
     pub unattributed: Vec<String>,
     /// What the compiler said about each condemned mutant.
@@ -160,9 +332,13 @@ impl ValidateError {
     }
 }
 
-/// Reads one round's diagnostics against the files that were written.
+/// Reads one round's diagnostics against the files that were written, and what validation has learned about their `const fn`s.
+///
+/// An error that refuses a call to a `const fn` the files write without their `const` is about that function wherever it points (ADR 0047).
+/// Where the call is in the body of a `const fn` that keeps its `const` only for want of a guard, the caller goes without its `const` too.
+/// Anywhere else the compiler evaluates the callee before the program runs, so it keeps its `const` from now on and every mutant it holds is condemned.
 #[must_use]
-pub fn attribute(files: &[FileOutput], messages: &[Message]) -> Attributed {
+pub fn attribute(files: &[FileOutput], messages: &[Message], constness: &Constness) -> Attributed {
     let mut attributed = Attributed::default();
     for message in messages {
         let Message::CompilerMessage(compiler) = message else {
@@ -172,22 +348,173 @@ pub fn attribute(files: &[FileOutput], messages: &[Message]) -> Attributed {
         if !diagnostic.is_error() {
             continue;
         }
-        match locate(files, diagnostic) {
-            Some(index) => {
-                attributed.condemned.insert(index);
-                attributed
-                    .diagnostics
-                    .entry(index)
-                    .or_insert_with(|| rendered(diagnostic));
-                attributed
-                    .codes
-                    .entry(index)
-                    .or_insert_with(|| diagnostic.code.clone());
+        let callees = evaluated(files, diagnostic);
+        if !callees.is_empty() {
+            match caller(files, diagnostic).filter(|caller| !constness.pinned.contains(caller)) {
+                Some(caller) => {
+                    attributed.calls.extend(
+                        callees
+                            .iter()
+                            .map(|callee| (caller.clone(), callee.at.clone())),
+                    );
+                    attributed.carried.push(rendered(diagnostic));
+                }
+                None => {
+                    for callee in &callees {
+                        attributed.pinned.insert(callee.at.clone());
+                        for index in &callee.function.mutants {
+                            condemn(&mut attributed, *index, diagnostic, true);
+                        }
+                    }
+                }
             }
+            continue;
+        }
+        match locate(files, diagnostic) {
+            Some(index) => condemn(&mut attributed, index, diagnostic, false),
             None => attributed.unattributed.push(rendered(diagnostic)),
         }
     }
     attributed
+}
+
+/// A function written without its `const`, as an error named it: where it is, and what the text holds of it.
+struct Named<'f> {
+    at: ConstFnAt,
+    function: &'f Deconst,
+}
+
+/// The `const fn` written with its `const` whose body holds the call an error refuses, when the error says the call is in a `const fn`.
+fn caller(files: &[FileOutput], diagnostic: &Diagnostic) -> Option<ConstFnAt> {
+    if !diagnostic.message.ends_with(IN_CONST_FN) {
+        return None;
+    }
+    let span = diagnostic.primary_span()?;
+    files
+        .iter()
+        .filter(|file| crate::cargo::names_file(&span.file_name, &file.path))
+        .flat_map(|file| file.constant.iter().map(move |held| (file, held)))
+        .filter(|(_, held)| {
+            held.body.start <= span.byte_start() && span.byte_start() < held.body.end
+        })
+        .min_by_key(|(_, held)| held.body.len())
+        .map(|(file, held)| ConstFnAt {
+            path: file.path.clone(),
+            keyword: held.origin,
+        })
+}
+
+/// How the compiler ends a refusal of a call it makes in the body of a `const fn`.
+const IN_CONST_FN: &str = "in constant functions";
+
+/// Condemns one mutant for one error, keeping the first error that condemned it and whether that one was about its function being evaluated.
+fn condemn(attributed: &mut Attributed, index: u32, diagnostic: &Diagnostic, evaluated: bool) {
+    attributed.condemned.insert(index);
+    if let std::collections::btree_map::Entry::Vacant(first) = attributed.diagnostics.entry(index) {
+        first.insert(rendered(diagnostic));
+        attributed.codes.insert(index, diagnostic.code.clone());
+        if evaluated {
+            attributed.evaluated.insert(index);
+        }
+    }
+}
+
+/// The functions written without their `const` whose call an error refuses: the one a note of the error defines, or else every one its message could name.
+fn evaluated<'f>(files: &'f [FileOutput], diagnostic: &Diagnostic) -> Vec<Named<'f>> {
+    if diagnostic.code.as_deref() != Some(EVALUATED_CODE) {
+        return Vec::new();
+    }
+    let defined: Vec<Named<'f>> = diagnostic
+        .children
+        .iter()
+        .flat_map(|child| &child.spans)
+        .flat_map(|span| defined_at(files, span))
+        .collect();
+    if !defined.is_empty() {
+        return defined;
+    }
+    let Some(Callee { owner, name }) = callee(&diagnostic.message) else {
+        return Vec::new();
+    };
+    let named: Vec<Named<'f>> = files
+        .iter()
+        .flat_map(|file| {
+            file.deconst
+                .iter()
+                .map(move |function| named(file, function))
+        })
+        .filter(|one| one.function.name == name)
+        .collect();
+    if owner.is_some()
+        && named
+            .iter()
+            .any(|one| one.function.owner.as_ref() == owner.as_ref())
+    {
+        return named
+            .into_iter()
+            .filter(|one| one.function.owner.as_ref() == owner.as_ref())
+            .collect();
+    }
+    named
+}
+
+/// A function of `file` written without its `const`, with where it is.
+fn named<'f>(file: &FileOutput, function: &'f Deconst) -> Named<'f> {
+    Named {
+        at: ConstFnAt {
+            path: file.path.clone(),
+            keyword: function.origin,
+        },
+        function,
+    }
+}
+
+/// A function as an error's message names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Callee {
+    /// The path segment before its name, which for an associated function is the type it belongs to.
+    owner: Option<String>,
+    /// Its own name.
+    name: String,
+}
+
+/// Every function written without its `const` whose keyword lies inside `span`, which is where the compiler points at a function's definition.
+fn defined_at<'f>(files: &'f [FileOutput], span: &DiagnosticSpan) -> Vec<Named<'f>> {
+    files
+        .iter()
+        .filter(|file| crate::cargo::names_file(&span.file_name, &file.path))
+        .flat_map(|file| {
+            file.deconst
+                .iter()
+                .map(move |function| named(file, function))
+        })
+        .filter(|one| {
+            span.byte_start() <= one.function.keyword.start
+                && one.function.keyword.start < span.byte_end()
+        })
+        .collect()
+}
+
+/// The function an error's message names between its first pair of backticks, with every generic argument left out.
+fn callee(message: &str) -> Option<Callee> {
+    let rest = message.split_once('`')?.1;
+    let quoted = rest.split_once('`')?.0;
+    let mut depth: u32 = 0;
+    let mut plain = String::with_capacity(quoted.len());
+    for character in quoted.chars() {
+        match character {
+            '<' => depth = depth.checked_add(1)?,
+            '>' => depth = depth.checked_sub(1)?,
+            other if depth == 0 => plain.push(other),
+            _nested => {}
+        }
+    }
+    let segments: Vec<&str> = plain.split("::").filter(|one| !one.is_empty()).collect();
+    let (name, before) = segments.split_last()?;
+    Some(Callee {
+        owner: before.last().map(|owner| (*owner).to_owned()),
+        name: (*name).to_owned(),
+    })
 }
 
 /// The mutant whose branch holds a span of this diagnostic, primary first, then the rest, then its notes.
@@ -212,7 +539,7 @@ fn locate(files: &[FileOutput], diagnostic: &Diagnostic) -> Option<u32> {
 }
 
 /// The narrowest branch of a written file that holds `span`'s first byte.
-fn branch_at(files: &[FileOutput], span: &crate::cargo::DiagnosticSpan) -> Option<u32> {
+fn branch_at(files: &[FileOutput], span: &DiagnosticSpan) -> Option<u32> {
     let file = files
         .iter()
         .find(|file| crate::cargo::names_file(&span.file_name, &file.path))?;
@@ -309,7 +636,8 @@ fn validate_set(
         trace,
     } = *validating;
     let mut condemned: BTreeSet<u32> = BTreeSet::new();
-    let mut diagnostics: BTreeMap<u32, (Option<String>, String)> = BTreeMap::new();
+    let mut constness = Constness::default();
+    let mut diagnostics: BTreeMap<u32, Said> = BTreeMap::new();
     let mut interacting: BTreeSet<u32> = BTreeSet::new();
     let mut rounds: u32 = 0;
     let mut bisections: u32 = 0;
@@ -318,7 +646,7 @@ fn validate_set(
         if cancel.is_cancelled() {
             return Err(ValidateError::Cancelled);
         }
-        let attempt = cancelled_or(compile.attempt(&condemned), cancel)?;
+        let attempt = cancelled_or(compile.attempt(&condemned, &constness), cancel)?;
         rounds = checked_add(rounds, 1, "validation rounds")?;
         match attempt.completion {
             Completion::Built => {
@@ -327,6 +655,7 @@ fn validate_set(
                     condemned: exact_count(condemned.len(), "condemned mutants")?,
                     success: true,
                     attributed: Vec::new(),
+                    carried: Vec::new(),
                     unattributed: Vec::new(),
                     written: attempt.written,
                 });
@@ -334,27 +663,27 @@ fn validate_set(
             }
             Completion::Refused => {}
         }
-        let attributed = attribute(&attempt.files, &attempt.messages);
-        trace.validate_round(ValidateRoundRecord {
-            round: rounds,
-            condemned: exact_count(condemned.len(), "condemned mutants")?,
-            success: false,
-            written: attempt.written,
-            attributed: attributions(&attributed),
-            unattributed: attributed
-                .unattributed
-                .iter()
-                .map(|said| first_line(said))
-                .collect(),
-        });
+        let attributed = attribute(&attempt.files, &attempt.messages, &constness);
+        trace.validate_round(refused_round(
+            (rounds, &condemned),
+            attempt.written,
+            &attributed,
+        )?);
         record(&attributed, &mut diagnostics);
         let progressed = !attributed.condemned.is_subset(&condemned);
+        let learned = !attributed.pinned.is_subset(&constness.pinned)
+            || !attributed.calls.is_subset(&constness.calls);
         condemned.extend(attributed.condemned.iter().copied());
+        constness.pinned.extend(attributed.pinned);
+        constness.calls.extend(attributed.calls);
 
-        if progressed && rounds < options.max_rounds {
+        if learned || (progressed && rounds < options.max_rounds) {
             continue;
         }
-        let settled = cancelled_or(settle(compile, all, &condemned, validating), cancel)?;
+        let settled = cancelled_or(
+            settle(compile, (all, &condemned, &constness), validating),
+            cancel,
+        )?;
         rounds = checked_add(rounds, settled.rounds, "validation rounds")?;
         bisections = checked_add(bisections, settled.attempts, "bisection attempts")?;
         for (index, entry) in settled.diagnostics {
@@ -378,15 +707,15 @@ fn validate_set(
     })
 }
 
-/// What each condemned mutant is in a report: its identity, its place, and what the compiler said.
+/// What each condemned mutant is in a report: its identity, its place, what the compiler said, and why it was left out.
 fn refusals(
     catalog: &Catalog,
-    diagnostics: BTreeMap<u32, (Option<String>, String)>,
+    diagnostics: BTreeMap<u32, Said>,
     interacting: &BTreeSet<u32>,
 ) -> Vec<Rejection> {
     diagnostics
         .into_iter()
-        .filter_map(|(index, (code, diagnostic))| {
+        .filter_map(|(index, said)| {
             let mutant = catalog.by_index(index)?;
             Some(Rejection {
                 index,
@@ -395,12 +724,21 @@ fn refusals(
                 path: mutant.candidate.path.clone(),
                 span: mutant.candidate.span,
                 rule: mutant.candidate.rule.name.to_owned(),
-                code,
-                diagnostic,
+                code: said.code,
+                diagnostic: said.words,
                 isolated: !interacting.contains(&index),
+                reason: said.reason,
             })
         })
         .collect()
+}
+
+/// What validation keeps about one condemned mutant: the compiler's code and words, and why it was left out.
+#[derive(Debug, Clone)]
+struct Said {
+    code: Option<String>,
+    words: String,
+    reason: Condemnation,
 }
 
 /// Reads a cancelled compilation as a cancellation rather than as whatever the half-finished command printed.
@@ -412,6 +750,31 @@ fn cancelled_or<T>(result: Result<T, ValidateError>, cancel: &Cancel) -> Result<
         }
         other => other,
     }
+}
+
+/// The trace's record of round `round`, which `condemned` went into and the compiler refused, and of what it attributed.
+fn refused_round(
+    (round, condemned): (u32, &BTreeSet<u32>),
+    written: u32,
+    attributed: &Attributed,
+) -> Result<ValidateRoundRecord, ValidateError> {
+    Ok(ValidateRoundRecord {
+        round,
+        condemned: exact_count(condemned.len(), "condemned mutants")?,
+        success: false,
+        written,
+        attributed: attributions(attributed),
+        carried: attributed
+            .carried
+            .iter()
+            .map(|said| first_line(said))
+            .collect(),
+        unattributed: attributed
+            .unattributed
+            .iter()
+            .map(|said| first_line(said))
+            .collect(),
+    })
 }
 
 /// What a round attributed, for the trace.
@@ -440,27 +803,36 @@ fn first_line(said: &str) -> String {
     said.lines().next().unwrap_or(said).to_owned()
 }
 
-/// Keeps the first thing the compiler said about each condemned mutant.
-fn record(attributed: &Attributed, into: &mut BTreeMap<u32, (Option<String>, String)>) {
+/// Keeps the first thing the compiler said about each condemned mutant, and why it was left out.
+fn record(attributed: &Attributed, into: &mut BTreeMap<u32, Said>) {
     for index in &attributed.condemned {
         let code = attributed
             .codes
             .get(index)
             .cloned()
             .and_then(std::convert::identity);
-        let said = attributed
+        let words = attributed
             .diagnostics
             .get(index)
             .cloned()
             .unwrap_or_default();
-        into.entry(*index).or_insert((code, said));
+        let reason = if attributed.evaluated.contains(index) {
+            Condemnation::EvaluatedBeforeRun
+        } else {
+            Condemnation::CompilerRefused
+        };
+        into.entry(*index).or_insert(Said {
+            code,
+            words,
+            reason,
+        });
     }
 }
 
 /// What settling by bisection established.
 struct Settled {
     condemned: BTreeSet<u32>,
-    diagnostics: BTreeMap<u32, (Option<String>, String)>,
+    diagnostics: BTreeMap<u32, Said>,
     rounds: u32,
     attempts: u32,
     unsettled: bool,
@@ -471,8 +843,7 @@ struct Settled {
 /// Isolates the offenders among everything still live, and leaves a tree that compiled behind.
 fn settle(
     compile: &mut dyn Compile,
-    all: &BTreeSet<u32>,
-    condemned: &BTreeSet<u32>,
+    (all, condemned, constness): (&BTreeSet<u32>, &BTreeSet<u32>, &Constness),
     validating: &Validating<'_>,
 ) -> Result<Settled, ValidateError> {
     let Validating { cancel, trace, .. } = *validating;
@@ -480,7 +851,7 @@ fn settle(
         return Err(ValidateError::Cancelled);
     }
     let live: Vec<u32> = all.difference(condemned).copied().collect();
-    let pristine = compile.attempt(all)?;
+    let pristine = compile.attempt(all, constness)?;
     match pristine.completion {
         Completion::Built => {}
         Completion::Refused => {
@@ -492,6 +863,7 @@ fn settle(
     let mut isolation = Isolation {
         compile,
         base: all,
+        constness,
         attempts: 1,
     };
     let offences = isolation.isolate(&live)?;
@@ -519,13 +891,13 @@ fn settle(
     });
     let mut finally = condemned.clone();
     finally.extend(offenders);
-    let last = compile.attempt(&finally)?;
+    let last = compile.attempt(&finally, constness)?;
     settled.rounds = checked_add(settled.rounds, 1, "settling rounds")?;
     match last.completion {
         Completion::Built => return Ok(settled),
         Completion::Refused => {}
     }
-    let again = attribute(&last.files, &last.messages);
+    let again = attribute(&last.files, &last.messages, constness);
     if again.condemned.is_subset(&finally) {
         settled.unsettled = true;
         return Ok(settled);
@@ -549,27 +921,36 @@ fn diagnose_offences(
                 .get(index)
                 .cloned()
                 .or_else(|| {
-                    alone
-                        .unattributed
-                        .first()
-                        .cloned()
-                        .map(|first| (alone.code.clone(), first))
+                    alone.unattributed.first().cloned().map(|first| Said {
+                        code: alone.code.clone(),
+                        words: first,
+                        reason: Condemnation::CompilerRefused,
+                    })
                 })
-                .filter(|(_, words)| !words.is_empty());
-            let (code, words) = match said {
+                .filter(|said| !said.words.is_empty());
+            let Said {
+                code,
+                words,
+                reason,
+            } = match said {
                 Some(said) => {
                     diagnosed = checked_add(diagnosed, 1, "diagnosed offenders")?;
                     said
                 }
-                None => (None, String::new()),
+                None => Said {
+                    code: None,
+                    words: String::new(),
+                    reason: Condemnation::CompilerRefused,
+                },
             };
             if offence.len() > 1 {
                 settled.interacting.extend(std::iter::once(*index));
             }
-            settled
-                .diagnostics
-                .entry(*index)
-                .or_insert_with(|| (code, told(offence, *index, &words)));
+            settled.diagnostics.entry(*index).or_insert_with(|| Said {
+                code,
+                words: told(offence, *index, &words),
+                reason,
+            });
         }
     }
     Ok(diagnosed)
@@ -604,13 +985,15 @@ struct Isolation<'a> {
     compile: &'a mut dyn Compile,
     /// Everything, so that "only these are live" is spelled as a condemned set the [`Compile`] seam understands.
     base: &'a BTreeSet<u32>,
+    /// What the rounds before bisection learned about which `const fn`s go without their `const`.
+    constness: &'a Constness,
     attempts: u32,
 }
 
 /// What one compilation of an offence alone said about it.
 #[derive(Debug, Default)]
 struct Alone {
-    diagnostics: BTreeMap<u32, (Option<String>, String)>,
+    diagnostics: BTreeMap<u32, Said>,
     unattributed: Vec<String>,
     code: Option<String>,
 }
@@ -631,7 +1014,7 @@ impl Isolation<'_> {
             condemned.remove(index);
         }
         self.attempts = checked_add(self.attempts, 1, "bisection attempts")?;
-        self.compile.attempt(&condemned)
+        self.compile.attempt(&condemned, self.constness)
     }
 
     /// Compiles one offence on its own so its own diagnostic can be kept.
@@ -641,7 +1024,7 @@ impl Isolation<'_> {
             Completion::Built => return Ok(Alone::default()),
             Completion::Refused => {}
         }
-        let attributed = attribute(&attempt.files, &attempt.messages);
+        let attributed = attribute(&attempt.files, &attempt.messages, self.constness);
         let mut alone = Alone {
             diagnostics: BTreeMap::new(),
             unattributed: attributed.unattributed.clone(),

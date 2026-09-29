@@ -48,7 +48,7 @@ Current independent audits require the v1 schema names and reject v1 explicitly;
     "source_digest": "<64 hex>", "original": "<=", "replacement": "<",
     "branch": { "direction": "decreasing", "body_start": {"line": 12, "column": 14}, "body_end": {"line": 14, "column": 2} }
   }],
-  "rejections": [{ "index": 7, "id": "…", "path": "…", "rule": "add-to-sub", "code": "E0369", "diagnostic": "…" }],
+  "rejections": [{ "index": 7, "id": "…", "path": "…", "rule": "add-to-sub", "code": "E0369", "diagnostic": "…", "isolated": true, "reason": "compiler-refused" }],
   "skips": [{ "path": "…", "reason": "macro-invocation", "count": 4 }]
 }
 ```
@@ -57,6 +57,8 @@ Current independent audits require the v1 schema names and reject v1 explicitly;
 `direction` is diagnostic: a consumer must not branch on it.
 
 `index` is dense over the accepted mutants and the refused candidates together: every index from zero to their combined count appears exactly once in one list or the other, which is what lets a reader check that a catalog lost nothing.
+A rejection's `reason` says why validation left it out: `compiler-refused` where the compiler refused the edit, and `evaluated-before-run` where the compiler evaluates the `const fn` it is in before the program runs, so the function keeps its `const` and no guard can live in it ([ADR 0047](../adr/0047-a-const-fn-is-mutated-where-nothing-evaluates-it-early.md)).
+Each of the second is also a place in the `evaluated-before-run` skip of its file, which counts exactly them.
 `path`, `rule`, `rule_version`, `start_byte`, `end_byte`,
 `source_digest`, `original`, and `replacement` are exactly what minting the identity takes, so a reader can re-mint `id` from the row and find out whether it is the mutant it says it is.
 
@@ -112,7 +114,8 @@ Every other outcome prohibits `step_notice` in the schema.
 `waited` is a bound that expired with nothing else running, which is also unresolved; a bound that expired once and did not expire again is `inconclusive`.
 
 Here `cataloged` is the number of candidate rows in `mutants`, not a blanket claim that the compiler accepted every row.
-`refused` candidates live in `rejections`.
+Every candidate validation left out lives in `rejections`: `refused` counts the ones whose `reason` is `compiler-refused`, and `skipped` counts the others with the places discovery passed over, as the `evaluated-before-run` skip records say.
+A report whose `evaluated-before-run` skip records and rejections disagree about a file is refused.
 In a filtered run, a row with `outcome: "not_run"` and `not_run_reason: "unselected"` may deliberately have skipped instrumentation and compiler validation.
 Every other outcome is about a compiler-accepted guard present in that run's build.
 

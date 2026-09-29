@@ -2,7 +2,7 @@
 
 **87.5%** — 28 detected of 32 decided
 
-32 mutants were cataloged: 32 executed, 0 refused by the compiler, 4 places that produced no candidate.
+32 mutants were cataloged: 32 executed, 0 refused by the compiler, 4 places passed over.
 
 | outcome | how many |
 | --- | --- |

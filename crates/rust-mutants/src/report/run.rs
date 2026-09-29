@@ -65,9 +65,9 @@ pub struct RunDocument {
     pub established_tests: u64,
     /// One record per non-refused candidate the run accounts for, in catalog order.
     pub mutants: Vec<RunMutantDocument>,
-    /// Every candidate the compiler refused.
+    /// Every candidate validation left out, and why.
     pub rejections: Vec<RejectionDocument>,
-    /// Every place discovery passed over.
+    /// Every place the run passed over.
     pub skips: Vec<SkipDocument>,
     /// The claims a reviewer declared, as the run left them.
     pub expectations: Vec<ExpectationDocument>,
@@ -115,11 +115,11 @@ pub struct JobsDocument {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Accounting {
-    /// How many candidate rows the run accounts for, excluding compiler refusals.
+    /// How many candidate rows the run accounts for, excluding every candidate validation left out.
     pub cataloged: u32,
     /// How many candidates the compiler refused.
     pub refused: Beside,
-    /// How many places discovery passed over.
+    /// How many places the run passed over: what discovery decided, and what validation found evaluated before the program runs.
     pub skipped: Beside,
     /// How many mutants an execution reached a verdict or a lead on.
     pub executed: Beside,
@@ -583,6 +583,18 @@ pub enum DocumentError {
         /// The unsupported finding kind.
         kind: FindingKind,
     },
+    /// The places a file says it passed over in a function evaluated before the program runs are not the candidates of that file left out for that reason.
+    #[error(
+        "{path} counts {counted} places evaluated before the program runs and leaves out {left} candidates for it"
+    )]
+    PassedOver {
+        /// The file the two disagree about.
+        path: String,
+        /// How many its skip record counts.
+        counted: u32,
+        /// How many of its candidates the report leaves out for that reason.
+        left: u32,
+    },
 }
 
 /// Which part of a verified step notice disagrees with its report row.
@@ -610,6 +622,7 @@ impl RunDocument {
         }
         self.validate_verdict_finding_references()?;
         self.validate_nonverdict_findings()?;
+        self.validate_passed_over()?;
         let expected_accounting = accounting_from_document(self)?;
         if let Some(field) = accounting_difference(&self.accounting, &expected_accounting) {
             return Err(DocumentError::Accounting { field });
@@ -702,6 +715,38 @@ impl RunDocument {
             });
         }
         Ok(())
+    }
+
+    /// Every place counted as evaluated before the program runs is a candidate left out for that reason, file by file, and nothing else is.
+    fn validate_passed_over(&self) -> Result<(), DocumentError> {
+        let reason = crate::validate::Condemnation::EvaluatedBeforeRun;
+        let mut counted: BTreeMap<&str, (u32, u32)> = BTreeMap::new();
+        for skip in self.skips.iter().filter(|skip| {
+            reason
+                .skipped()
+                .is_some_and(|named| skip.reason == named.name())
+        }) {
+            let entry = counted.entry(skip.path.as_str()).or_insert((0, 0));
+            entry.0 = entry
+                .0
+                .checked_add(skip.count)
+                .ok_or(DocumentError::CatalogTooLarge)?;
+        }
+        for rejection in self.rejections.iter().filter(|one| one.reason == reason) {
+            let entry = counted.entry(rejection.path.as_str()).or_insert((0, 0));
+            entry.1 = entry
+                .1
+                .checked_add(1)
+                .ok_or(DocumentError::CatalogTooLarge)?;
+        }
+        match counted.into_iter().find(|(_, (skips, left))| skips != left) {
+            Some((path, (counted, left))) => Err(DocumentError::PassedOver {
+                path: path.to_owned(),
+                counted,
+                left,
+            }),
+            None => Ok(()),
+        }
     }
 
     fn validate_verdict_finding_references(&self) -> Result<(), DocumentError> {
@@ -997,8 +1042,13 @@ fn accounting_from_document(document: &RunDocument) -> Result<Accounting, Docume
             .checked_add(skip.count)
             .ok_or(DocumentError::CatalogTooLarge)
     })?;
+    let refused = document
+        .rejections
+        .iter()
+        .filter(|rejection| rejection.refused())
+        .count();
     let tally = crate::run::Tally::of(
-        (document_count(document.rejections.len())?, skipped),
+        (document_count(refused)?, skipped),
         document.mutants.iter().map(|one| crate::run::RowVerdict {
             outcome: one.outcome,
             not_run_reason: one.not_run_reason,

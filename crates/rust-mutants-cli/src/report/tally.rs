@@ -68,7 +68,7 @@ impl Tally {
             beside: vec![
                 ("executed", counted.executed.count()),
                 ("refused by the compiler", counted.refused.count()),
-                ("places that produced no candidate", counted.skipped.count()),
+                ("places passed over", counted.skipped.count()),
             ],
         }
     }

@@ -540,6 +540,17 @@ struct Rejection {
     _diagnostic: String,
     #[serde(rename = "isolated")]
     _isolated: bool,
+    reason: Left,
+}
+
+/// Why a run left a candidate out, as a report spells it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum Left {
+    /// The compiler refused the edit.
+    CompilerRefused,
+    /// The compiler evaluates the function the edit is in before the program runs.
+    EvaluatedBeforeRun,
 }
 
 impl Rejection {
@@ -553,8 +564,16 @@ impl Rejection {
             _code: _,
             _diagnostic: _,
             _isolated: _,
+            reason,
         } = self;
-        Refusal { index, display_id }
+        Refusal {
+            index,
+            display_id,
+            refused: match reason {
+                Left::CompilerRefused => true,
+                Left::EvaluatedBeforeRun => false,
+            },
+        }
     }
 }
 

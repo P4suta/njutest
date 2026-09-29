@@ -7,7 +7,7 @@ surviving-mutant       no test noticed b1c483b9737229b06bad; 1 tests ran and pas
 
 SURVIVORS    1 survivors: 1 each its own finding, and 0 that are 0 unexercised paths, named once each below
 
-MUTANTS   3 mutants were cataloged: 3 executed, 0 refused by the compiler, 0 places that produced no candidate.
+MUTANTS   3 mutants were cataloged: 3 executed, 0 refused by the compiler, 0 places passed over.
 OUTCOMES  killed=1 survived=2 unproven=0 step_limit_reached=0 waited=0 inconclusive=0 errored=0 not_run=0
 OF THOSE  Those 8 add to the 3 cataloged. Within them, not run is 0 unreached, not run is 0 declined, survived is 1 expected, unproven is 0 killed natively, unproven is 0 survived natively, unproven is 0 unreached natively, unproven is 0 discharged by a native proof.
 SCORE     33.3%  (1 detected of 3 decided)

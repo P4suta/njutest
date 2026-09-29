@@ -1017,6 +1017,43 @@ fn a_file_the_configuration_excludes_is_not_mutated_and_is_still_built_and_run()
 
 #[cfg(unix)]
 #[test]
+fn a_const_fn_only_the_program_calls_is_mutated_and_one_the_compiler_evaluates_is_passed_over() {
+    let fixture = fixture("fixture-const-fn");
+    let output = verify(&fixture, &[]);
+    let report = part(&fixture);
+    let rows = report["mutants"].as_array().expect("mutants");
+    let items: std::collections::BTreeSet<&str> =
+        rows.iter().filter_map(|row| row["item"].as_str()).collect();
+    assert_eq!(
+        items,
+        std::collections::BTreeSet::from(["below_ten"]),
+        "the const fn only a test calls is mutated like any function, and none the compiler \
+         evaluates before the program runs has a row, since no guard can live in it (ADR \
+         0047): {rows:#?} (exit {:?}, {})",
+        output.status.code(),
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    assert!(
+        rows.iter()
+            .all(|row| row["decision"]["outcome"] != "compile-rejected"),
+        "a function the compiler evaluates is not a mutation the compiler refused, and a row \
+         that said so would send a reader to the edit rather than to the function: {rows:#?}"
+    );
+    let stated: Vec<&str> = report["limitations"]
+        .as_array()
+        .expect("limitations")
+        .iter()
+        .filter_map(|limitation| limitation["name"].as_str())
+        .collect();
+    assert!(
+        stated.contains(&"skipped-evaluated-before-run"),
+        "the report says the places it passed over for that, as it says every place nothing \
+         was put to: {stated:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn the_features_the_configuration_turns_on_are_the_features_the_run_compiles() {
     let fixture = fixture("fixture-features");
     std::fs::write(

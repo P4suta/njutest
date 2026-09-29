@@ -147,6 +147,7 @@ fn prepare(fixture: &str, triple: Option<&str>) -> Tree {
             path,
             source: &source,
             placements: &placements,
+            carriers: &[],
             markers: &[],
             comparable: &BTreeSet::default(),
             probed: &BTreeMap::default(),

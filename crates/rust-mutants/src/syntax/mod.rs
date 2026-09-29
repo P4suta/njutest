@@ -30,6 +30,11 @@ pub(crate) fn implemented(block: &syn::ItemImpl) -> String {
     shape::implemented(block)
 }
 
+/// The last segment of a type's name, which is what the compiler calls a function of its `impl` by.
+pub(crate) fn type_name(ty: &syn::Type) -> String {
+    shape::type_name(ty)
+}
+
 /// One of the four guard shapes the instrumenter composes a dormant mutant from; see the module documentation.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, njutest_macros::AllVariants,
@@ -75,6 +80,19 @@ pub struct SiteHint {
     pub site_text: String,
     /// How many `super::` segments the site's call into the runtime module needs, which is none where every inline module around it glob-imports its parent.
     pub super_depth: u32,
+    /// The `const fn` whose body is the innermost body around the site, which the instrumented tree writes without its `const` while it holds a guard (ADR 0047).
+    pub const_fn: Option<ConstFn>,
+}
+
+/// A `const fn` as the instrumenter has to find it again: where its `const` is, and the names a compiler diagnostic calls it by.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ConstFn {
+    /// The bytes of its `const` keyword.
+    pub keyword: Span,
+    /// Its own name.
+    pub name: String,
+    /// The last path segment of the type whose `impl` or `trait` holds it, or `None` for a function neither holds.
+    pub owner: Option<String>,
 }
 
 /// What an arm with no guard is given before the guard a mutation writes, so the edit a catalog records is the source the mutant compiles to rather than an expression spliced against the pattern.
@@ -150,7 +168,7 @@ pub struct Found {
     pub probe: Option<crate::probe::Question>,
 }
 
-/// Why a place produced no candidate.
+/// Why a place produced no mutant.
 /// Declared in rank order, which is the order skips are reported in.
 #[derive(
     Debug,
@@ -167,7 +185,7 @@ pub struct Found {
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum SkipReason {
-    /// A constant context: a `const` or `static` initializer, a `const fn` body, a `const` block, an array length, an enum discriminant.
+    /// A constant context: a `const` or `static` initializer, a `const` block, an array length, an enum discriminant.
     ConstContext,
     /// A macro invocation, whose body is tokens the walker does not parse.
     MacroInvocation,
@@ -189,8 +207,8 @@ pub enum SkipReason {
     GeneratedOutsideWorkspace,
     /// A file of a crate that forbids a lint the guards' own attribute turns off, which no guard could compile in.
     ForbiddenLints,
-    /// The body of a `const fn`, whose every call the compiler may evaluate, where a runtime guard cannot live.
-    ConstFnBody,
+    /// A candidate in a `const fn` the compiler evaluates before the program runs, which validation leaves out so the function keeps its `const` (ADR 0047).
+    EvaluatedBeforeRun,
     /// A condition that binds with `let`, whose parts a guard cannot rearrange without moving the binding out of scope.
     LetCondition,
     /// A range with no end, which has no other form to become.
@@ -221,7 +239,7 @@ impl SkipReason {
             Self::IncludedExpression => "included-expression",
             Self::GeneratedOutsideWorkspace => "generated-outside-workspace",
             Self::ForbiddenLints => "forbidden-lints",
-            Self::ConstFnBody => "const-fn-body",
+            Self::EvaluatedBeforeRun => "evaluated-before-run",
             Self::LetCondition => "let-condition",
             Self::OpenRange => "open-range",
             Self::UnstatedReturnType => "unstated-return-type",
@@ -236,7 +254,7 @@ impl SkipReason {
     pub const fn explanation(self) -> &'static str {
         match self {
             Self::ConstContext => {
-                "the expression is evaluated by the compiler (a const or static initializer, a const fn, a const block, an array length, a discriminant), where a runtime guard cannot live"
+                "the expression is evaluated by the compiler (a const or static initializer, a const block, an array length, a discriminant), where a runtime guard cannot live"
             }
             Self::MacroInvocation => {
                 "the code is inside a macro invocation, whose body is tokens the walker does not parse; each invocation counts once"
@@ -266,8 +284,8 @@ impl SkipReason {
             Self::ForbiddenLints => {
                 "the crate forbids a lint the guards' own attribute turns off, and forbid is the one level an allow cannot override, so no guard could compile here whatever it edited"
             }
-            Self::ConstFnBody => {
-                "the expression is in the body of a const fn, which the compiler may evaluate at any call, where a runtime guard cannot live"
+            Self::EvaluatedBeforeRun => {
+                "the expression is in a const fn the compiler evaluates before the program runs (a const or static initializer, a const block, an array length, or a const fn that keeps its const calls it), so the function keeps its const and a runtime guard cannot live in it"
             }
             Self::LetCondition => {
                 "the condition binds with let, and what a guard would have to rearrange is what the binding is in scope for"

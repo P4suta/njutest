@@ -175,7 +175,10 @@ fn rows(report: &Path) -> Vec<Fate> {
                     line: 0,
                     column: 0,
                     rule: text(row, "rule"),
-                    outcome: "refused".to_owned(),
+                    outcome: match text(row, "reason").as_str() {
+                        "compiler-refused" => "refused".to_owned(),
+                        other => other.to_owned(),
+                    },
                 }),
         )
         .collect();
@@ -308,6 +311,11 @@ fn fixture_cleared_under_mutant() {
 #[test]
 fn fixture_climbs_dep_lib() {
     holds("fixture-climbs-dep-lib");
+}
+
+#[test]
+fn fixture_const_fn() {
+    holds("fixture-const-fn");
 }
 
 #[test]

@@ -225,13 +225,13 @@ pub const FATES_FENCE: &str = "```fates";
 pub struct Fate {
     /// The file the mutation is in, relative to the fixture root.
     pub path: String,
-    /// The 1-based line of the edit, or zero for a candidate the compiler refused.
+    /// The 1-based line of the edit, or zero for a candidate validation left out.
     pub line: u32,
-    /// The 1-based byte column of the edit, or zero for a refusal.
+    /// The 1-based byte column of the edit, or zero for a candidate validation left out.
     pub column: u32,
     /// The rule that proposed it.
     pub rule: String,
-    /// What a run establishes: an outcome, or `refused`.
+    /// What a run establishes: an outcome, `refused`, or `evaluated-before-run`.
     pub outcome: String,
 }
 

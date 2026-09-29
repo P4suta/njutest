@@ -44,4 +44,5 @@ src/lib.rs:11:5 return-default killed
 src/lib.rs:11:21 add-to-sub killed
 src/lib.rs:11:23 int-decrement killed
 src/lib.rs:11:23 int-increment killed
+src/lib.rs:17:5 return-default killed
 ```

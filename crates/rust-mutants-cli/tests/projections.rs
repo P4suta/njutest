@@ -683,6 +683,7 @@ fn everything() -> RunDocument {
         code: Some("E0308".to_owned()),
         diagnostic: "expected `bool`, found `&str` in \"wide\" & elsewhere".to_owned(),
         isolated: true,
+        reason: rust_mutants::validate::Condemnation::CompilerRefused,
     }];
     document.skips = vec![SkipDocument {
         reason: "macro-invocation".to_owned(),

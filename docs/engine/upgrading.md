@@ -10,6 +10,13 @@ A change that needs nothing is not listed.
 
 ## Unreleased
 
+**The body of a `const fn` is mutated wherever nothing evaluates it before the program runs.** The instrumented tree writes a `const fn` holding a guard without its `const`, and validation gives it back to a function the compiler evaluates, from the `E0015` it refuses the tree with ([ADR 0047](../adr/0047-a-const-fn-is-mutated-where-nothing-evaluates-it-early.md)).
+A crate written the way `clippy::missing_const_for_fn` asks has more mutants than it had, and the first run after upgrading is longer by them.
+The skip reason `const-fn-body` is gone; `evaluated-before-run` counts the candidates of a function the compiler evaluates, one place each, and the limitation a report states for it is `skipped-evaluated-before-run`.
+Every rejection row gains `reason`, `compiler-refused` or `evaluated-before-run`, and `refused` counts only the first.
+The trace's `validate-round` gains `carried`.
+A documented example that evaluates such a function before its program runs no longer compiles against the instrumented tree; mark the function, and every `const fn` it calls, with `rust-mutants: skip`.
+
 **A verdict is what a sealed run observed.** The engine builds the instrumented tree a second time for `wasm32-wasip1` and runs each test alone in a fresh WebAssembly instance on a deterministic host; only those executions decide a mutant ([ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md), [sealed execution](sealed.md)).
 What a native run says is a lead: such a mutant's finding is `unproven-mutant`, its row's `evidence` says every reason there is no verdict, and the run exits 2.
 Install the target with `rustup target add wasm32-wasip1`; a toolchain without it leaves every mutant unproven.

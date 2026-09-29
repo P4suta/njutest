@@ -123,7 +123,7 @@ pub fn base() -> Value {
                 "index": 2, "id": REFUSED, "display_id": short(REFUSED),
                 "path": "src/lib.rs", "rule": "add-to-sub",
                 "code": "E0369", "diagnostic": "error[E0369]: cannot subtract",
-                "isolated": true
+                "isolated": true, "reason": "compiler-refused"
             }
         ],
         "skips": [],
@@ -157,7 +157,7 @@ pub fn recording() -> Vec<Value> {
         json!({"seq":4,"timestamp":"2026-09-06T10:15:00Z","elapsed_ms":20,
             "type":"validate-round","round":{"round":1,"condemned":0,"success":false,
             "attributed":[{"index":2,"code":"E0369","said":"cannot subtract"}],
-            "written":1,"unattributed":[]}}),
+            "carried":[],"written":1,"unattributed":[]}}),
         json!({"seq":5,"timestamp":"2026-09-06T10:15:01Z","elapsed_ms":30,
             "type":"build","build":{"targets":[TARGET],
             "details":[{"id":TARGET,"kind":"lib","harness":true,"limitations":[]}]}}),

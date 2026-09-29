@@ -608,6 +608,7 @@ pub fn run_resuming(
     let rejected: BTreeMap<&str, &str> = session
         .rejections()
         .iter()
+        .filter(|rejection| rejection.reason.refused())
         .map(|rejection| (rejection.id.as_str(), rejection.diagnostic.as_str()))
         .collect();
     let mutants = judged_here(&subject, options);
@@ -671,8 +672,15 @@ pub fn run_resuming(
     Ok(mutation)
 }
 
-/// The mutants of `subject`'s catalog this phase judges: those of the part `options` names, of the family the phase puts to the tests.
+/// The mutants of `subject`'s catalog this phase judges: those of the part `options` names, of the family the phase puts to the tests, and not in a function evaluated before the program runs, which its skips count instead (ADR 0047).
 fn judged_here<'a>(subject: &Subject<'a>, options: &MutationOptions) -> Vec<&'a Mutant> {
+    let passed_over: BTreeSet<&str> = subject
+        .session
+        .rejections()
+        .iter()
+        .filter(|rejection| !rejection.reason.refused())
+        .map(|rejection| rejection.id.as_str())
+        .collect();
     subject
         .session
         .catalog()
@@ -684,6 +692,7 @@ fn judged_here<'a>(subject: &Subject<'a>, options: &MutationOptions) -> Vec<&'a 
                 .perturbing
                 .judges(mutant.candidate.rule.family.perturbs())
         })
+        .filter(|mutant| !passed_over.contains(mutant.id.as_str()))
         .collect()
 }
 
