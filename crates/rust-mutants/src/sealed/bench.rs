@@ -109,6 +109,17 @@ pub enum BenchError {
         /// What the host said about it.
         source: SealedError,
     },
+    /// A sealed execution's judgement broke the rule a pass keeps.
+    #[error(
+        "{}: {target}: the judgement of {test} broke the rule a pass keeps, so no verdict is written on it",
+        crate::error::SEALED_JUDGEMENT_CONTRADICTED.code
+    )]
+    JudgementContradicted {
+        /// The target whose module ran.
+        target: String,
+        /// The test it ran.
+        test: String,
+    },
     /// The run was interrupted while a sealed execution ran, which says nothing about what it ran.
     #[error("{}: the run was interrupted during a sealed execution", crate::error::INTERRUPTED.code)]
     Interrupted,
@@ -126,6 +137,7 @@ impl BenchError {
                 crate::error::SEALED_TREE_UNREADABLE
             }
             Self::Interrupted => crate::error::INTERRUPTED,
+            Self::JudgementContradicted { .. } => crate::error::SEALED_JUDGEMENT_CONTRADICTED,
         }
     }
 }
@@ -686,11 +698,16 @@ impl<'runner> Bench<'runner> {
             }
             (None, Some(_) | None) => {}
         }
-        Ok(Some(judged(observed(
-            &transcript,
-            (test, run),
-            Some(control),
-        ))))
+        let observed = observed(&transcript, (test, run), Some(control));
+        let came_to = judged(observed);
+        if judgement_keeps_the_pass_rule(observed, came_to) {
+            Ok(Some(came_to))
+        } else {
+            Err(BenchError::JudgementContradicted {
+                target: target.to_owned(),
+                test: test.to_owned(),
+            })
+        }
     }
 
     /// What `module` of `station` did under `invocation`, unless the run was interrupted first.
@@ -957,6 +974,24 @@ fn sandbox(transcript: &Transcript) -> BTreeSet<&'static str> {
 }
 
 /// The bytes an instance left at `path` of the records it was given, where it wrote any.
+/// Whether `came_to` keeps the rule a pass keeps: an execution is passed exactly when it ended as its harness passes by and met nothing its control did not.
+///
+/// This is the rule `judged` is proved to keep, said again apart from it, so a judgement that broke it stops the run rather than become a verdict.
+fn judgement_keeps_the_pass_rule(observed: Observed, came_to: Sealed) -> bool {
+    let passing = !observed.beyond_control
+        && match observed.harness {
+            Harness::Libtest(account) => {
+                observed.ending == Ending::Returned && account == Account::Passed
+            }
+            Harness::Doctest => observed.ending == Ending::Returned,
+            Harness::ShouldPanic => matches!(
+                observed.ending,
+                Ending::ExitedFailure | Ending::Panicked | Ending::Aborted | Ending::Trapped
+            ),
+        };
+    passing == (came_to == Sealed::Passed)
+}
+
 /// The words the test declined to measure in, where it wrote any (ADR 0043).
 fn declined(transcript: &Transcript) -> Option<&[u8]> {
     written(transcript, DECLINE_LOG).filter(|notice| !notice.is_empty())
@@ -976,3 +1011,6 @@ fn written<'transcript>(
         }
     })
 }
+
+#[cfg(test)]
+mod tests;

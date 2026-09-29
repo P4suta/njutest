@@ -196,6 +196,8 @@ mod table {
         SealedEnvironmentNotText,
         /// A file of the instrumented tree could not be read into the snapshot a sealed instance is given.
         SealedTreeUnreadable,
+        /// A sealed execution's judgement broke the rule a pass keeps, which is a defect of the engine.
+        SealedJudgementContradicted,
         /// A rule name the canonical registry does not know.
         RuleUnknown,
         /// A pattern that is not a pattern.
@@ -861,6 +863,14 @@ mod table {
                     ),
                     sealed: Sealed,
                 },
+                Self::SealedJudgementContradicted => ErrorCode {
+                    code: "RM8005",
+                    summary: "a sealed execution's judgement broke the rule a pass keeps: it passed an ending its harness does not pass by, or failed one it does",
+                    remedy: Some(
+                        "this is a defect in this tool, which stopped rather than write a verdict on it; report the target and the test the message names",
+                    ),
+                    sealed: Sealed,
+                },
                 Self::SealedEnvironmentNotText => ErrorCode {
                     code: "RM8003",
                     summary: "a target's environment holds a name or a value that is not text",
@@ -960,6 +970,9 @@ pub const EQUIVALENCE_ARTIFACT_UNREADABLE: ErrorCode =
 pub const SEALED_MODULE_UNREADABLE: ErrorCode = RmCode::SealedModuleUnreadable.error_code();
 /// The sealed host could not run an invocation.
 pub const SEALED_HOST_FAILED: ErrorCode = RmCode::SealedHostFailed.error_code();
+/// A sealed execution's judgement broke the rule a pass keeps.
+pub const SEALED_JUDGEMENT_CONTRADICTED: ErrorCode =
+    RmCode::SealedJudgementContradicted.error_code();
 /// A target's environment is not text.
 pub const SEALED_ENVIRONMENT_NOT_TEXT: ErrorCode = RmCode::SealedEnvironmentNotText.error_code();
 /// A file of the instrumented tree could not be read into the sealed snapshot.
