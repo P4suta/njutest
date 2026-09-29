@@ -51,6 +51,7 @@ proptest = { workspace = true }
 ratatui = { workspace = true }
 regex = "1.13"
 rust-mutants = { workspace = true, features = ["testkit"] }
+rust-mutants-decision = { workspace = true }
 rustix = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
