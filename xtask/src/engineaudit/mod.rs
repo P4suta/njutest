@@ -1114,28 +1114,21 @@ impl Report {
     }
 }
 
-/// One array field, empty when it is absent.
-fn array<'a>(value: &'a Value, key: &str) -> Vec<&'a Value> {
-    value
-        .get(key)
-        .and_then(Value::as_array)
-        .map(|entries| entries.iter().collect())
-        .unwrap_or_default()
+/// One array field, or nothing where it is absent or not an array.
+fn array<'a>(value: &'a Value, key: &str) -> Option<&'a [Value]> {
+    value.get(key)?.as_array().map(Vec::as_slice)
 }
 
-/// One array of numbers, empty when it is absent.
-fn numbers(value: &Value, key: &str) -> Vec<u64> {
-    array(value, key)
-        .into_iter()
-        .filter_map(Value::as_u64)
-        .collect()
+/// One array of indices, or nothing where it is absent, not an array, or holds anything that is not an index.
+fn numbers(value: &Value, key: &str) -> Option<Vec<u64>> {
+    array(value, key)?.iter().map(Value::as_u64).collect()
 }
 
-/// One array of strings, empty when it is absent.
-fn strings(value: &Value, key: &str) -> Vec<String> {
-    array(value, key)
-        .into_iter()
-        .filter_map(|entry| entry.as_str().map(str::to_owned))
+/// One array of strings, or nothing where it is absent, not an array, or holds anything but strings.
+fn strings(value: &Value, key: &str) -> Option<Vec<String>> {
+    array(value, key)?
+        .iter()
+        .map(|entry| entry.as_str().map(str::to_owned))
         .collect()
 }
 

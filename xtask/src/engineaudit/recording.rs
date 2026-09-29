@@ -94,9 +94,28 @@ fn phases(events: &[Value], notes: &mut Notes<'_>) {
     let mut open: Vec<String> = Vec::new();
     for event in events {
         match string(event, "type").as_deref() {
-            Some("phase-start") => open.push(phase_name(event)),
+            Some("phase-start") => {
+                let Some(name) = phase_name(event) else {
+                    notes.unaudited(
+                        "phase",
+                        "a phase began and the recording names no phase for it, so which phase \
+                         ends it cannot be re-derived"
+                            .to_owned(),
+                    );
+                    return;
+                };
+                open.push(name);
+            }
             Some("phase-end") => {
-                let name = phase_name(event);
+                let Some(name) = phase_name(event) else {
+                    notes.unaudited(
+                        "phase",
+                        "a phase ended and the recording names no phase for it, so which phase \
+                         it closed cannot be re-derived"
+                            .to_owned(),
+                    );
+                    return;
+                };
                 if let Some(at) = open.iter().rposition(|held| *held == name) {
                     let closed = open.remove(at);
                     if closed != name {
@@ -161,7 +180,15 @@ fn instrumented(events: &[Value], notes: &mut Notes<'_>) {
             number(record, "lines_before"),
             number(record, "lines_after"),
         );
-        let path = string(record, "path").unwrap_or_default();
+        let Some(path) = string(record, "path") else {
+            notes.unaudited(
+                "instrument",
+                "an instrumentation record names no file, so whether it moved a line of one \
+                 cannot be re-derived"
+                    .to_owned(),
+            );
+            continue;
+        };
         match (before, after) {
             (Some(before), Some(after)) if before != after => notes.violated(
                 &path,
@@ -183,22 +210,41 @@ fn instrumented(events: &[Value], notes: &mut Notes<'_>) {
 
 /// Every target the build produced, against the verification of it.
 fn verified(events: &[Value], notes: &mut Notes<'_>) {
-    let mut built: BTreeSet<String> = BTreeSet::new();
+    let mut built: Option<BTreeSet<String>> = None;
     let mut verified: BTreeSet<String> = BTreeSet::new();
     let mut skipped: BTreeSet<String> = BTreeSet::new();
     for event in events {
         match string(event, "type").as_deref() {
             Some("build") => {
-                if let Some(record) = event.get("build") {
-                    built.extend(strings(record, "targets"));
-                    for detail in array(record, "details") {
-                        if strings(detail, "limitations")
-                            .iter()
-                            .any(|one| one == "target-skipped-by-configuration")
-                            && let Some(target) = string(detail, "id")
-                        {
-                            skipped.insert(target);
-                        }
+                let Some((targets, details)) = event.get("build").and_then(|record| {
+                    Some((strings(record, "targets")?, array(record, "details")?))
+                }) else {
+                    notes.unaudited(
+                        "build",
+                        "a build record holds no targets and details this audit reads, so what \
+                         the build produced cannot be held to what was verified"
+                            .to_owned(),
+                    );
+                    return;
+                };
+                built.get_or_insert_with(BTreeSet::new).extend(targets);
+                for detail in details {
+                    let (Some(target), Some(limitations)) =
+                        (string(detail, "id"), strings(detail, "limitations"))
+                    else {
+                        notes.unaudited(
+                            "build",
+                            "a build record details a target by no name and limitations this \
+                             audit reads, so whether it was configured out cannot be re-derived"
+                                .to_owned(),
+                        );
+                        return;
+                    };
+                    if limitations
+                        .iter()
+                        .any(|one| one == "target-skipped-by-configuration")
+                    {
+                        skipped.insert(target);
                     }
                 }
             }
@@ -220,6 +266,15 @@ fn verified(events: &[Value], notes: &mut Notes<'_>) {
         );
         return;
     }
+    let Some(built) = built else {
+        notes.unaudited(
+            "build",
+            "the recording holds no build record, so which targets the build produced cannot be \
+             held to what was verified"
+                .to_owned(),
+        );
+        return;
+    };
     for target in built.difference(&verified) {
         if skipped.contains(target) {
             continue;
@@ -233,8 +288,8 @@ fn verified(events: &[Value], notes: &mut Notes<'_>) {
     }
 }
 
-/// The refusals, against the rounds that condemned them.
-fn condemned(report: &Report, events: &[Value], notes: &mut Notes<'_>) {
+/// Every candidate the recording's validation rounds and bisections condemned, and how many rounds it holds; nothing where one of them names what it condemned in no form this audit reads, which is said.
+fn condemnations(events: &[Value], notes: &mut Notes<'_>) -> Option<(BTreeSet<u64>, usize)> {
     let mut named: BTreeSet<u64> = BTreeSet::new();
     let mut rounds = 0usize;
     for event in events {
@@ -246,25 +301,55 @@ fn condemned(report: &Report, events: &[Value], notes: &mut Notes<'_>) {
                         "the number of validation rounds exceeds this platform's address space"
                             .to_owned(),
                     );
-                    return;
+                    return None;
                 };
                 rounds = next_rounds;
-                if let Some(record) = event.get("round") {
-                    for one in array(record, "attributed") {
-                        if let Some(index) = number(one, "index") {
-                            named.insert(index);
-                        }
-                    }
-                }
+                let Some(attributed) = event
+                    .get("round")
+                    .and_then(|record| array(record, "attributed"))
+                    .and_then(|attributed| {
+                        attributed
+                            .iter()
+                            .map(|one| number(one, "index"))
+                            .collect::<Option<Vec<u64>>>()
+                    })
+                else {
+                    notes.unaudited(
+                        "rejections",
+                        "a validation round attributes its refusals to no candidate indices this \
+                         audit reads, so what it condemned cannot be re-derived"
+                            .to_owned(),
+                    );
+                    return None;
+                };
+                named.extend(attributed);
             }
             Some("bisect") => {
-                if let Some(record) = event.get("bisect") {
-                    named.extend(numbers(record, "offenders"));
-                }
+                let Some(offenders) = event
+                    .get("bisect")
+                    .and_then(|record| numbers(record, "offenders"))
+                else {
+                    notes.unaudited(
+                        "bisect",
+                        "a bisection record's offenders are not catalog indices this audit \
+                         reads, so what it condemned cannot be re-derived"
+                            .to_owned(),
+                    );
+                    return None;
+                };
+                named.extend(offenders);
             }
             _ => {}
         }
     }
+    Some((named, rounds))
+}
+
+/// The refusals, against the rounds that condemned them.
+fn condemned(report: &Report, events: &[Value], notes: &mut Notes<'_>) {
+    let Some((named, rounds)) = condemnations(events, notes) else {
+        return;
+    };
     if rounds == 0 {
         if !report.rejections.is_empty() {
             notes.unaudited(
@@ -285,17 +370,18 @@ fn condemned(report: &Report, events: &[Value], notes: &mut Notes<'_>) {
                 .to_owned(),
         );
     }
-    for index in refused.difference(&named) {
-        let subject = report
-            .rejections
-            .iter()
-            .find(|one| one.index == *index)
-            .map_or_else(|| index.to_string(), |one| one.display_id.clone());
+    for rejection in report
+        .rejections
+        .iter()
+        .filter(|one| !named.contains(&one.index))
+    {
         notes.violated(
-            &subject,
-            "the report refuses this candidate and no round condemned it; a refusal nothing \
-             accounts for is a mutant somebody dropped"
-                .to_owned(),
+            &rejection.display_id,
+            format!(
+                "the report refuses candidate {} and no round condemned it; a refusal nothing \
+                 accounts for is a mutant somebody dropped",
+                rejection.index
+            ),
         );
     }
 }
@@ -1075,10 +1161,7 @@ fn pairs_of(row: &Row, built: &BTreeSet<&str>, targets: usize, notes: &mut Notes
     }
 }
 
-/// The name of the phase one boundary is about.
-fn phase_name(event: &Value) -> String {
-    event
-        .get("phase")
-        .and_then(|phase| string(phase, "name"))
-        .unwrap_or_default()
+/// The name of the phase one boundary is about, or nothing where the boundary names none.
+fn phase_name(event: &Value) -> Option<String> {
+    event.get("phase").and_then(|phase| string(phase, "name"))
 }

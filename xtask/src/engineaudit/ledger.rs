@@ -23,7 +23,13 @@ pub(super) fn ledger(report: &Report, ledger: Option<&Ledger>, audit: &mut Audit
     };
     for finding in &report.findings {
         if finding.kind == SURVIVING_MUTANT || finding.kind == UNREACHED_MUTANT {
-            let subject = finding.mutant.as_deref().unwrap_or(finding.kind.as_str());
+            let Some(subject) = finding.mutant.as_deref() else {
+                notes.violated(
+                    finding.kind.as_str(),
+                    "a survivor finding names no mutant, so no acceptance can answer it".to_owned(),
+                );
+                continue;
+            };
             notes.violated(
                 subject,
                 "no test noticed this mutation and the ledger does not accept it; a survivor \
