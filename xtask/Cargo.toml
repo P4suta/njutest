@@ -22,6 +22,7 @@ testkit = []
 [dependencies]
 njutest-fixture-tree = { workspace = true }
 njutest-macros = { workspace = true }
+rust-mutants-decision = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 signal-hook = { workspace = true }

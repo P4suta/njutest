@@ -549,6 +549,11 @@ fn fixture_probeable() {
 }
 
 #[test]
+fn fixture_reads_its_source() {
+    holds("fixture-reads-its-source");
+}
+
+#[test]
 fn fixture_reads_tree() {
     holds("fixture-reads-tree");
 }

@@ -54,6 +54,26 @@ fn the_runner_may_depend_on_the_engine_but_not_the_reverse() {
 }
 
 #[test]
+fn xtask_may_share_the_engines_pure_decisions_and_nothing_else_of_it() {
+    let allowed = [
+        edge("xtask", "rust-mutants-decision", EdgeKind::Normal),
+        edge(
+            "compiler-surfaces",
+            "rust-mutants-decision",
+            EdgeKind::Normal,
+        ),
+    ];
+    assert!(check(&allowed).is_empty(), "{:?}", check(&allowed));
+    let refused = [
+        edge("xtask", "rust-mutants", EdgeKind::Normal),
+        edge("rust-mutants-decision", "xtask", EdgeKind::Normal),
+        edge("rust-mutants-decision", "rust-mutants", EdgeKind::Normal),
+        edge("njutest-devkit", "rust-mutants-decision", EdgeKind::Normal),
+    ];
+    assert_eq!(check(&refused), refused);
+}
+
+#[test]
 fn the_engine_alone_may_depend_on_the_sealed_host_and_the_host_on_nothing_of_the_workspace() {
     let allowed = [
         edge("rust-mutants", "rust-mutants-sealed", EdgeKind::Normal),

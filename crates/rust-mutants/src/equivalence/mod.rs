@@ -95,7 +95,16 @@ impl Prover {
             withdrawn: None,
             options: options.clone(),
         };
-        prover.original = prover.build(cancel)?.map(|built| built.artifacts);
+        let first = prover.build(cancel)?;
+        let kept = match &first {
+            Some(built) => prover.workspace.keep_includes_verbatim(&built.units)?,
+            None => Vec::new(),
+        };
+        prover.original = if kept.is_empty() {
+            first.map(|built| built.artifacts)
+        } else {
+            prover.build(cancel)?.map(|built| built.artifacts)
+        };
         Ok(prover)
     }
 
