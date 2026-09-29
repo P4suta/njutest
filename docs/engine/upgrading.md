@@ -10,6 +10,9 @@ A change that needs nothing is not listed.
 
 ## Unreleased
 
+**A merged report says which part's run decided each row.** Each mutant of the run report gains `part_run_id`: null in a run's own report, and in one `merge` wrote the run of the part that decided the row, whose bench its sealed executions ran on.
+A report written before it lacks the field and is refused; merge the parts again with this release.
+
 **The body of a `const fn` is mutated wherever nothing evaluates it before the program runs.** The instrumented tree writes a `const fn` holding a guard without its `const`, and validation gives it back to a function the compiler evaluates, from the `E0015` it refuses the tree with ([ADR 0047](../adr/0047-a-const-fn-is-mutated-where-nothing-evaluates-it-early.md)).
 A crate written the way `clippy::missing_const_for_fn` asks has more mutants than it had, and the first run after upgrading is longer by them.
 The skip reason `const-fn-body` is gone; `evaluated-before-run` counts the candidates of a function the compiler evaluates, one place each, and the limitation a report states for it is `skipped-evaluated-before-run`.

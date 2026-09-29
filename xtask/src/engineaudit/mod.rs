@@ -744,6 +744,8 @@ struct Row {
     unreached: bool,
     not_run_reason: Option<NotRunReason>,
     source_run_id: Option<String>,
+    /// The run of the part that decided the row, where the report merges parts.
+    part_run_id: Option<String>,
     declined: Vec<Decline>,
     evidence: Resting,
 }

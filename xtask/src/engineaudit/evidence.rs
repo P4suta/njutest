@@ -154,9 +154,13 @@ fn skip_total(tallies: &[Value], path: &str, notes: &mut Notes<'_>) -> Option<u6
     Some(hidden)
 }
 
-/// The parts of one catalog, against the whole they say they are.
+/// The parts of one catalog, against the whole they say they are, or, for a report `merge` wrote, each row against the part whose run it says decided it.
 pub(super) fn merge(report: &Report, evidence: &CheckedEvidence<'_>, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Merge);
+    if report.mutants.iter().any(|row| row.part_run_id.is_some()) {
+        decided_in_parts(report, &evidence.shards, &mut notes);
+        return notes.looked();
+    }
     if evidence.shards.is_empty() {
         notes.unaudited(
             "shards",
@@ -231,6 +235,57 @@ pub(super) fn merge(report: &Report, evidence: &CheckedEvidence<'_>, audit: &mut
         );
     }
     notes.looked()
+}
+
+/// Every row of the merged `report`, against the row of the same index in the part its `part_run_id` names among `parts`: the same outcome, resting on the same executions, since a merge runs nothing and carries what its parts decided.
+fn decided_in_parts(report: &Report, parts: &[(&str, Report)], notes: &mut Notes<'_>) {
+    if parts.is_empty() {
+        notes.unaudited(
+            "shards",
+            "this report merges parts and none of them was given, so whether each row is what \
+             the run of its part decided cannot be re-derived"
+                .to_owned(),
+        );
+        return;
+    }
+    for row in &report.mutants {
+        let Some(run) = row.part_run_id.as_deref() else {
+            notes.violated(
+                row.label(),
+                "the report merges parts and this row names no part run that decided it".to_owned(),
+            );
+            continue;
+        };
+        let Some((name, part)) = parts.iter().find(|(_, part)| part.run_id == run) else {
+            notes.unaudited(
+                row.label(),
+                format!("the part {run} that decided it was not given"),
+            );
+            continue;
+        };
+        match part.mutants.iter().find(|one| one.index == row.index) {
+            Some(one)
+                if one.id == row.id
+                    && one.outcome == row.outcome
+                    && one.evidence == row.evidence
+                    && one.part_run_id.is_none() => {}
+            Some(_) => notes.violated(
+                row.label(),
+                format!(
+                    "the part {name} its row names decided it otherwise; a merge carries what its \
+                     parts decided and runs nothing of its own"
+                ),
+            ),
+            None => notes.violated(
+                row.label(),
+                format!(
+                    "the part {name} its row names holds no row of index {}; a row no part \
+                     decided is one nobody ran",
+                    row.index
+                ),
+            ),
+        }
+    }
 }
 
 /// Re-derives every discharge the run claimed from the evidence it kept.

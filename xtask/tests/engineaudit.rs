@@ -347,6 +347,61 @@ fn the_parts_of_one_catalog_recount_to_the_whole() {
     );
 }
 
+/// The Merge layer's violations of `merged`, a report `merge` wrote, audited with `part` as the one part its rows name.
+fn merged_against(merged: &serde_json::Value, part: &serde_json::Value) -> Vec<String> {
+    let run = run_directory(merged);
+    let parts = tempfile::tempdir().expect("a temporary directory");
+    let path = parts.path().join("run-report-v1.json");
+    std::fs::write(&path, part.to_string()).expect("the part");
+    let audit = gates::engine_audit(
+        &checkers(),
+        &gates::EngineRun {
+            run: run.path(),
+            trace: None,
+            shards: &[path],
+            ledger: None,
+            sites: false,
+            root: None,
+        },
+    )
+    .expect("a report this audit can read");
+    violations(&audit, Layer::Merge)
+}
+
+/// The clean report as `merge` writes it of one part, the clean report itself, run by `part_run`.
+fn merged_of(part_run: &str) -> serde_json::Value {
+    let mut merged = base();
+    for row in merged["mutants"].as_array_mut().expect("the rows") {
+        row["part_run_id"] = serde_json::json!(part_run);
+    }
+    merged
+}
+
+#[test]
+fn a_merged_row_is_what_the_part_its_row_names_decided() {
+    let part = base();
+    let part_run = part["run"]["id"]
+        .as_str()
+        .expect("the part's run")
+        .to_owned();
+
+    assert_eq!(
+        merged_against(&merged_of(&part_run), &part),
+        Vec::<String>::new(),
+        "a merge carries what its parts decided, row for row"
+    );
+
+    let mut forged = merged_of(&part_run);
+    forged["mutants"][1]["evidence"]["executions"][0]["test"] = serde_json::json!("another");
+    let found = merged_against(&forged, &part);
+    assert!(
+        found
+            .iter()
+            .any(|remark| remark.contains("decided it otherwise")),
+        "a merged row resting on executions its part's run never ran rests on nothing: {found:?}"
+    );
+}
+
 #[test]
 fn a_mutant_exec_that_disagrees_with_its_row_is_a_violation() {
     let mut events = recording();
@@ -1378,6 +1433,7 @@ fn a_run_the_interruption_stopped_is_not_a_run_that_lost_its_routes() {
             "step_notice": null, "retried": false, "lingered": false, "not_run_reason": "interrupted", "declined": [],
             "route": null, "identical": "not-measured",
             "expected": false, "unreached": false, "source_run_id": null,
+            "part_run_id": null,
             "evidence": { "kind": "unproven", "reasons": ["not-sealed"] }
         }]
     }));

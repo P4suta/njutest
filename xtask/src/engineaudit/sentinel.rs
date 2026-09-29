@@ -46,14 +46,14 @@ fn killed() -> Value {
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
         "identical": "not-measured", "expected": false, "unreached": false,
-        "source_run_id": null,
+        "source_run_id": null, "part_run_id": null,
         "evidence": { "kind": "unproven", "reasons": ["test-absent"] }
     })
 }
 
 /// The row of the survivor a reviewer accepted.
 fn survived() -> Value {
-    json!({
+    let mut row = json!({
         "index": 1, "id": SURVIVED, "display_id": short(SURVIVED),
         "path": "src/lib.rs", "package": "demo",
         "family": "return-replacement", "rule": "return-default", "item": "larger",
@@ -68,12 +68,16 @@ fn survived() -> Value {
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
         "identical": "not-measured", "expected": true, "unreached": false,
-        "source_run_id": null,
-        "evidence": { "kind": "sealed", "executions": [
+        "source_run_id": null, "part_run_id": null
+    });
+    merge(
+        &mut row,
+        json!({ "evidence": { "kind": "sealed", "executions": [
             { "target": TARGET, "test": "larger_works", "came_to": "passed" },
             { "target": TARGET, "test": "smaller_works", "came_to": "passed" }
-        ] }
-    })
+        ] } }),
+    );
+    row
 }
 
 /// A run of three candidates: one a native run killed and nothing sealed decided, one sealed survivor a reviewer accepted, one the compiler refused.
