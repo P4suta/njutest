@@ -123,6 +123,7 @@
               "sites": 0,
               "noticed": 0,
               "unnoticed": 0,
+              "absorbed": 0,
               "unreached": 0,
               "waited": 0,
               "undecided": 0,

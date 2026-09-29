@@ -186,15 +186,18 @@ A record carries the fault's `id` and `display_id`, its `path`, `item` and `posi
 | `decision` | what it says | carries |
 | --- | --- | --- |
 | `noticed` | a test failed with the call failing and passed on the unchanged program, and failed again on a second run | `by`, the first target in target order that noticed |
-| `unnoticed` | every test that reached the site passed with the call failing | |
+| `unnoticed` | every test that reached the site passed with the call failing, and something formatted the failure it made, or the record of it cannot say | |
+| `absorbed` | every test that reached the site passed with the call failing, and a run of each dropped every failure it made without anything reading it | |
 | `unreached` | no test reached the site | |
 | `waited` | a bound expired with the call failing before a test finished | `on` |
 | `undecided` | a test failed with the call failing and the run could not confirm it, or could not run the test | `on`, `why` |
 | `not-put` | the compiler refused the fault, because the site propagates an error type the engine does not make | `diagnostic`, the compiler's first line |
 
 Nothing here is a kill, and nothing is proved: a fault changes what the program is given, never the program, and no discharge is applied to a fault's route.
-`accounting.faults` counts the records, and `noticed + unnoticed + unreached + waited + undecided + not_put` equals `sites`; a part whose counts do not is not a v1 document.
-Every `unnoticed` record raises one `unnoticed-fault` finding naming its `display_id`, and every `waited` or `undecided` one a `not-measured` finding naming it, so a run asked for faults that could not decide one is not `ASSURED`.
+`accounting.faults` counts the records, and `noticed + unnoticed + absorbed + unreached + waited + undecided + not_put` equals `sites`; a part whose counts do not is not a v1 document.
+Every `unnoticed` or `absorbed` record raises one `unnoticed-fault` finding naming its `display_id`, the `absorbed` one saying the failure went nowhere, and every `waited` or `undecided` one a `not-measured` finding naming it, so a run asked for faults that could not decide one is not `ASSURED`.
+`absorbed` rests on one more run of the fault on each target that reached it, in name order, stopping at the first that does not bear it out, with its runtime recording what became of each failure it made: `made`, `read` where something formatted it, `dropped`.
+Only an `std::io::Error` carries that record, so a site of any other error type stays `unnoticed`.
 `not-put` records are stated as one `fault-not-put` limitation naming each compiler error class with its sites.
 A tree whose faulted baseline could not be measured raises a `not-measured` finding about `fault-baseline-not-measured` and carries no records.
 A record's `position` is `null` where the run could not place the site.

@@ -59,7 +59,7 @@ fn each_fault_decision_is_answered_a_hole_or_a_class_the_column_does_not_speak_a
         findings: &[],
     };
     let faulted = column(&evidence, Dimension::Fault);
-    assert_eq!(counts(&faulted), Some((5, 3, 2)), "{faulted:?}");
+    assert_eq!(counts(&faulted), Some((6, 4, 2)), "{faulted:?}");
     assert_eq!(
         counts(&column(&evidence, Dimension::Mutation)),
         Some((5, 4, 1))

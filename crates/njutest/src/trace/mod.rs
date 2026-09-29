@@ -23,10 +23,10 @@ pub use event::{
     ArtifactRecord, AskedRecord, ConfirmRecord, ControlAnswer, ControlRecord, CrashAsked,
     CrashExecRecord, CrashNoticeRecord, CrashStep, CrashStepRecord, DischargeRecord, DriftRecord,
     Event, ExecRecord, Expected, FaultAttributionRecord, FaultControlRecord, FaultExecRecord,
-    FaultRejectedRecord, FaultRole, FaultRouteRecord, MutantExecRecord, NoteRecord, Payload,
-    PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RepairRecord, ResumedRecord, ReuseRule,
-    RouteRecord, RunAccounting, RunRecord, SentinelRecord, SiteReached, StartRecord, Unfaulted,
-    WireExchangeRecord, WireExecRecord,
+    FaultFateRecord, FaultRejectedRecord, FaultRole, FaultRouteRecord, MutantExecRecord,
+    NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RepairRecord,
+    ResumedRecord, ReuseRule, RouteRecord, RunAccounting, RunRecord, SentinelRecord, SiteReached,
+    StartRecord, Unfaulted, WireExchangeRecord, WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{DirSink, FILE_NAME, OUTPUT_DIRECTORY_NAME, Sink};
@@ -387,6 +387,11 @@ impl Recorder {
     /// Records one fault run against one target.
     pub fn fault_exec(&self, record: FaultExecRecord) {
         self.emit(Payload::FaultExec { fault: record });
+    }
+
+    /// Records one fault run again on one target with what became of the failures it made.
+    pub fn fault_fate(&self, record: FaultFateRecord) {
+        self.emit(Payload::FaultFate { fate: record });
     }
 
     /// Records whether one fault, run alone, wrote a path, and whether its target did without it.

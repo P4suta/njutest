@@ -596,11 +596,12 @@
         "faults": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Every site a fault was asked at has exactly one decision, so noticed + unnoticed + unreached + waited + undecided + not_put equals sites.",
+          "description": "Every site a fault was asked at has exactly one decision, so noticed + unnoticed + absorbed + unreached + waited + undecided + not_put equals sites.",
           "required": [
             "sites",
             "noticed",
             "unnoticed",
+            "absorbed",
             "unreached",
             "waited",
             "undecided",
@@ -614,6 +615,9 @@
               "$ref": "#/$defs/count"
             },
             "unnoticed": {
+              "$ref": "#/$defs/count"
+            },
+            "absorbed": {
               "$ref": "#/$defs/count"
             },
             "unreached": {
@@ -976,6 +980,18 @@
           "properties": {
             "decision": {
               "const": "unnoticed"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision"
+          ],
+          "properties": {
+            "decision": {
+              "const": "absorbed"
             }
           }
         },

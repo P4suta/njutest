@@ -53,7 +53,7 @@ pub fn base() -> Value {
             },
             "soundness": { "unsafe_items": 0, "packages_with_unsafe": 0, "executed": false },
             "faults": {
-                "sites": 0, "noticed": 0, "unnoticed": 0, "unreached": 0,
+                "sites": 0, "noticed": 0, "unnoticed": 0, "absorbed": 0, "unreached": 0,
                 "waited": 0, "undecided": 0, "not_put": 0
             }
         },
@@ -590,7 +590,59 @@ fn faults_planted(clean: &Perturbation) -> Vec<Perturbation> {
     ]
     .into_iter()
     .chain(faults_owing(clean))
+    .chain(faults_fated(clean))
     .collect()
+}
+
+/// The faults layer's planted defects about where a failure went: an absorbed fault whose run again read the failure, and an unnoticed one whose every run again dropped it unread.
+fn faults_fated(clean: &Perturbation) -> Vec<Perturbation> {
+    let fated = |decision: &str, read: u64| {
+        let decided = json!({ "decision": decision });
+        fault_recorded(&decided, "survived")
+            .into_iter()
+            .chain([
+                json!({
+                    "timestamp": "2026-09-06T00:00:04Z", "elapsed_ms": 4,
+                    "type": "fault-route",
+                    "route": { "fault": FAULTED, "reaching": [TARGET] }
+                }),
+                json!({
+                    "timestamp": "2026-09-06T00:00:05Z", "elapsed_ms": 5,
+                    "type": "fault-fate",
+                    "fate": {
+                        "fault": FAULTED, "target": TARGET, "outcome": "survived",
+                        "fate": { "made": 1, "read": read, "dropped": 1 }
+                    }
+                }),
+            ])
+            .collect::<Vec<Value>>()
+    };
+    let reported = |decision: &str| {
+        with(json!({
+            "faults": [fault_site(&json!({ "decision": decision }))],
+            "accounting": { "faults": { "sites": 1, decision: 1 } },
+            "findings": [{}, {
+                "kind": "unnoticed-fault",
+                "subject": FAULTED,
+                "detail": "nothing noticed the call failing",
+                "position": null
+            }]
+        }))
+    };
+    vec![
+        Perturbation {
+            name: "a fault said to be absorbed whose run again read the failure it made",
+            document: reported("absorbed"),
+            events: Some(fated("absorbed", 1)),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a fault said to be unnoticed whose every run again dropped its failure unread",
+            document: reported("unnoticed"),
+            events: Some(fated("unnoticed", 0)),
+            ..clean.clone()
+        },
+    ]
 }
 
 /// The faults layer's planted defects about what a fault's decision owes: the finding a decision raises, and the attribution a write rests on.

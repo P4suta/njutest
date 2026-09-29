@@ -3234,7 +3234,7 @@ fn besides(
     }
 }
 
-/// The fault counts, re-derived from the report's own records, since a part whose six decisions do not add up to its sites is refused whatever the recording says.
+/// The fault counts, re-derived from the report's own records, since a part whose seven decisions do not add up to its sites is refused whatever the recording says.
 fn fault_counts(
     recording: &Recording<'_>,
     reported: &[crate::faults::Site],
@@ -3243,6 +3243,7 @@ fn fault_counts(
     for (column_name, decision) in [
         ("noticed", "noticed"),
         ("unnoticed", "unnoticed"),
+        ("absorbed", "absorbed"),
         ("unreached", "unreached"),
         ("waited", "waited"),
         ("undecided", "undecided"),
@@ -3310,7 +3311,7 @@ fn fault_findings(
         .iter()
         .filter_map(|site| {
             let kind = match site.decision.as_str() {
-                "unnoticed" => UNNOTICED_FAULT,
+                "unnoticed" | "absorbed" => UNNOTICED_FAULT,
                 "waited" | "undecided" => NOT_MEASURED_FINDING,
                 _ => return None,
             };

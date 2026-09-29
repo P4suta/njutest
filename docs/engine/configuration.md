@@ -280,8 +280,9 @@ A skip that quietly stops meaning anything when the code under it moves is worse
 
 ## Reserved environment
 
-A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_FAULT`, `RUST_MUTANTS_CATALOG`, `RUST_MUTANTS_TOUCH`, `RUST_MUTANTS_TOUCH_ITEMS`, `RUST_MUTANTS_DELAY`, `RUST_MUTANTS_STEPS`, `RUST_MUTANTS_STEP_NOTICE`, and `RUST_MUTANTS_STEP_NONCE`, `RUST_MUTANTS_STEP_STATE`, `RUST_MUTANTS_STEP_BEAT`, `RUST_MUTANTS_CRASH_NOTICE` and `RUST_MUTANTS_CRASH_NONCE` for every test process it starts.
+A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_FAULT`, `RUST_MUTANTS_FAULT_FATE`, `RUST_MUTANTS_CATALOG`, `RUST_MUTANTS_TOUCH`, `RUST_MUTANTS_TOUCH_ITEMS`, `RUST_MUTANTS_DELAY`, `RUST_MUTANTS_STEPS`, `RUST_MUTANTS_STEP_NOTICE`, and `RUST_MUTANTS_STEP_NONCE`, `RUST_MUTANTS_STEP_STATE`, `RUST_MUTANTS_STEP_BEAT`, `RUST_MUTANTS_CRASH_NOTICE` and `RUST_MUTANTS_CRASH_NONCE` for every test process it starts.
 `RUST_MUTANTS_FAULT` names a fault to activate beside the active mutation, and only a fault whose guard the instrumentation carried into that mutation's branch can be; it is set only with `RUST_MUTANTS_ACTIVE` ([ADR 0032](../adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
+`RUST_MUTANTS_FAULT_FATE` names a file, apart from the scratch the test sees, that the runtime appends one line to for each thing that became of a failure the active fault made as an `std::io::Error` — `rust-mutants-fate-v1`, the catalog, and `made`, `read` where something formatted it, or `dropped` — and a line it cannot write stops the process with status 94; an error of any other type records nothing, and a run of the sealed module records nothing ([ADR 0032](../adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
 `RUST_MUTANTS_TOUCH_ITEMS`, set to `1` beside `RUST_MUTANTS_TOUCH`, asks a mutant execution to record only the items it entered, which is what a run that keeps its answers in the store records about each one.
 Finding any of them already set normally ends the command with `RM0006`: nothing a test process said under an unrelated activation would be about this run, and a touch log another run owns is not one this run may append to.
 

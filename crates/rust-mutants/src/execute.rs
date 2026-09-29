@@ -16,8 +16,8 @@ use crate::cargo::{
 use crate::id::{is_digest, is_id};
 use crate::instrument::{
     ACTIVE_ENV, CATALOG_ENV, CRASH_NONCE_ENV, CRASH_NOTICE_ENV, DELAY_ENV, FAULT_ENV,
-    STEP_BEAT_ENV, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_PROTOCOL_EXIT,
-    STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, STOP_SCHEMA, TOUCH_ENV,
+    FAULT_FATE_ENV, STEP_BEAT_ENV, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA,
+    STEP_PROTOCOL_EXIT, STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, STOP_SCHEMA, TOUCH_ENV,
 };
 use crate::outcome::Outcome;
 use crate::runner::{
@@ -28,11 +28,12 @@ use crate::workspace::SessionError;
 
 /// Every variable the engine owns.
 /// A test process sees exactly the ones this run set, never one an outer run left behind.
-pub const RESERVED_ENV: [&str; 13] = [
+pub const RESERVED_ENV: [&str; 14] = [
     ACTIVE_ENV,
     CRASH_NOTICE_ENV,
     CRASH_NONCE_ENV,
     FAULT_ENV,
+    FAULT_FATE_ENV,
     DELAY_ENV,
     CATALOG_ENV,
     TOUCH_ENV,
@@ -45,11 +46,12 @@ pub const RESERVED_ENV: [&str; 13] = [
 ];
 
 /// The variables a run composes for every test process it starts, which it therefore never lets one inherit.
-pub const COMPOSED_ENV: [&str; 15] = [
+pub const COMPOSED_ENV: [&str; 16] = [
     ACTIVE_ENV,
     CRASH_NOTICE_ENV,
     CRASH_NONCE_ENV,
     FAULT_ENV,
+    FAULT_FATE_ENV,
     DELAY_ENV,
     CATALOG_ENV,
     TOUCH_ENV,
@@ -1808,6 +1810,9 @@ pub fn environment(
         );
         env.set(OsString::from(CRASH_NONCE_ENV), OsString::from(crash.nonce));
     }
+    if let Some(fate) = context.fate {
+        env.set(OsString::from(FAULT_FATE_ENV), fate.as_os_str().to_owned());
+    }
     if let Some(touch) = context.touch {
         env.set(OsString::from(TOUCH_ENV), touch.log.as_os_str().to_owned());
         env.set(OsString::from(CATALOG_ENV), OsString::from(touch.catalog));
@@ -2370,6 +2375,9 @@ pub struct Context<'a> {
     /// Where the runtime publishes that a crash stopped the process, and the nonce that ties the notice to this execution.
     /// `None` runs a process whose crash, if it has one, says nothing it can be told by.
     pub crash: Option<Crashing<'a>>,
+    /// Where the runtime records what became of each failure the active fault made (ADR 0032).
+    /// `None` runs a process whose failures record nothing.
+    pub fate: Option<&'a Path>,
 }
 
 /// Which home a test process is given (ADR 0044).
@@ -3538,6 +3546,7 @@ mod tests {
             touch: None,
             profile: None,
             crash: None,
+            fate: None,
         };
 
         assert!(matches!(
@@ -3560,6 +3569,7 @@ mod tests {
             touch: None,
             profile: None,
             crash: None,
+            fate: None,
         };
         let step = returned!(ExpectedStep::new(&context, Some(scratch.path())), "setup");
         let step = present!(step, "bounded execution");

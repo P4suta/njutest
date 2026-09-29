@@ -1344,6 +1344,7 @@ fn target_key(
         steps: None,
         profile: None,
         crash: None,
+        fate: None,
     };
     let request = ExecRequest::new(target)
         .with_args(building.options.harness_args.clone())
@@ -1475,6 +1476,7 @@ fn ran(
         steps: None,
         profile: None,
         crash: None,
+        fate: None,
     };
     let request = ExecRequest::new(target)
         .with_args(building.options.harness_args.clone())

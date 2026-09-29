@@ -63,6 +63,9 @@ fn failed(decision: &FaultDecision) -> String {
         FaultDecision::Unnoticed => {
             "every test that reached it passed with the call failing".to_owned()
         }
+        FaultDecision::Absorbed => "every test that reached it passed with the call failing, \
+                                    and the failure was dropped without anything reading it"
+            .to_owned(),
         FaultDecision::Unreached => "no test reached it".to_owned(),
         FaultDecision::Waited { on } => format!("this machine stopped waiting for {on}"),
         FaultDecision::Undecided { on, why } => format!("{on} could not be decided: {why}"),
@@ -70,6 +73,19 @@ fn failed(decision: &FaultDecision) -> String {
             format!("the compiler refused the fault: {diagnostic}")
         }
     }
+}
+
+/// Where the failures a fault made went, as a run's record of them counted it.
+fn went(fate: Option<rust_mutants::fate::Fate>) -> String {
+    fate.map_or_else(
+        || "with no record of where its failures went".to_owned(),
+        |fate| {
+            format!(
+                "{} failure(s) made, {} read, {} dropped",
+                fate.made, fate.read, fate.dropped
+            )
+        },
+    )
 }
 
 /// What was read of an exchange, when anything was.
@@ -140,6 +156,17 @@ fn stepped(step: &Step, telling: Telling) -> String {
             telling.painted(Style::Marker, "asked"),
             telling.painted(Style::Subject, target),
             telling.painted(Style::Keyword, outcome)
+        ),
+        Step::Fated {
+            target,
+            outcome,
+            fate,
+        } => format!(
+            "{} {}  {}  {}",
+            telling.painted(Style::Marker, "asked again"),
+            telling.painted(Style::Subject, target),
+            telling.painted(Style::Keyword, outcome),
+            telling.painted(Style::Frame, &went(*fate))
         ),
         Step::ReadBack { run } => format!(
             "{} {}",

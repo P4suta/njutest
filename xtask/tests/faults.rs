@@ -3,7 +3,7 @@
 
 //! What the executions a recording holds of one fault say its decision can be.
 
-use xtask::faults::{Control, Evidence, Exec, FaultContradictionError, Site, supports};
+use xtask::faults::{Control, Evidence, Exec, Fate, FaultContradictionError, Site, supports};
 
 fn site(decision: &str, by: Option<&str>) -> Site {
     Site {
@@ -185,5 +185,91 @@ fn every_decision_is_held_to_the_executions_it_rests_on() {
             "a decision no fault has",
         ],
         "{said:#?}"
+    );
+}
+
+/// A decision about where a failure went, with the one reaching target `t` passing and a run again on it coming to `outcome` with `counted` made, read and dropped.
+fn fated(
+    decision: &str,
+    counted: Option<(u64, u64, u64)>,
+    outcome: &str,
+) -> Result<(), FaultContradictionError> {
+    let execs = ran(&[("t", "survived")]);
+    let reaching = ["t".to_owned()];
+    let again = Fate {
+        fault: "cccc".to_owned(),
+        target: "t".to_owned(),
+        outcome: outcome.to_owned(),
+        counted,
+    };
+    supports(
+        &site(decision, None),
+        &Evidence {
+            execs: execs.iter().collect(),
+            reaching: Some(&reaching),
+            fates: vec![&again],
+            ..Evidence::default()
+        },
+    )
+}
+
+#[test]
+fn a_failure_said_to_go_nowhere_is_held_to_the_runs_again_that_bear_it_out() {
+    let refused: Vec<&str> = [
+        (
+            "absorbed where the run again dropped it unread",
+            fated("absorbed", Some((1, 0, 1)), "survived"),
+        ),
+        (
+            "absorbed where the run again read it",
+            fated("absorbed", Some((1, 1, 1)), "survived"),
+        ),
+        (
+            "absorbed where the run again failed",
+            fated("absorbed", Some((1, 0, 1)), "killed"),
+        ),
+        (
+            "absorbed where the run again kept no record",
+            fated("absorbed", None, "survived"),
+        ),
+        (
+            "absorbed where a failure made was never dropped",
+            fated("absorbed", Some((2, 0, 1)), "survived"),
+        ),
+        (
+            "absorbed with no run again at all",
+            asked("absorbed", None, &[("t", "survived")]),
+        ),
+        (
+            "unnoticed where the run again read it",
+            fated("unnoticed", Some((1, 1, 1)), "survived"),
+        ),
+        (
+            "unnoticed where the run again kept no record",
+            fated("unnoticed", None, "survived"),
+        ),
+        (
+            "unnoticed where the run again dropped it unread",
+            fated("unnoticed", Some((1, 0, 1)), "survived"),
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(case, answer)| match answer {
+        Ok(()) => None,
+        Err(_refused) => Some(case),
+    })
+    .collect();
+    assert_eq!(
+        refused,
+        [
+            "absorbed where the run again read it",
+            "absorbed where the run again failed",
+            "absorbed where the run again kept no record",
+            "absorbed where a failure made was never dropped",
+            "absorbed with no run again at all",
+            "unnoticed where the run again dropped it unread",
+        ],
+        "absorbed stands only on a passing run again of every reaching target that dropped \
+         every failure unread, and unnoticed is refused only where such runs say absorbed"
     );
 }

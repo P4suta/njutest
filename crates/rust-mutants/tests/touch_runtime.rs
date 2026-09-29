@@ -18,7 +18,8 @@ use rust_mutants::instrument::{
     STEP_STATE_SCHEMA, STEPS_ENV, instrument_file,
 };
 use rust_mutants::instrument::{
-    CATALOG_ENV, MODULE_STEM, Rendering, TOUCH_ENV, WATCHED_ENV, render,
+    CATALOG_ENV, FAULT_FATE_ENV, FAULT_FATE_SCHEMA, MODULE_STEM, Rendering, TOUCH_ENV, WATCHED_ENV,
+    render,
 };
 use rust_mutants::rule::Tier;
 use rust_mutants::testkit::compile::ScriptedCompile;
@@ -193,6 +194,86 @@ fn ran(name: &str, body: &str, touching: bool) -> String {
         Some(text) => text,
         None => String::new(),
     }
+}
+
+/// Builds a program around the runtime whose body makes the failures a fault makes, runs it asked to record what became of them, and returns each event it recorded.
+fn fated(name: &str, body: &str) -> Vec<String> {
+    let (module, _) = module();
+    let temporary = tempfile::tempdir().expect("a place to build");
+    let dir = temporary.path();
+    let source = dir.join(format!("{name}.rs"));
+    std::fs::write(&source, format!("{module}\nfn main() {{\n{body}\n}}\n")).expect("write");
+    let built = Command::new("rustc")
+        .args(["--edition", "2024", "--crate-type", "bin"])
+        .arg("--out-dir")
+        .arg(dir)
+        .arg(&source)
+        .output()
+        .expect("rustc runs");
+    assert!(built.status.success(), "{}", exact_output(&built.stderr));
+    let log = dir.join(format!("{name}.fate"));
+    let output = Command::new(dir.join(name))
+        .env(CATALOG_ENV, CATALOG)
+        .env(WATCHED_ENV, WATCHED)
+        .env(FAULT_FATE_ENV, &log)
+        .output()
+        .expect("the program runs");
+    assert!(output.status.success(), "{}", exact_output(&output.stderr));
+    let text = read_optional_text(&log)
+        .expect("read the record")
+        .unwrap_or_default();
+    let prefix = format!("{FAULT_FATE_SCHEMA}\t{CATALOG}\t");
+    text.lines()
+        .map(|line| {
+            line.strip_prefix(&prefix)
+                .expect("every record is one of this catalog")
+                .to_owned()
+        })
+        .collect()
+}
+
+#[test]
+#[expect(
+    clippy::literal_string_with_formatting_args,
+    reason = "the strings are the source of the programs the test builds, and formatting a failure is what they do"
+)]
+fn a_failure_a_fault_makes_says_whether_anything_read_it_before_it_was_dropped() {
+    assert_eq!(
+        fated(
+            "absorbed",
+            "let answer: std::io::Result<u8> = Err(__rm::injected());\n\
+             assert_eq!(answer.unwrap_or_default(), 0);"
+        ),
+        ["made", "dropped"],
+        "a failure a caller throws away unread went nowhere anyone could read it"
+    );
+    assert_eq!(
+        fated(
+            "shown",
+            "let error: std::io::Error = __rm::injected();\n\
+             assert!(!format!(\"{}\", error).is_empty());"
+        ),
+        ["made", "read", "dropped"],
+        "a failure put into a message was read"
+    );
+    assert_eq!(
+        fated(
+            "debugged",
+            "let error: std::io::Error = __rm::injected();\n\
+             assert!(!format!(\"{:?}\", error).is_empty());"
+        ),
+        ["made", "read", "dropped"],
+        "and so was one put into a debugging message"
+    );
+    assert_eq!(
+        fated(
+            "parsed",
+            "let error: std::num::ParseIntError = __rm::injected();\n\
+             assert!(!format!(\"{}\", error).is_empty());"
+        ),
+        Vec::<String>::new(),
+        "an error type that carries nothing of ours records nothing, rather than a guess"
+    );
 }
 
 #[test]

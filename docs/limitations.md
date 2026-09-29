@@ -269,12 +269,13 @@ Where nothing rests on a moved target any more, `reach-moved` still names it: no
 ## What a run asks of a call that can fail
 
 Faults are opt-in, and a run that is not asked for them says nothing about failed calls ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
-A run that is asked pays a second instrumented build and baseline of the tree, and one execution for every `?` a test reaches.
+A run that is asked pays a second instrumented build and baseline of the tree, one execution for every `?` a test reaches, and one more on each target of a fault every reaching test passed.
 
 Three things are not claimed, and each is stated.
 A `?` whose error type is not one of the six the engine makes — `std::io::Error`, `Utf8Error`, `FromUtf8Error`, `ParseIntError`, `ParseFloatError`, `TryFromIntError` — or that propagates an `Option` is refused by the compiler under the fault and named in `fault-not-put`, one entry per compiler error class; a user's own error type is never injected, because guessing its constructor would inject something the program never returns.
 A fault a bound expired on, or whose failure did not reproduce, is a `not-measured` finding, so the run is not `ASSURED`.
-And a caller that swallows the injected error reads as `unnoticed`, which is what the suite could tell: where the error went is not recorded yet.
+And `absorbed` says the failure a fault made was dropped without anything formatting it, which is what the runtime can see of where it went: a caller that wraps the error in one of its own and shows only its own words has absorbed it by that measure, whatever its own message says, and a test that checks only that a call failed reads the same.
+Only an `std::io::Error` carries the record, so a caller that swallows any other error type still reads as `unnoticed`.
 
 A tree written while faults were put is raised for the phase, not for one site, because the faulted executions share one copy of the tree and run in parallel; which fault made the write is not established.
 Only a path first written after the faults began counts: a file a test writes on every run was written before any fault was put, and is not the fault's doing.

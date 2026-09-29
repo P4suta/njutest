@@ -93,6 +93,11 @@ pub enum Payload {
         /// The record.
         attribution: FaultAttributionRecord,
     },
+    /// One fault every reaching test passed, run again on one of them with its runtime recording what became of the failures it made.
+    FaultFate {
+        /// The record.
+        fate: FaultFateRecord,
+    },
     /// What the original code did on the target a fault's detection is confirmed against.
     FaultControl {
         /// The record.
@@ -211,6 +216,7 @@ impl Payload {
             Self::FaultExec { .. } => "fault-exec",
             Self::FaultControl { .. } => "fault-control",
             Self::FaultAttribution { .. } => "fault-attribution",
+            Self::FaultFate { .. } => "fault-fate",
             Self::FaultRoute { .. } => "fault-route",
             Self::FaultRejected { .. } => "fault-rejected",
             Self::Fault { .. } => "fault",
@@ -537,6 +543,21 @@ pub struct FaultAttributionRecord {
     pub passed: bool,
     /// What the same target did run alone without the fault.
     pub unfaulted: Unfaulted,
+}
+
+/// One fault run again on one target that reached it, and what its runtime recorded became of the failures it made (ADR 0032 decision 5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultFateRecord {
+    /// The fault a person types.
+    pub fault: String,
+    /// The target it was run on.
+    pub target: String,
+    /// What the execution established, as the engine names outcomes.
+    pub outcome: String,
+    /// What the record counted, or nothing where there was no record or it could not be read.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub fate: Option<rust_mutants::fate::Fate>,
 }
 
 /// What a target run alone without a fault did to a path its faulted run wrote.

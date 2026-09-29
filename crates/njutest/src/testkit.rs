@@ -353,6 +353,7 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::CrashStep { .. } => "step",
         Payload::FaultControl { .. } | Payload::Control { .. } => "control",
         Payload::FaultAttribution { .. } => "attribution",
+        Payload::FaultFate { .. } => "fate",
         Payload::FaultRejected { .. } => "rejected",
         Payload::ProbeExec { .. } => "probe",
         Payload::WireExchange { .. } => "exchange",
@@ -403,6 +404,8 @@ pub mod payload {
         FaultControl(&'a crate::trace::FaultControlRecord),
         /// A fault's write attribution.
         FaultAttribution(&'a crate::trace::FaultAttributionRecord),
+        /// What became of the failures a fault made on one target.
+        FaultFate(&'a crate::trace::FaultFateRecord),
         /// A fault's route.
         FaultRoute(&'a crate::trace::FaultRouteRecord),
         /// A fault the compiler refused.
@@ -464,6 +467,7 @@ pub mod payload {
             Payload::FaultControl { control } => Ref::FaultControl(control),
             Payload::FaultRoute { route } => Ref::FaultRoute(route),
             Payload::FaultAttribution { attribution } => Ref::FaultAttribution(attribution),
+            Payload::FaultFate { fate } => Ref::FaultFate(fate),
             Payload::FaultRejected { rejected } => Ref::FaultRejected(rejected),
             Payload::Fault { fault } => Ref::Fault(fault),
             Payload::Beside { beside } => Ref::Beside(beside),
@@ -676,6 +680,18 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 faulted: true,
                 passed: true,
                 unfaulted: crate::trace::Unfaulted::DidNotWrite,
+            },
+        },
+        Payload::FaultFate {
+            fate: crate::trace::FaultFateRecord {
+                fault: "abcdef".to_owned(),
+                target: "demo/test/calls".to_owned(),
+                outcome: "survived".to_owned(),
+                fate: Some(rust_mutants::fate::Fate {
+                    made: 1,
+                    read: 0,
+                    dropped: 1,
+                }),
             },
         },
         Payload::FaultRoute {

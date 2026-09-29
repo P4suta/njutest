@@ -13,8 +13,10 @@ use crate::report::faults::{
     BesideRecord, BesideRun, Failed, FaultAccounting, FaultDecision, FaultRecord,
 };
 use crate::report::{CatalogIndex, Finding, FindingKind};
+use crate::trace::FaultFateRecord;
 use crate::ui::Notes;
 use crate::watch::Watch;
+use rust_mutants::fate::{Fate, Fated};
 use rust_mutants::outcome::Outcome;
 
 /// The one rule a faulted session is discovered by.
@@ -78,11 +80,17 @@ pub fn put(
         Reporting { notes, watch },
     )?;
     let root = request.root.display().to_string();
-    let records: Vec<FaultRecord> = judged
+    let mut records: Vec<FaultRecord> = judged
         .judged
         .iter()
         .map(|judged| recorded(judged, &root))
         .collect();
+    absorbed(
+        &session,
+        (&judged.judged, &mut records),
+        &request.test_args,
+        watch,
+    )?;
     for record in &records {
         watch.trace.fault(record.clone());
     }
@@ -186,6 +194,54 @@ fn beside(
         }
     }
     Ok(found)
+}
+
+/// Each fault every reaching test passed, run again on those targets in name order with its runtime recording what became of the failures it made: absorbed where every run passed and dropped every failure it made unread, and left unnoticed at the first that did not (ADR 0032 decision 5).
+fn absorbed(
+    session: &rust_mutants::session::Session,
+    (judged, records): (&[Judged], &mut [FaultRecord]),
+    test_args: &[String],
+    watch: Watch<'_>,
+) -> Result<(), RunnerError> {
+    for (one, record) in judged.iter().zip(records.iter_mut()) {
+        if record.decision != FaultDecision::Unnoticed {
+            continue;
+        }
+        let Some(routing) = &one.routing else {
+            continue;
+        };
+        let mut reaching = routing.reaching.clone();
+        reaching.sort();
+        let mut absorbing = !reaching.is_empty();
+        for target in reaching {
+            if watch.cancel.is_cancelled() {
+                return Err(RunnerError::Interrupted);
+            }
+            let request = rust_mutants::session::Request::new(one.id.as_str())
+                .with_args(test_args.to_vec())
+                .with_target(target.clone());
+            let (result, fated) = session.exec_fated(&request, watch.cancel)?;
+            let fate = match fated {
+                Fated::Recorded(fate) => Some(fate),
+                Fated::Absent | Fated::Unreadable => None,
+            };
+            let outcome = result.outcome();
+            watch.trace.fault_fate(FaultFateRecord {
+                fault: record.display_id.clone(),
+                target,
+                outcome: outcome.name().to_owned(),
+                fate,
+            });
+            if outcome != Outcome::Survived || !fate.is_some_and(Fate::absorbed) {
+                absorbing = false;
+                break;
+            }
+        }
+        if absorbing {
+            record.decision = FaultDecision::Absorbed;
+        }
+    }
+    Ok(())
 }
 
 /// Which run of a pair failed, where exactly one did and the other passed.
@@ -443,6 +499,7 @@ fn recorded(judged: &Judged, root: &str) -> FaultRecord {
             },
             other @ (FaultDecision::Noticed { .. }
             | FaultDecision::Unnoticed
+            | FaultDecision::Absorbed
             | FaultDecision::Unreached
             | FaultDecision::Waited { .. }
             | FaultDecision::Undecided { .. }) => other,

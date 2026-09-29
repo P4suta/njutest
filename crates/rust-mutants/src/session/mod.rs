@@ -1705,6 +1705,7 @@ impl Session {
             steps: None,
             profile: None,
             crash: None,
+            fate: None,
         };
         let timeout = self.mutant_timeout.of(self.baseline(target.id()))?.0;
         let request = ExecRequest::new(target)
@@ -2058,6 +2059,7 @@ impl Session {
                 notice: &notice,
                 nonce: &nonce,
             }),
+            fate: None,
         };
         let mut exec = ExecRequest::new(target)
             .with_args(self.arguments(request))
@@ -2187,6 +2189,7 @@ impl Session {
             profile: None,
             leaders: Some(&self.leaders),
             crash: None,
+            fate: None,
         };
         let mut exec = ExecRequest::new(target)
             .with_args(self.arguments(request))
@@ -2207,6 +2210,52 @@ impl Session {
         })?;
         let reach = self.site_reach(target, &log, (mutant.index, mutant.id.as_str(), &result))?;
         Ok((result, reach))
+    }
+
+    /// Runs one fault against the one target `request` names, asking its runtime to record what became of each failure it made (ADR 0032).
+    ///
+    /// # Errors
+    /// [`SessionError::UnknownMutant`] and [`SessionError::UnknownTarget`], which is also what a request naming no target is.
+    pub fn exec_fated(
+        &self,
+        request: &Request,
+        cancel: &Cancel,
+    ) -> Result<(MutantResult, crate::fate::Fated), EngineError> {
+        let mutant = self.executable(&request.mutant)?;
+        let target = self.named(request)?;
+        let timeout = self.timeout_for(request, target.id())?.0;
+        let scratch = self.exec_scratch(self.home_of(target.id()))?;
+        let record = scratch.engine().join("fault-fate");
+        let context = Context {
+            base_env: &self.workspace.base_env,
+            cargo: Some(self.workspace.toolchain.cargo()),
+            sysroot: self.workspace.toolchain.sysroot(),
+            active: Some((mutant.id.as_str(), self.catalog.digest())),
+            beside: None,
+            touch: None,
+            steps: self.mutant_steps,
+            profile: None,
+            leaders: Some(&self.leaders),
+            crash: None,
+            fate: Some(&record),
+        };
+        let mut exec = ExecRequest::new(target)
+            .with_args(self.arguments(request))
+            .with_timeout(Some(timeout))
+            .with_scratch(scratch)
+            .in_scratch(self.scratch_working_directory);
+        if let Some(test) = &request.test {
+            exec = exec.with_test(test.clone());
+        }
+        let result = self.declined(
+            target.id(),
+            execute::exec(&exec, &context, cancel, &self.workspace.trace),
+        );
+        let fated = match crate::limitation::appended(std::fs::read_to_string(&record)) {
+            Ok(text) => crate::fate::Fated::read(&text, self.catalog.digest()),
+            Err(_unreadable) => crate::fate::Fated::Unreadable,
+        };
+        Ok((result, fated))
     }
 
     /// Whether the run that wrote `log` reached the site at `index`, recording what it reached as a `repair` touch record.
@@ -2388,6 +2437,7 @@ impl Session {
             steps: self.mutant_steps,
             profile: None,
             crash: None,
+            fate: None,
         }
     }
 
@@ -2736,6 +2786,7 @@ impl Session {
             steps: None,
             profile: None,
             crash: None,
+            fate: None,
         };
         if perturbation.schedule != execute::Schedule::AsConfigured && !once.target.harness {
             return MutantResult::apparatus_error(
@@ -2876,6 +2927,7 @@ impl Session {
             steps: None,
             profile: None,
             crash: None,
+            fate: None,
         };
         let mut asked = Vec::new();
         for target in targets {
