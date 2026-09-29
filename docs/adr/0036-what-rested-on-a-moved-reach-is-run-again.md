@@ -9,15 +9,20 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Proposed, 2026-09-24.
 The repair [ADR 0025](0025-a-reach-that-moves-is-not-a-measurement.md) decision 5 left for the next change.
-Implemented by `repaired` and `repair` in `njutest::assure::mutation`, `Session::exec_reaching`, the `repair` trace record and the proofaudit `repair` layer, held end to end by one Unix toolchain test.
-What stands between it and acceptance, as a reading of the tree on 2026-09-29 found it:
+The table says what holds each decision so far, and the list after it what still stands between it and acceptance, as a reading of the tree on 2026-09-29 found it.
 
-- Decision 1: a run again that could not record, exiting 96, is read as a kill, where a control runs again without recording; a repaired survivor keeps the route the proof decided and a repaired read-back disposition its old provenance.
-- Decision 1: whether a disposition is asked depends on target names, since a hole one moved target leaves is never asked of the next.
-- Decision 2: the audit refuses what the code does: a waited repair that ends `unconfirmed`, a declined one, the two touches a quiet re-measurement records, and an `unreached` row whose repair ran and did not reach; it infers `was` from a route's granularity, and checks neither that every resting pair was run again nor the order.
-- Decision 3: the `reach-moved` count counts replacements alone, and holes count as decided again; the counts in both details are not re-derived.
-- Decision 4: a merge never states `reach-moved`, and nothing audits a merge's side of decisions 3 and 4.
-- The checkpoint, the evidence store and the carry store keep dispositions from before the repair; the faulted phase repairs too; `BuildReport::concluded` calls any moved record `INSUFFICIENT` where the published verdict does not.
+| Decision | Held by |
+| --- | --- |
+| 1, run again and replaced only where it reached | `repaired` and `repair` in `njutest::assure::mutation`, routed on `Perturbing` so a faulted session repairs nothing; `Session::exec_reaching`, which runs again with nothing to record a run that could not record, as a control is; `Observation::refused`, so the runtime's own stop is never a kill; `Route::reached_by`, from which the replaced disposition's route and routing are drawn; `left_for_later`, which files the replacement in the evidence and carry stores; `toolchain_verify::a_target_whose_reach_moved_has_every_disposition_resting_on_it_run_again` and `execute::tests::a_process_its_runtime_ended_for_the_apparatus_is_never_a_kill` |
+| 2, the pair recorded and re-derived | the `repair` trace record; the proofaudit `repair` layer, whose `repair::derived` allows exactly what the aggregation can make of an outcome, which pairs a repair with its last touch and reads `was` as `judge` decides it; `proofaudit::a_repair_is_allowed_every_disposition_its_own_execution_can_come_to`, `a_repair_measured_again_alone_is_paired_with_the_touch_of_its_last_run`, `a_repair_touch_is_paired_with_the_repair_that_names_its_mutant_and_nothing_else` |
+| 3, what still rests is a finding, and a limitation otherwise | `drift::found` and `drift::repaired`; `concluded_from`, the one function every verdict is drawn from, which reads a moved reach only for a part; the proofaudit `drift` layer's `held_to_findings` and `held_to_repairs`; `drift::a_moved_target_nothing_rests_on_is_concluded_as_the_published_verdict_concludes_it` |
+| 4, a part repairs what it holds and a merge counts the rest | not held |
+
+- Decision 1: only a lead is run again, so a sealed disposition resting on a moved target stays counted in `unstable-baseline`; and whether a disposition is asked depends on target names, since a hole one moved target leaves is never asked of the next.
+- Decision 2: the audit checks neither that every resting pair was run again nor the order the pairs were run in.
+- Decision 3: the `reach-moved` count counts replacements, holes among them, as decided again; the counts in both details are not re-derived.
+- Decision 4: a merge never states `reach-moved`, because how many dispositions a part ran again is held in the run (`Mutation::repaired`) and not in the part's record, so a merge cannot re-derive it; and nothing audits a merge's side of decisions 3 and 4.
+- The checkpoint keeps only sealed kills and a repair replaces only a lead, so there is no checkpoint state for a repair to bring up to date.
 
 ## Context
 

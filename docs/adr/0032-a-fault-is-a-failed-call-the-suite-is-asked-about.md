@@ -10,14 +10,21 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 Proposed, 2026-09-24.
 The dimension `faulted-v1` of the assurance plan: what a run establishes when a call the program makes fails.
 Implemented by `inject-error`, the runtime's `Injectable` and its record of where a failure went, `njutest::assure::faults` and the proofaudit `faults` layer; `absorbed` landed on 2026-09-29.
-What stands between it and acceptance, as a reading of the tree on 2026-09-29 found it:
+The table says what holds each decision so far, and the list after it what still stands between it and acceptance, as a reading of the tree on 2026-09-29 found it.
+
+| Decision | Held by |
+| --- | --- |
+| 1, a fault site is a `?` in a measured file | not held |
+| 2, a fault replaces the call with its failure | the six `Injectable` implementations of the generated runtime; `execute::tests::every_error_a_fault_can_make_is_made_and_there_are_exactly_six`, which makes each of them and pins that there are six, in the native and the sealed module; the refused sites of `fixture-faulted` |
+| 3, activated like a mutant, and beside one | `Perturbing`, which has no `PartialEq`, so every stage `run_resuming` shares routes on it by an exhaustive match and a faulted session compares no reach and repairs nothing; `toolchain_faults::a_faulted_session_compares_no_reach_and_runs_nothing_again` |
+| 4, only reach decides where a fault is asked | not re-examined by the reading of 2026-09-29: `record_fault_route` records each route, and the proofaudit `faults` layer holds `unreached` to a route that reached nothing, but nothing checks that no discharge was applied to one |
+| 5, a fault has its own decisions | `FaultDecision` and `njutest::assure::faults`; the proofaudit `faults` layer, which reads a decision from the executions that asked the suite, holds `unnoticed` and `absorbed` to every reaching target, `noticed` to the first target in name order that noticed, and `fault-write-unattributed` to the attribution records; `faults::a_fault_nobody_noticed_was_put_to_every_target_that_reaches_it_and_only_its_own_runs_count`, `faults::a_fault_is_noticed_by_the_first_target_in_name_order_that_notices_it`, and the planted unsaid write of the faults sentinel |
+| 6, a survivor asked again under the fault is not a kill | the `beside` records and the proofaudit's re-derivation of them; the `why` step `observable-under-fault`, held by `toolchain_faults::why_names_a_survivor_the_suite_tells_apart_under_a_fault_observable_under_fault`; the runtime's stop on an unknown fault, which `Observation::refused` reads as never a kill, held by `execute::tests::a_process_its_runtime_ended_for_the_apparatus_is_never_a_kill` |
 
 - Decision 1: the engine audit re-mints an `inject-error` row only of `rust-mutants run --operator inject-error`, and no committed engine run holds one; a fault njutest reports carries no rule, span or digest to re-mint from.
   A `?` in a const context and one a macro expands to are held by the walker's general rules, with no fault test.
-- Decision 2: four of the six `Injectable` implementations are never run by a test, and nothing pins that the set is exactly six.
-- Decision 3: the faulted phase still runs `compared_alone` and `repaired` of the shared judging, so an original-code control of the faulted session emits `drift` records, and a moved target would emit `repair` records naming a fault.
-- Decision 5: the audit does not require every reaching target to have run for `unnoticed`, nor `by` to be the first noticing target in name order, and counts attribution runs as the fault's own; nothing audits `fault-write-unattributed`, and the paths written before the first fault and after the last are not recorded.
-- Decision 6: the name `observable-under-fault` is used nowhere, and `beside` evidence reaches the JSON alone, no drawing, page or `why`; the runtime's stop on an unknown fault is untested; `ignore-question-statement` carries nothing only because njutest selects the whole family.
+- Decision 5: the paths written before the first fault and after the last are not recorded, so the audit holds the unattributed finding only to the paths attribution was asked about.
+- Decision 6: the evidence is drawn on the `why` page and in the JSON, and in no report drawing; `ignore-question-statement` carries nothing only because njutest selects the whole family.
 - End to end, nothing runs an unreached `?`, a waited or declined fault, a fault several targets reach, or `failed: alone`.
 
 ## Context

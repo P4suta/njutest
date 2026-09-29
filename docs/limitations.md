@@ -264,7 +264,11 @@ Three things follow and are not hidden.
 A target whose second run cannot be compared — it failed, passed other tests than its baseline, or could not record — is `drift-not-measured`, and every proof read off its baseline rests on one run.
 The comparison sees what the guards see, so a suite whose behaviour moves where no mutant sits moves without this noticing.
 And what rested on a moved target is run again against it with its reach recorded ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)): a kill replaces the disposition, a pass replaces it only where the run's own record shows the site reached, and a pass that did not reach it leaves the disposition resting on the moved record, counted in `unstable-baseline`.
+A run again that could not record what its guards reached is run once more with nothing to record, as a control is, so its pass leaves the disposition where it was.
+A replaced disposition is routed to the target it was run against and kept for later runs as the run decided it.
+Only a lead is run again: a disposition sealed executions established that rests on a moved target stays counted in `unstable-baseline`.
 Where nothing rests on a moved target any more, `reach-moved` still names it: nothing the run concludes stands on the moved record, and the suite's reach is still not a function of the target.
+A report merged from shards names no `reach-moved`, because how many dispositions a part ran again is not in the part's record; what still rests is counted in `unstable-baseline` as in a run measured whole.
 
 ## What a run asks of a call that can fail
 
@@ -277,8 +281,10 @@ A fault a bound expired on, or whose failure did not reproduce, is a `not-measur
 And `absorbed` says the failure a fault made was dropped without anything formatting it, which is what the runtime can see of where it went: a caller that wraps the error in one of its own and shows only its own words has absorbed it by that measure, whatever its own message says, and a test that checks only that a call failed reads the same.
 Only an `std::io::Error` carries the record, so a caller that swallows any other error type still reads as `unnoticed`.
 
-A tree written while faults were put is raised for the phase, not for one site, because the faulted executions share one copy of the tree and run in parallel; which fault made the write is not established.
+A tree written while faults were put is tied to one fault where it can be: the faulted executions share one copy of the tree and run in parallel, so each path first written after the faults began is removed and one fault is run alone on a target that reached it, and a path it writes while that target passes and the target alone without it does not is `broken-under-fault`.
+A path no such run ties is a `not-measured` finding about `fault-write-unattributed`, raised for the phase and not for one site.
 Only a path first written after the faults began counts: a file a test writes on every run was written before any fault was put, and is not the fault's doing.
+A survivor of `question-to-unwrap` that a target tells apart only with the call at its own site failing is `observable-under-fault`, drawn on its `why` page: evidence it is no equivalence, in no kill count, since no test makes that call fail.
 A tree whose faulted build or baseline could not be measured raises a `not-measured` finding about `fault-baseline-not-measured` and puts nothing.
 A tree with no `?` in any measured file states `fault-no-site`: there was no call to fail, which is a finding about the tree and not a hole in the run.
 ## What a run asks of a suite that depends on where it runs
