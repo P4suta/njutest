@@ -84,6 +84,22 @@ fn part(fixture: &Fixture) -> serde_json::Value {
     whole["report"]["builds"][0]["parts"][0].clone()
 }
 
+/// The runner's recording of the run the index points at, read back.
+fn recording(fixture: &Fixture) -> Vec<njutest::trace::Event> {
+    let run = njutest::app::reports::pointed_at(&fixture.root, njutest::app::reports::Index::Any)
+        .expect("the index is readable")
+        .expect("the index names a run");
+    let stream = fixture
+        .root
+        .join(".njutest/trace")
+        .join(run.as_str())
+        .join(njutest::trace::FILE_NAME);
+    njutest::trace::read_events(std::io::BufReader::new(
+        std::fs::File::open(&stream).expect("the recording"),
+    ))
+    .expect("the recording reads back")
+}
+
 fn decisions(part: &serde_json::Value) -> Vec<(u64, String)> {
     let mut decided: Vec<(u64, String)> = part["faults"]
         .as_array()
@@ -168,6 +184,41 @@ fn a_run_asked_for_faults_says_which_failed_calls_the_suite_noticed() {
             "waited": 0, "undecided": 0, "not_put": 2
         }),
         "{part}"
+    );
+}
+
+#[test]
+fn a_faulted_session_compares_no_reach_and_runs_nothing_again() {
+    let fixture = fixture("fixture-faulted");
+    let output = verify(&fixture, &["--faults", "--trace"]);
+    let events = recording(&fixture);
+    let faulted = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event.payload,
+                njutest::trace::Payload::FaultRoute { .. }
+                    | njutest::trace::Payload::FaultExec { .. }
+            )
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "the run put faults: {}",
+                njutest_devkit::process::strict_utf8(&output.stderr)
+            )
+        });
+    let compared: Vec<&str> = events
+        .iter()
+        .skip(faulted)
+        .map(|event| event.payload.type_name())
+        .filter(|kind| matches!(*kind, "drift" | "repair"))
+        .collect();
+    assert!(
+        compared.is_empty(),
+        "a faulted session judges faults and nothing else: its touch and drift records are \
+         never compared with the baseline's, so it owes no target a control of its own and runs \
+         no disposition again, and the recording holds none of either after its first fault \
+         (ADR 0032 decision 3): {compared:?}"
     );
 }
 
