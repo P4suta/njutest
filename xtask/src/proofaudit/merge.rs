@@ -320,20 +320,45 @@ struct Lists {
     found: Vec<(String, String)>,
 }
 
+/// What a merged report lacks that a matrix is read off.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Unlisted {
+    /// A build that holds no part.
+    Build(String),
+    /// A part without the list.
+    List(&'static str),
+    /// A row without the text at the pointer.
+    Field(&'static str),
+    /// A row whose evidence is in no shape a run writes.
+    Evidence,
+}
+
+impl Unlisted {
+    /// What a violation says of it.
+    fn said(&self) -> String {
+        match self {
+            Self::Build(name) => format!("the build {name} holds no part"),
+            Self::List(name) => format!("a part holds no {name} list"),
+            Self::Field(pointer) => format!("a row holds no {pointer}"),
+            Self::Evidence => "a row holds evidence in no shape a run writes".to_owned(),
+        }
+    }
+}
+
 impl Lists {
-    /// What every part of `merged` holds, or the first list a part does not hold, by name.
-    fn of(merged: &Complete) -> Result<Self, String> {
-        let list = |part: &Value, name: &str| -> Result<Vec<Value>, String> {
+    /// What every part of `merged` holds, or the first thing a part does not hold.
+    fn of(merged: &Complete) -> Result<Self, Unlisted> {
+        let list = |part: &Value, name: &'static str| -> Result<Vec<Value>, Unlisted> {
             part.get(name)
                 .and_then(Value::as_array)
                 .cloned()
-                .ok_or_else(|| format!("a part holds no {name} list"))
+                .ok_or(Unlisted::List(name))
         };
-        let text = |row: &Value, pointer: &str| -> Result<String, String> {
+        let text = |row: &Value, pointer: &'static str| -> Result<String, Unlisted> {
             row.pointer(pointer)
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned)
-                .ok_or_else(|| format!("a row holds no {pointer}"))
+                .ok_or(Unlisted::Field(pointer))
         };
         let mut lists = Self {
             targets: Vec::new(),
@@ -351,7 +376,7 @@ impl Lists {
             let baseline = build
                 .parts
                 .first()
-                .ok_or_else(|| format!("the build {} holds no part", build.name))?;
+                .ok_or_else(|| Unlisted::Build(build.name.clone()))?;
             lists.targets.extend(list(baseline, "targets")?);
             lists.concurrency.extend(list(baseline, "concurrency")?);
             lists.seams.extend(list(baseline, "seams")?);
@@ -371,9 +396,7 @@ impl Lists {
                     let rests = mutant
                         .get("evidence")
                         .and_then(super::Rests::read)
-                        .ok_or_else(|| {
-                            "a row holds evidence in no shape a run writes".to_owned()
-                        })?;
+                        .ok_or(Unlisted::Evidence)?;
                     let lead = matches!(rests, super::Rests::Unproven(_))
                         && super::SEALED_OUTCOMES.contains(&outcome.as_str());
                     lists.unsettled = lists.unsettled || super::undecided(&outcome, lead);
@@ -416,7 +439,7 @@ fn dimensioned(merged: &Complete, kept: Option<&str>, notes: &mut Notes<'_>) {
     let lists = match Lists::of(merged) {
         Ok(lists) => lists,
         Err(why) => {
-            broke(notes, MergeRule::Dimensions, "dimensions", &why);
+            broke(notes, MergeRule::Dimensions, "dimensions", &why.said());
             return;
         }
     };

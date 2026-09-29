@@ -3319,8 +3319,40 @@ fn none_but_not_put(decided: &[String]) -> bool {
 
 /// What the record stream `kept` says of each dimension: whether its one `DIMENSION` record leaves it a hole, and which dimensions its findings name.
 struct Said {
-    columns: Vec<(String, Result<bool, String>)>,
+    columns: Vec<(String, Result<bool, Unsaid>)>,
     named: BTreeSet<String>,
+}
+
+/// Why a `DIMENSION` record cannot say whether its column is a hole.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Unsaid {
+    /// A measured column without the count, or with one that is not a number.
+    Count(&'static str),
+    /// A measured column whose counts do not add up.
+    Sum {
+        catalogued: u64,
+        answered: u64,
+        holes: u64,
+    },
+    /// A state no matrix has.
+    State(String),
+}
+
+impl Unsaid {
+    /// What a violation says of it.
+    fn said(&self) -> String {
+        match self {
+            Self::Count(name) => format!("a measured column with no {name} count a number holds"),
+            Self::Sum {
+                catalogued,
+                answered,
+                holes,
+            } => {
+                format!("{answered} answered and {holes} holes are not the {catalogued} catalogued")
+            }
+            Self::State(state) => format!("a column in no state a matrix has: {state}"),
+        }
+    }
 }
 
 impl Said {
@@ -3348,15 +3380,15 @@ impl Said {
 }
 
 /// Whether a `DIMENSION` record in `state` with the counts `rest` leaves its dimension a hole, or why the record cannot say.
-fn holed_by(state: &str, rest: &[&str]) -> Result<bool, String> {
-    let count = |name: &str| -> Result<u64, String> {
+fn holed_by(state: &str, rest: &[&str]) -> Result<bool, Unsaid> {
+    let count = |name: &'static str| -> Result<u64, Unsaid> {
         let value = rest
             .iter()
             .find_map(|field| field.strip_prefix(name))
-            .ok_or_else(|| format!("a measured column with no {name} count"))?;
+            .ok_or(Unsaid::Count(name))?;
         value
             .parse::<u64>()
-            .map_err(|error| format!("a measured column whose {name} count is {value:?}: {error}"))
+            .map_err(|_not_a_number| Unsaid::Count(name))
     };
     match state {
         "unmeasured" | "not-asked" => Ok(true),
@@ -3365,13 +3397,15 @@ fn holed_by(state: &str, rest: &[&str]) -> Result<bool, String> {
             let (catalogued, answered, holes) =
                 (count("catalogued=")?, count("answered=")?, count("holes=")?);
             if answered.checked_add(holes) != Some(catalogued) {
-                return Err(format!(
-                    "{answered} answered and {holes} holes are not the {catalogued} catalogued"
-                ));
+                return Err(Unsaid::Sum {
+                    catalogued,
+                    answered,
+                    holes,
+                });
             }
             Ok(holes > 0)
         }
-        other => Err(format!("a column in no state a matrix has: {other}")),
+        other => Err(Unsaid::State(other.to_owned())),
     }
 }
 
@@ -3379,7 +3413,7 @@ fn holed_by(state: &str, rest: &[&str]) -> Result<bool, String> {
 fn columns_disagree(said: &Said, holed: &BTreeSet<&'static str>) -> Vec<(&'static str, String)> {
     let mut disagree = Vec::new();
     for dimension in DIMENSIONS {
-        let records: Vec<&Result<bool, String>> = said
+        let records: Vec<&Result<bool, Unsaid>> = said
             .columns
             .iter()
             .filter(|(name, _holed)| name == dimension)
@@ -3396,7 +3430,7 @@ fn columns_disagree(said: &Said, holed: &BTreeSet<&'static str>) -> Vec<(&'stati
                     if derived { "is" } else { "is not" }
                 ),
             )),
-            [Err(why)] => disagree.push((dimension, why.clone())),
+            [Err(why)] => disagree.push((dimension, why.said())),
             _ => disagree.push((
                 dimension,
                 format!(
