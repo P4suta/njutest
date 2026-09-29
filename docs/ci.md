@@ -168,6 +168,7 @@ Both say how many moved, so a job that carried nothing says so rather than succe
 
 The import is skipped only when there is no file yet, on the first run of a repository, and the export runs whatever the verdict; nothing here fails quietly.
 An answer arriving from another machine is held to exactly what a run of this one would keep it to — the identity it is filed under, and the audit every durable report must satisfy — because that rule lives in one place and a second copy of it would be a second chance to write it more loosely.
+A run reissues it only after the sealed executions it rests on have run again on this machine and come out the same, so an answer whose executions come out otherwise here is named with `NJ8006` and established again rather than believed ([reproducing a sealed verdict](engine/sealed.md#reproducing-a-sealed-verdict)).
 A line that is not an answer refuses the import and names the line (`NJ8004`); an entry this machine cannot read back refuses the export and names the entry, since copying an answer nobody can check makes one broken answer into two.
 
 **What this does not carry is the build.** The compiled tree lives under the temporary directory, keyed to the workspace root, and it is the engine's rather than the runner's; `rust-mutants cache` reports that temporary root and the target directories it holds.

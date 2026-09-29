@@ -284,7 +284,7 @@ The caller's harness arguments are not carried over, because they name and selec
 Every answer is a `sentinel` event of the trace.
 The first planted mutant a layer did not route as it must ends the run in `ERROR` with `NJ5009`, naming the layer, the mutant, what was due, and what the engine did: nothing that layer would remove from the run is believed, and a run that believed it would report a survivor as never reached or never run a test that would have killed it.
 No setting skips the sentinels.
-A run answered whole from the store runs nothing and removes nothing, so it plants nothing either.
+A run answered whole from the store runs only the sealed executions the stored answer rests on, each exactly as recorded, and removes nothing, so it plants nothing either.
 They cost one more prepared session per configured build — a copy, a build, the instrumented build, and one run of a three-test suite — and no mutant execution.
 
 Every layer that removes work is sentineled in the runs that could use it.
@@ -298,6 +298,7 @@ A verdict is what a sealed run observed ([ADR 0046](adr/0046-a-verdict-is-what-a
 Where the build's session sealed anything — which it does unless `[mutation] seal = false` or `--no-seal` says otherwise — the mutation phase first puts each mutation to the sealed executions of the tests whose sealed controls reached it ([sealed execution](engine/sealed.md)), and decides it from them alone: `killed` by the first that detected it, `survived` where every one passed, and `unreached` where no sealed control reaches it.
 Nothing native runs for a mutation they decided, no confirmation pair among it, since one sealed execution is the same every time it runs.
 A stored answer is read back where sealed executions established it; one a native run established is read back only once sealing is tried and decides nothing, and where sealing decides it the stored answer is `superseded`.
+A whole report an earlier run of the same inputs stored is reissued only once every sealed execution it rests on has run again on this machine and come to what the report recorded ([reproducing a sealed verdict](engine/sealed.md#reproducing-a-sealed-verdict)); where one does not, or cannot be made again, the run names it with `NJ8006` and establishes everything again, and a report that rests on no sealed execution affirms nothing sealed and is reissued as it is.
 
 Where the sealed executions establish nothing — a test that reaches the mutation natively is not in the sealed build or reaches it natively and not sealed, a test ran only natively, the sealed build does not hold its guard, or one of them established nothing — the native pipeline below runs, and what it says is a lead.
 The row carries every reason there is no verdict as its `evidence` ([report v1](report-v1.md#what-a-decision-rests-on)), raises one `unproven-mutant` finding, answers nothing, can be accepted by nobody, and leaves the run `INSUFFICIENT`.
