@@ -138,17 +138,27 @@ fn read_gap(
     while at < gap.len() {
         let rest = gap.get(at..).ok_or(MarkerError::SourceBounds)?;
         if let Some(body) = rest.strip_prefix("//") {
-            let length = body.find('\n').unwrap_or(body.len());
+            let length = match body.find('\n') {
+                Some(newline) => newline,
+                None => body.len(),
+            };
             let content = body.get(..length).ok_or(MarkerError::SourceBounds)?;
             read_marker(source, checked_add(from, at)?, content, into)?;
             at = checked_add(checked_add(at, 2)?, length)?;
         } else if let Some(body) = rest.strip_prefix("/*") {
-            let length = body.find("*/").unwrap_or(body.len());
+            let length = match body.find("*/") {
+                Some(close) => close,
+                None => body.len(),
+            };
             let content = body.get(..length).ok_or(MarkerError::SourceBounds)?;
             read_marker(source, checked_add(from, at)?, content, into)?;
             at = checked_add(checked_add(at, 4)?, length)?;
         } else {
-            at = checked_add(at, rest.chars().next().map_or(1, char::len_utf8))?;
+            let width = match rest.chars().next() {
+                Some(next) => next.len_utf8(),
+                None => 1,
+            };
+            at = checked_add(at, width)?;
         }
     }
     Ok(())
@@ -171,7 +181,10 @@ fn read_marker(
         .map_err(|_position| MarkerError::SourceBounds)?
         .line;
     let said = rest.trim();
-    let (directive, reason) = said.split_once(char::is_whitespace).unwrap_or((said, ""));
+    let (directive, reason) = match said.split_once(char::is_whitespace) {
+        Some(parts) => parts,
+        None => (said, ""),
+    };
     if directive != DIRECTIVE {
         if directive.is_empty() {
             return Err(MarkerError::WithoutReason { line });
@@ -188,10 +201,9 @@ fn read_marker(
     let own_line = source
         .text
         .get(..at)
-        .and_then(|before| {
-            before
-                .rsplit_once('\n')
-                .map_or(Some(before), |(_, last)| Some(last))
+        .map(|before| match before.rsplit_once('\n') {
+            Some((_, last)) => last,
+            None => before,
         })
         .is_some_and(|last| last.trim().is_empty());
     let scope = if own_line {

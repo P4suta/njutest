@@ -183,7 +183,7 @@ pub fn explain(asked: &Asked<'_>) -> Result<ExplainDocument, ExplainError> {
         target: row
             .map(|one| one.target.clone())
             .filter(|target| !target.is_empty()),
-        killed_by: row.map(|one| one.killed_by.clone()).unwrap_or_default(),
+        killed_by: killers(row),
         diff,
         source,
         route: row.and_then(|one| one.route.clone()),
@@ -235,6 +235,14 @@ pub fn names(mutant: &MutantDocument) -> String {
         "{}:{}:{}@{}",
         mutant.path, mutant.item, mutant.rule, mutant.line
     )
+}
+
+/// Every test the run's row says noticed the mutant, and none where the run holds no row of it.
+fn killers(row: Option<&RunMutantDocument>) -> Vec<String> {
+    match row {
+        Some(one) => one.killed_by.clone(),
+        None => Vec::new(),
+    }
 }
 
 /// The `[[mutation.expect]]` a reader pastes to record this mutation with a reason.

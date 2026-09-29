@@ -107,6 +107,11 @@ pub enum Uncaptured {
         /// The line.
         line: String,
     },
+    /// The report announced its doctests and never closed, so it counts none of them.
+    Unclosed {
+        /// How many it announced.
+        announced: u32,
+    },
     /// The report does not close, or its closing counts disagree with the doctests it names.
     CountsDisagree {
         /// How many it announced.
@@ -146,6 +151,10 @@ impl std::fmt::Display for Uncaptured {
             Self::Unread { line } => write!(
                 formatter,
                 "rustdoc printed {line:?}, which is not part of a report of doctests"
+            ),
+            Self::Unclosed { announced } => write!(
+                formatter,
+                "rustdoc announced {announced} doctests and its report never closed"
             ),
             Self::CountsDisagree {
                 announced,
@@ -322,17 +331,18 @@ fn closed(report: &Report<'_>) -> Result<(), Uncaptured> {
         Ok(named) => named,
         Err(_wider) => u64::MAX,
     };
-    let counted = report.summary.map_or(u64::MAX, |summary| {
-        [
-            summary.passed,
-            summary.failed,
-            summary.ignored,
-            summary.measured,
-        ]
-        .into_iter()
-        .map(u64::from)
-        .sum()
-    });
+    let Some(summary) = report.summary else {
+        return Err(Uncaptured::Unclosed { announced });
+    };
+    let counted: u64 = [
+        summary.passed,
+        summary.failed,
+        summary.ignored,
+        summary.measured,
+    ]
+    .into_iter()
+    .map(u64::from)
+    .sum();
     let merged_closed = report.merged.is_empty() || report.merged_closed;
     if named != u64::from(announced) || counted != u64::from(announced) || !merged_closed {
         return Err(Uncaptured::CountsDisagree {
@@ -378,10 +388,10 @@ pub fn captured(stdout: &[u8], held: &Held) -> Result<Captured, Uncaptured> {
         if compiled_only || ignored {
             continue;
         }
-        let name = doctest
-            .name
-            .strip_suffix(SHOULD_PANIC)
-            .unwrap_or(doctest.name);
+        let name = match doctest.name.strip_suffix(SHOULD_PANIC) {
+            Some(expecting_a_panic) => expecting_a_panic,
+            None => doctest.name,
+        };
         let expects = match (
             doctest.word,
             report.blocks.get(doctest.name).map(Vec::as_slice),
@@ -436,10 +446,11 @@ pub fn natively_run(native: &str) -> Option<String> {
         return None;
     }
     Some(
-        native
-            .strip_suffix(SHOULD_PANIC)
-            .unwrap_or(native)
-            .to_owned(),
+        match native.strip_suffix(SHOULD_PANIC) {
+            Some(expecting_a_panic) => expecting_a_panic,
+            None => native,
+        }
+        .to_owned(),
     )
 }
 
@@ -537,10 +548,10 @@ pub fn printed(stdout: &[u8]) -> Option<Printed> {
 
 /// The name rustdoc indexes a doctest of a merged binary by: its name, less what libtest appends to one it only compiles.
 fn indexed(listed: &Listed) -> &str {
-    listed
-        .name
-        .strip_suffix(COMPILED_ONLY[0])
-        .unwrap_or(&listed.name)
+    match listed.name.strip_suffix(COMPILED_ONLY[0]) {
+        Some(run) => run,
+        None => listed.name.as_str(),
+    }
 }
 
 /// The doctests the only merged binary of `captured` holds past the ones its harness `printed` before it stopped, named from `native`, the names the native run passed its doctests under: each that rustdoc merged, being neither one that must fail to compile nor one `captured` holds apart, in the order rustdoc indexes them; nothing where `captured` has another merged binary, which leaves which of them holds a doctest unsaid, or where one of them sorts before a doctest printed, which no binary that runs its doctests in order can hold.

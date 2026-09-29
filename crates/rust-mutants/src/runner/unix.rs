@@ -438,14 +438,11 @@ pub(super) fn raised_by_itself(signal: i32) -> bool {
 
 /// The child's status, mapping a signal death to the shell's 128 + N convention: 137 for a SIGKILL is both distinguishable from "no status at all" and what every other tool on the machine prints.
 pub(super) fn process_exit(status: ExitStatus) -> ProcessExit {
-    status.code().map_or_else(
-        || {
-            status
-                .signal()
-                .map_or(ProcessExit::Unknown, ProcessExit::Signal)
-        },
-        ProcessExit::Code,
-    )
+    match (status.code(), status.signal()) {
+        (Some(code), _) => ProcessExit::Code(code),
+        (None, Some(signal)) => ProcessExit::Signal(signal),
+        (None, None) => ProcessExit::Unknown,
+    }
 }
 
 #[cfg(test)]

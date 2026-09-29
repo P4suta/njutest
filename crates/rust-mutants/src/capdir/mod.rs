@@ -70,7 +70,10 @@ impl<'a> Name<'a> {
         if text.ends_with(['.', ' ']) {
             return Err(refused("Windows drops a trailing dot or space"));
         }
-        let stem = text.split('.').next().unwrap_or(text);
+        let stem = match text.split_once('.') {
+            Some((stem, _extension)) => stem,
+            None => text,
+        };
         if RESERVED
             .iter()
             .any(|reserved| reserved.eq_ignore_ascii_case(stem))

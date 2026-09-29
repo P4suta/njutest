@@ -1194,6 +1194,26 @@ fn a_process_that_lost_the_runs_environment_says_so_where_the_run_looks() {
 }
 
 #[test]
+fn a_window_bound_past_what_a_clock_holds_leaves_that_side_open_rather_than_narrowed() {
+    let latest = std::time::UNIX_EPOCH
+        .checked_add(Duration::from_secs(u64::try_from(i64::MAX).expect("fits")))
+        .expect("a clock of signed seconds holds the largest of them");
+    let ended = latest
+        .checked_sub(Duration::from_secs(1))
+        .expect("a second before the latest time is a time");
+    let left = rust_mutants::orphan::Orphan {
+        pid: 4_000_000,
+        parent: 4_200_000,
+        at: Some(latest),
+    };
+    assert!(
+        left.during(ended, ended),
+        "an orphan left a second after an execution ended is within its slack, even where the \
+         slack's end is past what the clock holds"
+    );
+}
+
+#[test]
 fn a_child_that_lost_the_environment_belongs_to_the_execution_that_started_it() {
     use rust_mutants::orphan::{Known, Orphan, ours};
     let child = |parent: u32| Orphan {

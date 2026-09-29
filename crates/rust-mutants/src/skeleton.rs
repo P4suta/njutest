@@ -402,17 +402,15 @@ fn entries(
 ) -> BTreeMap<String, String> {
     let mut entries: BTreeMap<String, String> = BTreeMap::new();
     for (name, bytes) in &unit.files {
-        let sealed: Vec<(u32, &Item)> = name
-            .strip_prefix("$root/")
-            .map(|path| {
-                items
-                    .iter()
-                    .zip(evidence)
-                    .filter(|((_, reference), said)| reference.path == path && said.sealed)
-                    .map(|((item, reference), _)| (reference.ordinal, *item))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let sealed: Vec<(u32, &Item)> = match name.strip_prefix("$root/") {
+            Some(path) => items
+                .iter()
+                .zip(evidence)
+                .filter(|((_, reference), said)| reference.path == path && said.sealed)
+                .map(|((item, reference), _)| (reference.ordinal, *item))
+                .collect(),
+            None => Vec::new(),
+        };
         entries.insert(
             name.clone(),
             crate::id::digest(&with_placeholders(bytes, name, &sealed)),
@@ -465,7 +463,10 @@ fn with_placeholders(bytes: &[u8], name: &str, sealed: &[(u32, &Item)]) -> Vec<u
         out.extend_from_slice(format!("{{sealed:{name}#{ordinal}}}").as_bytes());
         from = end;
     }
-    out.extend_from_slice(bytes.get(from..).unwrap_or_default());
+    out.extend_from_slice(match bytes.get(from..) {
+        Some(rest) => rest,
+        None => &[],
+    });
     out
 }
 
@@ -798,8 +799,14 @@ impl Declarations {
             syn::UseTree::Name(name) => self.imported(prefix, &name.ident.to_string()),
             syn::UseTree::Rename(rename) => self.imported(prefix, &rename.rename.to_string()),
             syn::UseTree::Glob(_) => {
-                let root = prefix.first().map(String::as_str).unwrap_or_default();
-                if !STANDARD_ROOTS.contains(&root) && !LOCAL_ROOTS.contains(&root) {
+                let known = match prefix.first() {
+                    Some(root) => {
+                        STANDARD_ROOTS.contains(&root.as_str())
+                            || LOCAL_ROOTS.contains(&root.as_str())
+                    }
+                    None => false,
+                };
+                if !known {
                     self.found(Unsealing::ForeignGlob {
                         path: prefix.join("::"),
                     });
@@ -814,8 +821,11 @@ impl Declarations {
     }
 
     fn imported(&mut self, prefix: &[String], visible: &str) {
-        let root = prefix.first().map(String::as_str).unwrap_or_default();
-        if SEALABLE_MACROS.contains(&visible) && !STANDARD_ROOTS.contains(&root) {
+        let standard = match prefix.first() {
+            Some(root) => STANDARD_ROOTS.contains(&root.as_str()),
+            None => false,
+        };
+        if SEALABLE_MACROS.contains(&visible) && !standard {
             self.found(Unsealing::Shadowed {
                 name: visible.to_owned(),
             });
@@ -894,13 +904,12 @@ fn attribute(attribute: &syn::Attribute) -> Option<Unsealing> {
 /// Why an attribute with this path unseals, looking inside a `cfg_attr` at what it would apply.
 fn meta_path(path: &syn::Path, meta: Option<&syn::Meta>) -> Option<Unsealing> {
     let name = path_name(path);
-    let first = path
-        .segments
-        .first()
-        .map(|segment| segment.ident.to_string())
-        .unwrap_or_default();
+    let namespaced = match path.segments.first() {
+        Some(first) => TOOL_NAMESPACES.contains(&first.ident.to_string().as_str()),
+        None => false,
+    };
     let listed = path.segments.len() == 1 && SEALABLE_ATTRIBUTES.contains(&name.as_str());
-    let tool = path.segments.len() > 1 && TOOL_NAMESPACES.contains(&first.as_str());
+    let tool = path.segments.len() > 1 && namespaced;
     if !listed && !tool {
         return Some(Unsealing::Attribute { name });
     }
@@ -1140,7 +1149,10 @@ fn invoked(path: &syn::Path, tokens: &TokenStream) -> Option<Unsealing> {
         .iter()
         .map(|segment| segment.ident.to_string())
         .collect();
-    sealable(&segments).map_or_else(|| scanned(tokens.clone()), Some)
+    match sealable(&segments) {
+        Some(unsealing) => Some(unsealing),
+        None => scanned(tokens.clone()),
+    }
 }
 
 /// Why a macro with these path segments unseals, or nothing when it names a listed standard macro.

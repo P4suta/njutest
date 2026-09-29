@@ -230,7 +230,7 @@ fn run_targets(
         if cancel.is_cancelled() {
             reached
                 .limitations
-                .extend(targets.get(at..).unwrap_or_default().iter().map(|left| {
+                .extend(targets.split_at(at).1.iter().map(|left| {
                     Limited::for_target(
                         Limitation::CoverageNotMeasured,
                         TargetId::generated(left.id()),

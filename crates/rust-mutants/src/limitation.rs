@@ -221,9 +221,10 @@ impl FromStr for Limited {
     type Err = ParseError;
 
     fn from_str(named: &str) -> Result<Self, Self::Err> {
-        let (name, target) = named
-            .split_once(':')
-            .map_or((named, None), |(name, target)| (name, Some(target)));
+        let (name, target) = match named.split_once(':') {
+            Some((name, target)) => (name, Some(target)),
+            None => (named, None),
+        };
         let limitation = Limitation::from_str(name)?;
         let target = target.map(TargetId::from_str).transpose()?;
         Ok(Self { limitation, target })

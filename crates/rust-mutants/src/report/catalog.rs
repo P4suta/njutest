@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::catalog::Mutant;
 use crate::session::{PrepareOptions, Session};
-use crate::syntax::Position;
 
 /// The catalog as one JSON document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -234,14 +233,20 @@ pub fn document(
 /// Returns an engine error when the workspace name cannot cross the catalog's exact UTF-8 wire boundary.
 pub fn workspace_document(session: &Session) -> Result<WorkspaceDocument, crate::EngineError> {
     let host = session.toolchain().host().to_owned();
-    let (arch, os) = host.split_once('-').unwrap_or((&host, ""));
+    let (arch, os) = match host.split_once('-') {
+        Some(split) => split,
+        None => (host.as_str(), ""),
+    };
     Ok(WorkspaceDocument {
         root_name: session.root_name()?,
         toolchain: session.toolchain().rustc_version().summary.clone(),
         workspace_digest: session.workspace_digest().to_owned(),
         catalog_digest: session.catalog().digest().to_owned(),
         platform: PlatformDocument {
-            os: os.rsplit('-').next().unwrap_or_default().to_owned(),
+            os: match os.rsplit_once('-') {
+                Some((_vendor, system)) => system.to_owned(),
+                None => os.to_owned(),
+            },
             arch: arch.to_owned(),
             target: host.clone(),
         },
@@ -322,11 +327,14 @@ pub fn mutant_document(
     session: &Session,
     mutant: &Mutant,
 ) -> Result<MutantDocument, crate::EngineError> {
-    let position = session.position(mutant).unwrap_or(Position {
-        line: 0,
-        byte_column: 0,
-        char_column: 0,
-    });
+    let position = session.placed(mutant)?;
+    let attributed = |held: Option<&str>, missing: &'static str| match held {
+        Some(named) => Ok(named.to_owned()),
+        None => Err(crate::workspace::SessionError::UnattributedMutation {
+            mutant: mutant.display_id.to_string(),
+            missing,
+        }),
+    };
     let exact = |field: &'static str, bytes: &[u8]| {
         std::str::from_utf8(bytes)
             .map(str::to_owned)
@@ -343,11 +351,8 @@ pub fn mutant_document(
         id: mutant.id.to_string(),
         display_id: mutant.display_id.to_string(),
         path: mutant.candidate.path.clone(),
-        item: session.item_of(mutant.index).unwrap_or_default().to_owned(),
-        package: session
-            .package_of(mutant.index)
-            .unwrap_or_default()
-            .to_owned(),
+        item: attributed(session.item_of(mutant.index), "item")?,
+        package: attributed(session.package_of(mutant.index), "package")?,
         family: mutant.candidate.rule.family.name().to_owned(),
         rule: mutant.candidate.rule.name.to_owned(),
         rule_version: mutant.candidate.rule.version,

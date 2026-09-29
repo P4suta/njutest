@@ -543,7 +543,7 @@ impl Registry {
                     version: rule.version,
                 });
             }
-            let earlier = self.rules.get(..index).unwrap_or_default();
+            let earlier = self.rules.split_at(index).0;
             if let Some(previous) = earlier.last()
                 && rule.tier < previous.tier
             {

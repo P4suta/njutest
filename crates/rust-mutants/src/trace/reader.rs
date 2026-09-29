@@ -102,7 +102,10 @@ pub fn check(events: &[Event]) -> Vec<Problem> {
     ) {
         problems.push(Problem::MissingRunStart);
     }
-    let mut expected = events.first().map_or(1, |e| e.seq);
+    let mut expected = match events.first() {
+        Some(first) => first.seq,
+        None => 1,
+    };
     for event in events {
         if event.seq != expected {
             problems.push(Problem::SequenceGap {

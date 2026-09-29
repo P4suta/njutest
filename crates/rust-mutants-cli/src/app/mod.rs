@@ -240,10 +240,10 @@ fn reserved(environment: &Environment, compiled_catalog: Option<&str>) -> Result
     if is_self_measurement(environment, compiled_catalog) {
         return Ok(());
     }
-    reserved_names(environment).into_iter().next().map_or_else(
-        || Ok(()),
-        |name| Err(CliError::EnvironmentReserved { name }),
-    )
+    match reserved_names(environment).into_iter().next() {
+        Some(name) => Err(CliError::EnvironmentReserved { name }),
+        None => Ok(()),
+    }
 }
 
 /// Whether this binary belongs to exactly the catalog the inherited activation or touch run names.
@@ -541,7 +541,7 @@ fn measured(
         }
         cli::Command::List { claims: true, .. } => {
             let discovery = session::preview(&workspace, &options, cancel)?;
-            let expectations = expectations(settings);
+            let expectations = expectations(settings)?;
             let resolved =
                 session::resolve_claims(&workspace, &options, &discovery, &expectations)?;
             write(stdout, &report::claims(&expectations, &resolved))?;
@@ -712,9 +712,10 @@ fn narrowed(considered: &[String], named: &[String]) -> Result<(), CliError> {
     let missing: Vec<&String> = named
         .iter()
         .filter(|one| {
-            let path = one
-                .rsplit_once(':')
-                .map_or(one.as_str(), |(head, _lines)| head);
+            let path = match one.rsplit_once(':') {
+                Some((head, _lines)) => head,
+                None => one.as_str(),
+            };
             !considered.iter().any(|held| held == path)
         })
         .collect();
@@ -986,7 +987,10 @@ fn prepared(
                         command,
                         prepared.settings,
                         session,
-                        prepared_filter.cloned().unwrap_or_default(),
+                        match prepared_filter {
+                            Some(narrowed) => narrowed.clone(),
+                            None => run::Filter::default(),
+                        },
                     )?,
                     phases: prepared.phases,
                     environment: prepared.environment,
@@ -1137,7 +1141,7 @@ fn whole(
         rust_mutants::carry::Store::new(&environment.cache_directory),
         Killers::new(&environment.cache_directory),
     );
-    let (keyed, expectations) = (keyed(session, whole), expectations(settings));
+    let (keyed, expectations) = (keyed(session, whole), expectations(settings)?);
     let selection = report::selection_document(&settings.prepare_options()?);
     let options = run::Options {
         quiet: &run::Quiet::default(),
@@ -1490,7 +1494,10 @@ pub fn addressed(text: &str) -> Result<(String, Option<(u32, u32)>), CliError> {
         value: text.to_owned(),
         expected: "PATH, PATH:LINE, or PATH:FROM-TO".to_owned(),
     };
-    let (from, to) = lines.split_once('-').unwrap_or((lines, lines));
+    let (from, to) = match lines.split_once('-') {
+        Some(range) => range,
+        None => (lines, lines),
+    };
     let from: u32 = from.parse::<u32>().map_err(|_error| refuse())?;
     let to: u32 = to.parse::<u32>().map_err(|_error| refuse())?;
     if from == 0 || to < from {
@@ -1520,9 +1527,10 @@ fn replay(
         }
     }
     if let Some(judged) = run::sealed_now(session, &found, cancel)? {
-        let now = judged
-            .not_run_reason
-            .map_or_else(|| judged.outcome.name(), run::NotRunReason::name);
+        let now = match judged.not_run_reason {
+            Some(unrun) => unrun.name(),
+            None => judged.outcome.name(),
+        };
         write(
             stdout,
             &format!(
@@ -1647,7 +1655,11 @@ fn stored_explain(
     let settings = Settings::resolve(scope, environment)?;
     let directory = settings.report_directory();
     let report = stored::report_of(&directory, named)?;
-    let run = report.parent().map(Path::to_path_buf).unwrap_or_default();
+    let Some(run) = report.parent() else {
+        return Err(CliError::ReportMissing {
+            message: format!("{} is a report in no run's directory", report.display()),
+        });
+    };
     let catalog: rust_mutants::report::catalog::CatalogDocument =
         read_document(&run.join(rust_mutants::report::evidence::CATALOG))?;
     if named.is_none()
@@ -2108,7 +2120,10 @@ fn instrumented(
         guard.id,
         guard.form,
         guard.site,
-        landed.unwrap_or_else(|| String::from("the guard left no branch in the rewrite"))
+        match landed {
+            Some(line) => line,
+            None => String::from("the guard left no branch in the rewrite"),
+        }
     ))
 }
 
@@ -2124,10 +2139,16 @@ pub fn line_around(text: &str, offset: u32) -> Option<String> {
         None => 0,
     };
     let rest = text.get(at..)?;
-    let width = rest.find('\n').unwrap_or(rest.len());
+    let width = match rest.find('\n') {
+        Some(newline) => newline,
+        None => rest.len(),
+    };
     let to = at.checked_add(width)?;
     text.get(from..to)
-        .map(|line| line.strip_suffix('\r').unwrap_or(line).to_owned())
+        .map(|line| match line.strip_suffix('\r') {
+            Some(without) => without.to_owned(),
+            None => line.to_owned(),
+        })
 }
 
 fn json_line<T: serde::Serialize>(value: &T) -> Result<String, CliError> {
@@ -2223,13 +2244,24 @@ fn merge(
 }
 
 /// The claims the file wrote, as the engine reads them.
-fn expectations(settings: &Settings) -> Vec<Expectation> {
+///
+/// # Errors
+/// [`CliError::InvalidValue`] for an entry that is not a claim, which reading the file refuses first.
+fn expectations(settings: &Settings) -> Result<Vec<Expectation>, CliError> {
     settings
         .config
         .mutation
         .expect
         .iter()
-        .map(crate::config::Expect::expectation)
+        .map(|entry| {
+            entry.expectation().ok_or_else(|| CliError::InvalidValue {
+                flag: "[[mutation.expect]]".to_owned(),
+                value: entry.name(),
+                expected: "an identity, or a path, an item, a rule and an original, with an \
+                           outcome of survived or killed"
+                    .to_owned(),
+            })
+        })
         .collect()
 }
 

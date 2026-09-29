@@ -553,10 +553,10 @@ fn branch_at(files: &[FileOutput], span: &DiagnosticSpan) -> Option<u32> {
 }
 
 fn rendered(diagnostic: &Diagnostic) -> String {
-    diagnostic
-        .rendered
-        .clone()
-        .unwrap_or_else(|| diagnostic.message.clone())
+    match &diagnostic.rendered {
+        Some(rendered) => rendered.clone(),
+        None => diagnostic.message.clone(),
+    }
 }
 
 /// The first error of a message stream, rendered, so a caller can say what stopped a build without matching on the stream itself.
@@ -567,15 +567,15 @@ pub fn first_error_of(messages: &[Message]) -> String {
 
 /// The first error of a round, rendered, for a message about the round.
 fn first_error(messages: &[Message]) -> String {
-    messages
-        .iter()
-        .find_map(|message| match message {
-            Message::CompilerMessage(compiler) if compiler.message.is_error() => {
-                Some(rendered(&compiler.message))
-            }
-            _ => None,
-        })
-        .unwrap_or_else(|| "the build failed without an error message".to_owned())
+    match messages.iter().find_map(|message| match message {
+        Message::CompilerMessage(compiler) if compiler.message.is_error() => {
+            Some(rendered(&compiler.message))
+        }
+        _ => None,
+    }) {
+        Some(first) => first,
+        None => "the build failed without an error message".to_owned(),
+    }
 }
 
 /// What one validation is bounded and watched by.
@@ -789,18 +789,21 @@ fn attributions(attributed: &Attributed) -> Vec<AttributionRecord> {
                 .get(index)
                 .cloned()
                 .and_then(std::convert::identity),
-            said: attributed
-                .diagnostics
-                .get(index)
-                .map(|said| first_line(said))
-                .unwrap_or_default(),
+            said: match attributed.diagnostics.get(index) {
+                Some(said) => first_line(said),
+                None => String::new(),
+            },
         })
         .collect()
 }
 
 /// The first line of a rendered diagnostic, which is the one that says what went wrong.
 fn first_line(said: &str) -> String {
-    said.lines().next().unwrap_or(said).to_owned()
+    match said.lines().next() {
+        Some(first) => first,
+        None => said,
+    }
+    .to_owned()
 }
 
 /// Keeps the first thing the compiler said about each condemned mutant, and why it was left out.
@@ -811,11 +814,10 @@ fn record(attributed: &Attributed, into: &mut BTreeMap<u32, Said>) {
             .get(index)
             .cloned()
             .and_then(std::convert::identity);
-        let words = attributed
-            .diagnostics
-            .get(index)
-            .cloned()
-            .unwrap_or_default();
+        let words = match attributed.diagnostics.get(index) {
+            Some(said) => said.clone(),
+            None => String::new(),
+        };
         let reason = if attributed.evaluated.contains(index) {
             Condemnation::EvaluatedBeforeRun
         } else {

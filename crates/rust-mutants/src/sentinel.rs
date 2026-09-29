@@ -522,9 +522,10 @@ impl Sighting {
                 return format!("{}{withdrawn}", compared.identity.name());
             }
         };
-        let fallback = route
-            .fallback()
-            .map_or_else(String::new, |fallback| format!(" ({})", fallback.name()));
+        let fallback = match route.fallback() {
+            Some(fallback) => format!(" ({})", fallback.name()),
+            None => String::new(),
+        };
         let proofs: Vec<String> = route
             .discharged()
             .iter()

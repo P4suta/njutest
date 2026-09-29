@@ -1064,7 +1064,10 @@ fn unwrapped(text: &str, module: &str) -> String {
         {
             path_start = path_start.saturating_sub(OUTER.len());
         }
-        kept.push_str(before.get(..path_start).unwrap_or_default());
+        kept.push_str(match before.get(..path_start) {
+            Some(ahead_of_the_path) => ahead_of_the_path,
+            None => "",
+        });
         let blanked = before
             .len()
             .saturating_sub(path_start)
@@ -1072,7 +1075,10 @@ fn unwrapped(text: &str, module: &str) -> String {
         kept.extend(std::iter::repeat_n(' ', blanked));
         from = text.len().saturating_sub(rest.len());
     }
-    kept.push_str(text.get(from..).unwrap_or_default());
+    kept.push_str(match text.get(from..) {
+        Some(after_the_last_call) => after_the_last_call,
+        None => "",
+    });
     kept
 }
 
@@ -1478,14 +1484,14 @@ impl File<'_> {
                 probe: self.probed.get(&placement.index).copied(),
             });
         }
-        let form = node
-            .alternatives
-            .first()
-            .map_or(Form::E, |placement| placement.hint.form);
-        let depth = node
-            .alternatives
-            .first()
-            .map_or(0, |placement| placement.hint.super_depth);
+        let form = match node.alternatives.first() {
+            Some(placement) => placement.hint.form,
+            None => Form::E,
+        };
+        let depth = match node.alternatives.first() {
+            Some(placement) => placement.hint.super_depth,
+            None => 0,
+        };
         let composed = guards::compose(
             form,
             &guards::Paths {
@@ -1584,7 +1590,10 @@ impl File<'_> {
                 ),
             )
         })?;
-        let in_replacement: Vec<u32> = kept.map(|one| one.faults.clone()).unwrap_or_default();
+        let in_replacement: Vec<u32> = match kept {
+            Some(one) => one.faults.clone(),
+            None => Vec::new(),
+        };
         let replacement = match kept {
             Some(one) => {
                 let (_, rest) = replacement.split_at(self.slice(one.span)?.len());

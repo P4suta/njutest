@@ -360,9 +360,10 @@ fn create(parent: &File, name: &[u16], how: &Create<'_>) -> io::Result<File> {
         RootDirectory: parent.as_raw_handle(),
         ObjectName: &raw const object_name,
         Attributes: OBJ_CASE_INSENSITIVE,
-        SecurityDescriptor: how.security.map_or(ptr::null(), |private| {
-            private.descriptor().cast_const().cast()
-        }),
+        SecurityDescriptor: match how.security {
+            Some(private) => private.descriptor().cast_const().cast(),
+            None => ptr::null(),
+        },
         SecurityQualityOfService: ptr::null(),
     };
     let mut handle: HANDLE = ptr::null_mut();
@@ -477,7 +478,10 @@ fn volume_of(directory: &File) -> io::Result<Volume> {
         )
     };
     succeeded(asked)?;
-    let named = system.split(|unit| *unit == 0).next().unwrap_or(&[]);
+    let named = match system.iter().position(|unit| *unit == 0) {
+        Some(terminator) => system.split_at(terminator).0,
+        None => system.as_slice(),
+    };
     let system = String::from_utf16(named).map_err(|error| {
         io::Error::new(
             io::ErrorKind::InvalidData,

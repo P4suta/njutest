@@ -265,10 +265,13 @@ pub fn render(summary: &Summary) -> String {
         );
     }
     for (program, started) in &summary.invocations {
-        let duration = summary.programs.get(program).copied().unwrap_or_default();
+        let spent = match summary.programs.get(program) {
+            Some(duration) => format!("{duration}ms"),
+            None => "no time recorded".to_owned(),
+        };
         line(
             &mut out,
-            format_args!("PROGRAM\t{program}\t{started} started\t{duration}ms"),
+            format_args!("PROGRAM\t{program}\t{started} started\t{spent}"),
         );
     }
     for command in &summary.slowest {
@@ -311,8 +314,14 @@ pub fn diff(before: &Summary, after: &Summary) -> Vec<Change> {
         names.dedup();
         for name in names {
             let (from, to) = (
-                was.get(name).copied().unwrap_or_default(),
-                is.get(name).copied().unwrap_or_default(),
+                match was.get(name) {
+                    Some(counted) => *counted,
+                    None => 0,
+                },
+                match is.get(name) {
+                    Some(counted) => *counted,
+                    None => 0,
+                },
             );
             if from != to {
                 changes.push(Change {
@@ -350,7 +359,7 @@ fn path_of(open: &[String], name: &str) -> String {
 
 /// The program a command line starts with, by file name, without the suffix a platform puts on an executable.
 fn program_of(argv: &[String]) -> String {
-    argv.first().map_or_else(String::new, |first| {
+    let named = |first: &String| {
         let name = match std::path::Path::new(first)
             .file_name()
             .and_then(std::ffi::OsStr::to_str)
@@ -371,7 +380,11 @@ fn program_of(argv: &[String]) -> String {
         } else {
             name
         }
-    })
+    };
+    match argv.first() {
+        Some(first) => named(first),
+        None => String::new(),
+    }
 }
 
 /// The command line as a reader would quote it: the program by name, then its arguments.

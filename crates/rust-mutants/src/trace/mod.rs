@@ -296,10 +296,10 @@ impl Recorder {
     /// Every event a memory sink of this recording kept, oldest first.
     #[must_use]
     pub fn events(&self) -> Vec<Event> {
-        self.inner
-            .as_ref()
-            .map(|inner| inner.sink.events())
-            .unwrap_or_default()
+        match self.inner.as_ref() {
+            Some(inner) => inner.sink.events(),
+            None => Vec::new(),
+        }
     }
 
     /// Whether anything is recorded.
@@ -701,10 +701,9 @@ fn primary_with_close(primary: std::io::Error, close: std::io::Result<()>) -> st
 fn environment_names(entries: &[String]) -> Vec<String> {
     let mut names: Vec<String> = entries
         .iter()
-        .map(|entry| {
-            entry
-                .split_once('=')
-                .map_or(entry.as_str(), |(name, _)| name)
+        .map(|entry| match entry.split_once('=') {
+            Some((name, _)) => name,
+            None => entry.as_str(),
         })
         .filter(|name| !name.is_empty())
         .map(str::to_owned)

@@ -639,6 +639,14 @@ pub(crate) fn discover_counting_planted(
     })
 }
 
+/// Where a rule sits in the registry's order, and a rule it does not list after every one it does.
+fn listed(registry: &Registry, name: &str) -> usize {
+    match registry.position(name) {
+        Some(listed) => listed,
+        None => usize::MAX,
+    }
+}
+
 fn discover_counting_with<'p>(
     parsing: &'p crate::parsing::Parsing,
     (path, source): (&str, &[u8]),
@@ -702,7 +710,7 @@ fn discover_counting_with<'p>(
         .finish()
         .map_err(|failed| SyntaxError::walked(path, failed))?;
 
-    let position = |name: &str| selection.registry().position(name).unwrap_or(usize::MAX);
+    let position = |name: &str| listed(selection.registry(), name);
     candidates.sort_by_key(|found| {
         (
             found.candidate.span.start,

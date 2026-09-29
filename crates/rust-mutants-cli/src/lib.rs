@@ -85,10 +85,10 @@ impl Environment {
     /// The workspace a command was pointed at: what it named, or where it was started.
     #[must_use]
     pub fn rooted(&self, named: Option<&Path>) -> PathBuf {
-        named.map_or_else(
-            || self.working_directory.clone(),
-            |path| self.working_directory.join(path),
-        )
+        match named {
+            Some(path) => self.working_directory.join(path),
+            None => self.working_directory.clone(),
+        }
     }
 }
 

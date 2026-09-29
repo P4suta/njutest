@@ -437,6 +437,41 @@ pub enum SessionError {
         #[source]
         source: crate::syntax::PositionError,
     },
+    /// A mutation of the catalog has no position in the text its session holds of its file, so nothing written about it could say where it is.
+    #[error(
+        "{}: {mutant} has no position in the text of {path} this session holds, so nothing \
+         written about it could say where it is",
+        error::INSTRUMENT_SOURCE_MISMATCH.code
+    )]
+    UnplacedMutation {
+        /// The mutation, as a person reads its identity.
+        mutant: String,
+        /// The workspace-relative path of its file.
+        path: String,
+    },
+    /// A mutation of the catalog is attributed to no package or no item, so nothing written about it could say whose it is.
+    #[error(
+        "{}: {mutant} is attributed to no {missing} in this session, so nothing written about \
+         it could say whose it is",
+        error::INSTRUMENT_UNKNOWN_MUTANT.code
+    )]
+    UnattributedMutation {
+        /// The mutation, as a person reads its identity.
+        mutant: String,
+        /// What it is attributed to none of: `package` or `item`.
+        missing: &'static str,
+    },
+    /// A judgement names a mutant the session's catalog does not hold, so no row about it could say what it is.
+    #[error(
+        "{}: mutant {index} ({id}) was judged, and the catalog holds no mutant at that index",
+        error::INSTRUMENT_UNKNOWN_MUTANT.code
+    )]
+    UncatalogedJudgement {
+        /// The catalog index the judgement names.
+        index: u32,
+        /// The identity the judgement names.
+        id: String,
+    },
     /// A file used to bind retained build evidence was outside the copied tree.
     #[error(
         "{}: evidence path {} is outside copied tree {}",
@@ -794,6 +829,9 @@ impl SessionError {
             Self::PristineBroken { .. } => error::SESSION_PRISTINE_BROKEN,
             Self::VerifyFailed { .. } => error::SESSION_VERIFY_FAILED,
             Self::UnknownMutant { .. } => error::SESSION_UNKNOWN_MUTANT,
+            Self::UncatalogedJudgement { .. } | Self::UnattributedMutation { .. } => {
+                error::INSTRUMENT_UNKNOWN_MUTANT
+            }
             Self::NotBeside { .. } => error::SESSION_NOT_BESIDE,
             Self::CrashNonceUnavailable { .. } => error::SESSION_NONCE_UNAVAILABLE,
             Self::HomeUnbuilt { .. } | Self::IdentityUncopied { .. } => error::SESSION_HOME_UNBUILT,
@@ -837,6 +875,7 @@ impl SessionError {
             Self::SelectionSourceMissing { .. }
             | Self::SelectionSourceNotUtf8 { .. }
             | Self::SelectionPositionInvalid { .. }
+            | Self::UnplacedMutation { .. }
             | Self::EvidencePathOutside { .. }
             | Self::EvidencePathNotUtf8 { .. }
             | Self::EvidencePathInvalid { .. }

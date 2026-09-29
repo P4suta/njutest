@@ -406,7 +406,10 @@ impl Route {
     /// The tests of `target` this route names, or nothing when every test of it runs.
     #[must_use]
     pub fn tests_of(&self, target: &str) -> &[String] {
-        self.keeps(target).map_or(&[], |one| one.tests.named())
+        match self.keeps(target) {
+            Some(one) => one.tests.named(),
+            None => &[],
+        }
     }
 
     /// What this route keeps `target` for, or nothing when it does not keep it.

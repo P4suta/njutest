@@ -103,7 +103,10 @@ impl DepKind {
     /// The kind, with a normal dependency named rather than absent.
     #[must_use]
     pub fn name(&self) -> &str {
-        self.kind.as_deref().unwrap_or(Self::NORMAL)
+        match self.kind.as_deref() {
+            Some(named) => named,
+            None => Self::NORMAL,
+        }
     }
 }
 
@@ -177,7 +180,10 @@ impl Dependency {
     /// What kind of edge it is, in the word cargo uses.
     #[must_use]
     pub fn kind(&self) -> &str {
-        self.kind.as_deref().unwrap_or(DepKind::NORMAL)
+        match self.kind.as_deref() {
+            Some(named) => named,
+            None => DepKind::NORMAL,
+        }
     }
 }
 

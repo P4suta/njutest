@@ -453,10 +453,17 @@ pub fn create(options: &Options, now: Timestamp) -> Result<Snapshot, SnapshotErr
     let (dir, stable) = destination(&options.dest_parent, source_root, now)?;
     let owner = claim_destination(&dir, now)?;
     let placement = options.layout.under(dir.join(TREE_NAME));
+    let Some(dest_parent) = dir.parent().map(Path::to_path_buf) else {
+        return Err(SnapshotError::new(
+            SnapshotErrorKind::Destination,
+            dir.display().to_string(),
+            "the snapshot directory names no directory it was created in",
+        ));
+    };
     let mut snapshot = Snapshot {
         source_root: placement.source_root().to_path_buf(),
         root: placement.root().to_path_buf(),
-        dest_parent: dir.parent().map(Path::to_path_buf).unwrap_or_default(),
+        dest_parent,
         dir,
         manifest: Vec::new(),
         workspace_digest: digest_of(&[], &passed_over)?,
@@ -579,7 +586,13 @@ pub fn digest_of(entries: &[Entry], passed_over: &[PassedOver]) -> Result<String
     for entry in passed_over {
         write_length_prefixed(&mut hasher, &entry.rel_path)?;
         write_length_prefixed(&mut hasher, entry.kind.name())?;
-        write_length_prefixed(&mut hasher, entry.target.as_deref().unwrap_or(""))?;
+        write_length_prefixed(
+            &mut hasher,
+            match entry.target.as_deref() {
+                Some(target) => target,
+                None => "",
+            },
+        )?;
     }
     Ok(hex::encode(hasher.finalize()))
 }
@@ -1149,7 +1162,7 @@ fn fallback_destination(
         hasher.update(std::process::id().to_be_bytes());
         hasher.update(attempt.to_be_bytes());
         let hex = hex::encode(hasher.finalize());
-        let suffix = hex.get(..STABLE_NAME_HEX_LENGTH).unwrap_or(&hex);
+        let suffix: String = hex.chars().take(STABLE_NAME_HEX_LENGTH).collect();
         let dir = parent.join(format!("{DIR_PREFIX}{suffix}"));
         match fs::create_dir(&dir) {
             Ok(()) => return Ok(dir),

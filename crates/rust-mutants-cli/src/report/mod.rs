@@ -123,10 +123,10 @@ pub fn list(
             continue;
         }
         let candidate_id = candidate.id()?;
-        let mutant = discovery.catalog.by_id(candidate_id.as_str()).map_or_else(
-            || candidate_id.to_string(),
-            |mutant| mutant.display_id.to_string(),
-        );
+        let mutant = match discovery.catalog.by_id(candidate_id.as_str()) {
+            Some(mutant) => mutant.display_id.to_string(),
+            None => candidate_id.to_string(),
+        };
         let position = match sources.get(&candidate.path) {
             Some(source) => position_in(source, candidate.span.start)?,
             None => located.found.position,
@@ -259,11 +259,10 @@ pub fn decisions(discovery: &Discovery, file: &str, line: Option<u32>) -> String
             (None, Some(reason)) => reason.name().to_owned(),
             (None, None) => String::from("-"),
         };
-        let note = decision
-            .note
-            .as_ref()
-            .map(|note| format!("  {note:?}"))
-            .unwrap_or_default();
+        let note = match decision.note.as_ref() {
+            Some(note) => format!("  {note:?}"),
+            None => String::new(),
+        };
         let written = writeln!(
             text,
             "{}:{}  {:<30}  {what}{note}",
@@ -293,7 +292,10 @@ pub fn rejections(session: &Session) -> String {
             rejection.rule,
             rejection.path,
             passed_over(rejection.reason),
-            rejection.diagnostic.lines().next().unwrap_or_default()
+            match rejection.diagnostic.lines().next() {
+                Some(first) => first,
+                None => "",
+            }
         );
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
@@ -544,10 +546,10 @@ pub fn outcome(result: &MutantResult, mutant: &Mutant) -> String {
 /// What sealed executions established about one mutant, a line per execution.
 #[must_use]
 pub fn sealed(judged: &rust_mutants::run::Judged, mutant: &Mutant) -> String {
-    let said = judged.not_run_reason.map_or_else(
-        || judged.outcome.name(),
-        rust_mutants::run::NotRunReason::name,
-    );
+    let said = match judged.not_run_reason {
+        Some(unrun) => unrun.name(),
+        None => judged.outcome.name(),
+    };
     let mut text = format!(
         "{} {}  {}  {}\n",
         mutant.display_id, mutant.candidate.rule, said, judged.target

@@ -92,10 +92,14 @@ pub fn capture_doctests(
         .toolchain
         .command(driver.dir, capture_arguments(capture)?);
     if !options.env.is_empty() {
-        let mut env = spec
-            .env
-            .clone()
-            .unwrap_or_else(crate::vars::Variables::empty);
+        let Some(mut env) = spec.env.clone() else {
+            return Err(CargoError::new(
+                CargoErrorKind::CommandFailed,
+                "the doctests' build adds variables to the toolchain's environment, and the \
+                 toolchain was given none: it inherits this process's, which only the \
+                 composition root reads, so there is nothing to add them to",
+            ));
+        };
         env.overlay(&options.env);
         spec.env = Some(env);
     }

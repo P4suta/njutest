@@ -44,19 +44,24 @@ impl ScriptedCompile {
     #[must_use]
     pub fn from_source(path: &str, source: &str, tier: Tier) -> Self {
         let selection = Selection::tier(&REGISTRY, tier);
-        let discovery = discover_file(path, source.as_bytes(), &selection)
-            .unwrap_or_else(|error| panic!("{path} discovers: {error}"));
+        let discovery = match discover_file(path, source.as_bytes(), &selection) {
+            Ok(discovery) => discovery,
+            Err(error) => panic!("{path} discovers: {error}"),
+        };
         let mut builder = Builder::new();
         for found in &discovery.candidates {
-            builder
-                .add(found.candidate.clone())
-                .unwrap_or_else(|error| panic!("{path} catalogs: {error}"));
+            if let Err(error) = builder.add(found.candidate.clone()) {
+                panic!("{path} catalogs: {error}");
+            }
         }
-        let catalog = builder
-            .build()
-            .unwrap_or_else(|error| panic!("{path} catalogs: {error}"));
-        let placements = plan_file(&catalog, path, &discovery.candidates)
-            .unwrap_or_else(|error| panic!("{path} plans: {error}"));
+        let catalog = match builder.build() {
+            Ok(catalog) => catalog,
+            Err(error) => panic!("{path} catalogs: {error}"),
+        };
+        let placements = match plan_file(&catalog, path, &discovery.candidates) {
+            Ok(placements) => placements,
+            Err(error) => panic!("{path} plans: {error}"),
+        };
         Self {
             path: path.to_owned(),
             source: source.as_bytes().to_vec(),
@@ -144,7 +149,10 @@ impl Compile for ScriptedCompile {
             path: &self.path,
             source: &self.source,
             placements: &kept,
-            carriers: carriers.get(&self.path).map_or(&[][..], Vec::as_slice),
+            carriers: match carriers.get(&self.path) {
+                Some(carried) => carried.as_slice(),
+                None => &[],
+            },
             markers: &[],
             comparable: &BTreeSet::default(),
             probed: &BTreeMap::default(),
@@ -204,10 +212,10 @@ pub fn diagnostic_beside(path: &str, start: u32, end: u32, index: u32) -> Messag
         r#"{{"reason":"compiler-message","package_id":"p","manifest_path":"/w/Cargo.toml","target":{{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"/w/src/lib.rs","edition":"2024"}},"message":{{"message":"mutant {index} does not compile","code":{{"code":"E0999","explanation":""}},"level":"error","spans":[{{"file_name":"{path}","byte_start":0,"byte_end":1,"line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true,"text":[],"label":null}},{{"file_name":"{path}","byte_start":{start},"byte_end":{end},"line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":false,"text":[],"label":"expected because of this"}}],"children":[],"rendered":"error[E0999]: mutant {index} does not compile\n"}}}}"#
     );
     match crate::cargo::parse_messages(json.as_bytes()) {
-        Ok(messages) => messages
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| panic!("the composed diagnostic has one message")),
+        Ok(messages) => match messages.into_iter().next() {
+            Some(message) => message,
+            None => panic!("the composed diagnostic has one message"),
+        },
         Err(error) => panic!("the composed diagnostic parses: {error}"),
     }
 }
@@ -222,10 +230,10 @@ pub fn diagnostic_noted(path: &str, start: u32, end: u32, index: u32) -> Message
         r#"{{"reason":"compiler-message","package_id":"p","manifest_path":"/w/Cargo.toml","target":{{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"/w/src/lib.rs","edition":"2024"}},"message":{{"message":"mutant {index} does not compile","code":{{"code":"E0999","explanation":""}},"level":"error","spans":[{{"file_name":"{path}","byte_start":0,"byte_end":1,"line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true,"text":[],"label":null}}],"children":[{{"message":"the size is not known","code":null,"level":"note","spans":[{{"file_name":"{path}","byte_start":{start},"byte_end":{end},"line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true,"text":[],"label":null}}],"children":[],"rendered":null}}],"rendered":"error[E0999]: mutant {index} does not compile\n"}}}}"#
     );
     match crate::cargo::parse_messages(json.as_bytes()) {
-        Ok(messages) => messages
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| panic!("the composed diagnostic has one message")),
+        Ok(messages) => match messages.into_iter().next() {
+            Some(message) => message,
+            None => panic!("the composed diagnostic has one message"),
+        },
         Err(error) => panic!("the composed diagnostic parses: {error}"),
     }
 }
@@ -249,10 +257,10 @@ pub fn diagnostic_at(path: &str, start: u32, end: u32, index: u32) -> Message {
         r#"{{"reason":"compiler-message","package_id":"p","manifest_path":"/w/Cargo.toml","target":{{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"/w/src/lib.rs","edition":"2024"}},"message":{{"message":"mutant {index} does not compile","code":{{"code":"E0999","explanation":""}},"level":"error","spans":[{{"file_name":"{path}","byte_start":{start},"byte_end":{end},"line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true,"text":[],"label":null}}],"children":[],"rendered":"error[E0999]: mutant {index} does not compile\n"}}}}"#
     );
     match crate::cargo::parse_messages(json.as_bytes()) {
-        Ok(messages) => messages
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| panic!("the composed diagnostic has one message")),
+        Ok(messages) => match messages.into_iter().next() {
+            Some(message) => message,
+            None => panic!("the composed diagnostic has one message"),
+        },
         Err(error) => panic!("the composed diagnostic parses: {error}"),
     }
 }

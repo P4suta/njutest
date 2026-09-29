@@ -205,7 +205,10 @@ pub fn lines<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Lines> {
         Shape::Trimmed,
         &["merge-base", base, "HEAD"],
     );
-    let against = merge_base.as_deref().unwrap_or(base);
+    let against = match merge_base.as_deref() {
+        Some(fork_point) => fork_point,
+        None => base,
+    };
     let diff = ask_up_to(
         asking,
         (Empty::Accept, Shape::Verbatim, DIFF_LIMIT),

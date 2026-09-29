@@ -118,7 +118,11 @@ pub(super) fn bool_method(name: &str) -> bool {
 pub fn respell_int(lit: &syn::LitInt, delta: i32) -> Option<String> {
     let raw = lit.token().to_string();
     let suffix = lit.suffix();
-    let digits = raw.strip_suffix(suffix).unwrap_or(&raw).replace('_', "");
+    let digits = match raw.strip_suffix(suffix) {
+        Some(unsuffixed) => unsuffixed,
+        None => &raw,
+    }
+    .replace('_', "");
     let (prefix, radix) = match digits.get(..2) {
         Some("0x" | "0X") => ("0x", 16),
         Some("0o" | "0O") => ("0o", 8),

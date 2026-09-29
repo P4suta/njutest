@@ -379,10 +379,14 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
         .toolchain
         .command(driver.dir, compile_arguments(options));
     if !options.env.is_empty() {
-        let mut env = spec
-            .env
-            .clone()
-            .unwrap_or_else(crate::vars::Variables::empty);
+        let Some(mut env) = spec.env.clone() else {
+            return Err(CargoError::new(
+                CargoErrorKind::CommandFailed,
+                "the compilation adds variables to the toolchain's environment, and the \
+                 toolchain was given none: it inherits this process's, which only the \
+                 composition root reads, so there is nothing to add them to",
+            ));
+        };
         env.overlay(&options.env);
         spec.env = Some(env);
     }

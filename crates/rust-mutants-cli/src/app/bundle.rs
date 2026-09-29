@@ -48,10 +48,10 @@ pub(super) fn bundle(
             message: format!("no run report is stored under {}", reports.display()),
         })?;
     let run_id = super::stored_spelling(&directory)?;
-    let bundle = asked.output.map_or_else(
-        || directory.join(crate::diagnostics::DIRECTORY_NAME),
-        Path::to_path_buf,
-    );
+    let bundle = match asked.output {
+        Some(named) => named.to_path_buf(),
+        None => directory.join(crate::diagnostics::DIRECTORY_NAME),
+    };
     std::fs::create_dir_all(&bundle).map_err(|source| CliError::writing(&bundle, source))?;
 
     let doctor = json_line(&doctor_document(

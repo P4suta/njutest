@@ -199,10 +199,12 @@ fn said_by(
     let mut changed = Vec::new();
     let mut watched = BTreeMap::new();
     for line in text.lines() {
-        let line = line
+        let Some(line) = line
             .strip_prefix("cargo::")
             .or_else(|| line.strip_prefix("cargo:"))
-            .unwrap_or_default();
+        else {
+            continue;
+        };
         if let Some(path) = line.strip_prefix("rerun-if-changed=") {
             changed.push(path.to_owned());
         } else if let Some(name) = line.strip_prefix("rerun-if-env-changed=") {
@@ -228,8 +230,10 @@ fn watched_of(
     let mut inside = BTreeSet::new();
     let mut outside = BTreeMap::new();
     for path in changed {
-        let full =
-            directory.map_or_else(|| PathBuf::from(&path), |directory| directory.join(&path));
+        let full = match directory {
+            Some(directory) => directory.join(&path),
+            None => PathBuf::from(&path),
+        };
         let text = full
             .to_str()
             .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: full.clone() })?;
@@ -857,9 +861,10 @@ fn unit_sources(
             Some(_) | None => &[],
         };
         units.push(crate::skeleton::UnitSource {
-            package: names
-                .get(unit.package_id.as_str())
-                .map_or_else(|| unit.package_id.clone(), |name| (*name).to_owned()),
+            package: match names.get(unit.package_id.as_str()) {
+                Some(name) => (*name).to_owned(),
+                None => unit.package_id.clone(),
+            },
             target: unit.target.name.clone(),
             kind: unit.target.kind.join(","),
             test: unit.test,
@@ -888,10 +893,10 @@ fn text_of(path: &Path) -> Result<&str, SessionError> {
 
 /// A variable's value as a key holds it: unset, or the digest of what it was set to with the run's own directories spelled portably.
 fn env_value(value: Option<&str>, portable: impl Fn(&str) -> String) -> String {
-    value.map_or_else(
-        || "unset".to_owned(),
-        |value| format!("set:{}", crate::id::digest(portable(value).as_bytes())),
-    )
+    match value {
+        Some(value) => format!("set:{}", crate::id::digest(portable(value).as_bytes())),
+        None => "unset".to_owned(),
+    }
 }
 
 /// The pristine sources, selected placements, and complete-catalog indices one preparation must validate.
@@ -1600,7 +1605,10 @@ impl TreeCompiler<'_> {
             source,
             placements: kept,
             carriers,
-            markers: self.markers.get(path).map_or(&[], Vec::as_slice),
+            markers: match self.markers.get(path) {
+                Some(markers) => markers.as_slice(),
+                None => &[],
+            },
             comparable: self.comparable,
             probed: self.probed,
             catalog_digest: self.catalog.digest(),
@@ -1673,7 +1681,10 @@ impl Compile for TreeCompiler<'_> {
                 .map(|(path, kept)| (path.as_str(), kept.as_slice())),
         );
         for (path, kept) in planned {
-            let carried = carriers.get(&path).map_or(&[][..], Vec::as_slice);
+            let carried = match carriers.get(&path) {
+                Some(carried) => carried.as_slice(),
+                None => &[][..],
+            };
             let (file, changed) = self.instrument_one(&path, (&kept, carried))?;
             if changed {
                 written = written

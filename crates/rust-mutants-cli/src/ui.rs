@@ -253,7 +253,10 @@ impl Observer for Display<'_> {
         }
         line.push('\n');
         if completed.is_multiple_of(TALLY_EVERY) {
-            let elapsed = self.started.map(|at| at.elapsed()).unwrap_or_default();
+            let elapsed = match self.started {
+                Some(at) => at.elapsed(),
+                None => Duration::ZERO,
+            };
             line.push_str(&self.tally.line(elapsed, self.eta(completed)));
         }
         self.say(&line);
@@ -278,14 +281,14 @@ fn beside(judged: &Judged) -> Option<&str> {
 pub fn phase_line(event: &Event) -> Option<String> {
     match &event.payload {
         Payload::PhaseStart { phase } => Some(format!("{:<12}{:>28}\n", phase.name, "started")),
-        Payload::PhaseEnd { phase } => {
-            let milliseconds = phase.duration_ms.unwrap_or_default();
-            Some(format!(
+        Payload::PhaseEnd { phase } => match phase.duration_ms {
+            Some(milliseconds) => Some(format!(
                 "{:<12}{:>28}\n",
                 phase.name,
                 format!("{}.{:02}s", milliseconds / 1000, milliseconds % 1000 / 10)
-            ))
-        }
+            )),
+            None => Some(format!("{:<12}{:>28}\n", phase.name, "ended, untimed")),
+        },
         Payload::RunStart { .. }
         | Payload::Open { .. }
         | Payload::Snapshot { .. }
