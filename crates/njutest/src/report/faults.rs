@@ -153,6 +153,9 @@ pub enum Failed {
     Alone,
 }
 
+/// What a survivor a target told from the original only with the call at its own site failing is called: evidence it is no equivalence, in no kill count and no score (ADR 0032 decision 6).
+pub const OBSERVABLE_UNDER_FAULT: &str = "observable-under-fault";
+
 /// A survivor put again with the fault at its own call beside it, where a target told it from the call failing alone (ADR 0032 decision 6).
 ///
 /// It is evidence that the survivor is not an equivalence, never a kill: no test made the call fail, the run did.

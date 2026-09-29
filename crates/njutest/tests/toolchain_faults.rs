@@ -367,6 +367,37 @@ fn a_tree_every_run_writes_into_is_not_broken_by_a_fault() {
 }
 
 #[test]
+fn why_names_a_survivor_the_suite_tells_apart_under_a_fault_observable_under_fault() {
+    let fixture = fixture("fixture-faulted");
+    let output = verify(&fixture, &["--faults", "--trace"]);
+    let part = part(&fixture);
+    let survivor = part["beside"][0]["mutant"]
+        .as_str()
+        .unwrap_or_else(|| {
+            panic!(
+                "the run holds evidence beside a fault: {part}\n{}",
+                njutest_devkit::process::strict_utf8(&output.stderr)
+            )
+        })
+        .to_owned();
+    let fault = part["beside"][0]["fault"]
+        .as_str()
+        .expect("the evidence names its fault")
+        .to_owned();
+    let why = asked(&fixture, &["why", "mutation", &survivor]);
+    let page = njutest_devkit::process::strict_utf8(&why.stdout);
+    assert!(
+        page.contains("observable-under-fault")
+            && page.contains(&fault)
+            && page.contains("fixture-faulted/test/calls"),
+        "the page of the survivor names the evidence by its name, with the fault at its own \
+         call and the target that told it apart, so a reader learns that it is no equivalence \
+         and which failure no test makes (ADR 0032 decision 6): {page}\n{}",
+        njutest_devkit::process::strict_utf8(&why.stderr)
+    );
+}
+
+#[test]
 fn a_survivor_the_suite_tells_apart_only_under_a_fault_is_evidence_and_never_a_kill() {
     let fixture = fixture("fixture-faulted");
     let output = verify(&fixture, &["--faults"]);
