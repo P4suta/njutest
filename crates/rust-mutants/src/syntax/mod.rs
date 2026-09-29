@@ -326,6 +326,17 @@ pub struct Skip {
     pub count: u32,
 }
 
+/// How many places each reason left unmutated, every record counted by the places it stands for, or `None` where a total does not fit.
+#[must_use]
+pub fn census(skips: &[Skip]) -> Option<BTreeMap<SkipReason, u64>> {
+    let mut census: BTreeMap<SkipReason, u64> = BTreeMap::new();
+    for skip in skips {
+        let places = census.entry(skip.reason).or_insert(0);
+        *places = places.checked_add(u64::from(skip.count))?;
+    }
+    Some(census)
+}
+
 /// One decision the walker took, for the trace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decision {
