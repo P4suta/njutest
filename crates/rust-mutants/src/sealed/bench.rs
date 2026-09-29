@@ -11,9 +11,9 @@ use std::time::Duration;
 use rust_mutants_decision::evidence::Sealed;
 use rust_mutants_decision::judgement::{Account, Ending, Harness, Observed, judged};
 use rust_mutants_sealed::{
-    Arguments, ClockPolicy, Environment, Invocation, Limits, OverlayState, Preopens, RefusalReason,
-    SealedError, SealedModule, SealedRunner, SealedStop, Snapshot, Transcript, TrapKind,
-    WasiFunction,
+    Arguments, ClockPolicy, Environment, Invocation, Limits, OverlayState, Preopen, Preopens,
+    RefusalReason, SealedError, SealedModule, SealedRunner, SealedStop, Snapshot, Transcript,
+    TrapKind, WasiFunction,
 };
 
 use super::doctest::{Expects, Listed, NO_SUCH_INDEX, RUN_ONE, listed};
@@ -645,8 +645,14 @@ impl<'runner> Bench<'runner> {
             arguments: Arguments::new(arguments).map_err(host)?,
             environment: Environment::new(variables).map_err(host)?,
             preopens: Preopens::new(vec![
-                (self.tree.root.clone(), self.tree.snapshot.clone()),
-                (RECORDS.to_owned(), records),
+                Preopen::Tree {
+                    path: self.tree.root.clone(),
+                    snapshot: self.tree.snapshot.clone(),
+                },
+                Preopen::Tree {
+                    path: RECORDS.to_owned(),
+                    snapshot: records,
+                },
             ])
             .map_err(host)?,
             seed: seed(station.target.id()),

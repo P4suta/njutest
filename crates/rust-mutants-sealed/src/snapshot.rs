@@ -71,6 +71,21 @@ impl Snapshot {
     pub(crate) fn nodes(&self) -> &[Node] {
         &self.nodes
     }
+
+    /// The directory `names` walk to from the root, none where one of them is not a directory the snapshot holds.
+    pub(crate) fn directory(&self, names: &[&str]) -> Option<NodeId> {
+        let mut at = ROOT;
+        for name in names {
+            match &self.nodes.get(at)?.body {
+                Body::Directory(entries) => at = *entries.get(*name)?,
+                Body::File(_) => return None,
+            }
+        }
+        match self.nodes.get(at)?.body {
+            Body::Directory(_) => Some(at),
+            Body::File(_) => None,
+        }
+    }
 }
 
 /// What a path given to a snapshot being built names.

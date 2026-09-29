@@ -14,8 +14,8 @@ use std::num::NonZeroU64;
 use std::time::Duration;
 
 use rust_mutants_sealed::{
-    Arguments, ClockPolicy, Environment, Invocation, Limits, Preopens, SealedRunner, Snapshot,
-    Transcript,
+    Arguments, ClockPolicy, Environment, Invocation, Limits, Preopen, Preopens, SealedRunner,
+    Snapshot, Transcript,
 };
 
 /// Every function of WASI preview1 and its signature in the text format, written from the specification rather than from the crate's table, so each checks the other.
@@ -158,6 +158,24 @@ pub fn snapshot() -> Snapshot {
         .expect("the snapshot is valid")
 }
 
+/// `snapshot` preopened as a tree at `path`.
+#[must_use]
+pub fn tree(path: &str, snapshot: Snapshot) -> Preopen {
+    Preopen::Tree {
+        path: path.to_owned(),
+        snapshot,
+    }
+}
+
+/// The working directory `directory` of the tree preopened at `tree`.
+#[must_use]
+pub fn working(tree: &str, directory: &str) -> Preopen {
+    Preopen::Working {
+        tree: tree.to_owned(),
+        directory: directory.to_owned(),
+    }
+}
+
 /// An invocation with no arguments past the program name, the snapshot preopened at `/sandbox`.
 ///
 /// # Panics
@@ -167,7 +185,7 @@ pub fn invocation() -> Invocation {
     Invocation {
         arguments: Arguments::new(vec!["command".to_owned()]).expect("valid arguments"),
         environment: Environment::new(Vec::new()).expect("valid environment"),
-        preopens: Preopens::new(vec![("/sandbox".to_owned(), snapshot())]).expect("valid preopens"),
+        preopens: Preopens::new(vec![tree("/sandbox", snapshot())]).expect("valid preopens"),
         seed: 11,
         fuel: 10_000_000,
         limits: Limits {

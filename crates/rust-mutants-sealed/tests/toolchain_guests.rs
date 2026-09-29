@@ -14,8 +14,9 @@ use std::time::{Duration, Instant};
 
 use proptest::prelude::{ProptestConfig, any, prop, prop_assert_eq, proptest};
 use rust_mutants_sealed::{
-    Arguments, ClockPolicy, Environment, Invocation, Limits, OverlayEntry, OverlayState, Preopens,
-    SealedModule, SealedRunner, SealedStop, Snapshot, Transcript, TrapKind,
+    Arguments, ClockPolicy, Environment, Invocation, Limits, OverlayEntry, OverlayState, Preopen,
+    Preopens, Refusal, RefusalReason, SealedModule, SealedRunner, SealedStop, Snapshot, Transcript,
+    TrapKind, WasiFunction,
 };
 
 include!("support/guests.rs");
@@ -57,8 +58,7 @@ fn invocation(arguments: &[&str]) -> Invocation {
             ("SEALED_FIRST".to_owned(), "one".to_owned()),
         ])
         .expect("the environment is valid"),
-        preopens: Preopens::new(vec![(SANDBOX.to_owned(), snapshot())])
-            .expect("the preopen is valid"),
+        preopens: Preopens::new(vec![tree_at(SANDBOX)]).expect("the preopen is valid"),
         seed: 7,
         fuel: PLENTY,
         limits: Limits {
@@ -225,6 +225,178 @@ fn a_snapshot_preopened_at_an_absolute_host_path_is_read_through_it() {
     );
     assert_eq!(stdout(&transcript), "hello, sealed world");
     assert!(transcript.overlay().is_empty(), "reading changes nothing");
+}
+
+/// Where the test snapshot is preopened when a Windows build spelled its root.
+const WINDOWS_SANDBOX: &str = r"C:\runner\work\snapshot";
+
+/// The test snapshot preopened at `root`.
+fn tree_at(root: &str) -> Preopen {
+    Preopen::Tree {
+        path: root.to_owned(),
+        snapshot: snapshot(),
+    }
+}
+
+/// The working directory `directory` of the tree preopened at `root`.
+fn working_in(root: &str, directory: &str) -> Preopen {
+    Preopen::Working {
+        tree: root.to_owned(),
+        directory: directory.to_owned(),
+    }
+}
+
+/// An invocation of the program with `arguments`, the snapshot preopened at `root` and its working directory at `directory`.
+fn in_working_directory(arguments: &[&str], root: &str, directory: &str) -> Invocation {
+    let mut asked = invocation(arguments);
+    asked.preopens = Preopens::new(vec![tree_at(root), working_in(root, directory)])
+        .expect("the tree and its working directory are valid");
+    asked
+}
+
+/// What the program printed for `arguments` in the working directory `directory` of the snapshot at `root`, once it returned.
+fn printed(
+    module: &SealedModule<'_>,
+    arguments: &[&str],
+    (root, directory): (&str, &str),
+) -> String {
+    let transcript = run(module, &in_working_directory(arguments, root, directory));
+    assert_eq!(
+        transcript.stop(),
+        SealedStop::Returned,
+        "{arguments:?}: {}",
+        stderr(&transcript)
+    );
+    stdout(&transcript)
+}
+
+#[test]
+fn a_relative_path_is_read_from_the_working_directory_and_an_absolute_one_through_its_tree() {
+    let runner = runner();
+    let module = runner
+        .prepare(&program_bytes())
+        .expect("the program is a WASI command");
+    let at = (SANDBOX, "data");
+    assert_eq!(
+        printed(&module, &["read", "hello.txt"], at),
+        "hello, sealed world"
+    );
+    assert_eq!(printed(&module, &["read", "../listing/m.txt"], at), "m");
+    assert_eq!(
+        printed(&module, &["read", &format!("{SANDBOX}/listing/b.txt")], at),
+        "b",
+        "wasi-libc gives a path to the preopen whose name is its longest prefix, the tree's own"
+    );
+    assert_eq!(
+        printed(
+            &module,
+            &[
+                "relay",
+                "made.txt",
+                &format!("{SANDBOX}/data/made.txt"),
+                "one overlay"
+            ],
+            at
+        ),
+        "one overlay",
+        "what a relative path wrote, the tree's absolute path reads"
+    );
+    let escaped = run(
+        &module,
+        &in_working_directory(&["read", "../../outside.txt"], SANDBOX, "data"),
+    );
+    assert_eq!(escaped.stop(), SealedStop::Exited { code: 2 });
+    assert_eq!(
+        escaped.refusals(),
+        [Refusal {
+            function: WasiFunction::PathOpen,
+            reason: RefusalReason::Escape,
+            count: 1,
+        }]
+    );
+}
+
+#[test]
+fn an_absolute_path_no_other_preopen_names_is_read_from_the_working_directory() {
+    let runner = runner();
+    let module = runner
+        .prepare(&program_bytes())
+        .expect("the program is a WASI command");
+    assert_eq!(
+        printed(&module, &["read", "/listing/m.txt"], (SANDBOX, "")),
+        "m",
+        "wasi-libc strips the root off a path before it matches a preopen, so `/listing/m.txt` \
+         is `listing/m.txt` from the working directory"
+    );
+}
+
+#[test]
+fn a_path_a_windows_build_baked_in_reaches_the_tree_however_it_goes_on() {
+    let runner = runner();
+    let module = runner
+        .prepare(&program_bytes())
+        .expect("the program is a WASI command");
+    let at = (WINDOWS_SANDBOX, "data");
+    assert_eq!(
+        printed(
+            &module,
+            &[
+                "read-joined",
+                &format!(r"{WINDOWS_SANDBOX}\data"),
+                "hello.txt"
+            ],
+            at
+        ),
+        format!("{WINDOWS_SANDBOX}\\data/hello.txt\nhello, sealed world"),
+        "the guest's std joins with `/` after a root it does not know is one"
+    );
+    assert_eq!(
+        printed(
+            &module,
+            &["read-joined", WINDOWS_SANDBOX, "listing/m.txt"],
+            at
+        ),
+        format!("{WINDOWS_SANDBOX}/listing/m.txt\nm")
+    );
+    assert_eq!(
+        printed(
+            &module,
+            &["read", r"c:\runner\work\snapshot\listing\b.txt"],
+            at
+        ),
+        "b"
+    );
+    assert_eq!(printed(&module, &["read", r"..\listing\m.txt"], at), "m");
+    assert_eq!(
+        printed(
+            &module,
+            &[
+                "relay",
+                "made.txt",
+                &format!(r"{WINDOWS_SANDBOX}\data\made.txt"),
+                "one overlay"
+            ],
+            at
+        ),
+        "one overlay"
+    );
+    let elsewhere = run(
+        &module,
+        &in_working_directory(
+            &["read", r"C:\runner\work\outside.txt"],
+            WINDOWS_SANDBOX,
+            "data",
+        ),
+    );
+    assert_eq!(elsewhere.stop(), SealedStop::Exited { code: 2 });
+    assert_eq!(
+        elsewhere.refusals(),
+        [Refusal {
+            function: WasiFunction::PathOpen,
+            reason: RefusalReason::Escape,
+            count: 1,
+        }]
+    );
 }
 
 #[test]

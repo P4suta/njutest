@@ -13,8 +13,9 @@ use crate::abi::{
     RIGHTS_ALL, RIGHTS_DIRECTORY, RIGHTS_FD_READ, RIGHTS_FD_WRITE, RIGHTS_FILE, RIGHTS_STDIN,
     RIGHTS_STDOUT, WHENCE_CUR, WHENCE_END, WHENCE_SET,
 };
-use crate::invocation::Preopens;
+use crate::invocation::{Laid, Preopens, WORKING_NAME};
 use crate::snapshot::{Body, NodeId, ROOT, Snapshot, inode_of};
+use crate::spelling::{Reading, Spelling};
 use crate::transcript::{OverlayEntry, RefusalReason};
 
 use super::FILE_TIME;
@@ -88,10 +89,37 @@ pub(crate) struct Live {
 struct Tree {
     /// The guest path it is preopened at.
     guest_path: String,
+    /// How a path into it is read, as its root is spelled.
+    spelling: Spelling,
     /// The snapshot it grew from.
     base: Snapshot,
     /// Every node, the snapshot's first under their own identities, then every node the guest made.
     nodes: Vec<Live>,
+}
+
+impl Tree {
+    /// The tree `snapshot` grows into, preopened at `guest_path` and read as `spelling` says.
+    fn grown(guest_path: &str, snapshot: &Snapshot, spelling: &Spelling) -> Self {
+        Self {
+            guest_path: guest_path.to_owned(),
+            spelling: spelling.clone(),
+            base: snapshot.clone(),
+            nodes: snapshot
+                .nodes()
+                .iter()
+                .map(|node| Live {
+                    held: match &node.body {
+                        Body::File(bytes) => Held::File(Contents::Snapshot(Arc::clone(bytes))),
+                        Body::Directory(entries) => Held::Directory(Arc::clone(entries)),
+                    },
+                    inode: node.inode,
+                    parent: node.parent,
+                    accessed: FILE_TIME,
+                    modified: FILE_TIME,
+                })
+                .collect(),
+        }
+    }
 }
 
 /// What a descriptor reaches.
@@ -118,9 +146,18 @@ enum Object {
         tree: usize,
         /// The node.
         node: NodeId,
-        /// Whether this is the descriptor the tree was preopened at.
-        preopen: bool,
+        /// How the guest was given it, where it was preopened rather than opened.
+        preopen: Option<Entrance>,
     },
+}
+
+/// How a preopened directory was given to the guest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Entrance {
+    /// As its tree's root, named by the tree's guest path.
+    Root,
+    /// As the working directory, named `.`: a relative path starts there and may climb to the tree's root, and a path below the root as the tree spells it starts at the root.
+    Working,
 }
 
 /// An open regular file: where it is, and where its descriptor stands in it.
@@ -288,42 +325,36 @@ impl Filesystem {
             (2, standard(Object::Stderr, RIGHTS_STDOUT)),
         ]);
         let mut trees = Vec::new();
-        for (tree, (guest_path, snapshot)) in preopens.iter().enumerate() {
-            let number = u32::try_from(tree)
+        for (position, laid) in preopens.laid().iter().enumerate() {
+            let number = u32::try_from(position)
                 .map_err(|_wide| Errno::Mfile)?
                 .checked_add(3)
                 .ok_or(Errno::Mfile)?;
+            let (tree, node, entrance) = match laid {
+                Laid::Tree {
+                    path,
+                    snapshot,
+                    spelling,
+                } => {
+                    trees.push(Tree::grown(path, snapshot, spelling));
+                    let tree = trees.len().checked_sub(1).ok_or(Errno::Mfile)?;
+                    (tree, ROOT, Entrance::Root)
+                }
+                Laid::Working { index, node, .. } => (*index, *node, Entrance::Working),
+            };
             descriptors.insert(
                 number,
                 Descriptor {
                     object: Object::Directory {
                         tree,
-                        node: ROOT,
-                        preopen: true,
+                        node,
+                        preopen: Some(entrance),
                     },
                     flags: 0,
                     rights: RIGHTS_DIRECTORY,
                     inheriting: RIGHTS_ALL,
                 },
             );
-            trees.push(Tree {
-                guest_path: guest_path.to_owned(),
-                base: snapshot.clone(),
-                nodes: snapshot
-                    .nodes()
-                    .iter()
-                    .map(|node| Live {
-                        held: match &node.body {
-                            Body::File(bytes) => Held::File(Contents::Snapshot(Arc::clone(bytes))),
-                            Body::Directory(entries) => Held::Directory(Arc::clone(entries)),
-                        },
-                        inode: node.inode,
-                        parent: node.parent,
-                        accessed: FILE_TIME,
-                        modified: FILE_TIME,
-                    })
-                    .collect(),
-            });
         }
         Ok(Self {
             trees,
@@ -703,19 +734,23 @@ impl Filesystem {
         Ok(())
     }
 
-    /// The guest path `fd` was preopened at.
+    /// The name `fd` was preopened by: its tree's guest path, or `.` for the working directory.
     pub(crate) fn preopened(&self, fd: u32) -> Result<&str, Errno> {
         match self.descriptor(fd)?.object {
             Object::Directory {
                 tree,
-                preopen: true,
+                preopen: Some(Entrance::Root),
                 ..
             } => self
                 .trees
                 .get(tree)
                 .map(|held| held.guest_path.as_str())
                 .ok_or(Errno::Badf),
-            Object::Directory { preopen: false, .. }
+            Object::Directory {
+                preopen: Some(Entrance::Working),
+                ..
+            } => Ok(WORKING_NAME),
+            Object::Directory { preopen: None, .. }
             | Object::File { .. }
             | Object::Stdin
             | Object::Stdout
@@ -762,12 +797,7 @@ impl Filesystem {
 
     /// The tree and node of the directory `fd` reaches.
     fn directory(&self, fd: u32) -> Result<(usize, NodeId), Errno> {
-        match self.descriptor(fd)?.object {
-            Object::Directory { tree, node, .. } => Ok((tree, node)),
-            Object::File { .. } | Object::Stdin | Object::Stdout | Object::Stderr => {
-                Err(Errno::Notdir)
-            }
-        }
+        self.entered(fd).map(|(tree, node, _preopen)| (tree, node))
     }
 
     /// The entries of the directory `node` of tree `tree`.
@@ -799,29 +829,67 @@ impl Filesystem {
         Ok(matches!(self.live(tree, node)?.held, Held::Directory(_)))
     }
 
-    /// Resolves `path` from the directory `fd`, refusing one that leaves it.
+    /// The tree and node of the directory `fd` reaches, and how the guest was given it where it was preopened.
+    fn entered(&self, fd: u32) -> Result<(usize, NodeId, Option<Entrance>), Errno> {
+        match self.descriptor(fd)?.object {
+            Object::Directory {
+                tree,
+                node,
+                preopen,
+            } => Ok((tree, node, preopen)),
+            Object::File { .. } | Object::Stdin | Object::Stdout | Object::Stderr => {
+                Err(Errno::Notdir)
+            }
+        }
+    }
+
+    /// The directories from the root of tree `tree` down to `node`, `node` last, which `..` climbs back through.
+    fn ancestry(&self, tree: usize, node: NodeId) -> Result<Vec<NodeId>, Fault> {
+        let bound = self.trees.get(tree).map_or(0, |held| held.nodes.len());
+        let mut chain = vec![node];
+        let mut at = node;
+        for _step in 0..=bound {
+            let up = self.live(tree, at).map_err(errno)?.parent;
+            if up == at {
+                chain.reverse();
+                return Ok(chain);
+            }
+            chain.push(up);
+            at = up;
+        }
+        Err(Fault::Refused(RefusalReason::Escape))
+    }
+
+    /// Resolves `path` from the directory `fd`, refusing one that leaves what `fd` reaches: its own directory, or for the working directory its whole tree.
     fn resolve(&self, fd: u32, path: &str) -> Result<Resolved, Fault> {
-        let (tree, start) = self.directory(fd).map_err(errno)?;
+        let (tree, start, preopen) = self.entered(fd).map_err(errno)?;
         if path.is_empty() {
             return Err(errno(Errno::Noent));
         }
         if path.contains('\0') {
             return Err(errno(Errno::Inval));
         }
-        if path.starts_with('/') {
-            return Err(Fault::Refused(RefusalReason::Escape));
-        }
-        let names: Vec<&str> = path.split('/').filter(|name| !name.is_empty()).collect();
-        let mut chain = vec![start];
+        let spelling = &self.trees.get(tree).ok_or(errno(Errno::Badf))?.spelling;
+        let (mut chain, names) = match (spelling.read(path), preopen) {
+            (Reading::Relative(names), Some(Entrance::Working)) => {
+                (self.ancestry(tree, start)?, names)
+            }
+            (Reading::Relative(names), Some(Entrance::Root) | None) => (vec![start], names),
+            (Reading::Rooted(names), Some(Entrance::Working)) => (vec![ROOT], names),
+            (Reading::Rooted(_), Some(Entrance::Root) | None) | (Reading::Elsewhere, _) => {
+                return Err(Fault::Refused(RefusalReason::Escape));
+            }
+        };
+        let from = chain.last().copied().ok_or(errno(Errno::Badf))?;
         let mut found = Found::Existing {
-            node: start,
+            node: from,
             place: None,
         };
         for (at, name) in names.iter().enumerate() {
             let last = at.checked_add(1) == Some(names.len());
             found = self.step(tree, (&found, &mut chain), (name, last))?;
         }
-        let trailing = path.ends_with('/');
+        let trailing = spelling.trailing(path);
         if let Found::Existing { node, .. } = &found
             && trailing
             && !self.is_directory(tree, *node).map_err(errno)?
@@ -959,7 +1027,7 @@ impl Filesystem {
             let object = Object::Directory {
                 tree,
                 node,
-                preopen: false,
+                preopen: None,
             };
             (object, RIGHTS_DIRECTORY)
         } else {

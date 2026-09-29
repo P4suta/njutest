@@ -16,7 +16,7 @@ use rust_mutants_sealed::{
     TrapKind, WasiFunction,
 };
 
-use crate::common::{command, emitted, invocation, run, snapshot};
+use crate::common::{command, emitted, invocation, run, snapshot, tree};
 
 #[test]
 fn a_socket_call_is_answered_notsup_and_recorded_as_a_refusal() {
@@ -528,11 +528,8 @@ fn a_rename_from_one_preopen_into_another_is_answered_xdev() {
         "(call $expect (call $path_rename (i32.const 3) (i32.const 100) (i32.const 8) (i32.const 4) (i32.const 100) (i32.const 8)) (i32.const 75))",
     );
     let mut two = invocation();
-    two.preopens = Preopens::new(vec![
-        ("/one".to_owned(), snapshot()),
-        ("/two".to_owned(), snapshot()),
-    ])
-    .expect("two preopens");
+    two.preopens = Preopens::new(vec![tree("/one", snapshot()), tree("/two", snapshot())])
+        .expect("two preopens");
     let transcript = run(&bytes, &two);
     assert_eq!(transcript.stop(), SealedStop::Returned);
     assert!(
