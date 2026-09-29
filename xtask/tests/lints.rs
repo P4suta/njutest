@@ -189,7 +189,8 @@ fn cfg_excluded_platform_code_cannot_hide_an_unchecked_cast() {
 
 #[test]
 fn unsafe_code_lives_only_in_the_modules_the_rule_names() {
-    const MODULES: [&str; 3] = [
+    const MODULES: [&str; 4] = [
+        "crates/rust-mutants/src/capdir/windows.rs",
         "crates/rust-mutants/src/runner/unix.rs",
         "crates/rust-mutants/src/runner/windows.rs",
         "crates/rust-mutants/src/tempowner/lock.rs",

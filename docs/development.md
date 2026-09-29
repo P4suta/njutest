@@ -122,7 +122,7 @@ Three semantic states are a closed enum with three named variants, so every matc
 `broad-expectation` additionally refuses crate- or module-wide `expect(dead_code)` and `expect(unsafe_code)`.
 The expectation belongs on the exact expression it permits: one existing hit must not license every unsafe or unused item added later.
 
-`unsafe-outside-ffi` refuses `unsafe` — a block, a function, a trait, an implementation, an `unsafe extern` block, an `unsafe(...)` attribute, or the keyword inside a macro — and an `expect`, `allow` or `warn` of `unsafe_code`, in every file but the modules `xtask/src/lints/ffi.rs` names: the engine's `runner/unix.rs`, `runner/windows.rs` and `tempowner/lock.rs` ([ADR 0037](adr/0037-the-report-store-has-one-capability-directory.md) decision 8).
+`unsafe-outside-ffi` refuses `unsafe` — a block, a function, a trait, an implementation, an `unsafe extern` block, an `unsafe(...)` attribute, or the keyword inside a macro — and an `expect`, `allow` or `warn` of `unsafe_code`, in every file but the modules `xtask/src/lints/ffi.rs` names: the engine's `capdir/windows.rs`, `runner/unix.rs`, `runner/windows.rs` and `tempowner/lock.rs` ([ADR 0037](adr/0037-the-report-store-has-one-capability-directory.md) decision 8).
 Tests are held to it too, and a path is compared whole, so a `runner/windows.rs` in another crate is not one of them.
 The same list is the one `unchecked-cast` reads, so a module that may cross a foreign boundary is exactly a module held to checked conversions, and a new one is named there in the change that argues for it.
 
