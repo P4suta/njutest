@@ -1323,36 +1323,45 @@ fn held_to_counts(
                 ),
             );
         }
-        let again = repairs
-            .iter()
-            .filter(|repair| repair.target == *target)
-            .filter(|repair| repair.reached == "reached" || repair.now != repair.was)
-            .count();
-        let said = format!(
-            "; {again} {} that rested on its baseline",
-            if again == 1 {
-                "disposition"
-            } else {
-                "dispositions"
-            }
-        );
-        for detail in recording
-            .part
-            .limitations
-            .iter()
-            .filter(|row| field(row, "name").as_deref() == Some(REACH_MOVED))
-            .filter_map(|row| field(row, "detail"))
-            .filter(|detail| detail.ends_with(&format!("({target})")))
-            .filter(|detail| !detail.contains(&said))
-        {
-            notes.violated(
-                target,
-                format!(
-                    "the {REACH_MOVED} limitation about {target} does not count the {again} \
-                     disposition(s) the repairs replaced there: {detail}"
-                ),
-            );
+        held_to_replaced(recording, (target, repairs), notes);
+    }
+}
+
+/// The `reach-moved` limitation about `target`, held to how many dispositions resting on it a repair replaced.
+fn held_to_replaced(
+    recording: &Recording<'_>,
+    (target, repairs): (&str, &[crate::repair::Repair]),
+    notes: &mut Notes<'_>,
+) {
+    let again = repairs
+        .iter()
+        .filter(|repair| repair.target == target)
+        .filter(|repair| repair.reached == "reached" || repair.now != repair.was)
+        .count();
+    let said = format!(
+        "; {again} {} that rested on its baseline",
+        if again == 1 {
+            "disposition"
+        } else {
+            "dispositions"
         }
+    );
+    for detail in recording
+        .part
+        .limitations
+        .iter()
+        .filter(|row| field(row, "name").as_deref() == Some(REACH_MOVED))
+        .filter_map(|row| field(row, "detail"))
+        .filter(|detail| detail.ends_with(&format!("({target})")))
+        .filter(|detail| !detail.contains(&said))
+    {
+        notes.violated(
+            target,
+            format!(
+                "the {REACH_MOVED} limitation about {target} does not count the {again} \
+                 disposition(s) the repairs replaced there: {detail}"
+            ),
+        );
     }
 }
 
