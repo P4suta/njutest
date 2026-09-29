@@ -754,6 +754,7 @@ enum Came {
     Trapped,
     FuelExceeded,
     MemoryExceeded,
+    Declined,
     ExitedEarly,
     StackOverflow,
     Refused,
@@ -778,6 +779,7 @@ impl Came {
             Self::Trapped => "trapped",
             Self::FuelExceeded => "fuel-exceeded",
             Self::MemoryExceeded => "memory-exceeded",
+            Self::Declined => "declined",
             Self::ExitedEarly => "exited-early",
             Self::StackOverflow => "stack-overflow",
             Self::Refused => "refused",
@@ -792,7 +794,8 @@ impl Came {
             | Self::Failed
             | Self::Trapped
             | Self::FuelExceeded
-            | Self::MemoryExceeded => Said::Detected,
+            | Self::MemoryExceeded
+            | Self::Declined => Said::Detected,
             Self::ExitedEarly | Self::StackOverflow | Self::Refused | Self::Unaccounted => {
                 Said::Doubted
             }

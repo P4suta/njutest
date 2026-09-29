@@ -242,7 +242,8 @@ const fn sealed_outcome(came_to: rust_mutants::sealed::record::Came) -> Outcome 
         | rust_mutants::sealed::record::Came::Failed
         | rust_mutants::sealed::record::Came::Trapped
         | rust_mutants::sealed::record::Came::FuelExceeded
-        | rust_mutants::sealed::record::Came::MemoryExceeded => Outcome::Killed,
+        | rust_mutants::sealed::record::Came::MemoryExceeded
+        | rust_mutants::sealed::record::Came::Declined => Outcome::Killed,
         rust_mutants::sealed::record::Came::ExitedEarly
         | rust_mutants::sealed::record::Came::StackOverflow
         | rust_mutants::sealed::record::Came::Refused

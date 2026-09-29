@@ -30,12 +30,12 @@ src/lib.rs:8:5 return-true unproven
 src/lib.rs:8:7 gt-to-ge unproven
 src/lib.rs:8:9 int-decrement unproven
 src/lib.rs:8:9 int-increment unproven
-src/lib.rs:13:5 int-decrement unproven
+src/lib.rs:13:5 int-decrement killed
 src/lib.rs:13:5 int-increment survived
 src/lib.rs:13:5 return-true survived
 src/lib.rs:13:7 gt-to-ge survived
 src/lib.rs:13:9 int-decrement survived
-src/lib.rs:13:9 int-increment unproven
+src/lib.rs:13:9 int-increment killed
 src/lib.rs:18:5 return-default unproven
 src/lib.rs:18:11 mul-to-div unproven
 src/lib.rs:18:13 int-decrement unproven

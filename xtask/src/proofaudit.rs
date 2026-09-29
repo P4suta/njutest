@@ -1701,12 +1701,13 @@ impl Rests {
 const SEALED_OUTCOMES: [&str; 4] = [KILLED, SURVIVED, UNREACHED, EQUIVALENT];
 
 /// What a sealed execution comes to where it detected the mutation.
-pub const DETECTIONS: [&str; 5] = [
+pub const DETECTIONS: [&str; 6] = [
     "panicked",
     "failed",
     "trapped",
     "fuel-exceeded",
     "memory-exceeded",
+    "declined",
 ];
 
 /// What a sealed execution comes to where it established nothing, which no execution beside it can make a verdict of but a detection.

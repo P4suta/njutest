@@ -132,6 +132,8 @@ pub enum Came {
     FuelExceeded,
     /// The execution asked for more memory than its control ever did.
     MemoryExceeded,
+    /// The test declined to measure where its control measured.
+    Declined,
     /// The instance exited with status zero before its harness finished.
     ExitedEarly,
     /// The instance's stack overflowed.
@@ -163,6 +165,7 @@ impl Came {
             Self::Trapped => "trapped",
             Self::FuelExceeded => "fuel-exceeded",
             Self::MemoryExceeded => "memory-exceeded",
+            Self::Declined => "declined",
             Self::ExitedEarly => "exited-early",
             Self::StackOverflow => "stack-overflow",
             Self::Refused => "refused",
@@ -190,6 +193,7 @@ impl Came {
             Self::Trapped => Sealed::Detected(Detection::Trapped),
             Self::FuelExceeded => Sealed::Detected(Detection::FuelExceeded),
             Self::MemoryExceeded => Sealed::Detected(Detection::MemoryExceeded),
+            Self::Declined => Sealed::Detected(Detection::Declined),
             Self::ExitedEarly => {
                 Sealed::Doubted(rust_mutants_decision::evidence::Doubt::ExitedEarly)
             }
@@ -213,6 +217,7 @@ impl Came {
             Sealed::Detected(Detection::Trapped) => Self::Trapped,
             Sealed::Detected(Detection::FuelExceeded) => Self::FuelExceeded,
             Sealed::Detected(Detection::MemoryExceeded) => Self::MemoryExceeded,
+            Sealed::Detected(Detection::Declined) => Self::Declined,
             Sealed::Doubted(doubt) => match doubt {
                 rust_mutants_decision::evidence::Doubt::ExitedEarly => Self::ExitedEarly,
                 rust_mutants_decision::evidence::Doubt::StackOverflow => Self::StackOverflow,

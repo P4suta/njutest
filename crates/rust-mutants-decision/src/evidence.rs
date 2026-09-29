@@ -16,6 +16,8 @@ pub enum Detection {
     FuelExceeded,
     /// The execution asked for more memory than a bound its matched control stayed within.
     MemoryExceeded,
+    /// The test declined to measure where its matched control measured, which is the mutant changing what the test did (ADR 0043).
+    Declined,
 }
 
 /// Why a sealed execution established neither a pass nor a detection.

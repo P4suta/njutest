@@ -9,7 +9,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 A run seals by default: it builds the instrumented tree for `wasm32-wasip1`, lists each module's tests and runs each one's control on the host, puts every mutant to the tests whose controls reached it, and writes the verdict they establish, with its `evidence`, into the report.
 [The standing of a mutant](#the-standing-of-a-mutant) is `rust_mutants_decision::evidence::standing` and [the judgement of one execution](#judging-one-execution) is `rust_mutants_decision::judgement::judged`, both held to their rules by exhaustive comparisons and Kani.
 `--no-seal`, or `[mutation] seal = false`, builds nothing for the sealed target, and then every answer is a lead.
-Not yet: a sealed verdict is kept in the outcome store and read back under its key, but `verify` does not yet run a stored report's sealed executions again; a mutant that makes a test decline where its control did not is a doubt rather than the detection ADR 0043 makes it.
+Not yet: a sealed verdict is kept in the outcome store and read back under its key, but `verify` does not yet run a stored report's sealed executions again.
 
 A verdict is what a sealed run observed.
 A sealed run is the instrumented snapshot, built for `wasm32-wasip1`, with each test run alone in a fresh WebAssembly instance on a host that answers every question the same way every time.
@@ -95,6 +95,8 @@ Both are read, and they must agree.
 | anything else, or the harness disagreeing with what the host saw | * | * | doubted: unaccounted |
 
 A panic's trap with the standard library's message for a failed allocation is a memory bound, not a panic.
+A test that declines to measure ([ADR 0043](../adr/0043-a-test-may-decline-to-measure.md)) under the mutant, where its control measured, is detected: declined, whatever its ending, since the mutant changed what the test did.
+A test whose control declined has no control to hold it to, so no mutant is put to it.
 
 A doctest has no libtest account to ask: rustdoc's `main` runs it, and returns only where it returned, so the ending alone decides.
 Its failure status is `ExitCode::FAILURE`, which `main` reports a doctest's error with.

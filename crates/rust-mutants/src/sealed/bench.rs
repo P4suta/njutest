@@ -623,8 +623,8 @@ impl<'runner> Bench<'runner> {
         let invocation = self.invocation(station, asking, (Some(mutant), budget))?;
         let transcript = self.invoke(station, module, &invocation)?;
         if written(&transcript, DECLINE_LOG).is_some_and(|notice| !notice.is_empty()) {
-            return Ok(Some(Sealed::Doubted(
-                rust_mutants_decision::evidence::Doubt::Unaccounted,
+            return Ok(Some(Sealed::Detected(
+                rust_mutants_decision::evidence::Detection::Declined,
             )));
         }
         Ok(Some(judged(observed(

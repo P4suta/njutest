@@ -18,7 +18,7 @@ fn symbolic_sealability() -> Sealability {
 
 fn symbolic_execution() -> Execution {
     let index = kani::any::<u8>();
-    kani::assume(index < 11);
+    kani::assume(index < 12);
     match index {
         0 => Execution::Native,
         1 => Execution::Sealed(Sealed::Passed),
@@ -27,9 +27,10 @@ fn symbolic_execution() -> Execution {
         4 => Execution::Sealed(Sealed::Detected(Detection::Trapped)),
         5 => Execution::Sealed(Sealed::Detected(Detection::FuelExceeded)),
         6 => Execution::Sealed(Sealed::Detected(Detection::MemoryExceeded)),
-        7 => Execution::Sealed(Sealed::Doubted(Doubt::ExitedEarly)),
-        8 => Execution::Sealed(Sealed::Doubted(Doubt::StackOverflow)),
-        9 => Execution::Sealed(Sealed::Doubted(Doubt::Refused)),
+        7 => Execution::Sealed(Sealed::Detected(Detection::Declined)),
+        8 => Execution::Sealed(Sealed::Doubted(Doubt::ExitedEarly)),
+        9 => Execution::Sealed(Sealed::Doubted(Doubt::StackOverflow)),
+        10 => Execution::Sealed(Sealed::Doubted(Doubt::Refused)),
         _ => Execution::Sealed(Sealed::Doubted(Doubt::Unaccounted)),
     }
 }

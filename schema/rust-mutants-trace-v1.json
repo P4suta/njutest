@@ -2013,6 +2013,7 @@
                     "trapped",
                     "fuel-exceeded",
                     "memory-exceeded",
+                    "declined",
                     "exited-early",
                     "stack-overflow",
                     "refused",
