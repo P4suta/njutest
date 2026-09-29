@@ -553,6 +553,15 @@ pub enum RunnerError {
         /// The typed internal failure, rendered only at this outer error boundary.
         message: String,
     },
+    /// A Rust source could not be read at all, which the engine's reading says in its own code.
+    #[error("{code}: {doing}: {source}", code = source.code().code)]
+    Unread {
+        /// What the run was reading it for.
+        doing: &'static str,
+        /// Why the reading failed.
+        #[source]
+        source: rust_mutants::parsing::ReadingError,
+    },
     /// Measurements could not be scheduled without trusting state interrupted by a panic.
     #[error(transparent)]
     Schedule(#[from] crate::assure::schedule::ScheduleError),
@@ -647,6 +656,7 @@ impl RunnerError {
             Self::MiriMissing { .. } => MIRI_MISSING,
             Self::PhaseOutput { .. } => PHASE_OUTPUT_UNREADABLE,
             Self::Model { .. } => MODEL_PHASE_FAILED,
+            Self::Unread { source, .. } => ErrorCode::carried(source.code()),
             Self::Schedule(error) => error.code(),
             Self::Sources(error) => error.code(),
             Self::Blind { .. } => SENTINEL_BLIND,
@@ -685,9 +695,15 @@ const ERROR_CODES: [ErrorCode; NjCode::ALL.len()] = {
 };
 
 impl From<crate::assure::model::ModelError> for RunnerError {
-    fn from(source: crate::assure::model::ModelError) -> Self {
-        Self::Model {
-            message: source.to_string(),
+    fn from(failed: crate::assure::model::ModelError) -> Self {
+        match failed.unread() {
+            Ok(source) => Self::Unread {
+                doing: "reading a catalogued source to generate its harness",
+                source,
+            },
+            Err(other) => Self::Model {
+                message: other.to_string(),
+            },
         }
     }
 }

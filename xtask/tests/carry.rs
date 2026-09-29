@@ -20,7 +20,7 @@ fn page() -> Option<PageLists> {
 /// The sealing of the function `f` in `source`, the unit being that one file, or `None` where the source, the page, or `f`'s body cannot be read.
 fn sealed(source: &str) -> Option<Result<(), Unsealed>> {
     let lists = page()?;
-    let Ok(file) = syn::parse_str::<syn::File>(source) else {
+    let Ok(file) = njutest_devkit::lexed::parse::<syn::File>(source) else {
         return None;
     };
     let named = source.find("fn f")?;
@@ -121,7 +121,7 @@ fn a_body_that_contributes_more_than_its_execution_names_why() {
 #[test]
 fn a_span_the_parser_cannot_find_a_body_at_is_unlocated() {
     let source = "fn f() {}\nfn g() {}";
-    let Ok(file) = syn::parse_str::<syn::File>(source) else {
+    let Ok(file) = njutest_devkit::lexed::parse::<syn::File>(source) else {
         return;
     };
     let lists = page();

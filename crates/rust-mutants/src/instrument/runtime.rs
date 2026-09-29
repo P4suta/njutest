@@ -108,8 +108,12 @@ pub(super) const FIRST_UNREPRESENTABLE_INDEX: u32 = u32::MAX;
 #[derive(Debug, thiserror::Error)]
 pub enum ModuleNameError {
     /// The source was not a Rust token stream, or could not be read at all.
-    #[error("the source is not a Rust token stream: {0}")]
-    Tokens(#[from] crate::parsing::ReadingError),
+    #[error("the source is not a Rust token stream: {source}")]
+    Tokens {
+        /// Why the reading failed.
+        #[from]
+        source: crate::parsing::ReadingError,
+    },
     /// The finite suffix namespace could not be searched without overflowing its representation.
     #[error("the generated runtime module suffix namespace is exhausted")]
     SuffixesExhausted,

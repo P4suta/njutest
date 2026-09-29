@@ -95,7 +95,7 @@ impl fmt::Display for Seam {
 /// # Errors
 /// Returns the parse error when `source` is not Rust.
 pub fn scan_source(path: &str, source: &str) -> Result<Vec<Seam>, syn::Error> {
-    let file = syn::parse_file(source)?;
+    let file = crate::lexed::file(source)?;
     let composition_root = path.rsplit('/').next() == Some("main.rs");
     let mut scanner = Scanner {
         path,

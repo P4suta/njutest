@@ -77,7 +77,7 @@ pub struct Harness {
 /// Returns the parser error when the harness is not valid Rust.
 /// Invalid syntax cannot prove that the product has a private, dead-code-checked surface.
 pub fn harness_product(source: &str, harness_source: &Path) -> syn::Result<Option<PathBuf>> {
-    let parsed = syn::parse_file(source)?;
+    let parsed = crate::lexed::file(source)?;
     Ok(parsed.items.iter().find_map(|item| {
         let syn::Item::Mod(module) = item else {
             return None;
@@ -115,7 +115,7 @@ pub fn harness_product(source: &str, harness_source: &Path) -> syn::Result<Optio
 /// Root macros are rejected outright: an unexpanded syntax tree cannot prove that a macro or `include!` does not manufacture such a wrapper.
 #[must_use]
 pub fn has_public_root(source: &str) -> bool {
-    let Ok(parsed) = syn::parse_file(source) else {
+    let Ok(parsed) = crate::lexed::file(source) else {
         return true;
     };
     if parsed

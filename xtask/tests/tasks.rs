@@ -916,6 +916,35 @@ fn every_fuzz_run_replays_the_crashes_an_earlier_run_found_before_it_explores() 
 }
 
 #[test]
+fn the_compiler_refuses_every_reading_of_rust_that_resolves_to_syn_or_quote() {
+    let configured = repository("clippy.toml");
+    for (table, path) in [
+        ("disallowed-methods", "syn::parse_str"),
+        ("disallowed-methods", "syn::parse_file"),
+        ("disallowed-methods", "syn::parse::Parser::parse_str"),
+        ("disallowed-methods", "syn::LitStr::parse"),
+        ("disallowed-methods", "syn::LitStr::parse_with"),
+        ("disallowed-methods", "syn::LitInt::new"),
+        ("disallowed-methods", "syn::LitFloat::new"),
+        ("disallowed-macros", "quote::quote"),
+        ("disallowed-macros", "quote::quote_spanned"),
+        ("disallowed-macros", "syn::parse_quote"),
+        ("disallowed-macros", "syn::parse_quote_spanned"),
+    ] {
+        let listed = configured
+            .split_once(&format!("{table} = ["))
+            .and_then(|(_, rest)| rest.split_once("\n]"))
+            .is_some_and(|(entries, _)| entries.contains(&format!("path = \"{path}\"")));
+        assert!(
+            listed,
+            "{path} lexes into the calling thread's location map, and the compiler resolves every \
+             name, alias and macro argument it is reached by, so {table} keeps it out of all but \
+             the doors of ADR 0045"
+        );
+    }
+}
+
+#[test]
 fn fallible_values_cannot_be_erased_through_convenience_methods() {
     let configured = repository("clippy.toml");
     for method in [

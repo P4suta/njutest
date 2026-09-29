@@ -542,7 +542,7 @@ fn only_the_private_generated_modules_carry_the_exact_lint_exception() {
     let text = instrument(
         "pub fn f(a: i32, b: i32) -> i32 {\n    a + b\n}\n\npub fn g(a: i32) -> i32 {\n    fn inner(x: i32) -> i32 { x * 2 }\n    inner(a) - 1\n}\n",
     );
-    let parsed = syn::parse_file(&text).expect("instrumented source parses");
+    let parsed = njutest_devkit::lexed::file(&text).expect("instrumented source parses");
     let modules: Vec<&syn::ItemMod> = parsed
         .items
         .iter()
@@ -1098,7 +1098,7 @@ fn instrumented(path: &str, source: &str) -> Option<(String, Catalog)> {
 fn read_share(files: &[(String, String)]) -> (usize, Vec<String>) {
     let parsing: Vec<&(String, String)> = files
         .iter()
-        .filter(|(_, source)| syn::parse_file(source).is_ok())
+        .filter(|(_, source)| njutest_devkit::lexed::file(source).is_ok())
         .collect();
     let apart: Vec<String> = parsing
         .iter()
@@ -1463,7 +1463,7 @@ fn a_guard_that_breaks_inside_an_identity_macro_is_seen_where_a_plain_parse_is_b
     ];
     for text in planted {
         assert!(
-            syn::parse_file(text).is_ok(),
+            njutest_devkit::lexed::file(text).is_ok(),
             "a plain parse never opens the identity macro, which is how a broken guard inside one \
              went unseen: {text}"
         );

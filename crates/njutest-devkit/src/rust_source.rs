@@ -51,7 +51,7 @@ pub enum RustSourceError {
 
 /// Every top-level constant of `text`.
 fn constants(text: &str) -> Result<Vec<syn::ItemConst>, RustSourceError> {
-    let file = syn::parse_file(text).map_err(|error| RustSourceError::Unparsed {
+    let file = crate::lexed::file(text).map_err(|error| RustSourceError::Unparsed {
         message: error.to_string(),
     })?;
     Ok(file
@@ -121,7 +121,7 @@ pub fn names_listed(text: &str, name: &str) -> Result<Vec<String>, RustSourceErr
 /// # Errors
 /// A [`RustSourceError`] when `text` is not Rust, declares no such struct with named fields, or holds a `serde` attribute this reader cannot follow.
 pub fn serde_field_names(text: &str, name: &str) -> Result<Vec<String>, RustSourceError> {
-    let file = syn::parse_file(text).map_err(|error| RustSourceError::Unparsed {
+    let file = crate::lexed::file(text).map_err(|error| RustSourceError::Unparsed {
         message: error.to_string(),
     })?;
     let fields = file

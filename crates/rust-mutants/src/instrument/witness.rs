@@ -141,13 +141,8 @@ pub fn witness_file(
             witnessed: false,
         });
     }
-    let module = super::module_named_for(&text, MODULE_STEM).map_err(|error| {
-        InstrumentError::new(
-            InstrumentErrorKind::SourceMismatch,
-            path,
-            format!("the source token stream is invalid: {error}"),
-        )
-    })?;
+    let module = super::module_named_for(&text, MODULE_STEM)
+        .map_err(|failed| InstrumentError::named(path, failed))?;
     let mut conditions: BTreeMap<Span, Condition> = BTreeMap::new();
     for claimed in claims {
         let entry = conditions

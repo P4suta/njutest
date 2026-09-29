@@ -208,8 +208,9 @@ const BARE_SHELL_REMEDY: &str = "a POSIX `sh` is on every Unix and on no Windows
 const RAW_LEXING_REMEDY: &str = "read Rust text through `rust_mutants::parsing`: `apart` lends \
     a `Parsing`, and its `read`, `read_with`, `file` and `tokens` are the only ways text becomes \
     tokens. Text lexed anywhere else stays in proc-macro2's map for as long as its thread lives, and \
-    past 4 GiB on one thread every location wraps; a reading thread ends with its map. A \
-    `.parse::<T>()` of a type that is not Rust text goes on `PARSED_TYPES`";
+    past 4 GiB on one thread every location wraps; a reading thread ends with its map. A bench or \
+    an example that measures reads through `njutest_devkit::lexed`, and a `.parse::<T>()` of a \
+    type that is not Rust text goes on `PARSED_TYPES`";
 const RAW_ENVIRONMENT_REMEDY: &str = "hold an environment as `rust_mutants::vars::Variables`, \
     or in xtask, which cannot depend on the engine, as `xtask::environment::Environment`; each \
     reads, changes, selects and digests a name only as the platform takes it. Pairs of \
@@ -613,7 +614,7 @@ impl fmt::Display for Finding {
 /// # Errors
 /// A file that is not Rust this version can parse.
 pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error> {
-    let parsed = syn::parse_file(source)?;
+    let parsed = crate::lexed::file(source)?;
     let policies = [
         (
             file.ends_with(RECLAIMER) || file.contains("/tests/"),
@@ -684,7 +685,7 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
 /// # Errors
 /// The source is not Rust this compiler version can parse.
 pub fn source_redirects(source: &str) -> Result<Vec<SourceRedirect>, syn::Error> {
-    let parsed = syn::parse_file(source)?;
+    let parsed = crate::lexed::file(source)?;
     let mut visitor = SourceRedirects { found: Vec::new() };
     visitor.visit_file(&parsed);
     visitor.found.sort_by_key(|redirect| match redirect {
@@ -701,7 +702,7 @@ pub fn source_redirects(source: &str) -> Result<Vec<SourceRedirect>, syn::Error>
 /// # Errors
 /// The source is not Rust this compiler version can parse.
 pub fn proc_macro_exports(source: &str) -> Result<Vec<ProcMacroExport>, syn::Error> {
-    let parsed = syn::parse_file(source)?;
+    let parsed = crate::lexed::file(source)?;
     let mut exports = Vec::new();
     for item in parsed.items {
         let syn::Item::Fn(function) = item else {
@@ -786,7 +787,7 @@ fn conditional_proc_macro_export(meta: &syn::Meta) -> Result<bool, syn::Error> {
 /// # Errors
 /// The source is not Rust this compiler version can parse.
 pub fn opaque_proc_macro_synthesis(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error> {
-    let parsed = syn::parse_file(source)?;
+    let parsed = crate::lexed::file(source)?;
     let mut visitor = OpaqueProcMacroSynthesis {
         file,
         found: Vec::new(),
@@ -1303,7 +1304,7 @@ fn meta_broadly_expects(meta: &syn::Meta) -> bool {
 /// # Errors
 /// The source is not Rust this compiler version can parse.
 pub fn declared_enums(source: &str) -> Result<Vec<String>, syn::Error> {
-    let parsed = syn::parse_file(source)?;
+    let parsed = crate::lexed::file(source)?;
     let mut found = Vec::new();
     let mut named = Named { found: &mut found };
     named.visit_file(&parsed);
@@ -1327,7 +1328,7 @@ impl<'ast> Visit<'ast> for Named<'_> {
 /// # Errors
 /// The source is not Rust this compiler version can parse.
 pub fn open_enums(source: &str) -> Result<Vec<String>, syn::Error> {
-    let parsed = syn::parse_file(source)?;
+    let parsed = crate::lexed::file(source)?;
     Ok(open_enum_declarations(&parsed)
         .into_iter()
         .map(|(name, _line)| name)
@@ -1393,7 +1394,7 @@ impl Wildcard {
 /// # Errors
 /// The source is not Rust this compiler version can parse.
 pub fn wildcards_over(source: &str, ours: &[String]) -> Result<Vec<Wildcard>, syn::Error> {
-    let parsed = syn::parse_file(source)?;
+    let parsed = crate::lexed::file(source)?;
     let resolver = EnumResolver::of(&parsed, ours);
     let mut found = Vec::new();
     let mut scan = Catching {
@@ -2154,7 +2155,7 @@ pub fn manual_variant_lists_across<'a>(
     let mut parsed = Vec::new();
     let mut shapes: BTreeMap<String, BTreeMap<String, Vec<EnumShape>>> = BTreeMap::new();
     for (scope, file, source) in sources {
-        let syntax = syn::parse_file(source)?;
+        let syntax = crate::lexed::file(source)?;
         for (name, declarations) in enum_shapes(&syntax) {
             shapes
                 .entry(scope.to_owned())
@@ -2342,7 +2343,7 @@ pub fn open_and_closed_across<'a>(
     let mut listed = BTreeSet::new();
     let mut errors = BTreeSet::new();
     for (scope, file, source) in sources {
-        let parsed = syn::parse_file(source)?;
+        let parsed = crate::lexed::file(source)?;
         open.extend(
             open_enum_declarations(&parsed)
                 .into_iter()
@@ -6020,7 +6021,7 @@ fn tokens_name_one_of(tokens: &proc_macro2::TokenStream, names: &BTreeSet<String
         proc_macro2::TokenTree::Ident(ident) => names.contains(&ident.to_string()),
         proc_macro2::TokenTree::Group(group) => tokens_name_one_of(&group.stream(), names),
         proc_macro2::TokenTree::Literal(literal) => {
-            syn::parse_str::<syn::LitStr>(&literal.to_string())
+            crate::lexed::parse::<syn::LitStr>(&literal.to_string())
                 .is_ok_and(|literal| format_string_names_one_of(&literal.value(), names))
         }
         proc_macro2::TokenTree::Punct(_) => false,
@@ -8242,9 +8243,13 @@ const LEXING_MACROS: [&str; 4] = [
     "parse_quote_spanned",
 ];
 
-/// Whether `file` is shipped code that would read into proc-macro2's map on its own thread.
+/// Whether `file` is code a crate ships, builds with, or runs to measure itself, where a reading on its own thread would fill proc-macro2's map: its sources, its build script, its benches and its examples.
 fn reads_into_the_map(file: &str) -> bool {
-    shipped_source(file)
+    let built_or_measured = file.starts_with("crates/")
+        && (file.ends_with("/build.rs")
+            || file.contains("/benches/")
+            || file.contains("/examples/"));
+    (shipped_source(file) || built_or_measured)
         && file != RUST_READER
         && !OUTSIDE_THE_MAP
             .iter()
@@ -8253,20 +8258,52 @@ fn reads_into_the_map(file: &str) -> bool {
 
 /// Every place outside the reader where Rust text becomes tokens, but for code compiled only for tests.
 fn raw_lexings(parsed: &syn::File, file: &str) -> Vec<Finding> {
+    let mut renames = Renames::default();
+    renames.visit_file(parsed);
     let mut visitor = RawLexing {
         file,
         tests: 0,
         found: Vec::new(),
+        renamed: renames
+            .found
+            .into_iter()
+            .map(|rename| (rename.local, rename.source))
+            .collect(),
     };
     visitor.visit_file(parsed);
     visitor.found
 }
 
-/// How many enclosing items are compiled only for tests, and every lexing outside all of them.
+/// Every name the file gives to something named otherwise, wherever it stands: a `use` under another name, and a `type` alias of a path.
+#[derive(Default)]
+struct Renames {
+    found: Vec<Rename>,
+}
+
+impl Visit<'_> for Renames {
+    fn visit_item_use(&mut self, item: &syn::ItemUse) {
+        imported_renames(&item.tree, &mut Vec::new(), &mut self.found);
+    }
+
+    fn visit_item_type(&mut self, item: &syn::ItemType) {
+        if let syn::Type::Path(aliased) = &*item.ty
+            && aliased.qself.is_none()
+        {
+            self.found.push(Rename {
+                source: last_name(&aliased.path),
+                local: item.ident.to_string(),
+            });
+        }
+        syn::visit::visit_item_type(self, item);
+    }
+}
+
+/// How many enclosing items are compiled only for tests, and every lexing outside all of them, with every name the file gives to something named otherwise read as the name it stands for.
 struct RawLexing<'a> {
     file: &'a str,
     tests: usize,
     found: Vec<Finding>,
+    renamed: BTreeMap<String, String>,
 }
 
 /// Whether `attributes` compile what they sit on only for tests.
@@ -8289,33 +8326,24 @@ fn last_name(path: &syn::Path) -> String {
     }
 }
 
-/// Whether `path` names a function that lexes the text it is given.
-fn lexing_path(path: &syn::Path, qualified: Option<&syn::QSelf>) -> bool {
-    let names: Vec<String> = path
-        .segments
-        .iter()
-        .map(|segment| segment.ident.to_string())
-        .collect();
-    let Some(last) = names.last() else {
-        return false;
-    };
-    let lexed_type = |name: &str| name == "TokenStream" || name == "Literal";
-    let qualified_lexed = qualified.is_some_and(|qself| match &*qself.ty {
-        syn::Type::Path(ty) => lexed_type(&last_name(&ty.path)),
-        _ => false,
-    });
-    LEXING_FUNCTIONS.contains(&last.as_str())
-        || (last == "from_str"
-            && (qualified_lexed
-                || names
-                    .iter()
-                    .any(|name| lexed_type(name) || name == "FromStr")))
-        || (last == "new"
-            && names
+/// Whether a type spelled `spelled` is one a `.parse::<T>()` may read outside the reader.
+fn parsed_type(spelled: &str) -> bool {
+    PARSED_TYPES.contains(&spelled)
+}
+
+/// The type a turbofish names first, spelled with `::` between its segments, or nothing where it names no plain path.
+fn turbofish_type(arguments: &syn::AngleBracketedGenericArguments) -> Option<String> {
+    match arguments.args.first() {
+        Some(syn::GenericArgument::Type(syn::Type::Path(ty))) if ty.qself.is_none() => Some(
+            ty.path
+                .segments
                 .iter()
-                .rev()
-                .nth(1)
-                .is_some_and(|ty| ty == "LitInt" || ty == "LitFloat"))
+                .map(|segment| segment.ident.to_string())
+                .collect::<Vec<String>>()
+                .join("::"),
+        ),
+        Some(_) | None => None,
+    }
 }
 
 impl RawLexing<'_> {
@@ -8339,6 +8367,168 @@ impl RawLexing<'_> {
             });
         }
     }
+
+    /// `name` read back through every name the file gives it, an import under another name or a `type` alias, to the one it stands for.
+    fn resolved(&self, name: &str) -> String {
+        let mut standing = name;
+        for _ in 0..=self.renamed.len() {
+            match self.renamed.get(standing) {
+                Some(source) if source != standing => standing = source,
+                Some(_) | None => break,
+            }
+        }
+        standing.to_owned()
+    }
+
+    /// Whether `path` names a function that lexes the text it is given.
+    fn lexing_path(&self, path: &syn::Path, qualified: Option<&syn::QSelf>) -> bool {
+        let names: Vec<String> = path
+            .segments
+            .iter()
+            .map(|segment| self.resolved(&segment.ident.to_string()))
+            .collect();
+        let Some(last) = names.last() else {
+            return false;
+        };
+        let lexed_type = |name: &str| name == "TokenStream" || name == "Literal";
+        let qualified_type = qualified.and_then(|qself| match &*qself.ty {
+            syn::Type::Path(ty) => Some(self.resolved(&last_name(&ty.path))),
+            _ => None,
+        });
+        let member = qualified_type
+            .as_deref()
+            .or_else(|| names.iter().rev().nth(1).map(String::as_str));
+        let turbofish = path
+            .segments
+            .last()
+            .and_then(|segment| match &segment.arguments {
+                syn::PathArguments::AngleBracketed(arguments) => turbofish_type(arguments),
+                syn::PathArguments::None | syn::PathArguments::Parenthesized(_) => None,
+            });
+        LEXING_FUNCTIONS.contains(&last.as_str())
+            || (last == "from_str"
+                && (member.is_some_and(lexed_type)
+                    || names
+                        .iter()
+                        .any(|name| lexed_type(name) || name == "FromStr")))
+            || (last == "new" && matches!(member, Some("LitInt" | "LitFloat")))
+            || ((last == "parse" || last == "parse_with") && member == Some("LitStr"))
+            || (last == "parse"
+                && member == Some("str")
+                && turbofish.is_none_or(|ty| !parsed_type(&ty)))
+    }
+
+    /// Every lexing written inside the arguments of a macro, which the parser leaves as tokens: a lexing function named, one read through a type it is a method of, a `from_str` of a lexed type or of `FromStr`, a `parse` into a type not on the list or into one it does not name, and a lexing macro invoked.
+    fn lexing_tokens(&mut self, tokens: &proc_macro2::TokenStream) {
+        let mut flat = Vec::new();
+        flattened_tokens(tokens, &mut flat);
+        for (at, token) in flat.iter().enumerate() {
+            let FlatToken::Ident(spelled, span) = token else {
+                continue;
+            };
+            let name = self.resolved(spelled);
+            let before = |back: usize| at.checked_sub(back).and_then(|index| flat.get(index));
+            let after = |ahead: usize| at.checked_add(ahead).and_then(|index| flat.get(index));
+            let pathed = matches!(
+                (before(1), before(2)),
+                (Some(FlatToken::Punct(':')), Some(FlatToken::Punct(':')))
+            );
+            let owner = match before(3) {
+                Some(FlatToken::Ident(owner, _)) if pathed => Some(self.resolved(owner)),
+                Some(_) | None => None,
+            };
+            let method = matches!(before(1), Some(FlatToken::Punct('.')));
+            let qualified = pathed && matches!(before(3), Some(FlatToken::Punct('>')));
+            let called = pathed || method;
+            let read_as = turbofish_spelled(&flat, at);
+            let unlisted = |ty: &String| !parsed_type(ty);
+            let lexes = LEXING_FUNCTIONS.contains(&name.as_str())
+                || (name == "parse_with" && called)
+                || (name == "new" && matches!(owner.as_deref(), Some("LitInt" | "LitFloat")))
+                || (name == "parse" && owner.as_deref() == Some("LitStr"))
+                || (name == "from_str" && self.names_lexed_type(&flat, at))
+                || (name == "parse"
+                    && (method || qualified || owner.as_deref() == Some("str"))
+                    && read_as.as_ref().is_none_or(unlisted))
+                || (name == "parse" && called && read_as.as_ref().is_some_and(unlisted))
+                || (LEXING_MACROS.contains(&name.as_str())
+                    && matches!(after(1), Some(FlatToken::Punct('!'))));
+            if lexes {
+                self.note(*span);
+            }
+        }
+    }
+
+    /// Whether the path a `from_str` at `at` of `flat` is written at names `TokenStream`, `Literal` or `FromStr`.
+    fn names_lexed_type(&self, flat: &[FlatToken], at: usize) -> bool {
+        let mut back = at;
+        while let Some(previous) = back.checked_sub(1).and_then(|index| flat.get(index)) {
+            match previous {
+                FlatToken::Ident(name, _) => {
+                    let name = self.resolved(name);
+                    if name == "TokenStream" || name == "Literal" || name == "FromStr" {
+                        return true;
+                    }
+                }
+                FlatToken::Punct(':' | '<' | '>') => {}
+                FlatToken::Punct(_) | FlatToken::Other => return false,
+            }
+            back = back.saturating_sub(1);
+        }
+        false
+    }
+}
+
+/// One token of a macro's arguments, flattened so a rule can read its neighbours.
+enum FlatToken {
+    /// A name and where it stands.
+    Ident(String, proc_macro2::Span),
+    /// One punctuation character.
+    Punct(char),
+    /// A literal, or where a group opens or closes.
+    Other,
+}
+
+/// `tokens` flattened into `into`, each group marked where it opens and closes.
+fn flattened_tokens(tokens: &proc_macro2::TokenStream, into: &mut Vec<FlatToken>) {
+    for tree in tokens.clone() {
+        match tree {
+            proc_macro2::TokenTree::Ident(ident) => {
+                into.push(FlatToken::Ident(ident.to_string(), ident.span()));
+            }
+            proc_macro2::TokenTree::Punct(punct) => into.push(FlatToken::Punct(punct.as_char())),
+            proc_macro2::TokenTree::Group(group) => {
+                into.push(FlatToken::Other);
+                flattened_tokens(&group.stream(), into);
+                into.push(FlatToken::Other);
+            }
+            proc_macro2::TokenTree::Literal(_) => into.push(FlatToken::Other),
+        }
+    }
+}
+
+/// The type the turbofish after the name at `at` of `flat` names, spelled with `::` between its segments, or nothing where no turbofish follows.
+fn turbofish_spelled(flat: &[FlatToken], at: usize) -> Option<String> {
+    let mut ahead = at.checked_add(1)?;
+    for wanted in [':', ':', '<'] {
+        match flat.get(ahead) {
+            Some(FlatToken::Punct(found)) if *found == wanted => ahead = ahead.checked_add(1)?,
+            Some(_) | None => return None,
+        }
+    }
+    let mut names = Vec::new();
+    let mut depth = 0_usize;
+    while let Some(token) = flat.get(ahead) {
+        match token {
+            FlatToken::Punct('<') => depth = depth.saturating_add(1),
+            FlatToken::Punct('>') if depth == 0 => return Some(names.join("::")),
+            FlatToken::Punct('>') => depth = depth.saturating_sub(1),
+            FlatToken::Ident(name, _) if depth == 0 => names.push(name.clone()),
+            FlatToken::Ident(..) | FlatToken::Punct(_) | FlatToken::Other => {}
+        }
+        ahead = ahead.checked_add(1)?;
+    }
+    None
 }
 
 impl Visit<'_> for RawLexing<'_> {
@@ -8360,7 +8550,7 @@ impl Visit<'_> for RawLexing<'_> {
     }
 
     fn visit_item_use(&mut self, item: &syn::ItemUse) {
-        for function in LEXING_FUNCTIONS {
+        for function in LEXING_FUNCTIONS.iter().chain(&LEXING_MACROS) {
             for span in imported_function_spans(&item.tree, function) {
                 self.note(span);
             }
@@ -8369,7 +8559,7 @@ impl Visit<'_> for RawLexing<'_> {
     }
 
     fn visit_expr_path(&mut self, path: &syn::ExprPath) {
-        if lexing_path(&path.path, path.qself.as_ref())
+        if self.lexing_path(&path.path, path.qself.as_ref())
             && let Some(last) = path.path.segments.last()
         {
             self.note(last.ident.span());
@@ -8379,20 +8569,11 @@ impl Visit<'_> for RawLexing<'_> {
 
     fn visit_expr_method_call(&mut self, call: &syn::ExprMethodCall) {
         let method = call.method.to_string();
-        let untyped = |turbofish: &syn::AngleBracketedGenericArguments| match turbofish.args.first()
-        {
-            Some(syn::GenericArgument::Type(syn::Type::Path(ty))) if ty.qself.is_none() => {
-                let spelled = ty
-                    .path
-                    .segments
-                    .iter()
-                    .map(|segment| segment.ident.to_string())
-                    .collect::<Vec<String>>()
-                    .join("::");
-                !PARSED_TYPES.contains(&spelled.as_str())
-            }
-            Some(_) | None => true,
-        };
+        let untyped =
+            |turbofish: &syn::AngleBracketedGenericArguments| match turbofish_type(turbofish) {
+                Some(spelled) => !parsed_type(&spelled),
+                None => true,
+            };
         let lexes = method == "parse_str"
             || method == "parse_with"
             || (method == "parse" && call.turbofish.as_ref().is_some_and(untyped));
@@ -8403,11 +8584,12 @@ impl Visit<'_> for RawLexing<'_> {
     }
 
     fn visit_macro(&mut self, invocation: &syn::Macro) {
-        if LEXING_MACROS.contains(&last_name(&invocation.path).as_str())
+        if LEXING_MACROS.contains(&self.resolved(&last_name(&invocation.path)).as_str())
             && let Some(last) = invocation.path.segments.last()
         {
             self.note(last.ident.span());
         }
+        self.lexing_tokens(&invocation.tokens);
         syn::visit::visit_macro(self, invocation);
     }
 }

@@ -34,6 +34,7 @@ pub mod kanilaws;
 pub mod knobs;
 pub mod lanes;
 pub mod layers;
+pub mod lexed;
 pub mod lints;
 pub mod milestones;
 pub mod modelaudit;

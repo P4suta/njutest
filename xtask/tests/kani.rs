@@ -92,7 +92,8 @@ fn production_harnesses() -> BTreeSet<String> {
                 continue;
             }
             let source = std::fs::read_to_string(path).expect("production Rust source is readable");
-            let syntax = syn::parse_file(&source).expect("production Rust source parses");
+            let syntax =
+                njutest_devkit::lexed::file(&source).expect("production Rust source parses");
             let relative = path
                 .strip_prefix(&source_root)
                 .expect("the walk yields paths under its own root");

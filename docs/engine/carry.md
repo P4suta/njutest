@@ -21,7 +21,8 @@ A body is not sealed when any of these holds, and `unsealed` names the first tha
 2. `unlocated`: the catalog's body span names no bytes of the file.
 3. `evaluated`: the item is a `const fn`, a `const` or a `static`, which the compiler can evaluate where nothing enters it.
 4. `compile-time`: a unit that read the item's file is a procedural macro or a build script, whose code runs in the compiler, where no test enters it, and decides what other code is.
-5. `unlocated`: the catalog's body span is not a function body of the file as the parser reads it.
+5. `unit-file-unread`: the item's file could not be read at all — refused as nested or chained deeper than a reading holds (RM0020) or too large to read (RM0018), or left without a thread to read it on — so no rule after this one can be read of the body;
+   and otherwise `unlocated`: the catalog's body span is not a function body of the file as the parser reads it.
 6. `attribute`: an attribute off the list is on the file, on an inline `mod`, `impl` or `trait` around the item, or on the item.
    An attribute is on the list when its path is one segment named in `sealable-attributes`, or its first segment is named in `tool-namespaces`.
    A `cfg_attr` is on the list when every attribute it would apply is.
@@ -36,12 +37,15 @@ A body is not sealed when any of these holds, and `unsealed` names the first tha
    - `declares-item`: any item: `fn`, `struct`, `enum`, `union`, `impl`, `trait`, `type`, `use`, `mod`, `macro_rules!` or another item macro, `const`, `static`, `extern crate`, an `extern` block, or an item the parser keeps as tokens;
    - `const-block`: an inline `const { … }` block.
 9. The first of these in the files the unit read, in byte order of their names:
+   - `unit-file-unread`: the file could not be read at all, for any reason rule 5 names, so what it declares is not known, and it could declare anything the next two name;
    - `shadowed`: the file declares `macro_rules!` with a name in `sealable-macros`, or a `use` makes a name in `sealable-macros` visible, directly or with `as`, from a path whose first segment is not in `standard-roots`;
    - `foreign-glob`: the file imports `*` from a path whose first segment is in neither `standard-roots` nor `local-roots`, or takes a crate that is not in `standard-roots` with `#[macro_use] extern crate`.
      A glob reaches every module below the one that holds it, so this unseals every body of the unit.
 
 Rule 9 reads every file of the unit that parses as a whole Rust file, whatever its extension.
 A file that does not, such as a data file or an included expression, can declare no macro another file sees.
+A file that could not be read at all is not such a file: nothing says it is not Rust, so it is `unit-file-unread`, never a file that declares nothing.
+Where of every reading only the one that finds the positions of a file below fails, which only a thread the operating system refused can do, every body of that file is `unit-file-unread` too, since a placeholder would hide an edit that moves a position after it.
 A body is sealed only if it is sealed in every unit that read its file; rule 9 names the first such unit in the order the build reported them.
 
 ### Lists
@@ -136,7 +140,7 @@ Its skeleton is the SHA-256 of one line `<name>\0<digest>\n` per entry, in byte 
   The digest is the SHA-256 of the file's bytes with every sealed body of it replaced by `{sealed:<name>#<ordinal>}`.
   `<name>` is the entry's name, and `<ordinal>` is the `ordinal` of the item's reference, its position among the file's cataloged items from 0.
   The placeholder names neither the body's bytes nor its lines: a line added inside a sealed body moves every position after it, and those are kept where the compiler reads one, below, and held where a run could read one, by the rule's `item-moved`.
-- every workspace file that parses as a whole Rust file, again as `$positions/$root/<path>`, for where the compiler reads a position in it.
+- every workspace file that parses as a whole Rust file, again as `$positions/$root/<path>`, for where the compiler reads a position in it; a file that could not be read has no such entry, and no sealed body either, so its first entry holds every byte of it.
   The digest is the SHA-256 of one line per place, in byte order, joined by line feeds:
   `body <ordinal> <line>:<column>` for every cataloged body of the file that is not sealed, at its `start`, or `body <ordinal> unplaced` where it has none;
   and, outside every cataloged body, `<kind> <line>:<column>` for each place the compiler reads, at the token named for its kind:

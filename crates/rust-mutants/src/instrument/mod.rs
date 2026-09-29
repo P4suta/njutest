@@ -89,18 +89,13 @@ pub fn items(path: &str, source: &[u8], first_item: u32) -> Result<Vec<ItemBody>
             format!("the source is not valid UTF-8: {error}"),
         )
     })?;
+    let doing = "the items cannot be numbered";
     crate::parsing::apart(|parsing| steps::plant(parsing, text, MODULE_STEM, first_item))
         .map_err(|unread| {
-            InstrumentError::unread(InstrumentErrorKind::SourceMismatch, path, &unread)
+            InstrumentError::unread((InstrumentErrorKind::SourceMismatch, path), doing, &unread)
         })?
         .map(|planted| planted.items)
-        .map_err(|error| {
-            InstrumentError::new(
-                InstrumentErrorKind::SourceMismatch,
-                path,
-                format!("the items cannot be numbered: {error}"),
-            )
-        })
+        .map_err(|failed| InstrumentError::planted(path, doing, failed))
 }
 
 /// One file whose items are to be numbered: where it is, who compiles it, and its pristine bytes.
@@ -328,6 +323,8 @@ pub enum InstrumentErrorKind {
     ReadingExhausted,
     /// The thread the file is read on could not be started or did not finish.
     ReadingThread,
+    /// The file runs deeper than its reading thread's stack holds.
+    ReadingTooDeep,
 }
 
 impl InstrumentErrorKind {
@@ -345,6 +342,7 @@ impl InstrumentErrorKind {
             Self::Unparsable => error::INSTRUMENT_UNPARSABLE,
             Self::ReadingExhausted => error::READING_EXHAUSTED,
             Self::ReadingThread => error::READING_THREAD,
+            Self::ReadingTooDeep => error::READING_TOO_DEEP,
         }
     }
 }
@@ -358,10 +356,10 @@ pub struct InstrumentError {
 }
 
 impl InstrumentError {
-    /// Why text read while instrumenting `path` failed: a syntax error as `syntax`, and a reading that could not happen at all as what stopped it.
+    /// Why text read while instrumenting `path` failed, `doing` what: a syntax error as `syntax`, and a reading that could not happen at all as what stopped it.
     fn unread(
-        syntax: InstrumentErrorKind,
-        path: &str,
+        (syntax, path): (InstrumentErrorKind, &str),
+        doing: &str,
         unread: &crate::parsing::ReadingError,
     ) -> Self {
         let kind = match unread {
@@ -370,8 +368,61 @@ impl InstrumentError {
             crate::parsing::ReadingError::ThreadUnavailable { .. } => {
                 InstrumentErrorKind::ReadingThread
             }
+            crate::parsing::ReadingError::TooDeep { .. } => InstrumentErrorKind::ReadingTooDeep,
         };
-        Self::new(kind, path, unread.to_string())
+        Self::new(kind, path, format!("{doing}: {unread}"))
+    }
+
+    /// Why planting the checkpoints and entry markers of `path` failed, `doing` what: the reading's own failure where it could not read the file, and a source that is not the one discovered otherwise.
+    fn planted(path: &str, doing: &str, failed: steps::StepError) -> Self {
+        match failed {
+            steps::StepError::Unread { source } => {
+                Self::unread((InstrumentErrorKind::SourceMismatch, path), doing, &source)
+            }
+            other @ (steps::StepError::Prefix { .. }
+            | steps::StepError::OutOfRange
+            | steps::StepError::ConflictingPath { .. }) => Self::new(
+                InstrumentErrorKind::SourceMismatch,
+                path,
+                format!("{doing}: {other}"),
+            ),
+        }
+    }
+
+    /// Why the runtime module of `path` could not be named: the reading's own failure where it could not read the file, and a source that is not the one discovered otherwise.
+    pub(crate) fn named(path: &str, failed: ModuleNameError) -> Self {
+        let doing = "the runtime module cannot be named";
+        match failed {
+            ModuleNameError::Tokens { source } => {
+                Self::unread((InstrumentErrorKind::SourceMismatch, path), doing, &source)
+            }
+            other @ ModuleNameError::SuffixesExhausted => Self::new(
+                InstrumentErrorKind::SourceMismatch,
+                path,
+                format!("{doing}: {other}"),
+            ),
+        }
+    }
+
+    /// Why the alternative of `placement` written for `path` could not be folded onto one line: the reading's own failure where it could not read the fragment, and a fold that failed otherwise.
+    fn flattened(path: &str, placement: &Placement, failed: crate::flatten::FlattenError) -> Self {
+        let doing = format!(
+            "the {} alternative of mutant {} cannot be folded onto one line",
+            placement.hint.form, placement.index
+        );
+        match failed {
+            crate::flatten::FlattenError::Unread { source } => {
+                Self::unread((InstrumentErrorKind::FlattenFailed, path), &doing, &source)
+            }
+            other @ (crate::flatten::FlattenError::Untokenizable { .. }
+            | crate::flatten::FlattenError::Literal { .. }
+            | crate::flatten::FlattenError::NotFlat { .. }
+            | crate::flatten::FlattenError::NotIdentical { .. }) => Self::new(
+                InstrumentErrorKind::FlattenFailed,
+                path,
+                format!("{doing}: {other}"),
+            ),
+        }
     }
 
     fn new(kind: InstrumentErrorKind, path: impl Into<String>, message: impl Into<String>) -> Self {
@@ -527,12 +578,8 @@ fn checkpointed(
         first_item,
         watched: _watched,
     } = *file;
-    let planted = steps::plant(parsing, text, &module, first_item).map_err(|error| {
-        InstrumentError::new(
-            InstrumentErrorKind::SourceMismatch,
-            path,
-            format!("the step checkpoints cannot be placed: {error}"),
-        )
+    let planted = steps::plant(parsing, text, &module, first_item).map_err(|failed| {
+        InstrumentError::planted(path, "the step checkpoints cannot be placed", failed)
     })?;
     let items = u32::try_from(planted.items.len()).map_err(|_overflow| {
         InstrumentError::new(
@@ -603,7 +650,11 @@ fn text_of<'a>(
 /// See [`InstrumentErrorKind`].
 pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, InstrumentError> {
     crate::parsing::apart(|parsing| instrument_with(parsing, file)).map_err(|unread| {
-        InstrumentError::unread(InstrumentErrorKind::SourceMismatch, file.path, &unread)
+        InstrumentError::unread(
+            (InstrumentErrorKind::SourceMismatch, file.path),
+            "the file cannot be instrumented",
+            &unread,
+        )
     })?
 }
 
@@ -698,13 +749,8 @@ fn named(
     path: &str,
     text: &str,
 ) -> Result<String, InstrumentError> {
-    runtime::module_name_in(parsing, path, text).map_err(|error| {
-        InstrumentError::new(
-            InstrumentErrorKind::SourceMismatch,
-            path,
-            format!("the source token stream is invalid: {error}"),
-        )
-    })
+    runtime::module_name_in(parsing, path, text)
+        .map_err(|failed| InstrumentError::named(path, failed))
 }
 
 fn check_pristine(
@@ -901,9 +947,12 @@ impl File<'_> {
                 ),
             ),
             crate::parsing::ReadingError::Exhausted { .. }
-            | crate::parsing::ReadingError::ThreadUnavailable { .. } => {
-                InstrumentError::unread(InstrumentErrorKind::Unparsable, self.path, error)
-            }
+            | crate::parsing::ReadingError::ThreadUnavailable { .. }
+            | crate::parsing::ReadingError::TooDeep { .. } => InstrumentError::unread(
+                (InstrumentErrorKind::Unparsable, self.path),
+                "the rewritten file cannot be read back",
+                error,
+            ),
         }
     }
 
@@ -1340,15 +1389,8 @@ impl File<'_> {
                 carries: Vec::new(),
             });
         }
-        let text = crate::flatten::flatten_with(self.parsing, &text).map_err(|error| {
-            self.error(
-                InstrumentErrorKind::FlattenFailed,
-                format!(
-                    "the {} alternative of mutant {} cannot be folded onto one line: {error}",
-                    placement.hint.form, placement.index
-                ),
-            )
-        })?;
+        let text = crate::flatten::flatten_with(self.parsing, &text)
+            .map_err(|failed| InstrumentError::flattened(self.path, placement, failed))?;
         Ok(Written {
             text,
             carries: in_head.into_iter().chain(in_replacement).collect(),

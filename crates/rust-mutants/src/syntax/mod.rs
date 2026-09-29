@@ -543,7 +543,7 @@ impl SyntaxError {
             walk::WalkError::Bounds => Self::TooLarge {
                 path: path.to_owned(),
             },
-            walk::WalkError::Unread(unread) => Self::unread(path, unread),
+            walk::WalkError::Unread { source } => Self::unread(path, source),
         }
     }
 
@@ -560,7 +560,8 @@ impl SyntaxError {
                 message,
             },
             unread @ (crate::parsing::ReadingError::Exhausted { .. }
-            | crate::parsing::ReadingError::ThreadUnavailable { .. }) => Self::Unread {
+            | crate::parsing::ReadingError::ThreadUnavailable { .. }
+            | crate::parsing::ReadingError::TooDeep { .. }) => Self::Unread {
                 path: path.to_owned(),
                 source: unread,
             },

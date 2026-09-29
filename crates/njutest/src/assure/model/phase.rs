@@ -58,8 +58,12 @@ pub(crate) enum ModelError {
     #[error(transparent)]
     EvidenceIdentity(#[from] crate::report::ModelInvariantError),
     /// A catalogued source could not be read at all to generate its harness.
-    #[error("reading a catalogued source to generate its harness: {0}")]
-    Unread(#[from] rust_mutants::parsing::ReadingError),
+    #[error("reading a catalogued source to generate its harness: {source}")]
+    Unread {
+        /// Why the reading failed, which carries its own code.
+        #[from]
+        source: rust_mutants::parsing::ReadingError,
+    },
     /// A post-lattice model phase received no configured-build preparation.
     #[error("the completed build lattice has no model preparation")]
     EmptyPreparation,
@@ -104,6 +108,34 @@ pub(crate) enum ModelError {
         build: String,
         mutant: rust_mutants::id::MutantId,
     },
+}
+
+impl ModelError {
+    /// The reading failure this is, or this back when it is any other failure of the phase.
+    ///
+    /// # Errors
+    /// The phase failed for a reason other than a source it could not read.
+    pub(crate) fn unread(self) -> Result<rust_mutants::parsing::ReadingError, Self> {
+        match self {
+            Self::Unread { source } => Ok(source),
+            other @ (Self::Configuration(_)
+            | Self::Catalog { .. }
+            | Self::Source { .. }
+            | Self::ArtifactDirectory { .. }
+            | Self::ArtifactBoundary { .. }
+            | Self::TargetDirectory { .. }
+            | Self::SourceWrite { .. }
+            | Self::EvidenceIdentity(_)
+            | Self::EmptyPreparation
+            | Self::PreparationBuilds { .. }
+            | Self::PreparationContract { .. }
+            | Self::UnexpectedPreparation { .. }
+            | Self::PreparationTarget { .. }
+            | Self::PreparationMissing { .. }
+            | Self::PreparationDuplicate { .. }
+            | Self::PreparationMismatch { .. }) => Err(other),
+        }
+    }
 }
 
 /// One survivor and the immutable bytes from which it was catalogued.
@@ -1212,5 +1244,23 @@ mod tests {
                 Err(ModelError::PreparationBuilds { .. })
             ));
         }
+    }
+
+    #[test]
+    fn a_source_the_model_phase_could_not_read_is_reported_by_the_readings_own_code() {
+        let past = rust_mutants::parsing::NESTING.saturating_add(1);
+        let deep = format!("fn f() {{ {}1{} }}", "(".repeat(past), ")".repeat(past));
+        let refused = rust_mutants::parsing::apart(|parsing| parsing.file(&deep).map(|_| ()))
+            .expect("a reading thread");
+        let Err(unread) = refused else {
+            panic!("a nesting past the bound is refused")
+        };
+        let reported = crate::error::RunnerError::from(ModelError::from(unread));
+        assert_eq!(
+            reported.code().code,
+            "RM0020",
+            "a source the phase could not read is refused by the reading's code and remedy, not \
+             as the phase failing to keep its evidence: {reported}"
+        );
     }
 }

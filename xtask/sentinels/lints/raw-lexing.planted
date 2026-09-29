@@ -20,3 +20,40 @@ fn f(text: &str) -> bool { syn::Ident::parse_any.parse_str(text).is_ok() }
 fn f() -> syn::LitInt { syn::LitInt::new("1", proc_macro2::Span::call_site()) }
 === quoted source crates/app/src/lib.rs
 fn f() -> proc_macro2::TokenStream { quote::quote!(1 + 2) }
+=== parsed-inside-a-macro source crates/app/src/lib.rs
+fn f(text: &str) -> String { format!("{:?}", text.parse::<proc_macro2::TokenStream>().is_ok()) }
+=== from-str-inside-a-macro source crates/app/src/lib.rs
+fn f(text: &str) -> String { format!("{:?}", <proc_macro2::Literal as std::str::FromStr>::from_str(text).is_ok()) }
+=== read-inside-a-macro source crates/app/src/lib.rs
+fn f(text: &str) -> String { format!("{:?}", syn::parse_str::<syn::Expr>(text).is_ok()) }
+=== str-parse-by-path source crates/app/src/lib.rs
+fn f(text: &str) -> bool { str::parse::<proc_macro2::TokenStream>(text).is_ok() }
+=== literal-read-by-path source crates/app/src/lib.rs
+fn f(lit: &syn::LitStr) -> bool { syn::LitStr::parse::<syn::Expr>(lit).is_ok() }
+=== literal-read-with-by-path source crates/app/src/lib.rs
+fn f(lit: &syn::LitStr) -> bool { syn::LitStr::parse_with(lit, syn::Expr::parse).is_ok() }
+=== literal-read-through-its-type source crates/app/src/lib.rs
+fn f(lit: &syn::LitStr) -> bool { <syn::LitStr>::parse::<syn::Expr>(lit).is_ok() }
+=== str-parse-inferred source crates/app/src/lib.rs
+fn f(text: &str) -> bool { let tokens: Result<proc_macro2::TokenStream, _> = str::parse(text); tokens.is_ok() }
+=== inferred-parse-inside-a-macro source crates/app/src/lib.rs
+fn f(text: &str) -> String { format!("{:?}", { let tokens: Result<proc_macro2::TokenStream, _> = text.parse(); tokens.is_ok() }) }
+=== renamed-token-stream source crates/app/src/lib.rs
+use proc_macro2::TokenStream as Ts;
+use std::str::FromStr as _;
+fn f(text: &str) -> bool { Ts::from_str(text).is_ok() }
+=== aliased-token-stream source crates/app/src/lib.rs
+use std::str::FromStr as _;
+type Ts = proc_macro2::TokenStream;
+fn f(text: &str) -> bool { Ts::from_str(text).is_ok() }
+=== renamed-literal-constructor source crates/app/src/lib.rs
+use syn::LitInt as Whole;
+fn f() -> Whole { Whole::new("1", proc_macro2::Span::call_site()) }
+=== renamed-quote source crates/app/src/lib.rs
+use quote::quote as q;
+=== build-script source crates/app/build.rs
+fn main() { let _ = syn::parse_file(""); }
+=== bench source crates/app/benches/reading.rs
+fn f(text: &str) -> bool { syn::parse_str::<syn::Expr>(text).is_ok() }
+=== example source crates/app/examples/reading.rs
+fn f(text: &str) -> bool { text.parse::<proc_macro2::TokenStream>().is_ok() }

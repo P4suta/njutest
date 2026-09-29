@@ -210,7 +210,10 @@ pub(super) enum WalkError {
     /// Its internal offsets or exact counters contradicted the bounded source established at discovery entry.
     Bounds,
     /// Text it had to read back could not be read at all.
-    Unread(crate::parsing::ReadingError),
+    Unread {
+        /// Why the reading failed.
+        source: crate::parsing::ReadingError,
+    },
 }
 
 /// The file being walked.
@@ -324,7 +327,7 @@ impl<'a> Walker<'a> {
 
     pub(super) fn finish(mut self) -> Result<Walked, WalkError> {
         if let Some(unread) = self.unread.take() {
-            return Err(WalkError::Unread(unread));
+            return Err(WalkError::Unread { source: unread });
         }
         if self.bounds_failed.get() {
             return Err(WalkError::Bounds);

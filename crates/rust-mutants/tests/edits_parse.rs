@@ -67,7 +67,7 @@ fn every_catalogued_edit_applied_to_its_file_is_still_rust() {
             edited.extend_from_slice(&bytes[end..]);
             checked = checked.saturating_add(1);
             let text = String::from_utf8(edited).expect("an edit keeps the file text");
-            if syn::parse_file(&text).is_err() {
+            if njutest_devkit::lexed::file(&text).is_err() {
                 broken.push(format!(
                     "{name}:{} {}",
                     candidate.span.start, candidate.rule.name
