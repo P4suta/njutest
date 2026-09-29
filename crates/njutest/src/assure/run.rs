@@ -1709,6 +1709,10 @@ fn evidence_of(mutating: &Mutating<'_>) -> Result<Option<mutation::Evidence>, Ru
     let carry = keyed.usable().then(|| mutation::Carry {
         store: rust_mutants::carry::Store::new(root),
         keyed,
+        kept: request
+            .carried_evidence
+            .clone()
+            .map_or(mutation::Keeping::Nowhere, mutation::Keeping::Beside),
     });
     Ok(Some(mutation::Evidence {
         root: root.clone(),

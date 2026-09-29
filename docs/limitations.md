@@ -464,6 +464,7 @@ It is not closed here, and a report that says `waited` is saying exactly what it
 Every place a rule targets gets a decision: a candidate, or a skip with the reason for it.
 A run reports its skips as one limitation per reason —
 `skipped-<reason>`, with how many places it covers — because a place nothing was put to is a place the suite was never asked about, and a tally of them is the difference between "the tests noticed every mutation" and "the tests noticed every mutation somebody proposed".
+The engine keeps one record per reason and file, which says how many places it stands for, and njutest tallies them with the engine's own `rust_mutants::syntax::census`, so its count is places, never records, as the engine's is.
 The engine's [architecture page](engine/architecture.md) says how each decision is reached; what follows is what the name in a report means.
 
 Five are about a whole file, decided from cargo's metadata rather than by reading it:

@@ -602,13 +602,27 @@ fn a_message_before_an_error_does_not_stop_the_reading_of_the_rest() {
 /// Two `const fn`s of one name in two `impl`s, both holding guards, and a third that calls one and keeps its `const`.
 const TWINS: &str = "pub struct A;\nimpl A {\n    pub const fn make(n: u8) -> u8 {\n        n + 1\n    }\n}\npub struct B;\nimpl B {\n    pub const fn make(n: u8) -> u8 {\n        n - 1\n    }\n}\npub const fn keeps(n: u8) -> u8 {\n    A::make(n)\n}\n";
 
+/// [`TWINS`] and a `const fn` whose body holds a `const` of its own that calls `A::make`.
+const NESTED: &str = "pub struct A;\nimpl A {\n    pub const fn make(n: u8) -> u8 {\n        n + 1\n    }\n}\npub struct B;\nimpl B {\n    pub const fn make(n: u8) -> u8 {\n        n - 1\n    }\n}\npub const fn keeps(n: u8) -> u8 {\n    A::make(n)\n}\npub const fn nests(n: u8) -> u8 {\n    const INNER: u8 = A::make(1);\n    n + INNER\n}\n";
+
 /// [`TWINS`] instrumented with every guard but those of `keeps`, which the tests treat as refused.
 fn twins() -> (
     rust_mutants::instrument::FileOutput,
     BTreeSet<u32>,
     BTreeSet<u32>,
 ) {
-    let scripted = ScriptedCompile::from_source("src/lib.rs", TWINS, Tier::All);
+    twins_in(TWINS)
+}
+
+/// `source` instrumented with every guard of the twin `make`s and none other.
+fn twins_in(
+    source: &str,
+) -> (
+    rust_mutants::instrument::FileOutput,
+    BTreeSet<u32>,
+    BTreeSet<u32>,
+) {
+    let scripted = ScriptedCompile::from_source("src/lib.rs", source, Tier::All);
     let owned = |owner: &str| -> BTreeSet<u32> {
         scripted
             .placements()
@@ -797,6 +811,69 @@ fn a_refused_call_inside_a_const_fn_that_keeps_its_const_for_want_of_a_guard_mak
          and every mutant it holds is condemned"
     );
     assert!(pinned.calls.is_empty());
+}
+
+#[test]
+fn where_a_refused_call_stands_decides_whether_its_const_fn_carries_the_guard_whatever_the_words() {
+    let (file, a, b) = twins_in(NESTED);
+    assert!(
+        !a.is_empty() && a.is_disjoint(&b),
+        "the call names A's make, whose guards are its own"
+    );
+    let at_call = |after: u32| -> (u32, u32) {
+        let start = file
+            .text
+            .match_indices("A::make(")
+            .map(|(found, _)| u32::try_from(found).expect("the fixture is small"))
+            .find(|found| *found >= after)
+            .expect("the call is written");
+        (start, start + 10)
+    };
+    let body_of = |name: &str| {
+        file.constant
+            .iter()
+            .find(|function| function.name == name)
+            .unwrap_or_else(|| panic!("{name} is written with its const"))
+    };
+    let keeps = body_of("keeps");
+    let nests = body_of("nests");
+    let in_keeps = at_call(keeps.body.start);
+    let in_nests = at_call(nests.body.start);
+    let keeps_at = ConstFnAt {
+        path: "src/lib.rs".to_owned(),
+        keyword: keeps.origin,
+    };
+    for said in [
+        "cannot call non-const associated function `A::make` in constant functions",
+        "cannot call non-const associated function `A::make` in const fns",
+        "cannot call non-const associated function `A::make` in constants",
+    ] {
+        let carried = attribute(
+            std::slice::from_ref(&file),
+            &[evaluation(said, in_keeps, None)],
+            &Constness::default(),
+        );
+        assert_eq!(
+            (carried.calls, carried.condemned),
+            (
+                BTreeSet::from([(keeps_at.clone(), make_of(&file, "A"))]),
+                BTreeSet::new()
+            ),
+            "the call is in the body of keeps, which nothing says the compiler evaluates, so keeps \
+             carries the guard however the compiler words it: {said}"
+        );
+        let pinned = attribute(
+            std::slice::from_ref(&file),
+            &[evaluation(said, in_nests, None)],
+            &Constness::default(),
+        );
+        assert_eq!(
+            (pinned.calls, pinned.condemned),
+            (BTreeSet::new(), a.clone()),
+            "the call is in a const nests holds, which the compiler evaluates as a constant of its \
+             own, so A's make keeps its const however the compiler words it: {said}"
+        );
+    }
 }
 
 #[test]

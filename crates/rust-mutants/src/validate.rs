@@ -384,28 +384,23 @@ struct Named<'f> {
     function: &'f Deconst,
 }
 
-/// The `const fn` written with its `const` whose body holds the call an error refuses, when the error says the call is in a `const fn`.
+/// The `const fn` written with its `const` whose own body holds the call an error refuses: the narrowest body holding the call, unless a constant inside that body holds it, which the compiler evaluates on its own.
 fn caller(files: &[FileOutput], diagnostic: &Diagnostic) -> Option<ConstFnAt> {
-    if !diagnostic.message.ends_with(IN_CONST_FN) {
-        return None;
-    }
     let span = diagnostic.primary_span()?;
+    let at = span.byte_start();
+    let holds = |outer: &Span| outer.start <= at && at < outer.end;
     files
         .iter()
         .filter(|file| crate::cargo::names_file(&span.file_name, &file.path))
         .flat_map(|file| file.constant.iter().map(move |held| (file, held)))
-        .filter(|(_, held)| {
-            held.body.start <= span.byte_start() && span.byte_start() < held.body.end
-        })
+        .filter(|(_, held)| holds(&held.body))
         .min_by_key(|(_, held)| held.body.len())
+        .filter(|(_, held)| !held.evaluated.iter().any(holds))
         .map(|(file, held)| ConstFnAt {
             path: file.path.clone(),
             keyword: held.origin,
         })
 }
-
-/// How the compiler ends a refusal of a call it makes in the body of a `const fn`.
-const IN_CONST_FN: &str = "in constant functions";
 
 /// Condemns one mutant for one error, keeping the first error that condemned it and whether that one was about its function being evaluated.
 fn condemn(attributed: &mut Attributed, index: u32, diagnostic: &Diagnostic, evaluated: bool) {

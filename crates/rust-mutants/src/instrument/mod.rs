@@ -270,6 +270,8 @@ pub struct Constant {
     pub origin: Span,
     /// The bytes its body covers in the instrumented text, braces included.
     pub body: Span,
+    /// Every constant its body holds, in the instrumented text: an initializer, a `const` block, an array length, a discriminant or a const argument, which the compiler evaluates on its own rather than as this function's body.
+    pub evaluated: Vec<Span>,
 }
 
 /// The spaces a `const` is written as while its function holds a guard, as long as the keyword so that nothing after it moves.
@@ -725,6 +727,11 @@ fn mapped_const_fns(
             let mapped = steps::ConstSite {
                 keyword: map(site.keyword)?,
                 body: map(site.body)?,
+                evaluated: site
+                    .evaluated
+                    .iter()
+                    .map(|constant| map(*constant))
+                    .collect::<Result<Vec<Span>, InstrumentError>>()?,
                 ..site.clone()
             };
             Ok((site.keyword, mapped))
@@ -1438,6 +1445,12 @@ impl File<'_> {
                     name: held.site.name.clone(),
                     origin: held.origin,
                     body: landed(held.site.body)?,
+                    evaluated: held
+                        .site
+                        .evaluated
+                        .iter()
+                        .map(|constant| landed(*constant))
+                        .collect::<Result<Vec<Span>, InstrumentError>>()?,
                 });
             }
         }

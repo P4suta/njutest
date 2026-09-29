@@ -176,6 +176,9 @@ After the exact key misses, a run reads the record under the mutation's locus an
 The trace's `cache` record says `rule: carried` for this lookup, and `refused` names the first premise that failed: `skeleton-changed`, `item-changed`, `unsealed`, `item-moved`, `entry-incomplete`, `route-grew`, `filter-differs`, `reach-moved` or `uncontrolled`.
 A believed record is reported like an exact one, with the run that established it as `source_run_id`.
 
+An answer is carried only by a run that keeps what it rests on where an audit reads it again.
+njutest keeps the carried records it believed, the skeletons and the guards' record beside each build's recording, which only a traced run writes, so a run that is not traced files its answers for a later run and carries none: `mutation::Keeping::Nowhere` refuses the lookup before any record is read.
+
 A carried record lists native executions, and keeps no sealed execution, so a carried answer is a lead and never a verdict ([ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md)).
 A run that seals puts the mutation to its sealed executions first, as it does a mutation nothing was kept about, and a verdict they establish is what the run reports, the carried answer set aside; only where they establish none is the carried answer read back, as the lead it is, resting on every reason they established none.
 So no sealed verdict is ever carried across an edit, and none is read back from here without running: a sealed verdict kept under the exact key is run again before it is believed, as [reproducing a sealed verdict](sealed.md#reproducing-a-sealed-verdict) says.

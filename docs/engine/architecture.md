@@ -301,6 +301,7 @@ Where the compiler evaluates such a function, it refuses the tree with `E0015` a
 The refusal names the callee: a free function by a note whose span is its definition, which holds the blanked keyword, and an associated function or a method by its type and its name, which may name more than one function the round wrote without its `const`, and then names every one of them.
 Where the call is in the body of a `const fn` the round wrote with its `const` only because it holds no guard — its one candidate refused by the compiler, say — the caller carries the guard: from the next round on it goes without its `const` too, wherever the callee does.
 Anywhere else — a `const` or `static` initializer, a `const` block, an array length, or a `const fn` that keeps its `const` because the compiler evaluates it — the callee keeps its `const` from the next round on, and every mutant it holds is left out as `evaluated-before-run`.
+Which of the two it is, is read from the refusal's primary span against the syntax, never from its words: the narrowest body of a `const fn` written with its `const` that holds the span is the caller, unless a constant inside that body holds it, since the compiler evaluates such a constant on its own.
 Each such round learns a call or a function that keeps its `const`, neither of which it unlearns, so the rounds end, however long the chain, without a bisection and without the round limit that bounds ordinary attribution.
 A bisection starts from the tree with nothing live, in which no function goes without its `const`.
 

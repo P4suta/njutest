@@ -569,6 +569,84 @@ fn a_chain_the_compiler_evaluates_gives_back_one_const_a_round_and_a_caller_only
     );
 }
 
+/// A `const fn` holding no guard whose own `const` calls a function that holds one, and another whose body calls it, each kept `const` by a marker.
+const NESTED: &str = "pub struct Held;
+
+impl Held {
+    pub const fn make(n: u32) -> u32 {
+        n * 2
+    }
+}
+
+// rust-mutants: skip the constant inside is what the compiler evaluates
+pub const fn nests(n: u32) -> u32 {
+    const INNER: u32 = Held::make(1);
+    n + INNER
+}
+
+// rust-mutants: skip only the program calls this one
+pub const fn keeps(n: u32) -> u32 {
+    Held::make(n)
+}
+";
+
+#[test]
+fn the_pinned_compiler_s_own_spans_tell_a_constant_inside_a_const_fn_from_its_body() {
+    let mut fixture = prepare_fixture_with("fixture-rejectable", |root| {
+        std::fs::write(root.join("src/lib.rs"), NESTED).expect("write the nesting");
+    });
+    let catalog = fixture.catalog.clone();
+    let placements: Vec<Placement> = fixture
+        .placements
+        .values()
+        .flat_map(|file| file.iter().cloned())
+        .collect();
+    let make: BTreeSet<u32> = placements
+        .iter()
+        .filter(|placement| {
+            placement
+                .hint
+                .const_fn
+                .as_ref()
+                .is_some_and(|function| function.name == "make")
+        })
+        .map(|placement| placement.index)
+        .collect();
+    assert!(
+        !make.is_empty() && make.len() == placements.len(),
+        "make holds every guard, and the markers keep nests and keeps without one: {placements:?}"
+    );
+    let validated = validate(
+        &catalog,
+        &mut fixture,
+        &rust_mutants::validate::Validating {
+            options: options(),
+            cancel: &Cancel::new(),
+            trace: &Recorder::disabled(),
+        },
+    )
+    .expect("validation settles");
+    let evaluated: BTreeSet<u32> = validated
+        .rejections
+        .iter()
+        .filter(|rejection| rejection.reason == Condemnation::EvaluatedBeforeRun)
+        .map(|rejection| rejection.index)
+        .collect();
+    assert_eq!(
+        evaluated, make,
+        "the call inside INNER is inside nests's body, and the compiler evaluates INNER on its \
+         own: where it points is enough to say make is evaluated before the program runs, so \
+         every mutant of make is left out for that: {:?}",
+        validated.rejections
+    );
+    assert_eq!(
+        (validated.rounds, validated.bisections),
+        (2, 0),
+        "the first round pins make for INNER and learns keeps's call, and the second builds: \
+         keeps carries nothing once make keeps its const"
+    );
+}
+
 /// A session over `fixture`, with `RUSTFLAGS` set to `flags` or left alone.
 fn prepared(
     fixture: &njutest_devkit::fixture::Fixture,

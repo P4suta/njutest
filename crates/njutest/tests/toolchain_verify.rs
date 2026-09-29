@@ -2882,7 +2882,7 @@ fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
     let text = std::fs::read_to_string(&source).expect("the library");
     std::fs::write(&source, text.replace("left + right", "right + left"))
         .expect("edit inside the body of `total` alone");
-    let carried = verify(&fixture, &["--no-seal"]);
+    let carried = verify(&fixture, &["--no-seal", "--trace"]);
     assert!(
         carried.status.code().is_some_and(|code| code < 3),
         "{}",
@@ -2908,6 +2908,39 @@ fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
             "a carried answer is the answer running it gives: {place:?}"
         );
     }
+}
+
+#[test]
+fn an_untraced_run_carries_nothing_since_it_keeps_nothing_an_audit_could_hold_it_to() {
+    let fixture = fixture("fixture-two-bodies");
+    let first = verify(&fixture, &["--no-seal"]);
+    assert!(
+        first.status.code().is_some_and(|code| code < 3),
+        "{}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    let source = fixture.root.join("src/lib.rs");
+    let text = std::fs::read_to_string(&source).expect("the library");
+    std::fs::write(&source, text.replace("left + right", "right + left"))
+        .expect("edit inside the body of `total` alone");
+    let untraced = verify(&fixture, &["--no-seal"]);
+    assert!(
+        untraced.status.code().is_some_and(|code| code < 3),
+        "{}",
+        njutest_devkit::process::strict_utf8(&untraced.stderr)
+    );
+    let rows = rows_by_place(&document(&fixture));
+    let carried: Vec<&Place> = rows
+        .iter()
+        .filter(|(_, row)| row["reuse"]["reused"] == true)
+        .map(|(place, _)| place)
+        .collect();
+    assert!(
+        carried.is_empty(),
+        "an untraced run keeps no carried record, skeleton or reach beside a recording, so an \
+         answer it carried would rest on nothing an audit can read again: every mutation is run \
+         again instead, and none of {carried:?} may be read back"
+    );
 }
 
 #[cfg(unix)]

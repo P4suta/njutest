@@ -60,6 +60,8 @@ pub(super) struct ConstSite {
     pub(super) name: String,
     /// The last path segment of the type whose `impl` or `trait` holds it, or `None` for a function neither holds.
     pub(super) owner: Option<String>,
+    /// Every constant inside its body, which the compiler evaluates on its own rather than as this function's body.
+    pub(super) evaluated: Vec<Span>,
 }
 
 /// Plants the checkpoints and the entry markers of one file, numbering its items from `first_item`.
@@ -84,10 +86,19 @@ pub(super) fn plant(
         entering: None,
         const_fns: Vec::new(),
         owners: Vec::new(),
+        evaluated: Vec::new(),
     };
     collector.visit_file(&file);
     if let Some(error) = collector.error {
         return Err(error);
+    }
+    for site in &mut collector.const_fns {
+        site.evaluated = collector
+            .evaluated
+            .iter()
+            .filter(|constant| site.body.start <= constant.start && constant.end <= site.body.end)
+            .copied()
+            .collect();
     }
     Ok(Planted {
         splices: collector
@@ -130,6 +141,8 @@ struct Collector<'a> {
     const_fns: Vec<ConstSite>,
     /// The types and traits whose members the walk is inside, innermost last.
     owners: Vec<String>,
+    /// Every constant of the file the compiler evaluates on its own: an initializer, a `const` block, an array length, a discriminant, a const argument or default.
+    evaluated: Vec<Span>,
 }
 
 #[derive(Default)]
@@ -205,6 +218,12 @@ impl Collector<'_> {
         let start = self.absolute(range.start)?;
         let end = self.absolute(range.end)?;
         Some(Span { start, end })
+    }
+
+    fn evaluates(&mut self, constant: &impl syn::spanned::Spanned) {
+        if let Some(span) = self.span_of(constant) {
+            self.evaluated.push(span);
+        }
     }
 
     fn called(&mut self, name: String, whole: &impl syn::spanned::Spanned) -> Option<Named> {
@@ -342,6 +361,7 @@ impl Collector<'_> {
                 body,
                 name: signature.ident.to_string(),
                 owner,
+                evaluated: Vec::new(),
             });
         }
         let measurable = signature.constness.is_none();
@@ -367,6 +387,7 @@ impl Collector<'_> {
     }
 
     fn constant(&mut self, named: Named, value: &syn::Expr, walk: impl FnOnce(&mut Self)) {
+        self.evaluates(value);
         let Named { name, span } = named;
         self.named(name, |collector| {
             let Some(body) = collector.span_of(value) else {
@@ -481,9 +502,41 @@ impl<'ast> Visit<'ast> for Collector<'_> {
     }
 
     fn visit_expr_const(&mut self, node: &'ast syn::ExprConst) {
+        self.evaluates(node);
         self.in_context(RuntimeContext::Constant, |collector| {
             visit::visit_expr_const(collector, node);
         });
+    }
+
+    fn visit_expr_repeat(&mut self, node: &'ast syn::ExprRepeat) {
+        self.evaluates(&node.len);
+        visit::visit_expr_repeat(self, node);
+    }
+
+    fn visit_type_array(&mut self, node: &'ast syn::TypeArray) {
+        self.evaluates(&node.len);
+        visit::visit_type_array(self, node);
+    }
+
+    fn visit_variant(&mut self, node: &'ast syn::Variant) {
+        if let Some((_, discriminant)) = &node.discriminant {
+            self.evaluates(discriminant);
+        }
+        visit::visit_variant(self, node);
+    }
+
+    fn visit_generic_argument(&mut self, node: &'ast syn::GenericArgument) {
+        if let syn::GenericArgument::Const(argument) = node {
+            self.evaluates(argument);
+        }
+        visit::visit_generic_argument(self, node);
+    }
+
+    fn visit_const_param(&mut self, node: &'ast syn::ConstParam) {
+        if let Some((_, default)) = &node.default {
+            self.evaluates(default);
+        }
+        visit::visit_const_param(self, node);
     }
 
     fn visit_expr_loop(&mut self, node: &'ast syn::ExprLoop) {

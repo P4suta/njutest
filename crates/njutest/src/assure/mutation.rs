@@ -515,6 +515,17 @@ pub struct Carry {
     pub store: rust_mutants::carry::Store,
     /// What the engine and this runner decide an answer under.
     pub keyed: rust_mutants::outcomes::Keyed,
+    /// Where the run keeps what every answer it carries rests on.
+    pub kept: Keeping,
+}
+
+/// Where a run keeps the evidence an answer it carries rests on, which is what decides whether it may carry one (ADR 0041).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Keeping {
+    /// Beside the build's recording, where an audit reads every premise again.
+    Beside(PathBuf),
+    /// Nowhere, since the run keeps no recording: it files its answers for a later run and carries none.
+    Nowhere,
 }
 
 impl Evidence {
@@ -562,19 +573,14 @@ impl std::fmt::Debug for Resume<'_> {
     }
 }
 
-/// How many places of the catalog each reason left unmutated.
+/// How many places of the catalog each reason left unmutated, as the engine counts them.
 fn skip_census(
-    session: &Session,
+    skips: &[rust_mutants::syntax::Skip],
 ) -> Result<BTreeMap<rust_mutants::syntax::SkipReason, u64>, crate::error::RunnerError> {
-    let mut census = BTreeMap::new();
-    for skip in session.skips() {
-        let count = census.entry(skip.reason).or_insert(0_u64);
-        *count = count
-            .checked_add(1)
-            .ok_or(crate::report::CountError::Overflow {
-                field: "mutation skip census",
-            })?;
-    }
+    let census =
+        rust_mutants::syntax::census(skips).ok_or(crate::report::CountError::Overflow {
+            field: "mutation skip census",
+        })?;
     Ok(census)
 }
 
@@ -593,7 +599,7 @@ pub fn run_resuming(
     let (session, baseline) = (subject.session, subject.baseline);
     let phase = watch.trace.phase("mutation-judge");
     let mut mutation = Mutation {
-        skips: skip_census(session)?,
+        skips: skip_census(session.skips())?,
         ..Mutation::default()
     };
 
@@ -1476,6 +1482,10 @@ fn carried(
             return Ok(Consulted::Refused(exact));
         }
     };
+    match carry.kept {
+        Keeping::Beside(_) => {}
+        Keeping::Nowhere => return Ok(Consulted::Refused(exact)),
+    }
     let Some(locus) = session.locus(mutant) else {
         return Ok(Consulted::Refused(exact));
     };
@@ -2738,7 +2748,7 @@ pub fn tail(output: &[u8]) -> String {
 mod tests {
     use super::{
         AnsweredIndex, ExpectedReproduction, Outcome, TargetObservation, Unconfirmed, Unsettled,
-        select_unsettled,
+        select_unsettled, skip_census,
     };
     use rust_mutants::session::Request;
 
@@ -2840,5 +2850,35 @@ mod tests {
             selected(vec![waited("z"), waited("a")]),
             (TargetObservation::Waited, "a".to_owned())
         );
+    }
+
+    #[test]
+    fn the_skip_census_counts_every_place_a_record_stands_for() {
+        use rust_mutants::syntax::{Skip, SkipReason};
+        let skips = [
+            Skip {
+                reason: SkipReason::EvaluatedBeforeRun,
+                path: "src/a.rs".to_owned(),
+                count: 3,
+            },
+            Skip {
+                reason: SkipReason::EvaluatedBeforeRun,
+                path: "src/b.rs".to_owned(),
+                count: 2,
+            },
+            Skip {
+                reason: SkipReason::ConstContext,
+                path: "src/a.rs".to_owned(),
+                count: 1,
+            },
+        ];
+        let census = skip_census(&skips).expect("five places fit");
+        assert_eq!(
+            census.get(&SkipReason::EvaluatedBeforeRun),
+            Some(&5),
+            "a record stands for every place of its reason in its file, so two records of three \
+             and two places are five places, not two: {census:?}"
+        );
+        assert_eq!(census.get(&SkipReason::ConstContext), Some(&1));
     }
 }
