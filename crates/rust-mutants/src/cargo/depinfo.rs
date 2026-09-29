@@ -24,6 +24,8 @@ pub struct Unit {
     pub inputs: Vec<PathBuf>,
     /// Every environment variable the compiler read for the unit through `env!` or `option_env!`, with the value it read, or nothing where it was unset.
     pub env: std::collections::BTreeMap<String, Option<String>>,
+    /// Whether cargo said it reused the unit's artifact rather than compiling it.
+    pub fresh: bool,
 }
 
 /// The dep-info file rustc wrote beside `artifact`, an output of the target cargo names `target`: the same stem with the `.d` extension, less the `lib` prefix rustc puts on a library's outputs and on nothing else.
@@ -411,6 +413,7 @@ fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoErro
         sources,
         inputs,
         env: env_deps(&text),
+        fresh: artifact.fresh,
     })
 }
 

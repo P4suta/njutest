@@ -48,7 +48,7 @@ pub use metadata::{
     DepKind, Dependency, ManifestPath, ManifestPathError, Metadata, MetadataOptions, Node, NodeDep,
     Package, Resolve, Target, metadata_arguments,
 };
-pub use outside::{Outside, reaching_outside};
+pub use outside::{Outside, reaching_outside, resolved};
 pub use version::{VersionInfo, parse_version};
 
 /// Everything a cargo command needs besides its arguments: the toolchain, the directory to run in, the cancellation flag, and the trace.
