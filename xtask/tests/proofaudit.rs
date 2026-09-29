@@ -3663,8 +3663,49 @@ fn a_control_that_entered_an_item_its_baseline_did_not_is_owed_the_finding() {
          union `select` narrows by; a report that calls it held is refused: {said:?}"
     );
 }
+/// The repair layer's violations over the moved specimen, counting one disposition run again for each of `repaired`, with the clean routes, a survived repair of each against the moved target, and `engine` as the one engine recording.
 fn repair_audit(repaired: &[&str], engine: Vec<serde_json::Value>) -> Vec<String> {
-    repair_audit_of(with(sentinel::drifted("moved")), repaired, engine)
+    let mut document = with(sentinel::drifted("moved"));
+    merge(
+        &mut document,
+        serde_json::json!({ "repaired": [{ "target": TARGET, "again": repaired.len() }] }),
+    );
+    repair_audit_of(document, repaired, engine)
+}
+
+#[test]
+fn a_part_s_repair_count_is_held_to_the_repairs_its_recording_holds() {
+    let engine = || {
+        vec![
+            sentinel::touch("baseline", &[0]),
+            sentinel::touch("control", &[0, 1]),
+            repair_touch(&"b".repeat(64), &[1]),
+        ]
+    };
+    let counting = |again: u64| {
+        let mut document = with(sentinel::drifted("moved"));
+        merge(
+            &mut document,
+            serde_json::json!({ "repaired": [{ "target": TARGET, "again": again }] }),
+        );
+        document
+    };
+    let said = repair_audit_of(counting(1), &[SURVIVED], engine());
+    assert!(
+        !said
+            .iter()
+            .any(|line| line.contains("disposition(s) run again")),
+        "one repair replaced one disposition, which is what the part counts: {said:?}"
+    );
+    let said = repair_audit_of(counting(2), &[SURVIVED], engine());
+    assert!(
+        said.iter().any(|line| line.contains(
+            "the report counts 2 disposition(s) run again against pkg/test/lib, and its \
+                       repair records replaced 1"
+        )),
+        "a part that counts a repair its recording does not hold is refused, since a merge \
+         states reach-moved with that count (ADR 0036 decision 4): {said:?}"
+    );
 }
 
 /// The repair layer's violations over `document`, with the clean routes, a survived repair of each of `repaired` against the moved target, and `engine` as the one engine recording.

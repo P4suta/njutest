@@ -421,6 +421,7 @@ impl Lists {
                 findings: &self.findings,
                 limitations: &self.limitations,
                 drift: &[],
+                repaired: &[],
                 knobs: &self.knobs,
                 concurrency: &self.concurrency,
                 faults: &self.faults,

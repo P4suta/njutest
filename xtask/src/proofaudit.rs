@@ -963,6 +963,7 @@ fn projected(document: &serde_json::Value) -> Result<Projected, UnprojectableErr
         "mutants",
         "limitations",
         "drift",
+        "repaired",
         "faults",
         "beside",
         "knobs",
@@ -1555,6 +1556,7 @@ fn repaired(
         return notes.looked();
     };
     let moved = crate::drift::standings(touched);
+    counted(recording, repairs, &moved, &mut notes);
     let owed = owed(recording, (repairs, routing), &moved, &mut notes);
     if repairs.is_empty() && owed == 0 {
         return notes.absent("the run ran no disposition again against a target whose reach moved");
@@ -1582,6 +1584,76 @@ fn repaired(
         }
     }
     notes.looked()
+}
+
+/// Whether the part's `repaired` records say, of each target the touch records show moving and of nothing else, how many dispositions the repair records replaced there: those whose run reached the site or came to something other than what the disposition was (ADR 0036 decision 4).
+fn counted(
+    recording: &Recording<'_>,
+    repairs: &[crate::repair::Repair],
+    moved: &BTreeMap<String, crate::drift::Standing>,
+    notes: &mut Notes<'_>,
+) {
+    let mut said: Vec<(String, u64)> = Vec::new();
+    for row in recording.part.repaired {
+        let (Some(target), Some(again)) = (
+            field(row, "target"),
+            row.get("again").and_then(serde_json::Value::as_u64),
+        ) else {
+            notes.violated(
+                "repaired",
+                "a repair count of the report names no target or no count, which is not the \
+                 shape a run writes it in"
+                    .to_owned(),
+            );
+            continue;
+        };
+        said.push((target, again));
+    }
+    let owed = moved
+        .iter()
+        .filter(|(_, standing)| **standing == crate::drift::Standing::Moved)
+        .map(|(target, _)| target);
+    for target in owed {
+        let replaced = repairs
+            .iter()
+            .filter(|repair| repair.target == *target)
+            .filter(|repair| repair.reached == "reached" || repair.now != repair.was)
+            .count();
+        let stated: Vec<u64> = said
+            .iter()
+            .filter(|(named, _)| named == target)
+            .map(|(_, again)| *again)
+            .collect();
+        match stated.as_slice() {
+            [again] if u64::try_from(replaced) == Ok(*again) => {}
+            [again] => notes.violated(
+                target,
+                format!(
+                    "the report counts {again} disposition(s) run again against {target}, and \
+                     its repair records replaced {replaced}"
+                ),
+            ),
+            others => notes.violated(
+                target,
+                format!(
+                    "the reach of {target} moved and the report holds {} repair count(s) about it \
+                     where it owes exactly one",
+                    others.len()
+                ),
+            ),
+        }
+    }
+    for (target, again) in &said {
+        if moved.get(target) != Some(&crate::drift::Standing::Moved) {
+            notes.violated(
+                target,
+                format!(
+                    "the report counts {again} disposition(s) run again against {target}, whose \
+                     reach the touch records do not show moving"
+                ),
+            );
+        }
+    }
 }
 
 /// How many dispositions rested on a moved target, each of which the repair owes a run against that target, holding every such pair to a repair that names it and every repair to the order the repair takes: mutation by mutation in catalog order, moved target by moved target in name order (ADR 0036 decision 1).
@@ -4765,6 +4837,7 @@ struct Part<'a> {
     findings: &'a [serde_json::Value],
     limitations: &'a [serde_json::Value],
     drift: &'a [serde_json::Value],
+    repaired: &'a [serde_json::Value],
     knobs: &'a [serde_json::Value],
     concurrency: &'a [serde_json::Value],
     faults: &'a [serde_json::Value],
@@ -4784,6 +4857,7 @@ impl<'a> Part<'a> {
             findings: rows(document, "findings")?,
             limitations: rows(document, "limitations")?,
             drift: rows(document, "drift")?,
+            repaired: rows(document, "repaired")?,
             knobs: rows(document, "knobs")?,
             concurrency: rows(document, "concurrency")?,
             faults: rows(document, "faults")?,

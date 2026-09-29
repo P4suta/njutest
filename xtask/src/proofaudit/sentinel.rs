@@ -990,15 +990,18 @@ pub fn knobbed(state: &str) -> Value {
     })
 }
 
-/// The report's drift record about [`TARGET`], in the standing `state` names.
+/// The report's drift record about [`TARGET`], in the standing `state` names, with the repair count a moved one owes.
 #[must_use]
 pub fn drifted(state: &str) -> Value {
-    let record = match state {
-        "moved" => moved(TARGET),
-        "not-measured" => json!({ "target": TARGET, "state": state, "why": "no-control" }),
-        other => json!({ "target": TARGET, "state": other }),
+    let (record, repaired) = match state {
+        "moved" => (moved(TARGET), json!([{ "target": TARGET, "again": 0 }])),
+        "not-measured" => (
+            json!({ "target": TARGET, "state": state, "why": "no-control" }),
+            json!([]),
+        ),
+        other => (json!({ "target": TARGET, "state": other }), json!([])),
     };
-    json!({ "drift": [record] })
+    json!({ "drift": [record], "repaired": repaired })
 }
 
 /// A drift record saying `target` reached one more site on a control than on its baseline, and nothing else moved.
@@ -1865,6 +1868,19 @@ fn repaired_where_nothing_moved(clean: Perturbation) -> Perturbation {
     }
 }
 
+/// The defect planted for the repair layer: a part that counts a disposition run again against its moved target that no repair record holds, which a merge would state as `reach-moved`.
+fn repair_counted_that_never_ran(clean: Perturbation) -> Perturbation {
+    Perturbation {
+        name: "a part counting a repair its recording does not hold",
+        document: with(json!({
+            "drift": [moved(TARGET)],
+            "repaired": [{ "target": TARGET, "again": 1 }]
+        })),
+        engine: Some(vec![touch("baseline", &[0]), touch("control", &[0, 1])]),
+        ..clean
+    }
+}
+
 /// The defect planted for the repair layer: a repair whose run nothing could observe, said to have survived.
 fn unobserved_repair_called_a_survival() -> Perturbation {
     let mut events = routes();
@@ -2287,6 +2303,7 @@ impl Layer {
             }],
             Self::Repair => vec![
                 unobserved_repair_called_a_survival(),
+                repair_counted_that_never_ran(clean.clone()),
                 repaired_where_nothing_moved(clean),
             ],
             Self::Knobs => knobs_planted(clean),
