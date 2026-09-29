@@ -121,6 +121,47 @@ fn the_catalog_schema_accepts_exactly_every_compiler_named_skip_reason() {
 }
 
 #[test]
+fn the_report_schemas_accept_exactly_every_reason_validation_leaves_a_candidate_out_for() {
+    let in_code = rust_mutants::validate::Condemnation::ALL
+        .iter()
+        .map(|reason| reason.name())
+        .collect::<BTreeSet<_>>();
+    for (relative, pointer) in [
+        (
+            "schema/rust-mutants-catalog-v1.json",
+            "/$defs/rejection/properties/reason/enum",
+        ),
+        (
+            "schema/rust-mutants-run-report-v1.json",
+            "/properties/rejections/items/properties/reason/enum",
+        ),
+    ] {
+        let source = page(relative);
+        assert!(source.is_ok(), "{relative} is readable: {source:?}");
+        let Ok(source) = source else { return };
+        let schema = njutest_devkit::strictjson::decode_str::<serde_json::Value>(&source);
+        assert!(schema.is_ok(), "{relative} is strict JSON: {schema:?}");
+        let Ok(schema) = schema else { return };
+        let declared = schema
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_array)
+            .and_then(|values| {
+                values
+                    .iter()
+                    .map(serde_json::Value::as_str)
+                    .collect::<Option<BTreeSet<_>>>()
+            });
+        assert_eq!(
+            declared.as_ref(),
+            Some(&in_code),
+            "{relative} and the closed set of reasons a candidate is left out for drifted: a \
+             reason the schema refuses is a report nobody can validate, and one it accepts that \
+             no run writes is a reader guessing at a meaning"
+        );
+    }
+}
+
+#[test]
 fn the_operators_page_names_every_rule_and_counts_them_as_the_table_does() {
     let text = page("docs/engine/operators.md");
     assert!(text.is_ok(), "the operators page is readable: {text:?}");

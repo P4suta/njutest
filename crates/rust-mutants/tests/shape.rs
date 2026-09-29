@@ -393,6 +393,7 @@ fn instrumented(source: &str) -> Instrumented {
         path: "src/lib.rs",
         source: source.as_bytes(),
         placements: &placements,
+        carriers: &[],
         markers: &[],
         comparable: &comparable,
         probed: &BTreeMap::new(),

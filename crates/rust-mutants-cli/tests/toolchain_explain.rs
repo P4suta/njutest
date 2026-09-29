@@ -493,6 +493,7 @@ fn a_catalog_and_a_report_that_disagree_about_a_mutant_are_said_to_rather_than_o
             code: Some("E0308".to_owned()),
             diagnostic: "error[E0308]: mismatched types at another mutant's line".to_owned(),
             isolated: false,
+            reason: rust_mutants::validate::Condemnation::CompilerRefused,
         });
     std::fs::write(
         &path,

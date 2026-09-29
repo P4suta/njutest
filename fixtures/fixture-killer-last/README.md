@@ -16,4 +16,7 @@ src/lib.rs:12:5 return-default killed
 src/lib.rs:12:7 mul-to-div killed
 src/lib.rs:12:9 int-decrement killed
 src/lib.rs:12:9 int-increment killed
+src/unrelated.rs:9:5 int-decrement unreached
+src/unrelated.rs:9:5 int-increment unreached
+src/unrelated.rs:9:5 return-default unreached
 ```

@@ -273,10 +273,16 @@ fn every_place_passed_over_is_counted_under_the_outermost_reason() {
     assert_eq!(
         render(&d),
         [
+            "return-default@4:29 \"x + 1\"=>\"Default::default()\" E[\"x + 1\"]",
+            "add-to-sub@4:31 \"+\"=>\"-\" E[\"x + 1\"]",
+            "int-increment@4:33 \"1\"=>\"2\" E[\"1\"]",
+            "int-decrement@4:33 \"1\"=>\"0\" E[\"1\"]",
             "int-increment@15:14 \"0u8\"=>\"1u8\" E[\"0u8\"]",
             "return-default@16:5 \"a.len() as i32 * x\"=>\"Default::default()\" E[\"a.len() as i32 * x\"]",
             "mul-to-div@16:20 \"*\"=>\"/\" E[\"a.len() as i32 * x\"]",
-        ]
+        ],
+        "the body of a const fn is proposed like any other, since only the compiler can say \
+         whether anything evaluates it before the program runs (ADR 0047)"
     );
     assert_eq!(
         skips(&d),
@@ -285,15 +291,59 @@ fn every_place_passed_over_is_counted_under_the_outermost_reason() {
             ("macro-invocation", 1),
             ("cfg-attribute", 4),
             ("test-code", 8),
-            ("const-fn-body", 4),
         ],
-        "the body of a const fn is its own reason: what the compiler may evaluate at a call is \
-         not what it evaluates in an initializer"
+        "an initializer the compiler evaluates is passed over whatever function it sits in"
     );
     for skip in &d.skips {
         assert_eq!(skip.path, "src/lib.rs");
         assert!(!skip.reason.explanation().is_empty());
     }
+}
+
+#[test]
+fn a_site_names_the_const_fn_whose_body_is_the_innermost_around_it_and_no_other() {
+    let src = "pub struct S;\nimpl S {\n    pub const fn wide(a: u8) -> u8 {\n        let f = |b: u8| b + 1;\n        fn inner(c: u8) -> u8 { c - 1 }\n        a * 2\n    }\n}\npub const fn free(d: u8) -> u8 { d / 2 }\npub fn plain(e: u8) -> u8 { e % 2 }\n";
+    let d = discover(src);
+    assert_coherent(src, &d);
+    let named = |rule: &str| -> Option<(String, Option<String>, String)> {
+        let found = d
+            .candidates
+            .iter()
+            .find(|found| found.candidate.rule.name == rule)
+            .expect("the rule proposes a candidate here");
+        found.hint.const_fn.as_ref().map(|function| {
+            (
+                function.name.clone(),
+                function.owner.clone(),
+                src.get(function.keyword.start as usize..function.keyword.end as usize)
+                    .expect("the keyword is a range of the source")
+                    .to_owned(),
+            )
+        })
+    };
+    assert_eq!(
+        named("mul-to-div"),
+        Some(("wide".to_owned(), Some("S".to_owned()), "const".to_owned())),
+        "a site in a method's body names the method, the type the compiler calls it by, and \
+         the keyword the instrumented tree takes away"
+    );
+    assert_eq!(
+        named("div-to-mul"),
+        Some(("free".to_owned(), None, "const".to_owned())),
+        "a free function has no type to be called by"
+    );
+    assert_eq!(
+        named("add-to-sub"),
+        None,
+        "a closure's body is its own, and the compiler does not ask it to be const whatever \
+         function it was written in"
+    );
+    assert_eq!(
+        named("sub-to-add"),
+        None,
+        "neither is a function's that is not const itself"
+    );
+    assert_eq!(named("rem-to-mul"), None, "nor a plain function's");
 }
 
 #[test]
@@ -313,7 +363,7 @@ fn skip_reasons_are_named_explained_and_ranked() {
             "included-expression",
             "generated-outside-workspace",
             "forbidden-lints",
-            "const-fn-body",
+            "evaluated-before-run",
             "let-condition",
             "open-range",
             "unstated-return-type",

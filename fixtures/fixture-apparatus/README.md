@@ -14,7 +14,7 @@ A run of this fixture now stops at the first of the three with `RM5011`, naming 
 
 | Path | Unit | Candidates |
 | --- | --- | --- |
-| `src/lib.rs` | lib and test | `sweep`: conditions, strings, compound assignment, return default |
+| `src/lib.rs` | lib and test | `sweep`: conditions, strings, compound assignment, return default; `double`, a `const fn` only the test calls: arithmetic, literals, return default |
 
 ## Fates
 
@@ -32,4 +32,8 @@ src/lib.rs:13:13 delete-compound-assignment unreached
 src/lib.rs:13:21 add-assign-to-sub-assign unreached
 src/lib.rs:13:71 is-ok-to-is-err unreached
 src/lib.rs:16:5 return-default unreached
+src/lib.rs:22:5 return-default killed
+src/lib.rs:22:7 mul-to-div killed
+src/lib.rs:22:9 int-decrement killed
+src/lib.rs:22:9 int-increment killed
 ```

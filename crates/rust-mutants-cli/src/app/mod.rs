@@ -2079,6 +2079,7 @@ fn instrumented(
         path,
         source: &source,
         placements: &placements,
+        carriers: &[],
         markers: &[],
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),

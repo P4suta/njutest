@@ -113,7 +113,7 @@
     "rejection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["index", "id", "display_id", "path", "rule", "code", "diagnostic"],
+      "required": ["index", "id", "display_id", "path", "rule", "code", "diagnostic", "reason"],
       "properties": {
         "index": { "type": "integer", "minimum": 0 },
         "id": { "$ref": "#/$defs/digest" },
@@ -125,6 +125,10 @@
         "isolated": {
           "type": "boolean",
           "description": "Whether the compiler refused it on its own, rather than only alongside another mutant."
+        },
+        "reason": {
+          "enum": ["compiler-refused", "evaluated-before-run"],
+          "description": "Why validation left it out: the compiler refused the edit, or the compiler evaluates the const fn the edit is in before the program runs, which is counted with the places passed over (ADR 0047)."
         }
       }
     },
@@ -146,7 +150,7 @@
             "included-expression",
             "generated-outside-workspace",
             "forbidden-lints",
-            "const-fn-body",
+            "evaluated-before-run",
             "let-condition",
             "open-range",
             "unstated-return-type",

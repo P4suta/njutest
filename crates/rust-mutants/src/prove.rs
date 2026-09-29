@@ -417,10 +417,13 @@ fn count(claims: &ByFile) -> usize {
     claims.values().map(Vec::len).sum()
 }
 
-/// Every claim discovery made, by the file it is in.
+/// Every claim discovery made, by the file it is in, except in a `const fn`, whose witnesses would be calls its `const` refuses (ADR 0047).
 fn questions_of(discovery: &Discovery, selected: Option<&BTreeSet<u32>>) -> Questions {
     let mut questions = Questions::default();
     for located in &discovery.candidates {
+        if located.found.hint.const_fn.is_some() {
+            continue;
+        }
         let Ok(id) = located.found.candidate.id() else {
             continue;
         };

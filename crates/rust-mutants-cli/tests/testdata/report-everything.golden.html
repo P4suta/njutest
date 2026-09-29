@@ -13,7 +13,7 @@
 <p class="score">50.0%</p>
 <p>1 detected of 2 decided</p>
 <h2>Accounting</h2>
-<p>2 mutants were cataloged: 2 executed, 0 refused by the compiler, 0 places that produced no candidate.</p>
+<p>2 mutants were cataloged: 2 executed, 0 refused by the compiler, 0 places passed over.</p>
 <table>
 <tr><th>killed</th><td>1</td></tr>
 <tr><th>survived</th><td>1</td></tr>
@@ -50,8 +50,8 @@
 
 <h2>Refused</h2>
 <table>
-<tr><th>where</th><th>rule</th><th>code</th><th>alone</th><th>what the compiler said</th></tr>
-<tr><td><code>src/lib.rs</code></td><td>gt-to-ge</td><td>E0308</td><td>yes</td><td>expected `bool`, found `&amp;str` in &quot;wide&quot; &amp; elsewhere</td></tr>
+<tr><th>where</th><th>rule</th><th>why</th><th>code</th><th>alone</th><th>what the compiler said</th></tr>
+<tr><td><code>src/lib.rs</code></td><td>gt-to-ge</td><td>compiler-refused</td><td>E0308</td><td>yes</td><td>expected `bool`, found `&amp;str` in &quot;wide&quot; &amp; elsewhere</td></tr>
 </table>
 <h2>Skipped</h2>
 <table>

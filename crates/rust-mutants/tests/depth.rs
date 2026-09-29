@@ -355,6 +355,7 @@ fn instrumenting_a_file_too_deep_to_read_says_so_by_the_readings_own_code() {
                 path: "src/lib.rs",
                 source,
                 placements: &[],
+                carriers: &[],
                 markers: &[],
                 comparable: &comparable,
                 probed: &probed,

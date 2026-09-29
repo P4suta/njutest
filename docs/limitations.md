@@ -476,9 +476,9 @@ Five are about a whole file, decided from cargo's metadata rather than by readin
 - `skipped-generated-outside-workspace` — a build script wrote the file outside the tree, which the run does not hold and cannot rewrite.
 - `skipped-forbidden-lints` — the crate `forbid`s a lint the guards' own attribute turns off, which `forbid` does not let an `allow` override, so every mutant of it would be refused with nothing saying why.
 
-Eleven are about a place inside a file, decided by the walk:
+Ten are about a place inside a file, decided by the walk:
 
-- `skipped-const-context` and `skipped-const-fn-body` — the compiler may evaluate the code before the program runs, where a runtime guard cannot live.
+- `skipped-const-context` — the compiler evaluates the code before the program runs, where a runtime guard cannot live: a `const` or `static` initializer, a `const` block, an array length, an enum discriminant, wherever it is written.
 - `skipped-macro-invocation` — the body is tokens the walker does not parse,
   counted once for the whole invocation.
 - `skipped-cfg-attribute` — the place is behind a `#[cfg(...)]`, so what the build compiles is not what the walk read.
@@ -489,6 +489,19 @@ Eleven are about a place inside a file, decided by the walk:
 - `skipped-open-range` — a range with no end has no other form to become.
 - `skipped-unstated-return-type` — the syntax cannot say the return type has a default, so there is no value to return instead.
 - `skipped-loop-value` — the loop decides the jump's value by what it breaks with, so the other jump has no value to carry.
+
+One is about a whole `const fn`, decided by the compiler while validation runs rather than by the walk ([ADR 0047](adr/0047-a-const-fn-is-mutated-where-nothing-evaluates-it-early.md)):
+
+- `skipped-evaluated-before-run` — the compiler evaluates the function before the program runs, because a `const` or `static` initializer, a `const` block or an array length calls it, or a `const fn` that keeps its `const` for that reason does.
+  The body of a `const fn` is proposed like any other, and the instrumented tree writes a `const fn` holding a guard without its `const`, together with any `const fn` that calls it and is called only while the program runs.
+  Where the compiler refuses that tree with `E0015` at a call it evaluates, the callee gets its `const` back and every candidate in it is counted here, one place per candidate, and listed with the rejections for its identity and the compiler's words.
+  It is not a refusal: the edit may well compile, and a test may notice it through what the compiler computed, but no guard can live where it is.
+  Each round gives back at least one function's `const` or learns one call, so however long the chain, the build is never refused.
+
+Two uses of such a function are not in the build validation compiles, so it cannot see them: a documented example, which rustdoc compiles only when it runs, and cargo will not compile without running; and code behind a `#[cfg(...)]` the validated build does not enable, such as `target_os = "wasi"` for the sealed build.
+Where one of them evaluates a function the tree wrote without its `const`, that build fails with the same `E0015`: a doctest target whose baseline fails, or a sealed build the target cannot make, each of which the run already refuses or names.
+A `rust-mutants: skip <reason>` marker on the function, and on every `const fn` it calls, keeps them all `const`: a `const fn` holding no guard loses its `const` only to carry the guard of one it calls.
+A site in a `const fn` carries no branch proof, no comparison and no probe, since the witness tree that vouches for them is checked before validation says which functions go without their `const`: such a mutant is run against every test that reaches it.
 
 Two are what a person wrote, and are the two to read first:
 

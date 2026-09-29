@@ -39,12 +39,27 @@ pub(super) enum StepError {
     ConflictingPath { offset: u32 },
 }
 
-/// What one file is planted with: the insertions, and the items whose bodies the entry markers name.
+/// What one file is planted with: the insertions, the items whose bodies the entry markers name, and every `const fn` it holds.
 pub(super) struct Planted {
     /// One-line insertions that charge the active mutation at function and loop boundaries and record each entered item.
     pub(super) splices: Vec<Splice>,
     /// Every item the file holds, in the order their indices were given from `first_item` up.
     pub(super) items: Vec<ItemBody>,
+    /// Every `const fn` the file holds, in the order the walk met them, none of which takes a checkpoint or an entry marker whether or not the instrumented text keeps its `const` (ADR 0047).
+    pub(super) const_fns: Vec<ConstSite>,
+}
+
+/// One `const fn` of a file: where its `const` and its body are, and the names a compiler diagnostic calls it by.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ConstSite {
+    /// The bytes of its `const` keyword.
+    pub(super) keyword: Span,
+    /// The bytes of its body, braces included.
+    pub(super) body: Span,
+    /// Its own name.
+    pub(super) name: String,
+    /// The last path segment of the type whose `impl` or `trait` holds it, or `None` for a function neither holds.
+    pub(super) owner: Option<String>,
 }
 
 /// Plants the checkpoints and the entry markers of one file, numbering its items from `first_item`.
@@ -67,6 +82,8 @@ pub(super) fn plant(
         first_item,
         items: Vec::new(),
         entering: None,
+        const_fns: Vec::new(),
+        owners: Vec::new(),
     };
     collector.visit_file(&file);
     if let Some(error) = collector.error {
@@ -83,6 +100,7 @@ pub(super) fn plant(
             })
             .collect(),
         items: collector.items,
+        const_fns: collector.const_fns,
     })
 }
 
@@ -109,6 +127,9 @@ struct Collector<'a> {
     first_item: u32,
     items: Vec<ItemBody>,
     entering: Option<u32>,
+    const_fns: Vec<ConstSite>,
+    /// The types and traits whose members the walk is inside, innermost last.
+    owners: Vec<String>,
 }
 
 #[derive(Default)]
@@ -307,7 +328,22 @@ impl Collector<'_> {
         Some(index)
     }
 
-    fn function(&mut self, named: Named, signature: &syn::Signature, block: &syn::Block) {
+    fn function(
+        &mut self,
+        named: Named,
+        signature: &syn::Signature,
+        (block, owner): (&syn::Block, Option<String>),
+    ) {
+        if let Some(keyword) = &signature.constness
+            && let (Some(keyword), Some(body)) = (self.span_of(keyword), self.span_of(block))
+        {
+            self.const_fns.push(ConstSite {
+                keyword,
+                body,
+                name: signature.ident.to_string(),
+                owner,
+            });
+        }
         let measurable = signature.constness.is_none();
         let context = if measurable {
             RuntimeContext::Allowed
@@ -350,14 +386,15 @@ impl<'ast> Visit<'ast> for Collector<'_> {
     fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
         visit::visit_signature(self, &node.sig);
         if let Some(named) = self.called(node.sig.ident.to_string(), node) {
-            self.function(named, &node.sig, &node.block);
+            self.function(named, &node.sig, (&node.block, None));
         }
     }
 
     fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
         visit::visit_signature(self, &node.sig);
         if let Some(named) = self.called(node.sig.ident.to_string(), node) {
-            self.function(named, &node.sig, &node.block);
+            let owner = self.owners.last().cloned();
+            self.function(named, &node.sig, (&node.block, owner));
         }
     }
 
@@ -366,20 +403,29 @@ impl<'ast> Visit<'ast> for Collector<'_> {
         if let Some(block) = &node.default
             && let Some(named) = self.called(node.sig.ident.to_string(), node)
         {
-            self.function(named, &node.sig, block);
+            let owner = self.owners.last().cloned();
+            self.function(named, &node.sig, (block, owner));
         }
     }
 
     fn visit_item_impl(&mut self, node: &'ast syn::ItemImpl) {
+        self.owners.push(crate::syntax::type_name(&node.self_ty));
         self.named(crate::syntax::implemented(node), |collector| {
             visit::visit_item_impl(collector, node);
         });
+        if self.owners.pop().is_none() {
+            self.error = Some(StepError::OutOfRange);
+        }
     }
 
     fn visit_item_trait(&mut self, node: &'ast syn::ItemTrait) {
+        self.owners.push(node.ident.to_string());
         self.named(node.ident.to_string(), |collector| {
             visit::visit_item_trait(collector, node);
         });
+        if self.owners.pop().is_none() {
+            self.error = Some(StepError::OutOfRange);
+        }
     }
 
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
@@ -681,6 +727,45 @@ mod tests {
         assert!(
             text.contains("const fn c() -> u8 { 1 }") && text.contains("const fn g() {}"),
             "{text}"
+        );
+    }
+
+    #[test]
+    fn every_const_fn_is_found_with_its_body_and_the_type_it_belongs_to() {
+        let source = "impl S { const fn a() -> u8 { 1 } fn b() { const fn c() {} } } trait T { fn d() {} } const fn e() {}";
+        let planted = match plant(source, "__rm", 0) {
+            Ok(planted) => planted,
+            Err(error) => panic!("plant: {error}"),
+        };
+        let text = |span: crate::span::Span| match (
+            usize::try_from(span.start),
+            usize::try_from(span.end),
+        ) {
+            (Ok(start), Ok(end)) => source.get(start..end),
+            (Err(_), _) | (_, Err(_)) => None,
+        };
+        let found: Vec<String> = planted
+            .const_fns
+            .iter()
+            .map(|site| {
+                format!(
+                    "{} of {:?}: {:?} {:?}",
+                    site.name,
+                    site.owner,
+                    text(site.keyword),
+                    text(site.body)
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                r#"a of Some("S"): Some("const") Some("{ 1 }")"#,
+                r#"c of None: Some("const") Some("{}")"#,
+                r#"e of None: Some("const") Some("{}")"#,
+            ],
+            "a const fn nested in a method belongs to no type, and a function that is not const \
+             is not one"
         );
     }
 

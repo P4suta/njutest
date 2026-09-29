@@ -149,7 +149,10 @@ pub(super) fn accounting(report: &Report, audit: &mut Audit) -> Decided {
         (ERRORED, report.counted(ERRORED)),
         (NOT_RUN, rows(|row| row.outcome == NOT_RUN && !row.lead())),
         ("cataloged", count(report.mutants.len())),
-        ("refused", count(report.rejections.len())),
+        (
+            "refused",
+            count(report.rejections.iter().filter(|one| one.refused).count()),
+        ),
         (UNREACHED, rows(|row| row.unreached && !row.lead())),
         (
             "unproven_killed",

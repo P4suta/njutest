@@ -308,17 +308,18 @@ fn rejections(document: &RunDocument) -> String {
         return "<p class=\"none\">The compiler accepted every candidate.</p>".to_owned();
     }
     let mut out = String::from(
-        "<table>\n<tr><th>where</th><th>rule</th><th>code</th><th>alone</th>\
+        "<table>\n<tr><th>where</th><th>rule</th><th>why</th><th>code</th><th>alone</th>\
          <th>what the compiler said</th></tr>\n",
     );
     for rejection in &document.rejections {
         crate::text::line(
             &mut out,
             format_args!(
-                "<tr><td><code>{path}</code></td><td>{rule}</td><td>{code}</td><td>{alone}</td>\
-             <td>{diagnostic}</td></tr>",
+                "<tr><td><code>{path}</code></td><td>{rule}</td><td>{why}</td><td>{code}</td>\
+             <td>{alone}</td><td>{diagnostic}</td></tr>",
                 path = escape(&rejection.path),
                 rule = escape(&rejection.rule),
+                why = rejection.reason.name(),
                 code = escape(match rejection.code.as_deref() {
                     Some(code) => code,
                     None => "—",

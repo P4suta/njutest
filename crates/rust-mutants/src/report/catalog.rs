@@ -25,9 +25,9 @@ pub struct CatalogDocument {
     pub selection: CatalogSelectionDocument,
     /// Every mutant the compiler accepted.
     pub mutants: Vec<MutantDocument>,
-    /// Every candidate the compiler refused.
+    /// Every candidate validation left out, and why.
     pub rejections: Vec<RejectionDocument>,
-    /// Every place discovery passed over.
+    /// Every place a run passed over.
     pub skips: Vec<SkipDocument>,
 }
 
@@ -157,7 +157,7 @@ pub struct BranchDocument {
     pub end_column: u32,
 }
 
-/// One refused candidate.
+/// One candidate validation left out.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RejectionDocument {
@@ -177,6 +177,16 @@ pub struct RejectionDocument {
     pub diagnostic: String,
     /// Whether the compiler refused it on its own, rather than only alongside another mutant.
     pub isolated: bool,
+    /// Why it was left out: the compiler refused the edit, or it evaluates the function the edit is in before the program runs.
+    pub reason: crate::validate::Condemnation,
+}
+
+impl RejectionDocument {
+    /// Whether the compiler refused the edit itself, which is what the `refused` count counts.
+    #[must_use]
+    pub const fn refused(&self) -> bool {
+        self.reason.refused()
+    }
 }
 
 /// One reason places were passed over, and how many.
@@ -269,7 +279,7 @@ pub fn catalog_selection_document(options: &PrepareOptions) -> CatalogSelectionD
     }
 }
 
-/// Every candidate the compiler refused, as documents.
+/// Every candidate validation left out, as documents.
 #[must_use]
 pub fn rejection_documents(session: &Session) -> Vec<RejectionDocument> {
     session
@@ -284,11 +294,12 @@ pub fn rejection_documents(session: &Session) -> Vec<RejectionDocument> {
             code: rejection.code.clone(),
             diagnostic: rejection.diagnostic.clone(),
             isolated: rejection.isolated,
+            reason: rejection.reason,
         })
         .collect()
 }
 
-/// Every place discovery passed over, as documents.
+/// Every place a run passed over, as documents.
 #[must_use]
 pub fn skip_documents(session: &Session) -> Vec<SkipDocument> {
     session

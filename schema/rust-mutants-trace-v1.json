@@ -1341,6 +1341,7 @@
               "additionalProperties": false,
               "required": [
                 "attributed",
+                "carried",
                 "condemned",
                 "round",
                 "success",
@@ -1389,6 +1390,13 @@
                         "type": "string"
                       }
                     }
+                  }
+                },
+                "carried": {
+                  "type": "array",
+                  "description": "The errors a const fn that goes without its const from the next round on accounts for, each the first line of what the compiler said (ADR 0047).",
+                  "items": {
+                    "type": "string"
                   }
                 },
                 "unattributed": {

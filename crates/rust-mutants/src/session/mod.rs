@@ -959,10 +959,18 @@ impl Session {
         &self.validated.accepted
     }
 
-    /// The candidates the compiler refused, with its own words.
+    /// The candidates validation left out, each with the compiler's own words and why.
     #[must_use]
     pub fn rejections(&self) -> &[Rejection] {
         &self.validated.rejections
+    }
+
+    /// The candidates the compiler refused: every rejection but the ones in a function the compiler evaluates before the program runs, which are places passed over.
+    pub fn refused(&self) -> impl Iterator<Item = &Rejection> {
+        self.validated
+            .rejections
+            .iter()
+            .filter(|rejection| rejection.reason.refused())
     }
 
     /// Whether compiler validation considered this catalog index.
@@ -971,7 +979,7 @@ impl Session {
         self.eligible.contains(&index)
     }
 
-    /// Every place discovery passed over, with its reason.
+    /// Every place the run passed over, with its reason: what discovery decided, and every candidate validation found in a function evaluated before the program runs.
     #[must_use]
     pub fn skips(&self) -> &[Skip] {
         &self.skips

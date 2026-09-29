@@ -24,7 +24,9 @@ use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
 use rust_mutants::syntax::Selection;
 use rust_mutants::trace::Recorder;
-use rust_mutants::validate::{Attempt, Compile, ValidateError, ValidateOptions, validate};
+use rust_mutants::validate::{
+    Attempt, Compile, Condemnation, Constness, ValidateError, ValidateOptions, validate,
+};
 
 /// Instruments a copy of a fixture and compiles it with a real cargo.
 struct CargoScripted {
@@ -39,19 +41,35 @@ struct CargoScripted {
 }
 
 impl Compile for CargoScripted {
-    fn attempt(&mut self, condemned: &BTreeSet<u32>) -> Result<Attempt, ValidateError> {
+    fn attempt(
+        &mut self,
+        condemned: &BTreeSet<u32>,
+        constness: &Constness,
+    ) -> Result<Attempt, ValidateError> {
         let mut files = Vec::new();
-        for (path, placements) in &self.placements {
-            let kept: Vec<Placement> = placements
-                .iter()
-                .filter(|placement| !condemned.contains(&placement.index))
-                .cloned()
-                .collect();
-            let source = &self.sources[path];
+        let kept: BTreeMap<&String, Vec<Placement>> = self
+            .placements
+            .iter()
+            .map(|(path, placements)| {
+                let kept = placements
+                    .iter()
+                    .filter(|placement| !condemned.contains(&placement.index))
+                    .cloned()
+                    .collect();
+                (path, kept)
+            })
+            .collect();
+        let carriers = constness.carriers_of(
+            kept.iter()
+                .map(|(path, placements)| (path.as_str(), placements.as_slice())),
+        );
+        for (path, kept) in &kept {
+            let source = &self.sources[*path];
             let file = instrument_file(&Instrumenting {
                 path,
                 source,
-                placements: &kept,
+                placements: kept,
+                carriers: carriers.get(*path).map_or(&[][..], Vec::as_slice),
                 markers: &[],
                 comparable: &BTreeSet::default(),
                 probed: &BTreeMap::default(),
@@ -356,7 +374,10 @@ pub fn name(flag: bool) -> &'static str {
     );
 
     let final_attempt = fixture
-        .attempt(&validated.rejections.iter().map(|one| one.index).collect())
+        .attempt(
+            &validated.rejections.iter().map(|one| one.index).collect(),
+            &Constness::default(),
+        )
         .expect("final strict attempt");
     assert!(
         final_attempt.completion == rust_mutants::cargo::Completion::Built,
@@ -426,12 +447,125 @@ fn the_compiler_decides_which_mutants_are_real_and_says_why_for_each() {
     assert!(validated.rounds >= 2);
 
     let final_attempt = fixture
-        .attempt(&validated.rejections.iter().map(|r| r.index).collect())
+        .attempt(
+            &validated.rejections.iter().map(|r| r.index).collect(),
+            &Constness::default(),
+        )
         .expect("attempt");
     assert_eq!(
         final_attempt.completion,
         rust_mutants::cargo::Completion::Built,
         "the accepted tree compiles"
+    );
+}
+
+/// A const item that calls a chain of two `const fn`s, and a `const fn` whose only guard the compiler refuses, which calls a third that only the program calls.
+const EVALUATED: &str = "pub const X: u32 = outer(1);
+
+pub const fn outer(n: u32) -> u32 {
+    inner(n) + 1
+}
+
+pub const fn inner(n: u32) -> u32 {
+    n * 2
+}
+
+pub struct Wrapped(pub u32);
+
+pub const fn relay(n: u32) -> Wrapped {
+    Wrapped(lone(n))
+}
+
+pub const fn lone(n: u32) -> u32 {
+    n - 1
+}
+";
+
+#[test]
+fn a_chain_the_compiler_evaluates_gives_back_one_const_a_round_and_a_caller_only_the_program_calls_carries_the_guard()
+ {
+    let mut fixture = prepare_fixture_with("fixture-rejectable", |root| {
+        std::fs::write(root.join("src/lib.rs"), EVALUATED).expect("write the chain");
+    });
+    let catalog = fixture.catalog.clone();
+    let of = |name: &str| -> BTreeSet<u32> {
+        let placements: Vec<Placement> = fixture
+            .placements
+            .values()
+            .flat_map(|file| file.iter().cloned())
+            .collect();
+        placements
+            .iter()
+            .filter(|placement| {
+                placement
+                    .hint
+                    .const_fn
+                    .as_ref()
+                    .is_some_and(|function| function.name == name)
+            })
+            .map(|placement| placement.index)
+            .collect()
+    };
+    let (outer, inner, relay, lone) = (of("outer"), of("inner"), of("relay"), of("lone"));
+    assert!(
+        [&outer, &inner, &relay, &lone]
+            .iter()
+            .all(|held| !held.is_empty()),
+        "every function holds a guard going in"
+    );
+    let validated = validate(
+        &catalog,
+        &mut fixture,
+        &rust_mutants::validate::Validating {
+            options: options(),
+            cancel: &Cancel::new(),
+            trace: &Recorder::disabled(),
+        },
+    )
+    .expect("validation settles");
+    let left = |reason: Condemnation| -> BTreeSet<u32> {
+        validated
+            .rejections
+            .iter()
+            .filter(|rejection| rejection.reason == reason)
+            .map(|rejection| rejection.index)
+            .collect()
+    };
+    let evaluated: BTreeSet<u32> = outer.union(&inner).copied().collect();
+    assert_eq!(
+        left(Condemnation::EvaluatedBeforeRun),
+        evaluated,
+        "the const item evaluates outer, and outer, const again, evaluates inner: every mutant of \
+         both is left out for that, and none of any other function is: {:?}",
+        validated.rejections
+    );
+    assert!(
+        validated
+            .rejections
+            .iter()
+            .filter(|rejection| rejection.reason == Condemnation::EvaluatedBeforeRun)
+            .all(|rejection| rejection.code.as_deref() == Some("E0015")),
+        "in the compiler's own words, which name the call it would have to make before the \
+         program runs: {:?}",
+        validated.rejections
+    );
+    assert!(
+        relay.is_subset(&left(Condemnation::CompilerRefused)),
+        "relay's only guard is a return the compiler refuses, as it would anywhere: {:?}",
+        validated.rejections
+    );
+    assert!(
+        lone.iter().all(|index| validated.accepted.contains(index)),
+        "relay keeps its const only for want of a guard, and it calls lone, which nothing \
+         evaluates before the program runs: relay goes without its const too, so lone's \
+         mutants are mutants: {validated:?}"
+    );
+    assert_eq!(
+        (validated.rounds, validated.bisections),
+        (3, 0),
+        "outer in the first round, inner and relay's call in the second, and a tree that builds \
+         in the third: each round learns something about a function, so the rounds end without \
+         a bisection, and the build is never refused"
     );
 }
 

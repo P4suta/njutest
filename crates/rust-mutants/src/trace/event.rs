@@ -603,6 +603,8 @@ pub struct ValidateRoundRecord {
     pub written: u32,
     /// The mutants an error was inside of, and what the compiler said.
     pub attributed: Vec<AttributionRecord>,
+    /// The errors a `const fn` that goes without its `const` from the next round on accounts for, each the first line of what the compiler said (ADR 0047).
+    pub carried: Vec<String>,
     /// The errors no branch accounts for, rendered.
     pub unattributed: Vec<String>,
 }

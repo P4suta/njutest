@@ -917,6 +917,7 @@ fn one_of_each_preparation(recorder: &Recorder) {
             code: Some("E0308".to_owned()),
             said: "mismatched types".to_owned(),
         }],
+        carried: Vec::new(),
         unattributed: vec!["error: something else".to_owned()],
     });
     recorder.bisect(rust_mutants::trace::BisectRecord {

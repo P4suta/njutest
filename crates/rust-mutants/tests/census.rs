@@ -66,12 +66,22 @@ fn every_site_the_rules_target_has_a_decision() {
 }
 
 #[test]
-fn a_const_fn_body_is_its_own_reason_and_a_const_block_stays_const_context() {
+fn a_const_fn_body_is_walked_as_a_body_and_what_the_compiler_evaluates_in_it_stays_const_context() {
+    let (decisions, candidates, skipped) =
+        decided("pub const fn f(a: i32) -> i32 {\n    a + 1\n}\n");
     assert_eq!(
-        reasons("pub const fn f(a: i32) -> i32 {\n    a + 1\n}\n"),
-        ["const-fn-body"],
-        "the compiler may evaluate any call of a const fn, and a runtime guard cannot live \
-         where it does"
+        (decisions, candidates, skipped),
+        (4, 4, 0),
+        "whether a const fn is evaluated before the program runs is the compiler's to say, one \
+         function at a time, so the walk proposes its body as it proposes any other (ADR 0047)"
+    );
+    assert_eq!(
+        reasons(
+            "pub const fn f(a: i32) -> [i32; 4] {\n    const N: i32 = 1 + 2;\n    [a + N; 1 + 3]\n}\n"
+        ),
+        ["const-context"],
+        "a const item and an array length inside a const fn are evaluated by the compiler \
+         whatever becomes of the function"
     );
     assert_eq!(
         reasons("pub static N: i32 = 1 + 2;\n"),

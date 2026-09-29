@@ -289,6 +289,25 @@ The search is bounded; running out of the budget condemns what is left, which is
 Every offence bisection names is then compiled once more on its own, so the report carries the compiler's words about that mutant rather than a sentence saying there were none.
 A row says `isolated` when the compiler refused it alone, and names the mutants it was refused with when it did not.
 
+### A `const fn`
+
+A guard is a call the program makes while it runs, and the body of a `const fn` is one the compiler may evaluate before it does ([ADR 0047](../adr/0047-a-const-fn-is-mutated-where-nothing-evaluates-it-early.md)).
+The walk proposes a `const fn`'s body as it proposes any other, and records with each candidate the `const fn` whose body is the innermost around it; a closure or a function written inside one is a body of its own.
+A round writes every `const fn` holding a guard without its `const`, blanking the keyword so that nothing after it moves, and every other `const fn` with it.
+A `const fn` so written takes no checkpoint and no entry marker, as it takes none with its `const`: what the steps count and what an item's reach names are what the pristine file says, whichever functions a round unconsts.
+
+Where the compiler evaluates such a function, it refuses the tree with `E0015` at the call, which lies in no mutant's branch.
+The refusal names the callee: a free function by a note whose span is its definition, which holds the blanked keyword, and an associated function or a method by its type and its name, which may name more than one function the round wrote without its `const`, and then names every one of them.
+Where the call is in the body of a `const fn` the round wrote with its `const` only because it holds no guard — its one candidate refused by the compiler, say — the caller carries the guard: from the next round on it goes without its `const` too, wherever the callee does.
+Anywhere else — a `const` or `static` initializer, a `const` block, an array length, or a `const fn` that keeps its `const` because the compiler evaluates it — the callee keeps its `const` from the next round on, and every mutant it holds is left out as `evaluated-before-run`.
+Each such round learns a call or a function that keeps its `const`, neither of which it unlearns, so the rounds end, however long the chain, without a bisection and without the round limit that bounds ordinary attribution.
+A bisection starts from the tree with nothing live, in which no function goes without its `const`.
+
+A candidate left out this way is not a refusal: its edit may compile, and a mutation of a function the compiler evaluates may even be noticed by the compiler itself.
+It is a place no guard can live, so a report counts it with the places passed over, under `evaluated-before-run`, and lists it with the rejections for its identity and the compiler's words, with `reason: "evaluated-before-run"` where a refusal says `"compiler-refused"`.
+
+The witness tree asks nothing about a site in a `const fn`, because it is checked before validation says which of them go without their `const`, and a witness written into one would be a call the `const` refuses: such a mutant carries no branch proof, no comparison and no probe, and is run against every test that reaches it.
+
 A build nobody waited for is a cancellation and not a tree that does not compile: `Ctrl-C` during a round ends validation with `RM0001`, and nothing is condemned on the strength of what a half-finished command printed.
 The same holds of every build either product runs: how it came out is `cargo::Completion`, which exists only where cargo exited with a code of its own and printed exactly one `build-finished` record, last, that agrees with that code.
 A cargo ended by a signal, one that exited without the record, or a record that says what the exit code does not is a failed command or an unreadable stream, never a compiler that refused the tree.
@@ -298,10 +317,10 @@ A cargo ended by a signal, one that exited without the record, or a record that 
 `const-context`, `macro-invocation`, `cfg-attribute`, `test-code`,
 `unsupported-site`, `excluded`, `test-only-file`, `no-std-crate`,
 `included-expression`, `generated-outside-workspace`, `forbidden-lints`,
-`const-fn-body`, `let-condition`, `open-range`, `unstated-return-type`,
+`evaluated-before-run`, `let-condition`, `open-range`, `unstated-return-type`,
 `loop-value`, `annotated`, `configured`.
 Each is counted and named;
-`rust-mutants why-skipped` lists them.
+`rust-mutants why-skipped` lists them, except `evaluated-before-run`, which validation decides and `why-skipped` does not run.
 A skip is a decision the tool made and says; a rejection (a mutant the compiler refused) is a fact about the program and is reported with the diagnostic.
 
 A `rust-mutants: skip <reason>` comment is the one skip an author writes.
@@ -313,13 +332,13 @@ Markers are read from the gaps between tokens, so the words inside a string lite
 It is applied where the walk's own decisions are, so every tally says the same thing about the file, and an entry that hid nothing is the same `unmatched-skip` finding a stale marker is.
 
 Every place a rule targets has a decision: a candidate with its guard form, or a skip with its reason.
-A rule that passed over a place without saying so is what `crates/rust-mutants/tests/census.rs` refuses, and it is why a `const fn` body, a condition that binds with `let`, and a range with no end are reasons of their own rather than silence.
+A rule that passed over a place without saying so is what `crates/rust-mutants/tests/census.rs` refuses, and it is why a condition that binds with `let` and a range with no end are reasons of their own rather than silence.
 Two decisions carry a note instead of a reason of their own: `identical-replacement` where a rule's replacement is what is already written, and `text-mismatch` where the bytes at the span are not the operator the rule expects.
 
 The per-file walk (`rust_mutants::syntax`) keeps walking inside a region it will not mutate and counts every candidate it would have produced under the outermost reason, so the tallies say how much code each reason hides.
 A macro invocation counts once, since its body is tokens the walker does not parse.
 Whole-file reasons (`excluded`, `test-only-file`,
-`no-std-crate`, `generated-outside-workspace`, `forbidden-lints`) are decided by the workspace layer from cargo metadata and dep-info, not by the walk.
+`no-std-crate`, `generated-outside-workspace`, `forbidden-lints`) are decided by the workspace layer from cargo metadata and dep-info, not by the walk, and `evaluated-before-run` by validation, from what the compiler refused.
 A file a build script A crate is `forbidden-lints` when its root, or the `[lints]` table cargo builds it with, forbids one of the lints the guards' own attribute turns off:
 `forbid` is the one level an `allow` cannot override, so a guard there is a compile error whatever it edits, and every mutant of the crate would otherwise be refused with nothing saying why.
 A `deny` is fine, which is what the attribute is carried for.

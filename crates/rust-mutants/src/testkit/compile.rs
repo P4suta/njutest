@@ -18,7 +18,7 @@ use crate::instrument::{Placement, instrument_file, plan_file};
 use crate::rule::{Registry, Tier};
 use crate::runner::{Cancel, ProcessExit, Termination};
 use crate::syntax::{Selection, discover_file};
-use crate::validate::{Attempt, Compile, ValidateError};
+use crate::validate::{Attempt, Compile, Constness, ValidateError};
 
 static REGISTRY: Registry = Registry::canonical();
 
@@ -118,7 +118,11 @@ impl ScriptedCompile {
 }
 
 impl Compile for ScriptedCompile {
-    fn attempt(&mut self, condemned: &BTreeSet<u32>) -> Result<Attempt, ValidateError> {
+    fn attempt(
+        &mut self,
+        condemned: &BTreeSet<u32>,
+        constness: &Constness,
+    ) -> Result<Attempt, ValidateError> {
         self.attempts.push(condemned.clone());
         if let Some((nth, cancel)) = &self.cancelling
             && self.attempts.len() >= *nth
@@ -135,10 +139,12 @@ impl Compile for ScriptedCompile {
             .filter(|placement| !condemned.contains(&placement.index))
             .cloned()
             .collect();
+        let carriers = constness.carriers_of([(self.path.as_str(), kept.as_slice())]);
         let file = instrument_file(&crate::instrument::Instrumenting {
             path: &self.path,
             source: &self.source,
             placements: &kept,
+            carriers: carriers.get(&self.path).map_or(&[][..], Vec::as_slice),
             markers: &[],
             comparable: &BTreeSet::default(),
             probed: &BTreeMap::default(),
