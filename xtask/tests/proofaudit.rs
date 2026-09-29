@@ -4184,3 +4184,42 @@ fn a_kept_output_larger_than_the_runner_keeps_is_not_read_whole() {
 fn checkers() -> xtask::schemas::Checkers {
     xtask::schemas::Checkers::compiled().expect("the published schemas compile")
 }
+
+#[test]
+fn a_repair_is_allowed_every_disposition_its_own_execution_can_come_to() {
+    let allowed = |outcome: &str| {
+        xtask::repair::derived("survived", outcome, (0, None))
+            .unwrap_or_else(|refused| panic!("{outcome} is an outcome a run comes to: {refused}"))
+            .now
+    };
+    assert_eq!(
+        allowed("waited"),
+        ["waited", "unconfirmed"],
+        "a wait is confirmed as every wait is, and one whose confirmation does not reproduce is \
+         unconfirmed (ADR 0036 decision 1)"
+    );
+    assert_eq!(
+        allowed("not_run"),
+        ["declined", "errored"],
+        "a run whose every test declined to measure is `declined`, and any other run that did \
+         not run to an answer is an error (ADR 0043)"
+    );
+}
+
+#[test]
+fn a_repair_measured_again_alone_is_paired_with_the_touch_of_its_last_run() {
+    let mut engine = vec![
+        sentinel::touch("baseline", &[0]),
+        sentinel::touch("control", &[0, 1]),
+    ];
+    engine.push(repair_touch(&"b".repeat(64), &[0]));
+    engine.push(repair_touch(&"b".repeat(64), &[1]));
+    let said = repair_audit(&[SURVIVED], engine);
+    assert_eq!(
+        said,
+        Vec::<String>::new(),
+        "a repair whose first run waited is measured again alone, as every wait is, so two \
+         repair touches name it; the repair is decided by the last run, and so is the audit \
+         (ADR 0036 decision 2)"
+    );
+}

@@ -54,7 +54,7 @@ pub fn read(recorded: &crate::route::Checked<crate::schemas::RunnerLines>) -> Ve
 pub struct Derived {
     /// `reached`, `not-reached` or `unrecorded`, from the repair's own touch record.
     pub reached: &'static str,
-    /// Every disposition its last execution allows: a kill is `killed` or, where its control failed, `unconfirmed`.
+    /// Every disposition its last execution allows: a kill or a wait is itself or, where its confirmation did not hold, `unconfirmed`, and a run that did not run to an answer is `declined` where every test declined and `errored` otherwise.
     pub now: Vec<String>,
 }
 
@@ -101,9 +101,10 @@ pub fn derived(
         "survived" if reached == "reached" => vec!["survived".to_owned()],
         "survived" => vec![was.to_owned()],
         "killed" => vec!["killed".to_owned(), "unconfirmed".to_owned()],
-        "waited" => vec!["waited".to_owned()],
+        "waited" => vec!["waited".to_owned(), "unconfirmed".to_owned()],
         "step_limit_reached" => vec!["step-limit-reached".to_owned()],
-        "errored" | "inconclusive" | "not_run" => vec!["errored".to_owned()],
+        "not_run" => vec!["declined".to_owned(), "errored".to_owned()],
+        "errored" | "inconclusive" => vec!["errored".to_owned()],
         other => {
             return Err(RepairContradictionError::Outcome {
                 outcome: other.to_owned(),

@@ -31,6 +31,7 @@ pub const EXIT_UNAUDITED: u8 = 3;
 const KILLED: &str = "killed";
 const SURVIVED: &str = "survived";
 const UNREACHED: &str = "unreached";
+const DISCHARGED: &str = "discharged";
 const REJECTED: &str = "compile-rejected";
 const STEP_LIMIT_REACHED: &str = "step-limit-reached";
 const WAITED: &str = "waited";
@@ -1449,7 +1450,7 @@ fn repaired(
     notes.looked()
 }
 
-/// Each repair's last execution against its moved target, paired with the one engine repair touch record naming that mutation and target; a repair touch no repair names, or a repair two of them name, is a violation.
+/// Each repair's last execution against its moved target, paired with the last engine repair touch record naming that mutation and target, which is the quiet re-measurement's where a wait had one; a repair touch no repair names is a violation.
 fn paired<'a>(
     recording: &Recording<'_>,
     repairs: &[crate::repair::Repair],
@@ -1504,19 +1505,7 @@ fn paired<'a>(
                 touch.target == repair.target && touch.mutant.is_some() && touch.mutant == id
             })
             .collect();
-        match naming.as_slice() {
-            [] => pairs.push((exec, None)),
-            [one] => pairs.push((exec, Some(*one))),
-            several => notes.violated(
-                &repair.mutant,
-                format!(
-                    "{} repair touch records name it against {}, so which one its repair \
-                     reached through cannot be told",
-                    several.len(),
-                    repair.target
-                ),
-            ),
-        }
+        pairs.push((exec, naming.last().copied()));
     }
     pairs
 }
@@ -1552,8 +1541,11 @@ fn rested(
     }
     let (expected_was, by) = match before {
         Some(now) => (now, "the repair of it before this one made it"),
-        None if route.is_some_and(|route| route.granularity == UNREACHED) => {
-            (UNREACHED, "its route makes it")
+        None if route.is_some_and(|route| {
+            route.reaching.is_empty() && route.granularity != DISCHARGED
+        }) =>
+        {
+            (UNREACHED, "its route reaches no target and a proof removed none, which makes it")
         }
         None => (SURVIVED, "its route makes it"),
     };
