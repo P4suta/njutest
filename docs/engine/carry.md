@@ -177,7 +177,8 @@ The trace's `cache` record says `rule: carried` for this lookup, and `refused` n
 A believed record is reported like an exact one, with the run that established it as `source_run_id`.
 
 An answer is carried only by a run that keeps what it rests on where an audit reads it again.
-njutest keeps the carried records it believed, the skeletons and the guards' record beside each build's recording, which only a traced run writes, so a run that is not traced files its answers for a later run and carries none: `mutation::Keeping::Nowhere` refuses the lookup before any record is read.
+njutest keeps the carried records it believed, the skeletons, the guards' record and the catalog beside each build's recording, and `cargo xtask proofaudit` derives each record's locus again from the catalog's edit for its mutant, which must be the edit the report's row says.
+Only a traced run writes that recording, so a run that is not traced files its answers for a later run and carries none: `mutation::Keeping::Nowhere` refuses the lookup before any record is read.
 
 A carried record lists native executions, and keeps no sealed execution, so a carried answer is a lead and never a verdict ([ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md)).
 A run that seals puts the mutation to its sealed executions first, as it does a mutation nothing was kept about, and a verdict they establish is what the run reports, the carried answer set aside; only where they establish none is the carried answer read back, as the lead it is, resting on every reason they established none.

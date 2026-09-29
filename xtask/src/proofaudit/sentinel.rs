@@ -1503,6 +1503,7 @@ fn reuse_planted(clean: Perturbation) -> Vec<Perturbation> {
             ..clean.clone()
         },
         carried_past_its_killer(clean.clone()),
+        carried_elsewhere(clean.clone()),
         carried(
             "a kill carried from an earlier tree though a body its killer entered starts elsewhere since",
             clean.clone(),
@@ -1510,6 +1511,25 @@ fn reuse_planted(clean: Perturbation) -> Vec<Perturbation> {
         ),
         unreached_plan(clean),
     ]
+}
+
+/// The defect planted for the reuse layer: a kill carried under a record whose locus names another place in the body than the mutation's edit.
+#[must_use]
+pub fn carried_elsewhere(clean: Perturbation) -> Perturbation {
+    let mut planted = carried(
+        "a kill carried under a record whose locus is another place in the body than the mutation's",
+        clean,
+        &json!({ "line": BODY_START.0, "column": BODY_START.1 }),
+    );
+    for (file, document) in &mut planted.beside {
+        if *file == "carried-v1.json" {
+            merge(
+                document,
+                json!({ "records": [{ "record": { "locus": { "start": 4, "end": 5 } } }] }),
+            );
+        }
+    }
+    planted
 }
 
 /// The defect planted for the reuse layer: a kill carried under a plan that runs a target the guards' record says reaches nothing of the mutation.
@@ -1545,6 +1565,26 @@ fn carried_item() -> Value {
 /// Where the body of [`carried_item`] starts now.
 pub const BODY_START: (u64, u64) = (6, 23);
 
+/// The column of the carried kill's edit, the `!` two bytes into the body `{ !ready }` that starts at [`BODY_START`].
+const EDIT_COLUMN: u64 = 25;
+
+/// The catalog a specimen's build keeps beside its recording: the carried kill's edit, which takes the `!` out of the body of [`carried_item`].
+fn carried_catalog() -> Value {
+    json!({
+        "document_type": "rust-mutants/catalog", "schema_version": 1,
+        "tool_version": "0.1.0", "workspace": {}, "selection": {},
+        "mutants": [{
+            "index": 0, "id": "a".repeat(64), "display_id": KILLED,
+            "path": "src/lib.rs", "package": "pkg", "family": "condition",
+            "rule": "negate-condition", "item": "negated", "rule_version": 1,
+            "line": BODY_START.0, "column": EDIT_COLUMN,
+            "start_byte": 82, "end_byte": 83,
+            "source_digest": "0".repeat(64), "original": "!", "replacement": ""
+        }],
+        "rejections": [], "skips": []
+    })
+}
+
 /// The specimen with its kill carried from [`EARLIER`] by an execution of [`TARGET`] that entered [`carried_item`] where `entered` says its body started, and the carry evidence the engine keeps beside its recording; every premise of ADR 0041 holds where `entered` is [`BODY_START`].
 #[must_use]
 pub fn carried(name: &'static str, clean: Perturbation, entered: &Value) -> Perturbation {
@@ -1565,12 +1605,16 @@ pub fn carried(name: &'static str, clean: Perturbation, entered: &Value) -> Pert
         document: with(json!({
             "mutants": [{
                 "catalog_index": 0,
+                "position": { "line": BODY_START.0, "column": EDIT_COLUMN, "character_column": EDIT_COLUMN },
+                "original": "!",
+                "replacement": "",
                 "reuse": { "reused": true, "source_run_id": EARLIER }
             }],
             "accounting": { "mutants": { "reused_killed": 1 } }
         })),
         events: Some(numbered(events)),
         beside: vec![
+            ("catalog-v1.json", carried_catalog()),
             (
                 "touched-v1.json",
                 json!({

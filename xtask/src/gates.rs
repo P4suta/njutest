@@ -2615,7 +2615,7 @@ fn recordings(trace: Option<&Path>) -> Result<Recordings, proofaudit::AuditError
     })
 }
 
-/// What each configured build's engine kept beside its recording of the answers it carried, in namespace order, each with the position of its recording; a build that kept no `carried-v1.json` carried nothing it kept, and one that kept it keeps the skeletons and the guards' record beside it.
+/// What each configured build's engine kept beside its recording of the answers it carried, in namespace order, each with the position of its recording; a build that kept no `carried-v1.json` carried nothing it kept, and one that kept it keeps the skeletons, the guards' record and the catalog beside it.
 fn engine_beside(trace: &Path) -> Result<Vec<proofaudit::Beside>, proofaudit::AuditError> {
     let builds = trace.join("builds");
     let namespaces = match crate::repository::entries(&builds) {
@@ -2647,6 +2647,7 @@ fn engine_beside(trace: &Path) -> Result<Vec<proofaudit::Beside>, proofaudit::Au
             carried,
             skeletons: required("skeletons-v1.json")?,
             touched: required("touched-v1.json")?,
+            catalog: required("catalog-v1.json")?,
         });
     }
     Ok(kept)

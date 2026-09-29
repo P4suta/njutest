@@ -855,6 +855,15 @@ fn a_carried_answer_is_held_to_every_premise_again_from_what_its_build_kept() {
         "the killer entered a body that starts elsewhere now, so a position it read may be \
          another: {moved:?}"
     );
+    let elsewhere = carried_remarks(&sentinel::carried_elsewhere(sentinel::clean()));
+    assert!(
+        elsewhere.iter().any(|(standing, subject, detail)| {
+            *standing == Standing::Violated && subject == KILLED && detail.contains("locus")
+        }),
+        "the record the kill was carried under names another place in the body than the \
+         mutation's edit, which the catalog kept beside the recording says, so it answered for \
+         another mutation: {elsewhere:?}"
+    );
     let unkept = sentinel::Perturbation {
         beside: Vec::new(),
         ..sentinel::carried(

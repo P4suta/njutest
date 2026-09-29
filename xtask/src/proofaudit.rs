@@ -588,6 +588,8 @@ pub struct Beside {
     pub skeletons: serde_json::Value,
     /// `touched-v1.json`: the guards' record, with the item catalog.
     pub touched: serde_json::Value,
+    /// `catalog-v1.json`: every mutation's edit, which each carried record's locus is derived from again.
+    pub catalog: serde_json::Value,
 }
 
 /// The runner's recording, where the run kept one, with the path it was read from.
@@ -1981,11 +1983,36 @@ struct MutantRow {
     id: String,
     display_id: String,
     catalog_index: Option<u64>,
+    edit: RowEdit,
     outcome: String,
     acceptance: AcceptanceFact,
     killed_by: Option<String>,
     read_back_from: Option<String>,
     rests: Rests,
+}
+
+/// Where a row says its mutation's edit is, and what it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RowEdit {
+    path: String,
+    line: u64,
+    column: u64,
+    original: String,
+    replacement: String,
+}
+
+impl RowEdit {
+    /// The edit `row` says, from its required columns.
+    fn read(row: &serde_json::Value) -> Option<Self> {
+        let position = row.get("position")?;
+        Some(Self {
+            path: row.get("path")?.as_str()?.to_owned(),
+            line: position.get("line")?.as_u64()?,
+            column: position.get("column")?.as_u64()?,
+            original: row.get("original")?.as_str()?.to_owned(),
+            replacement: row.get("replacement")?.as_str()?.to_owned(),
+        })
+    }
 }
 
 /// One sealed execution, as a report's evidence names it and an engine recording holds it.
@@ -4835,6 +4862,11 @@ impl<'a> Recording<'a> {
                     id: required(row, "id", text)?,
                     display_id: required(row, "display_id", text)?,
                     catalog_index: row.get("catalog_index").and_then(serde_json::Value::as_u64),
+                    edit: RowEdit::read(row).ok_or_else(|| {
+                        crate::route::ReadCauseError::Absent {
+                            field: "position".to_owned(),
+                        }
+                    })?,
                     outcome: required(decision, "outcome", text)?,
                     acceptance: AcceptanceFact::from_json(row.get("accepted")),
                     killed_by: field(decision, "killed_by"),
@@ -5609,6 +5641,26 @@ fn reuse(
     notes.looked()
 }
 
+/// What each row read back says of its mutation's edit and catalog index, by identity, for a row that names its index.
+fn reported_of(read_back: &[&MutantRow]) -> BTreeMap<String, crate::engineaudit::carry::Reported> {
+    read_back
+        .iter()
+        .filter_map(|mutant| {
+            Some((
+                mutant.id.clone(),
+                crate::engineaudit::carry::Reported {
+                    index: mutant.catalog_index?,
+                    path: mutant.edit.path.clone(),
+                    line: mutant.edit.line,
+                    column: mutant.edit.column,
+                    original: mutant.edit.original.clone(),
+                    replacement: mutant.edit.replacement.clone(),
+                },
+            ))
+        })
+        .collect()
+}
+
 /// Whether every disposition the run's own routes say was carried from an earlier tree rests on a record a build kept beside its recording, says what the report says, and meets every premise of ADR 0041, re-derived from those documents and that build's control records.
 fn carried_back(
     read_back: &[&MutantRow],
@@ -5616,10 +5668,7 @@ fn carried_back(
     (beside, engines): (&[Beside], &[Engine]),
     notes: &mut Notes<'_>,
 ) {
-    let indices: BTreeMap<String, u64> = read_back
-        .iter()
-        .filter_map(|mutant| Some((mutant.id.clone(), mutant.catalog_index?)))
-        .collect();
+    let reported = reported_of(read_back);
     let mut believed: BTreeMap<String, crate::engineaudit::carry::Rederived> = BTreeMap::new();
     for kept in beside {
         let standings = engines
@@ -5630,8 +5679,9 @@ fn carried_back(
                 carried: &kept.carried,
                 skeletons: &kept.skeletons,
                 touched: &kept.touched,
+                catalog: &kept.catalog,
             },
-            (standings.as_ref(), &indices),
+            (standings.as_ref(), &reported),
         ) {
             Ok(records) => {
                 believed.extend(records.into_iter().map(|one| (one.mutant.clone(), one)));
@@ -5664,6 +5714,12 @@ fn carried_back(
                     "the report says {} from {:?}, and the record it carried says {} from {}",
                     mutant.outcome, mutant.read_back_from, record.outcome, record.run_id
                 ),
+            );
+        }
+        if let Some(why) = &record.misplaced {
+            notes.violated(
+                mutant.label(),
+                format!("the record's locus is not the mutation's: {why}"),
             );
         }
         if let Some(why) = &record.fails {

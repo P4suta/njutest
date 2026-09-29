@@ -1434,7 +1434,7 @@ fn run_mutation(
     mutating.report.findings.extend(accepted.findings);
     concurrency_of(mutating, session, watch)?;
     if let Some(directory) = &mutating.request.carried_evidence {
-        rust_mutants::report::evidence::carried(session, directory)
+        rust_mutants::report::evidence::carried(session, directory, &preparing(mutating.request)?)
             .map_err(|source| RunnerError::CarriedEvidence { source })?;
     }
     Ok(())
