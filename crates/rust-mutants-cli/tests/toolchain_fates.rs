@@ -349,6 +349,16 @@ fn fixture_doctest_host_only() {
 }
 
 #[test]
+fn fixture_doctest_refused() {
+    holds("fixture-doctest-refused");
+}
+
+#[test]
+fn fixture_target_tmpdir() {
+    holds("fixture-target-tmpdir");
+}
+
+#[test]
 fn fixture_drifts() {
     holds("fixture-drifts");
 }

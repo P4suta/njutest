@@ -8,12 +8,11 @@ use super::{TARGET, installed};
 fn a_tree_is_spelled_as_its_build_baked_it_in_and_places_a_directory_by_its_names() {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path().join("tree");
-    let tree = Tree::read(&root.join(""), std::iter::empty()).expect("an empty tree");
+    let tree = Tree::read(&root, std::iter::empty()).expect("an empty tree");
     assert_eq!(
         Some(tree.root.as_str()),
         root.to_str(),
-        "the tree is preopened at the root cargo bakes into `CARGO_MANIFEST_DIR`, with no \
-         separator after it"
+        "the tree is preopened at the root cargo bakes into `CARGO_MANIFEST_DIR`"
     );
     assert_eq!(tree.within(&root), Some(String::new()));
     assert_eq!(

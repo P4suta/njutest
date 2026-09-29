@@ -619,6 +619,46 @@ fn a_test_that_reads_the_tree_by_a_path_its_build_gave_it_passes_its_control_sea
     assert_eq!(controlled, 4, "every test is controlled");
 }
 
+#[test]
+fn a_test_that_writes_where_cargo_gives_an_integration_test_to_write_passes_its_control_sealed() {
+    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-target-tmpdir");
+    let session = rust_mutants::workspace::Workspace::open(
+        fixture.root(),
+        rust_mutants::testkit::opening::opening(
+            &njutest_devkit::paths::cargo_binary(),
+            fixture.temp(),
+        ),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(
+        &rust_mutants::session::PrepareOptions {
+            sealing: Sealing::On,
+            ..rust_mutants::session::PrepareOptions::new(rust_mutants::rule::Tier::All)
+        },
+        &Cancel::new(),
+    )
+    .expect("prepare");
+    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
+        .expect("the sealed runner starts");
+    let bench = session
+        .bench(&runner, &Cancel::new())
+        .expect("the bench is assembled");
+    let station = bench
+        .stations
+        .get("fixture-target-tmpdir/test/scratch")
+        .expect("the integration test has a station");
+    let control = station
+        .controls
+        .get("what_is_kept_in_the_targets_scratch_reads_back")
+        .expect("the station holds the test");
+    assert!(
+        control.is_ok(),
+        "a test that writes into CARGO_TARGET_TMPDIR, as cargo lets an integration test, passes \
+         its control sealed: {control:?}"
+    );
+}
+
 /// The options every preparation of a fixture below is made with, the one that records and the one that runs again alike.
 fn every_rule() -> rust_mutants::session::PrepareOptions {
     rust_mutants::session::PrepareOptions {

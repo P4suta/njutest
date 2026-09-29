@@ -3,7 +3,9 @@
 
 use std::path::PathBuf;
 
-use super::{Alone, Captured, Expects, Held, Listed, Uncaptured, captured, listed};
+use super::{
+    Alone, Captured, Expects, Held, Listed, Printed, Uncaptured, captured, listed, printed,
+};
 
 const EDITION_2021: &str = "
 running 6 tests
@@ -302,4 +304,97 @@ fn a_listing_that_filtered_a_doctest_out_or_did_not_close_names_nothing() {
     assert_eq!(listed(unclosed.as_bytes()), None);
     let short = ALL_IN_ONE.replace("running 5 tests", "running 6 tests");
     assert_eq!(listed(short.as_bytes()), None);
+}
+
+const STOPPED: &str = "
+running 3 tests
+test src/lib.rs - after (line 8) ... ok
+test src/lib.rs - double (line 17) ... ";
+
+#[test]
+fn a_merged_binary_stopped_inside_a_doctest_names_each_it_finished_and_the_one_it_stopped_in() {
+    let returning = |name: &str| Listed {
+        name: name.to_owned(),
+        expects: Expects::Return,
+        ignored: false,
+    };
+    assert_eq!(
+        printed(STOPPED.as_bytes()),
+        Some(Printed {
+            announced: 3,
+            finished: vec![returning("src/lib.rs - after (line 8)")],
+            stopped: Some(returning("src/lib.rs - double (line 17)")),
+            whole: false,
+        })
+    );
+    assert_eq!(
+        listed(STOPPED.as_bytes()),
+        None,
+        "a listing that stopped names only the doctests before the one it stopped in"
+    );
+    let resumed = format!("{STOPPED}\ntest src/lib.rs - half (line 27) ... ok\n");
+    assert_eq!(
+        printed(resumed.as_bytes()),
+        None,
+        "a harness that began another doctest after one it never finished is not one run in order"
+    );
+}
+
+#[test]
+fn doctests_past_a_stopped_listing_are_named_from_the_native_run_in_the_order_rustdoc_indexes_them()
+{
+    let listed = |name: &str, expects: Expects| Listed {
+        name: name.to_owned(),
+        expects,
+        ignored: false,
+    };
+    let captured = Captured {
+        merged: vec![PathBuf::from("0.wasm")],
+        alone: vec![alone("src/lib.rs - kept (line 40)", 1, Expects::Return)],
+        unbuilt: vec!["src/lib.rs - unbuilt (line 50)".to_owned()],
+    };
+    let printed = [
+        listed("src/lib.rs - after (line 8)", Expects::Return),
+        listed("src/lib.rs - double (line 17)", Expects::Return),
+    ];
+    let native: Vec<String> = [
+        "src/lib.rs - half (line 3)",
+        "src/lib.rs - after (line 8)",
+        "src/lib.rs - half (line 27) - should panic",
+        "src/lib.rs - example (line 60) - compile",
+        "src/lib.rs - failing (line 70) - compile fail",
+        "src/lib.rs - kept (line 40)",
+        "src/lib.rs - unbuilt (line 50)",
+        "src/lib.rs - double (line 17)",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    assert_eq!(
+        super::unprinted(&native, &captured, &printed),
+        Some(vec![
+            listed("src/lib.rs - example (line 60) - compile", Expects::Return),
+            listed("src/lib.rs - half (line 27)", Expects::Panic),
+            listed("src/lib.rs - half (line 3)", Expects::Return),
+        ]),
+        "a doctest held apart, compiled only, or printed is not past the listing"
+    );
+    let earlier = [
+        native.clone(),
+        vec!["src/lib.rs - before (line 1)".to_owned()],
+    ]
+    .concat();
+    assert_eq!(
+        super::unprinted(&earlier, &captured, &printed),
+        None,
+        "a doctest that sorts before one the binary printed is not one this binary holds past it"
+    );
+    let two = Captured {
+        merged: vec![PathBuf::from("0.wasm"), PathBuf::from("2.wasm")],
+        ..captured
+    };
+    assert_eq!(
+        super::unprinted(&native, &two, &printed),
+        None,
+        "two merged binaries leave which one holds a doctest unsaid"
+    );
 }

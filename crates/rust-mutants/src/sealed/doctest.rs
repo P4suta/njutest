@@ -3,7 +3,7 @@
 
 //! Doctests built for the sealed target: rustdoc hands every binary it would run to a capture, and what it prints says which doctest each one holds (ADR 0046).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// The program rustdoc runs each doctest binary through: it keeps the binary under the next free claim, prints the claim, and fails, so that rustdoc prints which doctest the claim holds.
@@ -454,14 +454,44 @@ pub struct Listed {
     pub ignored: bool,
 }
 
-/// The doctests a merged binary's own harness names when it runs every one of them in one instance, in index order, where it announced them, filtered none out, and closed.
+/// What a merged binary's own harness printed of the doctests it ran in one instance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Printed {
+    /// How many doctests it announced it would run.
+    pub announced: u32,
+    /// Each doctest it finished, in index order.
+    pub finished: Vec<Listed>,
+    /// The doctest it began after those and never finished, where it stopped inside one.
+    pub stopped: Option<Listed>,
+    /// Whether it finished every doctest it announced, filtered none out, and closed with counts that agree.
+    pub whole: bool,
+}
+
+/// The doctest a result line of a merged binary's harness names.
+fn listing(name: &str, ignored: bool) -> Listed {
+    match name.strip_suffix(SHOULD_PANIC) {
+        Some(name) => Listed {
+            name: name.to_owned(),
+            expects: Expects::Panic,
+            ignored,
+        },
+        None => Listed {
+            name: name.to_owned(),
+            expects: Expects::Return,
+            ignored,
+        },
+    }
+}
+
+/// What a merged binary's own harness printed when it ran its doctests in one instance, where it announced them and began none after one it never finished.
 #[must_use]
-pub fn listed(stdout: &[u8]) -> Option<Vec<Listed>> {
+pub fn printed(stdout: &[u8]) -> Option<Printed> {
     let Ok(text) = std::str::from_utf8(stdout) else {
         return None;
     };
     let mut announced = None;
-    let mut names = Vec::new();
+    let mut finished = Vec::new();
+    let mut stopped = None;
     let mut summary = None;
     for line in text.lines() {
         if announced.is_none() {
@@ -476,31 +506,79 @@ pub fn listed(stdout: &[u8]) -> Option<Vec<Listed>> {
             .strip_prefix("test ")
             .and_then(|rest| rest.split_once(" ... "))
         {
-            let ignored = word.starts_with("ignored");
-            names.push(match name.strip_suffix(SHOULD_PANIC) {
-                Some(name) => Listed {
-                    name: name.to_owned(),
-                    expects: Expects::Panic,
-                    ignored,
-                },
-                None => Listed {
-                    name: name.to_owned(),
-                    expects: Expects::Return,
-                    ignored,
-                },
-            });
+            if stopped.is_some() {
+                return None;
+            }
+            if word.is_empty() {
+                stopped = Some(listing(name, false));
+            } else {
+                finished.push(listing(name, word.starts_with("ignored")));
+            }
         }
     }
-    let (announced, summary) = (announced?, summary?);
-    let accounted = summary
-        .passed
-        .checked_add(summary.failed)?
-        .checked_add(summary.ignored)?
-        .checked_add(summary.measured)?;
-    let Ok(listed) = u32::try_from(names.len()) else {
+    let announced = announced?;
+    let whole = stopped.is_none()
+        && summary.is_some_and(|summary| {
+            let accounted = summary
+                .passed
+                .checked_add(summary.failed)
+                .and_then(|sum| sum.checked_add(summary.ignored))
+                .and_then(|sum| sum.checked_add(summary.measured));
+            let listed = u32::try_from(finished.len()).is_ok_and(|listed| listed == announced);
+            listed && accounted == Some(announced) && summary.filtered_out == 0
+        });
+    Some(Printed {
+        announced,
+        finished,
+        stopped,
+        whole,
+    })
+}
+
+/// The name rustdoc indexes a doctest of a merged binary by: its name, less what libtest appends to one it only compiles.
+fn indexed(listed: &Listed) -> &str {
+    listed
+        .name
+        .strip_suffix(COMPILED_ONLY[0])
+        .unwrap_or(&listed.name)
+}
+
+/// The doctests the only merged binary of `captured` holds past the ones its harness `printed` before it stopped, named from `native`, the names the native run passed its doctests under: each that rustdoc merged, being neither one that must fail to compile nor one `captured` holds apart, in the order rustdoc indexes them; nothing where `captured` has another merged binary, which leaves which of them holds a doctest unsaid, or where one of them sorts before a doctest printed, which no binary that runs its doctests in order can hold.
+#[must_use]
+pub fn unprinted(
+    native: &[String],
+    captured: &Captured,
+    printed: &[Listed],
+) -> Option<Vec<Listed>> {
+    if captured.merged.len() != 1 {
         return None;
-    };
-    (listed == announced && accounted == announced && summary.filtered_out == 0).then_some(names)
+    }
+    let apart: BTreeSet<&str> = captured
+        .alone
+        .iter()
+        .map(|alone| alone.name.as_str())
+        .chain(captured.unbuilt.iter().map(String::as_str))
+        .chain(printed.iter().map(|listed| listed.name.as_str()))
+        .collect();
+    let mut past: Vec<Listed> = native
+        .iter()
+        .filter(|name| !name.ends_with(COMPILED_ONLY[1]))
+        .map(|name| listing(name, false))
+        .filter(|listed| !apart.contains(listed.name.as_str()))
+        .collect();
+    past.sort_by(|one, other| indexed(one).cmp(indexed(other)));
+    let last = printed.last().map(indexed);
+    past.iter()
+        .all(|listed| last.is_none_or(|last| indexed(listed) > last))
+        .then_some(past)
+}
+
+/// The doctests a merged binary's own harness names when it runs every one of them in one instance, in index order, where it announced them, filtered none out, and closed.
+#[must_use]
+pub fn listed(stdout: &[u8]) -> Option<Vec<Listed>> {
+    printed(stdout)
+        .filter(|printed| printed.whole)
+        .map(|printed| printed.finished)
 }
 
 #[cfg(test)]

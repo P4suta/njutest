@@ -213,6 +213,11 @@ fn a_windows_path_below_the_trees_root_starts_at_the_root_however_its_names_are_
             },
             Asked {
                 fd: 4,
+                path: r"C:\Work\TREE\top.txt",
+                errno: 0,
+            },
+            Asked {
+                fd: 4,
                 path: r"C:\work\tree\pkg\..\top.txt",
                 errno: 0,
             },
@@ -234,7 +239,10 @@ fn a_windows_path_below_the_trees_root_starts_at_the_root_however_its_names_are_
         ],
     );
     assert_eq!(transcript.stop(), SealedStop::Returned);
-    assert_eq!(transcript.stdout().bytes(), b"datainnertoptopinnertopdata");
+    assert_eq!(
+        transcript.stdout().bytes(),
+        b"datainnertoptoptopinnertopdata"
+    );
     assert!(
         transcript.refusals().is_empty(),
         "{:?}",
@@ -270,11 +278,6 @@ fn a_windows_path_outside_the_trees_root_is_refused_as_an_escape() {
             },
             Asked {
                 fd: 4,
-                path: r"C:\Work\tree\top.txt",
-                errno: 76,
-            },
-            Asked {
-                fd: 4,
                 path: r"\work\tree\top.txt",
                 errno: 76,
             },
@@ -296,7 +299,7 @@ fn a_windows_path_outside_the_trees_root_is_refused_as_an_escape() {
         [Refusal {
             function: WasiFunction::PathOpen,
             reason: RefusalReason::Escape,
-            count: 8,
+            count: 7,
         }]
     );
 }

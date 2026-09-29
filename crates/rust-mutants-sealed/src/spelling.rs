@@ -53,7 +53,10 @@ impl Spelling {
                     let below = below_drive(rest);
                     let within = asked.eq_ignore_ascii_case(drive)
                         && names.len() <= below.len()
-                        && names.iter().zip(&below).all(|(root, name)| root == name);
+                        && names
+                            .iter()
+                            .zip(&below)
+                            .all(|(root, name)| one_name(root, name));
                     match below.get(names.len()..) {
                         Some(rest) if within => Reading::Rooted(rest.to_vec()),
                         Some(_) | None => Reading::Elsewhere,
@@ -81,6 +84,24 @@ fn drive_rooted(path: &str) -> Option<(u8, &str)> {
             path.get(2..).map(|rest| (*drive, rest))
         }
         _ => None,
+    }
+}
+
+/// Whether two names of a Windows path are one name as NTFS compares names: character by character, each in either case where its case is one other character.
+fn one_name(one: &str, other: &str) -> bool {
+    one.chars().count() == other.chars().count()
+        && one.chars().zip(other.chars()).all(|(left, right)| {
+            left == right
+                || matches!((upper(left), upper(right)), (Some(left), Some(right)) if left == right)
+        })
+}
+
+/// The one character `character` is in upper case, where its upper case is one character.
+fn upper(character: char) -> Option<char> {
+    let mut upper = character.to_uppercase();
+    match (upper.next(), upper.next()) {
+        (Some(single), None) => Some(single),
+        (Some(_), Some(_)) | (None, _) => None,
     }
 }
 

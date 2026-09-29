@@ -2981,7 +2981,7 @@ pub fn startable(targets: &[TestTarget], skipped: &[String]) -> Vec<TestTarget> 
         .collect()
 }
 
-/// The test binaries a build produced, in target id order.
+/// The test binaries a build produced, in target id order, laid out in `target_dir`: the target directory, or a named target's own inside it.
 ///
 /// # Errors
 /// Refuses a cargo message stream that names two different executable paths for the same package target.

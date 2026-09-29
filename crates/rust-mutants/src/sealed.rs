@@ -76,7 +76,7 @@ impl Unsealed {
             }
             Self::DoctestsUnaccounted => {
                 "run `cargo test --doc --target wasm32-wasip1` to see what rustdoc reported of the \
-                 doctests, or which doctest stops a merged binary that runs them all"
+                 doctests, or what a merged binary printed before it announced them"
             }
             Self::ProcMacro => {
                 "a procedural macro runs in the compiler, so what only its own tests reach rests on \
@@ -187,8 +187,9 @@ impl SealedBuild {
         (packages, target_dir): (&[Package], &Path),
     ) -> Result<Self, CargoError> {
         let mut modules = BTreeMap::new();
+        let laid_out = target_dir.join(TARGET);
         for build in compiled {
-            for target in crate::execute::targets_of(&build.messages, packages, target_dir)? {
+            for target in crate::execute::targets_of(&build.messages, packages, &laid_out)? {
                 if target.kind() == crate::execute::TargetKind::ProcMacro || !target.harness {
                     continue;
                 }

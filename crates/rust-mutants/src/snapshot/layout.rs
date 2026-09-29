@@ -90,10 +90,15 @@ impl Layout {
         &self.root
     }
 
-    /// This layout, with the directory a copy of it is made in.
+    /// This layout, with the directory a copy of it is made in, every place in it spelled by its names alone, with no separator after the last.
     #[must_use]
     pub fn under(&self, stage: PathBuf) -> Placement {
-        let placed = |source: &Path| stage.join(relative(&self.ancestor, source));
+        let placed = |source: &Path| -> PathBuf {
+            stage
+                .components()
+                .chain(relative(&self.ancestor, source).components())
+                .collect()
+        };
         Placement {
             source_root: self.root.clone(),
             root: placed(&self.root),

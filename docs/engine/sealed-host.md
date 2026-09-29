@@ -92,8 +92,9 @@ Any other guest path is a POSIX tree, where `/` alone separates names and `..` c
 A Windows build bakes paths such as `env!("CARGO_MANIFEST_DIR")` into the guest as it spells them, and the guest's standard library, which knows `/` alone, takes them for relative ones and joins them with `/`.
 wasi-libc matches a preopen's name only where `/` or nothing follows it, so `C:\tree\pkg/data.txt` never reaches the tree preopened at `C:\tree`, and neither does `C:\tree/data.txt` where the tree was preopened at `C:\tree\`.
 The working directory of a Windows tree answers such a path: one whose names begin with the names of the tree's root resolves from the tree's root.
-The drive letter is compared in either case, as Rust's own `Path` reads a drive, and every other name exactly, since the build baked in the spelling the tree was read at.
-Any other absolute path, on another drive, below a name spelled in another case, rooted without a drive, or on a drive without its root, names no place in the tree and is refused.
+The drive letter and every name of the tree's root are compared in either case, as NTFS compares a name: character by character, each in either case where its case is one other character, so a build that spelled the root in another case than the tree was read at still reaches it.
+A name below the root is walked exactly as spelled, as the snapshot holds it.
+Any other absolute path, on another drive, below a root it does not spell, rooted without a drive, or on a drive without its root, names no place in the tree and is refused.
 
 ## What a run costs
 

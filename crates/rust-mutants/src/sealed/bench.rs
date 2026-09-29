@@ -16,7 +16,7 @@ use rust_mutants_sealed::{
     Transcript, TrapKind, WasiFunction,
 };
 
-use super::doctest::{Expects, Listed, NO_SUCH_INDEX, RUN_ONE, listed};
+use super::doctest::{Expects, Listed, NO_SUCH_INDEX, RUN_ONE, printed};
 use super::{SealedBuild, Unsealed};
 use crate::execute::TestTarget;
 use crate::libtest::{Asked, Configured, Own, account};
@@ -29,6 +29,18 @@ const TOUCH_LOG: &str = "/rust-mutants-sealed/touch.log";
 
 /// Where a test that cannot measure on the sealed host says so, as ADR 0043 lets it.
 const DECLINE_LOG: &str = "/rust-mutants-sealed/decline-notice";
+
+/// Where an instance keeps what a test writes for itself: a directory of its own, which starts with an empty home and an empty temporary directory.
+pub const SCRATCH: &str = "/rust-mutants-scratch";
+
+/// The home an instance's `HOME` names, inside [`SCRATCH`].
+pub const SCRATCH_HOME: &str = "/rust-mutants-scratch/home";
+
+/// The temporary directory an instance's `TMPDIR` names, inside [`SCRATCH`].
+pub const SCRATCH_TMP: &str = "/rust-mutants-scratch/tmp";
+
+/// The directory cargo gives an integration test to write in, which a sealed instance holds, empty, at the path its build baked in.
+const TARGET_TMPDIR: &str = "CARGO_TARGET_TMPDIR";
 
 /// The fuel a control may spend: far past any test a person writes, and still a bound.
 pub const CONTROL_FUEL: u64 = 200_000_000_000;
@@ -174,8 +186,7 @@ impl Tree {
         let snapshot = builder
             .build()
             .map_err(|source| BenchError::Snapshot { source })?;
-        let spelled: PathBuf = root.components().collect();
-        let root = match spelled.to_str() {
+        let root = match root.to_str() {
             Some(root) => root.to_owned(),
             None => {
                 return Err(BenchError::EnvironmentNotText {
@@ -276,6 +287,15 @@ pub struct Ran {
     pub tests: Vec<String>,
     /// Whether those are every test it ran: the names come to the count its summaries said.
     pub whole: bool,
+    /// How many tests it ignored.
+    pub ignored: u32,
+}
+
+impl Ran {
+    /// The names of every test it passed where they are every test it named at all, which leaves no test it ignored or failed unnamed.
+    fn named(&self) -> Option<&[String]> {
+        (self.whole && self.ignored == 0).then_some(self.tests.as_slice())
+    }
 }
 
 /// How one test of a station runs.
@@ -316,6 +336,14 @@ impl Run {
             },
         }
     }
+}
+
+/// The doctests a merged binary holds, in index order from the first.
+struct Indexed {
+    /// Each the binary printed when it ran them in one instance.
+    printed: Vec<Listed>,
+    /// Each past those, named from the native run.
+    past: Vec<Listed>,
 }
 
 /// One module of a station, and how each test it holds runs.
@@ -455,7 +483,10 @@ impl<'runner> Bench<'runner> {
             }
         }
         for (id, doctests) in &sealed.doctests {
-            let Some(mut station) = bench.documented(runner, doctests, Controlled::Every)? else {
+            let native = natives.get(id).and_then(Ran::named);
+            let Some(mut station) =
+                bench.documented(runner, (doctests, native), Controlled::Every)?
+            else {
                 bench
                     .unsealed
                     .insert(id.clone(), Unsealed::DoctestsUnaccounted);
@@ -553,11 +584,11 @@ impl<'runner> Bench<'runner> {
         answering
     }
 
-    /// The station of one library's captured doctests, with the control of each `controlled` asks for, or nothing where a merged binary did not name the doctests it holds.
+    /// The station of one library's captured doctests, with the control of each `controlled` asks for, or nothing where a merged binary did not name the doctests it holds; a doctest a merged binary holds past the one that stopped its listing is named from `native`, the names the native run passed the library's doctests under, where there are any.
     pub(super) fn documented(
         &self,
         runner: &'runner SealedRunner,
-        doctests: &super::Doctests,
+        (doctests, native): (&super::Doctests, Option<&[String]>),
         controlled: Controlled<'_>,
     ) -> Result<Option<Station<'runner>>, BenchError> {
         let id = doctests.target.id();
@@ -568,13 +599,18 @@ impl<'runner> Bench<'runner> {
             controls: BTreeMap::new(),
         };
         let mut held = Vec::new();
+        let mut unprinted_names = BTreeSet::new();
         for binary in &doctests.captured.merged {
             let module = prepared(runner, binary, id)?;
-            let Some(listed) = self.merged(&station, &module)? else {
+            let Some(Indexed { printed, past }) =
+                self.merged(&station, &module, (native, doctests))?
+            else {
                 return Ok(None);
             };
-            let tests = listed
+            unprinted_names.extend(past.iter().map(|doctest| doctest.name.clone()));
+            let tests = printed
                 .into_iter()
+                .chain(past)
                 .enumerate()
                 .filter(|(_, doctest)| !doctest.ignored || doctest.expects == Expects::Panic)
                 .map(|(index, doctest)| {
@@ -608,7 +644,12 @@ impl<'runner> Bench<'runner> {
                 .iter()
                 .filter(|(name, _)| controlled.asks(name))
             {
-                let control = self.control(&station, &holding.module, (name, *run))?;
+                let control = match self.control(&station, &holding.module, (name, *run))? {
+                    Ok(control) if control.reached.is_empty() && unprinted_names.contains(name) => {
+                        Err(Uncontrolled::Unsealed)
+                    }
+                    control => control,
+                };
                 station.controls.insert(name.clone(), control);
             }
             station.holdings.push(holding);
@@ -621,12 +662,13 @@ impl<'runner> Bench<'runner> {
         Ok(Some(station))
     }
 
-    /// The doctests the merged binary `module` of `station` holds, in index order, where it named them all when it ran them in one instance and holds no doctest past the last it named.
+    /// The doctests the merged binary `module` of `station` holds, in index order from the first, where it holds no doctest past the last it announced: every one, where it named them all when it ran them in one instance, or each it finished and the one that stopped the instance, where one did, and then every one past those, where `native` names exactly as many as the binary announced beyond them, and nothing past them otherwise.
     fn merged(
         &self,
         station: &Station<'_>,
         module: &SealedModule<'_>,
-    ) -> Result<Option<Vec<Listed>>, BenchError> {
+        (native, doctests): (Option<&[String]>, &super::Doctests),
+    ) -> Result<Option<Indexed>, BenchError> {
         let all = Asking {
             arguments: Vec::new(),
             index: None,
@@ -640,17 +682,36 @@ impl<'runner> Bench<'runner> {
             transcript.stop(),
             SealedStop::Returned | SealedStop::Exited { code: 101 }
         );
-        let Some(listed) = listed(transcript.stdout().bytes()).filter(|_| ended) else {
+        let stopped_inside =
+            transcript.stop() != SealedStop::Returned && transcript.stdout().truncated() == 0;
+        let Some(printed) = printed(transcript.stdout().bytes()) else {
             return Ok(None);
         };
-        let past = Asking {
+        let listed = match printed.stopped {
+            None if printed.whole && ended => printed.finished,
+            Some(stopped) if stopped_inside => [printed.finished, vec![stopped]].concat(),
+            None | Some(_) => return Ok(None),
+        };
+        let Ok(announced) = usize::try_from(printed.announced) else {
+            return Ok(None);
+        };
+        let Some(beyond_listed) = announced.checked_sub(listed.len()) else {
+            return Ok(None);
+        };
+        let past = match native
+            .and_then(|native| super::doctest::unprinted(native, &doctests.captured, &listed))
+        {
+            Some(past) if past.len() == beyond_listed => past,
+            Some(_) | None => Vec::new(),
+        };
+        let after = Asking {
             arguments: Vec::new(),
-            index: Some(listed.len()),
+            index: Some(announced),
         };
         let beyond = self.invoke(
             station,
             module,
-            &self.invocation(station, past, (None, CONTROL_FUEL))?,
+            &self.invocation(station, after, (None, CONTROL_FUEL))?,
         )?;
         let refused = matches!(
             beyond.stop(),
@@ -658,7 +719,10 @@ impl<'runner> Bench<'runner> {
                 kind: TrapKind::Unreachable
             }
         ) && holds(beyond.stderr().bytes(), NO_SUCH_INDEX);
-        Ok(refused.then_some(listed))
+        Ok(refused.then_some(Indexed {
+            printed: listed,
+            past,
+        }))
     }
 
     /// What `test` of `target` comes to with `mutant` active, judged against its control, or nothing where there is no control to judge it against.
@@ -788,6 +852,45 @@ impl<'runner> Bench<'runner> {
         }))
     }
 
+    /// Every directory an instance of `station` is given: the tree, the records, its scratch, an empty `target_tmpdir` where cargo names one, and its working directory where the tree holds it.
+    fn preopens(
+        &self,
+        station: &Station<'_>,
+        target_tmpdir: Option<String>,
+    ) -> Result<Preopens, SealedError> {
+        let scratch = Snapshot::builder()
+            .directory("home")?
+            .directory("tmp")?
+            .build()?;
+        let mut preopens = vec![
+            Preopen::Tree {
+                path: self.tree.root.clone(),
+                snapshot: self.tree.snapshot.clone(),
+            },
+            Preopen::Tree {
+                path: RECORDS.to_owned(),
+                snapshot: Snapshot::builder().build()?,
+            },
+            Preopen::Tree {
+                path: SCRATCH.to_owned(),
+                snapshot: scratch,
+            },
+        ];
+        if let Some(path) = target_tmpdir {
+            preopens.push(Preopen::Tree {
+                path,
+                snapshot: Snapshot::builder().build()?,
+            });
+        }
+        if let Some(directory) = self.tree.within(&station.target.cwd) {
+            preopens.push(Preopen::Working {
+                tree: self.tree.root.clone(),
+                directory,
+            });
+        }
+        Preopens::new(preopens)
+    }
+
     fn invocation(
         &self,
         station: &Station<'_>,
@@ -823,31 +926,21 @@ impl<'runner> Bench<'runner> {
         if let Some(index) = asking.index {
             variables.push((RUN_ONE.to_owned(), index.to_string()));
         }
+        let target_tmpdir = variables
+            .iter()
+            .find(|(name, _)| name == TARGET_TMPDIR)
+            .map(|(_, value)| value.clone());
+        variables.retain(|(name, _)| name != "HOME" && name != "TMPDIR");
+        variables.push(("HOME".to_owned(), SCRATCH_HOME.to_owned()));
+        variables.push(("TMPDIR".to_owned(), SCRATCH_TMP.to_owned()));
         let host = |source| BenchError::Host {
             target: id.clone(),
             source,
         };
-        let records = Snapshot::builder().build().map_err(host)?;
-        let mut preopens = vec![
-            Preopen::Tree {
-                path: self.tree.root.clone(),
-                snapshot: self.tree.snapshot.clone(),
-            },
-            Preopen::Tree {
-                path: RECORDS.to_owned(),
-                snapshot: records,
-            },
-        ];
-        if let Some(directory) = self.tree.within(&station.target.cwd) {
-            preopens.push(Preopen::Working {
-                tree: self.tree.root.clone(),
-                directory,
-            });
-        }
         Ok(Invocation {
             arguments: Arguments::new(arguments).map_err(host)?,
             environment: Environment::new(variables).map_err(host)?,
-            preopens: Preopens::new(preopens).map_err(host)?,
+            preopens: self.preopens(station, target_tmpdir).map_err(host)?,
             seed: seed(station.target.id()),
             fuel,
             limits: Limits {

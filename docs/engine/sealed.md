@@ -26,7 +26,11 @@ Its tests are the ones `--list` names inside the host, given the harness argumen
 Each test of each module runs in its own instance, as `<module> --exact <name> --test-threads=1 --nocapture` and then the harness arguments the run was configured with, less a thread count or a capture of their own, which libtest refuses to be given twice.
 The instance is new, the memory is the module's initial memory, the filesystem is the snapshot with nothing written, and the clock reads zero.
 Its working directory is its package's directory in the snapshot, where cargo runs a test and rustdoc a doctest, so a relative path reads what it reads natively.
+What a test writes for itself lands in directories the instance holds, each empty when it starts and written only to its overlay: `CARGO_TARGET_TMPDIR` at the path the build baked in, which for the sealed target is the target's own directory inside the target directory, and a home and a temporary directory, which `HOME` and `TMPDIR` name.
+The standard library of `wasm32-wasip1` has no temporary directory of its own, so `std::env::temp_dir()` panics there whatever `TMPDIR` says, and its home directory is none.
 A path the build baked in, such as `env!("CARGO_MANIFEST_DIR")`, reaches the snapshot as the build spelled it, a Windows build's `C:\…` included, as [the sealed host](sealed-host.md#the-working-directory) says.
+Not yet: an absolute path no directory the instance holds names is read from the working directory rather than refused.
+wasi-libc resolves every path against its own working directory, `/`, and takes the leading `/` off before it matches a preopen, so such a path reaches the host as the relative path it becomes, the same call a relative one makes, and the host cannot refuse the one without the other; closing it needs the guest's own working directory set to its package's directory, so that `.` need not be preopened.
 `--nocapture` keeps a panic's message on the stream the host records, where libtest's capture would hold it in memory the abort discards.
 
 A library's doctests seal too, as [Doctests](#doctests) says.
@@ -66,7 +70,7 @@ A refusal returns its error to the guest and is recorded in the transcript, so a
 | `fd_fdstat_get`, `fd_fdstat_set_flags`, `fd_fdstat_set_rights` | On the instance's descriptor table. |
 | `fd_filestat_get`, `path_filestat_get` | Fixed metadata: every timestamp one constant, the inode derived from the path, the size the overlay's. |
 | `fd_filestat_set_times`, `path_filestat_set_times` | Recorded in the overlay and read back; a time never set reads as the constant. |
-| `fd_prestat_get`, `fd_prestat_dir_name` | The snapshot, at the path the build knew it by; the directory the runtime's records land in; and `.`, the test's working directory in the snapshot. |
+| `fd_prestat_get`, `fd_prestat_dir_name` | The snapshot, at the path the build knew it by; the directory the runtime's records land in; a scratch directory of the instance's own, whose empty `home` and `tmp` are what `HOME` and `TMPDIR` name; for a target cargo gives one, an empty directory at the `CARGO_TARGET_TMPDIR` the build baked in; and `.`, the test's working directory in the snapshot. |
 | `fd_readdir` | Entries in name order, with cookies that are their positions. |
 | `path_open`, `path_create_directory`, `path_remove_directory`, `path_rename`, `path_unlink_file` | Inside the snapshot, on the overlay: a relative path from the working directory, an absolute one below the snapshot's root as the build spelled it. A path outside it is refused, `ENOTCAPABLE`. |
 | `path_readlink` | A link the snapshot holds. |
@@ -127,7 +131,12 @@ The capture keeps each binary under the next free claim, prints the claim, and f
 - A doctest rustdoc only compiles, `no_run` or `compile_fail`, or ignores, is not run natively, and has no binary.
 
 A merged binary names its doctests when it runs them all in one instance, sorted by name as rustdoc indexes them, and runs one alone when `RUSTDOC_DOCTEST_RUN_NB_TEST` gives its index.
-Before any of them counts, the index one past the last it named must be refused as naming no doctest, so a listing that left one out is caught.
+A doctest that fails on the sealed target aborts that instance inside itself, so the listing then names each doctest the binary finished and the one it stopped in, and nothing past it.
+Before any of them counts, the index the binary announced as its count must be refused as naming no doctest, so a listing that left one out, or a binary built to leave some out, is caught.
+The doctest the listing stopped in is then a test like the others, whose control fails.
+The doctests past it are named from the native run, where it passed every doctest it ran and ignored none, where the library has one merged binary, and where the native run names exactly as many doctests past the listing as the binary announced, each sorting after the last the binary printed and none held in a binary of its own; they take the indexes past the listing in the order rustdoc sorts them in.
+A doctest named so is held only where its control reached a guard, because one the sealed target ignores runs as nothing by index, and is otherwise not held; a run again of a stored report has no native run to name them from, so it holds none past the listing.
+Where they cannot be named, they are not held.
 Each doctest is then a test like any other: its control records what it reached and spent, and a mutant is put to it alone.
 A report that does not account for every claim the capture gave out, or a merged binary that does not name its doctests, leaves the documentation target unsealed.
 

@@ -357,3 +357,62 @@ fn what_only_an_example_the_sealed_target_ignores_reaches_is_unproven() {
         );
     }
 }
+
+#[test]
+fn an_example_the_sealed_host_refuses_is_one_uncontrolled_test_of_its_merged_binary() {
+    let fixture = Fixture::copy("fixture-doctest-refused");
+    let output = against(&fixture, &[]);
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
+        "{}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let document = report(&fixture);
+    let documentation = document["targets"]
+        .as_array()
+        .expect("the targets")
+        .iter()
+        .find(|target| target["kind"].as_str() == Some("doc"))
+        .expect("the documentation target");
+    assert_eq!(
+        documentation["sealed"]["state"].as_str(),
+        Some("sealed"),
+        "an example that fails sealed is one test without a control, not a library the sealed \
+         build cannot answer for: {documentation}"
+    );
+    let uncontrolled: Vec<(String, &str)> = documentation["sealed"]["uncontrolled"]
+        .as_array()
+        .expect("the uncontrolled tests")
+        .iter()
+        .map(|one| {
+            (
+                one["test"].as_str().expect("a test").replace('\\', "/"),
+                one["reason"].as_str().expect("a reason"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        uncontrolled,
+        [("src/lib.rs - double (line 17)".to_owned(), "panicked")],
+        "the example that starts a thread fails its control, and it is the only one without a \
+         control: {documentation}"
+    );
+    for (line, example, when) in [
+        (12, "src/lib.rs - after (line 8)", "before"),
+        (31, "src/lib.rs - half (line 27)", "after"),
+    ] {
+        for mutant in mutants_at(&document, line) {
+            let evidence = &mutant["evidence"];
+            assert_eq!(evidence["kind"].as_str(), Some("sealed"), "{mutant}");
+            assert_eq!(
+                evidence["executions"][0]["test"]
+                    .as_str()
+                    .map(|test| test.replace('\\', "/")),
+                Some(example.to_owned()),
+                "the example the merged binary holds {when} the one that stopped it answers \
+                 sealed: {mutant}"
+            );
+        }
+    }
+}
