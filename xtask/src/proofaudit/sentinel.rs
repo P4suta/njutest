@@ -1858,12 +1858,38 @@ fn repaired_where_nothing_moved(clean: Perturbation) -> Perturbation {
         "type": "repair",
         "repair": {
             "mutant": SURVIVED, "target": "t1",
-            "was": "survived", "now": "survived", "reached": "reached"
+            "was": "survived", "now": "survived", "reached": "reached",
+            "by": { "kind": "native" }
         }
     }));
     Perturbation {
         name: "a disposition run again against a target whose reach never moved",
         events: Some(events),
+        ..clean
+    }
+}
+
+/// The defect planted for the repair layer: a sealed verdict put again on the sealed bench against its moved target, said to survive where the executions that put came to detected the mutation.
+fn sealed_put_said_to_survive_a_detection(clean: Perturbation) -> Perturbation {
+    let mut events = routes();
+    events.push(json!({
+        "type": "repair",
+        "repair": {
+            "mutant": SURVIVED, "target": TARGET, "was": "survived", "now": "survived",
+            "reached": "reached",
+            "by": { "kind": "sealed", "evidence": { "kind": "sealed", "executions": [
+                { "target": TARGET, "test": "tests::one", "came_to": "panicked" }
+            ] } }
+        }
+    }));
+    Perturbation {
+        name: "a sealed put again said to survive where its executions detected the mutation",
+        document: with(json!({
+            "drift": [moved(TARGET)],
+            "repaired": [{ "target": TARGET, "again": 1 }]
+        })),
+        events: Some(events),
+        engine: Some(vec![touch("baseline", &[0]), touch("control", &[0, 1])]),
         ..clean
     }
 }
@@ -1895,7 +1921,8 @@ fn unobserved_repair_called_a_survival() -> Perturbation {
         "type": "repair",
         "repair": {
             "mutant": SURVIVED, "target": TARGET,
-            "was": "survived", "now": "survived", "reached": "reached"
+            "was": "survived", "now": "survived", "reached": "reached",
+            "by": { "kind": "native" }
         }
     }));
     let mut repair = touch("repair", &[1]);
@@ -2304,6 +2331,7 @@ impl Layer {
             Self::Repair => vec![
                 unobserved_repair_called_a_survival(),
                 repair_counted_that_never_ran(clean.clone()),
+                sealed_put_said_to_survive_a_detection(clean.clone()),
                 repaired_where_nothing_moved(clean),
             ],
             Self::Knobs => knobs_planted(clean),

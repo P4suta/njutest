@@ -82,6 +82,38 @@ fn row(index: u32, outcome: Decided, discharged: bool) -> MutantRecord {
     }
 }
 
+/// One row no test reached, as a route that reached nothing and removed nothing decides it.
+fn unreached(index: u32) -> MutantRecord {
+    let mut record = row(index, Decided::Unreached, false);
+    record.routing = Some(Routing {
+        granularity: rust_mutants::session::Granularity::Unreached,
+        reaching: Vec::new(),
+        discharged: Vec::new(),
+        fallback: None,
+        answered: Vec::new(),
+    });
+    record
+}
+
+#[test]
+fn an_unreached_claim_a_sealed_put_again_counted_the_moved_target_in_rests_on_it_no_longer() {
+    let mut resealed = unreached(0);
+    if let Some(routing) = resealed.routing.as_mut() {
+        routing.granularity = rust_mutants::session::Granularity::Block;
+        routing.reaching = vec![TARGET.to_owned()];
+    }
+    assert_eq!(
+        (
+            drift::resting(&[unreached(0)], TARGET),
+            drift::resting(&[resealed], TARGET)
+        ),
+        ((0, 1), (0, 0)),
+        "an unreached claim rests on the moved target while its route leaves the target out; \
+         a sealed verdict put again with the target counted among those reaching it names it in \
+         its route and no longer rests on its baseline (ADR 0036 decision 1)"
+    );
+}
+
 #[test]
 fn a_move_one_control_saw_is_not_undone_by_another_that_saw_none() {
     let folded = drift::folded([TARGET], [moved(), held()]);
@@ -149,7 +181,7 @@ fn the_finding_counts_what_a_proof_decided_on_the_moved_record_and_nothing_a_kil
             },
             true,
         ),
-        row(2, Decided::Unreached, false),
+        unreached(2),
         row(3, Decided::Survived, false),
     ];
     let found = drift::found(&[moved(), held()], &rows);

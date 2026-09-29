@@ -750,7 +750,7 @@ fn runner_evidence(runner: Option<&RunnerRecording<'_>>) -> Result<RunnerEvidenc
         watched: read_runner(runner, crate::wire::read)?,
         faulted: runner.map(|(_, checked)| crate::faults::read(checked)),
         crashed: runner.map(|(_, checked)| crate::crashes::read(checked)),
-        repairs: runner.map(|(_, checked)| crate::repair::read(checked)),
+        repairs: read_runner(runner, crate::repair::read)?,
         confirmed: read_runner(runner, crate::confirm::read)?,
         recorded_executions: runner.map(|(_, checked)| executions_of(checked)),
     })
@@ -1318,7 +1318,7 @@ fn held_to_counts(
                     !repairs.iter().any(|repair| {
                         repair.mutant == row.display_id
                             && repair.target == *target
-                            && repair.reached == "reached"
+                            && repair.settles()
                     })
                 })
                 .count()
@@ -1358,11 +1358,7 @@ fn held_to_replaced(
     (target, repairs): (&str, &[crate::repair::Repair]),
     notes: &mut Notes<'_>,
 ) {
-    let again = repairs
-        .iter()
-        .filter(|repair| repair.target == target)
-        .filter(|repair| repair.reached == "reached" || repair.now != repair.was)
-        .count();
+    let again = crate::repair::replaced_against(repairs, target);
     let said = format!(
         "; {again} {} that rested on its baseline",
         if again == 1 {
@@ -1424,7 +1420,7 @@ fn resting(
                         !repairs.iter().any(|repair| {
                             repair.mutant == row.display_id
                                 && repair.target == *target
-                                && repair.reached == "reached"
+                                && repair.settles()
                         })
                     })
                     .count()
@@ -1540,7 +1536,12 @@ fn repaired(
         );
         return notes.looked();
     };
-    let [Engine { touched, .. }] = engines else {
+    let [
+        Engine {
+            touched, sealed, ..
+        },
+    ] = engines
+    else {
         if repairs.is_empty() {
             return notes
                 .absent("the run ran no disposition again against a target whose reach moved");
@@ -1563,7 +1564,17 @@ fn repaired(
     }
     let paired = paired(recording, repairs, (routing, touched), &mut notes);
     for repair in repairs {
-        one_repair(recording, (repair, &moved, routing), &paired, &mut notes);
+        match &repair.by {
+            crate::repair::By::Native => {
+                one_repair(recording, (repair, &moved, routing), &paired, &mut notes);
+            }
+            crate::repair::By::Sealed(put) => one_sealed(
+                recording,
+                (repair, put, &moved, routing),
+                sealed.as_deref(),
+                &mut notes,
+            ),
+        }
     }
     for row in &recording.mutants {
         let of_it: Vec<&crate::repair::Repair> = repairs
@@ -1614,11 +1625,7 @@ fn counted(
         .filter(|(_, standing)| **standing == crate::drift::Standing::Moved)
         .map(|(target, _)| target);
     for target in owed {
-        let replaced = repairs
-            .iter()
-            .filter(|repair| repair.target == *target)
-            .filter(|repair| repair.reached == "reached" || repair.now != repair.was)
-            .count();
+        let replaced = crate::repair::replaced_against(repairs, target);
         let stated: Vec<u64> = said
             .iter()
             .filter(|(named, _)| named == target)
@@ -1656,9 +1663,10 @@ fn counted(
     }
 }
 
-/// How many dispositions rested on a moved target, each of which the repair owes a run against that target, holding every such pair to a repair that names it and every repair to the order the repair takes: mutation by mutation in catalog order, moved target by moved target in name order (ADR 0036 decision 1).
+/// How many dispositions rested on a moved target, each of which the repair owes a run against that target, holding every such pair to a repair that names it and every repair to the order the repair takes: mutation by mutation in catalog order, its sealed puts before its native runs, and moved target by moved target in name order (ADR 0036 decision 1).
 ///
-/// A disposition rests on a target when it is a lead, its route did not put the target to it, and it was `survived` or `unreached` before any repair; it is owed a run against every such target, whatever a run against another made of it, until one against a target earlier in name order kills it.
+/// A disposition rests on a target when its route did not put the target to it and it was `survived` or `unreached` before any repair.
+/// A sealed verdict is owed a sealed put against every such target, and a lead a native run against each, whatever a run against another made of it, until one against a target earlier in name order kills it; a sealed verdict a put left a lead is owed those native runs where what the native run judged of it is `survived` or `unreached`.
 fn owed(
     recording: &Recording<'_>,
     (repairs, routing): (&[crate::repair::Repair], &crate::route::Routing),
@@ -1671,11 +1679,7 @@ fn owed(
         .filter(|(_, standing)| **standing == crate::drift::Standing::Moved)
         .map(|(target, _)| target);
     for target in targets {
-        for row in recording
-            .mutants
-            .iter()
-            .filter(|row| matches!(row.rests, Rests::Unproven(_)))
-        {
+        for row in &recording.mutants {
             let put = routing.routes.iter().any(|route| {
                 route.names(&row.id, &row.display_id)
                     && route.reaching.iter().any(|one| one == target)
@@ -1685,22 +1689,58 @@ fn owed(
                 Some(first) => first.was.as_str(),
                 None => row.outcome.as_str(),
             };
-            let killed_before = of_it().any(|one| one.target < *target && one.now == KILLED);
-            if put || killed_before || !matches!(then, SURVIVED | UNREACHED) {
+            if put || !matches!(then, SURVIVED | UNREACHED) {
                 continue;
             }
-            owed.push((target.as_str(), row.display_id.as_str()));
-            if !of_it().any(|one| one.target == *target) {
-                notes.violated(
-                    &row.display_id,
-                    format!(
-                        "it was {then} on the word of the baseline of {target}, whose reach \
-                         moved, and no repair ran it again there"
-                    ),
-                );
+            let judged = of_it()
+                .find(|one| {
+                    matches!(
+                        one.by,
+                        crate::repair::By::Sealed(crate::repair::Put::Unproven(_))
+                    )
+                })
+                .map(|one| one.now.as_str());
+            let (by_seal, natively) = match (&row.rests, judged) {
+                (Rests::Sealed(_), _) => (true, false),
+                (Rests::Unproven(_), Some(judged)) => {
+                    (true, matches!(judged, SURVIVED | UNREACHED))
+                }
+                (Rests::Unproven(_), None) => (false, true),
+                (Rests::Nothing, _) => (false, false),
+            };
+            let killed_before =
+                of_it().any(|one| !one.sealed() && one.target < *target && one.now == KILLED);
+            let debts = [
+                (by_seal, true, "no sealed put ran it again there"),
+                (
+                    natively && !killed_before,
+                    false,
+                    "no repair ran it again there",
+                ),
+            ];
+            for (owing, sealed_put, missing) in debts {
+                if !owing {
+                    continue;
+                }
+                owed.push((target.as_str(), row.display_id.as_str()));
+                if !of_it().any(|one| one.target == *target && one.sealed() == sealed_put) {
+                    notes.violated(
+                        &row.display_id,
+                        format!(
+                            "it was {then} on the word of the baseline of {target}, whose reach \
+                             moved, and {missing}"
+                        ),
+                    );
+                }
             }
         }
     }
+    in_order(recording, repairs, notes);
+    owed.len()
+}
+
+/// Whether `repairs` ran in the order the repair takes: mutation by mutation in catalog order, its sealed puts before its native runs, and moved target by moved target in name order.
+fn in_order(recording: &Recording<'_>, repairs: &[crate::repair::Repair], notes: &mut Notes<'_>) {
     let place = |repair: &crate::repair::Repair| {
         (
             recording
@@ -1708,6 +1748,7 @@ fn owed(
                 .iter()
                 .find(|row| row.display_id == repair.mutant)
                 .and_then(|row| row.catalog_index),
+            !repair.sealed(),
             repair.target.clone(),
         )
     };
@@ -1717,14 +1758,13 @@ fn owed(
                 &later.mutant,
                 format!(
                     "it was run again against {} after {} was against {}, out of the order the \
-                     repair takes: mutation by mutation in catalog order, and moved target by \
-                     moved target in name order",
+                     repair takes: mutation by mutation in catalog order, its sealed puts before \
+                     its native runs, and moved target by moved target in name order",
                     later.target, earlier.mutant, earlier.target
                 ),
             );
         }
     }
-    owed.len()
 }
 
 /// Each repair's last execution against its moved target, paired with the last engine repair touch record naming that mutation and target, which is the quiet re-measurement's where a wait had one; a repair touch no repair names is a violation.
@@ -1747,10 +1787,13 @@ fn paired<'a>(
         .filter(|touch| touch.measured == crate::drift::Measured::Repair)
         .collect();
     for touch in &repair_touches {
-        let claimed = repairs.iter().any(|repair| {
-            repair.target == touch.target
-                && full(&repair.mutant).is_none_or(|id| touch.mutant.as_ref() == Some(&id))
-        });
+        let claimed = repairs
+            .iter()
+            .filter(|repair| !repair.sealed())
+            .any(|repair| {
+                repair.target == touch.target
+                    && full(&repair.mutant).is_none_or(|id| touch.mutant.as_ref() == Some(&id))
+            });
         if !claimed {
             notes.violated(
                 &touch.target,
@@ -1767,7 +1810,7 @@ fn paired<'a>(
         }
     }
     let mut pairs = Vec::new();
-    for repair in repairs {
+    for repair in repairs.iter().filter(|repair| !repair.sealed()) {
         let id = full(&repair.mutant);
         let Some(exec) = routing.execs.iter().rev().find(|exec| {
             exec.target == repair.target
@@ -1833,6 +1876,118 @@ fn rested(
                 "the repair says it was {}, and {by} {expected_was}",
                 repair.was
             ),
+        );
+    }
+}
+
+/// One sealed put of a verdict again against a moved target, held to what its target and route decide, to the verdict its own executions establish, to the sealed executions the engine recorded of the mutation, and to the row it left (ADR 0036 decision 1).
+fn one_sealed(
+    recording: &Recording<'_>,
+    (repair, put, moved, routing): (
+        &crate::repair::Repair,
+        &crate::repair::Put,
+        &BTreeMap<String, crate::drift::Standing>,
+        &crate::route::Routing,
+    ),
+    recorded: Option<&[(String, SealedRun)]>,
+    notes: &mut Notes<'_>,
+) {
+    let subject = &repair.mutant;
+    rested(repair, (moved, routing), notes);
+    let row = recording
+        .mutants
+        .iter()
+        .find(|row| row.display_id == *subject);
+    match put {
+        crate::repair::Put::Established(runs) => {
+            reestablished((repair, runs), row, recorded, notes);
+        }
+        crate::repair::Put::Unproven(reasons) => {
+            if let Some(why) = unreasoned(reasons) {
+                notes.violated(subject, format!("its sealed put again: {why}"));
+            }
+            if repair.reached != "not-reached" {
+                notes.violated(
+                    subject,
+                    format!(
+                        "its sealed put again established nothing, and the repair says it {} the \
+                         site",
+                        repair.reached
+                    ),
+                );
+            }
+            if row.is_some_and(|row| !matches!(row.rests, Rests::Unproven(_))) {
+                notes.violated(
+                    subject,
+                    "its sealed put again established nothing, so it is a lead, and the report \
+                     rests it on sealed executions"
+                        .to_owned(),
+                );
+            }
+        }
+    }
+}
+
+/// A sealed put again that re-established a verdict on `runs`, held to the verdict they establish, to whether one of them is of its target, to the sealed executions the engine `recorded` of the mutation, and to the evidence of its `row`.
+fn reestablished(
+    (repair, runs): (&crate::repair::Repair, &[(String, String, String)]),
+    row: Option<&MutantRow>,
+    recorded: Option<&[(String, SealedRun)]>,
+    notes: &mut Notes<'_>,
+) {
+    let subject = &repair.mutant;
+    let runs: Vec<SealedRun> = runs
+        .iter()
+        .map(|(target, test, came_to)| SealedRun {
+            target: target.clone(),
+            test: test.clone(),
+            came_to: came_to.clone(),
+        })
+        .collect();
+    let killed_by = runs
+        .iter()
+        .find(|run| DETECTIONS.contains(&run.came_to.as_str()))
+        .map(|run| run.target.as_str());
+    if let Some(why) = sealed_against(&runs, &repair.now, killed_by) {
+        notes.violated(subject, format!("its sealed put again: {why}"));
+    }
+    let reached = if runs.iter().any(|run| run.target == repair.target) {
+        "reached"
+    } else {
+        "not-reached"
+    };
+    if repair.reached != reached {
+        notes.violated(
+            subject,
+            format!(
+                "the repair says its sealed put {} the site against {}, and its executions say \
+                 {reached}",
+                repair.reached, repair.target
+            ),
+        );
+    }
+    if let (Some(recorded), Some(row)) = (recorded, row) {
+        let engine: Vec<&SealedRun> = recorded
+            .iter()
+            .filter(|(mutant, _)| *mutant == row.display_id || *mutant == row.id)
+            .map(|(_, run)| run)
+            .collect();
+        if let Some(why) = unrecorded_sealed(&runs, engine) {
+            notes.violated(
+                subject,
+                format!(
+                    "its sealed put again is not the executions its verdict was established by: \
+                     {why}"
+                ),
+            );
+        }
+    }
+    if row.is_some_and(|row| row.rests != Rests::Sealed(runs.clone())) {
+        notes.violated(
+            subject,
+            "its sealed put again re-established a verdict, and the report does not rest on the \
+             executions that put came to"
+                .to_owned(),
         );
     }
 }

@@ -340,6 +340,131 @@ fn a_target_whose_reach_moved_has_every_disposition_resting_on_it_run_again() {
     );
 }
 
+/// Every repair record of the one recording `verify --trace` left in `fixture`.
+#[cfg(unix)]
+fn repairs(fixture: &Fixture) -> Vec<njutest::trace::RepairRecord> {
+    let traces = fixture.root.join(".njutest/trace");
+    let recording = std::fs::read_dir(&traces)
+        .expect("the trace directory")
+        .map(|entry| entry.expect("every trace entry is readable"))
+        .map(|entry| entry.path())
+        .next()
+        .expect("one recording");
+    njutest::trace::read_events(std::io::BufReader::new(
+        std::fs::File::open(recording.join(njutest::trace::FILE_NAME)).expect("the stream"),
+    ))
+    .expect("the events read back")
+    .into_iter()
+    .filter_map(|event| {
+        let njutest::trace::Payload::Repair { repair } = event.payload else {
+            return None;
+        };
+        Some(repair)
+    })
+    .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn a_sealed_verdict_resting_on_a_moved_target_is_put_again_on_the_sealed_bench() {
+    let fixture = fixture("fixture-drifts");
+    let output = verify(&fixture, &["--trace"]);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
+    let document = document(&fixture);
+    let target = "fixture-drifts/lib/fixture_drifts";
+    let sealed: Vec<njutest::trace::RepairRecord> = repairs(&fixture)
+        .into_iter()
+        .filter(|repair| matches!(repair.by, njutest::trace::RepairedBy::Sealed { .. }))
+        .collect();
+    assert_eq!(
+        sealed.len(),
+        2,
+        "the two mutations of `return_visit` were sealed `unreached` on the word of a baseline \
+         the control contradicted, so each is put again on the sealed bench with the moved \
+         target counted among those reaching it (ADR 0036 decision 1): {sealed:?}\n{stderr}"
+    );
+    assert!(
+        sealed.iter().all(|repair| repair.target == target
+            && matches!(
+                &repair.by,
+                njutest::trace::RepairedBy::Sealed {
+                    evidence: rust_mutants::sealed::record::Evidence::Unproven { .. }
+                }
+            )),
+        "the moved target's own test cannot seal, since it asks for a temporary directory the \
+         sealed target has none of, so no put establishes a verdict with it counted, and each \
+         disposition becomes a lead: {sealed:?}"
+    );
+    assert!(
+        findings_of(&fixture, "unstable-baseline").is_empty(),
+        "each lead is then run natively against the moved target and reaches the site, so \
+         nothing rests on the moved record any more: {document}"
+    );
+    let part = &document["builds"][0]["parts"][0];
+    assert_eq!(
+        part["repaired"],
+        serde_json::json!([{ "target": target, "again": 2 }]),
+        "the part counts each disposition it ran again once, however many runs of it there \
+         were: {document}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_verdict_the_sealed_bench_establishes_again_replaces_the_one_resting_on_a_moved_target() {
+    let fixture = fixture("fixture-drifts-sealed");
+    let output = verify(&fixture, &["--trace"]);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
+    let document = document(&fixture);
+    let target = "fixture-drifts-sealed/lib/fixture_drifts_sealed";
+    let part = &document["builds"][0]["parts"][0];
+    assert_eq!(part["drift"][0]["state"], "moved", "{document}\n{stderr}");
+    let sealed: Vec<njutest::trace::RepairRecord> = repairs(&fixture)
+        .into_iter()
+        .filter(|repair| {
+            matches!(
+                &repair.by,
+                njutest::trace::RepairedBy::Sealed {
+                    evidence: rust_mutants::sealed::record::Evidence::Sealed { .. }
+                }
+            )
+        })
+        .collect();
+    assert_eq!(
+        sealed.len(),
+        2,
+        "the two sealed `unreached` claims of `return_visit` rested on the moved record, and \
+         each, put again with the moved target counted among those reaching it, is established \
+         again by the sealed bench (ADR 0036 decision 1): {sealed:?}\n{stderr}"
+    );
+    let resting: Vec<&serde_json::Value> = part["mutants"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the part lists its mutants: {document}"))
+        .iter()
+        .filter(|mutant| mutant["decision"]["outcome"] == "unreached")
+        .filter(|mutant| {
+            mutant["evidence"]["kind"] != "sealed"
+                || !mutant["routing"]["reaching"]
+                    .as_array()
+                    .is_some_and(|reaching| reaching.iter().any(|one| one == target))
+        })
+        .collect();
+    assert!(
+        resting.is_empty(),
+        "each `unreached` claim rests on sealed executions again, with the moved target in its \
+         route: {resting:?}"
+    );
+    assert!(
+        findings_of(&fixture, "unstable-baseline").is_empty(),
+        "nothing rests on the moved record any more: {document}"
+    );
+    assert_eq!(
+        part["repaired"],
+        serde_json::json!([{ "target": target, "again": 2 }]),
+        "{document}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn a_target_no_kill_was_confirmed_on_is_still_compared_with_a_control_of_its_own() {

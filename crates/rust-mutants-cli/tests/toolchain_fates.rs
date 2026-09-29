@@ -364,6 +364,11 @@ fn fixture_drifts() {
 }
 
 #[test]
+fn fixture_drifts_sealed() {
+    holds("fixture-drifts-sealed");
+}
+
+#[test]
 fn fixture_durable() {
     holds("fixture-durable");
 }

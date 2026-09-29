@@ -558,19 +558,15 @@ impl Moves {
         Ok(moves)
     }
 
-    /// How many rows came to `outcome` and rest on `target`: every unreached one, and each survivor whose route did not put `target` to it.
+    /// How many rows came to `outcome` and rest on `target`: those whose route did not put `target` to it.
     fn resting(&self, target: &str, outcome: &str) -> usize {
         self.rows
             .iter()
             .filter(|row| row.pointer("/decision/outcome").and_then(Value::as_str) == Some(outcome))
             .filter(|row| {
-                outcome == "unreached"
-                    || !row
-                        .pointer("/routing/reaching")
-                        .and_then(Value::as_array)
-                        .is_some_and(|reaching| {
-                            reaching.iter().any(|one| one.as_str() == Some(target))
-                        })
+                !row.pointer("/routing/reaching")
+                    .and_then(Value::as_array)
+                    .is_some_and(|reaching| reaching.iter().any(|one| one.as_str() == Some(target)))
             })
             .count()
     }

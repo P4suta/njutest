@@ -3663,14 +3663,99 @@ fn a_control_that_entered_an_item_its_baseline_did_not_is_owed_the_finding() {
          union `select` narrows by; a report that calls it held is refused: {said:?}"
     );
 }
-/// The repair layer's violations over the moved specimen, counting one disposition run again for each of `repaired`, with the clean routes, a survived repair of each against the moved target, and `engine` as the one engine recording.
+/// The repair layer's violations over the moved specimen, its survivor a lead, counting one disposition run again for each of `repaired`, with the clean routes, a survived native repair of each against the moved target, and `engine` as the one engine recording.
 fn repair_audit(repaired: &[&str], engine: Vec<serde_json::Value>) -> Vec<String> {
     let mut document = with(sentinel::drifted("moved"));
     merge(
         &mut document,
         serde_json::json!({ "repaired": [{ "target": TARGET, "again": repaired.len() }] }),
     );
+    if let Some(evidence) = document.pointer_mut("/mutants/1/evidence") {
+        *evidence = serde_json::json!({ "kind": "unproven", "reasons": ["not-sealed"] });
+    }
     repair_audit_of(document, repaired, engine)
+}
+
+/// The repair layer's violations over the moved specimen whose sealed survivor was put again on the sealed bench against the moved target, the repair saying it came to `now` on `came_to`, with the engine recording the survivor's one sealed execution as `recorded`.
+fn sealed_put_audit(now: &str, came_to: &str, recorded: &str) -> Vec<String> {
+    let mut document = with(sentinel::drifted("moved"));
+    merge(
+        &mut document,
+        serde_json::json!({ "repaired": [{ "target": TARGET, "again": 1 }] }),
+    );
+    let mut events = routes();
+    events.push(serde_json::json!({
+        "type": "repair",
+        "repair": {
+            "mutant": SURVIVED, "target": TARGET, "was": "survived", "now": now,
+            "reached": "reached",
+            "by": { "kind": "sealed", "evidence": { "kind": "sealed", "executions": [
+                { "target": TARGET, "test": "tests::one", "came_to": came_to }
+            ] } }
+        }
+    }));
+    let engine = vec![
+        sentinel::touch("baseline", &[0]),
+        sentinel::touch("control", &[0, 1]),
+        serde_json::json!({
+            "type": "sealed-exec",
+            "sealed": {
+                "mutant": KILLED, "index": 0, "target": TARGET, "test": "tests::one",
+                "came_to": "panicked"
+            }
+        }),
+        serde_json::json!({
+            "type": "sealed-exec",
+            "sealed": {
+                "mutant": SURVIVED, "index": 1, "target": TARGET, "test": "tests::one",
+                "came_to": recorded
+            }
+        }),
+    ];
+    let laid = sentinel::Perturbation {
+        name: "a sealed put again",
+        document,
+        events: Some(events),
+        engine: Some(engine),
+        shards: Vec::new(),
+        outputs: Vec::new(),
+        beside: Vec::new(),
+        kept: None,
+    }
+    .lay()
+    .expect("the specimen is laid out");
+    let audit = gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        .expect("a recording this audit can read");
+    audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Repair && remark.standing == Standing::Violated)
+        .map(|remark| format!("{}: {}", remark.subject, remark.detail))
+        .collect()
+}
+
+#[test]
+fn a_sealed_put_again_is_held_to_the_verdict_its_own_executions_establish() {
+    assert_eq!(
+        sealed_put_audit("survived", "passed", "passed"),
+        Vec::<String>::new(),
+        "the survivor rested on the moved target, was put again on the sealed bench with it \
+         counted, and the put came to the executions its verdict was established by (ADR 0036 \
+         decision 1)"
+    );
+    let said = sealed_put_audit("survived", "panicked", "passed");
+    assert!(
+        said.iter()
+            .any(|line| line.contains("its sealed put again: outcome survived rests on sealed")),
+        "a put again whose executions detected the mutation re-establishes a kill, and one that \
+         says it survived is refused: {said:?}"
+    );
+    assert!(
+        said.iter()
+            .any(|line| line.contains("is not the executions its verdict was established by")),
+        "and a put again that did not come to the executions its engine recorded of the \
+         mutation is not the same verdict run again: {said:?}"
+    );
 }
 
 #[test]
@@ -3727,7 +3812,8 @@ fn repair_audit_of(
             "type": "repair",
             "repair": {
                 "mutant": mutant, "target": TARGET,
-                "was": "survived", "now": "survived", "reached": "reached"
+                "was": "survived", "now": "survived", "reached": "reached",
+            "by": { "kind": "native" }
             }
         }));
     }
@@ -3837,7 +3923,8 @@ fn two_repairs(second_was: &str) -> Vec<String> {
             "type": "repair",
             "repair": {
                 "mutant": SURVIVED, "target": target,
-                "was": was, "now": "survived", "reached": "reached"
+                "was": was, "now": "survived", "reached": "reached",
+            "by": { "kind": "native" }
             }
         }));
     }
@@ -4644,7 +4731,8 @@ fn a_hole_one_moved_target_left_does_not_excuse_a_run_against_the_next() {
         "type": "repair",
         "repair": {
             "mutant": SURVIVED, "target": TARGET,
-            "was": "survived", "now": "waited", "reached": "not-reached"
+            "was": "survived", "now": "waited", "reached": "not-reached",
+            "by": { "kind": "native" }
         }
     }));
     let laid = sentinel::Perturbation {
@@ -4767,7 +4855,8 @@ fn a_reach_moved_limitation_counts_the_dispositions_the_repairs_replaced() {
             "type": "repair",
             "repair": {
                 "mutant": SURVIVED, "target": TARGET,
-                "was": "survived", "now": "survived", "reached": "reached"
+                "was": "survived", "now": "survived", "reached": "reached",
+            "by": { "kind": "native" }
             }
         }));
         let mut document = with(sentinel::drifted("moved"));

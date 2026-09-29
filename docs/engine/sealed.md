@@ -212,6 +212,7 @@ So a kept sealed verdict no longer saves an instance; it says which run first es
 On fixture-simple, a `verify` whose whole report is gone, so that each of its ten mutations asks the store, and a `verify --no-cache` of the same tree each assembled the same bench, put the mutations to 10 sealed executions, and ran the same 8 cargo invocations; the first believed the 9 kills it had kept, each after its one execution came out the same, and established the survivor, which it had not kept.
 Trusting the 9 kept kills, as a run did before, skipped those 9 executions.
 A kept lead is not a verdict, so nothing is run again for it: sealing is tried first, as for a mutant nothing was kept about.
+A sealed verdict njutest finds resting on a target whose native reach moved is put again the same way, by `rust_mutants::run::sealed_along`, with that target counted among the ones reaching it natively and nothing recorded a second time, and the verdict that put establishes, or the lead it leaves, replaces the one that rested on the moved record ([ADR 0036](../adr/0036-what-rested-on-a-moved-reach-is-run-again.md)).
 An answer carried across an edit ([carrying an answer](carry.md)) rests on native executions, so it is always such a lead.
 
 ## What sealing cannot see

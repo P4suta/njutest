@@ -741,27 +741,6 @@ fn repaired(
         .collect();
     let mut again: BTreeMap<&str, u32> = moved.iter().map(|one| (one.as_str(), 0)).collect();
     for judged in &mut mutation.judged {
-        let lead = matches!(
-            judged.disposition,
-            Disposition::Survived { .. } | Disposition::Unreached
-        ) && judged.verdict(false).lead();
-        let resting: Vec<(&str, &Measured)> = moved
-            .iter()
-            .filter(|target| {
-                lead && crate::report::drift::rests_on(judged.routing.as_ref(), target)
-            })
-            .filter_map(|target| {
-                judging
-                    .subject
-                    .baseline
-                    .iter()
-                    .find(|measured| measured.target.name() == *target)
-                    .map(|measured| (target.as_str(), measured))
-            })
-            .collect();
-        if resting.is_empty() {
-            continue;
-        }
         let Some(mutant) = session
             .catalog()
             .mutants()
@@ -770,7 +749,18 @@ fn repaired(
         else {
             continue;
         };
-        for target in repaired_across(judging, (judged, mutant), &resting)? {
+        let mut replaced: BTreeSet<&str> = BTreeSet::new();
+        if let Some(bench) = judging.bench {
+            let resting = resting_on(judging, judged, &moved, false);
+            if !resting.is_empty() {
+                replaced.extend(resealed(judging, (judged, mutant), &resting, bench)?);
+            }
+        }
+        let resting = resting_on(judging, judged, &moved, true);
+        if !resting.is_empty() {
+            replaced.extend(repaired_across(judging, (judged, mutant), &resting)?);
+        }
+        for target in replaced {
             if let Some(count) = again.get_mut(target) {
                 *count = count
                     .checked_add(1)
@@ -788,6 +778,117 @@ fn repaired(
         })
         .collect();
     Ok(())
+}
+
+/// Each of the `moved` targets `judged` rests on, in name order, with its baseline: a survival or an unreached claim whose route did not put the target to it, a lead where `lead` says so and a sealed verdict otherwise.
+fn resting_on<'m>(
+    judging: &Judging<'m>,
+    judged: &Judged,
+    moved: &'m BTreeSet<String>,
+    lead: bool,
+) -> Vec<(&'m str, &'m Measured)> {
+    let resting = matches!(
+        judged.disposition,
+        Disposition::Survived { .. } | Disposition::Unreached
+    ) && judged.verdict(false).lead() == lead;
+    moved
+        .iter()
+        .filter(|target| resting && crate::report::drift::rests_on(judged.routing.as_ref(), target))
+        .filter_map(|target| {
+            judging
+                .subject
+                .baseline
+                .iter()
+                .find(|measured| measured.target.name() == *target)
+                .map(|measured| (target.as_str(), measured))
+        })
+        .collect()
+}
+
+/// Puts the sealed verdict of `judged` again on the sealed `bench` with each of the moved `targets` it rests on counted among the targets that reach it natively, and replaces it with the verdict that put re-establishes, or, where it establishes none, with what the native run judges of it, which is a lead; names each target, all of which it replaced it against (ADR 0036 decision 1).
+///
+/// # Errors
+/// The engine's refusals, and an interruption.
+fn resealed<'t>(
+    judging: &Judging<'_>,
+    (judged, mutant): (&mut Judged, &Mutant),
+    targets: &[(&'t str, &Measured)],
+    bench: &rust_mutants::sealed::bench::Bench<'_>,
+) -> Result<Vec<&'t str>, crate::error::RunnerError> {
+    let session = judging.subject.session;
+    let was = judged.disposition.clone();
+    let route = match &was {
+        Disposition::Survived { route } => route.clone(),
+        Disposition::Rejected { .. }
+        | Disposition::Killed { .. }
+        | Disposition::StepLimitReached { .. }
+        | Disposition::Waited { .. }
+        | Disposition::Unreached
+        | Disposition::Equivalent { .. }
+        | Disposition::Unconfirmed { .. }
+        | Disposition::Errored { .. }
+        | Disposition::Declined { .. } => session.route(mutant),
+    };
+    let along = targets
+        .iter()
+        .fold(route, |route, (target, _)| route.reached_by(target));
+    if judging.watch.cancel.is_cancelled() {
+        return Err(crate::error::RunnerError::Interrupted);
+    }
+    let came = match rust_mutants::run::sealed_along(session, mutant, bench, &along)? {
+        rust_mutants::run::Sealing::Established(verdict) => {
+            let (now, answered) = decided_by(mutant, &along, &verdict)?;
+            left_for_later(
+                judging,
+                mutant,
+                (&along, &answered, &[]),
+                (&now, &verdict.evidence),
+            )?;
+            Came {
+                disposition: now,
+                evidence: Some(verdict.evidence),
+                routing: Some(crate::report::Routing::of(&along, answered)),
+                source: None,
+            }
+        }
+        rust_mutants::run::Sealing::Unproven(lead) => {
+            natively(judging, mutant, &session.route(mutant), lead)?
+        }
+        rust_mutants::run::Sealing::Interrupted => {
+            return Err(crate::error::RunnerError::Interrupted);
+        }
+    };
+    let put = match &came.evidence {
+        Some(evidence) => evidence.clone(),
+        None => RestsOn::not_sealed(),
+    };
+    for (target, _) in targets {
+        let reached = match &put {
+            RestsOn::Sealed { executions }
+                if executions.iter().any(|one| one.target == *target) =>
+            {
+                crate::trace::SiteReached::Reached
+            }
+            RestsOn::Sealed { .. } | RestsOn::Unproven { .. } => {
+                crate::trace::SiteReached::NotReached
+            }
+        };
+        judging.watch.trace.repair(crate::trace::RepairRecord {
+            mutant: judged.display_id.clone(),
+            target: (*target).to_owned(),
+            was: was.name().to_owned(),
+            now: came.disposition.name().to_owned(),
+            reached,
+            by: crate::trace::RepairedBy::Sealed {
+                evidence: put.clone(),
+            },
+        });
+    }
+    judged.disposition = came.disposition;
+    judged.evidence = came.evidence;
+    judged.routing = came.routing;
+    judged.source_run_id = came.source;
+    Ok(targets.iter().map(|(target, _)| *target).collect())
 }
 
 /// Runs `judged` again against each of the moved `targets` it rests on, in name order until one kills it, replaces its disposition with what those runs decide together, and names each target whose own run replaced it.
@@ -2393,6 +2494,7 @@ fn repair(
         was: was.name().to_owned(),
         now: if replaced { now.name() } else { was.name() }.to_owned(),
         reached,
+        by: crate::trace::RepairedBy::Native,
     });
     Ok((
         RanAgainst {

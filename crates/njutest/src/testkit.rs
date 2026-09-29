@@ -879,6 +879,25 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 was: "unreached".to_owned(),
                 now: "survived".to_owned(),
                 reached: crate::trace::SiteReached::Reached,
+                by: crate::trace::RepairedBy::Native,
+            },
+        },
+        Payload::Repair {
+            repair: crate::trace::RepairRecord {
+                mutant: "abcdef".to_owned(),
+                target: "demo/lib/demo".to_owned(),
+                was: "survived".to_owned(),
+                now: "survived".to_owned(),
+                reached: crate::trace::SiteReached::Reached,
+                by: crate::trace::RepairedBy::Sealed {
+                    evidence: rust_mutants::sealed::record::Evidence::Sealed {
+                        executions: vec![rust_mutants::sealed::record::SealedRun {
+                            target: "demo/lib/demo".to_owned(),
+                            test: "tests::works".to_owned(),
+                            came_to: rust_mutants::sealed::record::Came::Passed,
+                        }],
+                    },
+                },
             },
         },
         Payload::Knob {

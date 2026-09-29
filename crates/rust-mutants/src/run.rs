@@ -1799,6 +1799,23 @@ pub fn sealed_verdict(
     sealing(session, mutant, (&route, answer, started), None)
 }
 
+/// Puts `mutant` again to `bench` as though `route` reached it natively, judging it from its sealed executions and recording nothing (ADR 0036).
+///
+/// # Errors
+/// A host that cannot run an execution, or an environment that is not text.
+pub fn sealed_along(
+    session: &Session,
+    mutant: &Mutant,
+    bench: &crate::sealed::bench::Bench<'_>,
+    route: &crate::session::Route,
+) -> Result<Sealing, EngineError> {
+    let started = Instant::now();
+    let Some(answer) = answered(session, mutant, bench, route)? else {
+        return Ok(Sealing::Interrupted);
+    };
+    judged_by(mutant, (route, answer, started), None)
+}
+
 /// What putting a mutant again to this run's bench came to, where a kept sealed verdict answered for it (ADR 0046, decision 7).
 #[derive(Debug)]
 pub enum Again {
@@ -1901,14 +1918,13 @@ fn sealing(
     ),
     source: Option<&str>,
 ) -> Result<Sealing, EngineError> {
-    let evidence = crate::sealed::record::Evidence::of(&answer);
-    let rust_mutants_decision::evidence::Standing::Established(verdict) = answer.standing else {
-        return Ok(Sealing::Unproven(evidence));
-    };
-    let source_run_id = source.map(str::to_owned);
-    if session.trace().is_enabled() {
+    let established = matches!(
+        answer.standing,
+        rust_mutants_decision::evidence::Standing::Established(_)
+    );
+    if established && session.trace().is_enabled() {
         let mut record = route.record(mutant, Vec::new());
-        record.reused.clone_from(&source_run_id);
+        record.reused = source.map(str::to_owned);
         session.trace().route(record);
         for put in &answer.puts {
             session.trace().sealed_exec(crate::trace::SealedExecRecord {
@@ -1922,6 +1938,24 @@ fn sealing(
             });
         }
     }
+    judged_by(mutant, (route, answer, started), source)
+}
+
+/// What `answer`, which `route` led to and which began at `started`, establishes about `mutant`, naming `source` as the run whose verdict it reproduced, where it reproduced one; recording nothing.
+fn judged_by(
+    mutant: &Mutant,
+    (route, answer, started): (
+        &crate::session::Route,
+        crate::sealed::standing::Answer,
+        Instant,
+    ),
+    source: Option<&str>,
+) -> Result<Sealing, EngineError> {
+    let evidence = crate::sealed::record::Evidence::of(&answer);
+    let rust_mutants_decision::evidence::Standing::Established(verdict) = answer.standing else {
+        return Ok(Sealing::Unproven(evidence));
+    };
+    let source_run_id = source.map(str::to_owned);
     let (outcome, not_run_reason) = crate::sealed::record::row_of(verdict.found());
     let by = answer.puts.iter().find(|put| {
         matches!(
