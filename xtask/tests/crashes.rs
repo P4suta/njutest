@@ -259,6 +259,41 @@ fn a_report_that_drops_renames_or_softens_a_crash_disagrees_with_its_recording()
 }
 
 #[test]
+fn a_nonce_is_one_run_s_and_a_second_run_carrying_it_is_refused() {
+    let ids = std::collections::BTreeMap::from([
+        ("dddd".to_owned(), "d".repeat(64)),
+        ("eeee".to_owned(), "d".repeat(64)),
+    ]);
+    let one = Crashed {
+        steps: vec![("dddd".to_owned(), run("t", "crash", "stopped", &["a"]))],
+    };
+    assert!(
+        xtask::crashes::issued_disagreements(&ids, &one).is_empty(),
+        "one run carrying its own nonce is what the engine issues"
+    );
+    let twice = Crashed {
+        steps: vec![
+            ("dddd".to_owned(), run("t", "crash", "stopped", &["a"])),
+            ("eeee".to_owned(), run("t", "crash", "stopped", &["a"])),
+        ],
+    };
+    let said = xtask::crashes::issued_disagreements(&ids, &twice);
+    assert!(
+        said.iter().any(|(crash, why)| crash == "eeee"
+            && why.contains("carries the nonce already issued a run of dddd")),
+        "a nonce issued to one run and read back from another is a notice one run could have \
+         written for the other, so the second is refused: {said:?}"
+    );
+    let other = std::collections::BTreeMap::from([("dddd".to_owned(), "e".repeat(64))]);
+    assert!(
+        xtask::crashes::issued_disagreements(&other, &one)
+            .iter()
+            .any(|(_crash, why)| why.contains("another mutation")),
+        "a run issued another mutation than the report's site names is refused too"
+    );
+}
+
+#[test]
 fn once_a_stop_wrote_into_the_tree_every_later_crash_is_left_alone() {
     let steps = |later: Vec<Step>| Crashed {
         steps: [
