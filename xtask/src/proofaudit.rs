@@ -3039,14 +3039,14 @@ fn hollow(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit) -> D
     };
     let asked = match answering(recording, &sealed) {
         Ok(asked) => asked,
-        Err(HollowError::Overflow { target }) => {
+        Err(Uncounted::Overflow { target }) => {
             notes.violated(
                 target,
                 "the execution count exceeds the report wire's u64 range".to_owned(),
             );
             return notes.looked();
         }
-        Err(HollowError::Unplaced { target, came_to }) => {
+        Err(Uncounted::Unplaced { target, came_to }) => {
             notes.violated(
                 target,
                 format!(
@@ -3105,7 +3105,7 @@ fn hollow_held_to_findings(
 
 /// Why the answers of the sealed executions could not be counted.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum HollowError<'a> {
+enum Uncounted<'a> {
     /// A target answered about more mutations than the report wire counts.
     Overflow { target: &'a str },
     /// A sealed execution came to an ending this audit does not know.
@@ -3146,7 +3146,7 @@ impl SealedAnswer {
 fn answering<'a>(
     recording: &Recording<'_>,
     sealed: &BTreeMap<&str, Vec<&'a SealedRun>>,
-) -> Result<BTreeMap<&'a str, (u64, bool)>, HollowError<'a>> {
+) -> Result<BTreeMap<&'a str, (u64, bool)>, Uncounted<'a>> {
     let mut asked: BTreeMap<&str, (u64, bool)> = BTreeMap::new();
     for mutant in &recording.mutants {
         if !mutant.sealed() {
@@ -3155,7 +3155,7 @@ fn answering<'a>(
         let mut said: BTreeMap<&str, SealedAnswer> = BTreeMap::new();
         for run in sealed_of_row(sealed, mutant) {
             let target = run.target.as_str();
-            let now = SealedAnswer::of(&run.came_to).ok_or(HollowError::Unplaced {
+            let now = SealedAnswer::of(&run.came_to).ok_or(Uncounted::Unplaced {
                 target,
                 came_to: run.came_to.as_str(),
             })?;
@@ -3172,7 +3172,7 @@ fn answering<'a>(
             held.0 = held
                 .0
                 .checked_add(1)
-                .ok_or(HollowError::Overflow { target })?;
+                .ok_or(Uncounted::Overflow { target })?;
             held.1 |= noticed;
         }
     }
