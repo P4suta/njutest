@@ -2929,3 +2929,118 @@ fn a_run_asks_first_the_target_that_killed_the_mutant_last_time() {
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_kept_sealed_answer_about_one_mutation_is_believed_only_once_its_executions_come_out_the_same()
+{
+    use rust_mutants::sealed::record::{Came, Evidence};
+    let fixture = fixture("fixture-assured");
+    let first = verify(&fixture, &[]);
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "{}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    let established = document(&fixture);
+    let store = njutest::cache::store::Store::new(
+        &njutest_devkit::paths::cache_beside(&fixture.root).expect("a cache directory"),
+        u64::MAX,
+        std::time::Duration::from_hours(1),
+    );
+    let identity = rust_mutants::id::HexDigest::try_from(
+        text(&established["provenance"]["identity"]).as_str(),
+    )
+    .expect("a canonical identity");
+    std::fs::remove_file(store.entry(&identity))
+        .expect("the whole answer is forgotten, so the next run asks the store of mutations");
+    let row = established["builds"][0]["parts"][0]["mutants"]
+        .as_array()
+        .expect("mutation rows")
+        .iter()
+        .find(|row| row["decision"]["outcome"] == "killed" && row["evidence"]["kind"] == "sealed")
+        .expect("the fixture kills a mutation with a sealed execution")
+        .clone();
+    let mutant = rust_mutants::id::HexDigest::try_from(text(&row["id"]).as_str())
+        .expect("a canonical mutant identity");
+    let mut record = njutest::evidence::store::read(store.root(), &mutant)
+        .expect("the store of mutations reads")
+        .expect("the run kept what it established about the mutation");
+    let Evidence::Sealed { executions } = &mut record.evidence else {
+        panic!("a sealed kill is kept with its sealed executions: {record:?}");
+    };
+    let killing = executions
+        .last_mut()
+        .expect("a sealed kill rests on the execution that detected it");
+    let came_to = killing.came_to;
+    killing.came_to = if came_to == Came::Failed {
+        Came::Panicked
+    } else {
+        Came::Failed
+    };
+    let (target, test, stored) = (
+        killing.target.clone(),
+        killing.test.clone(),
+        killing.came_to,
+    );
+    njutest::evidence::store::write(store.root(), &record)
+        .expect("the store of mutations takes the record");
+    assert_eq!(
+        njutest::evidence::store::read(store.root(), &mutant)
+            .expect("the store of mutations reads the record back")
+            .as_ref(),
+        Some(&record),
+        "the record passes every check the store makes of what it reads"
+    );
+
+    let second = verify(&fixture, &["--trace"]);
+    let stderr = njutest_devkit::process::strict_utf8(&second.stderr);
+    assert_eq!(second.status.code(), Some(0), "{stderr}");
+    let answered = document(&fixture);
+    assert_eq!(answered["provenance"]["cached"], false, "{stderr}");
+    let now = answered["builds"][0]["parts"][0]["mutants"]
+        .as_array()
+        .expect("mutation rows")
+        .iter()
+        .find(|one| one["id"] == row["id"])
+        .expect("the mutation is still in the catalog")
+        .clone();
+    assert_eq!(
+        now["reuse"]["reused"], false,
+        "a kept sealed answer one of whose executions comes to something else when it is put \
+         again is not believed, and the run establishes the mutation afresh: {now}"
+    );
+    assert_eq!(
+        now["evidence"]["executions"]
+            .as_array()
+            .and_then(|executions| executions.last())
+            .map(|execution| execution["came_to"].clone()),
+        Some(serde_json::json!(came_to.name())),
+        "what the run established is what the execution comes to: {now}"
+    );
+    let events = recording_of(&fixture, &text(&answered["run_id"]));
+    let said: Vec<String> = events
+        .iter()
+        .filter_map(|event| njutest::testkit::payload::of(&event.payload).note())
+        .filter(|note| note.kind == "unreproduced")
+        .map(|note| note.detail.clone())
+        .collect();
+    let display = text(&row["display_id"]);
+    let note = said
+        .iter()
+        .find(|detail| detail.contains(&display))
+        .unwrap_or_else(|| panic!("the recording names the answer it did not believe: {said:?}"));
+    for named in [
+        target.as_str(),
+        test.as_str(),
+        stored.name(),
+        came_to.name(),
+    ] {
+        assert!(
+            note.contains(named),
+            "the note names the execution that differed, what the store said it came to, and \
+             what it came to now; {named} is missing: {note}"
+        );
+    }
+}

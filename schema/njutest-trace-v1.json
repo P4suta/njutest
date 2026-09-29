@@ -322,7 +322,7 @@
                 "considered": { "type": "array", "items": { "type": "string" } },
                 "reused": { "$ref": "#/$defs/nullableString" },
                 "refused": {
-                  "enum": ["nothing-recorded", "unreadable", "target-unknown", "not-routed", "key-changed", "not-passing", "target-entered", "nothing-routed", "superseded", null]
+                  "enum": ["nothing-recorded", "unreadable", "target-unknown", "not-routed", "key-changed", "not-passing", "target-entered", "nothing-routed", "superseded", "unreproduced", null]
                 },
                 "rule": { "enum": ["exact", "carried", null] },
                 "carry_refused": {
