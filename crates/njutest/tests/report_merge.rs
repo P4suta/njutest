@@ -1001,6 +1001,38 @@ fn a_shard_holds_evidence_about_its_survivor_beside_a_fault_another_shard_holds(
 }
 
 #[test]
+fn a_binary_every_shard_ran_is_one_hole_of_the_merge_however_many_shards_ran_it() {
+    let whole = |source: &mut BuildReport| source.contract = Contract::WholeV1;
+    let one = part_varying(
+        "one",
+        "1/2",
+        vec![row(0, &"a".repeat(64), "killed", false)],
+        &whole,
+    );
+    let two = part_varying(
+        "two",
+        "2/2",
+        vec![row(1, &"b".repeat(64), "killed", false)],
+        &whole,
+    );
+    let conclusion = super_whole(&[one, two]);
+    let scheduled = conclusion
+        .matrix
+        .iter()
+        .find(|row| row.dimension == njutest::report::matrix::Dimension::Schedule)
+        .map(|row| row.column.clone());
+    assert!(
+        matches!(
+            &scheduled,
+            Some(njutest::report::matrix::Column::Measured { catalogued: 1, holes, .. })
+                if holes.len() == 1
+        ),
+        "the shards divide one catalog and share one baseline, so the binary each of them ran \
+         is one binary: {scheduled:?}"
+    );
+}
+
+#[test]
 fn a_merge_of_whole_parts_names_each_dimension_they_left_a_hole_once() {
     let whole = |source: &mut BuildReport| source.contract = Contract::WholeV1;
     let one = part_varying(
