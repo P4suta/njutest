@@ -235,12 +235,11 @@ fn a_report_that_does_not_close_or_count_is_refused() {
         "test result: FAILED. 3 passed; 2 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.42s",
         "",
     );
-    assert!(
-        matches!(
-            captured(unclosed.as_bytes(), &held(3)),
-            Err(Uncaptured::CountsDisagree { .. })
-        ),
-        "a report with no closing line may have stopped before the last doctest"
+    assert_eq!(
+        captured(unclosed.as_bytes(), &held(3)),
+        Err(Uncaptured::Unclosed { announced: 6 }),
+        "a report with no closing line may have stopped before the last doctest, and counts \
+         none of them rather than the most a count holds"
     );
 }
 

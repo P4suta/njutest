@@ -449,7 +449,10 @@ fn past_whitespace(text: &str) -> &str {
         }
         match rest.chars().next() {
             Some(ch) if ch.is_whitespace() || ch == '\u{200e}' || ch == '\u{200f}' => {
-                rest = rest.get(ch.len_utf8()..).unwrap_or_default();
+                rest = match rest.get(ch.len_utf8()..) {
+                    Some(after) => after,
+                    None => "",
+                };
             }
             Some(_) | None => return rest,
         }

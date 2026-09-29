@@ -432,11 +432,10 @@ impl Exit {
         if interrupted {
             return Self::Interrupted;
         }
-        kinds
-            .into_iter()
-            .map(FindingKind::exit)
-            .max()
-            .unwrap_or(Self::Detected)
+        match kinds.into_iter().map(FindingKind::exit).max() {
+            Some(gravest) => gravest,
+            None => Self::Detected,
+        }
     }
 }
 
@@ -817,16 +816,11 @@ fn detail(kind: FindingKind, one: &Judged) -> String {
         FindingKind::SurvivingMutant => format!(
             "no test noticed {}; {} ran and passed",
             one.display_id,
-            one.tests_run.map_or_else(
-                || "the target".to_owned(),
-                |count| {
-                    if count == 1 {
-                        "1 test".to_owned()
-                    } else {
-                        format!("{count} tests")
-                    }
-                }
-            )
+            match one.tests_run {
+                Some(1) => "1 test".to_owned(),
+                Some(count) => format!("{count} tests"),
+                None => "the target".to_owned(),
+            }
         ),
         FindingKind::WaitedMutant => format!(
             "this machine stopped waiting for {} twice, so the run established nothing about \
@@ -997,11 +991,9 @@ impl Filter {
             return false;
         }
         if let Some(ids) = &self.ids
-            && !ids.iter().any(|selector| {
-                Locator::parse(selector).map_or_else(
-                    || mutant.id.as_str().starts_with(selector.as_str()),
-                    |name| name.describes(mutant, item, line),
-                )
+            && !ids.iter().any(|selector| match Locator::parse(selector) {
+                Some(name) => name.describes(mutant, item, line),
+                None => mutant.id.as_str().starts_with(selector.as_str()),
             })
         {
             return false;
@@ -1203,12 +1195,12 @@ pub fn run<O: Observer>(
         .iter()
         .filter_map(|index| session.catalog().by_index(*index))
         .collect();
-    let (places, mut unselected) = narrowed(session, places, options.filter);
+    let (places, mut unselected) = narrowed(session, places, options.filter)?;
     for mutant in session.catalog().mutants().iter().filter(|mutant| {
         options.shard.is_none_or(|shard| shard.holds(mutant.index))
             && !session.was_validated(mutant.index)
     }) {
-        if filter_selects(session, mutant, options.filter) {
+        if filter_selects(session, mutant, options.filter)? {
             return Err(EngineError::from(SessionError::UnknownMutant {
                 message: format!(
                     "{} was not compiled by this prepared session; prepare with a validation filter that includes it",
@@ -1324,7 +1316,10 @@ fn decided(
         standing_of(judged, expectation.outcome, &ids)
     };
     let standing = match standing {
-        Standing::Met => moved.unwrap_or(Standing::Met),
+        Standing::Met => match moved {
+            Some(moved) => moved,
+            None => Standing::Met,
+        },
         held @ (Standing::Moved { .. }
         | Standing::Stale { .. }
         | Standing::Unmatched { .. }
@@ -1929,19 +1924,23 @@ fn sealing(
             rust_mutants_decision::evidence::Sealed::Detected(_)
         )
     });
+    let (target, failed_tests) = match by {
+        Some(put) => (put.target.clone(), vec![put.test.clone()]),
+        None => (String::new(), Vec::new()),
+    };
     Ok(Sealing::Established(Box::new(Judged {
         index: mutant.index,
         id: mutant.id.to_string(),
         display_id: mutant.display_id.to_string(),
         outcome,
         step_notice: None,
-        target: by.map(|put| put.target.clone()).unwrap_or_default(),
+        target,
         exit_code: -1,
         start_failure: None,
         protocol_failure: None,
         duration: started.elapsed(),
         tests_run: Some(count(answer.puts.len())?),
-        failed_tests: by.map(|put| vec![put.test.clone()]).unwrap_or_default(),
+        failed_tests,
         signal: None,
         retried: false,
         lingered: false,
@@ -2165,7 +2164,10 @@ mod pool {
                 .places
                 .iter()
                 .zip(self.done)
-                .map(|(mutant, one)| one.unwrap_or_else(|| unexecuted(mutant, unreached)))
+                .map(|(mutant, one)| match one {
+                    Some(answered) => answered,
+                    None => unexecuted(mutant, unreached),
+                })
                 .collect())
         }
     }
@@ -2535,18 +2537,21 @@ const fn stops(one: &Judged) -> bool {
 }
 
 /// What a filter leaves of a catalog, and what it took out.
+///
+/// # Errors
+/// [`SessionError::UnplacedMutation`] for a mutant the session cannot place, which no filter can then say it is about.
 fn narrowed<'m>(
     session: &Session,
     places: Vec<&'m Mutant>,
     filter: Option<&Filter>,
-) -> (Vec<&'m Mutant>, Vec<Judged>) {
+) -> Result<(Vec<&'m Mutant>, Vec<Judged>), SessionError> {
     let Some(filter) = filter.filter(|one| !one.is_empty()) else {
-        return (places, Vec::new());
+        return Ok((places, Vec::new()));
     };
     let mut selected = Vec::with_capacity(places.len());
     let mut left = Vec::new();
     for mutant in places {
-        if filter_selects(session, mutant, Some(filter)) {
+        if filter_selects(session, mutant, Some(filter))? {
             selected.push(mutant);
         } else {
             if session.trace().is_enabled() {
@@ -2558,14 +2563,26 @@ fn narrowed<'m>(
             left.push(unexecuted(mutant, NotRunReason::Unselected));
         }
     }
-    (selected, left)
+    Ok((selected, left))
 }
 
-fn filter_selects(session: &Session, mutant: &Mutant, filter: Option<&Filter>) -> bool {
-    filter.filter(|one| !one.is_empty()).is_none_or(|filter| {
-        let line = session.position(mutant).map_or(0, |at| at.line);
-        filter.selects(mutant, line, session.item_of(mutant.index))
-    })
+/// Whether `filter` is about `mutant`, which a filter that says nothing always is.
+///
+/// # Errors
+/// [`SessionError::UnplacedMutation`] for a mutant the session cannot place, where a filter that says something would have to read its line.
+fn filter_selects(
+    session: &Session,
+    mutant: &Mutant,
+    filter: Option<&Filter>,
+) -> Result<bool, SessionError> {
+    match filter.filter(|one| !one.is_empty()) {
+        Some(filter) => Ok(filter.selects(
+            mutant,
+            session.placed(mutant)?.line,
+            session.item_of(mutant.index),
+        )),
+        None => Ok(true),
+    }
 }
 
 /// What an earlier run of this exact tree established about this mutant, when a record answers for it.
@@ -2854,10 +2871,10 @@ pub fn verify(
                 return Err(SessionError::ExpectationsOverlap {
                     first,
                     second: expectation.name(),
-                    mutant: session.position(mutant).map_or_else(
-                        || mutant.display_id.to_string(),
-                        |at| format!("{}@{}", mutant.display_id, at.line),
-                    ),
+                    mutant: match session.position(mutant) {
+                        Some(at) => format!("{}@{}", mutant.display_id, at.line),
+                        None => mutant.display_id.to_string(),
+                    },
                 });
             }
         }

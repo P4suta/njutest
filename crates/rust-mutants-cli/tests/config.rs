@@ -428,6 +428,7 @@ fn an_expectation_is_addressed_by_id_or_by_locator_and_never_both() {
     .expect("an expectation by locator");
     let locator = by_locator.mutation.expect[0]
         .expectation()
+        .expect("a claim")
         .locator
         .expect("a locator");
     assert_eq!(locator.item, "clamp");
@@ -459,6 +460,7 @@ fn a_count_says_how_many_mutations_one_reason_was_written_for() {
     assert_eq!(
         counted.mutation.expect[0]
             .expectation()
+            .expect("a claim")
             .locator
             .expect("a locator")
             .count,
@@ -632,7 +634,10 @@ fn a_claim_says_where_it_holds_over_the_target_and_the_tests_environment() {
         "{claim}where = {{ cfg = 'target_os = \"linux\"', env = {{ REQUIRE_SHARING = \"1\" }} }}\n"
     ))
     .expect("a claim that says where it holds");
-    let under = scoped.mutation.expect[0].expectation().under;
+    let under = scoped.mutation.expect[0]
+        .expectation()
+        .expect("a claim")
+        .under;
     assert_eq!(
         under.cfg,
         Some(rust_mutants::facts::Predicate::Pair(
@@ -650,6 +655,7 @@ fn a_claim_says_where_it_holds_over_the_target_and_the_tests_environment() {
             .mutation
             .expect[0]
             .expectation()
+            .expect("a claim")
             .under,
         rust_mutants::run::Where::default(),
         "a claim that names no facts holds everywhere"
@@ -682,4 +688,31 @@ fn a_claim_says_where_it_holds_over_the_target_and_the_tests_environment() {
             "{why}: the refusal names {named:?}: {error}"
         );
     }
+}
+
+#[test]
+fn an_entry_whose_outcome_is_not_one_or_whose_locator_lacks_a_part_is_no_claim() {
+    let misspelt = rust_mutants_cli::config::Expect {
+        id: Some("abc".to_owned()),
+        reason: "the bound is equivalent".to_owned(),
+        outcome: Some("killd".to_owned()),
+        ..rust_mutants_cli::config::Expect::default()
+    };
+    assert_eq!(
+        misspelt.expectation(),
+        None,
+        "an outcome that is not one is no claim, rather than a claim of survival"
+    );
+    let partial = rust_mutants_cli::config::Expect {
+        path: Some("src/lib.rs".to_owned()),
+        item: Some("clamp".to_owned()),
+        rule: Some("le-to-lt".to_owned()),
+        reason: "the bound is equivalent".to_owned(),
+        ..rust_mutants_cli::config::Expect::default()
+    };
+    assert_eq!(
+        partial.expectation(),
+        None,
+        "a locator with no original is no claim, rather than one naming any original"
+    );
 }

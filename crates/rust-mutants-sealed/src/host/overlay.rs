@@ -38,7 +38,10 @@ impl Walk<'_> {
 
     /// Whether the live node `held` carries other times than the snapshot's node `base`, which a node the snapshot does not hold carries the constant for.
     fn retimed(&self, base: NodeId, held: &Live) -> bool {
-        let times = self.base.get(base).map_or(Times::UNSET, |node| node.times);
+        let times = match self.base.get(base) {
+            Some(node) => node.times,
+            None => Times::UNSET,
+        };
         held.accessed != times.accessed || held.modified != times.modified
     }
 
@@ -68,7 +71,10 @@ impl Walk<'_> {
             });
         }
         let nothing = BTreeMap::new();
-        let before = self.base_entries(base).unwrap_or(&nothing);
+        let before = match self.base_entries(base) {
+            Some(entries) => entries,
+            None => &nothing,
+        };
         let after = self.filesystem.entries(self.tree, live)?;
         let mut names: Vec<&String> = before.keys().chain(after.keys()).collect();
         names.sort();

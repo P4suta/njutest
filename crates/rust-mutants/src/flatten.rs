@@ -107,7 +107,10 @@ pub(crate) fn flatten_with(parsing: &Parsing, src: &str) -> Result<String, Flatt
             }
         }
         out.push_str(&leaf.text);
-        previous_end = Some(previous_end.map_or(leaf.end, |end| end.max(leaf.end)));
+        previous_end = Some(match previous_end {
+            Some(end) => end.max(leaf.end),
+            None => leaf.end,
+        });
     }
 
     if let Some(byte) = out.find(['\n', '\r']) {

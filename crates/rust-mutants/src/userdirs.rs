@@ -13,8 +13,11 @@ pub fn cache_directory(vars: &crate::vars::Variables, fallback: &str) -> PathBuf
             .map(PathBuf::from)
             .filter(|path| path.is_absolute())
     };
-    named("XDG_CACHE_HOME")
+    match named("XDG_CACHE_HOME")
         .or_else(|| named("HOME").map(|home| home.join(".cache")))
         .or_else(|| named("LOCALAPPDATA"))
-        .unwrap_or_else(|| PathBuf::from(fallback))
+    {
+        Some(given) => given,
+        None => PathBuf::from(fallback),
+    }
 }

@@ -22,8 +22,10 @@ pub const ORIGIN: i64 = 1_800_000_000;
 /// Never: [`ORIGIN`] is a moment.
 #[must_use]
 pub fn stepping_clock() -> Clock {
-    let origin = Timestamp::from_second(ORIGIN)
-        .unwrap_or_else(|error| panic!("the frozen origin is a moment: {error}"));
+    let origin = match Timestamp::from_second(ORIGIN) {
+        Ok(origin) => origin,
+        Err(error) => panic!("the frozen origin is a moment: {error}"),
+    };
     Clock::stepping(origin, std::time::Duration::from_secs(1))
 }
 
@@ -43,8 +45,10 @@ pub fn memory_recorder() -> Recorder {
 /// Panics only if the fixed test run identity ceases to be canonical, which is a defect in this testkit rather than a condition a test can recover from.
 #[must_use]
 pub fn standalone_context() -> TraceContext {
-    let run_id = crate::id::RunId::try_from("test")
-        .unwrap_or_else(|error| panic!("the fixed test run id is canonical: {error}"));
+    let run_id = match crate::id::RunId::try_from("test") {
+        Ok(run_id) => run_id,
+        Err(error) => panic!("the fixed test run id is canonical: {error}"),
+    };
     let build = crate::cargo::BuildConfig::default().selection();
     TraceContext::Standalone {
         run_id,

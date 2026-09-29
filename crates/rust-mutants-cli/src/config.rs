@@ -230,10 +230,26 @@ pub struct Holds {
 }
 
 impl Expect {
-    /// How the claim is written back to a reader.
+    /// How the claim is written back to a reader, an absent part of a locator spelled as nothing.
     #[must_use]
     pub fn name(&self) -> String {
-        self.expectation().name()
+        let spelled = |part: &Option<String>| match part {
+            Some(written) => written.clone(),
+            None => String::new(),
+        };
+        match (&self.id, self.is_locator()) {
+            (Some(id), _) => id.clone(),
+            (None, true) => Locator {
+                path: spelled(&self.path),
+                item: spelled(&self.item),
+                rule: spelled(&self.rule),
+                original: spelled(&self.original),
+                line: self.line,
+                count: self.count,
+            }
+            .name(),
+            (None, false) => String::new(),
+        }
     }
 
     /// Whether the entry names a mutant by where it is rather than by identity.
@@ -250,35 +266,45 @@ impl Expect {
     /// The outcome claimed, which is `survived` when the entry does not say.
     #[must_use]
     pub fn outcome(&self) -> Option<Outcome> {
-        self.outcome
-            .as_deref()
-            .map_or(Some(Outcome::Survived), Outcome::parse)
+        match self.outcome.as_deref() {
+            Some(written) => Outcome::parse(written),
+            None => Some(Outcome::Survived),
+        }
     }
 
-    /// The claim as the engine reads it.
+    /// The claim as the engine reads it, or nothing where the entry is not one: a locator missing its path, item, rule or original, or an outcome that is not one.
     #[must_use]
-    pub fn expectation(&self) -> Expectation {
-        Expectation {
-            id: self.id.clone(),
-            locator: self.is_locator().then(|| Locator {
-                path: self.path.clone().unwrap_or_default(),
-                item: self.item.clone().unwrap_or_default(),
-                rule: self.rule.clone().unwrap_or_default(),
-                original: self.original.clone().unwrap_or_default(),
+    pub fn expectation(&self) -> Option<Expectation> {
+        let locator = if self.is_locator() {
+            let (Some(path), Some(item), Some(rule), Some(original)) =
+                (&self.path, &self.item, &self.rule, &self.original)
+            else {
+                return None;
+            };
+            Some(Locator {
+                path: path.clone(),
+                item: item.clone(),
+                rule: rule.clone(),
+                original: original.clone(),
                 line: self.line,
                 count: self.count,
-            }),
+            })
+        } else {
+            None
+        };
+        Some(Expectation {
+            id: self.id.clone(),
+            locator,
             reason: self.reason.clone(),
-            outcome: self.outcome().unwrap_or(Outcome::Survived),
-            under: self
-                .holds
-                .as_ref()
-                .map(|holds| rust_mutants::run::Where {
+            outcome: self.outcome()?,
+            under: match &self.holds {
+                Some(holds) => rust_mutants::run::Where {
                     cfg: holds.cfg.clone(),
                     env: holds.env.clone(),
-                })
-                .unwrap_or_default(),
-        }
+                },
+                None => rust_mutants::run::Where::default(),
+            },
+        })
     }
 }
 
@@ -672,7 +698,10 @@ impl Config {
                 return Err(invalid(format!(
                     "the expectation for {name:?} expects {:?}, which is not an outcome; write \
                      survived or killed",
-                    expectation.outcome.as_deref().unwrap_or_default()
+                    match expectation.outcome.as_deref() {
+                        Some(written) => written,
+                        None => "",
+                    }
                 )));
             };
             if !matches!(outcome, Outcome::Survived | Outcome::Killed) {
@@ -791,7 +820,10 @@ impl Config {
 /// Whether a harness flag is one a run passes through rather than one the engine owns.
 #[must_use]
 pub fn allowed_test_arg(argument: &str) -> bool {
-    let name = argument.split_once('=').map_or(argument, |(name, _)| name);
+    let name = match argument.split_once('=') {
+        Some((name, _value)) => name,
+        None => argument,
+    };
     ALLOWED_TEST_ARGS.contains(&name)
 }
 
@@ -858,11 +890,10 @@ fn optional_duration_text<S: Serializer>(
     value: &Option<Duration>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
-    serializer.serialize_str(
-        &value
-            .map(rust_mutants::duration::render)
-            .unwrap_or_default(),
-    )
+    serializer.serialize_str(&match value {
+        Some(bound) => rust_mutants::duration::render(*bound),
+        None => String::new(),
+    })
 }
 
 fn tier<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Tier, D::Error> {

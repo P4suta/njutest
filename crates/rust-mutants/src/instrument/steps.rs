@@ -286,10 +286,10 @@ impl Collector<'_> {
     }
 
     fn checkpoint(&mut self, block: &syn::Block) {
-        let relative = block.stmts.first().map_or_else(
-            || block.brace_token.span.close().byte_range().start,
-            |statement| statement.span().byte_range().start,
-        );
+        let relative = match block.stmts.first() {
+            Some(statement) => statement.span().byte_range().start,
+            None => block.brace_token.span.close().byte_range().start,
+        };
         self.checkpoint_at(relative);
     }
 
@@ -311,7 +311,10 @@ impl Collector<'_> {
         let Some(call) = self.call() else {
             return;
         };
-        let entry = self.entry().unwrap_or_default();
+        let entry = match self.entry() {
+            Some(entering) => entering,
+            None => String::new(),
+        };
         let written = write!(
             self.insertions.entry(start).or_default().opens,
             "{{ {entry}{call}"

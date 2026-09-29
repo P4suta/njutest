@@ -807,15 +807,15 @@ impl RunDocument {
         let mut display_ids = BTreeSet::new();
         let mut previous = None;
         let registry = crate::rule::Registry::canonical();
-        let shard = self
-            .run
-            .shard
-            .as_deref()
-            .map(crate::run::Shard::parse)
-            .transpose()
-            .map_err(|_error| DocumentError::Shard {
-                shard: self.run.shard.clone().unwrap_or_default(),
-            })?;
+        let shard =
+            match self.run.shard.as_deref() {
+                Some(spelled) => Some(crate::run::Shard::parse(spelled).map_err(|_error| {
+                    DocumentError::Shard {
+                        shard: spelled.to_owned(),
+                    }
+                })?),
+                None => None,
+            };
         for one in &self.mutants {
             if let Some(shard) = shard
                 && !shard.holds(one.index)
@@ -1215,12 +1215,18 @@ pub fn document(
             .judged
             .iter()
             .map(|one| {
-                let catalog = session
-                    .catalog()
-                    .by_index(one.index)
-                    .map(|mutant| crate::report::catalog::mutant_document(session, mutant))
-                    .transpose()?;
-                mutant(one, catalog)
+                let Some(found) = session.catalog().by_index(one.index) else {
+                    return Err(crate::EngineError::from(
+                        crate::workspace::SessionError::UncatalogedJudgement {
+                            index: one.index,
+                            id: one.id.clone(),
+                        },
+                    ));
+                };
+                mutant(
+                    one,
+                    crate::report::catalog::mutant_document(session, found)?,
+                )
             })
             .collect::<Result<Vec<_>, _>>()?,
         rejections: crate::report::catalog::rejection_documents(session),
@@ -1284,27 +1290,8 @@ fn finding(finding: &Finding) -> FindingDocument {
 
 fn mutant(
     one: &crate::run::Judged,
-    catalog: Option<MutantDocument>,
+    catalog: MutantDocument,
 ) -> Result<RunMutantDocument, crate::EngineError> {
-    let catalog = catalog.unwrap_or_else(|| MutantDocument {
-        index: one.index,
-        id: one.id.clone(),
-        display_id: one.display_id.clone(),
-        path: String::new(),
-        package: String::new(),
-        family: String::new(),
-        rule: String::new(),
-        item: String::new(),
-        rule_version: 0,
-        line: 0,
-        column: 0,
-        start_byte: 0,
-        end_byte: 0,
-        source_digest: String::new(),
-        original: String::new(),
-        replacement: String::new(),
-        branch: None,
-    });
     Ok(RunMutantDocument {
         index: catalog.index,
         id: catalog.id,

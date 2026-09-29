@@ -111,12 +111,15 @@ pub const FAILURE_STATUS: i32 = 101;
 fn text_lines(output: &[u8]) -> Vec<&str> {
     output
         .split(|byte| *byte == b'\n')
-        .filter_map(
-            |line| match std::str::from_utf8(line.strip_suffix(b"\r").unwrap_or(line)) {
+        .filter_map(|line| {
+            match std::str::from_utf8(match line.strip_suffix(b"\r") {
+                Some(without_return) => without_return,
+                None => line,
+            }) {
                 Ok(text) => Some(text),
                 Err(_not_text) => None,
-            },
-        )
+            }
+        })
         .collect()
 }
 
@@ -155,13 +158,16 @@ fn same_count(names: usize, counted: u32) -> bool {
 }
 
 /// How many tests a closing line accounts for.
-fn accounted(summary: &Summary) -> u32 {
+///
+/// # Errors
+/// [`Unaccounted::TooMany`] where its counts together pass what a count holds, which is no number of tests.
+fn accounted(summary: &Summary) -> Result<u32, Unaccounted> {
     summary
         .passed
         .checked_add(summary.failed)
         .and_then(|sum| sum.checked_add(summary.ignored))
         .and_then(|sum| sum.checked_add(summary.measured))
-        .unwrap_or(u32::MAX)
+        .ok_or(Unaccounted::TooMany)
 }
 
 /// Whether one report, announcing `announced` where it announced at all and closing with `summary` after `body`, accounts for itself: its counts agree, its verdict agrees with them, and its closing list names as many failures as it counts.
@@ -170,13 +176,14 @@ fn closed_report(
     announced: Option<u32>,
     summary: &Summary,
 ) -> Result<Vec<String>, Unaccounted> {
-    if let Some(announced) = announced
-        && accounted(summary) != announced
-    {
-        return Err(Unaccounted::CountsDisagree {
-            announced,
-            accounted: accounted(summary),
-        });
+    if let Some(announced) = announced {
+        let accounted = accounted(summary)?;
+        if accounted != announced {
+            return Err(Unaccounted::CountsDisagree {
+                announced,
+                accounted,
+            });
+        }
     }
     if summary.ok != (summary.failed == 0) {
         return Err(Unaccounted::VerdictContradicts);
@@ -228,7 +235,7 @@ pub fn account(output: &[u8], asked: Asked<'_>, exit: Option<i32>) -> Result<Acc
         (None, Some(_) | None) => return Err(Unaccounted::Unannounced),
     };
     if let (Asked::Exact(names), Some(announced)) = (asked, announced)
-        && accounted(&summary) == announced
+        && accounted(&summary)? == announced
         && !same_count(names.len(), announced)
     {
         return Err(Unaccounted::SelectionDisagrees {
@@ -236,11 +243,7 @@ pub fn account(output: &[u8], asked: Asked<'_>, exit: Option<i32>) -> Result<Acc
             announced,
         });
     }
-    let failed = closed_report(
-        lines.get(..closing).unwrap_or_default(),
-        announced,
-        &summary,
-    )?;
+    let failed = closed_report(lines.split_at(closing).0, announced, &summary)?;
     let foreign = match asked {
         Asked::Whole => false,
         Asked::Exact(names) => failed.iter().any(|name| !names.contains(name)),
@@ -302,7 +305,7 @@ pub fn accounts(output: &[u8], exit: Option<i32>) -> Result<Account, Unaccounted
             let Some((start, said)) = open.take() else {
                 return Err(Unaccounted::Unannounced);
             };
-            let body = lines.get(start..at).unwrap_or_default();
+            let body = lines.split_at(at).0.split_at(start).1;
             failed.extend(closed_report(body, said, &closing)?);
             summary = added(summary, &closing).ok_or(Unaccounted::TooMany)?;
             announced = match (announced, said) {

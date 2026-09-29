@@ -525,7 +525,7 @@ impl Filesystem {
         self.overlay = overlay;
         let live = self.live_mut(tree, node).map_err(errno)?;
         if let Some(snapshot) = copied {
-            let kept = snapshot.get(..len.min(snapshot.len())).unwrap_or_default();
+            let kept = snapshot.split_at(len.min(snapshot.len())).0;
             live.held = Held::File(Contents::Overlay(kept.to_vec()));
         }
         match &mut live.held {
@@ -845,7 +845,10 @@ impl Filesystem {
 
     /// The directories from the root of tree `tree` down to `node`, `node` last, which `..` climbs back through.
     fn ancestry(&self, tree: usize, node: NodeId) -> Result<Vec<NodeId>, Fault> {
-        let bound = self.trees.get(tree).map_or(0, |held| held.nodes.len());
+        let bound = match self.trees.get(tree) {
+            Some(held) => held.nodes.len(),
+            None => return Err(errno(Errno::Badf)),
+        };
         let mut chain = vec![node];
         let mut at = node;
         for _step in 0..=bound {
@@ -1124,7 +1127,10 @@ impl Filesystem {
     /// Whether `ancestor` is `node` or holds it, walking up from `node`.
     fn holds(&self, tree: usize, ancestor: NodeId, node: NodeId) -> Result<bool, Errno> {
         let mut at = node;
-        let bound = self.trees.get(tree).map_or(0, |held| held.nodes.len());
+        let bound = match self.trees.get(tree) {
+            Some(held) => held.nodes.len(),
+            None => return Err(Errno::Badf),
+        };
         for _step in 0..=bound {
             if at == ancestor {
                 return Ok(true);
@@ -1340,6 +1346,9 @@ fn slice_at(bytes: &[u8], offset: u64, len: usize) -> &[u8] {
     let Ok(start) = usize::try_from(offset) else {
         return &[];
     };
-    let rest = bytes.get(start..).unwrap_or_default();
-    rest.get(..len.min(rest.len())).unwrap_or(rest)
+    let rest = match bytes.get(start..) {
+        Some(rest) => rest,
+        None => return &[],
+    };
+    rest.split_at(len.min(rest.len())).0
 }

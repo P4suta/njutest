@@ -455,7 +455,11 @@ const SHOULD_PANIC: &str = " - should panic";
 fn verdict_of(line: &str) -> Option<(&str, &str)> {
     let rest = line.trim_end().strip_prefix("test ")?;
     let (name, verdict) = rest.rsplit_once(" ... ")?;
-    let name = name.strip_suffix(SHOULD_PANIC).unwrap_or(name).trim();
+    let name = match name.strip_suffix(SHOULD_PANIC) {
+        Some(expecting_a_panic) => expecting_a_panic,
+        None => name,
+    }
+    .trim();
     (!name.is_empty()).then_some((name, verdict.trim()))
 }
 
@@ -2327,7 +2331,10 @@ impl<'a> ExecRequest<'a> {
     /// Every named test is passed as a filter with `--exact`, so a name that is a prefix of another cannot drag it in.
     #[must_use]
     pub fn argv(&self) -> Vec<OsString> {
-        let mut argv = self.launcher.and_then(Launcher::argv).unwrap_or_default();
+        let mut argv = match self.launcher.and_then(Launcher::argv) {
+            Some(launching) => launching,
+            None => Vec::new(),
+        };
         argv.push(self.target.executable.clone().into_os_string());
         if !self.target.through.is_empty() {
             argv.extend(self.target.through.iter().cloned());
@@ -3114,9 +3121,14 @@ fn cargo_environment(
 #[must_use]
 pub fn package_environment(package: &Package) -> crate::vars::Variables {
     let (major, minor, patch, pre) = version_parts(&package.version);
-    let said = |value: Option<&str>| OsString::from(value.unwrap_or_default());
-    let named =
-        |value: Option<&Path>| value.map_or_else(OsString::new, |one| one.as_os_str().to_owned());
+    let said = |value: Option<&str>| match value {
+        Some(told) => OsString::from(told),
+        None => OsString::new(),
+    };
+    let named = |value: Option<&Path>| match value {
+        Some(one) => one.as_os_str().to_owned(),
+        None => OsString::new(),
+    };
     crate::vars::Variables::of([
         (
             OsString::from("CARGO_MANIFEST_DIR"),
@@ -3184,18 +3196,20 @@ pub fn package_environment(package: &Package) -> crate::vars::Variables {
 
 /// A semantic version cut the way cargo cuts it: three numbers and whatever follows the first hyphen.
 fn version_parts(version: &str) -> (&str, &str, &str, &str) {
-    let (numbers, pre) = version.split_once('-').unwrap_or((version, ""));
+    let (numbers, pre) = match version.split_once('-') {
+        Some((numbers, pre)) => (numbers, pre),
+        None => (version, ""),
+    };
     let numbers = match numbers.split_once('+') {
         Some((without_build, _)) => without_build,
         None => numbers,
     };
     let mut parts = numbers.split('.');
-    (
-        parts.next().unwrap_or_default(),
-        parts.next().unwrap_or_default(),
-        parts.next().unwrap_or_default(),
-        pre,
-    )
+    let mut next = || match parts.next() {
+        Some(part) => part,
+        None => "",
+    };
+    (next(), next(), next(), pre)
 }
 
 #[cfg(test)]

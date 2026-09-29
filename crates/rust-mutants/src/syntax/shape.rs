@@ -147,10 +147,10 @@ pub(super) fn implemented(block: &syn::ItemImpl) -> String {
     let name = type_name(&block.self_ty);
     match &block.trait_ {
         Some((path, _)) => {
-            let trait_name = path
-                .segments
-                .last()
-                .map_or_else(String::new, |segment| segment.ident.to_string());
+            let trait_name = match path.segments.last() {
+                Some(segment) => segment.ident.to_string(),
+                None => String::new(),
+            };
             format!("<{name} as {trait_name}>")
         }
         None => name,
@@ -160,11 +160,10 @@ pub(super) fn implemented(block: &syn::ItemImpl) -> String {
 /// The last segment of a type's name, which is what a reader writes.
 pub(super) fn type_name(ty: &Type) -> String {
     match ty {
-        Type::Path(path) => path
-            .path
-            .segments
-            .last()
-            .map_or_else(String::new, |segment| segment.ident.to_string()),
+        Type::Path(path) => match path.path.segments.last() {
+            Some(segment) => segment.ident.to_string(),
+            None => String::new(),
+        },
         Type::Paren(one) => type_name(&one.elem),
         Type::Group(one) => type_name(&one.elem),
         Type::Reference(one) => type_name(&one.elem),
@@ -199,10 +198,10 @@ pub(super) fn deletable_arm(arms: &[syn::Arm], position: usize) -> bool {
     if is_bare_wildcard(&arm.pat) {
         return false;
     }
-    arms.get(position.saturating_add(1)..)
-        .unwrap_or_default()
-        .iter()
-        .any(|later| is_bare_wildcard(&later.pat))
+    match arms.get(position.saturating_add(1)..) {
+        Some(later) => later.iter().any(|one| is_bare_wildcard(&one.pat)),
+        None => false,
+    }
 }
 
 /// The value a block ends with, when it ends with one rather than with a statement.

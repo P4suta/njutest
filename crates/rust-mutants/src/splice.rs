@@ -251,7 +251,10 @@ fn validate<'a>(
 /// Renders a byte range for a diagnostic, shortened so that a mismatch on a long span stays one line.
 fn quote_bytes(bytes: &[u8]) -> String {
     const LIMIT: usize = 48;
-    let shown = bytes.get(..LIMIT).unwrap_or(bytes);
+    let shown = match bytes.get(..LIMIT) {
+        Some(first) => first,
+        None => bytes,
+    };
     let mut quoted = String::from("\"");
     for &byte in shown {
         match byte {

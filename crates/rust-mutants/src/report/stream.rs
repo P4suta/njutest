@@ -134,24 +134,27 @@ impl MutantLine {
     /// What a stream says about one judged mutant of `session`.
     ///
     /// # Errors
-    /// Returns an exact-projection error when the execution duration does not fit the stream schema's millisecond field.
+    /// Returns an exact-projection error when the execution duration does not fit the stream schema's millisecond field, [`crate::workspace::SessionError::UncatalogedJudgement`] for a judgement of a mutant the catalog does not hold, and [`crate::workspace::SessionError::UnplacedMutation`] for one the session cannot place.
     pub fn of(
         session: &crate::session::Session,
         judged: &crate::run::Judged,
     ) -> Result<Self, crate::workspace::SessionError> {
-        let found = session.catalog().by_index(judged.index);
-        let position = found.and_then(|mutant| session.position(mutant));
+        let Some(found) = session.catalog().by_index(judged.index) else {
+            return Err(crate::workspace::SessionError::UncatalogedJudgement {
+                index: judged.index,
+                id: judged.id.clone(),
+            });
+        };
+        let position = session.placed(found)?;
         Ok(Self {
             index: judged.index,
             id: judged.id.clone(),
             display_id: judged.display_id.clone(),
-            rule: found.map_or_else(String::new, |mutant| mutant.candidate.rule.name.to_owned()),
-            family: found.map_or_else(String::new, |mutant| {
-                mutant.candidate.rule.family.name().to_owned()
-            }),
-            path: found.map_or_else(String::new, |mutant| mutant.candidate.path.clone()),
-            line: position.map_or(0, |at| at.line),
-            column: position.map_or(0, |at| at.byte_column),
+            rule: found.candidate.rule.name.to_owned(),
+            family: found.candidate.rule.family.name().to_owned(),
+            path: found.candidate.path.clone(),
+            line: position.line,
+            column: position.byte_column,
             outcome: judged.outcome,
             step_notice: judged.step_notice.clone(),
             target: judged.target.clone(),

@@ -524,10 +524,10 @@ impl DirSink {
                     return Err(io::Error::other("the durable trace mutex is poisoned"));
                 }
             };
-            stream.as_mut().map_or_else(
-                || Err(io::Error::other("trace sink is closed")),
-                |file| file.write_all(&line).and_then(|()| file.sync_data()),
-            )
+            match stream.as_mut() {
+                Some(file) => file.write_all(&line).and_then(|()| file.sync_data()),
+                None => Err(io::Error::other("trace sink is closed")),
+            }
         };
         if let Err(error) = written {
             count_drop(&self.dropped)?;

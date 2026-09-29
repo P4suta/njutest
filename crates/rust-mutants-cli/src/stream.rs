@@ -10,7 +10,8 @@ use std::time::Duration;
 use rust_mutants::report::stream::{Line, MutantLine, SCHEMA};
 use rust_mutants::run::{Judged, Observer};
 use rust_mutants::session::Session;
-use rust_mutants::trace::{Event, Payload};
+use rust_mutants::trace::summary::SummaryError;
+use rust_mutants::trace::{Event, Payload, PhaseRecord};
 
 /// Writes one complete line or returns the exact encoding or output failure.
 ///
@@ -105,7 +106,7 @@ where
     loop {
         match events.recv_timeout(LOOKING) {
             Ok(event) => {
-                if let Some(line) = phase_of(&event) {
+                if let Some(line) = phase_of(&event)? {
                     say(stream, &line)?;
                 }
             }
@@ -119,15 +120,33 @@ where
     }
 }
 
+/// How long a phase took, which the end of one always carries.
+///
+/// # Errors
+/// [`crate::error::CliError::TraceSummary`] for an end that carries none, which the stream would otherwise have to say took nothing.
+fn took(phase: &PhaseRecord) -> Result<u64, crate::error::CliError> {
+    match phase.duration_ms {
+        Some(took) => Ok(took),
+        None => Err(crate::error::CliError::TraceSummary {
+            source: SummaryError::MissingPhaseDuration {
+                phase: phase.name.clone(),
+            },
+        }),
+    }
+}
+
 /// One phase event as a line of the stream, when it is one.
-fn phase_of(event: &Event) -> Option<Line> {
-    match &event.payload {
+///
+/// # Errors
+/// [`crate::error::CliError::TraceSummary`] for a phase's end that carries no duration.
+fn phase_of(event: &Event) -> Result<Option<Line>, crate::error::CliError> {
+    Ok(match &event.payload {
         Payload::PhaseStart { phase } => Some(Line::PhaseStart {
             phase: phase.name.clone(),
         }),
         Payload::PhaseEnd { phase } => Some(Line::PhaseEnd {
             phase: phase.name.clone(),
-            duration_ms: phase.duration_ms.unwrap_or_default(),
+            duration_ms: took(phase)?,
         }),
         Payload::RunStart { .. }
         | Payload::Open { .. }
@@ -154,7 +173,7 @@ fn phase_of(event: &Event) -> Option<Line> {
         | Payload::SealedExec { .. }
         | Payload::Note { .. }
         | Payload::RunEnd { .. } => None,
-    }
+    })
 }
 
 /// The lines a run writes while it is happening.
@@ -207,9 +226,17 @@ impl<'a> Writer<'a> {
                 Payload::PhaseStart { phase } => Line::PhaseStart {
                     phase: phase.name.clone(),
                 },
-                Payload::PhaseEnd { phase } => Line::PhaseEnd {
-                    phase: phase.name.clone(),
-                    duration_ms: phase.duration_ms.unwrap_or_default(),
+                Payload::PhaseEnd { phase } => match took(phase) {
+                    Ok(duration_ms) => Line::PhaseEnd {
+                        phase: phase.name.clone(),
+                        duration_ms,
+                    },
+                    Err(untimed) => {
+                        if self.failure.is_none() {
+                            self.failure = Some(untimed);
+                        }
+                        continue;
+                    }
                 },
                 Payload::RunStart { .. }
                 | Payload::Open { .. }

@@ -833,9 +833,10 @@ fn complete(
         },
     };
     let capture_failed = capture_failure.is_some();
-    let termination = capture_failure.map_or(process_termination, |error| {
-        Termination::WaitFailed { error }
-    });
+    let termination = match capture_failure {
+        Some(error) => Termination::WaitFailed { error },
+        None => process_termination,
+    };
     let termination = checked_answered_termination(
         Observed {
             wait,
@@ -1048,7 +1049,10 @@ fn start(spec: &Spec, program: &OsString, answered: &Arc<AtomicBool>) -> Result<
     let readers = match launch_readers(
         merged,
         structured,
-        spec.output_limit.unwrap_or(DEFAULT_OUTPUT_LIMIT),
+        match spec.output_limit {
+            Some(asked) => asked,
+            None => DEFAULT_OUTPUT_LIMIT,
+        },
         spec.stop_at_first_failure.then(|| Arc::clone(answered)),
     ) {
         Ok(readers) => readers,
@@ -1275,8 +1279,14 @@ impl<C: ReaderCapture> ReaderCapture for FirstFailure<C> {
 /// Whether `line` is libtest's report of one test that failed: `test <name> ... FAILED`, and never its closing `test result: FAILED.`.
 #[must_use]
 pub fn says_a_test_failed(line: &[u8]) -> bool {
-    let line = line.strip_suffix(b"\n").unwrap_or(line);
-    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    let line = match line.strip_suffix(b"\n") {
+        Some(without_newline) => without_newline,
+        None => line,
+    };
+    let line = match line.strip_suffix(b"\r") {
+        Some(without_return) => without_return,
+        None => line,
+    };
     line.starts_with(b"test ") && line.ends_with(b" ... FAILED")
 }
 

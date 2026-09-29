@@ -84,11 +84,14 @@ impl Questions {
     /// What one file is asked.
     fn of<'a>(&'a self, path: &str, empty: &'a Empty) -> witness::Asking<'a> {
         witness::Asking {
-            conditions: self
-                .conditions
-                .get(path)
-                .map_or(&empty.conditions, Vec::as_slice),
-            probes: self.probes.get(path).map_or(&empty.probes, Vec::as_slice),
+            conditions: match self.conditions.get(path) {
+                Some(asked) => asked.as_slice(),
+                None => empty.conditions.as_slice(),
+            },
+            probes: match self.probes.get(path) {
+                Some(asked) => asked.as_slice(),
+                None => empty.probes.as_slice(),
+            },
         }
     }
 }
@@ -264,10 +267,10 @@ fn checked_until_compiled(
                 &format!(
                     "the witness tree did not compile and no rewrite of it accounts for that, so \
                      nothing is vouched for: {}",
-                    round
-                        .unaccounted
-                        .first()
-                        .map_or("the compiler named no place at all", String::as_str)
+                    match round.unaccounted.first() {
+                        Some(named) => named.as_str(),
+                        None => "the compiler named no place at all",
+                    }
                 ),
             );
             return Ok(None);

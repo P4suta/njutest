@@ -1123,9 +1123,10 @@ impl Session {
     ) -> Result<MutantResult, EngineError> {
         let before = self.orphans();
         let started = std::time::SystemTime::now();
-        let mutant = context
-            .active
-            .map_or_else(String::new, |(mutant, _catalog)| self.display_of(mutant));
+        let mutant = match context.active {
+            Some((mutant, _catalog)) => self.display_of(mutant),
+            None => String::new(),
+        };
         let began = self
             .apparatus
             .running
@@ -1226,11 +1227,15 @@ impl Session {
 
     /// The short name a person reads for the mutant whose full identity is `id`, or the identity itself where the catalog holds no such mutant.
     fn display_of(&self, id: &str) -> String {
-        self.catalog
+        match self
+            .catalog
             .mutants()
             .iter()
             .find(|mutant| mutant.id.as_str() == id)
-            .map_or_else(|| id.to_owned(), |mutant| mutant.display_id.to_string())
+        {
+            Some(mutant) => mutant.display_id.to_string(),
+            None => id.to_owned(),
+        }
     }
 
     /// Whether a process of the tree may have run without the environment the run gave it while something ran from the first time to the second, which a directory that cannot be read cannot rule out.
@@ -1332,6 +1337,20 @@ impl Session {
         }
     }
 
+    /// Where a mutant's edit is, for anything written about it that has to say where it is.
+    ///
+    /// # Errors
+    /// [`SessionError::UnplacedMutation`] where the session holds no text of its file, or its edit has no position in it.
+    pub fn placed(&self, mutant: &Mutant) -> Result<Position, SessionError> {
+        match self.position(mutant) {
+            Some(position) => Ok(position),
+            None => Err(SessionError::UnplacedMutation {
+                mutant: mutant.display_id.to_string(),
+                path: mutant.candidate.path.clone(),
+            }),
+        }
+    }
+
     /// The package a mutant belongs to.
     #[must_use]
     pub fn package_of(&self, index: u32) -> Option<&str> {
@@ -1367,11 +1386,9 @@ impl Session {
             several => Err(LocateError::Several {
                 display_ids: several
                     .iter()
-                    .map(|mutant| {
-                        self.position(mutant).map_or_else(
-                            || mutant.display_id.to_string(),
-                            |at| format!("{}@{}", mutant.display_id, at.line),
-                        )
+                    .map(|mutant| match self.position(mutant) {
+                        Some(at) => format!("{}@{}", mutant.display_id, at.line),
+                        None => mutant.display_id.to_string(),
                     })
                     .collect(),
             }),
@@ -1547,11 +1564,10 @@ impl Session {
     /// How many tests one target's baseline ran, which is what asking the whole of it about one mutation costs.
     #[must_use]
     pub fn tests_of(&self, target: &str) -> u32 {
-        self.verified
-            .targets
-            .get(target)
-            .map_or(1, |measured| measured.baseline().tests)
-            .max(1)
+        match self.verified.targets.get(target) {
+            Some(measured) => measured.baseline().tests.max(1),
+            None => 1,
+        }
     }
 
     /// How many tests this session started to establish that a set of them answers on its own.
@@ -1633,7 +1649,10 @@ impl Session {
     #[must_use]
     pub fn timing(&self, target: &str) -> Timing {
         Timing::new(
-            self.baseline(target).unwrap_or(DEFAULT_MUTANT_TIMEOUT),
+            match self.baseline(target) {
+                Some(timed) => timed,
+                None => DEFAULT_MUTANT_TIMEOUT,
+            },
             self.tests_of(target),
         )
     }
@@ -1641,12 +1660,16 @@ impl Session {
     /// The longest a target's own baseline took, which is what an estimate of a run's cost rests on.
     #[must_use]
     pub fn slowest_baseline(&self) -> Duration {
-        self.verified
+        match self
+            .verified
             .targets
             .values()
             .map(|measured| measured.baseline().duration)
             .max()
-            .unwrap_or(Duration::from_secs(1))
+        {
+            Some(slowest) => slowest,
+            None => Duration::from_secs(1),
+        }
     }
 
     /// Which targets could notice this mutation, and what the answer rests on.
@@ -2170,7 +2193,10 @@ impl Session {
 
     /// The one target a request names.
     fn named(&self, request: &Request) -> Result<&TestTarget, EngineError> {
-        let name = request.target.as_deref().unwrap_or_default();
+        let name = match request.target.as_deref() {
+            Some(named) => named,
+            None => "",
+        };
         let targets = self.selected(Some(name))?;
         targets.into_iter().next().ok_or_else(|| {
             EngineError::from(SessionError::UnknownTarget {
@@ -2213,7 +2239,10 @@ impl Session {
     ) -> Result<(MutantResult, SiteReach), EngineError> {
         let mutant = self.executable(&request.mutant)?;
         let beside = self.beside(request, mutant)?;
-        let name = request.target.as_deref().unwrap_or_default();
+        let name = match request.target.as_deref() {
+            Some(named) => named,
+            None => "",
+        };
         let target = self
             .selected(Some(name))?
             .into_iter()
@@ -3205,10 +3234,10 @@ pub fn resolve_claims(
             Ok(id) => discovery.catalog.by_id(id.as_str()),
             Err(_unnameable) => None,
         };
-        catalogued.map_or_else(
-            || located.found.item.clone(),
-            |mutant| mutant.display_id.to_string(),
-        )
+        match catalogued {
+            Some(mutant) => mutant.display_id.to_string(),
+            None => located.found.item.clone(),
+        }
     };
     let located = |locator: &Locator| {
         locate(
@@ -3361,21 +3390,23 @@ impl Chosen {
             (None, _) => {}
             (Some(_), false) => return Self::Everything,
             (Some(target), true) => {
-                return route
-                    .narrowing()
-                    .map_or(Self::Everything, |_| Self::Narrowed {
+                return match route.narrowing() {
+                    Some(_narrowed) => Self::Narrowed {
                         only: vec![target.clone()],
                         asked: route.asked(),
-                    });
+                    },
+                    None => Self::Everything,
+                };
             }
         }
         match asking {
-            Asking::Anything => route
-                .narrowing()
-                .map_or(Self::Everything, |only| Self::Narrowed {
+            Asking::Anything => match route.narrowing() {
+                Some(only) => Self::Narrowed {
                     only,
                     asked: route.asked(),
-                }),
+                },
+                None => Self::Everything,
+            },
             Asking::ThisRun => Self::Narrowed {
                 only: route
                     .reaching()

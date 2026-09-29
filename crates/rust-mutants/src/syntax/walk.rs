@@ -548,10 +548,13 @@ impl<'a> Walker<'a> {
         }
         let line = self.line_of(edit.span.start);
         if let Some(index) = self.marker_at(line) {
-            let reason = self
-                .markers
-                .get(index)
-                .map_or_else(String::new, |marker| marker.reason.clone());
+            let reason = match self.markers.get(index) {
+                Some(marker) => marker.reason.clone(),
+                None => {
+                    self.bounds_failed.set(true);
+                    return;
+                }
+            };
             if let Some(claimed) = self.matched.get_mut(index) {
                 *claimed = true;
             }
@@ -773,17 +776,17 @@ impl<'a> Walker<'a> {
 
     /// Whether the loop a jump names is one whose breaks decide its value.
     fn breaks_decide_the_value(&self, label: Option<&syn::Lifetime>) -> bool {
-        label.map_or_else(
-            || self.loops.last().is_none_or(|(_, valued)| *valued),
-            |named| {
+        match label {
+            Some(named) => {
                 let wanted = named.ident.to_string();
                 self.loops
                     .iter()
                     .rev()
                     .find(|(label, _)| label.as_deref() == Some(wanted.as_str()))
                     .is_none_or(|(_, valued)| *valued)
-            },
-        )
+            }
+            None => self.loops.last().is_none_or(|(_, valued)| *valued),
+        }
     }
 
     fn walk_items(&mut self, items: &[Item]) {
@@ -1163,7 +1166,10 @@ impl<'a> Walker<'a> {
                     self.crash_after(expr, ctx);
                 }
                 self.walk_method_name(m, ctx);
-                let chain = ctx.wrap.unwrap_or_else(|| self.span(m));
+                let chain = match ctx.wrap {
+                    Some(outer) => outer,
+                    None => self.span(m),
+                };
                 self.walk_expr(&m.receiver, value.wrapping(chain));
                 for arg in &m.args {
                     self.walk_expr(arg, value);
@@ -1484,10 +1490,10 @@ impl<'a> Walker<'a> {
                     self.walk_expr(value, ctx.value());
                     return;
                 }
-                let label = one
-                    .label
-                    .as_ref()
-                    .map_or_else(String::new, |label| format!(" {label}"));
+                let label = match one.label.as_ref() {
+                    Some(label) => format!(" {label}"),
+                    None => String::new(),
+                };
                 ("break-to-continue", format!("continue{label}"))
             }
             Expr::Continue(one) => {
@@ -1498,10 +1504,10 @@ impl<'a> Walker<'a> {
                     );
                     return;
                 }
-                let label = one
-                    .label
-                    .as_ref()
-                    .map_or_else(String::new, |label| format!(" {label}"));
+                let label = match one.label.as_ref() {
+                    Some(label) => format!(" {label}"),
+                    None => String::new(),
+                };
                 ("continue-to-break", format!("break{label}"))
             }
             _ => return,

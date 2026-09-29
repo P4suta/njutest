@@ -72,9 +72,10 @@ pub fn parse(text: &str) -> Result<Duration, DurationError> {
     let mut total: u128 = 0;
     let mut rest = text;
     while !rest.is_empty() {
-        let digits = rest
-            .find(|character: char| !character.is_ascii_digit())
-            .unwrap_or(rest.len());
+        let digits = match rest.find(|character: char| !character.is_ascii_digit()) {
+            Some(unit_at) => unit_at,
+            None => rest.len(),
+        };
         if digits == 0 {
             return Err(DurationError::UnitWithoutNumber {
                 text: text.to_owned(),
@@ -82,9 +83,10 @@ pub fn parse(text: &str) -> Result<Duration, DurationError> {
         }
         let (number, tail) = rest.split_at(digits);
         let count = number.parse::<u128>().map_err(|_error| too_large())?;
-        let unit_length = tail
-            .find(|character: char| character.is_ascii_digit())
-            .unwrap_or(tail.len());
+        let unit_length = match tail.find(|character: char| character.is_ascii_digit()) {
+            Some(number_at) => number_at,
+            None => tail.len(),
+        };
         let (unit, tail) = tail.split_at(unit_length);
         if unit.is_empty() {
             return Err(DurationError::NumberWithoutUnit {
@@ -106,10 +108,10 @@ pub fn parse(text: &str) -> Result<Duration, DurationError> {
 
 /// How many nanoseconds one of `unit` is, under its own name or an alias.
 fn scale_of(unit: &str) -> Option<u128> {
-    let unit = ALIASES
-        .iter()
-        .find(|(alias, _)| *alias == unit)
-        .map_or(unit, |(_, named)| *named);
+    let unit = match ALIASES.iter().find(|(alias, _)| *alias == unit) {
+        Some((_, named)) => *named,
+        None => unit,
+    };
     UNITS
         .iter()
         .find(|(name, _)| *name == unit)
@@ -132,7 +134,10 @@ pub fn render(value: Duration) -> String {
     let mut nanos = value.as_nanos();
     let mut text = String::new();
     for (name, scale) in UNITS {
-        let count = nanos.checked_div(scale).unwrap_or_default();
+        let count = match nanos.checked_div(scale) {
+            Some(count) => count,
+            None => continue,
+        };
         if count > 0 {
             let written = write!(text, "{count}{name}");
             debug_assert!(written.is_ok(), "writing to a String cannot fail");

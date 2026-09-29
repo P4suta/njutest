@@ -23,3 +23,7 @@ fn read(v: Option<Option<u8>>) -> u8 { v.map(|inner| inner.unwrap_or(1)).unwrap_
 fn decide(v: Option<u8>) -> u8 { v.unwrap_or_default() }
 === runner-column source crates/njutest/src/report/matrix.rs
 fn column(v: Option<u8>) -> u8 { v.map_or(0, |one| one) }
+=== sealed-host source crates/rust-mutants-sealed/src/host/fs.rs
+fn size(v: Option<u64>) -> u64 { v.map_or_else(|| 0, |one| one) }
+=== command-line source crates/rust-mutants-cli/src/app/mod.rs
+fn say(v: Option<&str>) -> String { format!("{}", v.unwrap_or_else(|| "?")) }

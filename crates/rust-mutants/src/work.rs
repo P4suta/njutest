@@ -101,6 +101,12 @@ pub enum WorkError {
         /// The ambiguous reason.
         reason: String,
     },
+    /// A route executed a target the document's targets do not list, so how many tests it was asked is not written anywhere.
+    #[error("a route executed {target}, which the document's targets do not list")]
+    UnlistedTarget {
+        /// The target.
+        target: String,
+    },
 }
 
 /// A mutation no measured target reaches, which coverage routing removed.
@@ -313,10 +319,10 @@ fn processes(mutant: &RunMutantDocument) -> Result<u64, WorkError> {
     if mutant.source_run_id.is_some() {
         return Ok(0);
     }
-    let executed = mutant
-        .route
-        .as_ref()
-        .map_or(0, |route| route.executed.len());
+    let executed = match mutant.route.as_ref() {
+        Some(route) => route.executed.len(),
+        None => 0,
+    };
     let executed = count_u64(WorkQuantity::ExecutedTargets, executed)?;
     checked_add(
         executed,
@@ -336,7 +342,12 @@ fn tests(mutant: &RunMutantDocument, held: &BTreeMap<&str, u64>) -> Result<u64, 
     let asked = |target: &str| -> Result<u64, WorkError> {
         match route.tests.get(target) {
             Some(named) => count_u64(WorkQuantity::NamedTests, named.len()),
-            None => Ok(held.get(target).copied().unwrap_or(1)),
+            None => match held.get(target) {
+                Some(whole) => Ok(*whole),
+                None => Err(WorkError::UnlistedTarget {
+                    target: target.to_owned(),
+                }),
+            },
         }
     };
     let walked = route.executed.iter().try_fold(0_u64, |total, target| {
@@ -359,10 +370,11 @@ fn per_mutant(
         return Ok(vec![(REUSED.to_owned(), Removal::Memory, targets)]);
     }
     let Some(route) = mutant.route.as_ref() else {
-        let reason = mutant
-            .not_run_reason
-            .map_or(UNREACHED, crate::run::NotRunReason::name)
-            .to_owned();
+        let reason = match mutant.not_run_reason {
+            Some(unrun) => unrun.name(),
+            None => UNREACHED,
+        }
+        .to_owned();
         return Ok(vec![(reason.clone(), kind_of(&reason), targets)]);
     };
     let reaching = count_u64(WorkQuantity::ReachingTargets, route.reaching.len())?;
@@ -403,9 +415,10 @@ fn per_mutant(
     if unasked > 0 {
         let reason = match mutant.evidence.class() {
             crate::sealed::record::Class::Sealed => SEALED,
-            crate::sealed::record::Class::Unproven => mutant
-                .not_run_reason
-                .map_or(ANSWERED, crate::run::NotRunReason::name),
+            crate::sealed::record::Class::Unproven => match mutant.not_run_reason {
+                Some(reason) => reason.name(),
+                None => ANSWERED,
+            },
         }
         .to_owned();
         removed.push((reason.clone(), kind_of(&reason), unasked));
