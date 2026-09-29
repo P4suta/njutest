@@ -3479,6 +3479,15 @@ fn a_control_that_entered_an_item_its_baseline_did_not_is_owed_the_finding() {
     );
 }
 fn repair_audit(repaired: &[&str], engine: Vec<serde_json::Value>) -> Vec<String> {
+    repair_audit_of(with(sentinel::drifted("moved")), repaired, engine)
+}
+
+/// The repair layer's violations over `document`, with the clean routes, a survived repair of each of `repaired` against the moved target, and `engine` as the one engine recording.
+fn repair_audit_of(
+    document: serde_json::Value,
+    repaired: &[&str],
+    engine: Vec<serde_json::Value>,
+) -> Vec<String> {
     let mut events = routes();
     for mutant in repaired {
         events.push(serde_json::json!({
@@ -3498,7 +3507,7 @@ fn repair_audit(repaired: &[&str], engine: Vec<serde_json::Value>) -> Vec<String
     }
     let laid = sentinel::Perturbation {
         name: "repair",
-        document: with(sentinel::drifted("moved")),
+        document,
         events: Some(events),
         engine: Some(engine),
         shards: Vec::new(),
@@ -4221,5 +4230,63 @@ fn a_repair_measured_again_alone_is_paired_with_the_touch_of_its_last_run() {
         "a repair whose first run waited is measured again alone, as every wait is, so two \
          repair touches name it; the repair is decided by the last run, and so is the audit \
          (ADR 0036 decision 2)"
+    );
+}
+
+#[test]
+fn a_lead_resting_on_a_moved_target_that_nothing_ran_again_is_a_violation() {
+    let mut document = with(sentinel::drifted("moved"));
+    let evidence = document
+        .pointer_mut("/mutants/1/evidence")
+        .expect("the survivor's evidence");
+    *evidence = serde_json::json!({ "kind": "unproven", "reasons": ["not-sealed"] });
+    let engine = vec![
+        sentinel::touch("baseline", &[0]),
+        sentinel::touch("control", &[0, 1]),
+    ];
+    let audit = with_engine(document, engine);
+    let said: Vec<String> = audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Repair && remark.standing == Standing::Violated)
+        .map(|remark| format!("{}: {}", remark.subject, remark.detail))
+        .collect();
+    assert!(
+        said.iter()
+            .any(|line| line.contains(SURVIVED) && line.contains("no repair ran it again")),
+        "the survivor is a lead its route did not put to the moved target, so it rested on that \
+         target's baseline and the repair owed it a run there (ADR 0036 decision 1): {said:?}\n\
+         {audit}"
+    );
+}
+
+#[test]
+fn repairs_out_of_the_order_the_repair_takes_are_a_violation() {
+    let moved = || {
+        vec![
+            sentinel::touch("baseline", &[0]),
+            sentinel::touch("control", &[0, 1]),
+        ]
+    };
+    let mut in_order = moved();
+    in_order.push(repair_touch(&"a".repeat(64), &[1]));
+    in_order.push(repair_touch(&"b".repeat(64), &[1]));
+    let mut indexed = with(sentinel::drifted("moved"));
+    merge(
+        &mut indexed,
+        serde_json::json!({ "mutants": [{ "catalog_index": 0 }, { "catalog_index": 1 }] }),
+    );
+    let said = repair_audit_of(indexed.clone(), &[KILLED, SURVIVED], in_order);
+    assert!(
+        !said.iter().any(|line| line.contains("out of the order")),
+        "mutation by mutation in catalog order is the order the repair takes: {said:?}"
+    );
+    let mut reversed = moved();
+    reversed.push(repair_touch(&"b".repeat(64), &[1]));
+    reversed.push(repair_touch(&"a".repeat(64), &[1]));
+    let said = repair_audit_of(indexed, &[SURVIVED, KILLED], reversed);
+    assert!(
+        said.iter().any(|line| line.contains("out of the order")),
+        "a repair of an earlier mutation after a later one is not what the run does: {said:?}"
     );
 }

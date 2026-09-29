@@ -1404,10 +1404,11 @@ fn repaired(
         );
         return notes.looked();
     };
-    if repairs.is_empty() {
-        return notes.absent("the run ran no disposition again against a target whose reach moved");
-    }
     let [Engine { touched, .. }] = engines else {
+        if repairs.is_empty() {
+            return notes
+                .absent("the run ran no disposition again against a target whose reach moved");
+        }
         notes.unaudited(
             "repair",
             format!(
@@ -1419,6 +1420,10 @@ fn repaired(
         return notes.looked();
     };
     let moved = crate::drift::standings(touched);
+    let owed = owed(recording, (repairs, routing), &moved, &mut notes);
+    if repairs.is_empty() && owed == 0 {
+        return notes.absent("the run ran no disposition again against a target whose reach moved");
+    }
     let paired = paired(recording, repairs, (routing, touched), &mut notes);
     for (at, repair) in repairs.iter().enumerate() {
         let before = repairs
@@ -1449,6 +1454,80 @@ fn repaired(
         }
     }
     notes.looked()
+}
+
+/// How many dispositions rested on a moved target when the repair came to it, each of which it owes a run against that target, holding every such pair to a repair that names it and every repair to the order the repair takes: moved target by moved target in name order, mutation by mutation in catalog order (ADR 0036 decision 1).
+///
+/// A disposition rests on a target when it is a lead, its route did not put the target to it, and it was `survived` or `unreached` once every repair against an earlier target had replaced it.
+fn owed(
+    recording: &Recording<'_>,
+    (repairs, routing): (&[crate::repair::Repair], &crate::route::Routing),
+    moved: &BTreeMap<String, crate::drift::Standing>,
+    notes: &mut Notes<'_>,
+) -> usize {
+    let mut owed: Vec<(&str, &str)> = Vec::new();
+    let targets = moved
+        .iter()
+        .filter(|(_, standing)| **standing == crate::drift::Standing::Moved)
+        .map(|(target, _)| target);
+    for target in targets {
+        for row in recording
+            .mutants
+            .iter()
+            .filter(|row| matches!(row.rests, Rests::Unproven(_)))
+        {
+            let put = routing.routes.iter().any(|route| {
+                route.names(&row.id, &row.display_id)
+                    && route.reaching.iter().any(|one| one == target)
+            });
+            let of_it = || repairs.iter().filter(|one| one.mutant == row.display_id);
+            let then = match (
+                of_it().rev().find(|one| one.target < *target),
+                of_it().next(),
+            ) {
+                (Some(earlier), _) => earlier.now.as_str(),
+                (None, Some(first)) => first.was.as_str(),
+                (None, None) => row.outcome.as_str(),
+            };
+            if put || !matches!(then, SURVIVED | UNREACHED) {
+                continue;
+            }
+            owed.push((target.as_str(), row.display_id.as_str()));
+            if !of_it().any(|one| one.target == *target) {
+                notes.violated(
+                    &row.display_id,
+                    format!(
+                        "it was {then} on the word of the baseline of {target}, whose reach \
+                         moved, and no repair ran it again there"
+                    ),
+                );
+            }
+        }
+    }
+    let place = |repair: &crate::repair::Repair| {
+        (
+            repair.target.clone(),
+            recording
+                .mutants
+                .iter()
+                .find(|row| row.display_id == repair.mutant)
+                .and_then(|row| row.catalog_index),
+        )
+    };
+    for (earlier, later) in repairs.iter().zip(repairs.iter().skip(1)) {
+        if place(earlier) > place(later) {
+            notes.violated(
+                &later.mutant,
+                format!(
+                    "it was run again against {} after {} was against {}, out of the order the \
+                     repair takes: moved target by moved target in name order, and mutation by \
+                     mutation in catalog order",
+                    later.target, earlier.mutant, earlier.target
+                ),
+            );
+        }
+    }
+    owed.len()
 }
 
 /// Each repair's last execution against its moved target, paired with the last engine repair touch record naming that mutation and target, which is the quiet re-measurement's where a wait had one; a repair touch no repair names is a violation.
