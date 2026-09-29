@@ -29,6 +29,8 @@ Its working directory is its package's directory in the snapshot, where cargo ru
 What a test writes for itself lands in directories the instance holds, each empty when it starts and written only to its overlay: `CARGO_TARGET_TMPDIR` at the path the build baked in, which for the sealed target is the target's own directory inside the target directory, and a home and a temporary directory, which `HOME` and `TMPDIR` name.
 The standard library of `wasm32-wasip1` has no temporary directory of its own, so `std::env::temp_dir()` panics there whatever `TMPDIR` says, and its home directory is none.
 A path the build baked in, such as `env!("CARGO_MANIFEST_DIR")`, reaches the snapshot as the build spelled it, a Windows build's `C:\…` included, as [the sealed host](sealed-host.md#the-working-directory) says.
+Not yet: an absolute path no directory the instance holds names is read from the working directory rather than refused.
+wasi-libc resolves every path against its own working directory, `/`, and takes the leading `/` off before it matches a preopen, so such a path reaches the host as the relative path it becomes, the same call a relative one makes, and the host cannot refuse the one without the other; closing it needs the guest's own working directory set to its package's directory, so that `.` need not be preopened.
 `--nocapture` keeps a panic's message on the stream the host records, where libtest's capture would hold it in memory the abort discards.
 
 A library's doctests seal too, as [Doctests](#doctests) says.
