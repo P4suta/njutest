@@ -211,6 +211,12 @@ fn faulted_failures() -> Vec<(SealedError, String)> {
             format!("\"pkg\" of the tree at \"/guest\" cannot be preopened: {fault}"),
         ));
     }
+    failures.push((
+        SealedError::Halt {
+            path: "/nowhere/notice".to_owned(),
+        },
+        "\"/nowhere/notice\" to halt at is in no tree".to_owned(),
+    ));
     for fault in memory_faults() {
         failures.push((SealedError::ModuleMemory { fault }, fault.to_string()));
     }

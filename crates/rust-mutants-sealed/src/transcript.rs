@@ -31,6 +31,8 @@ pub enum SealedStop {
     FuelExhausted,
     /// The memory limit refused the guest a growth, and the guest then trapped.
     MemoryExhausted,
+    /// A rename put a file at the path the invocation halts at, and the host ended the guest in that call, with nothing after it.
+    Halted,
 }
 
 /// Every trap wasmtime raises, but running out of fuel and being interrupted, which are stops of their own.
@@ -659,6 +661,9 @@ fn stop_into(encoder: &mut Encoder, stop: SealedStop) {
         }
         SealedStop::MemoryExhausted => {
             encoder.tag(4);
+        }
+        SealedStop::Halted => {
+            encoder.tag(5);
         }
     }
 }

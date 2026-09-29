@@ -10,6 +10,7 @@ use crate::digest::{Encoder, SealedDigest};
 use crate::error::{EnvironmentFault, PreopenFault, SealedError, WorkingFault};
 use crate::snapshot::{NodeId, Snapshot};
 use crate::spelling::Spelling;
+use crate::transcript::{OverlayEntry, OverlayState};
 
 /// The arguments a guest reads, the program name first.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -191,6 +192,62 @@ impl Preopens {
     pub(crate) fn laid(&self) -> &[Laid] {
         &self.0
     }
+
+    /// These preopens with each tree as `overlay`, a transcript's or a part of one, left it: an entry changes the tree whose guest path is the longest that holds it, in the order the overlay lists them, so an invocation given them starts where the one that wrote the overlay stopped.
+    ///
+    /// # Errors
+    /// [`SealedError::SnapshotPath`] for an entry below no tree, or one its tree's snapshot cannot take; [`SealedError::WorkingDirectory`] where the change took away the working directory.
+    pub fn after(&self, overlay: &[OverlayEntry]) -> Result<Self, SealedError> {
+        let mut changes: Vec<Vec<(&str, &OverlayState)>> = vec![Vec::new(); self.0.len()];
+        for entry in overlay {
+            let held = self
+                .0
+                .iter()
+                .enumerate()
+                .filter_map(|(at, laid)| match laid {
+                    Laid::Tree { path, .. } => {
+                        below(path, &entry.path).map(|rest| (at, path, rest))
+                    }
+                    Laid::Working { .. } => None,
+                })
+                .max_by_key(|(_, path, _)| path.len());
+            let Some((at, _, rest)) = held else {
+                return Err(SealedError::SnapshotPath {
+                    path: entry.path.clone(),
+                    fault: crate::error::SnapshotFault::NoParent,
+                });
+            };
+            if let Some(tree) = changes.get_mut(at) {
+                tree.push((rest, &entry.state));
+            }
+        }
+        let mut preopens = Vec::with_capacity(self.0.len());
+        for (laid, changed) in self.0.iter().zip(changes) {
+            preopens.push(match laid {
+                Laid::Tree { path, snapshot, .. } => Preopen::Tree {
+                    path: path.clone(),
+                    snapshot: snapshot.after(changed)?,
+                },
+                Laid::Working {
+                    tree, directory, ..
+                } => Preopen::Working {
+                    tree: tree.clone(),
+                    directory: directory.clone(),
+                },
+            });
+        }
+        Self::new(preopens)
+    }
+}
+
+/// Where `path` is below the tree preopened at `root`: empty for the root itself, or the names below it, where it is in the tree at all.
+fn below<'a>(root: &str, path: &'a str) -> Option<&'a str> {
+    let root = root.trim_end_matches('/');
+    let rest = path.strip_prefix(root)?;
+    if rest.is_empty() || rest == "/" {
+        return Some("");
+    }
+    rest.strip_prefix('/')
 }
 
 impl Laid {
@@ -292,16 +349,56 @@ pub struct Invocation {
     pub limits: Limits,
     /// How the guest's clocks read.
     pub clock: ClockPolicy,
+    /// The absolute guest path, inside a tree given before, at which a rename that puts a file there ends the guest as [`crate::SealedStop::Halted`], in that call and with nothing after it; nothing where no rename halts it.
+    pub halt: Option<String>,
+}
+
+/// Where an invocation halts, as the host finds it: a tree, counting trees alone, and the names below its root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Halt {
+    /// The tree.
+    pub(crate) tree: usize,
+    /// The names from its root to the path.
+    pub(crate) names: Vec<String>,
 }
 
 impl Invocation {
+    /// Where this invocation halts, refusing a path no tree it is given holds a place for.
+    ///
+    /// # Errors
+    /// [`SealedError::Halt`] for a path below no tree's guest path, or naming nothing below it, or naming `.`, `..`, an empty name or NUL.
+    pub(crate) fn halting(&self) -> Result<Option<Halt>, SealedError> {
+        let Some(path) = &self.halt else {
+            return Ok(None);
+        };
+        let trees = self.preopens.0.iter().filter_map(|laid| match laid {
+            Laid::Tree { path, .. } => Some(path.as_str()),
+            Laid::Working { .. } => None,
+        });
+        for (tree, root) in trees.enumerate() {
+            let Some(below) = path.strip_prefix(root.trim_end_matches('/')) else {
+                continue;
+            };
+            let Some(below) = below.strip_prefix('/') else {
+                continue;
+            };
+            if let Some(names) = names_of(below).filter(|names| !names.is_empty()) {
+                return Ok(Some(Halt {
+                    tree,
+                    names: names.into_iter().map(ToOwned::to_owned).collect(),
+                }));
+            }
+        }
+        Err(SealedError::Halt { path: path.clone() })
+    }
+
     /// The digest of this invocation of the module `module` under the configuration `configuration`.
     pub(crate) fn digest(
         &self,
         module: &SealedDigest,
         configuration: &SealedDigest,
     ) -> SealedDigest {
-        let mut encoder = Encoder::new("rust-mutants-sealed/invocation/v2");
+        let mut encoder = Encoder::new("rust-mutants-sealed/invocation/v3");
         encoder.digest(configuration).digest(module);
         encoder.count(self.arguments.0.len());
         for argument in &self.arguments.0 {
@@ -334,6 +431,10 @@ impl Invocation {
             .number(self.clock.realtime_origin)
             .number(self.clock.monotonic_origin)
             .number(self.clock.nanos_per_fuel.get());
+        match &self.halt {
+            Some(path) => encoder.tag(b'H').text(path),
+            None => encoder.tag(b'N'),
+        };
         encoder.finish()
     }
 }

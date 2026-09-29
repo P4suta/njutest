@@ -795,6 +795,19 @@ fn gated(
     Ok(Gated { discovery, read })
 }
 
+/// What discovery finds on the tree as it was copied, behind the gate the tree has to pass, with nothing instrumented, built or run.
+///
+/// # Errors
+/// The pristine gate and the failures of discovery.
+pub fn discovered(
+    workspace: &Workspace,
+    options: &PrepareOptions,
+    cancel: &Cancel,
+) -> Result<Catalog, EngineError> {
+    let trace = workspace.trace.clone();
+    Ok(gated(workspace, options, cancel, &trace)?.discovery.catalog)
+}
+
 /// What the gate established: what there is to mutate, and everything the build read.
 struct Gated {
     discovery: discover::Discovery,

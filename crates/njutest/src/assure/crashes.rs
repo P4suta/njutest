@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use rust_mutants::catalog::Mutant;
 use rust_mutants::outcome::Outcome;
-use rust_mutants::session::{Asked, Kept, Observing, Request as ExecRequest, Session, Stop};
+use rust_mutants::session::{Asked, Kept, Left, Observing, Request as ExecRequest, Session, Stop};
 
 use crate::assure::baseline::{self, Reporting};
 use crate::assure::run::Request;
@@ -41,7 +41,17 @@ pub fn put(
     notes.phase("crashes")?;
     watch.trace.stage("crashes");
     let session = match prepared(request, environment, watch) {
-        Ok(session) => session,
+        Ok(Prepared::Nothing(kept)) => {
+            report.limitations.push(Limitation::new(
+                crate::limitation::Limitation::CrashNoSite,
+                "no measured file calls anything that writes, so there was nothing to stop after",
+            ));
+            for path in kept {
+                notes.note("kept", &path.display().to_string())?;
+            }
+            return Ok(());
+        }
+        Ok(Prepared::Guarded(session)) => *session,
         Err(error) => {
             if baseline::refused(&error).is_none() {
                 return Err(error);
@@ -57,12 +67,6 @@ pub fn put(
         return Ok(());
     }
     let records = sites(&session, request, watch)?;
-    if session.catalog().mutants().is_empty() {
-        report.limitations.push(Limitation::new(
-            crate::limitation::Limitation::CrashNoSite,
-            "no measured file calls anything that writes, so there was nothing to stop after",
-        ));
-    }
     report.accounting.crashes = CrashAccounting::of(&records)?;
     report
         .findings
@@ -228,8 +232,8 @@ fn written(session: &Session) -> Result<std::collections::BTreeSet<String>, Runn
 
 /// What one run of a test with the crash active came to.
 enum Ran {
-    /// It stopped at the call, and this is the scratch it left.
-    Stopped(Kept),
+    /// It stopped at the call, and this is the scratch it left and what it left there.
+    Stopped(Kept, Left),
     /// It passed without reaching the call's stop, so another test is asked.
     Passed,
     /// A process it started stopped at the call, and its own process ended with this status.
@@ -328,7 +332,7 @@ impl Stopped<'_> {
         let left = if came == Came::Stopped {
             kept.left()?
         } else {
-            Vec::new()
+            Left::Named(Vec::new())
         };
         self.recorded(Recorded {
             stage: "crash",
@@ -340,7 +344,7 @@ impl Stopped<'_> {
             failed: &[],
         });
         Ok(match came {
-            Came::Stopped => Ran::Stopped(kept),
+            Came::Stopped => Ran::Stopped(kept, left),
             Came::Passed => Ran::Passed,
             Came::Elsewhere(exit_code) => Ran::Elsewhere(exit_code),
             Came::Other(outcome, exit_code) => Ran::Other(outcome, exit_code),
@@ -350,8 +354,8 @@ impl Stopped<'_> {
     /// What the test comes to after a stop at the call, or nothing where it did not stop there.
     fn decided(&self) -> Result<Option<CrashDecision>, RunnerError> {
         let on = self.on();
-        let kept = match self.crashed()? {
-            Ran::Stopped(kept) => kept,
+        let (kept, left) = match self.crashed()? {
+            Ran::Stopped(kept, left) => (kept, left),
             Ran::Passed => return Ok(None),
             Ran::Elsewhere(exit_code) => {
                 return Ok(Some(CrashDecision::Undecided {
@@ -373,7 +377,15 @@ impl Stopped<'_> {
                 }));
             }
         };
-        let left = kept.left()?;
+        let left = match left {
+            Left::Named(left) => left,
+            Left::Unnamed(entry) => {
+                return Ok(Some(CrashDecision::Undecided {
+                    on,
+                    why: unnamed(&entry),
+                }));
+            }
+        };
         if left.is_empty() {
             return Ok(Some(CrashDecision::Unshared { on }));
         }
@@ -386,7 +398,7 @@ impl Stopped<'_> {
             outcome: next.outcome(),
             stop: Stop::none(),
             issued: None,
-            left: &[],
+            left: &Left::Named(Vec::new()),
             failed: &next.failed_tests,
         });
         Ok(Some(match next.outcome() {
@@ -434,7 +446,7 @@ impl Stopped<'_> {
             outcome: fresh.outcome(),
             stop: Stop::none(),
             issued: None,
-            left: &[],
+            left: &Left::Named(Vec::new()),
             failed: &fresh.failed_tests,
         });
         if fresh.outcome() != Outcome::Survived {
@@ -442,13 +454,21 @@ impl Stopped<'_> {
                 "the test fails in a fresh scratch too, so the failure is not the stop's",
             ));
         }
-        let Ran::Stopped(kept) = self.crashed()? else {
+        let Ran::Stopped(kept, left) = self.crashed()? else {
             return Ok(Round::Not("a later run did not stop at the call"));
         };
-        if kept.left()?.is_empty() {
-            return Ok(Round::Not(
-                "a later stop at the call left nothing for the next run",
-            ));
+        match left {
+            Left::Named(left) if !left.is_empty() => {}
+            Left::Named(_) => {
+                return Ok(Round::Not(
+                    "a later stop at the call left nothing for the next run",
+                ));
+            }
+            Left::Unnamed(_) => {
+                return Ok(Round::Not(
+                    "a later stop at the call left an entry whose name is not text",
+                ));
+            }
         }
         let again = self
             .session
@@ -459,7 +479,7 @@ impl Stopped<'_> {
             outcome: again.outcome(),
             stop: Stop::none(),
             issued: None,
-            left: &[],
+            left: &Left::Named(Vec::new()),
             failed: &again.failed_tests,
         });
         Ok(
@@ -487,10 +507,24 @@ impl Stopped<'_> {
                 nonce: notice.nonce.clone(),
                 read: notice.read.clone(),
             }),
-            left: run.left.to_vec(),
+            left: match run.left {
+                Left::Named(left) => left.clone(),
+                Left::Unnamed(_) => Vec::new(),
+            },
+            unnamed: match run.left {
+                Left::Named(_) => None,
+                Left::Unnamed(entry) => Some(entry.clone()),
+            },
             failed: run.failed.to_vec(),
         });
     }
+}
+
+/// Why a stop that left an entry whose name is not text is undecided: what it left cannot be named to the next run, or to anyone reading the report.
+fn unnamed(entry: &str) -> String {
+    format!(
+        "the stop left an entry whose name is not text, {entry}, so what it left cannot be named"
+    )
 }
 
 /// How many times a failing next run is reproduced, each after a fresh run that passes, before the stop is called corrupt: a test that fails half its runs by itself passes all of them about once in 128.
@@ -512,7 +546,7 @@ struct Recorded<'a> {
     outcome: Outcome,
     stop: Stop,
     issued: Option<&'a rust_mutants::session::Notice>,
-    left: &'a [String],
+    left: &'a Left,
     failed: &'a [String],
 }
 
@@ -526,12 +560,20 @@ fn unmeasured() -> Finding {
     )
 }
 
-/// The session every call that writes is guarded in, with its one run with nothing active.
+/// What a crash phase is prepared as.
+enum Prepared {
+    /// Discovery found no call that writes, so nothing was built or run, and the closed workspace kept these paths.
+    Nothing(Vec<std::path::PathBuf>),
+    /// The session every call that writes is guarded in, with its one run with nothing active.
+    Guarded(Box<Session>),
+}
+
+/// The session every call that writes is guarded in, or nothing where discovery alone finds no such call, before anything is built.
 fn prepared(
     request: &Request,
     environment: &Environment,
     watch: Watch<'_>,
-) -> Result<Session, RunnerError> {
+) -> Result<Prepared, RunnerError> {
     let workspace = rust_mutants::workspace::Workspace::open(
         &request.root,
         rust_mutants::workspace::OpenOptions {
@@ -540,14 +582,21 @@ fn prepared(
         },
         watch.cancel,
     )?;
-    Ok(workspace.prepare(
-        &rust_mutants::session::PrepareOptions {
-            operators: vec![RULE.to_owned()],
-            sealing: rust_mutants::sealed::Sealing::Off,
-            ..crate::assure::run::preparing(request)?
-        },
-        watch.cancel,
-    )?)
+    let options = rust_mutants::session::PrepareOptions {
+        operators: vec![RULE.to_owned()],
+        sealing: rust_mutants::sealed::Sealing::Off,
+        ..crate::assure::run::preparing(request)?
+    };
+    if workspace
+        .discover(&options, watch.cancel)?
+        .mutants()
+        .is_empty()
+    {
+        return Ok(Prepared::Nothing(workspace.close()?));
+    }
+    Ok(Prepared::Guarded(Box::new(
+        workspace.prepare(&options, watch.cancel)?,
+    )))
 }
 
 #[cfg(test)]

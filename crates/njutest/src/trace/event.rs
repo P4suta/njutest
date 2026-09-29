@@ -667,6 +667,9 @@ pub struct CrashExecRecord {
     pub issued: Option<CrashNoticeRecord>,
     /// The files a stopped run left in its scratch, on a `crash` run that stopped; empty otherwise.
     pub left: Vec<String>,
+    /// The entry a stopped run left whose name is not text, spelled without loss, where it left one: what it left then cannot be named, `left` is empty, and the crash is undecided; nothing otherwise.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub unnamed: Option<String>,
     /// The tests a `next` or `fresh` run failed.
     pub failed: Vec<String>,
 }

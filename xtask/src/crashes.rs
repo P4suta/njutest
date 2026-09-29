@@ -26,6 +26,8 @@ pub struct Run {
     pub issued: Option<Issued>,
     /// What a stopped run left.
     pub left: Vec<String>,
+    /// The entry a stopped run left whose name is not text, where it left one, which leaves what it left unnamed.
+    pub unnamed: Option<String>,
     /// What a next or fresh run failed.
     pub failed: Vec<String>,
 }
@@ -193,6 +195,11 @@ fn ran(record: &Value, issued: Option<Issued>) -> Option<Run> {
         noticed: record.get("noticed")?.as_bool()?,
         issued,
         left: texts(record, "left")?,
+        unnamed: match record.get("unnamed")? {
+            Value::Null => None,
+            Value::String(entry) => Some(entry.clone()),
+            Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => return None,
+        },
         failed: texts(record, "failed")?,
     })
 }
@@ -438,6 +445,12 @@ impl<'b> Cursor<'_, 'b> {
                         }
                     )));
                 }
+                if run.unnamed.is_some() && (!stopped(run) || !run.left.is_empty()) {
+                    return Err(unmade(&format!(
+                        "a {stage} run of {target}::{test} names an entry left unnamed, which \
+                         only a stop that named nothing it left can"
+                    )));
+                }
                 self.rest = rest;
                 Ok(run)
             }
@@ -474,6 +487,9 @@ fn routed(crash: &str, asked: &[Asked], cursor: &mut Cursor<'_, '_>) -> Result<S
                 if stop.outcome == "survived" && !published(stop) {
                     continue;
                 }
+                return Ok(site("undecided", &on));
+            }
+            if stop.unnamed.is_some() {
                 return Ok(site("undecided", &on));
             }
             if stop.left.is_empty() {
@@ -524,7 +540,7 @@ fn confirmed(
             return Ok(false);
         }
         let again = cursor.run(target, test, "crash")?;
-        if !stopped(again) || again.left.is_empty() {
+        if !stopped(again) || again.unnamed.is_some() || again.left.is_empty() {
             return Ok(false);
         }
         let next = cursor.run(target, test, "next")?;

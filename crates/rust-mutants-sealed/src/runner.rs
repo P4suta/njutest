@@ -264,7 +264,8 @@ impl SealedModule<'_> {
         let digest = invocation.digest(&self.digest, &self.runner.configuration);
         let watchdog = self.runner.watchdog;
         let deadline = Instant::now().checked_add(watchdog);
-        let host = Host::new(invocation, (deadline, interrupt.clone())).map_err(broken)?;
+        let halt = invocation.halting()?;
+        let host = Host::new((invocation, halt), (deadline, interrupt.clone())).map_err(broken)?;
         let mut store = Store::new(&self.runner.engine, host);
         store.limiter(|host| &mut host.limiter);
         store
@@ -340,6 +341,7 @@ fn stopped(
     match host.stop {
         Some(HostStop::Exited { code }) => return Ok(SealedStop::Exited { code }),
         Some(HostStop::FuelExhausted) => return Ok(SealedStop::FuelExhausted),
+        Some(HostStop::Halted) => return Ok(SealedStop::Halted),
         Some(HostStop::WatchdogExpired) => {
             return Err(SealedError::WatchdogExpired { limit: watchdog });
         }
