@@ -46,6 +46,7 @@ const DIMENSION_NOT_MEASURED: &str = "dimension-not-measured";
 const CORRUPT_AFTER_CRASH: &str = "corrupt-after-crash";
 const BROKEN_UNDER_FAULT: &str = "broken-under-fault";
 const NOT_MEASURED_FINDING: &str = "not-measured";
+const UNATTRIBUTED_WRITE: &str = "fault-write-unattributed";
 /// Every finding kind that is something wrong with the code under test, as `docs/report-v1.md` marks them, which is what lets a run conclude DEFECT.
 pub const DEFECT_KINDS: [&str; 7] = [
     "build-failure",
@@ -3013,6 +3014,7 @@ fn faults(
         return notes.looked();
     };
     broken(recording, faulted, &mut notes);
+    unattributed(recording, faulted, &mut notes);
     let recorded: BTreeMap<&str, &crate::faults::Site> = faulted
         .sites
         .iter()
@@ -3530,6 +3532,72 @@ fn broken(recording: &Recording<'_>, faulted: &crate::faults::Faulted, notes: &m
              finding says so"
                 .to_owned(),
         );
+    }
+}
+
+/// The `fault-write-unattributed` finding, owed wherever a path the phase left written was put to a fault run alone and no such run tied it, and naming every such path, and no path a run tied.
+fn unattributed(
+    recording: &Recording<'_>,
+    faulted: &crate::faults::Faulted,
+    notes: &mut Notes<'_>,
+) {
+    let tied: BTreeSet<&str> = faulted
+        .writes
+        .iter()
+        .filter(|(_, tied)| *tied)
+        .map(|(path, _)| path.as_str())
+        .collect();
+    let untied: BTreeSet<&str> = faulted
+        .writes
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .filter(|path| !tied.contains(path))
+        .collect();
+    let details: Vec<Option<String>> = recording
+        .part
+        .findings
+        .iter()
+        .filter(|row| {
+            field(row, "kind").as_deref() == Some(NOT_MEASURED_FINDING)
+                && field(row, "subject").as_deref() == Some(UNATTRIBUTED_WRITE)
+        })
+        .map(|row| field(row, "detail"))
+        .collect();
+    match details.as_slice() {
+        [] if untied.is_empty() => {}
+        [] => notes.violated(
+            UNATTRIBUTED_WRITE,
+            format!(
+                "the recording puts {} to a fault run alone and ties none of them, and the report \
+                 raises no {UNATTRIBUTED_WRITE} finding",
+                untied.iter().copied().collect::<Vec<&str>>().join(", ")
+            ),
+        ),
+        [None] => notes.violated(
+            UNATTRIBUTED_WRITE,
+            "the finding names no path it is about".to_owned(),
+        ),
+        [Some(detail)] => {
+            for path in untied.iter().filter(|path| !detail.contains(**path)) {
+                notes.violated(
+                    UNATTRIBUTED_WRITE,
+                    format!("no fault run alone tied {path}, and the finding does not name it"),
+                );
+            }
+            for path in tied.iter().filter(|path| detail.contains(**path)) {
+                notes.violated(
+                    UNATTRIBUTED_WRITE,
+                    format!("a fault run alone tied {path}, and the finding calls it unattributed"),
+                );
+            }
+        }
+        several => notes.violated(
+            UNATTRIBUTED_WRITE,
+            format!(
+                "the report raises {} {UNATTRIBUTED_WRITE} findings where one names every path",
+                several.len()
+            ),
+        ),
     }
 }
 
