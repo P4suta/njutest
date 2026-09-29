@@ -25,7 +25,6 @@ use crate::snapshot::{Body, NodeId, ROOT, Snapshot, inode_of};
 use crate::spelling::{Reading, Spelling};
 use crate::transcript::{OverlayEntry, RefusalReason};
 
-use super::FILE_TIME;
 use super::overlay::Walk;
 
 /// What a name the guest makes costs the overlay, besides its bytes.
@@ -157,8 +156,8 @@ struct Tree {
 }
 
 impl Tree {
-    /// The tree `snapshot` grows into, preopened at `guest_path` and read as `spelling` says.
-    fn grown(guest_path: &str, snapshot: &Snapshot, spelling: &Spelling) -> Self {
+    /// The tree `snapshot` grows into, preopened at `guest_path`, read as `spelling` says, and every node of it accessed and modified at `started`.
+    fn grown(guest_path: &str, snapshot: &Snapshot, (spelling, started): (&Spelling, u64)) -> Self {
         Self {
             guest_path: guest_path.to_owned(),
             spelling: spelling.clone(),
@@ -173,8 +172,8 @@ impl Tree {
                     },
                     inode: node.inode,
                     parent: node.parent,
-                    accessed: FILE_TIME,
-                    modified: FILE_TIME,
+                    accessed: started,
+                    modified: started,
                 })
                 .collect(),
         }
@@ -373,11 +372,13 @@ pub(crate) struct Filesystem {
     overlay: u64,
     /// How many bytes the overlay may hold.
     limit: u64,
+    /// The time every file and directory is accessed and modified at until the guest sets another: what the realtime clock reads when the invocation starts.
+    started: u64,
 }
 
 impl Filesystem {
-    /// The standard streams at 0, 1 and 2, and each preopen from 3 in order.
-    pub(crate) fn new(preopens: &Preopens, limit: u64) -> Result<Self, Errno> {
+    /// The standard streams at 0, 1 and 2, and each preopen from 3 in order, every node dated `started`.
+    pub(crate) fn new(preopens: &Preopens, (limit, started): (u64, u64)) -> Result<Self, Errno> {
         let mut descriptors = BTreeMap::from([
             (0, standard(Object::Stdin, RIGHTS_STDIN)),
             (1, standard(Object::Stdout, RIGHTS_STDOUT)),
@@ -395,7 +396,7 @@ impl Filesystem {
                     snapshot,
                     spelling,
                 } => {
-                    trees.push(Tree::grown(path, snapshot, spelling));
+                    trees.push(Tree::grown(path, snapshot, (spelling, started)));
                     let tree = trees.len().checked_sub(1).ok_or(Errno::Mfile)?;
                     (tree, ROOT, Entrance::Root)
                 }
@@ -420,7 +421,13 @@ impl Filesystem {
             descriptors,
             overlay: 0,
             limit,
+            started,
         })
+    }
+
+    /// The time every file and directory is accessed and modified at until the guest sets another.
+    pub(crate) const fn started(&self) -> u64 {
+        self.started
     }
 
     /// The descriptor `fd`, once it is known to hold what the call `needs`.
@@ -692,8 +699,8 @@ impl Filesystem {
                 inode: 0,
                 filetype: FILETYPE_UNKNOWN,
                 size: 0,
-                accessed: FILE_TIME,
-                modified: FILE_TIME,
+                accessed: self.started,
+                modified: self.started,
             }),
             Object::File { tree, node, .. } | Object::Directory { tree, node, .. } => {
                 self.node_stat(tree, node)
@@ -1067,14 +1074,15 @@ impl Filesystem {
     ) -> Result<NodeId, Fault> {
         self.charge_name(name)?;
         let parent_inode = self.live(tree, parent).map_err(errno)?.inode;
+        let started = self.started;
         let arena = &mut self.trees.get_mut(tree).ok_or(errno(Errno::Badf))?.nodes;
         let node = arena.len();
         arena.push(Live {
             held,
             inode: inode_of(parent_inode, name),
             parent,
-            accessed: FILE_TIME,
-            modified: FILE_TIME,
+            accessed: started,
+            modified: started,
         });
         self.entries_mut(tree, parent)
             .map_err(errno)?

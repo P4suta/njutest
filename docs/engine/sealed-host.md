@@ -81,7 +81,9 @@ A wait on a CPU-time clock, which moves only while the guest runs, is answered w
 A wait for a deadline past the end of virtual time is a wait nothing ends, so the guest spends its whole budget and stops as `FuelExhausted`.
 
 A directory lists `.` and `..` and then its entries in the order of their names.
-Every file and directory reads the same metadata in every invocation: its times are zero until the guest sets them, its inode is a digest of its path, its device is the number of its preopen, and it has one link.
+Every file and directory reads the same metadata in every invocation.
+Its times are what the realtime clock reads when the invocation starts, a file or directory the guest makes as much as the snapshot's, until the guest sets them, so no time is one the guest's own clock could never have read.
+Its inode is a digest of its path, its device is the number of its preopen, and it has one link.
 
 ## The working directory
 

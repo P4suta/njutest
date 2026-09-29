@@ -10,7 +10,6 @@ use crate::abi::Errno;
 use crate::snapshot::{Body, Node, NodeId};
 use crate::transcript::{OverlayEntry, OverlayState};
 
-use super::FILE_TIME;
 use super::fs::{Contents, Filesystem, Held};
 
 /// One tree compared with the snapshot it grew from.
@@ -53,7 +52,8 @@ impl Walk<'_> {
         out: &mut Vec<OverlayEntry>,
     ) -> Result<(), Errno> {
         let held = self.filesystem.live(self.tree, live)?;
-        if held.accessed != FILE_TIME || held.modified != FILE_TIME {
+        let started = self.filesystem.started();
+        if held.accessed != started || held.modified != started {
             out.push(OverlayEntry {
                 path: self.guest(relative),
                 state: OverlayState::Directory {
@@ -138,7 +138,8 @@ impl Walk<'_> {
                     Contents::Snapshot(is) => Arc::ptr_eq(was, is) || was == is,
                     Contents::Overlay(is) => **was == **is,
                 };
-                if !same_bytes || held.accessed != FILE_TIME || held.modified != FILE_TIME {
+                let started = self.filesystem.started();
+                if !same_bytes || held.accessed != started || held.modified != started {
                     out.push(OverlayEntry {
                         path: self.guest(relative),
                         state: OverlayState::File {

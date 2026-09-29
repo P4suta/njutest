@@ -16,7 +16,7 @@ use wasmtime::{
 
 use crate::digest::{Encoder, SealedDigest};
 use crate::error::{Invariant, RuntimeStep, SealedError};
-use crate::host::{BYTE_FUEL, CALL_FUEL, FILE_TIME, Host, HostStop, RESOLUTION, TABLE_ELEMENTS};
+use crate::host::{BYTE_FUEL, CALL_FUEL, Host, HostStop, RESOLUTION, TABLE_ELEMENTS};
 use crate::imports::{IMPORT_MODULE, WasiFunction};
 use crate::interrupt::Interrupt;
 use crate::invocation::Invocation;
@@ -194,14 +194,13 @@ fn link(engine: &Engine) -> Result<Linker<Host>, SealedError> {
 
 /// The digest of everything about `engine` and the host a transcript depends on.
 fn configuration(engine: &Engine) -> SealedDigest {
-    let mut encoder = Encoder::new("rust-mutants-sealed/configuration/v1");
+    let mut encoder = Encoder::new("rust-mutants-sealed/configuration/v2");
     encoder
         .text(env!("CARGO_PKG_VERSION"))
         .text(WASMTIME_VERSION)
         .number(CALL_FUEL)
         .number(BYTE_FUEL)
         .number(RESOLUTION)
-        .number(FILE_TIME)
         .count(TABLE_ELEMENTS)
         .count(KEPT_REQUESTS);
     engine

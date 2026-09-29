@@ -34,9 +34,6 @@ pub(crate) const CALL_FUEL: u64 = 64;
 /// The fuel every byte of guest memory a host call reads or writes costs.
 pub(crate) const BYTE_FUEL: u64 = 1;
 
-/// The time every file and directory of a snapshot carries until the guest sets another.
-pub(crate) const FILE_TIME: u64 = 0;
-
 /// The resolution every clock reports, in nanoseconds.
 pub(crate) const RESOLUTION: u64 = 1;
 
@@ -178,8 +175,11 @@ impl Host {
             .variables()
             .map(|(name, value)| c_string(format!("{name}={value}").as_bytes()))
             .collect();
-        let files = Filesystem::new(&invocation.preopens, invocation.limits.overlay)
-            .map_err(|_numbering| Invariant::Width)?;
+        let files = Filesystem::new(
+            &invocation.preopens,
+            (invocation.limits.overlay, invocation.clock.realtime_origin),
+        )
+        .map_err(|_numbering| Invariant::Width)?;
         Ok(Self {
             arguments,
             environment,

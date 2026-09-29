@@ -960,6 +960,56 @@ fn the_preopen_is_named_to_the_guest_and_no_path_is_a_symbolic_link() {
 }
 
 #[test]
+fn every_file_carries_the_time_the_realtime_clock_starts_at_until_the_guest_sets_another() {
+    let bytes = command(
+        &[
+            "path_open",
+            "path_create_directory",
+            "path_filestat_get",
+            "fd_filestat_get",
+            "path_filestat_set_times",
+        ],
+        "(data (i32.const 100) \"seen.txt\")
+         (data (i32.const 120) \"made\")
+         (data (i32.const 140) \"dir\")",
+        "(call $expect (call $fd_filestat_get (i32.const 3) (i32.const 200)) (i32.const 0))
+         (i64.store (i32.const 800) (i64.load (i32.const 240)))
+         (i64.store (i32.const 808) (i64.load (i32.const 248)))
+         (call $expect (call $path_filestat_get (i32.const 3) (i32.const 0) (i32.const 100) (i32.const 8) (i32.const 200)) (i32.const 0))
+         (i64.store (i32.const 816) (i64.load (i32.const 240)))
+         (i64.store (i32.const 824) (i64.load (i32.const 248)))
+         (call $expect (call $path_open (i32.const 3) (i32.const 0) (i32.const 120) (i32.const 4) (i32.const 1) (i64.const -1) (i64.const -1) (i32.const 0) (i32.const 64)) (i32.const 0))
+         (call $expect (call $path_filestat_get (i32.const 3) (i32.const 0) (i32.const 120) (i32.const 4) (i32.const 200)) (i32.const 0))
+         (i64.store (i32.const 832) (i64.load (i32.const 240)))
+         (i64.store (i32.const 840) (i64.load (i32.const 248)))
+         (call $expect (call $path_create_directory (i32.const 3) (i32.const 140) (i32.const 3)) (i32.const 0))
+         (call $expect (call $path_filestat_get (i32.const 3) (i32.const 0) (i32.const 140) (i32.const 3) (i32.const 200)) (i32.const 0))
+         (i64.store (i32.const 848) (i64.load (i32.const 240)))
+         (i64.store (i32.const 856) (i64.load (i32.const 248)))
+         (call $expect (call $path_filestat_set_times (i32.const 3) (i32.const 0) (i32.const 100) (i32.const 8) (i64.const 0) (i64.sub (i64.load (i32.const 824)) (i64.const 100)) (i32.const 4)) (i32.const 0))
+         (call $expect (call $path_filestat_get (i32.const 3) (i32.const 0) (i32.const 100) (i32.const 8) (i32.const 200)) (i32.const 0))
+         (i64.store (i32.const 864) (i64.load (i32.const 240)))
+         (i64.store (i32.const 872) (i64.load (i32.const 248)))
+         (call $emit (i32.const 800) (i32.const 80))",
+    );
+    let started = invocation();
+    let origin = started.clock.realtime_origin;
+    let set = origin.checked_sub(100).expect("the origin is past 100");
+    let transcript = run(&bytes, &started);
+    assert_eq!(transcript.stop(), SealedStop::Returned);
+    assert_eq!(
+        emitted(&transcript),
+        [
+            origin, origin, origin, origin, origin, origin, origin, origin, origin, set
+        ],
+        "the preopen, a file of the snapshot, a file made and a directory made are each accessed \
+         and modified at the time the realtime clock starts at, never at a time before it that \
+         the guest's own clock could not have read, and a time the guest sets is the one it reads \
+         back"
+    );
+}
+
+#[test]
 fn fuel_that_runs_out_inside_a_host_call_is_fuel_exhausted() {
     let bytes = command(&["sched_yield"], "", "(drop (call $sched_yield))");
     let mut starved = invocation();
