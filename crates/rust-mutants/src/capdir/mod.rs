@@ -5,6 +5,8 @@
 
 #[cfg(unix)]
 mod unix;
+#[cfg(windows)]
+mod windows;
 
 use std::fs::File;
 use std::io;
@@ -130,10 +132,11 @@ pub enum Entry {
 /// How many directories deep [`Dir::remove_contents`] goes before it refuses, rather than running out of handles on the way down.
 pub const REMOVAL_DEPTH: usize = 64;
 
-/// Who may reach into a directory, read from its owner and mode bits alone.
+/// Who may reach into a directory, read from its owner and its permissions.
 ///
-/// Owner-only is exactly read, write and enter for the owner, with no setuid, setgid or sticky bit: a directory made under a setgid parent reads as [`Privacy::Loose`] and is tightened.
-/// An access control list can grant what the mode bits do not show, and is not read.
+/// On Unix owner-only is exactly read, write and enter for the owner, with no setuid, setgid or sticky bit: a directory made under a setgid parent reads as [`Privacy::Loose`] and is tightened.
+/// An access control list can grant what the mode bits do not show, and is not read there.
+/// On Windows owner-only is a protected access control list admitting this user with everything, the system, and the administrators, and nobody else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Privacy {
     /// This process's user owns it and nobody else may enter it.
@@ -286,9 +289,10 @@ impl Dir {
 
     /// Removes everything beneath this directory, leaving it empty and held.
     ///
-    /// Each entry is renamed aside under a fresh name before it is removed, and is removed only if the aside name still holds what was renamed, so nothing another process put in its place is touched; a link is removed as a link.
+    /// Only the object that was looked at is removed, so nothing another process put in its place is touched, and a link is removed as a link.
+    /// On Unix each entry is renamed aside under a fresh name and removed only if the aside name still holds what was renamed; an entry that changed as it was set aside is put back, and if its name was taken meanwhile it stays under its aside name, which a later emptying removes without the identity check, a residue only a directory its owner alone may enter can afford.
+    /// On Windows each entry is removed through the handle it was opened by, which is the object itself.
     /// Entries are handled by the names the platform holds, so one no [`Name`] could spell is removed too, and one gone before it was reached counts as removed.
-    /// An entry that changed as it was set aside is put back; if its name was taken meanwhile it stays under its aside name, which a later emptying removes without the identity check, a residue only a directory its owner alone may enter can afford.
     /// A tree deeper than [`REMOVAL_DEPTH`] is refused before anything beneath that depth is touched.
     ///
     /// # Errors
@@ -314,80 +318,23 @@ pub fn file_status(file: &File) -> io::Result<Status> {
     sys::file_status(file)
 }
 
+/// Makes what was written to an open file durable, whether it was opened for reading or for writing.
+///
+/// # Errors
+/// The volume refuses to flush it.
+pub fn sync_file(file: &File) -> io::Result<()> {
+    sys::sync_file(file)
+}
+
+/// The file at `path`, for reading, not following a final link and not waiting on a pipe.
+///
+/// # Errors
+/// It is missing, a link, or cannot be opened.
+pub fn open_file_at(path: &Path) -> io::Result<File> {
+    sys::open_file_at(path)
+}
+
 #[cfg(unix)]
 use unix as sys;
-
-#[cfg(not(unix))]
-mod sys {
-    use std::fs::File;
-    use std::io;
-    use std::path::Path;
-
-    use super::{Name, Privacy, Status};
-
-    fn unsupported<T>() -> io::Result<T> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "this platform has no capability directory yet",
-        ))
-    }
-
-    pub(super) fn open(_path: &Path) -> io::Result<File> {
-        unsupported()
-    }
-    pub(super) fn open_dir(_dir: &File, _name: Name<'_>) -> io::Result<File> {
-        unsupported()
-    }
-    pub(super) fn open_file(_dir: &File, _name: Name<'_>) -> io::Result<File> {
-        unsupported()
-    }
-    pub(super) fn create_file(_dir: &File, _name: Name<'_>) -> io::Result<File> {
-        unsupported()
-    }
-    pub(super) fn create_private_dir(_dir: &File, _name: Name<'_>) -> io::Result<File> {
-        unsupported()
-    }
-    pub(super) fn status_at(_dir: &File, _name: Name<'_>) -> io::Result<Option<Status>> {
-        unsupported()
-    }
-    pub(super) fn rename_noreplace(
-        _from_dir: &File,
-        _from: Name<'_>,
-        _to_dir: &File,
-        _to: Name<'_>,
-    ) -> io::Result<()> {
-        unsupported()
-    }
-    pub(super) fn rename_replace(
-        _from_dir: &File,
-        _from: Name<'_>,
-        _to_dir: &File,
-        _to: Name<'_>,
-    ) -> io::Result<()> {
-        unsupported()
-    }
-    pub(super) fn remove(_dir: &File, _name: Name<'_>, _directory: bool) -> io::Result<()> {
-        unsupported()
-    }
-    pub(super) fn sync(_dir: &File) -> io::Result<()> {
-        unsupported()
-    }
-    pub(super) fn entries(_dir: &File) -> io::Result<Vec<String>> {
-        unsupported()
-    }
-    pub(super) fn privacy(_dir: &File) -> io::Result<Privacy> {
-        unsupported()
-    }
-    pub(super) fn restrict_to_owner(_dir: &File) -> io::Result<()> {
-        unsupported()
-    }
-    pub(super) fn remove_contents(_dir: &File) -> io::Result<()> {
-        unsupported()
-    }
-    pub(super) fn open_entry(_dir: &File, _name: Name<'_>) -> io::Result<(File, super::Kind)> {
-        unsupported()
-    }
-    pub(super) fn file_status(_file: &File) -> io::Result<Status> {
-        unsupported()
-    }
-}
+#[cfg(windows)]
+use windows as sys;

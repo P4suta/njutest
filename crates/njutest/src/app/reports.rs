@@ -3,30 +3,24 @@
 
 //! Where a completed verification is kept.
 
-#[cfg(unix)]
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
-#[cfg(unix)]
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
 use rust_mutants::id::{RunId, RunIdError, StoredRunId};
-#[cfg(unix)]
 use serde::Deserialize;
 
 use crate::error::{self, ErrorCode};
 use crate::report::{Report, ReportDocument, json};
-#[cfg(unix)]
 use rust_mutants::capdir::{Dir, Kind, Name, Privacy, Status};
 
 /// One path component the store names, refused as input when it is not one.
-#[cfg(unix)]
 fn name(text: &str) -> io::Result<Name<'_>> {
     Name::new(text).map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))
 }
 
 /// Whether a failure says the entry is not there.
-#[cfg(unix)]
 fn absent(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::NotFound
 }
@@ -40,9 +34,7 @@ pub struct Store {
     runs: PathBuf,
     root: PathBuf,
     configured: crate::config::ReportDirectory,
-    #[cfg(unix)]
     workspace: Dir,
-    #[cfg(unix)]
     report_root: std::sync::Arc<std::sync::OnceLock<Dir>>,
 }
 
@@ -52,7 +44,6 @@ pub struct Store {
 #[derive(Debug)]
 pub(crate) struct WorkspaceRoot {
     path: PathBuf,
-    #[cfg(unix)]
     directory: Dir,
 }
 
@@ -72,13 +63,11 @@ pub(crate) struct LoadedConfiguration {
     pub(crate) source: ConfigurationSource,
 }
 
-#[cfg(unix)]
 #[derive(Debug)]
 struct StoreRoot {
     directory: Dir,
 }
 
-#[cfg(unix)]
 #[derive(Debug)]
 enum StoreRootState {
     Missing,
@@ -88,13 +77,11 @@ enum StoreRootState {
 /// The one opened `runs` namespace a whole reader operation resolves against.
 ///
 /// The only constructor opens it beneath a held [`StoreRoot`], and every census and run opening goes through the same value, so a run is never validated against one `runs` inode and read from another.
-#[cfg(unix)]
 #[derive(Debug)]
 struct RunsRoot {
     directory: Dir,
 }
 
-#[cfg(unix)]
 impl RunsRoot {
     fn open_at(root: &StoreRoot) -> Result<Self, StoreError> {
         open_directory_at(&root.directory, RUNS_NAME)
@@ -112,7 +99,6 @@ pub(crate) struct StoredRun {
     id: StoredRunId,
     display: PathBuf,
     said_document: String,
-    #[cfg(unix)]
     directory: Dir,
 }
 
@@ -124,7 +110,6 @@ pub(crate) enum StoredFile {
 }
 
 impl StoredFile {
-    #[cfg(unix)]
     const fn name(self) -> &'static str {
         match self {
             Self::Document => DOCUMENT_NAME,
@@ -165,9 +150,8 @@ struct PublicationFile {
 }
 
 /// Open directory capabilities retained from exclusive creation through publication.
-/// On Unix every model read, report write, tree sync, rename,
-/// and parent sync is relative to these descriptors rather than a spelling that an ancestor replacement could redirect.
-#[cfg(unix)]
+/// Every model read, report write, tree sync, rename,
+/// and parent sync is relative to these handles rather than a spelling that an ancestor replacement could redirect.
 #[derive(Debug)]
 struct RunCapability {
     root: Dir,
@@ -175,12 +159,6 @@ struct RunCapability {
     staging_parent: Dir,
     published_parent: Dir,
 }
-
-/// Hosts without the Unix handle-relative backend refuse publication.
-/// A path fallback cannot bind check, read, rename, and cleanup to the same object.
-#[cfg(not(unix))]
-#[derive(Debug)]
-struct RunCapability;
 
 /// Which unpublished filesystem object a [`RunDirectory`] still owns.
 ///
@@ -245,21 +223,7 @@ impl RunDirectory {
     }
 
     fn publish_entry(&self) -> io::Result<()> {
-        #[cfg(unix)]
-        {
-            self.capability.publish(self.run_id.as_str())
-        }
-        #[cfg(not(unix))]
-        {
-            let staging_parent = self.staging.parent().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "staging path has no parent")
-            })?;
-            let published_parent = self.published.parent().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "published path has no parent")
-            })?;
-            self.capability
-                .publish(self.run_id.as_str(), staging_parent, published_parent)
-        }
+        self.capability.publish(self.run_id.as_str())
     }
 
     fn published_entry_matches(&self) -> io::Result<bool> {
@@ -272,36 +236,11 @@ impl RunDirectory {
     }
 
     fn staging_entry_matches(&self) -> io::Result<bool> {
-        #[cfg(unix)]
-        {
-            self.capability.staging_entry_matches(self.run_id.as_str())
-        }
-        #[cfg(not(unix))]
-        {
-            let staging_parent = self.staging.parent().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "staging path has no parent")
-            })?;
-            self.capability
-                .staging_entry_matches(self.run_id.as_str(), staging_parent)
-        }
+        self.capability.staging_entry_matches(self.run_id.as_str())
     }
 
     fn sync_rename_parent(&self, published: bool) -> io::Result<()> {
-        #[cfg(unix)]
-        {
-            self.capability.sync_parent(published)
-        }
-        #[cfg(not(unix))]
-        {
-            let staging_parent = self.staging.parent().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "staging path has no parent")
-            })?;
-            let published_parent = self.published.parent().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "published path has no parent")
-            })?;
-            self.capability
-                .sync_parent(published, staging_parent, published_parent)
-        }
+        self.capability.sync_parent(published)
     }
 
     /// Explicitly abandons an unpublished run.
@@ -333,40 +272,17 @@ impl RunDirectory {
         }
     }
 
-    #[cfg_attr(
-        not(unix),
-        expect(
-            clippy::missing_const_for_fn,
-            clippy::unused_self,
-            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-        )
-    )]
     fn remove_owned(&self, published: bool) -> Result<(), StoreError> {
-        #[cfg(unix)]
-        {
-            self.capability
-                .remove_entry(published, self.run_id.as_str())
-                .map_err(|source| StoreError::NotKept {
-                    path: if published {
-                        self.published.display().to_string()
-                    } else {
-                        self.staging.display().to_string()
-                    },
-                    source,
-                })
-        }
-        #[cfg(not(unix))]
-        {
-            #[cfg_attr(
-                not(unix),
-                expect(
-                    clippy::no_effect_underscore_binding,
-                    reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-                )
-            )]
-            let _published = published;
-            Err(StoreError::UnsupportedCapability)
-        }
+        self.capability
+            .remove_entry(published, self.run_id.as_str())
+            .map_err(|source| StoreError::NotKept {
+                path: if published {
+                    self.published.display().to_string()
+                } else {
+                    self.staging.display().to_string()
+                },
+                source,
+            })
     }
 
     fn owned_path(&self) -> Option<&Path> {
@@ -395,12 +311,7 @@ impl Drop for RunDirectory {
     }
 }
 
-#[cfg(unix)]
 impl RunCapability {
-    const fn supports_model_artifacts() -> bool {
-        true
-    }
-
     fn claim_beneath(root: &Dir, run: &str) -> io::Result<Self> {
         Self::claim_beneath_with_root(root, root.try_clone(), run)
     }
@@ -639,7 +550,6 @@ impl RunCapability {
     }
 }
 
-#[cfg(unix)]
 fn open_configured_root(workspace: &Dir, configured: &Path) -> io::Result<Dir> {
     let mut current = workspace.try_clone()?;
     for component in configured_components(configured)? {
@@ -649,7 +559,6 @@ fn open_configured_root(workspace: &Dir, configured: &Path) -> io::Result<Dir> {
 }
 
 /// The components of a configured workspace-relative report directory, refused unless each is one plain UTF-8 name.
-#[cfg(unix)]
 fn configured_components(configured: &Path) -> io::Result<Vec<&str>> {
     let components = configured
         .components()
@@ -677,13 +586,11 @@ fn configured_components(configured: &Path) -> io::Result<Vec<&str>> {
     Ok(components)
 }
 
-#[cfg(unix)]
 enum ExistingStoreRoot {
     Missing,
     Present(Dir),
 }
 
-#[cfg(unix)]
 fn open_existing_configured_root(
     workspace: &Dir,
     configured: &Path,
@@ -699,7 +606,6 @@ fn open_existing_configured_root(
     Ok(ExistingStoreRoot::Present(current))
 }
 
-#[cfg(unix)]
 fn ensure_directory_at(parent: &Dir, entry: &str) -> io::Result<Dir> {
     let entry_name = name(entry)?;
     let directory = match parent.open_dir(entry_name) {
@@ -726,7 +632,6 @@ fn ensure_directory_at(parent: &Dir, entry: &str) -> io::Result<Dir> {
     Ok(directory)
 }
 
-#[cfg(unix)]
 fn require_private_directory(directory: &Dir) -> io::Result<()> {
     if directory.status()?.kind != Kind::Directory {
         return Err(io::Error::new(
@@ -755,7 +660,6 @@ fn require_private_directory(directory: &Dir) -> io::Result<()> {
     }
 }
 
-#[cfg(unix)]
 fn create_private_claim_directory(parent: &Dir, final_name: &str) -> io::Result<Dir> {
     const ATTEMPTS: usize = 8;
     let final_entry = name(final_name)?;
@@ -807,7 +711,6 @@ fn create_private_claim_directory(parent: &Dir, final_name: &str) -> io::Result<
     ))
 }
 
-#[cfg(unix)]
 fn ensure_private_marker(directory: &Dir) -> io::Result<()> {
     const MARKER: &str = ".gitignore";
     const CONTENTS: &[u8] = b"*\n";
@@ -837,7 +740,6 @@ fn ensure_private_marker(directory: &Dir) -> io::Result<()> {
     directory.sync()
 }
 
-#[cfg(unix)]
 fn ensure_writable_spelling_at(directory: &Dir, run: &str) -> io::Result<()> {
     let wanted = StoredRunId::try_from(run).map_err(|error| {
         io::Error::new(
@@ -874,7 +776,6 @@ fn ensure_writable_spelling_at(directory: &Dir, run: &str) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 fn claim_cleanup_error(primary: io::Error, cleanup: io::Result<()>) -> io::Error {
     match cleanup {
         Ok(()) => primary,
@@ -884,7 +785,6 @@ fn claim_cleanup_error(primary: io::Error, cleanup: io::Result<()>) -> io::Error
     }
 }
 
-#[cfg(unix)]
 fn remove_empty_if_identity(parent: &Dir, entry: &str, expected: &Status) -> io::Result<()> {
     let entry_name = name(entry)?;
     let gone = || {
@@ -910,7 +810,6 @@ fn remove_empty_if_identity(parent: &Dir, entry: &str, expected: &Status) -> io:
     parent.sync()
 }
 
-#[cfg(unix)]
 fn quarantine_named_entry(directory: &Dir, original: &str, stem: &str) -> io::Result<String> {
     quarantine_entry_with(directory, original, stem, || {
         let mut token = [0_u8; 16];
@@ -923,7 +822,6 @@ fn quarantine_named_entry(directory: &Dir, original: &str, stem: &str) -> io::Re
     })
 }
 
-#[cfg(unix)]
 fn quarantine_entry_with<F>(
     directory: &Dir,
     original: &str,
@@ -952,13 +850,11 @@ where
     ))
 }
 
-#[cfg(unix)]
 fn named_directory_matches(parent: &Dir, entry: &str, expected: &Dir) -> io::Result<bool> {
     let actual = open_directory_at(parent, entry)?;
     Ok(expected.status()?.identity == actual.status()?.identity)
 }
 
-#[cfg(unix)]
 fn require_same_directory(expected: &Dir, actual: &Dir) -> io::Result<()> {
     let expected = expected.status()?;
     let actual = actual.status()?;
@@ -973,7 +869,6 @@ fn require_same_directory(expected: &Dir, actual: &Dir) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 fn read_regular_artifact(file: std::fs::File, expected: u64) -> io::Result<Vec<u8>> {
     let status = rust_mutants::capdir::file_status(&file)?;
     if status.kind != Kind::File || status.len != expected {
@@ -1009,12 +904,10 @@ fn read_regular_artifact(file: std::fs::File, expected: u64) -> io::Result<Vec<u
     Ok(bytes)
 }
 
-#[cfg(unix)]
 fn open_directory(path: &Path) -> io::Result<Dir> {
     Dir::open(path)
 }
 
-#[cfg(unix)]
 fn read_optional_config_at(workspace: &Dir, path: &Path) -> Result<Option<String>, StoreError> {
     let opened = name(crate::config::FILE_NAME).and_then(|file| workspace.open_file(file));
     let file = match opened {
@@ -1030,7 +923,6 @@ fn read_optional_config_at(workspace: &Dir, path: &Path) -> Result<Option<String
     read_configuration_descriptor(file, path).map(Some)
 }
 
-#[cfg(unix)]
 fn read_configuration_descriptor(file: std::fs::File, path: &Path) -> Result<String, StoreError> {
     const MAX_CONFIG_BYTES: u64 = 1_048_576;
     let status =
@@ -1065,31 +957,13 @@ fn read_configuration_descriptor(file: std::fs::File, path: &Path) -> Result<Str
 /// # Errors
 /// Refuses unsafe, oversized, changing, non-UTF-8, or unreadable bytes.
 pub(crate) fn read_configuration(path: &Path) -> Result<String, StoreError> {
-    #[cfg(unix)]
-    {
-        use rustix::fs::{Mode, OFlags};
-
-        let descriptor = rustix::fs::open(
-            path,
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
-            Mode::empty(),
-        )
-        .map_err(|error| StoreError::NotKept {
-            path: path.display().to_string(),
-            source: io::Error::from(error),
-        })?;
-        read_configuration_descriptor(std::fs::File::from(descriptor), path)
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::read_to_string(path).map_err(|source| StoreError::NotKept {
-            path: path.display().to_string(),
-            source,
-        })
-    }
+    let file = rust_mutants::capdir::open_file_at(path).map_err(|source| StoreError::NotKept {
+        path: path.display().to_string(),
+        source,
+    })?;
+    read_configuration_descriptor(file, path)
 }
 
-#[cfg(unix)]
 fn read_optional_regular_at(
     directory: &Dir,
     file_name: &str,
@@ -1123,17 +997,14 @@ fn read_optional_regular_at(
         .map_err(not_kept)
 }
 
-#[cfg(unix)]
 fn open_directory_at(directory: &Dir, entry: &str) -> io::Result<Dir> {
     directory.open_dir(name(entry)?)
 }
 
-#[cfg(unix)]
 fn directory_names(directory: &Dir) -> io::Result<Vec<String>> {
     directory.entries()
 }
 
-#[cfg(unix)]
 fn require_regular_at(directory: &Dir, entry: &str) -> io::Result<()> {
     match directory.status_at(name(entry)?)? {
         Some(status) if status.kind == Kind::File => Ok(()),
@@ -1148,7 +1019,6 @@ fn require_regular_at(directory: &Dir, entry: &str) -> io::Result<()> {
     }
 }
 
-#[cfg(unix)]
 fn validate_model_names(directory: &Dir, expected: &mut BTreeSet<String>) -> io::Result<()> {
     for name in directory_names(directory)? {
         if !expected.remove(&name) {
@@ -1162,169 +1032,8 @@ fn validate_model_names(directory: &Dir, expected: &mut BTreeSet<String>) -> io:
     Ok(())
 }
 
-#[cfg(unix)]
 fn remove_open_tree(directory: &Dir) -> io::Result<()> {
     directory.remove_contents()
-}
-
-#[cfg(not(unix))]
-impl RunCapability {
-    const fn supports_model_artifacts() -> bool {
-        false
-    }
-
-    #[cfg_attr(
-        not(unix),
-        expect(
-            clippy::missing_const_for_fn,
-            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-        )
-    )]
-    fn claim(_store: &Store, _name: &str) -> Result<Self, StoreError> {
-        Err(StoreError::UnsupportedCapability)
-    }
-
-    #[cfg_attr(
-        not(unix),
-        expect(
-            clippy::unused_self,
-            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-        )
-    )]
-    fn write_new(&self, _staging: &Path, _name: &str, _bytes: &[u8]) -> io::Result<()> {
-        Err(unsupported_capability())
-    }
-
-    #[cfg_attr(
-        not(unix),
-        expect(
-            clippy::unused_self,
-            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-        )
-    )]
-    fn sync_tree(&self, _staging: &Path) -> io::Result<()> {
-        Err(unsupported_capability())
-    }
-
-    #[cfg_attr(
-        not(unix),
-        expect(
-            clippy::unused_self,
-            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-        )
-    )]
-    fn read_model_artifact(
-        &self,
-        _staging: &Path,
-        _relative: &Path,
-        _expected: u64,
-    ) -> io::Result<Vec<u8>> {
-        Err(unsupported_capability())
-    }
-
-    #[cfg_attr(
-        not(unix),
-        expect(
-            clippy::unused_self,
-            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-        )
-    )]
-    fn read_publication_file(
-        &self,
-        _staging: &Path,
-        _name: &str,
-        _expected: u64,
-    ) -> io::Result<Vec<u8>> {
-        Err(unsupported_capability())
-    }
-
-    #[cfg_attr(
-        not(unix),
-        expect(
-            clippy::unused_self,
-            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-        )
-    )]
-    fn validate_closed_tree(
-        &self,
-        _files: &[PublicationFile],
-        _artifacts: &[crate::report::ModelArtifact],
-    ) -> io::Result<()> {
-        Err(unsupported_capability())
-    }
-
-    #[cfg_attr(
-        not(unix),
-        expect(
-            clippy::unused_self,
-            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-        )
-    )]
-    fn publish(
-        &self,
-        _name: &str,
-        _staging_parent: &Path,
-        _published_parent: &Path,
-    ) -> io::Result<()> {
-        Err(unsupported_capability())
-    }
-
-    #[cfg_attr(
-        not(unix),
-        expect(
-            clippy::unused_self,
-            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-        )
-    )]
-    fn published_entry_matches(&self, _name: &str) -> io::Result<bool> {
-        Err(unsupported_capability())
-    }
-
-    #[cfg_attr(
-        not(unix),
-        expect(
-            clippy::unused_self,
-            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-        )
-    )]
-    fn validate_run_spelling(&self, _name: &str) -> io::Result<()> {
-        Err(unsupported_capability())
-    }
-
-    #[cfg_attr(
-        not(unix),
-        expect(
-            clippy::unused_self,
-            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-        )
-    )]
-    fn staging_entry_matches(&self, _name: &str, _staging_parent: &Path) -> io::Result<bool> {
-        Err(unsupported_capability())
-    }
-
-    #[cfg_attr(
-        not(unix),
-        expect(
-            clippy::unused_self,
-            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-        )
-    )]
-    fn sync_parent(
-        &self,
-        _published: bool,
-        _staging_parent: &Path,
-        _published_parent: &Path,
-    ) -> io::Result<()> {
-        Err(unsupported_capability())
-    }
-}
-
-#[cfg(not(unix))]
-fn unsupported_capability() -> io::Error {
-    io::Error::new(
-        io::ErrorKind::Unsupported,
-        "durable report publication requires a supported capability backend",
-    )
 }
 
 impl WorkspaceRoot {
@@ -1332,22 +1041,13 @@ impl WorkspaceRoot {
     ///
     /// # Errors
     /// Refuses a missing, non-directory, symlinked, or unreadable workspace.
-    #[cfg_attr(
-        not(unix),
-        expect(
-            clippy::unnecessary_wraps,
-            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-        )
-    )]
     pub(crate) fn open(path: &Path) -> Result<Self, StoreError> {
-        #[cfg(unix)]
         let directory = open_directory(path).map_err(|source| StoreError::NotKept {
             path: path.display().to_string(),
             source,
         })?;
         Ok(Self {
             path: path.to_path_buf(),
-            #[cfg(unix)]
             directory,
         })
     }
@@ -1357,68 +1057,30 @@ impl WorkspaceRoot {
     /// # Errors
     /// Refuses non-regular, symlinked, oversized, non-UTF-8, malformed, or unreadable configuration bytes.
     pub(crate) fn load_config(&self) -> Result<LoadedConfiguration, StoreError> {
-        #[cfg(unix)]
-        {
-            let path = self.path.join(crate::config::FILE_NAME);
-            let Some(text) = read_optional_config_at(&self.directory, &path)? else {
-                return Ok(LoadedConfiguration {
-                    config: crate::config::Config::unwritten(),
-                    source: ConfigurationSource::Defaults,
-                });
-            };
-            crate::config::Config::parse(&text, &path)
-                .map(|config| LoadedConfiguration {
-                    config,
-                    source: ConfigurationSource::WorkspaceFile,
-                })
-                .map_err(StoreError::from)
-        }
-        #[cfg(not(unix))]
-        {
-            let path = self.path.join(crate::config::FILE_NAME);
-            let source = match std::fs::symlink_metadata(&path) {
-                Ok(metadata) if metadata.file_type().is_file() => {
-                    ConfigurationSource::WorkspaceFile
-                }
-                Ok(_unsafe_kind) => {
-                    return Err(StoreError::UnsafePath {
-                        path,
-                        message: "the configuration is not one regular file".to_owned(),
-                    });
-                }
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    ConfigurationSource::Defaults
-                }
-                Err(source) => {
-                    return Err(StoreError::NotKept {
-                        path: path.display().to_string(),
-                        source,
-                    });
-                }
-            };
-            crate::config::Config::load(&self.path)
-                .map(|config| LoadedConfiguration { config, source })
-                .map_err(StoreError::from)
-        }
+        let path = self.path.join(crate::config::FILE_NAME);
+        let Some(text) = read_optional_config_at(&self.directory, &path)? else {
+            return Ok(LoadedConfiguration {
+                config: crate::config::Config::unwritten(),
+                source: ConfigurationSource::Defaults,
+            });
+        };
+        crate::config::Config::parse(&text, &path)
+            .map(|config| LoadedConfiguration {
+                config,
+                source: ConfigurationSource::WorkspaceFile,
+            })
+            .map_err(StoreError::from)
     }
 
     /// Derives a report store from the same workspace object that supplied the configuration.
     ///
     /// # Errors
     /// Refuses when the retained workspace descriptor cannot be duplicated.
-    #[cfg_attr(
-        not(unix),
-        expect(
-            clippy::unnecessary_wraps,
-            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-        )
-    )]
     pub(crate) fn store(
         &self,
         configured: &crate::config::ReportDirectory,
     ) -> Result<Store, StoreError> {
         let root = self.path.join(configured.as_path());
-        #[cfg(unix)]
         let workspace = self
             .directory
             .try_clone()
@@ -1426,7 +1088,6 @@ impl WorkspaceRoot {
                 path: self.path.display().to_string(),
                 source,
             })?;
-        #[cfg(unix)]
         let report_root = {
             let bound = std::sync::Arc::new(std::sync::OnceLock::new());
             match open_existing_configured_root(&self.directory, configured.as_path()) {
@@ -1453,9 +1114,7 @@ impl WorkspaceRoot {
             runs: root.join(RUNS_NAME),
             root,
             configured: configured.clone(),
-            #[cfg(unix)]
             workspace,
-            #[cfg(unix)]
             report_root,
         })
     }
@@ -1483,41 +1142,18 @@ impl StoredRun {
     /// Reads one closed stored file through this held run capability.
     ///
     /// # Errors
-    /// Refuses symlinks, non-regular entries, oversized bytes, concurrent changes, non-UTF-8 text, and unsupported hosts.
-    #[cfg_attr(
-        not(unix),
-        expect(
-            clippy::missing_const_for_fn,
-            clippy::unused_self,
-            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-        )
-    )]
+    /// Refuses symlinks, non-regular entries, oversized bytes, concurrent changes, and non-UTF-8 text.
     pub(crate) fn read(&self, file: StoredFile) -> Result<Option<String>, StoreError> {
-        #[cfg(unix)]
-        {
-            let path = self.display.join(file.name());
-            let Some(bytes) = read_optional_regular_at(&self.directory, file.name(), &path)? else {
-                return Ok(None);
-            };
-            String::from_utf8(bytes)
-                .map(Some)
-                .map_err(|source| StoreError::UnsafePath {
-                    path,
-                    message: format!("stored report text is not UTF-8: {source}"),
-                })
-        }
-        #[cfg(not(unix))]
-        {
-            #[cfg_attr(
-                not(unix),
-                expect(
-                    clippy::no_effect_underscore_binding,
-                    reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-                )
-            )]
-            let _file = file;
-            Err(StoreError::UnsupportedCapability)
-        }
+        let path = self.display.join(file.name());
+        let Some(bytes) = read_optional_regular_at(&self.directory, file.name(), &path)? else {
+            return Ok(None);
+        };
+        String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|source| StoreError::UnsafePath {
+                path,
+                message: format!("stored report text is not UTF-8: {source}"),
+            })
     }
 
     /// Reads the required canonical report document.
@@ -1567,7 +1203,6 @@ impl Store {
     /// # Errors
     /// Refuses an existing entry, an ASCII-case alias, or any filesystem failure.
     /// A model phase therefore cannot write into a stale or pre-populated report namespace.
-    #[cfg(unix)]
     pub(crate) fn claim_writable_run(&self, run_id: &RunId) -> Result<RunDirectory, StoreError> {
         let staging_root = self.root.join(STAGING_NAME);
         let published = self.writable_run(run_id);
@@ -1596,102 +1231,38 @@ impl Store {
         })
     }
 
-    #[cfg(not(unix))]
-    pub(crate) fn claim_writable_run(&self, run_id: &RunId) -> Result<RunDirectory, StoreError> {
-        let staging = self.root.join(STAGING_NAME).join(run_id.as_str());
-        let published = self.writable_run(run_id);
-        let capability = RunCapability::claim(self, run_id.as_str())?;
-        Ok(RunDirectory {
-            store: self.try_clone().map_err(|source| StoreError::NotKept {
-                path: self.root.display().to_string(),
-                source,
-            })?,
-            run_id: run_id.clone(),
-            staging,
-            published,
-            capability,
-            ownership: RunOwnership::Staging,
-        })
-    }
-
     /// Opens one explicit canonical run beneath this held store root.
     ///
     /// # Errors
     /// Refuses absent, aliased, symlinked, replaced, or unsupported entries.
-    #[cfg_attr(
-        not(unix),
-        expect(
-            clippy::missing_const_for_fn,
-            clippy::unused_self,
-            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-        )
-    )]
     pub(crate) fn open_run(&self, id: &StoredRunId) -> Result<StoredRun, StoreError> {
-        #[cfg(unix)]
-        {
-            let root = match self.open_existing_root()? {
-                StoreRootState::Missing => {
-                    return Err(StoreError::UnsafePath {
-                        path: self.root.clone(),
-                        message: "the configured report store does not exist".to_owned(),
-                    });
-                }
-                StoreRootState::Open(root) => root,
-            };
-            let runs = RunsRoot::open_at(&root)?;
-            open_stored_run(self, &runs, id)
-        }
-        #[cfg(not(unix))]
-        {
-            #[cfg_attr(
-                not(unix),
-                expect(
-                    clippy::no_effect_underscore_binding,
-                    reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-                )
-            )]
-            let _id = id;
-            Err(StoreError::UnsupportedCapability)
-        }
+        let root = match self.open_existing_root()? {
+            StoreRootState::Missing => {
+                return Err(StoreError::UnsafePath {
+                    path: self.root.clone(),
+                    message: "the configured report store does not exist".to_owned(),
+                });
+            }
+            StoreRootState::Open(root) => root,
+        };
+        let runs = RunsRoot::open_at(&root)?;
+        open_stored_run(self, &runs, id)
     }
 
     /// Opens the exact run selected by one held and strictly decoded index.
     ///
     /// # Errors
     /// Returns the closed index or run-directory capability failure.
-    #[cfg_attr(
-        not(unix),
-        expect(
-            clippy::missing_const_for_fn,
-            clippy::unused_self,
-            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-        )
-    )]
     pub(crate) fn pointed_run(&self, index: Index) -> Result<Option<StoredRun>, StoreError> {
-        #[cfg(unix)]
-        {
-            let root = match self.open_existing_root()? {
-                StoreRootState::Missing => return Ok(None),
-                StoreRootState::Open(root) => root,
-            };
-            let runs = RunsRoot::open_at(&root)?;
-            let Some(id) = pointed_at_root(self, &root, &runs, index)? else {
-                return Ok(None);
-            };
-            open_stored_run(self, &runs, &id).map(Some)
-        }
-        #[cfg(not(unix))]
-        {
-            #[cfg_attr(
-                not(unix),
-                expect(
-                    clippy::no_effect_underscore_binding,
-                    reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-                )
-            )]
-            let _index = index;
-            Err(StoreError::UnsupportedCapability)
-        }
+        let root = match self.open_existing_root()? {
+            StoreRootState::Missing => return Ok(None),
+            StoreRootState::Open(root) => root,
+        };
+        let runs = RunsRoot::open_at(&root)?;
+        let Some(id) = pointed_at_root(self, &root, &runs, index)? else {
+            return Ok(None);
+        };
+        open_stored_run(self, &runs, &id).map(Some)
     }
 
     /// The canonical run identity one index names, retained only for authority-internal retention and tests.
@@ -1704,7 +1275,6 @@ impl Store {
             .map(|run| run.map(|opened| opened.id))
     }
 
-    #[cfg(unix)]
     fn open_existing_root(&self) -> Result<StoreRootState, StoreError> {
         if let Some(directory) = self.bound_root()? {
             return Ok(StoreRootState::Open(StoreRoot { directory }));
@@ -1721,7 +1291,6 @@ impl Store {
         }
     }
 
-    #[cfg(unix)]
     fn open_or_create_root(&self) -> Result<Dir, StoreError> {
         if let Some(directory) = self.bound_root()? {
             return Ok(directory);
@@ -1736,7 +1305,6 @@ impl Store {
         self.bind_root(directory)
     }
 
-    #[cfg(unix)]
     fn bound_root(&self) -> Result<Option<Dir>, StoreError> {
         self.report_root
             .get()
@@ -1748,7 +1316,6 @@ impl Store {
             })
     }
 
-    #[cfg(unix)]
     fn bind_root(&self, candidate: Dir) -> Result<Dir, StoreError> {
         if let Some(bound) = self.report_root.get() {
             require_same_directory(bound, &candidate).map_err(|source| StoreError::NotKept {
@@ -1805,21 +1372,12 @@ impl Store {
         format!("{}/{RUNS_NAME}/{run_id}", self.configured.as_str())
     }
 
-    #[cfg_attr(
-        not(unix),
-        expect(
-            clippy::unnecessary_wraps,
-            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-        )
-    )]
     fn try_clone(&self) -> io::Result<Self> {
         Ok(Self {
             runs: self.runs.clone(),
             root: self.root.clone(),
             configured: self.configured.clone(),
-            #[cfg(unix)]
             workspace: self.workspace.try_clone()?,
-            #[cfg(unix)]
             report_root: std::sync::Arc::clone(&self.report_root),
         })
     }
@@ -1827,8 +1385,7 @@ impl Store {
     /// Retires old runs through this store's already-held workspace root.
     ///
     /// # Errors
-    /// Refuses an incomplete index view, unsafe run entry, unsupported host,
-    /// or any deletion/synchronization failure.
+    /// Refuses an incomplete index view, an unsafe run entry, or any deletion/synchronization failure.
     pub(crate) fn retain(&self, keep: u32) -> Result<Vec<PathBuf>, StoreError> {
         retain_with_capability(self, keep)
     }
@@ -1931,12 +1488,6 @@ pub enum StoreError {
     /// The configured report root could not be established.
     #[error(transparent)]
     Configuration(#[from] crate::config::ConfigError),
-    /// This non-Unix host lacks the handle-relative filesystem backend needed for authoritative report reads, writes, deletion, and publication.
-    #[error(
-        "{}: this platform has no supported capability-rooted report publication backend",
-        error::REPORT_NOT_KEPT.code
-    )]
-    UnsupportedCapability,
     /// The report itself is not one that may be persisted.
     #[error(transparent)]
     Report(#[from] json::ReportError),
@@ -1999,9 +1550,6 @@ pub enum StoreError {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum PublicationError {
-    /// The host cannot bind authoritative report bytes strongly enough to publish them.
-    #[error("this platform has no supported capability-rooted report backend")]
-    UnsupportedCapability,
     /// The completed document failed its own closed audit.
     #[error(transparent)]
     Report(#[from] json::ReportError),
@@ -2045,8 +1593,7 @@ impl StoreError {
             Self::Configuration(error) => error.code(),
             Self::Report(error) => error.code(),
             Self::Count(_) | Self::Junit(_) => error::REPORT_UNSOUND,
-            Self::UnsupportedCapability
-            | Self::RunId { .. }
+            Self::RunId { .. }
             | Self::Index { .. }
             | Self::UnsafePath { .. }
             | Self::NotKept { .. }
@@ -2058,7 +1605,6 @@ impl StoreError {
 impl From<PublicationError> for StoreError {
     fn from(failure: PublicationError) -> Self {
         match failure {
-            PublicationError::UnsupportedCapability => Self::UnsupportedCapability,
             PublicationError::Report(error) => Self::Report(error),
             PublicationError::Count(source) => Self::Count(source),
             PublicationError::Junit(source) => Self::Junit(source),
@@ -2217,12 +1763,6 @@ fn seal(
     report: &ReportDocument,
     document_text: &str,
 ) -> Result<SealedRunDirectory, StoreError> {
-    if !RunCapability::supports_model_artifacts() && !report.model_artifacts().is_empty() {
-        return Err(abort_after(
-            claimed,
-            PublicationError::UnsupportedCapability,
-        ));
-    }
     if let Err(error) = validate_model_artifacts(&claimed, report) {
         return Err(abort_after(claimed, error));
     }
@@ -2598,13 +2138,12 @@ fn retain_checked_directory(
     }
 }
 
-#[cfg(unix)]
 fn sync_open_tree(directory: &Dir) -> io::Result<()> {
     use rust_mutants::capdir::Entry;
 
     for entry in directory.entries()? {
         match directory.open_entry(name(&entry)?)? {
-            Entry::File(file) => file.sync_all()?,
+            Entry::File(file) => rust_mutants::capdir::sync_file(&file)?,
             Entry::Dir(child) => sync_open_tree(&child)?,
             Entry::Other => {
                 return Err(io::Error::other(format!(
@@ -2626,10 +2165,8 @@ pub fn retain(root: &Path, keep: u32) -> Result<Vec<PathBuf>, StoreError> {
 }
 
 /// The retention quarantine stem, kept beside the removal it guards.
-#[cfg(unix)]
 const RETENTION_STEM: &str = ".njutest-retention";
 
-#[cfg(unix)]
 fn retain_with_capability(store: &Store, keep: u32) -> Result<Vec<PathBuf>, StoreError> {
     let root = match store.open_existing_root()? {
         StoreRootState::Missing => return Ok(Vec::new()),
@@ -2700,7 +2237,6 @@ fn retain_with_capability(store: &Store, keep: u32) -> Result<Vec<PathBuf>, Stor
 ///
 /// # Errors
 /// Returns the refusal for a run whose name changed identity first.
-#[cfg(unix)]
 fn quarantine_retained_run(runs: &Dir, candidate: &str, held: &Dir) -> io::Result<(String, Dir)> {
     let quarantine = quarantine_named_entry(runs, candidate, RETENTION_STEM)?;
     let quarantined = open_directory_at(runs, &quarantine)?;
@@ -2716,7 +2252,6 @@ fn quarantine_retained_run(runs: &Dir, candidate: &str, held: &Dir) -> io::Resul
 ///
 /// # Errors
 /// Returns the refusal for a run that changed identity while it was removed.
-#[cfg(unix)]
 fn destroy_quarantined_run(runs: &Dir, quarantine: &str, quarantined: &Dir) -> io::Result<()> {
     remove_open_tree(quarantined)?;
     if !named_directory_matches(runs, quarantine, quarantined)? {
@@ -2732,7 +2267,6 @@ fn destroy_quarantined_run(runs: &Dir, quarantine: &str, quarantined: &Dir) -> i
 ///
 /// # Errors
 /// Returns the closed index error when an index is unreadable or malformed.
-#[cfg(unix)]
 fn index_now_names(
     store: &Store,
     root: &StoreRoot,
@@ -2765,21 +2299,8 @@ fn index_now_names(
 ///
 /// # Errors
 /// Returns the refusal when the original name was taken while it was away.
-#[cfg(unix)]
 fn restore_from_quarantine(runs: &Dir, quarantine: &str, run: &str) -> io::Result<()> {
     runs.rename_noreplace(name(quarantine)?, runs, name(run)?)
-}
-
-#[cfg(not(unix))]
-#[cfg_attr(
-    not(unix),
-    expect(
-        clippy::missing_const_for_fn,
-        reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-    )
-)]
-fn retain_with_capability(_store: &Store, _keep: u32) -> Result<Vec<PathBuf>, StoreError> {
-    Err(StoreError::UnsupportedCapability)
 }
 
 /// The run one index names, if it names one.
@@ -2810,7 +2331,6 @@ fn point(authority: &RunDirectory, index: Index, run_id: &RunId) -> Result<(), S
     write_index(authority, index, text.as_bytes())
 }
 
-#[cfg(unix)]
 fn pointed_at_root(
     store: &Store,
     root: &StoreRoot,
@@ -2864,7 +2384,6 @@ fn pointed_at_root(
     Ok(Some(pointer.run_id))
 }
 
-#[cfg(unix)]
 fn open_stored_run(
     store: &Store,
     runs: &RunsRoot,
@@ -2910,7 +2429,6 @@ fn open_stored_run(
     })
 }
 
-#[cfg(unix)]
 fn read_index_at(root: &Dir, index: Index, path: &Path) -> Result<Option<String>, StoreError> {
     const MAX_INDEX_BYTES: u64 = 65_536;
     let refused = |message: String| StoreError::Index {
@@ -2936,7 +2454,6 @@ fn read_index_at(root: &Dir, index: Index, path: &Path) -> Result<Option<String>
         .map_err(|error| refused(error.to_string()))
 }
 
-#[cfg(unix)]
 fn stored_spellings_at(
     store: &Store,
     runs: &RunsRoot,
@@ -2975,12 +2492,10 @@ fn stored_spellings_at(
     Ok(spellings)
 }
 
-#[cfg(unix)]
 fn read_named_regular(directory: &Dir, entry: &str, expected: u64) -> io::Result<Vec<u8>> {
     read_regular_artifact(directory.open_file(name(entry)?)?, expected)
 }
 
-#[cfg(unix)]
 fn write_index(authority: &RunDirectory, index: Index, bytes: &[u8]) -> Result<(), StoreError> {
     let store = &authority.store;
     let root = &authority.capability.root;
@@ -3029,19 +2544,6 @@ fn write_index(authority: &RunDirectory, index: Index, bytes: &[u8]) -> Result<(
         .map_err(not_kept(store.root.display().to_string()))
 }
 
-#[cfg(not(unix))]
-#[cfg_attr(
-    not(unix),
-    expect(
-        clippy::missing_const_for_fn,
-        reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
-    )
-)]
-fn write_index(_authority: &RunDirectory, _index: Index, _bytes: &[u8]) -> Result<(), StoreError> {
-    Err(StoreError::UnsupportedCapability)
-}
-
-#[cfg(unix)]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Pointer {
@@ -3050,7 +2552,6 @@ struct Pointer {
     directory: String,
 }
 
-#[cfg(unix)]
 fn remember_unique_spelling(
     spellings: &mut BTreeMap<String, (StoredRunId, PathBuf)>,
     run: &StoredRunId,
@@ -3071,28 +2572,37 @@ fn remember_unique_spelling(
 
 #[cfg(test)]
 mod tests {
-    #![cfg_attr(
-        unix,
-        expect(
-            clippy::disallowed_methods,
-            reason = "a test asserts what the filesystem says by asking it directly"
-        )
+    #![expect(
+        clippy::disallowed_methods,
+        reason = "a test asserts what the filesystem says by asking it directly"
     )]
     use super::Store;
-    #[cfg(unix)]
     use super::{SealedRunDirectory, publish, publish_with, validate_model_artifact};
     use rust_mutants::id::RunId;
-    #[cfg(unix)]
     use std::cell::{Cell, RefCell};
     use std::path::Path;
-    #[cfg(unix)]
     use std::rc::Rc;
 
     fn store(root: &Path) -> Store {
         Store::read(root).expect("default report store")
     }
 
-    #[cfg(unix)]
+    /// Makes `at` a link to the directory `target`: a symbolic link on Unix, and on Windows a junction, which any user may make.
+    fn link_directory(target: &Path, at: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, at).expect("adversarial link");
+        #[cfg(windows)]
+        {
+            let made = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(at)
+                .arg(target)
+                .output()
+                .expect("mklink runs");
+            assert!(made.status.success(), "a junction was made: {made:?}");
+        }
+    }
+
     fn sealed(directory: super::RunDirectory) -> SealedRunDirectory {
         SealedRunDirectory {
             directory,
@@ -3101,7 +2611,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     #[test]
     fn dropping_an_armed_claim_removes_its_private_namespace() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -3134,7 +2643,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn configuration_and_claim_share_the_original_workspace_capability() {
         let parent = tempfile::tempdir().expect("temporary parent");
@@ -3200,7 +2708,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn readers_and_retention_share_one_bound_report_root() {
         let parent = tempfile::tempdir().expect("temporary parent");
@@ -3259,7 +2766,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn explicit_and_indexed_readers_keep_the_selected_run_directory_open() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -3312,32 +2818,8 @@ mod tests {
         );
     }
 
-    #[cfg(not(unix))]
-    #[test]
-    fn authority_bearing_store_operations_are_typed_refusals_without_a_backend() {
-        let root = tempfile::tempdir().expect("temporary project");
-        let store = store(root.path());
-        let run_id = RunId::try_from("20260101t000000z-aaaaab").expect("canonical run id");
-
-        assert!(matches!(
-            store.claim_writable_run(&run_id),
-            Err(super::StoreError::UnsupportedCapability)
-        ));
-        assert!(matches!(
-            store.pointed_at(super::Index::Any),
-            Err(super::StoreError::UnsupportedCapability)
-        ));
-        assert!(matches!(
-            super::retain_with_capability(&store, 1),
-            Err(super::StoreError::UnsupportedCapability)
-        ));
-    }
-
-    #[cfg(unix)]
     #[test]
     fn tree_sync_refuses_a_symlink_instead_of_following_it() {
-        use std::os::unix::fs::symlink;
-
         let root = tempfile::tempdir().expect("temporary project");
         let outside = tempfile::tempdir().expect("outside directory");
         let store = store(root.path());
@@ -3345,12 +2827,11 @@ mod tests {
         let claimed = store
             .claim_writable_run(&run_id)
             .expect("fresh unpublished namespace");
-        symlink(outside.path(), claimed.path().join("escaped")).expect("adversarial link");
+        link_directory(outside.path(), &claimed.path().join("escaped"));
         assert!(claimed.sync_tree().is_err());
         claimed.abort().expect("remove the refused tree");
     }
 
-    #[cfg(unix)]
     #[test]
     fn model_artifact_is_rehashed_from_the_held_directory_before_publication() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -3381,7 +2862,6 @@ mod tests {
         claimed.abort().expect("remove the refused tree");
     }
 
-    #[cfg(unix)]
     #[test]
     fn an_artifact_changed_after_sealing_is_removed_instead_of_published() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -3421,7 +2901,6 @@ mod tests {
         ));
     }
 
-    #[cfg(unix)]
     #[test]
     fn an_unretained_file_cannot_cross_the_sealed_publication_boundary() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -3443,7 +2922,6 @@ mod tests {
         ));
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_held_report_root_prevents_mixed_parent_capabilities() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -3481,7 +2959,6 @@ mod tests {
             .expect("remove the held claim");
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_root_capability_clone_failure_creates_no_store_namespace() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -3533,7 +3010,6 @@ mod tests {
         claimed.abort().expect("remove the held run claim");
     }
 
-    #[cfg(unix)]
     #[test]
     fn an_abandoned_index_temporary_cannot_block_a_later_run() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -3568,7 +3044,6 @@ mod tests {
         claimed.abort().expect("remove the successor claim");
     }
 
-    #[cfg(unix)]
     #[test]
     fn configured_report_root_cannot_escape_the_workspace_capability() {
         let root = tempfile::tempdir().expect("temporary parent");
@@ -3582,11 +3057,8 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn index_reader_uses_one_nofollow_root_capability() {
-        use std::os::unix::fs::symlink;
-
         let root = tempfile::tempdir().expect("temporary project");
         let store = store(root.path());
         let initializing = RunId::try_from("20260101t000000z-cccdca").expect("canonical run id");
@@ -3595,9 +3067,10 @@ mod tests {
             .expect("initialize the capability-rooted store")
             .abort()
             .expect("remove the initializing claim");
-        let outside = root.path().join("outside-index.json");
-        std::fs::write(&outside, b"{}\n").expect("external index target");
-        symlink(&outside, store.index(super::Index::Any)).expect("adversarial index symlink");
+        let outside = root.path().join("outside-index");
+        std::fs::create_dir_all(&outside).expect("external index target");
+        std::fs::write(outside.join("index.json"), b"{}\n").expect("external index bytes");
+        link_directory(&outside, &store.index(super::Index::Any));
 
         assert!(
             store.pointed_at(super::Index::Any).is_err(),
@@ -3605,7 +3078,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn cleanup_removes_a_nested_tree_through_quarantined_entries() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -3628,7 +3100,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn prepopulated_quarantine_names_cannot_block_owned_cleanup() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -3664,7 +3135,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn quarantine_collision_work_is_bounded_and_preserves_the_original() {
         let root = tempfile::tempdir().expect("temporary cleanup namespace");
@@ -3698,7 +3168,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn prepopulated_retention_quarantine_cannot_block_removal() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -3727,7 +3196,6 @@ mod tests {
         assert!(collision.is_dir(), "the foreign collision is never taken");
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_preexisting_casefold_alias_refuses_publication_before_rename() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -3753,7 +3221,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_casefold_alias_inserted_during_publish_aborts_the_owned_run() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -3798,7 +3265,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn cleanup_never_unlinks_a_replacement_for_the_held_directory() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -3830,7 +3296,6 @@ mod tests {
         claimed.abort().expect("remove the restored held directory");
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_failed_cleanup_keeps_the_claim_armed_for_drop() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -3903,7 +3368,53 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(windows)]
+    #[test]
+    fn a_namespace_the_store_holds_a_handle_beneath_is_neither_moved_nor_replaced_meanwhile() {
+        let root = tempfile::tempdir().expect("temporary project");
+        let store = store(root.path());
+        let run_id = RunId::try_from("20260101t000000z-abcdef").expect("canonical run id");
+        let claimed = store
+            .claim_writable_run(&run_id)
+            .expect("fresh unpublished namespace");
+        let staging_parent = claimed
+            .path()
+            .parent()
+            .expect("staging leaf has a parent")
+            .to_path_buf();
+        for (held, aside) in [
+            (&store.root, store.root.with_file_name("reports-moved")),
+            (
+                &staging_parent,
+                staging_parent.with_file_name(".pending-runs-moved"),
+            ),
+        ] {
+            let refused = std::fs::rename(held, &aside);
+            assert!(
+                matches!(&refused, Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied),
+                "Windows refuses to move a directory with a handle open beneath it, so the \
+                 replacement races the Unix laws stage cannot happen while a claim is held: \
+                 {held:?}: {refused:?}"
+            );
+        }
+        let (published, indexes) = publish(sealed(claimed), |authority| {
+            match super::point(authority, super::Index::Any, &run_id) {
+                Ok(()) => super::IndexPublication::Complete,
+                Err(error) => super::IndexPublication::Incomplete {
+                    index: super::Index::Any,
+                    error,
+                },
+            }
+        })
+        .expect("the held namespace publishes where it was claimed");
+        assert_eq!(published, store.writable_run(&run_id));
+        assert!(matches!(indexes, super::IndexPublication::Complete));
+        assert_eq!(
+            store.pointed_at(super::Index::Any).expect("the index"),
+            Some(rust_mutants::id::StoredRunId::from(&run_id))
+        );
+    }
+
     #[test]
     fn publication_syncs_both_rename_parents_before_disarming_the_claim() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -3927,7 +3438,7 @@ mod tests {
                     None => "<root>",
                 };
                 sync_events.borrow_mut().push(format!("sync:{name}"));
-                std::fs::File::open(directory)?.sync_all()
+                rust_mutants::capdir::Dir::open(directory)?.sync()
             },
             |_| super::IndexPublication::NotRequired,
         )
@@ -3941,7 +3452,6 @@ mod tests {
         assert!(matches!(published.1, super::IndexPublication::NotRequired));
     }
 
-    #[cfg(unix)]
     #[test]
     fn post_index_integrity_failure_never_deletes_the_indexed_run() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -3983,7 +3493,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn retention_over_a_replaced_namespace_without_the_indexed_run_is_a_typed_refusal() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -4167,7 +3676,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn failure_syncing_the_source_parent_aborts_the_published_authority() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -4209,10 +3717,9 @@ mod tests {
             .expect("remove the second claim");
     }
 
-    #[cfg(unix)]
     #[test]
     fn same_owner_legacy_namespaces_are_tightened_before_claiming() {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        use rust_mutants::capdir::{Dir, Privacy};
 
         let root = tempfile::tempdir().expect("temporary project");
         let report_root = root.path().join(crate::config::DEFAULT_REPORTS_DIRECTORY);
@@ -4220,9 +3727,25 @@ mod tests {
         let runs = report_root.join(super::RUNS_NAME);
         std::fs::create_dir_all(&staging).expect("legacy staging namespace");
         std::fs::create_dir_all(&runs).expect("legacy runs namespace");
+        #[cfg(unix)]
         for directory in [&staging, &runs] {
+            use std::os::unix::fs::PermissionsExt as _;
+
             std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o755))
                 .expect("legacy directory mode");
+        }
+        let privacy = |directory: &Path| {
+            Dir::open(directory)
+                .expect("the namespace held")
+                .privacy()
+                .expect("its privacy")
+        };
+        for directory in [&staging, &runs] {
+            assert_eq!(
+                privacy(directory),
+                Privacy::Loose,
+                "a namespace made the ordinary way admits more than its owner"
+            );
         }
 
         let store = store(root.path());
@@ -4231,18 +3754,23 @@ mod tests {
             .claim_writable_run(&run_id)
             .expect("same-owner legacy namespaces are migrated through held descriptors");
         for directory in [&staging, &runs] {
-            assert_eq!(
-                std::fs::metadata(directory)
-                    .expect("tightened namespace")
-                    .mode()
-                    & 0o7777,
-                0o700
-            );
+            assert_eq!(privacy(directory), Privacy::OwnerOnly);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt as _;
+
+                assert_eq!(
+                    std::fs::metadata(directory)
+                        .expect("tightened namespace")
+                        .mode()
+                        & 0o7777,
+                    0o700
+                );
+            }
         }
         claimed.abort().expect("remove the migrated claim");
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_preexisting_staging_name_is_not_adopted_as_a_fresh_claim() {
         let root = tempfile::tempdir().expect("temporary project");
@@ -4280,7 +3808,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     #[test]
     fn an_unknown_entry_makes_the_run_store_corrupt_instead_of_invisible() {
         let root = tempfile::tempdir().expect("temporary project");

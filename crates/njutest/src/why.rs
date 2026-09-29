@@ -146,6 +146,15 @@ pub enum Step {
         /// What the execution came to.
         came_to: String,
     },
+    /// A fault every reaching test passed was put to a target again, with the target's answer and what its runtime recorded became of the failures it made.
+    Fated {
+        /// The target.
+        target: String,
+        /// What the target answered.
+        outcome: String,
+        /// What the record counted, where there was one it could read.
+        fate: Option<rust_mutants::fate::Fate>,
+    },
     /// It was read back from an earlier run rather than established here.
     ReadBack {
         /// The run it came from.
@@ -187,6 +196,11 @@ fn fault(id: &str, events: &[Event]) -> Why {
                 target: fault.target.clone(),
                 outcome: fault.outcome.clone(),
             }),
+            Payload::FaultFate { fate } if fate.fault == id => steps.push(Step::Fated {
+                target: fate.target.clone(),
+                outcome: fate.outcome.clone(),
+                fate: fate.fate,
+            }),
             Payload::Fault { fault } => {
                 recorded.insert(fault.display_id.as_str());
                 if fault.display_id == id {
@@ -196,6 +210,7 @@ fn fault(id: &str, events: &[Event]) -> Why {
             Payload::RunStart { .. }
             | Payload::FaultControl { .. }
             | Payload::FaultAttribution { .. }
+            | Payload::FaultFate { .. }
             | Payload::FaultRoute { .. }
             | Payload::FaultRejected { .. }
             | Payload::PhaseStart { .. }
@@ -308,6 +323,7 @@ fn followed(
         Payload::RunStart { .. }
         | Payload::FaultControl { .. }
         | Payload::FaultAttribution { .. }
+        | Payload::FaultFate { .. }
         | Payload::FaultRoute { .. }
         | Payload::FaultRejected { .. }
         | Payload::PhaseStart { .. }
@@ -434,6 +450,7 @@ fn mutations(events: &[Event]) -> usize {
             Payload::RunStart { .. }
             | Payload::FaultControl { .. }
             | Payload::FaultAttribution { .. }
+            | Payload::FaultFate { .. }
             | Payload::FaultRoute { .. }
             | Payload::FaultRejected { .. }
             | Payload::PhaseStart { .. }

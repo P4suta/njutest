@@ -434,6 +434,39 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "fate"],
+          "properties": {
+            "type": { "const": "fault-fate" },
+            "fate": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fault", "target", "outcome", "fate"],
+              "properties": {
+                "fault": { "type": "string", "minLength": 1 },
+                "target": { "type": "string", "minLength": 1 },
+                "outcome": { "type": "string", "minLength": 1 },
+                "fate": {
+                  "oneOf": [
+                    { "type": "null" },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["made", "read", "dropped"],
+                      "properties": {
+                        "made": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+                        "read": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+                        "dropped": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "route"],
           "properties": {
             "type": { "const": "fault-route" },

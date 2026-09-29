@@ -92,6 +92,12 @@ pub const CRASH_EXIT: i32 = 93;
 /// Names the fresh file through which the runtime says a crash stopped the process at the active call.
 pub const CRASH_NOTICE_ENV: &str = "RUST_MUTANTS_CRASH_NOTICE";
 
+/// Names the file the runtime appends what became of each failure a fault made to: made, read by whatever formatted it, dropped.
+pub const FAULT_FATE_ENV: &str = "RUST_MUTANTS_FAULT_FATE";
+
+/// The first field of every line of a fault's fate, followed by the catalog and the event.
+pub const FAULT_FATE_SCHEMA: &str = "rust-mutants-fate-v1";
+
 /// Ties one crash notice to exactly one supervised execution.
 pub const CRASH_NONCE_ENV: &str = "RUST_MUTANTS_CRASH_NONCE";
 
@@ -473,7 +479,48 @@ mod {{MODULE}} {
     }
     impl Injectable for __rm_std::io::Error {
         fn injected() -> Self {
-            __rm_std::io::Error::other("a failure rust-mutants injected")
+            fated("made");
+            __rm_std::io::Error::other(Injected)
+        }
+    }
+    // The failure an io::Error a fault makes carries, which says what became
+    // of it: read by whatever formatted it, and dropped. A failure dropped
+    // unread went nowhere a person or a test could read it (ADR 0032).
+    struct Injected;
+    impl __rm_std::fmt::Display for Injected {
+        fn fmt(&self, formatter: &mut __rm_std::fmt::Formatter<'_>) -> __rm_std::fmt::Result {
+            fated("read");
+            formatter.write_str("a failure rust-mutants injected")
+        }
+    }
+    impl __rm_std::fmt::Debug for Injected {
+        fn fmt(&self, formatter: &mut __rm_std::fmt::Formatter<'_>) -> __rm_std::fmt::Result {
+            fated("read");
+            formatter.write_str("a failure rust-mutants injected")
+        }
+    }
+    impl __rm_std::error::Error for Injected {}
+    impl __rm_std::ops::Drop for Injected {
+        fn drop(&mut self) {
+            fated("dropped");
+        }
+    }
+    // One line per event, where a run asked for them. A line that cannot be
+    // written stops the process, so no run is read as one whose failure
+    // nothing read because the record of the reading was lost.
+    fn fated(event: &str) {
+        let path = match __rm_std::env::var_os("{{FAULT_FATE_ENV}}") {
+            __rm_std::option::Option::Some(path) if !path.is_empty() => path,
+            _ => return,
+        };
+        let line = __rm_std::format!("{{FAULT_FATE_SCHEMA}}\t{}\t{}\n", CATALOG, event);
+        let written = __rm_std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| __rm_std::io::Write::write_all(&mut file, line.as_bytes()));
+        if let __rm_std::result::Result::Err(error) = written {
+            protocol_failed(Why::os("fate: write", &error));
         }
     }
     impl Injectable for __rm_std::str::Utf8Error {
@@ -2153,6 +2200,8 @@ fn with_protocol(text: &str) -> String {
         .replace("{{CRASH_NOTICE_ENV}}", CRASH_NOTICE_ENV)
         .replace("{{CRASH_NONCE_ENV}}", CRASH_NONCE_ENV)
         .replace("{{CRASH_NOTICE_SCHEMA}}", CRASH_NOTICE_SCHEMA)
+        .replace("{{FAULT_FATE_ENV}}", FAULT_FATE_ENV)
+        .replace("{{FAULT_FATE_SCHEMA}}", FAULT_FATE_SCHEMA)
         .replace("{{DELAY_ENV}}", DELAY_ENV)
 }
 
@@ -2555,7 +2604,7 @@ mod tests {
     }
 
     /// The items the sealed runtime answers for itself, by the name both runtimes give them: the entries a guard calls first, and the recording behind them.
-    const ANSWERED_BY_THE_SEALED_RUNTIME: [&str; 10] = [
+    const ANSWERED_BY_THE_SEALED_RUNTIME: [&str; 11] = [
         "fn active",
         "fn append",
         "fn checkpoint",
@@ -2565,6 +2614,7 @@ mod tests {
         "fn item",
         "fn opened",
         "fn touch",
+        "impl Injectable for __rm_std::io::Error",
         "static TOUCH_SINK",
     ];
 

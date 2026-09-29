@@ -19,11 +19,11 @@ authors = ["njutest contributors"]
 readme = "README.md"
 
 [workspace.lints.rust]
-# `deny`, not `forbid`: the process supervisor and the temporary-directory
-# owner need Windows FFI (Job Objects, LockFileEx) in exactly two modules,
-# whose individual FFI boundaries carry `#[expect(unsafe_code, reason = ...)]`.
-# Every crate that needs
-# none carries `#![forbid(unsafe_code)]` at its root.
+# `deny`, not `forbid`: the process supervisor, the temporary-directory owner and the capability directory call the platform (process groups, Job Objects,
+# LockFileEx, NtCreateFile) in the modules `xtask/src/lints/ffi.rs` names,
+# whose individual FFI boundaries carry `#[expect(unsafe_code, reason = ...)]`;
+# `cargo xtask lints` refuses `unsafe` anywhere else.
+# Every crate that needs none carries `#![forbid(unsafe_code)]` at its root.
 unsafe_code = "deny"
 non_ascii_idents = "deny"
 unexpected_cfgs = { level = "deny", check-cfg = ['cfg(kani)'] }
@@ -144,8 +144,11 @@ schemars = "1.2"
 clap = { version = "4.6", features = ["derive", "wrap_help"] }
 rustix = { version = "1.1", features = ["fs", "process", "termios"] }
 windows-sys = { version = "0.61", features = [
+  "Wdk_Foundation",
+  "Wdk_Storage_FileSystem",
   "Win32_Foundation",
   "Win32_Security",
+  "Win32_Security_Authorization",
   "Win32_Storage_FileSystem",
   "Win32_System_IO",
   "Win32_System_JobObjects",

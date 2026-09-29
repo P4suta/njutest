@@ -9,6 +9,15 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Proposed, 2026-09-24.
 The repair [ADR 0025](0025-a-reach-that-moves-is-not-a-measurement.md) decision 5 left for the next change.
+Implemented by `repaired` and `repair` in `njutest::assure::mutation`, `Session::exec_reaching`, the `repair` trace record and the proofaudit `repair` layer, held end to end by one Unix toolchain test.
+What stands between it and acceptance, as a reading of the tree on 2026-09-29 found it:
+
+- Decision 1: a run again that could not record, exiting 96, is read as a kill, where a control runs again without recording; a repaired survivor keeps the route the proof decided and a repaired read-back disposition its old provenance.
+- Decision 1: whether a disposition is asked depends on target names, since a hole one moved target leaves is never asked of the next.
+- Decision 2: the audit refuses what the code does: a waited repair that ends `unconfirmed`, a declined one, the two touches a quiet re-measurement records, and an `unreached` row whose repair ran and did not reach; it infers `was` from a route's granularity, and checks neither that every resting pair was run again nor the order.
+- Decision 3: the `reach-moved` count counts replacements alone, and holes count as decided again; the counts in both details are not re-derived.
+- Decision 4: a merge never states `reach-moved`, and nothing audits a merge's side of decisions 3 and 4.
+- The checkpoint, the evidence store and the carry store keep dispositions from before the repair; the faulted phase repairs too; `BuildReport::concluded` calls any moved record `INSUFFICIENT` where the published verdict does not.
 
 ## Context
 

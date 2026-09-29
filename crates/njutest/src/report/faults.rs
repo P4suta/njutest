@@ -20,8 +20,10 @@ pub enum FaultDecision {
         /// The target that noticed.
         by: String,
     },
-    /// Every test that reached the site passed with the call failing.
+    /// Every test that reached the site passed with the call failing, and something formatted the failure it made, or the record cannot say.
     Unnoticed,
+    /// Every test that reached the site passed with the call failing, and a run of each dropped every failure it made without anything reading it (ADR 0032 decision 5).
+    Absorbed,
     /// No test reached the site, so every test runs the same with the call failing.
     Unreached,
     /// A bound expired with the call failing before a test finished, which establishes nothing.
@@ -50,6 +52,7 @@ impl FaultDecision {
         match self {
             Self::Noticed { .. }
             | Self::Unnoticed
+            | Self::Absorbed
             | Self::Unreached
             | Self::Waited { .. }
             | Self::Undecided { .. }
@@ -64,6 +67,7 @@ impl FaultDecision {
         let every = vec![
             Self::Noticed { by: "t".to_owned() },
             Self::Unnoticed,
+            Self::Absorbed,
             Self::Unreached,
             Self::Waited { on: "t".to_owned() },
             Self::Undecided {
@@ -87,6 +91,7 @@ impl FaultDecision {
         match self {
             Self::Noticed { .. } => "noticed",
             Self::Unnoticed => "unnoticed",
+            Self::Absorbed => "absorbed",
             Self::Unreached => "unreached",
             Self::Waited { .. } => "waited",
             Self::Undecided { .. } => "undecided",
@@ -186,12 +191,14 @@ pub struct BesideRun {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FaultAccounting {
-    /// Every site, which the six after it add up to.
+    /// Every site, which the seven after it add up to.
     pub sites: u32,
     /// How many a test noticed.
     pub noticed: u32,
-    /// How many every reaching test passed.
+    /// How many every reaching test passed, with the failure read by something or the record unable to say.
     pub unnoticed: u32,
+    /// How many every reaching test passed with the failure dropped unread.
+    pub absorbed: u32,
     /// How many no test reached.
     pub unreached: u32,
     /// How many a bound expired on.
@@ -213,6 +220,7 @@ impl FaultAccounting {
             let (field, count) = match record.decision {
                 FaultDecision::Noticed { .. } => ("fault noticed", &mut counted.noticed),
                 FaultDecision::Unnoticed => ("fault unnoticed", &mut counted.unnoticed),
+                FaultDecision::Absorbed => ("fault absorbed", &mut counted.absorbed),
                 FaultDecision::Unreached => ("fault unreached", &mut counted.unreached),
                 FaultDecision::Waited { .. } => ("fault waited", &mut counted.waited),
                 FaultDecision::Undecided { .. } => ("fault undecided", &mut counted.undecided),
@@ -228,12 +236,13 @@ impl FaultAccounting {
         Ok(counted)
     }
 
-    /// Whether the six decisions add up to the sites, which every report holds.
+    /// Whether the seven decisions add up to the sites, which every report holds.
     #[must_use]
     pub fn adds_up(self) -> bool {
         [
             self.noticed,
             self.unnoticed,
+            self.absorbed,
             self.unreached,
             self.waited,
             self.undecided,
@@ -257,6 +266,17 @@ pub fn found(records: &[FaultRecord]) -> Vec<Finding> {
                     format!(
                         "the call the `?` at {} asks about failed and every test that reached \
                          it passed: no test asserts what `{}` does when it fails",
+                        record.place(),
+                        record.item
+                    ),
+                ),
+                FaultDecision::Absorbed => (
+                    FindingKind::UnnoticedFault,
+                    format!(
+                        "the call the `?` at {} asks about failed, every test that reached it \
+                         passed, and the failure it made was dropped without anything reading \
+                         it: `{}` goes on as if the call had not failed, and no test asserts \
+                         what it does instead",
                         record.place(),
                         record.item
                     ),

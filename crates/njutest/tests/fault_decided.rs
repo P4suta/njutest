@@ -93,10 +93,11 @@ fn a_fault_the_run_could_not_decide_is_a_finding_so_the_run_is_not_assured() {
         kinds,
         vec![
             FindingKind::UnnoticedFault,
+            FindingKind::UnnoticedFault,
             FindingKind::NotMeasured,
             FindingKind::NotMeasured
         ],
-        "one finding for the failure nothing noticed, then one for each the run could not \
-         decide, in the order the records hold them"
+        "one finding for the failure nothing noticed, one for the failure the program dropped \
+         unread, then one for each the run could not decide, in the order the records hold them"
     );
 }

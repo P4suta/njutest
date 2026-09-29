@@ -252,7 +252,48 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     }
     impl Injectable for __rm_std::io::Error {
         fn injected() -> Self {
-            __rm_std::io::Error::other("a failure rust-mutants injected")
+            fated("made");
+            __rm_std::io::Error::other(Injected)
+        }
+    }
+    // The failure an io::Error a fault makes carries, which says what became
+    // of it: read by whatever formatted it, and dropped. A failure dropped
+    // unread went nowhere a person or a test could read it (ADR 0032).
+    struct Injected;
+    impl __rm_std::fmt::Display for Injected {
+        fn fmt(&self, formatter: &mut __rm_std::fmt::Formatter<'_>) -> __rm_std::fmt::Result {
+            fated("read");
+            formatter.write_str("a failure rust-mutants injected")
+        }
+    }
+    impl __rm_std::fmt::Debug for Injected {
+        fn fmt(&self, formatter: &mut __rm_std::fmt::Formatter<'_>) -> __rm_std::fmt::Result {
+            fated("read");
+            formatter.write_str("a failure rust-mutants injected")
+        }
+    }
+    impl __rm_std::error::Error for Injected {}
+    impl __rm_std::ops::Drop for Injected {
+        fn drop(&mut self) {
+            fated("dropped");
+        }
+    }
+    // One line per event, where a run asked for them. A line that cannot be
+    // written stops the process, so no run is read as one whose failure
+    // nothing read because the record of the reading was lost.
+    fn fated(event: &str) {
+        let path = match __rm_std::env::var_os("RUST_MUTANTS_FAULT_FATE") {
+            __rm_std::option::Option::Some(path) if !path.is_empty() => path,
+            _ => return,
+        };
+        let line = __rm_std::format!("rust-mutants-fate-v1\t{}\t{}\n", CATALOG, event);
+        let written = __rm_std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| __rm_std::io::Write::write_all(&mut file, line.as_bytes()));
+        if let __rm_std::result::Result::Err(error) = written {
+            protocol_failed(Why::os("fate: write", &error));
         }
     }
     impl Injectable for __rm_std::str::Utf8Error {

@@ -294,6 +294,7 @@ fn dimensions(report: &Conclusion, out: &mut String) {
                 &format!("sites={}", faults.sites),
                 &format!("noticed={}", faults.noticed),
                 &format!("unnoticed={}", faults.unnoticed),
+                &format!("absorbed={}", faults.absorbed),
                 &format!("unreached={}", faults.unreached),
                 &format!("waited={}", faults.waited),
                 &format!("undecided={}", faults.undecided),

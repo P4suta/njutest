@@ -63,6 +63,9 @@ fn failed(decision: &FaultDecision) -> String {
         FaultDecision::Unnoticed => {
             "every test that reached it passed with the call failing".to_owned()
         }
+        FaultDecision::Absorbed => "every test that reached it passed with the call failing, \
+                                    and the failure was dropped without anything reading it"
+            .to_owned(),
         FaultDecision::Unreached => "no test reached it".to_owned(),
         FaultDecision::Waited { on } => format!("this machine stopped waiting for {on}"),
         FaultDecision::Undecided { on, why } => format!("{on} could not be decided: {why}"),
@@ -70,6 +73,19 @@ fn failed(decision: &FaultDecision) -> String {
             format!("the compiler refused the fault: {diagnostic}")
         }
     }
+}
+
+/// Where the failures a fault made went, as a run's record of them counted it.
+fn went(fate: Option<rust_mutants::fate::Fate>) -> String {
+    fate.map_or_else(
+        || "with no record of where its failures went".to_owned(),
+        |fate| {
+            format!(
+                "{} failure(s) made, {} read, {} dropped",
+                fate.made, fate.read, fate.dropped
+            )
+        },
+    )
 }
 
 /// What was read of an exchange, when anything was.
@@ -105,36 +121,7 @@ fn stepped(step: &Step, telling: Telling) -> String {
             reaching,
             discharged,
             fallback,
-        } => {
-            let mut parts = vec![format!(
-                "{} by {}",
-                telling.painted(Style::Marker, "routed"),
-                telling.painted(Style::Keyword, granularity.name())
-            )];
-            if !reaching.is_empty() {
-                parts.push(format!(
-                    "reaching {}",
-                    telling.painted(Style::Subject, &reaching.join(", "))
-                ));
-            }
-            parts.extend(discharged.iter().map(|(target, proof)| {
-                format!(
-                    "{} {} by {}",
-                    telling.painted(Style::Well, "discharged"),
-                    telling.painted(Style::Subject, target),
-                    telling.painted(Style::Keyword, proof)
-                )
-            }));
-            if let Some(fallback) = fallback {
-                parts.push(format!(
-                    "{} {}  {}",
-                    telling.painted(Style::Limitation, "widened back:"),
-                    telling.painted(Style::Keyword, fallback.name()),
-                    crate::assure::route::detail(*fallback)
-                ));
-            }
-            parts.join("  ")
-        }
+        } => routed((*granularity, *fallback), (reaching, discharged), telling),
         Step::Asked { target, outcome } => format!(
             "{} {}  {}",
             telling.painted(Style::Marker, "asked"),
@@ -152,6 +139,17 @@ fn stepped(step: &Step, telling: Telling) -> String {
             telling.painted(Style::Subject, test),
             telling.painted(Style::Keyword, came_to)
         ),
+        Step::Fated {
+            target,
+            outcome,
+            fate,
+        } => format!(
+            "{} {}  {}  {}",
+            telling.painted(Style::Marker, "asked again"),
+            telling.painted(Style::Subject, target),
+            telling.painted(Style::Keyword, outcome),
+            telling.painted(Style::Frame, &went(*fate))
+        ),
         Step::ReadBack { run } => format!(
             "{} {}",
             telling.painted(Style::Limitation, "read back from"),
@@ -164,6 +162,45 @@ fn stepped(step: &Step, telling: Telling) -> String {
             telling.painted(Style::Frame, &settled(decision))
         ),
     }
+}
+
+/// A route's line: how it was decided, what it reached, what each proof removed, and whether it widened back.
+fn routed(
+    (granularity, fallback): (
+        rust_mutants::session::Granularity,
+        Option<rust_mutants::session::Fallback>,
+    ),
+    (reaching, discharged): (&[String], &[(String, String)]),
+    telling: Telling,
+) -> String {
+    let mut parts = vec![format!(
+        "{} by {}",
+        telling.painted(Style::Marker, "routed"),
+        telling.painted(Style::Keyword, granularity.name())
+    )];
+    if !reaching.is_empty() {
+        parts.push(format!(
+            "reaching {}",
+            telling.painted(Style::Subject, &reaching.join(", "))
+        ));
+    }
+    parts.extend(discharged.iter().map(|(target, proof)| {
+        format!(
+            "{} {} by {}",
+            telling.painted(Style::Well, "discharged"),
+            telling.painted(Style::Subject, target),
+            telling.painted(Style::Keyword, proof)
+        )
+    }));
+    if let Some(fallback) = fallback {
+        parts.push(format!(
+            "{} {}  {}",
+            telling.painted(Style::Limitation, "widened back:"),
+            telling.painted(Style::Keyword, fallback.name()),
+            crate::assure::route::detail(fallback)
+        ));
+    }
+    parts.join("  ")
 }
 
 /// What `why` says about `claim`, drawn for `terminal`.

@@ -72,8 +72,34 @@ pub struct Faulted {
     pub besides: Vec<Beside>,
     /// Every pair of runs behind that evidence, in recording order.
     pub pairs: Vec<Pair>,
+    /// Every run again of a fault every reaching test passed, in recording order.
+    pub fates: Vec<Fate>,
     /// The fault records that lack a field their schema requires, by event type, which nothing is held to.
     pub unread: Vec<String>,
+}
+
+/// One fault every reaching test passed, run again on one target with its runtime recording what became of the failures it made.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Fate {
+    /// The fault a person types.
+    pub fault: String,
+    /// The target it ran against.
+    pub target: String,
+    /// What the execution established, as the engine names outcomes.
+    pub outcome: String,
+    /// The failures it made, read and dropped, where the run had a record it could read.
+    pub counted: Option<(u64, u64, u64)>,
+}
+
+impl Fate {
+    /// Whether this run bears out that the failure went nowhere: it passed, made a failure, and dropped every one it made without anything reading it.
+    #[must_use]
+    pub fn absorbing(&self) -> bool {
+        self.outcome == "survived"
+            && self
+                .counted
+                .is_some_and(|(made, read, dropped)| made > 0 && read == 0 && dropped == made)
+    }
 }
 
 /// One pair of runs of a target: the fault alone, then the survivor beside it.
@@ -159,6 +185,10 @@ fn held(faulted: &mut Faulted, kind: &str, event: &Value) -> bool {
             }
             Some(())
         }),
+        "fault-fate" => event
+            .get("fate")
+            .and_then(fate)
+            .map(|one| faulted.fates.push(one)),
         "fault-rejected" => event
             .get("rejected")
             .and_then(|record| text(record, "fault"))
@@ -204,6 +234,23 @@ pub fn beside(record: &Value) -> Option<Beside> {
     })
 }
 
+/// One run again as the recording writes it, or nothing where a field it requires is missing.
+fn fate(record: &Value) -> Option<Fate> {
+    let counted = match record.get("fate")? {
+        Value::Null => None,
+        counts => {
+            let count = |key: &str| counts.get(key).and_then(Value::as_u64);
+            Some((count("made")?, count("read")?, count("dropped")?))
+        }
+    };
+    Some(Fate {
+        fault: text(record, "fault")?,
+        target: text(record, "target")?,
+        outcome: text(record, "outcome")?,
+        counted,
+    })
+}
+
 /// One pair of runs as the recording writes it, or nothing where a field it requires is missing.
 fn pair(record: &Value) -> Option<Pair> {
     Some(Pair {
@@ -243,6 +290,8 @@ pub struct Evidence<'a> {
     pub reaching: Option<&'a [String]>,
     /// Whether the compiler refused it.
     pub rejected: bool,
+    /// Every run again of it with a record of where its failures went.
+    pub fates: Vec<&'a Fate>,
 }
 
 impl Faulted {
@@ -262,6 +311,7 @@ impl Faulted {
                 .find(|(routed, _)| routed == fault)
                 .map(|(_, reaching)| reaching.as_slice()),
             rejected: self.rejected.iter().any(|one| one == fault),
+            fates: self.fates.iter().filter(|one| one.fault == fault).collect(),
         }
     }
 }
@@ -328,6 +378,19 @@ pub enum FaultContradictionError {
         "the run says nothing reached it, and the recording holds no route of it that reached nothing"
     )]
     UnreachedWithoutRoute,
+    /// A fault said to have been absorbed where a target that reached it has no run again that bears that out.
+    #[error(
+        "the run says the failure it made went nowhere, and the recording holds no run again of it on {target} that passed dropping every failure it made unread"
+    )]
+    AbsorbedUnborne {
+        /// The reaching target without such a run.
+        target: String,
+    },
+    /// A fault said to be unnoticed whose every reaching target has a run again that bears out that it was absorbed.
+    #[error(
+        "the run says something read the failure it made, and every target that reached it has a run again that dropped every failure unread"
+    )]
+    UnnoticedThoughAbsorbed,
     /// A fault said not to have been put that the recording holds no refusal of.
     #[error("the run says the compiler refused it, and the recording holds no refusal of it")]
     NotPutWithoutRefusal,
@@ -351,6 +414,8 @@ impl crate::error::Coded for FaultContradictionError {
             | Self::WaitedWithoutBound
             | Self::UnreachedWithoutRoute
             | Self::NotPutWithoutRefusal
+            | Self::AbsorbedUnborne { .. }
+            | Self::UnnoticedThoughAbsorbed
             | Self::Unknown { .. }
             | Self::NoticedByNoOne => crate::error::XtCode::FaultContradicted,
         }
@@ -394,14 +459,21 @@ pub fn supports(site: &Site, evidence: &Evidence<'_>) -> Result<(), FaultContrad
                 Ok(())
             }
         }
-        "unnoticed" if !ran => Err(FaultContradictionError::NothingRan {
+        "unnoticed" | "absorbed" if !ran => Err(FaultContradictionError::NothingRan {
             decision: site.decision.clone(),
         }),
-        "unnoticed" => match failed {
-            None => Ok(()),
-            Some(one) => Err(FaultContradictionError::NotAllPassed {
+        "unnoticed" | "absorbed" => match (failed, site.decision.as_str()) {
+            (Some(one), _) => Err(FaultContradictionError::NotAllPassed {
                 outcome: one.outcome.clone(),
             }),
+            (None, "absorbed") => match unborne(evidence) {
+                Some(target) => Err(FaultContradictionError::AbsorbedUnborne { target }),
+                None => Ok(()),
+            },
+            (None, _) if absorbed_everywhere(evidence) => {
+                Err(FaultContradictionError::UnnoticedThoughAbsorbed)
+            }
+            (None, _) => Ok(()),
         },
         "undecided" if ran && failed.is_none() => {
             Err(FaultContradictionError::UndecidedThoughPassed { runs: execs.len() })
@@ -424,6 +496,32 @@ pub fn supports(site: &Site, evidence: &Evidence<'_>) -> Result<(), FaultContrad
             decision: other.to_owned(),
         }),
     }
+}
+
+/// The first target that reached a fault, in name order, with no run again that bears out that its failure went nowhere, or the empty name where the recording holds no route.
+fn unborne(evidence: &Evidence<'_>) -> Option<String> {
+    let Some(reaching) = evidence.reaching else {
+        return Some(String::new());
+    };
+    if reaching.is_empty() {
+        return Some(String::new());
+    }
+    let mut targets: Vec<&String> = reaching.iter().collect();
+    targets.sort();
+    targets
+        .into_iter()
+        .find(|target| {
+            !evidence
+                .fates
+                .iter()
+                .any(|fate| &fate.target == *target && fate.absorbing())
+        })
+        .cloned()
+}
+
+/// Whether every target that reached a fault has a run again that bears out that its failure went nowhere.
+fn absorbed_everywhere(evidence: &Evidence<'_>) -> bool {
+    unborne(evidence).is_none()
 }
 
 /// One string field, or nothing where it is not there or is not a string.

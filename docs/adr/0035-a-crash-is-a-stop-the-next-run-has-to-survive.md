@@ -10,6 +10,16 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 Proposed, 2026-09-24.
 The dimension `durable` of the assurance matrix ([ADR 0033](0033-every-dimension-or-a-hole.md)).
 Amended by [ADR 0046](0046-a-verdict-is-what-a-sealed-run-observed.md): a sealed crash is confirmed in one round, the next instance starting from the crashed one's overlay.
+Implemented natively by `crash-after-write`, the runtime's crash notice, `njutest::assure::crashes` and the proofaudit `crashes` layer.
+What stands between it and acceptance, as a reading of the tree on 2026-09-29 found it:
+
+- The amendment: every crash runs natively in three rounds; nothing starts an instance from another's overlay, a crash record does not say it was sealed, and the sealed build the crash session makes is read by nothing.
+- Decision 2: the stop is `std::process::exit`, which flushes standard output, runs the C runtime's exit handlers and, on glibc, the calling thread's thread-local destructors, so "no flush after it" does not hold for state kept there, and no test holds that nothing after the call is written.
+- Decisions 1 and 2: a write that returns a future, `tokio::fs::write` or an asynchronous `write_all`, is a site at which `crashed_after` stops before the write happens, the case this record sets aside, and reads as `restarted`.
+- Decision 2: a child that reaches the crash is untested, and a parent that tolerates its child's status reads the run as passed; the audit's one-run-per-nonce rule is untested.
+- Decision 3: an entry of the crashed scratch whose name is not UTF-8 ends the phase rather than leaving the crash `undecided`, and a crash that wrote only to a home the run was given reads as `unshared`.
+- Decision 5: a tree with no write call is known to have nothing to ask only after its crash build and baseline, and a baseline that fails there makes the column `unmeasured`.
+- The runner and the audit are never run together on a real recording; `copy`, `remove_file`, `sync_all`, `sync_data`, `set_len` and `flush` are never sites in a test.
 
 ## Context
 

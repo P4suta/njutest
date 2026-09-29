@@ -325,9 +325,10 @@ fn fault(evidence: &Evidence<'_>) -> Column {
     }
     tallied(
         evidence.faults.iter().map(|record| match &record.decision {
-            FaultDecision::Noticed { .. } | FaultDecision::Unnoticed | FaultDecision::Unreached => {
-                Counted::Answered
-            }
+            FaultDecision::Noticed { .. }
+            | FaultDecision::Unnoticed
+            | FaultDecision::Absorbed
+            | FaultDecision::Unreached => Counted::Answered,
             FaultDecision::Waited { .. } | FaultDecision::Undecided { .. } => Counted::Hole,
             FaultDecision::NotPut { .. } => Counted::SpeaksNotAbout(format!(
                 "an error type the engine does not make, at {}",

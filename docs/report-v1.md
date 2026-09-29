@@ -18,12 +18,10 @@ The canonical document is `njutest-assurance-report-v1.json`; HTML, SARIF,
 JUnit and line output are projections of that document.
 `latest-any.json` names the latest completed run, and `latest-full.json` advances only for a full run.
 
-Authoritative report publication and reading currently require the Unix handle-relative filesystem backend.
-That backend holds the workspace,
-configured report root, selected run, and each file open while it validates and uses them; it never turns a checked path spelling back into authority.
-On Windows and other non-Unix hosts, commands that would publish, select,
-read, retain, or delete durable reports refuse with the typed `REPORT_NOT_KEPT` error.
-They do not fall back to pathname checks whose object could change between validation and use.
+Authoritative report publication and reading go through one capability directory, `rust_mutants::capdir`, on Unix and on Windows alike.
+It holds the workspace, configured report root, selected run, and each file open while it validates and uses them, and names every operation relative to a held handle; it never turns a checked path spelling back into authority.
+On Windows a store is kept only on NTFS or ReFS with POSIX unlink and rename semantics, and any other volume refuses with the typed `REPORT_NOT_KEPT` error naming its file system ([limitations](limitations.md)).
+Nothing falls back to pathname checks whose object could change between validation and use.
 
 ## Mutation records
 
@@ -191,30 +189,33 @@ A record's `state` is `held` where an original-code control of the whole target 
 `moved` where it did not, with what only the control reported (`gained`) and what only the baseline reported (`lost`) for each union by catalog index,
 and `not-measured` with one closed `why`: `no-control` (the run was cancelled before any control of it ran), `unrecorded`, `unreadable`, `control-failed`, `other-tests`, `no-baseline`, `baseline-retried`, which a target whose baseline passed only when run again in the directory its failed first attempt left gets, because that run did not happen under the conditions a control's does, or `unparsed`, where the tests either run was read as passing do not come to the count its own summary gives, because then which tests passed is the parser's answer and not the harness's.
 
-A part that measured the whole catalog raises `unstable-baseline` about each moved target and states `drift-not-measured` naming every target that is not measured.
+A part that measured the whole catalog raises `unstable-baseline` about each moved target something still rests on and states `drift-not-measured` naming every target that is not measured.
 A shard records drift and raises neither, and concludes `INSUFFICIENT` rather than `PARTIAL` where a target moved; a merge raises both from the combined records of every part of the build.
 The same holds for `hollow-target`, since which targets answered about a mutation and noticed none is only known over the whole catalog.
 What only the whole catalog decides is one function, `report::whole_catalog`, called by a run that measured the catalog whole and by a merge over the combined records, so a catalog concludes the same whether it was measured whole or in shards.
-Re-executing what rested on a moved record is not done by this release; the finding is what a reader acts on.
+Every survived or unreached disposition that rested on a moved target is run again against it with its reach recorded, and replaced by what that run decides where it reached the site ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)); a moved target nothing rests on afterwards is stated as the limitation `reach-moved`, naming it and how many dispositions were run again.
 
 ## Faults
 
 Every part carries `faults`, one record per site a fault was asked at, in catalog order, and empty unless the run was asked for faults ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
-A fault site is a `?` in a measured file; its catalog is its own, discovered by the rule `inject-error` alone, so `catalog_index` counts faults and a `K/N` shard owns the faults whose index modulo `N` is `K - 1`, exactly as it owns mutations.
+A fault site is a `?` in a measured file; its catalog is its own, holding the rule `inject-error` and the error-propagation mutations a fault is put beside, so `catalog_index` counts in that catalog and a `K/N` shard owns the faults whose index modulo `N` is `K - 1`, exactly as it owns mutations.
 A record carries the fault's `id` and `display_id`, its `path`, `item` and `position`, and one closed `decision`:
 
 | `decision` | what it says | carries |
 | --- | --- | --- |
 | `noticed` | a test failed with the call failing and passed on the unchanged program, and failed again on a second run | `by`, the first target in target order that noticed |
-| `unnoticed` | every test that reached the site passed with the call failing | |
+| `unnoticed` | every test that reached the site passed with the call failing, and something formatted the failure it made, or the record of it cannot say | |
+| `absorbed` | every test that reached the site passed with the call failing, and a run of each dropped every failure it made without anything reading it | |
 | `unreached` | no test reached the site | |
 | `waited` | a bound expired with the call failing before a test finished | `on` |
 | `undecided` | a test failed with the call failing and the run could not confirm it, or could not run the test | `on`, `why` |
 | `not-put` | the compiler refused the fault, because the site propagates an error type the engine does not make | `diagnostic`, the compiler's first line |
 
 Nothing here is a kill, and nothing is proved: a fault changes what the program is given, never the program, and no discharge is applied to a fault's route.
-`accounting.faults` counts the records, and `noticed + unnoticed + unreached + waited + undecided + not_put` equals `sites`; a part whose counts do not is not a v1 document.
-Every `unnoticed` record raises one `unnoticed-fault` finding naming its `display_id`, and every `waited` or `undecided` one a `not-measured` finding naming it, so a run asked for faults that could not decide one is not `ASSURED`.
+`accounting.faults` counts the records, and `noticed + unnoticed + absorbed + unreached + waited + undecided + not_put` equals `sites`; a part whose counts do not is not a v1 document.
+Every `unnoticed` or `absorbed` record raises one `unnoticed-fault` finding naming its `display_id`, the `absorbed` one saying the failure went nowhere, and every `waited` or `undecided` one a `not-measured` finding naming it, so a run asked for faults that could not decide one is not `ASSURED`.
+`absorbed` rests on one more run of the fault on each target that reached it, in name order, stopping at the first that does not bear it out, with its runtime recording what became of each failure it made: `made`, `read` where something formatted it, `dropped`.
+Only an `std::io::Error` carries that record, so a site of any other error type stays `unnoticed`.
 `not-put` records are stated as one `fault-not-put` limitation naming each compiler error class with its sites.
 A tree whose faulted baseline could not be measured raises a `not-measured` finding about `fault-baseline-not-measured` and carries no records.
 A record's `position` is `null` where the run could not place the site.

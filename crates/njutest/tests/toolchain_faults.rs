@@ -129,7 +129,7 @@ fn a_run_asked_for_faults_says_which_failed_calls_the_suite_noticed() {
         vec![
             (13, "noticed".to_owned()),
             (22, "noticed".to_owned()),
-            (33, "unnoticed".to_owned()),
+            (33, "absorbed".to_owned()),
             (46, "not-put".to_owned()),
             (57, "not-put".to_owned()),
         ],
@@ -144,8 +144,14 @@ fn a_run_asked_for_faults_says_which_failed_calls_the_suite_noticed() {
     );
     assert_eq!(unnoticed[0]["path"], "src/lib.rs", "{part}");
     assert!(
+        unnoticed[0]["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("dropped without anything reading it")),
+        "the finding says the failure went nowhere, which is what `length` does with it: {part}"
+    );
+    assert!(
         njutest_devkit::process::strict_utf8(&output.stdout).contains(
-            "FAULTS\tsites=5\tnoticed=2\tunnoticed=1\tunreached=0\twaited=0\tundecided=0\tnot_put=2"
+            "FAULTS\tsites=5\tnoticed=2\tunnoticed=0\tabsorbed=1\tunreached=0\twaited=0\tundecided=0\tnot_put=2"
         ),
         "the run says what the faults came to where it says what the mutations did: {}",
         njutest_devkit::process::strict_utf8(&output.stdout)
@@ -158,7 +164,7 @@ fn a_run_asked_for_faults_says_which_failed_calls_the_suite_noticed() {
     assert_eq!(
         part["accounting"]["faults"],
         serde_json::json!({
-            "sites": 5, "noticed": 2, "unnoticed": 1, "unreached": 0,
+            "sites": 5, "noticed": 2, "unnoticed": 0, "absorbed": 1, "unreached": 0,
             "waited": 0, "undecided": 0, "not_put": 2
         }),
         "{part}"
@@ -193,7 +199,7 @@ fn a_write_one_fault_makes_on_its_own_and_its_test_does_not_without_it_is_a_defe
     let part = part(&fixture);
     assert_eq!(
         decisions(&part),
-        vec![(13, "unnoticed".to_owned())],
+        vec![(13, "absorbed".to_owned())],
         "{part}\n{}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
@@ -264,25 +270,30 @@ fn why_follows_a_fault_from_every_target_it_was_put_to_to_what_it_came_to() {
     let fixture = fixture("fixture-faulted");
     let output = verify(&fixture, &["--faults", "--trace"]);
     let part = part(&fixture);
-    let unnoticed = part["faults"]
+    let absorbed = part["faults"]
         .as_array()
         .expect("a list of faults")
         .iter()
-        .find(|fault| fault["decision"]["decision"] == "unnoticed")
+        .find(|fault| fault["decision"]["decision"] == "absorbed")
         .and_then(|fault| fault["display_id"].as_str())
         .unwrap_or_else(|| {
             panic!(
-                "the run holds the unnoticed fault: {part}\n{}",
+                "the run holds the absorbed fault: {part}\n{}",
                 njutest_devkit::process::strict_utf8(&output.stderr)
             )
         })
         .to_owned();
-    let why = asked(&fixture, &["why", "fault", &unnoticed]);
+    let why = asked(&fixture, &["why", "fault", &absorbed]);
     let page = njutest_devkit::process::strict_utf8(&why.stdout);
     assert!(
         page.contains("every test that reached it passed with the call failing")
-            && page.contains("asked fixture-faulted/test/calls  survived"),
-        "the page names every target the fault was put to and what the run concluded: {page}\n{}",
+            && page.contains("asked fixture-faulted/test/calls  survived")
+            && page.contains(
+                "asked again fixture-faulted/test/calls  survived  1 failure(s) made, 0 read, \
+                 1 dropped"
+            ),
+        "the page names every target the fault was put to, what its failures came to, and what \
+         the run concluded: {page}\n{}",
         njutest_devkit::process::strict_utf8(&why.stderr)
     );
 }

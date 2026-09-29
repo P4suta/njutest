@@ -22,6 +22,7 @@ pub mod escaped;
 pub mod execcost;
 pub mod execute;
 pub mod facts;
+pub mod fate;
 pub mod flatten;
 pub mod git;
 pub mod glob;
