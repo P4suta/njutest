@@ -127,10 +127,10 @@ pub fn interpret(
     }
     let mut spec = Spec::new(
         argv,
-        interpreting.timeout.map_or(
-            rust_mutants::runner::Bound::Unbounded,
-            rust_mutants::runner::Bound::After,
-        ),
+        match interpreting.timeout {
+            Some(after) => rust_mutants::runner::Bound::After(after),
+            None => rust_mutants::runner::Bound::Unbounded,
+        },
     );
     spec.dir = Some(interpreting.root.to_path_buf());
     spec.env = Some(environment(interpreting));
@@ -243,14 +243,11 @@ enum Ending {
 fn ran_no_test(interpreted: &mut Interpreted, said: &str) {
     interpreted.executed = false;
     let read = reading(said);
-    let last = said
-        .lines()
-        .map(str::trim)
-        .rfind(|line| !line.is_empty())
-        .map_or_else(
-            || "it said nothing".to_owned(),
-            |line| format!("it last said: {line}"),
-        );
+    let last = said.lines().map(str::trim).rfind(|line| !line.is_empty());
+    let last = match last {
+        Some(line) => format!("it last said: {line}"),
+        None => "it said nothing".to_owned(),
+    };
     interpreted.limitations.push(Limitation::new(
         crate::limitation::Limitation::MiriRanNoTest,
         &format!(
@@ -310,10 +307,13 @@ fn reading(said: &str) -> Reading {
             read.results.push(ended);
             continue;
         }
-        let after_test = spoken
+        let after_test = match spoken
             .strip_prefix(TEST_PREFIX.0)
             .and_then(|rest| rest.split_once(TEST_PREFIX.1))
-            .map_or(spoken, |(_name, after)| after);
+        {
+            Some((_name, after)) => after,
+            None => spoken,
+        };
         let Some(diagnostic) = after_test.strip_prefix(DIAGNOSTIC) else {
             continue;
         };
@@ -483,8 +483,9 @@ fn absent(said: &str) -> bool {
 
 /// What to say about a Miri that is not there.
 fn absence(said: &str, error: Option<rust_mutants::runner::RunFailure<'_>>) -> String {
-    error.map_or_else(
-        || first_line(said, "error").unwrap_or_else(|| "the toolchain has no miri".to_owned()),
-        |failure| failure.to_string(),
-    )
+    match (error, first_line(said, "error")) {
+        (Some(failure), _) => failure.to_string(),
+        (None, Some(line)) => line,
+        (None, None) => "the toolchain has no miri".to_owned(),
+    }
 }

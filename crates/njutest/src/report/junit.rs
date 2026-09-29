@@ -71,7 +71,10 @@ fn write_target(out: &mut String, target: &super::TargetRecord) -> Result<(), st
         escape(&target.name),
         seconds(target.duration_ms)
     )?;
-    let message = target.message.as_deref().unwrap_or_default();
+    let message = match target.message.as_deref() {
+        Some(said) => said,
+        None => "",
+    };
     match target.status {
         TargetStatus::Passed => {
             writeln!(out, "/>")?;

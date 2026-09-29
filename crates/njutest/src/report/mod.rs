@@ -246,7 +246,10 @@ impl Position {
     /// Returns [`CountError`] when either one-based column is outside the v1 wire range.
     #[cfg(feature = "testkit")]
     pub fn of(line_text: &str, line: u32, offset: usize) -> Result<Self, CountError> {
-        let prefix = line_text.get(..offset).unwrap_or(line_text);
+        let prefix = match line_text.get(..offset) {
+            Some(prefix) => prefix,
+            None => line_text,
+        };
         Ok(Self {
             line,
             column: count_of("position byte column", prefix.len())?
@@ -514,14 +517,20 @@ impl Git {
     ///
     /// The word is made here rather than stored, so nothing can hold a commit and say it was not asked at the same time.
     #[must_use]
-    pub fn commit(&self) -> &str {
-        self.said().map_or(UNAVAILABLE, |said| said.commit.as_str())
+    pub const fn commit(&self) -> &str {
+        match self.said() {
+            Some(said) => said.commit.as_str(),
+            None => UNAVAILABLE,
+        }
     }
 
     /// The branch, or [`UNAVAILABLE`] where git was not asked.
     #[must_use]
-    pub fn branch(&self) -> &str {
-        self.said().map_or(UNAVAILABLE, |said| said.branch.as_str())
+    pub const fn branch(&self) -> &str {
+        match self.said() {
+            Some(said) => said.branch.as_str(),
+            None => UNAVAILABLE,
+        }
     }
 
     /// Whether the tree had uncommitted changes, which a tree nobody could ask about does not.
@@ -559,7 +568,10 @@ impl Serialize for Git {
             branch: self.branch().to_owned(),
             dirty: self.dirty(),
             merge_base: against.map(|taken| taken.merge_base.clone()),
-            changed_files: against.map_or_else(Vec::new, |taken| taken.changed_files.clone()),
+            changed_files: match against {
+                Some(taken) => taken.changed_files.clone(),
+                None => Vec::new(),
+            },
         }
         .serialize(serializer)
     }

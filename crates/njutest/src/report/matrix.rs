@@ -259,17 +259,17 @@ fn column(dimension: Dimension, evidence: &Evidence<'_>) -> Column {
 
 /// A measured column, or an unmeasured one where its counts do not add up to a count.
 fn measured(answered: usize, holes: Vec<String>, speaks_not_about: Vec<String>) -> Column {
-    answered.checked_add(holes.len()).map_or_else(
-        || Column::Unmeasured {
+    match answered.checked_add(holes.len()) {
+        None => Column::Unmeasured {
             why: "more was put than a count can hold".to_owned(),
         },
-        |catalogued| Column::Measured {
+        Some(catalogued) => Column::Measured {
             catalogued,
             answered,
             holes,
             speaks_not_about,
         },
-    )
+    }
 }
 
 /// Where one record of a dimension falls: decided, put and not decided, or of a class the dimension cannot put at all.
@@ -591,7 +591,10 @@ pub fn pooled(columns: Vec<Column>) -> Column {
             }
         });
     }
-    pooled.unwrap_or(Column::NotAsked)
+    match pooled {
+        Some(column) => column,
+        None => Column::NotAsked,
+    }
 }
 
 /// How little a column establishes, so the one that establishes least stands for several.

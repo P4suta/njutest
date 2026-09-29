@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The files that read a run's recordings and reports to re-decide them, and the calls the `defaulted-absence` lint refuses there because they supply a value where the input gave none.
+//! The files that read a run's recordings and reports to re-decide them, the runner's files that decide what a run established, and the calls the `defaulted-absence` lint refuses in both because they supply a value where the input gave none.
 
 /// The files that read a run's recordings and reports to re-decide them, by path or by directory.
 pub const AUDIT_READERS: [&str; 10] = [
@@ -17,6 +17,9 @@ pub const AUDIT_READERS: [&str; 10] = [
     "xtask/src/concurrency.rs",
 ];
 
+/// The runner's files that decide a standing, a finding, a column or a report row from what a run observed, by directory.
+pub const RUNNER_DECIDERS: [&str; 2] = ["crates/njutest/src/assure/", "crates/njutest/src/report/"];
+
 /// The methods that answer for an absent value with one the input never gave.
 pub const DEFAULTING: [&str; 5] = [
     "unwrap_or",
@@ -26,14 +29,17 @@ pub const DEFAULTING: [&str; 5] = [
     "map_or_else",
 ];
 
-/// Whether `file`, repository-relative, is an audit reader.
+/// Whether `file`, repository-relative, is an audit reader or a runner file that decides, where an absent value is stated rather than supplied.
 #[must_use]
-pub fn reads_for_an_audit(file: &str) -> bool {
-    AUDIT_READERS.iter().any(|reader| {
-        if reader.ends_with('/') {
-            file.starts_with(reader)
-        } else {
-            file == *reader
-        }
-    })
+pub fn answers_for_absence(file: &str) -> bool {
+    AUDIT_READERS
+        .iter()
+        .chain(RUNNER_DECIDERS.iter())
+        .any(|reader| {
+            if reader.ends_with('/') {
+                file.starts_with(reader)
+            } else {
+                file == *reader
+            }
+        })
 }

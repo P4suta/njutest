@@ -38,10 +38,10 @@ pub fn recorded(
     let closures: BTreeMap<String, Vec<String>> = binaries
         .iter()
         .map(|(binary, (package, _))| {
-            let closure = metadata
-                .members()
-                .find(|member| member.name == *package)
-                .map_or_else(Vec::new, |member| metadata.closure(&member.id));
+            let closure = match metadata.members().find(|member| member.name == *package) {
+                Some(member) => metadata.closure(&member.id),
+                None => Vec::new(),
+            };
             let (kept, left_out) = linked(&closure, &compiled);
             uncompiled.extend(left_out.into_iter().cloned());
             (binary.clone(), kept.into_iter().cloned().collect())
@@ -56,7 +56,10 @@ pub fn recorded(
     let records = binaries
         .into_iter()
         .map(|(binary, (package, harness))| {
-            let closure = closures.get(&binary).map_or(&[][..], Vec::as_slice);
+            let closure = match closures.get(&binary) {
+                Some(closure) => closure.as_slice(),
+                None => &[][..],
+            };
             let unread: Vec<PackageScan> = closure
                 .iter()
                 .filter(|id| !read.contains_key(*id))
@@ -112,11 +115,9 @@ pub fn scans(
     let read = schedule::measure(
         ids,
         &schedule::Crew::threads(workers, "njutest-read"),
-        |_at, id| {
-            metadata.package(id).map_or_else(
-                || Ok(unread_manifest(id)),
-                |package| crate::concurrency::read::package(package, compiled),
-            )
+        |_at, id| match metadata.package(id) {
+            Some(package) => crate::concurrency::read::package(package, compiled),
+            None => Ok(unread_manifest(id)),
         },
     )?;
     let mut scanned = BTreeMap::new();

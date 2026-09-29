@@ -331,7 +331,10 @@ pub fn status_of(outcome: Outcome, ignored: u32, output: &str) -> TargetVerdict 
         Outcome::Killed => (
             TargetStatus::Failed,
             Some(FindingKind::FailingTest),
-            Some(failure(output).unwrap_or_else(|| "the target failed".to_owned())),
+            Some(match failure(output) {
+                Some(said) => said,
+                None => "the target failed".to_owned(),
+            }),
         ),
         Outcome::StepLimitReached => (
             TargetStatus::Missing,
@@ -363,9 +366,10 @@ pub fn status_of(outcome: Outcome, ignored: u32, output: &str) -> TargetVerdict 
         Outcome::Errored => (
             TargetStatus::Missing,
             Some(FindingKind::TargetMissing),
-            Some(failure(output).unwrap_or_else(|| {
-                "the target could not be started, so nothing was observed".to_owned()
-            })),
+            Some(match failure(output) {
+                Some(said) => said,
+                None => "the target could not be started, so nothing was observed".to_owned(),
+            }),
         ),
     };
     TargetVerdict {

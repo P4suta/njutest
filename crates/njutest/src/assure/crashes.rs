@@ -135,7 +135,10 @@ fn sites(
             id: mutant.id.to_string(),
             display_id: mutant.display_id.to_string(),
             path: mutant.candidate.path.clone(),
-            item: session.item_of(mutant.index).unwrap_or_default().to_owned(),
+            item: match session.item_of(mutant.index) {
+                Some(item) => item.to_owned(),
+                None => String::new(),
+            },
             position: session.position(mutant).map(|at| crate::report::Position {
                 line: at.line,
                 column: at.byte_column,

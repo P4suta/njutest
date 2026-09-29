@@ -113,7 +113,10 @@ pub fn replay(
             build: replaying.build.clone(),
             harness_args: replaying.harness_args.clone(),
             skip_targets: replaying.skip_targets.clone(),
-            mutant_timeout: replaying.timeout.map_or(Timeout::Auto, Timeout::Fixed),
+            mutant_timeout: match replaying.timeout {
+                Some(after) => Timeout::Fixed(after),
+                None => Timeout::Auto,
+            },
             mutant_steps: (replaying.steps > 0).then_some(replaying.steps),
             operators,
             ..crate::assure::engine::switches(rust_mutants::sealed::Sealing::Off)

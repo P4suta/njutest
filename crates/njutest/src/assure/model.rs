@@ -975,10 +975,10 @@ fn item_conflicts_with_type_roots(item: &syn::Item, roots: &BTreeSet<String>) ->
         syn::Item::Const(item) => roots.contains(&item.ident.to_string()),
         syn::Item::Enum(item) => roots.contains(&item.ident.to_string()),
         syn::Item::ExternCrate(item) => {
-            let bound = item
-                .rename
-                .as_ref()
-                .map_or(&item.ident, |(_as, rename)| rename);
+            let bound = match &item.rename {
+                Some((_as, rename)) => rename,
+                None => &item.ident,
+            };
             roots.contains(&bound.to_string())
         }
         syn::Item::Fn(item) => roots.contains(&item.sig.ident.to_string()),
@@ -1151,10 +1151,10 @@ impl Purity {
                 _ => self.reject(Effect::Unsupported),
             },
             syn::Expr::Block(block) => self.block(&block.block),
-            syn::Expr::Break(one) => one
-                .expr
-                .as_deref()
-                .map_or(Ok(()), |value| self.expression(value)),
+            syn::Expr::Break(one) => match one.expr.as_deref() {
+                Some(value) => self.expression(value),
+                None => Ok(()),
+            },
             syn::Expr::Cast(cast) => {
                 self.expression(&cast.expr)?;
                 symbolic_type(&cast.ty)
@@ -1175,9 +1175,10 @@ impl Purity {
             syn::Expr::If(one) => {
                 self.expression(&one.cond)?;
                 self.block(&one.then_branch)?;
-                one.else_branch
-                    .as_ref()
-                    .map_or(Ok(()), |(_else, branch)| self.expression(branch))
+                match &one.else_branch {
+                    Some((_else, branch)) => self.expression(branch),
+                    None => Ok(()),
+                }
             }
             syn::Expr::Index(index) => {
                 self.expression(&index.expr)?;
@@ -1212,10 +1213,10 @@ impl Purity {
                 self.expression(&repeat.expr)?;
                 self.expression(&repeat.len)
             }
-            syn::Expr::Return(one) => one
-                .expr
-                .as_deref()
-                .map_or(Ok(()), |value| self.expression(value)),
+            syn::Expr::Return(one) => match one.expr.as_deref() {
+                Some(value) => self.expression(value),
+                None => Ok(()),
+            },
             syn::Expr::Tuple(tuple) => tuple
                 .elems
                 .iter()

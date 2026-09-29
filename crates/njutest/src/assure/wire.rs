@@ -175,16 +175,16 @@ where
             break;
         }
         let mut asked = None;
-        let decision = crate::wire::prove::discharges(fault, measuring.observed).map_or_else(
-            || {
+        let decision = match crate::wire::prove::discharges(fault, measuring.observed) {
+            Some(proof) => SeamDecision::Proved {
+                proof: proof.to_owned(),
+            },
+            None => {
                 let (put, decision) = decided(fault, &mut run, measuring.before);
                 asked = Some(put);
                 decision
-            },
-            |proof| SeamDecision::Proved {
-                proof: proof.to_owned(),
-            },
-        );
+            }
+        };
         watch.trace.wire_exec(crate::trace::WireExecRecord {
             fault: fault.id.clone(),
             capability: fault.capability.clone(),
@@ -308,7 +308,10 @@ fn asked_about(
         .observed
         .iter()
         .find(|one| one.capability == fault.capability && one.seq == fault.seq);
-    let (asked, answered) = named.map_or_else(|| (String::new(), None), |one| one.spoken.asked());
+    let (asked, answered) = match named {
+        Some(one) => one.spoken.asked(),
+        None => (String::new(), None),
+    };
     done.seams.push(crate::report::SeamRecord {
         id: fault.id.clone(),
         capability: fault.capability.clone(),
@@ -324,17 +327,17 @@ fn asked_about(
 ///
 /// The exchange is named by what was asked over it rather than by its place in the order: a reader who has to count round trips to find out which one this was has been handed an ordinal instead of an answer.
 fn unnoticed(fault: &Fault, observed: &[Exchange]) -> Finding {
-    let spoke = observed
+    let spoken = observed
         .iter()
         .find(|one| one.capability == fault.capability && one.seq == fault.seq)
         .and_then(|one| match &one.spoken {
             crate::wire::Spoken::Http { method, path, .. } => Some(format!("{method} {path}")),
             crate::wire::Spoken::Raw { .. } => None,
-        })
-        .map_or_else(
-            || format!("exchange {} of the {} seam", fault.seq, fault.capability),
-            |what| format!("{what} on the {} seam", fault.capability),
-        );
+        });
+    let spoke = match spoken {
+        Some(what) => format!("{what} on the {} seam", fault.capability),
+        None => format!("exchange {} of the {} seam", fault.seq, fault.capability),
+    };
     let mut finding = Finding::new(
         FindingKind::WireUnnoticed,
         &fault.id,

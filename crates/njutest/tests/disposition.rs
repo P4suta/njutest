@@ -35,7 +35,11 @@ fn judged(disposition: Disposition) -> Judged {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: String::new(),
-        position: None,
+        position: Position {
+            line: 1,
+            column: 1,
+            character_column: 1,
+        },
         disposition,
         source_run_id: None,
         observed: Vec::new(),
@@ -329,11 +333,11 @@ fn each_way_a_pair_can_fail_to_agree_says_which_one_happened() {
 #[test]
 fn a_finding_is_raised_where_the_mutation_it_names_is() {
     let mut one = judged(Disposition::Unreached);
-    one.position = Some(Position {
+    one.position = Position {
         line: 12,
         column: 5,
         character_column: 5,
-    });
+    };
     let phase = Mutation {
         judged: vec![one],
         skips: BTreeMap::new(),
@@ -409,7 +413,11 @@ fn of(display_id: &str, disposition: Disposition, reused: bool) -> Judged {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: String::new(),
-        position: None,
+        position: Position {
+            line: 1,
+            column: 1,
+            character_column: 1,
+        },
         disposition,
         source_run_id: reused.then(|| "20260905T081500Z-000000".to_owned()),
         observed: Vec::new(),

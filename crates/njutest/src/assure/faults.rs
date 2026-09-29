@@ -493,7 +493,7 @@ fn recorded(judged: &Judged, root: &str) -> FaultRecord {
         display_id: judged.display_id.clone(),
         path: judged.path.clone(),
         item: judged.item.clone(),
-        position: judged.position,
+        position: Some(judged.position),
         decision: match decided(&judged.disposition) {
             FaultDecision::NotPut { diagnostic } => FaultDecision::NotPut {
                 diagnostic: diagnostic.replace(root, "."),

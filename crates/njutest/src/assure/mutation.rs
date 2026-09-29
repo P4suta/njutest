@@ -214,8 +214,8 @@ pub struct Judged {
     pub original: String,
     /// The bytes it puts there instead.
     pub replacement: String,
-    /// Where it is, when the catalog could say.
-    pub position: Option<crate::report::Position>,
+    /// Where it is.
+    pub position: crate::report::Position,
     /// What was established.
     pub disposition: Disposition,
     /// What that rests on: the sealed executions that established it, or every reason none did, and `None` where no execution was asked about it (ADR 0046).
@@ -306,11 +306,7 @@ fn watching(judged: &Judged) -> String {
 fn survived(judged: &Judged) -> String {
     let at = format!(
         "{} at {}:{}",
-        judged.rule,
-        judged.path,
-        judged
-            .position
-            .map_or_else(|| "?".to_owned(), |one| one.line.to_string())
+        judged.rule, judged.path, judged.position.line
     );
     let (executions, targets) = match &judged.evidence {
         Some(RestsOn::Sealed { executions }) => (
@@ -441,7 +437,7 @@ fn finding_of(judged: &Judged) -> Option<Finding> {
     };
     let mut finding = Finding::new(kind, &judged.display_id, &detail);
     finding.path = Some(judged.path.clone());
-    finding.position = judged.position;
+    finding.position = Some(judged.position);
     Some(finding)
 }
 
@@ -825,11 +821,18 @@ fn establish(
     rejected: &BTreeMap<&str, &str>,
 ) -> Result<Judged, crate::error::RunnerError> {
     let (session, watch) = (judging.subject.session, judging.watch);
-    let position = session.position(mutant).map(|at| crate::report::Position {
+    let Some(at) = session.position(mutant) else {
+        return Err(crate::assure::run::RunInvariantError::UnplacedMutation {
+            mutant: mutant.display_id.to_string(),
+            path: mutant.candidate.path.clone(),
+        }
+        .into());
+    };
+    let position = crate::report::Position {
         line: at.line,
         column: at.byte_column,
         character_column: at.char_column,
-    });
+    };
     let came = if let Some(saved) = state.and_then(|state| state.mutant(mutant.id.as_str())) {
         resumed(judging, mutant, saved)?
     } else if let Some(diagnostic) = rejected.get(mutant.id.as_str()) {
@@ -861,12 +864,10 @@ fn establish(
         display_id: mutant.display_id.to_string(),
         path: mutant.candidate.path.clone(),
         rule: mutant.candidate.rule.name.to_owned(),
-        item: judging
-            .subject
-            .session
-            .item_of(mutant.index)
-            .unwrap_or_default()
-            .to_owned(),
+        item: match judging.subject.session.item_of(mutant.index) {
+            Some(item) => item.to_owned(),
+            None => String::new(),
+        },
         original: original.to_owned(),
         replacement: replacement.to_owned(),
         position,
@@ -1412,12 +1413,9 @@ pub fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Consulte
     if let Err(refusal) = record.believable(&asking, &evidence.standing) {
         return Consulted::Refused(refusal);
     }
-    let named = |target: &String| {
-        evidence
-            .names
-            .get(target)
-            .cloned()
-            .unwrap_or_else(|| target.clone())
+    let named = |target: &String| match evidence.names.get(target) {
+        Some(name) => name.clone(),
+        None => target.clone(),
     };
     let (disposition, answered, claimed) = match &record.outcome {
         store::Outcome::Killed { target, before, .. } => (
@@ -2337,16 +2335,11 @@ fn against_reaching(
 
 /// What one execution of a mutation against one target says, before the route aggregates every target.
 fn fact_of(request: Request, measured: Option<&Measured>, result: &MutantResult) -> TargetFact {
-    let name = measured.map_or_else(
-        || {
-            if result.target.is_empty() {
-                SUITE.to_owned()
-            } else {
-                result.target.clone()
-            }
-        },
-        |one| one.target.name(),
-    );
+    let name = match measured {
+        Some(one) => one.target.name(),
+        None if result.target.is_empty() => SUITE.to_owned(),
+        None => result.target.clone(),
+    };
     match &result.conclusion {
         MutantConclusion::Survived => TargetFact::Survived,
         MutantConclusion::Killed | MutantConclusion::DeclinedUnderTheMutant { .. } => {
@@ -2634,12 +2627,14 @@ impl Controls {
 
     /// What the controls run while judging `mutant` established, taken so that it is recorded once.
     fn taken(&self, mutant: &str) -> Result<Vec<Drift>, crate::error::RunnerError> {
-        Ok(self
+        let mut observed = self
             .observed
             .lock()
-            .map_err(|_poisoned| schedule::ScheduleError::ControlStatePoisoned)?
-            .remove(mutant)
-            .unwrap_or_default())
+            .map_err(|_poisoned| schedule::ScheduleError::ControlStatePoisoned)?;
+        Ok(match observed.remove(mutant) {
+            Some(drifts) => drifts,
+            None => Vec::new(),
+        })
     }
 }
 
@@ -2664,9 +2659,10 @@ fn record_exec(
     let duration_ms = u64::try_from(milliseconds).map_err(|_outside_wire_range| {
         crate::assure::run::RunInvariantError::MutationDurationOutsideWire { milliseconds }
     })?;
-    let target = ran
-        .measured
-        .map_or_else(|| SUITE.to_owned(), |one| one.target.name());
+    let target = match ran.measured {
+        Some(one) => one.target.name(),
+        None => SUITE.to_owned(),
+    };
     match ran.perturbing {
         Perturbing::Mutants => watch.trace.mutant_exec(crate::trace::MutantExecRecord {
             mutant: ran.mutant.display_id.to_string(),

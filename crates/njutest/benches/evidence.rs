@@ -83,7 +83,11 @@ fn survivors(count: u32) -> (Vec<Judged>, Vec<Decided>) {
             item: "demo".to_owned(),
             original: ">".to_owned(),
             replacement: String::new(),
-            position: None,
+            position: njutest::report::Position {
+                line: 1,
+                column: 1,
+                character_column: 1,
+            },
             disposition: Disposition::Survived {
                 route: Route::All {
                     reaching: vec!["core/lib/core".to_owned()],

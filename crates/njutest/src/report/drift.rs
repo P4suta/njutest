@@ -268,7 +268,10 @@ pub fn repaired(
         })
         .filter(|target| resting(records, target) == (0, 0))
         .map(|target| {
-            let again = counted.get(target).copied().unwrap_or_default();
+            let again = match counted.get(target) {
+                Some(again) => *again,
+                None => 0,
+            };
             Limitation::new(
                 crate::limitation::Limitation::ReachMoved,
                 &format!(

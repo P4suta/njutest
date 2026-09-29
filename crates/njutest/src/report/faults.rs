@@ -125,10 +125,10 @@ impl FaultRecord {
     /// Where a person reads it: the file, and the line where the run knows one.
     #[must_use]
     pub fn place(&self) -> String {
-        self.position.map_or_else(
-            || self.path.clone(),
-            |at| format!("{}:{}", self.path, at.line),
-        )
+        match self.position {
+            Some(at) => format!("{}:{}", self.path, at.line),
+            None => self.path.clone(),
+        }
     }
 }
 
@@ -345,8 +345,11 @@ pub fn limited(records: &[FaultRecord]) -> Vec<Limitation> {
 
 /// The compiler's error code in a first line, or the whole line where it named none.
 fn class(diagnostic: &str) -> &str {
-    diagnostic
+    match diagnostic
         .strip_prefix("error[")
         .and_then(|rest| rest.split_once(']'))
-        .map_or(diagnostic, |(code, _message)| code)
+    {
+        Some((code, _message)) => code,
+        None => diagnostic,
+    }
 }

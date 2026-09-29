@@ -694,7 +694,7 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     if reads_into_the_map(file) {
         scan.found.extend(raw_lexings(&parsed, file));
     }
-    if crate::defaulted::reads_for_an_audit(file) {
+    if crate::defaulted::answers_for_absence(file) {
         scan.found.extend(defaulted_absences(&parsed, file));
     }
     if !ENVIRONMENT_READERS
@@ -8625,7 +8625,7 @@ impl Visit<'_> for RawLexing<'_> {
     }
 }
 
-/// Every call in an audit reader, outside code compiled only for tests, that answers for an absent value with one its input never gave.
+/// Every call in an audit reader or a runner file that decides, outside code compiled only for tests, that answers for an absent value with one its input never gave.
 fn defaulted_absences(parsed: &syn::File, file: &str) -> Vec<Finding> {
     let mut visitor = DefaultedAbsence {
         file,

@@ -191,10 +191,10 @@ fn command(sanitizing: &Sanitizing<'_>, sanitizer: Sanitizer) -> Result<Spec, Ru
     }
     let mut spec = Spec::new(
         argv,
-        sanitizing.timeout.map_or(
-            rust_mutants::runner::Bound::Unbounded,
-            rust_mutants::runner::Bound::After,
-        ),
+        match sanitizing.timeout {
+            Some(after) => rust_mutants::runner::Bound::After(after),
+            None => rust_mutants::runner::Bound::Unbounded,
+        },
     );
     spec.dir = Some(sanitizing.root.to_path_buf());
     spec.env = Some(instrumenting(&sanitizing.env, sanitizer)?);

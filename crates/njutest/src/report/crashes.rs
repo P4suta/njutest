@@ -131,10 +131,10 @@ impl CrashRecord {
     /// Where a person reads it: the file, and the line where the run knows one.
     #[must_use]
     pub fn place(&self) -> String {
-        self.position.map_or_else(
-            || self.path.clone(),
-            |at| format!("{}:{}", self.path, at.line),
-        )
+        match self.position {
+            Some(at) => format!("{}:{}", self.path, at.line),
+            None => self.path.clone(),
+        }
     }
 }
 

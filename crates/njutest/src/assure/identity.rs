@@ -124,10 +124,10 @@ impl Evidence {
     /// Falling back to the run identity is safe only for an unknown evidence value, which callers already refuse to persist.
     #[must_use]
     pub fn continuation_identity(&self) -> String {
-        self.keying.as_ref().map_or_else(
-            || self.identity.clone(),
-            |keying| key::continuation_identity(&self.identity, &keying.common.build),
-        )
+        match &self.keying {
+            Some(keying) => key::continuation_identity(&self.identity, &keying.common.build),
+            None => self.identity.clone(),
+        }
     }
 }
 

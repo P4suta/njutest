@@ -87,6 +87,20 @@ pub enum RunInvariantError {
         /// The outcome the verdict came as.
         outcome: &'static str,
     },
+    /// The engine cataloged a mutation at a place the source it read cannot locate.
+    #[error("the engine cataloged {mutant} in {path} at a place its source does not have")]
+    UnplacedMutation {
+        /// The mutation.
+        mutant: String,
+        /// The file it names.
+        path: String,
+    },
+    /// A surviving-mutant finding names a mutation the report holds no row of.
+    #[error("the finding about {subject} names a mutation the report holds no row of")]
+    UnrowedFinding {
+        /// What the finding names.
+        subject: String,
+    },
 }
 
 /// What one run was asked to do.
@@ -328,12 +342,10 @@ fn wired(
     }
     notes.phase("wire")?;
     watch.trace.stage("wire");
-    let held_up = seams
-        .watching
-        .iter()
-        .map(|one| one.held_up)
-        .max()
-        .unwrap_or_default();
+    let held_up = match seams.watching.iter().map(|one| one.held_up).max() {
+        Some(longest) => longest,
+        None => std::time::Duration::ZERO,
+    };
     let timeout = session
         .slowest_baseline()
         .checked_mul(2)
@@ -600,7 +612,10 @@ fn driven(
 
 /// The environment the fuzzer runs with: the toolchain's own, since a fuzz build is a build.
 fn environment_of(toolchain: &rust_mutants::cargo::Toolchain) -> rust_mutants::vars::Variables {
-    toolchain.env().cloned().unwrap_or_default()
+    match toolchain.env() {
+        Some(own) => own.clone(),
+        None => rust_mutants::vars::Variables::default(),
+    }
 }
 
 /// Keeps one crashing input as a candidate for the corpus.
@@ -663,19 +678,21 @@ fn proposed(
     }
     notes.phase("generation")?;
     watch.trace.stage("generation");
-    propose(report, request, environment, watch);
-    Ok(())
+    propose(report, request, environment, watch)
 }
 
 /// Asks the generation provider to close what the run found, and puts every candidate to the tests before keeping it.
+///
+/// # Errors
+/// A surviving-mutant finding that names a mutation the report holds no row of.
 fn propose(
     report: &mut BuildReport,
     request: &Request,
     environment: &Environment,
     watch: Watch<'_>,
-) {
+) -> Result<(), RunnerError> {
     let Some(generation) = &request.config.generation else {
-        return;
+        return Ok(());
     };
     let allowed = crate::repair::allowed(&generation.allowed_paths);
     let subjects: Vec<(String, String)> = report
@@ -688,7 +705,7 @@ fn propose(
         if watch.cancel.is_cancelled() {
             break;
         }
-        let asking = ask(report, request, (&mutant, &detail), &allowed);
+        let asking = ask(report, request, (&mutant, &detail), &allowed)?;
         let Ok(asked) = serde_json::to_string(&asking) else {
             continue;
         };
@@ -708,7 +725,7 @@ fn propose(
                     crate::limitation::Limitation::GenerationProviderUnavailable,
                     &format!("the generation provider could not be asked: {refusal}"),
                 ));
-                return;
+                return Ok(());
             }
         };
         match crate::repair::take(&said, &request.root, &allowed) {
@@ -723,30 +740,39 @@ fn propose(
             )),
         }
     }
+    Ok(())
 }
 
 /// What the provider is told about one finding.
+///
+/// # Errors
+/// [`RunInvariantError::UnrowedFinding`] where the report holds no row of the mutation it names.
 fn ask(
     report: &BuildReport,
     request: &Request,
     about: (&str, &str),
     allowed: &[String],
-) -> crate::repair::Ask {
+) -> Result<crate::repair::Ask, RunInvariantError> {
     let (mutant, detail) = about;
-    let found = report
+    let Some(found) = report
         .mutants
         .iter()
-        .find(|one| one.display_id == mutant || one.id == mutant);
-    crate::repair::Ask {
+        .find(|one| one.display_id == mutant || one.id == mutant)
+    else {
+        return Err(RunInvariantError::UnrowedFinding {
+            subject: mutant.to_owned(),
+        });
+    };
+    Ok(crate::repair::Ask {
         version: crate::repair::VERSION,
         finding: crate::repair::AskedFinding {
             id: mutant.to_owned(),
             kind: "surviving-mutant".to_owned(),
-            path: found.map(|one| one.path.clone()).unwrap_or_default(),
-            line: found.map_or(0, |one| one.position.line),
+            path: found.path.clone(),
+            line: found.position.line,
             summary: detail.to_owned(),
             replay: format!("njutest replay {mutant}"),
-            mutant: found.map(|one| one.rule.clone()).unwrap_or_default(),
+            mutant: found.rule.clone(),
             mutant_id: mutant.to_owned(),
         },
         allowed_paths: allowed.to_vec(),
@@ -754,7 +780,7 @@ fn ask(
             workspace_digest: report.repository.workspace_digest.clone(),
             run_id: request.run_id.to_string(),
         },
-    }
+    })
 }
 
 /// Puts one candidate to the tests and records what that established.
@@ -1015,9 +1041,10 @@ impl Journal {
         restore: Option<&crate::checkpoint::State>,
     ) -> Result<Self, RunInvariantError> {
         let identity = request.evidence.continuation_identity();
-        let mut state = restore
-            .cloned()
-            .unwrap_or_else(|| crate::checkpoint::State::new(&identity));
+        let mut state = match restore {
+            Some(restored) => restored.clone(),
+            None => crate::checkpoint::State::new(&identity),
+        };
         state.attempts = state
             .attempts
             .checked_add(1)
@@ -1337,15 +1364,13 @@ pub fn resolve_acceptances(
         .iter()
         .filter(|acceptance| acceptance.holds(now))
     {
-        let found = acceptance.locator().map_or_else(
-            || {
-                catalog
-                    .resolve_prefix(&acceptance.id)
-                    .map(|mutant| mutant.id.to_string())
-                    .map_err(AcceptanceResolutionError::from)
-            },
-            |locator| locate(&locator).map_err(AcceptanceResolutionError::from),
-        );
+        let found = match acceptance.locator() {
+            Some(locator) => locate(&locator).map_err(AcceptanceResolutionError::from),
+            None => catalog
+                .resolve_prefix(&acceptance.id)
+                .map(|mutant| mutant.id.to_string())
+                .map_err(AcceptanceResolutionError::from),
+        };
         match found {
             Ok(id) => ids.push(id),
             Err(error) => findings.push(Finding::new(
@@ -1738,11 +1763,7 @@ pub fn record(
             id: judged.id.clone(),
             display_id: judged.display_id.clone(),
             path: judged.path.clone(),
-            position: judged.position.unwrap_or(crate::report::Position {
-                line: 1,
-                column: 1,
-                character_column: 1,
-            }),
+            position: judged.position,
             rule: judged.rule.clone(),
             item: judged.item.clone(),
             original: judged.original.clone(),
@@ -1750,10 +1771,10 @@ pub fn record(
             outcome: judged.disposition.decided(),
             evidence: judged.evidence.clone(),
             accepted: mutation::answered_by(judged, accepted),
-            reuse: crate::report::Reuse(judged.source_run_id.clone().map_or(
-                crate::report::Established::Here,
-                crate::report::Established::ReadBackFrom,
-            )),
+            reuse: crate::report::Reuse(match &judged.source_run_id {
+                Some(source) => crate::report::Established::ReadBackFrom(source.clone()),
+                None => crate::report::Established::Here,
+            }),
             blind_in: Vec::new(),
             routing: judged.routing.clone(),
         })
@@ -1848,10 +1869,10 @@ pub fn absorb(
             report.findings.push(Finding::new(
                 kind,
                 &subject,
-                measured
-                    .message
-                    .as_deref()
-                    .unwrap_or("the target ended without saying why"),
+                match measured.message.as_deref() {
+                    Some(said) => said,
+                    None => "the target ended without saying why",
+                },
             ));
         }
         report.targets.push(TargetRecord {
@@ -1989,10 +2010,10 @@ fn root_name(root: &std::path::Path) -> Result<String, crate::evidence::tree::Sc
 /// One sentence of a compiler's several, and something to say when it said nothing.
 #[must_use]
 pub fn first_line(text: &str) -> String {
-    text.lines()
-        .find(|line| !line.trim().is_empty())
-        .unwrap_or("the workspace does not compile")
-        .to_owned()
+    match text.lines().find(|line| !line.trim().is_empty()) {
+        Some(line) => line.to_owned(),
+        None => "the workspace does not compile".to_owned(),
+    }
 }
 
 /// What a named limitation means, for the ones a phase reports by name.
@@ -2002,7 +2023,10 @@ pub fn first_line(text: &str) -> String {
     reason = "one sentence for every limitation a phase names, and a table split in two is two places to add the next one to"
 )]
 pub fn limitation_detail(name: &str) -> String {
-    let named = name.split_once(':').map_or(name, |(head, _target)| head);
+    let named = match name.split_once(':') {
+        Some((head, _target)) => head,
+        None => name,
+    };
     match named {
         crate::limitation::TARGET_RUSTFLAGS_NOT_MERGED
         | rust_mutants::limitation::COVERAGE_REFUSED_CONFIGURED_RUSTFLAGS => {

@@ -31,7 +31,11 @@ fn judged(display_id: &str, disposition: Disposition, reused: bool) -> Judged {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: String::new(),
-        position: None,
+        position: njutest::report::Position {
+            line: 1,
+            column: 1,
+            character_column: 1,
+        },
         evidence: njutest::testkit::reports::sealed_as(&(disposition).decided()),
         disposition,
         source_run_id: reused.then(|| "20260905T081500Z-000000".to_owned()),
@@ -137,11 +141,11 @@ fn every_mutation_judged_is_a_row_that_says_what_became_of_it() {
         },
         true,
     );
-    placed.position = Some(njutest::report::Position {
+    placed.position = njutest::report::Position {
         line: 12,
         column: 5,
         character_column: 5,
-    });
+    };
     let mutation = Mutation {
         judged: vec![
             placed,

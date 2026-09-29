@@ -205,7 +205,10 @@ fn refused(one: &Asked, unsafe_packages: &BTreeSet<String>, tree_written: bool) 
     Decided {
         display_id: one.display_id.clone(),
         equivalent: false,
-        detail: why.map_or_else(|| "not-asked".to_owned(), |why| why.name().to_owned()),
+        detail: match why {
+            Some(why) => why.name().to_owned(),
+            None => "not-asked".to_owned(),
+        },
     }
 }
 

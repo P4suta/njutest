@@ -57,10 +57,10 @@ fn rules(findings: &[Finding]) -> Vec<serde_json::Value> {
 /// A mutant's identity is a function of the whole file, so keying on it closes every alert in a file and opens them again as new on any commit touching it, taking a reviewer's dismissals with them.
 /// Where the finding names a place, the place is the key; where it names nothing else, its own kind and subject are all there is.
 fn fingerprint(finding: &Finding) -> String {
-    finding.path.as_ref().map_or_else(
-        || format!("{}:{}", finding.kind_name(), finding.subject),
-        |path| format!("{}:{}", finding.kind_name(), path),
-    )
+    match &finding.path {
+        Some(path) => format!("{}:{}", finding.kind_name(), path),
+        None => format!("{}:{}", finding.kind_name(), finding.subject),
+    }
 }
 
 fn result(finding: &Finding) -> serde_json::Value {

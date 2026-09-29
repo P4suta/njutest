@@ -67,9 +67,10 @@ fn findings(report: &Conclusion) -> String {
         return "<p class=\"none\">Nothing was found.</p>".to_owned();
     }
     let rows = report.findings.iter().map(|finding| {
-        let at = finding.position.map_or_else(String::new, |position| {
-            format!("{}:{}", position.line, position.column)
-        });
+        let at = match finding.position {
+            Some(position) => format!("{}:{}", position.line, position.column),
+            None => String::new(),
+        };
         format!(
             "<tr><td>{}</td><td><code>{}</code></td><td>{}</td><td>{}</td></tr>",
             escape(&finding.kind_name()),
@@ -111,7 +112,10 @@ fn targets(report: &Conclusion) -> String {
             status = escape(status_name(target.status)),
             name = escape(&target.name),
             duration = target.duration_ms,
-            message = escape(target.message.as_deref().unwrap_or_default()),
+            message = escape(match target.message.as_deref() {
+                Some(said) => said,
+                None => "",
+            }),
         )
     });
     table(&["Status", "Target", "Took", "Said"], rows)

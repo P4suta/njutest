@@ -810,7 +810,10 @@ fn misplaced(row: &super::MutantRecord) -> Option<String> {
         return Some(format!(
             "outcome {} rests on sealed executions that establish {}",
             outcome.name(),
-            established.map_or("no verdict", Outcome::name)
+            match established {
+                Some(outcome) => outcome.name(),
+                None => "no verdict",
+            }
         ));
     }
     let super::Decided::Killed { by } = &row.outcome else {

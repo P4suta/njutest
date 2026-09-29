@@ -135,7 +135,11 @@ fn survivor(display_id: &str) -> Judged {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: String::new(),
-        position: None,
+        position: njutest::report::Position {
+            line: 1,
+            column: 1,
+            character_column: 1,
+        },
         evidence: njutest::testkit::reports::sealed_as(
             &(Disposition::Survived {
                 route: block(&["core/lib/core"]),
