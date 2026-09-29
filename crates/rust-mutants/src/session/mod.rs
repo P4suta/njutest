@@ -1025,6 +1025,7 @@ impl Session {
                 let ran = crate::sealed::bench::Ran {
                     tests: baseline.ran.clone(),
                     whole: named,
+                    ignored: baseline.ignored,
                 };
                 (id.clone(), ran)
             })

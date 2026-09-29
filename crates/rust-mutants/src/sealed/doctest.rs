@@ -3,7 +3,7 @@
 
 //! Doctests built for the sealed target: rustdoc hands every binary it would run to a capture, and what it prints says which doctest each one holds (ADR 0046).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// The program rustdoc runs each doctest binary through: it keeps the binary under the next free claim, prints the claim, and fails, so that rustdoc prints which doctest the claim holds.
@@ -533,6 +533,44 @@ pub fn printed(stdout: &[u8]) -> Option<Printed> {
         stopped,
         whole,
     })
+}
+
+/// The name rustdoc indexes a doctest of a merged binary by: its name, less what libtest appends to one it only compiles.
+fn indexed(listed: &Listed) -> &str {
+    listed
+        .name
+        .strip_suffix(COMPILED_ONLY[0])
+        .unwrap_or(&listed.name)
+}
+
+/// The doctests the only merged binary of `captured` holds past the ones its harness `printed` before it stopped, named from `native`, the names the native run passed its doctests under: each that rustdoc merged, being neither compiled only nor one `captured` holds apart, in the order rustdoc indexes them; nothing where `captured` has another merged binary, which leaves which of them holds a doctest unsaid, or where one of them sorts before a doctest printed, which no binary that runs its doctests in order can hold.
+#[must_use]
+pub fn unprinted(
+    native: &[String],
+    captured: &Captured,
+    printed: &[Listed],
+) -> Option<Vec<Listed>> {
+    if captured.merged.len() != 1 {
+        return None;
+    }
+    let apart: BTreeSet<&str> = captured
+        .alone
+        .iter()
+        .map(|alone| alone.name.as_str())
+        .chain(captured.unbuilt.iter().map(String::as_str))
+        .chain(printed.iter().map(|listed| listed.name.as_str()))
+        .collect();
+    let mut past: Vec<Listed> = native
+        .iter()
+        .filter(|name| !name.ends_with(COMPILED_ONLY[1]))
+        .map(|name| listing(name, false))
+        .filter(|listed| !apart.contains(listed.name.as_str()))
+        .collect();
+    past.sort_by(|one, other| indexed(one).cmp(indexed(other)));
+    let last = printed.last().map(indexed);
+    past.iter()
+        .all(|listed| last.is_none_or(|last| indexed(listed) > last))
+        .then_some(past)
 }
 
 /// The doctests a merged binary's own harness names when it runs every one of them in one instance, in index order, where it announced them, filtered none out, and closed.

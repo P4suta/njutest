@@ -339,3 +339,62 @@ fn a_merged_binary_stopped_inside_a_doctest_names_each_it_finished_and_the_one_i
         "a harness that began another doctest after one it never finished is not one run in order"
     );
 }
+
+#[test]
+fn doctests_past_a_stopped_listing_are_named_from_the_native_run_in_the_order_rustdoc_indexes_them()
+{
+    let listed = |name: &str, expects: Expects| Listed {
+        name: name.to_owned(),
+        expects,
+        ignored: false,
+    };
+    let captured = Captured {
+        merged: vec![PathBuf::from("0.wasm")],
+        alone: vec![alone("src/lib.rs - kept (line 40)", 1, Expects::Return)],
+        unbuilt: vec!["src/lib.rs - unbuilt (line 50)".to_owned()],
+    };
+    let printed = [
+        listed("src/lib.rs - after (line 8)", Expects::Return),
+        listed("src/lib.rs - double (line 17)", Expects::Return),
+    ];
+    let native: Vec<String> = [
+        "src/lib.rs - half (line 3)",
+        "src/lib.rs - after (line 8)",
+        "src/lib.rs - half (line 27) - should panic",
+        "src/lib.rs - example (line 60) - compile",
+        "src/lib.rs - failing (line 70) - compile fail",
+        "src/lib.rs - kept (line 40)",
+        "src/lib.rs - unbuilt (line 50)",
+        "src/lib.rs - double (line 17)",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    assert_eq!(
+        super::unprinted(&native, &captured, &printed),
+        Some(vec![
+            listed("src/lib.rs - example (line 60) - compile", Expects::Return),
+            listed("src/lib.rs - half (line 27)", Expects::Panic),
+            listed("src/lib.rs - half (line 3)", Expects::Return),
+        ]),
+        "a doctest held apart, compiled only, or printed is not past the listing"
+    );
+    let earlier = [
+        native.clone(),
+        vec!["src/lib.rs - before (line 1)".to_owned()],
+    ]
+    .concat();
+    assert_eq!(
+        super::unprinted(&earlier, &captured, &printed),
+        None,
+        "a doctest that sorts before one the binary printed is not one this binary holds past it"
+    );
+    let two = Captured {
+        merged: vec![PathBuf::from("0.wasm"), PathBuf::from("2.wasm")],
+        ..captured
+    };
+    assert_eq!(
+        super::unprinted(&native, &two, &printed),
+        None,
+        "two merged binaries leave which one holds a doctest unsaid"
+    );
+}

@@ -394,23 +394,25 @@ fn an_example_the_sealed_host_refuses_is_one_uncontrolled_test_of_its_merged_bin
         .collect();
     assert_eq!(
         uncontrolled,
-        [
-            ("src/lib.rs - double (line 17)".to_owned(), "panicked"),
-            ("src/lib.rs - half (line 27)".to_owned(), "not-held"),
-        ],
-        "the example that starts a thread fails its control, and the merged binary never names \
-         the one after it: {documentation}"
+        [("src/lib.rs - double (line 17)".to_owned(), "panicked")],
+        "the example that starts a thread fails its control, and it is the only one without a \
+         control: {documentation}"
     );
-    for mutant in mutants_at(&document, 12) {
-        let evidence = &mutant["evidence"];
-        assert_eq!(evidence["kind"].as_str(), Some("sealed"), "{mutant}");
-        assert_eq!(
-            evidence["executions"][0]["test"]
-                .as_str()
-                .map(|test| test.replace('\\', "/")),
-            Some("src/lib.rs - after (line 8)".to_owned()),
-            "the example the merged binary ran before the one that stopped it answers sealed: \
-             {mutant}"
-        );
+    for (line, example, when) in [
+        (12, "src/lib.rs - after (line 8)", "before"),
+        (31, "src/lib.rs - half (line 27)", "after"),
+    ] {
+        for mutant in mutants_at(&document, line) {
+            let evidence = &mutant["evidence"];
+            assert_eq!(evidence["kind"].as_str(), Some("sealed"), "{mutant}");
+            assert_eq!(
+                evidence["executions"][0]["test"]
+                    .as_str()
+                    .map(|test| test.replace('\\', "/")),
+                Some(example.to_owned()),
+                "the example the merged binary holds {when} the one that stopped it answers \
+                 sealed: {mutant}"
+            );
+        }
     }
 }

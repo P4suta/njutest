@@ -129,7 +129,10 @@ The capture keeps each binary under the next free claim, prints the claim, and f
 A merged binary names its doctests when it runs them all in one instance, sorted by name as rustdoc indexes them, and runs one alone when `RUSTDOC_DOCTEST_RUN_NB_TEST` gives its index.
 A doctest that fails on the sealed target aborts that instance inside itself, so the listing then names each doctest the binary finished and the one it stopped in, and nothing past it.
 Before any of them counts, the index the binary announced as its count must be refused as naming no doctest, so a listing that left one out, or a binary built to leave some out, is caught.
-The doctest the listing stopped in is then a test like the others, whose control fails, and a doctest past it is not held.
+The doctest the listing stopped in is then a test like the others, whose control fails.
+The doctests past it are named from the native run, where it passed every doctest it ran and ignored none, where the library has one merged binary, and where the native run names exactly as many doctests past the listing as the binary announced, each sorting after the last the binary printed and none held in a binary of its own; they take the indexes past the listing in the order rustdoc sorts them in.
+A doctest named so is held only where its control reached a guard, because one the sealed target ignores runs as nothing by index, and is otherwise not held; a run again of a stored report has no native run to name them from, so it holds none past the listing.
+Where they cannot be named, they are not held.
 Each doctest is then a test like any other: its control records what it reached and spent, and a mutant is put to it alone.
 A report that does not account for every claim the capture gave out, or a merged binary that does not name its doctests, leaves the documentation target unsealed.
 
