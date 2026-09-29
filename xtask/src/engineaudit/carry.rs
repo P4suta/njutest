@@ -1538,20 +1538,167 @@ fn reach_held(
     standings: &std::collections::BTreeMap<String, crate::drift::Standing>,
     notes: &mut super::Notes<'_>,
 ) {
-    for target in targets {
-        let standing = match standings.get(target) {
-            Some(crate::drift::Standing::Held) => continue,
-            Some(other) => other.name(),
-            None => "without a baseline to compare a control with",
-        };
+    for why in targets
+        .into_iter()
+        .filter_map(|target| unheld(target, standings))
+    {
         notes.violated(
             subject,
-            format!(
-                "the run carried it though a premise of ADR 0041 fails: reach-moved: the run's own \
-                 records make {target} {standing}"
-            ),
+            format!("the run carried it though a premise of ADR 0041 fails: {why}"),
         );
     }
+}
+
+/// Why `target` did not hold its reach under a control of the run's tree, as the run's own records make it, or nothing where it held (P7).
+fn unheld(
+    target: &str,
+    standings: &std::collections::BTreeMap<String, crate::drift::Standing>,
+) -> Option<String> {
+    let standing = match standings.get(target) {
+        Some(crate::drift::Standing::Held) => return None,
+        Some(other) => other.name(),
+        None => "without a baseline to compare a control with",
+    };
+    Some(format!(
+        "reach-moved: the run's own records make {target} {standing}"
+    ))
+}
+
+/// What one configured build of a runner kept beside its engine recording of the answers it carried: the documents the engine writes for them.
+#[derive(Debug, Clone, Copy)]
+pub struct Kept<'a> {
+    /// `carried-v1.json`.
+    pub carried: &'a serde_json::Value,
+    /// `skeletons-v1.json`.
+    pub skeletons: &'a serde_json::Value,
+    /// `touched-v1.json`.
+    pub touched: &'a serde_json::Value,
+}
+
+/// One carried answer a runner's build believed, as this audit reads it again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rederived {
+    /// The full identity of the mutant it answered for.
+    pub mutant: String,
+    /// What the record says the answer was.
+    pub outcome: String,
+    /// The run the record says established it.
+    pub run_id: String,
+    /// The first premise of ADR 0041 it fails, in the words the trace uses, or nothing where every one holds.
+    pub fails: Option<String>,
+}
+
+/// Why what a runner's build kept beside its recording is not the carry evidence this audit reads.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum KeptError {
+    /// A document does not decode into the shape this audit reads.
+    #[error("{file} is not the {document} document this audit reads: {source}")]
+    Undecodable {
+        /// The document's file name.
+        file: &'static str,
+        /// The document it should be.
+        document: &'static str,
+        /// What the decoder said.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// A document says it is another document, or another version of it.
+    #[error("{file} says it is {said} version {version}, not {document} version 2")]
+    Other {
+        /// The document's file name.
+        file: &'static str,
+        /// What it says it is.
+        said: String,
+        /// The version it says.
+        version: u64,
+        /// The document it should be.
+        document: &'static str,
+    },
+    /// The guards' record keeps no item catalog, so no body can be named.
+    #[error("touched-v1.json keeps no item catalog")]
+    Uncataloged,
+}
+
+impl crate::error::Coded for KeptError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Undecodable { .. } | Self::Other { .. } | Self::Uncataloged => {
+                crate::error::XtCode::EngineEvidence
+            }
+        }
+    }
+}
+
+/// Every carried answer a runner's build believed, held to every premise of ADR 0041 again.
+///
+/// P1 to P6 and P8 are read from what the build kept beside its recording and P7 from the control records `standings` re-derives, with nothing of the engine's.
+///
+/// # Errors
+/// The first document that is not the one this audit reads, in words.
+pub fn rederived(
+    kept: Kept<'_>,
+    standings: Option<&std::collections::BTreeMap<String, crate::drift::Standing>>,
+) -> Result<Vec<Rederived>, KeptError> {
+    let skeletons =
+        serde_json::from_value::<Skeletons>(kept.skeletons.clone()).map_err(|source| {
+            KeptError::Undecodable {
+                file: "skeletons-v1.json",
+                document: "rust-mutants/skeletons",
+                source,
+            }
+        })?;
+    if skeletons.document_type != "rust-mutants/skeletons" || skeletons.schema_version != 2 {
+        return Err(KeptError::Other {
+            file: "skeletons-v1.json",
+            said: skeletons.document_type,
+            version: skeletons.schema_version,
+            document: "rust-mutants/skeletons",
+        });
+    }
+    let touched =
+        super::wire::read_touched(kept.touched).map_err(|source| KeptError::Undecodable {
+            file: "touched-v1.json",
+            document: "guards' record",
+            source,
+        })?;
+    let spans = spans(&touched).ok_or(KeptError::Uncataloged)?;
+    let carried = serde_json::from_value::<Believed>(kept.carried.clone()).map_err(|source| {
+        KeptError::Undecodable {
+            file: "carried-v1.json",
+            document: "rust-mutants/carried",
+            source,
+        }
+    })?;
+    if carried.document_type != "rust-mutants/carried" || carried.schema_version != 2 {
+        return Err(KeptError::Other {
+            file: "carried-v1.json",
+            said: carried.document_type,
+            version: carried.schema_version,
+            document: "rust-mutants/carried",
+        });
+    }
+    let held = Held::of(&skeletons, &touched, &spans);
+    Ok(carried
+        .records
+        .iter()
+        .map(|entry| {
+            let record = &entry.record;
+            let fails = premise_fails(record, &entry.plan, &held).or_else(|| {
+                standings.and_then(|standings| {
+                    resting_targets(record, &entry.plan)
+                        .into_iter()
+                        .find_map(|target| unheld(target, standings))
+                })
+            });
+            Rederived {
+                mutant: entry.mutant.clone(),
+                outcome: record.outcome.clone(),
+                run_id: record.run_id.clone(),
+                fails,
+            }
+        })
+        .collect())
 }
 
 /// Every target a carried answer rests on: the killer's for a kill, every planned one for a survival.

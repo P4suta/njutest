@@ -1186,6 +1186,7 @@ pub fn sharded_clean() -> Result<Perturbation, SpecimenError> {
         engine: None,
         shards,
         outputs: Vec::new(),
+        beside: Vec::new(),
     })
 }
 
@@ -1289,6 +1290,8 @@ pub struct Perturbation {
     pub shards: Vec<Shard>,
     /// What runs in the recording said, each by the path its exec record gives, kept beside the recording.
     pub outputs: Vec<(&'static str, &'static str)>,
+    /// What the one configured build's engine kept beside its recording of the answers it carried, each by its file name.
+    pub beside: Vec<(&'static str, Value)>,
 }
 
 /// The clean specimen every perturbation starts from, on which no layer may find anything.
@@ -1314,6 +1317,7 @@ pub fn clean() -> Perturbation {
         engine: Some(clean_engine()),
         shards: Vec::new(),
         outputs: Vec::new(),
+        beside: Vec::new(),
     }
 }
 
@@ -1365,6 +1369,7 @@ impl Perturbation {
             .map(|events| {
                 let trace = recorded(&concluding(&self.document, events))?;
                 lay_engine(trace.path(), self.engine.as_deref())?;
+                lay_beside(trace.path(), &self.beside)?;
                 Ok::<_, SpecimenError>(trace)
             })
             .transpose()?;
@@ -1480,13 +1485,107 @@ fn reuse_planted(clean: Perturbation) -> Vec<Perturbation> {
             })),
             ..clean.clone()
         },
-        carried_past_its_killer(clean),
+        carried_past_its_killer(clean.clone()),
+        carried(
+            "a kill carried from an earlier tree though a body its killer entered starts elsewhere since",
+            clean,
+            &json!({ "line": 2, "column": 1 }),
+        ),
     ]
+}
+
+/// The run that established the answers a specimen carries.
+pub const EARLIER: &str = "20260905T090000Z-1a2b3c";
+
+/// The one item the carry evidence of a specimen names: the body of `src/lib.rs` its killed mutant is in, which starts at [`BODY_START`].
+fn carried_item() -> Value {
+    json!({ "package": "pkg", "path": "src/lib.rs", "ordinal": 0 })
+}
+
+/// Where the body of [`carried_item`] starts now.
+pub const BODY_START: (u64, u64) = (6, 23);
+
+/// The specimen with its kill carried from [`EARLIER`] by an execution of [`TARGET`] that entered [`carried_item`] where `entered` says its body started, and the carry evidence the engine keeps beside its recording; every premise of ADR 0041 holds where `entered` is [`BODY_START`].
+#[must_use]
+pub fn carried(name: &'static str, clean: Perturbation, entered: &Value) -> Perturbation {
+    let digest = crate::engineaudit::carry::digest_of(b"{ !ready }");
+    let skeleton = crate::engineaudit::carry::digest_of(b"");
+    let now = json!({ "line": BODY_START.0, "column": BODY_START.1 });
+    let mut events = numbered(vec![json!({
+        "type": "route",
+        "route": {
+            "mutant": KILLED, "granularity": "block", "fallback": null,
+            "reaching": [TARGET], "tests": [], "discharged": [], "considered": [],
+            "reused": EARLIER, "refused": null, "rule": "carried", "carry_refused": null
+        }
+    })]);
+    events.extend(routes_for(&[(SURVIVED, "survived")]));
+    Perturbation {
+        name,
+        document: with(json!({
+            "mutants": [{ "reuse": { "reused": true, "source_run_id": EARLIER } }],
+            "accounting": { "mutants": { "reused_killed": 1 } }
+        })),
+        events: Some(numbered(events)),
+        beside: vec![
+            (
+                "touched-v1.json",
+                json!({
+                    "targets": {}, "limitations": [],
+                    "items": [{
+                        "index": 0, "package": "pkg", "path": "src/lib.rs", "name": "negated",
+                        "span": { "start": 60, "end": 90 },
+                        "body": { "start": 80, "end": 90 },
+                        "measurable": true
+                    }]
+                }),
+            ),
+            (
+                "skeletons-v1.json",
+                json!({
+                    "document_type": "rust-mutants/skeletons", "schema_version": 2,
+                    "items": [{
+                        "index": 0, "item": carried_item(), "name": "negated",
+                        "body_digest": digest, "sealed": true, "unsealed": null, "start": now
+                    }],
+                    "units": []
+                }),
+            ),
+            (
+                "carried-v1.json",
+                json!({
+                    "document_type": "rust-mutants/carried", "schema_version": 2,
+                    "records": [{
+                        "mutant": "a".repeat(64),
+                        "record": {
+                            "schema": "rust-mutants-carried-v2",
+                            "locus": {
+                                "item": carried_item(), "body_digest": digest,
+                                "start": 2, "end": 3, "replacement": "", "rule": "negate-condition@1"
+                            },
+                            "keyed": {}, "outcome": "killed", "target": TARGET, "tests_run": 1,
+                            "failed_tests": ["tests::one"], "run_id": EARLIER,
+                            "executions": [{
+                                "target": TARGET, "filter": null, "skeleton": skeleton,
+                                "entered": [{
+                                    "item": carried_item(), "body_digest": digest,
+                                    "start": entered
+                                }],
+                                "completeness": "whole", "detected": true
+                            }]
+                        },
+                        "plan": [{ "target": TARGET, "filter": null }]
+                    }]
+                }),
+            ),
+        ],
+        ..clean
+    }
 }
 
 /// The defect planted for the reuse layer: a kill carried from an earlier tree by a target this run's route no longer reaches, which the engine refuses as `filter-differs`.
 fn carried_past_its_killer(clean: Perturbation) -> Perturbation {
-    let earlier = "20260905T090000Z-1a2b3c";
+    let earlier = EARLIER;
     let mut events = numbered(vec![json!({
         "type": "route",
         "route": {
@@ -1629,6 +1728,19 @@ fn lay_engine(into: &Path, engine: Option<&[Value]>) -> Result<(), SpecimenError
     Ok(())
 }
 
+/// Writes each of `beside` into the engine directory of the one configured build of the recording directory `into`.
+fn lay_beside(into: &Path, beside: &[(&'static str, Value)]) -> Result<(), SpecimenError> {
+    let namespace = into.join("builds").join("0000000000").join("engine");
+    for (file, document) in beside {
+        std::fs::create_dir_all(&namespace).map_err(|source| SpecimenError::Unwritable {
+            path: namespace.display().to_string(),
+            source,
+        })?;
+        written(&namespace.join(file), &document.to_string())?;
+    }
+    Ok(())
+}
+
 /// The recording of a kill by a target the route's proof had discharged.
 fn discharged_then_killed() -> Vec<Value> {
     vec![
@@ -1722,6 +1834,7 @@ fn unobserved_repair_called_a_survival() -> Perturbation {
         ]),
         shards: Vec::new(),
         outputs: Vec::new(),
+        beside: Vec::new(),
     }
 }
 

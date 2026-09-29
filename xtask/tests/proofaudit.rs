@@ -801,6 +801,63 @@ fn reuse_remarks(
         .collect()
 }
 
+/// The reuse layer's remarks about `perturbation`, laid out as a run and its recording, by standing, subject and detail.
+fn carried_remarks(perturbation: &sentinel::Perturbation) -> Vec<(Standing, String, String)> {
+    let laid = perturbation.lay().expect("the specimen is laid out");
+    gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        .expect("a recording this audit can read")
+        .remarks
+        .into_iter()
+        .filter(|remark| remark.layer == Layer::Reuse)
+        .map(|remark| (remark.standing, remark.subject, remark.detail))
+        .collect()
+}
+
+#[test]
+fn a_carried_answer_is_held_to_every_premise_again_from_what_its_build_kept() {
+    let (line, column) = sentinel::BODY_START;
+    let held = carried_remarks(&sentinel::carried(
+        "held",
+        sentinel::clean(),
+        &serde_json::json!({ "line": line, "column": column }),
+    ));
+    assert!(
+        !held
+            .iter()
+            .any(|(standing, ..)| *standing == Standing::Violated),
+        "a kill carried by an execution that entered a body which has the digest, the sealing \
+         and the start it had, on the skeleton it had, through a target whose control held, is \
+         what ADR 0041 carries: {held:?}"
+    );
+    let moved = carried_remarks(&sentinel::carried(
+        "moved",
+        sentinel::clean(),
+        &serde_json::json!({ "line": 2, "column": 1 }),
+    ));
+    assert!(
+        moved.iter().any(|(standing, subject, detail)| {
+            *standing == Standing::Violated && subject == KILLED && detail.contains("item-moved")
+        }),
+        "the killer entered a body that starts elsewhere now, so a position it read may be \
+         another: {moved:?}"
+    );
+    let unkept = sentinel::Perturbation {
+        beside: Vec::new(),
+        ..sentinel::carried(
+            "unkept",
+            sentinel::clean(),
+            &serde_json::json!({ "line": line, "column": column }),
+        )
+    };
+    assert!(
+        carried_remarks(&unkept)
+            .iter()
+            .any(|(standing, subject, _)| *standing == Standing::Violated && subject == KILLED),
+        "a disposition the route says was carried, with no record kept beside the recording, is \
+         one no premise of which can be read again"
+    );
+}
+
 #[test]
 fn what_a_reused_disposition_rests_on_is_unaudited() {
     let remarks = reuse_remarks(
@@ -938,6 +995,7 @@ fn duplicate_report_keys_are_malformed_before_any_redecision() {
             runner: None,
             engines: &[],
             outputs: &[],
+            beside: &[],
         };
         let checkers = xtask::schemas::Checkers::compiled().expect("the published schemas compile");
         let error = xtask::proofaudit::audit_with(
@@ -2448,6 +2506,7 @@ fn with_engine(document: serde_json::Value, engine: Vec<serde_json::Value>) -> A
         engine: Some(engine),
         shards: Vec::new(),
         outputs: Vec::new(),
+        beside: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
@@ -2668,6 +2727,7 @@ fn a_complete_report_is_re_decided_as_the_one_build_it_measured_whole() {
         engine: sentinel::clean().engine,
         shards: Vec::new(),
         outputs: Vec::new(),
+        beside: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
@@ -3503,6 +3563,7 @@ fn repair_audit(repaired: &[&str], engine: Vec<serde_json::Value>) -> Vec<String
         engine: Some(engine),
         shards: Vec::new(),
         outputs: Vec::new(),
+        beside: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
@@ -3620,6 +3681,7 @@ fn two_repairs(second_was: &str) -> Vec<String> {
         engine: Some(engine),
         shards: Vec::new(),
         outputs: Vec::new(),
+        beside: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
