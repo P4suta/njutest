@@ -423,6 +423,7 @@ fn the_drawing_says_what_a_dimension_does_not_speak_about() {
             on: "pkg/test/it::saves".to_owned(),
             left: vec!["state.json".to_owned()],
         },
+        sealed: false,
     }];
     let evidence = Evidence {
         crashes: &crashes,

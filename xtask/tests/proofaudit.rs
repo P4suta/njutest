@@ -4211,6 +4211,60 @@ fn a_real_run_measured_in_two_shards_and_merged_is_re_decided_clean_shard_by_sha
     }
 }
 
+#[test]
+fn a_real_crash_run_is_re_decided_clean_sealed_and_native() {
+    for (recording, sealed, rounds) in [
+        ("crash-run-sealed", 14, "one sealed round"),
+        ("crash-run-native", 0, "three native rounds"),
+    ] {
+        let recorded = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/testdata")
+            .join(recording);
+        let run = std::fs::read_dir(recorded.join("runs"))
+            .expect("the recorded run")
+            .map(|entry| entry.expect("a readable run").file_name())
+            .next()
+            .expect("one run is recorded");
+        let audit = gates::proofaudit(
+            &checkers(),
+            &recorded.join("runs").join(&run),
+            Some(&recorded.join("traces").join(&run)),
+        )
+        .expect("a recorded run is read");
+        assert_eq!(
+            (audit.violations(), audit.unaudited()),
+            (0, 0),
+            "{recording}: every crash of fixture-durable-calls, decided in {rounds}, is what its \
+             recorded steps decide again: {audit}"
+        );
+        assert_eq!(
+            audit.coverage.get(&Layer::Crashes),
+            Some(&Coverage::Rederived),
+            "{recording}: the crashes layer re-decided every site: {audit}"
+        );
+        let text = std::fs::read_to_string(recorded.join("runs").join(&run).join(REPORT_FILE))
+            .expect("the recorded report");
+        let report: serde_json::Value =
+            xtask::strictjson::from_str(&text).expect("the recorded report is JSON");
+        let crashes = report
+            .pointer("/report/builds/0/parts/0/crashes")
+            .and_then(serde_json::Value::as_array)
+            .expect("the recorded crashes");
+        assert_eq!(
+            (
+                crashes.len(),
+                crashes
+                    .iter()
+                    .filter(|crash| crash["sealed"] == serde_json::json!(true))
+                    .count()
+            ),
+            (15, sealed),
+            "{recording}: every call that writes is a site, and a sealed run decides all but the \
+             one only a process the test started reaches in one sealed round"
+        );
+    }
+}
+
 /// One shard of the recorded sharded run: its run directory, its report rewritten by `edit`, and its recordings.
 fn recorded_shard(edit: impl FnOnce(&mut serde_json::Value)) -> Audit {
     let recorded = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/sharded-run");

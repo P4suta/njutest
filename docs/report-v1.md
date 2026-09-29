@@ -267,12 +267,15 @@ A part states `schedule-not-explored` naming every binary that is not `single-th
 
 Every part carries `crashes`, one record per call that writes a crash was asked at, in catalog order, and empty unless the run was asked for crashes ([ADR 0035](adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
 A crash site is a call that writes in a measured file, discovered by the rule `crash-after-write` alone; under it the call runs and the process stops at once.
-The first test that reaches the call, target by target in name order, is stopped there and run again with nothing active in the scratch the stop left, and each record carries one closed `decision`:
+The first test that reaches the call, target by target in name order, is stopped there and run again with nothing active in the scratch the stop left, and each record carries one closed `decision`.
+Where the run seals and the test's sealed control reached the call, the stop is a sealed instance the host halts in the call that publishes its notice, and the next run is a fresh instance started from everything it left but the runtime's own records; one round decides it, since the same instance comes out the same every time, and the record says `sealed: true` ([ADR 0046](adr/0046-a-verdict-is-what-a-sealed-run-observed.md)).
+`sealed` is true exactly where the decision rests on at least one run and every run it rests on was a sealed instance.
+A sealed stop names what it left as a native one does, relative to the temporary directory and from `~/` below the home, and names a change it made in the tree from `./`, below `CARGO_TARGET_TMPDIR` from `$CARGO_TARGET_TMPDIR/`, and a removal with ` (removed)` after it.
 
 | `decision` | what it says | carries |
 | --- | --- | --- |
 | `restarted` | the next run passed over the files the stop left | `on`, the target and test; `left`, those files |
-| `corrupt` | the next run failed, a fresh run passed, and a second stop failed the next run again | `on`; `failed`, the tests |
+| `corrupt` | the next run failed; natively a fresh run passed and a second stop failed the next run again, and sealed the next instance detected, its control having passed | `on`; `failed`, the tests |
 | `unshared` | the stopped run left nothing in its scratch | `on` |
 | `unreached` | no test that reached the call stopped at it | |
 | `undecided` | a run came to something other than passing or stopping at the call, which test reaches the call is not known, or an earlier stop wrote outside its scratch into the tree | `on`, `why` |

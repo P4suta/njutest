@@ -436,6 +436,11 @@ impl Stop {
         Self(false)
     }
 
+    /// A stop where the run ended as a stop at the call ends, `stopped`, and its runtime published exactly the notice `notice` says it was issued.
+    fn verified(stopped: bool, notice: &Notice) -> Self {
+        Self(stopped && notice.published())
+    }
+
     /// Whether the engine verified that the run stopped at the call.
     #[must_use]
     pub const fn noticed(self) -> bool {
@@ -497,6 +502,46 @@ impl Kept {
         }
         found.sort();
         Ok(Left::Named(found))
+    }
+}
+
+/// What a sealed instance a crash was put to left, kept so a next instance can start over it, and what its stop was decided on (ADR 0035, amended by ADR 0046).
+#[derive(Debug, Clone)]
+pub struct SealedKept {
+    crashed: crate::sealed::bench::Crashed,
+    stop: Stop,
+    notice: Notice,
+}
+
+impl SealedKept {
+    /// Whether the instance stopped at the call its crash was put at: the host halted it where its runtime published exactly the notice it was issued.
+    #[must_use]
+    pub const fn stop(&self) -> Stop {
+        self.stop
+    }
+
+    /// What the stop was decided on.
+    #[must_use]
+    pub const fn notice(&self) -> &Notice {
+        &self.notice
+    }
+
+    /// How the instance ended.
+    #[must_use]
+    pub const fn ended(&self) -> crate::sealed::bench::Crashing {
+        self.crashed.ended
+    }
+
+    /// The status the instance exited with, where it ended by exiting.
+    #[must_use]
+    pub const fn exit(&self) -> Option<u32> {
+        self.crashed.exit
+    }
+
+    /// Every change the instance made outside the runtime's records, named as a crash's `left` names one, in the order its overlay lists them: what a next instance starts over.
+    #[must_use]
+    pub fn left(&self) -> &[String] {
+        &self.crashed.named
     }
 }
 
@@ -2158,8 +2203,63 @@ impl Session {
                 Err(_absent_or_unreadable) => None,
             },
         };
-        let stopped = result.exit_code == crate::instrument::CRASH_EXIT && evidence.published();
-        Ok((result, Kept(scratch, Stop(stopped), evidence)))
+        let stop = Stop::verified(result.exit_code == crate::instrument::CRASH_EXIT, &evidence);
+        Ok((result, Kept(scratch, stop, evidence)))
+    }
+
+    /// Puts the crash `request` names to the one test of the one target it names in a sealed instance on `bench`, where the bench answers for that test at the crash's guard, and keeps what the instance left for a next instance to start over (ADR 0035, amended by ADR 0046); nothing where the bench does not answer for it.
+    ///
+    /// # Errors
+    /// [`SessionError::UnknownMutant`] and [`SessionError::UnknownTarget`], a nonce the system could not give, and what the bench could not run.
+    pub fn crash_sealed(
+        &self,
+        bench: &crate::sealed::bench::Bench<'_>,
+        request: &Request,
+    ) -> Result<Option<SealedKept>, EngineError> {
+        let mutant = self.executable(&request.mutant)?;
+        let target = self.named(request)?;
+        let Some(test) = request.test.as_deref() else {
+            return Ok(None);
+        };
+        if !bench.reaches(target.id(), test, mutant.index) {
+            return Ok(None);
+        }
+        let nonce = crash_nonce()?;
+        let Some(crashed) = bench.crash((target.id(), test), (mutant.id.as_str(), &nonce))? else {
+            return Ok(None);
+        };
+        let notice = Notice {
+            mutant: mutant.id.to_string(),
+            catalog: self.catalog.digest().to_owned(),
+            nonce,
+            read: crashed.read.clone(),
+        };
+        let stop = Stop::verified(
+            crashed.ended == crate::sealed::bench::Crashing::Halted,
+            &notice,
+        );
+        Ok(Some(SealedKept {
+            crashed,
+            stop,
+            notice,
+        }))
+    }
+
+    /// Runs the one test of the one target `request` names with nothing active, in a fresh sealed instance on `bench` started from what `kept` left, judged against the test's control; nothing where the bench has no control of it.
+    ///
+    /// # Errors
+    /// [`SessionError::UnknownTarget`], and what the bench could not run.
+    pub fn next_sealed(
+        &self,
+        bench: &crate::sealed::bench::Bench<'_>,
+        request: &Request,
+        kept: &SealedKept,
+    ) -> Result<Option<rust_mutants_decision::evidence::Sealed>, EngineError> {
+        let target = self.named(request)?;
+        let Some(test) = request.test.as_deref() else {
+            return Ok(None);
+        };
+        Ok(bench.after((target.id(), test), &kept.crashed)?)
     }
 
     /// Runs the one target `request` names with nothing active, in the scratch directory `kept` holds, over whatever the run that kept it left there.

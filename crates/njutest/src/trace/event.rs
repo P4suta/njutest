@@ -656,9 +656,12 @@ pub struct CrashExecRecord {
     pub test: String,
     /// Which run it was: `crash`, stopped at the call; `next`, over what a crash left; or `fresh`, in a scratch of its own.
     pub stage: String,
-    /// The exit status, which is how a stop at the call is told from a test that failed.
-    pub exit_code: i64,
-    /// What the engine made of it.
+    /// Whether the run was a sealed instance rather than a process (ADR 0046): a sealed crash is decided in one round, and has no `fresh` run.
+    pub sealed: bool,
+    /// The process's exit status, which is how a native stop at the call is told from a test that failed; nothing for a sealed instance, whose ending is its `outcome`.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub exit_code: Option<i64>,
+    /// What the engine made of it: a native run's outcome, or for a sealed instance `halted`, where the host stopped it at the notice, or what it came to judged against the test's control.
     pub outcome: String,
     /// Whether the runtime published the notice that it stopped at the call, which is what makes the exit status a stop rather than a status the test chose.
     pub noticed: bool,

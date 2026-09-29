@@ -125,6 +125,8 @@ pub struct CrashRecord {
     pub position: Option<Position>,
     /// What became of it.
     pub decision: CrashDecision,
+    /// Whether the decision rests on at least one run and every run it rests on was a sealed instance, which one round decides (ADR 0046).
+    pub sealed: bool,
 }
 
 impl CrashRecord {

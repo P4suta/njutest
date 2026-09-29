@@ -791,7 +791,8 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 target: "demo/test/counter".to_owned(),
                 test: "a_count_goes_up".to_owned(),
                 stage: "crash".to_owned(),
-                exit_code: 93,
+                sealed: false,
+                exit_code: Some(93),
                 outcome: "killed".to_owned(),
                 noticed: true,
                 issued: Some(crate::trace::CrashNoticeRecord {
@@ -833,6 +834,7 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                     on: "demo/test/counter::a_count_goes_up".to_owned(),
                     left: vec!["count".to_owned()],
                 },
+                sealed: false,
             },
         },
         Payload::ProbeExec {

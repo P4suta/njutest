@@ -133,7 +133,8 @@ fn crash_reported(decision: &Value, counted: &str, finding: Option<(&str, &str)>
             "path": "src/lib.rs",
             "item": "save",
             "position": null,
-            "decision": decision
+            "decision": decision,
+            "sealed": false
         }],
         "accounting": { "crashes": { "sites": 1, counted: 1 } }
     }));
@@ -178,11 +179,45 @@ fn crash_run(test: &str, stage: &str, ended: &str, files: &[&str]) -> Value {
     json!({
         "type": "crash-exec",
         "crash": {
-            "crash": CRASHED, "target": TARGET, "test": test, "stage": stage,
+            "crash": CRASHED, "target": TARGET, "test": test, "stage": stage, "sealed": false,
             "exit_code": exit_code, "outcome": outcome, "noticed": ended == "stopped",
             "issued": issued, "left": left, "unnamed": null, "failed": failed
         }
     })
+}
+
+/// One sealed instance of `test` with the crash [`CRASHED`] put to it, which came to `outcome`, `halted` where the host stopped it at the notice, with the `files` a halt left or a next instance failed.
+fn sealed_crash_run(test: &str, stage: &str, outcome: &str, files: &[&str]) -> Value {
+    let Value::Object(mut run) = crash_run(
+        test,
+        stage,
+        if outcome == crate::crashes::HALTED {
+            "stopped"
+        } else {
+            "passed"
+        },
+        files,
+    ) else {
+        return Value::Null;
+    };
+    if let Some(Value::Object(record)) = run.get_mut("crash") {
+        record.insert("sealed".to_owned(), Value::Bool(true));
+        record.insert("exit_code".to_owned(), Value::Null);
+        record.insert("outcome".to_owned(), Value::String(outcome.to_owned()));
+    }
+    Value::Object(run)
+}
+
+/// `document` with its one crash site said to be sealed.
+fn said_sealed(mut document: Value) -> Value {
+    if let Some(site) = document
+        .get_mut("crashes")
+        .and_then(|crashes| crashes.get_mut(0))
+        .and_then(Value::as_object_mut)
+    {
+        site.insert("sealed".to_owned(), Value::Bool(true));
+    }
+    document
 }
 
 /// The defects planted for the crashes layer about the evidence a stop is decided on: a notice the engine never read, one naming another run's nonce, and a run issued another mutation.
@@ -367,6 +402,19 @@ fn crashes_planted(clean: &Perturbation) -> Vec<Perturbation> {
             crash_reported(&json!({ "decision": "unreached" }), "unreached", None),
             crash_recorded(Vec::new()),
         ),
+        planted(
+            "a sealed crash said to have restarted whose one round's next instance panicked",
+            said_sealed(crash_reported(&restarted, "restarted", None)),
+            crash_recorded(vec![
+                sealed_crash_run("t", "crash", crate::crashes::HALTED, &["count"]),
+                sealed_crash_run("t", "next", "panicked", &["t"]),
+            ]),
+        ),
+        planted(
+            "a crash said to be sealed whose runs were processes",
+            said_sealed(crash_reported(&restarted, "restarted", None)),
+            crash_recorded(crash_restarted()),
+        ),
     ]
     .into_iter()
     .chain(crashes_planted_against_order(clean))
@@ -392,7 +440,7 @@ fn crashes_planted_against_order(clean: &Perturbation) -> Vec<Perturbation> {
                 "crashes": [{
                     "catalog_index": 0, "id": "d".repeat(64), "display_id": CRASHED,
                     "path": "src/lib.rs", "item": "save", "position": null,
-                    "decision": restarted
+                    "decision": restarted, "sealed": false
                 }],
                 "accounting": { "crashes": { "sites": 7, "restarted": 1 } }
             })),
