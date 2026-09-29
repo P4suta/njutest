@@ -110,6 +110,12 @@ impl Repo {
 pub fn commit_tree(root: &Path) {
     let run = |args: &[&str]| -> String {
         let output = Command::new("git")
+            .args([
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.untrackedCache=false",
+            ])
             .args(args)
             .current_dir(root)
             .env_clear()

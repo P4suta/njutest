@@ -501,3 +501,41 @@ fn a_change_that_only_deletes_rust_files_touches_nothing_to_mutate() {
          measures rather than naming a file no pattern can select: {within:?}"
     );
 }
+
+#[test]
+fn a_file_system_monitor_that_says_nothing_changed_is_never_asked() {
+    let asked = Asked::new(Vec::new());
+    asked.repo.package("demo").lib("pub fn f() {}\n");
+    asked.repo.commit();
+    let monitor = asked
+        .repo
+        .root()
+        .join(".git")
+        .join("monitor-that-sees-nothing");
+    std::fs::write(&monitor, "#!/bin/sh\nprintf 'token-%s\\0' \"$$\"\n")
+        .expect("the monitor is written");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&monitor, std::fs::Permissions::from_mode(0o755))
+            .expect("the monitor is executable");
+    }
+    let config = asked.repo.root().join(".git").join("config");
+    let mut said = std::fs::read_to_string(&config).expect("the repository's configuration");
+    said.push_str("[core]\n\tfsmonitor = ");
+    said.push_str(&monitor.display().to_string().replace('\\', "/"));
+    said.push('\n');
+    std::fs::write(&config, said).expect("the monitor is configured");
+    assert!(
+        asked.facts().is_some(),
+        "git states the facts of the tree, as a run's first question asks it to"
+    );
+    asked.repo.write("src/lib.rs", "pub fn f() -> i32 { 1 }\n");
+    let change = asked.changed("HEAD").expect("git answers what changed");
+    assert_eq!(
+        change.files,
+        vec!["src/lib.rs".to_owned()],
+        "a monitor a user configured is a daemon's say-so about the tree, and a change set \
+         is read from the tree itself: {change:?}"
+    );
+}
