@@ -8,9 +8,6 @@
 # A line leaves when its cell names what holds the decision there, and `cargo xtask invariants`
 # refuses a line the table no longer leaves open, so a closed hole cannot stay listed.
 
-answered-stop mutation njutest-14
-group-stop mutation njutest-14
-stall-watch mutation njutest-14
 step-transition mutation njutest-14
 step-stop-said self-check njutest-14
 step-stop-said mutation njutest-14

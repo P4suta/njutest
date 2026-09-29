@@ -22,6 +22,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use output::{OutputError, TailBuffer};
+use rust_mutants_decision::answered::{Answer, Observed, Wait};
+use rust_mutants_decision::stall::Stillness;
 
 pub use group::GroupChild;
 #[cfg(unix)]
@@ -225,17 +227,10 @@ pub(crate) struct Progress {
     pub(crate) quiet: Duration,
 }
 
-/// How many beats the child is told to fit into one quiet window.
-const BEATS_PER_WINDOW: u32 = 4;
-
 impl Progress {
-    /// How long the child may spend a reservation before it rewrites [`Progress::beat`]: a quarter of the window, and never less than a millisecond.
+    /// How long the child may spend a reservation before it rewrites [`Progress::beat`], as [`rust_mutants_decision::stall::beat_every`] decides.
     pub(crate) fn beat_every(&self) -> Duration {
-        let share = match self.quiet.checked_div(BEATS_PER_WINDOW) {
-            Some(share) => share,
-            None => self.quiet,
-        };
-        share.max(Duration::from_millis(1))
+        rust_mutants_decision::stall::beat_every(self.quiet)
     }
 
     /// What the child is told so that it is never quiet for a window while it moves, set over its environment by the runner that watches it.
@@ -804,13 +799,16 @@ fn complete(
     child.finish();
     let duration = started.elapsed();
     let named_a_failure = answered.is_some_and(|answered| answered.load(Ordering::SeqCst));
-    let observation = observe_answer(&outcome, named_a_failure);
+    let wait = outcome.wait();
+    let answer = rust_mutants_decision::answered::answer(wait, named_a_failure);
     let process_termination = match outcome {
-        Exit::Exited if named_a_failure => Termination::Answered,
+        Exit::Exited | Exit::Answered if answer == Answer::Answered => Termination::Answered,
         Exit::TimedOut => Termination::TimedOut,
         Exit::Stalled => Termination::Stalled,
         Exit::StoppedByMonitor => Termination::StoppedByMonitor,
-        Exit::Answered => Termination::Answered,
+        Exit::Answered => Termination::WaitFailed {
+            error: RunnerError::AnsweredStopInconsistent,
+        },
         Exit::MonitorFailed(failure) => Termination::MonitorFailed { failure },
         Exit::Cancelled => Termination::Cancelled { started: true },
         Exit::Exited => Termination::Exited(sys::process_exit(status)),
@@ -838,7 +836,14 @@ fn complete(
     let termination = capture_failure.map_or(process_termination, |error| {
         Termination::WaitFailed { error }
     });
-    let termination = checked_answered_termination(observation, capture_failed, termination);
+    let termination = checked_answered_termination(
+        Observed {
+            wait,
+            named_a_failure,
+            capture_failed,
+        },
+        termination,
+    );
     RunResult {
         termination,
         duration,
@@ -1488,42 +1493,26 @@ enum Exit {
     SupervisionFailed(RunnerError),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum AnswerObservation {
-    ExitedAfterFailure,
-    StoppedAtFailure,
-    Other,
-    InconsistentStop,
-}
-
-const fn observe_answer(outcome: &Exit, named_a_failure: bool) -> AnswerObservation {
-    match outcome {
-        Exit::Exited if named_a_failure => AnswerObservation::ExitedAfterFailure,
-        Exit::Answered if named_a_failure => AnswerObservation::StoppedAtFailure,
-        Exit::Answered => AnswerObservation::InconsistentStop,
-        Exit::Exited
-        | Exit::WaitFailed(_)
-        | Exit::TimedOut
-        | Exit::Stalled
-        | Exit::Cancelled
-        | Exit::StoppedByMonitor
-        | Exit::MonitorFailed(_)
-        | Exit::SupervisionFailed(_) => AnswerObservation::Other,
+impl Exit {
+    /// How the wait ended, as far as a stop at the first failing test reads it.
+    const fn wait(&self) -> Wait {
+        match self {
+            Self::Exited => Wait::Exited,
+            Self::Answered => Wait::Answered,
+            Self::WaitFailed(_)
+            | Self::TimedOut
+            | Self::Stalled
+            | Self::Cancelled
+            | Self::StoppedByMonitor
+            | Self::MonitorFailed(_)
+            | Self::SupervisionFailed(_) => Wait::Other,
+        }
     }
 }
 
-fn checked_answered_termination(
-    observation: AnswerObservation,
-    capture_failed: bool,
-    reported: Termination,
-) -> Termination {
-    let answered = !capture_failed
-        && matches!(
-            observation,
-            AnswerObservation::ExitedAfterFailure | AnswerObservation::StoppedAtFailure
-        );
-    if observation != AnswerObservation::InconsistentStop
-        && answered == matches!(reported, Termination::Answered)
+/// `reported`, where it agrees with what was observed of the run, and otherwise the inconsistency, so an ending the answered stop cannot stand on is never a result.
+fn checked_answered_termination(observed: Observed, reported: Termination) -> Termination {
+    if rust_mutants_decision::answered::agrees(observed, matches!(reported, Termination::Answered))
     {
         reported
     } else {
@@ -1549,7 +1538,8 @@ struct Stops<'a> {
 struct Watching<'a> {
     progress: &'a Progress,
     seen: [Option<Vec<u8>>; 2],
-    moved: Instant,
+    started: Instant,
+    stillness: Stillness,
 }
 
 impl<'a> Watching<'a> {
@@ -1557,34 +1547,44 @@ impl<'a> Watching<'a> {
         Self {
             progress,
             seen: [None, None],
-            moved: started,
+            started,
+            stillness: Stillness::new(progress.quiet),
         }
+    }
+
+    /// How long after the watch began `now` is.
+    fn since(&self, now: Instant) -> Duration {
+        now.saturating_duration_since(self.started)
     }
 
     /// Looks at the files and returns the moment they count as stalled; a failed read is not a change, since a child that is not writing never causes one.
     fn look(&mut self, now: Instant) -> Option<Instant> {
+        let mut changed = false;
         for (path, seen) in self.progress.signals().into_iter().zip(&mut self.seen) {
             match read_between_writes(path) {
                 Ok(content) if seen.as_ref() != Some(&content) => {
                     *seen = Some(content);
-                    self.moved = now;
+                    changed = true;
                 }
                 Ok(_unchanged) => {}
                 Err(_a_failed_read_is_not_a_change) => {}
             }
         }
-        self.moved.checked_add(self.progress.quiet)
+        self.stillness = self.stillness.looked(self.since(now), changed);
+        self.stillness
+            .stalls_at()
+            .and_then(|stalls| self.started.checked_add(stalls))
     }
 
     fn confirms_stall(&mut self, now: Instant) -> bool {
-        if now.saturating_duration_since(self.moved) < self.progress.quiet {
+        if !self.stillness.still_for_the_window(self.since(now)) {
             return false;
         }
         for (path, seen) in self.progress.signals().into_iter().zip(&mut self.seen) {
             match read_between_writes(path) {
                 Ok(content) if seen.as_ref() != Some(&content) => {
                     *seen = Some(content);
-                    self.moved = now;
+                    self.stillness = self.stillness.looked(self.since(now), true);
                     return false;
                 }
                 Ok(_unchanged) => {}
@@ -1915,66 +1915,7 @@ pub enum GroupStop {
     Kill,
 }
 
-/// What stopping a group reached.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
-#[must_use = "a stop that reached only the leader leaves the rest of the group running"]
-pub enum Stopped {
-    /// Every process of the group was signalled, or none besides its unreaped leader was left.
-    Group,
-    /// The kernel refused the group whole and only its leader was signalled, with other members still in the group or not seen.
-    LeaderOnly,
-}
-
-/// What the kernel answered one signal with.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
-pub enum Delivered {
-    /// It was sent.
-    Sent,
-    /// Nothing by that id was left to send it to.
-    Gone,
-    /// Sending it is beyond this process's authority for some process it names.
-    Refused,
-    /// Any other failure.
-    Failed,
-}
-
-/// Who besides its leader a group was seen to hold.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
-pub enum Others {
-    /// Nobody.
-    Nobody,
-    /// Somebody still running.
-    Somebody,
-    /// The group could not be looked at.
-    Unseen,
-}
-
-/// What a group stop comes to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StopDecision {
-    /// It reached this much.
-    Reached(Stopped),
-    /// It failed.
-    Failed,
-}
-
-/// What a group stop comes to, from what the group's signal got, what its leader's got when the group was refused, and who else the group was seen to hold, as `tests/testdata/group-stop.tsv` lists for every combination.
-#[must_use]
-pub const fn decide_stop(group: Delivered, leader: Delivered, others: Others) -> StopDecision {
-    match group {
-        Delivered::Sent | Delivered::Gone => StopDecision::Reached(Stopped::Group),
-        Delivered::Failed => StopDecision::Failed,
-        Delivered::Refused => match (leader, others) {
-            (Delivered::Refused | Delivered::Failed, _) => StopDecision::Failed,
-            (Delivered::Sent | Delivered::Gone, Others::Nobody) => {
-                StopDecision::Reached(Stopped::Group)
-            }
-            (Delivered::Sent | Delivered::Gone, Others::Somebody | Others::Unseen) => {
-                StopDecision::Reached(Stopped::LeaderOnly)
-            }
-        },
-    }
-}
+pub use rust_mutants_decision::group::{Delivered, Others, StopDecision, Stopped, decide_stop};
 
 #[cfg(unix)]
 fn checked_decide_stop(
@@ -1984,25 +1925,7 @@ fn checked_decide_stop(
     classify: impl FnOnce(Delivered, Delivered, Others) -> StopDecision,
 ) -> io::Result<StopDecision> {
     let decision = classify(group, leader, others);
-    let valid = match decision {
-        StopDecision::Reached(Stopped::Group) => {
-            matches!(group, Delivered::Sent | Delivered::Gone)
-                || (group == Delivered::Refused
-                    && matches!(leader, Delivered::Sent | Delivered::Gone)
-                    && others == Others::Nobody)
-        }
-        StopDecision::Reached(Stopped::LeaderOnly) => {
-            group == Delivered::Refused
-                && matches!(leader, Delivered::Sent | Delivered::Gone)
-                && matches!(others, Others::Somebody | Others::Unseen)
-        }
-        StopDecision::Failed => {
-            group == Delivered::Failed
-                || (group == Delivered::Refused
-                    && matches!(leader, Delivered::Refused | Delivered::Failed))
-        }
-    };
-    if valid {
+    if rust_mutants_decision::group::agrees(group, leader, others, decision) {
         Ok(decision)
     } else {
         Err(io::Error::other(format!(
@@ -2207,10 +2130,12 @@ mod tests {
 
     #[test]
     fn a_planted_exit_after_a_named_failure_is_refused() {
-        let observation = super::observe_answer(&super::Exit::Exited, true);
         let termination = super::checked_answered_termination(
-            observation,
-            false,
+            super::Observed {
+                wait: super::Exit::Exited.wait(),
+                named_a_failure: true,
+                capture_failed: false,
+            },
             Termination::Exited(ProcessExit::Code(101)),
         );
         assert!(matches!(
@@ -2223,9 +2148,14 @@ mod tests {
 
     #[test]
     fn a_planted_answer_without_failure_evidence_is_refused() {
-        let observation = super::observe_answer(&super::Exit::Answered, false);
-        let termination =
-            super::checked_answered_termination(observation, false, Termination::Answered);
+        let termination = super::checked_answered_termination(
+            super::Observed {
+                wait: super::Exit::Answered.wait(),
+                named_a_failure: false,
+                capture_failed: false,
+            },
+            Termination::Answered,
+        );
         assert!(matches!(
             termination,
             Termination::WaitFailed {
@@ -2237,19 +2167,26 @@ mod tests {
     #[test]
     fn answered_stop_self_check_accepts_both_failure_endings() {
         for outcome in [super::Exit::Exited, super::Exit::Answered] {
-            let observation = super::observe_answer(&outcome, true);
-            let termination =
-                super::checked_answered_termination(observation, false, Termination::Answered);
+            let termination = super::checked_answered_termination(
+                super::Observed {
+                    wait: outcome.wait(),
+                    named_a_failure: true,
+                    capture_failed: false,
+                },
+                Termination::Answered,
+            );
             assert!(matches!(termination, Termination::Answered));
         }
     }
 
     #[test]
     fn a_failed_capture_cannot_be_overridden_by_a_named_test_failure() {
-        let observation = super::observe_answer(&super::Exit::Exited, true);
         let termination = super::checked_answered_termination(
-            observation,
-            true,
+            super::Observed {
+                wait: super::Exit::Exited.wait(),
+                named_a_failure: true,
+                capture_failed: true,
+            },
             Termination::WaitFailed {
                 error: super::RunnerError::OutputReaderDisconnected { stream: "output" },
             },
