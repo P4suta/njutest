@@ -176,6 +176,10 @@ After the exact key misses, a run reads the record under the mutation's locus an
 The trace's `cache` record says `rule: carried` for this lookup, and `refused` names the first premise that failed: `skeleton-changed`, `item-changed`, `unsealed`, `item-moved`, `entry-incomplete`, `route-grew`, `filter-differs`, `reach-moved` or `uncontrolled`.
 A believed record is reported like an exact one, with the run that established it as `source_run_id`.
 
+A carried record lists native executions, and keeps no sealed execution, so a carried answer is a lead and never a verdict ([ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md)).
+A run that seals puts the mutation to its sealed executions first, as it does a mutation nothing was kept about, and a verdict they establish is what the run reports, the carried answer set aside; only where they establish none is the carried answer read back, as the lead it is, resting on every reason they established none.
+So no sealed verdict is ever carried across an edit, and none is read back from here without running: a sealed verdict kept under the exact key is run again before it is believed, as [reproducing a sealed verdict](sealed.md#reproducing-a-sealed-verdict) says.
+
 `item-moved` is why the placeholder may forget a body's lines.
 Every body of a file the run instruments records its entry, the tests' own among them, and only such a file has placeholders; a `const fn`, a `const` and a `static`, which run where nothing records entering, are not sealed, so their `start` is in the file's `$positions` entry.
 So a position that moved can reach what an execution did only through a body it entered, which the rule holds where it stood, or through what the compiler read, which the skeleton holds; a `#[track_caller]` location or a backtrace frame is read by code that is running, and that code is an entered body or code outside the tree, which no edit moves.

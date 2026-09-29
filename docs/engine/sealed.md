@@ -5,13 +5,12 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Sealed execution
 
-**Status: implemented, with the gaps below.** This page is the contract [ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md) decided.
+**Status: implemented, with the gap below.** This page is the contract [ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md) decided.
 A run seals by default: it builds the instrumented tree for `wasm32-wasip1`, lists each module's tests and runs each one's control on the host, puts every mutant to the tests whose controls reached it, and writes the verdict they establish, with its `evidence`, into the report.
 [The standing of a mutant](#the-standing-of-a-mutant) is `rust_mutants_decision::evidence::standing` and [the judgement of one execution](#judging-one-execution) is `rust_mutants_decision::judgement::judged`, both held to their rules by exhaustive comparisons and Kani.
 `--no-seal`, or `[mutation] seal = false`, builds nothing for the sealed target, and then every answer is a lead.
-A report `verify` stored is reissued only once every sealed execution it rests on has run again and come out the same, as [Reproducing a sealed verdict](#reproducing-a-sealed-verdict) says.
-Not yet: a sealed verdict kept for one mutant, in the outcome store, in njutest's mutation evidence or among the answers carried across an edit, is still read back under its key without its executions running again.
-Nor is a sealed result cached by its digest: a report records what each sealed execution came to rather than the digest of its transcript, so running one again compares what it came to.
+A report `verify` stored is reissued only once every sealed execution it rests on has run again and come out the same, and a sealed verdict kept for one mutant is believed only once its executions, put again on the run's own bench, come out the same, as [Reproducing a sealed verdict](#reproducing-a-sealed-verdict) says.
+Not yet: a sealed result is cached by its digest nowhere: a report records what each sealed execution came to rather than the digest of its transcript, so running one again compares what it came to.
 
 A verdict is what a sealed run observed.
 A sealed run is the instrumented snapshot, built for `wasm32-wasip1`, with each test run alone in a fresh WebAssembly instance on a host that answers every question the same way every time.
@@ -192,6 +191,19 @@ The first that does not, or that cannot be made again because its mutant, its gu
 A report that rests on no sealed execution, because every row is a lead or rests on no execution at all, affirms nothing sealed and is reissued as it is.
 The trace records the running again as a `rerun` phase with a `sealed-exec` for each execution that ran, and a `rerun-unmade` note for one that could not be made.
 What it costs is the preparation's builds, which the engine's build cache makes incremental, and one instance for each module listed, each control and each recorded execution; no test runs natively, no sentinel is planted, and nothing is routed.
+
+A sealed verdict kept for one mutant is run again too, on the bench the run assembles anyway.
+The engine's outcome store, njutest's store of mutation answers and njutest's checkpoint of an interrupted run each keep, beside a verdict, the sealed executions it rests on, and a run that reads one back puts the mutant again to its own bench, through `Bench::put` and `judged` as every sealed execution goes, by `rust_mutants::run::sealed_again`.
+The kept verdict is believed, or the kept kill inherited, only where the executions come to what it recorded, in the order they ran, and establish a verdict again.
+The comparison is over the whole sequence: an execution the record left out, one it names that the bench cannot make again, because its target has no station, its test no control or its control no reach of the mutant, and a survival that a test now reaching the mutant natively leaves unproven all part from it.
+Where they part, the mutant is established afresh from those same executions, never read back, and the trace carries an `unreproduced` note naming the first execution that parted: its place, its target and test, what it was kept as and what it came to now.
+A run that seals nothing cannot make a kept execution again, so it establishes the mutant natively, and what it says is a lead.
+Believing a kept verdict costs one fresh answer: the executions a fresh answer makes are the ones compared, one instance each, and nothing is built for them that the run does not build anyway.
+So a kept sealed verdict no longer saves an instance; it says which run first established the verdict.
+On fixture-simple, a `verify` whose whole report is gone, so that each of its ten mutations asks the store, and a `verify --no-cache` of the same tree each assembled the same bench, put the mutations to 10 sealed executions, and ran the same 8 cargo invocations; the first believed the 9 kills it had kept, each after its one execution came out the same, and established the survivor, which it had not kept.
+Trusting the 9 kept kills, as a run did before, skipped those 9 executions.
+A kept lead is not a verdict, so nothing is run again for it: sealing is tried first, as for a mutant nothing was kept about.
+An answer carried across an edit ([carrying an answer](carry.md)) rests on native executions, so it is always such a lead.
 
 ## What sealing cannot see
 
