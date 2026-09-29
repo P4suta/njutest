@@ -270,6 +270,17 @@ impl Execution {
     }
 }
 
+/// What a layer of either audit reads of the executions a row can rest on, each handed to it as an [`Execution`] it has to place (ADR 0046).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reads {
+    /// No execution of a mutation.
+    Nothing,
+    /// Native executions alone, because what it holds is only ever native: a process started, or a disposition run again with sealing off.
+    Native,
+    /// Native and sealed executions, and a defect only a sealed execution shows is planted for it.
+    Both,
+}
+
 /// The routes and the executions of one recording, in the order they were written.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Routing {

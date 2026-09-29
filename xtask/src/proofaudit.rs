@@ -319,7 +319,8 @@ impl Layer {
 
     /// What this layer reads of the executions a row can rest on, which says whether a defect only a sealed execution shows is owed to it.
     #[must_use]
-    pub const fn reads(self) -> Reads {
+    pub const fn reads(self) -> crate::route::Reads {
+        use crate::route::Reads;
         match self {
             Self::Executions | Self::Proofs | Self::Hollow | Self::Reuse => Reads::Both,
             Self::Repair => Reads::Native,
@@ -341,17 +342,6 @@ impl Layer {
             | Self::Evidence => Reads::Nothing,
         }
     }
-}
-
-/// What a layer reads of the executions a row can rest on, each handed to it as a [`Ran`] it has to place (ADR 0046).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Reads {
-    /// No execution of a mutation.
-    Nothing,
-    /// Native executions alone, because what it holds runs only natively: a disposition run again against a moved target runs with sealing off.
-    Native,
-    /// Native and sealed executions, and a defect only a sealed execution shows is planted for it.
-    Both,
 }
 
 /// What a layer hands back to show it said how far it got, which only [`Notes::looked`] and [`Notes::absent`] make.

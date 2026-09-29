@@ -1081,15 +1081,12 @@ pub(super) fn work(
         return notes.looked();
     };
     let ran = recorded
-        .events
+        .routing
+        .executions()
         .iter()
-        .filter(|event| {
-            string(event, "type").as_deref() == Some("mutant-exec")
-                && event
-                    .get("mutant")
-                    .and_then(|record| record.get("id"))
-                    .and_then(Value::as_str)
-                    .is_some_and(|id| !id.is_empty())
+        .filter(|execution| match execution {
+            crate::route::Execution::Native(exec) => !exec.mutant.is_empty(),
+            crate::route::Execution::Sealed(_) => false,
         })
         .count();
     let Ok(ran) = u64::try_from(ran) else {

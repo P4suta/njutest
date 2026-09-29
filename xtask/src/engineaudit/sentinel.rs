@@ -1035,11 +1035,45 @@ pub fn entered(entered: &Value, measurable: bool) -> Value {
 impl Layer {
     /// The defects planted for this layer, each of which it must report as a violation.
     #[must_use]
+    pub fn planted(self) -> Vec<Perturbation> {
+        let mut planted = self.planted_natively();
+        planted.extend(self.sealed_planted());
+        planted
+    }
+
+    /// The defects planted for this layer that only a sealed execution shows, each of which it must report as a violation; none for a layer that reads no sealed execution.
+    #[must_use]
+    pub fn sealed_planted(self) -> Vec<Perturbation> {
+        match self {
+            Self::Trace => vec![Perturbation {
+                name: "a sealed survivor its recording says one execution of detected",
+                events: amended(11, json!({ "sealed": { "came_to": "failed" } })),
+                ..clean()
+            }],
+            Self::Identity
+            | Self::Accounting
+            | Self::Score
+            | Self::Findings
+            | Self::Expectations
+            | Self::Exit
+            | Self::Merge
+            | Self::Proofs
+            | Self::Sites
+            | Self::Ledger
+            | Self::Work
+            | Self::Touch
+            | Self::Entry
+            | Self::Carry
+            | Self::Sealed => Vec::new(),
+        }
+    }
+
+    /// The defects planted for this layer that any execution shows.
     #[expect(
         clippy::too_many_lines,
         reason = "one total match holds every layer's planted defects, so a layer added without one does not compile"
     )]
-    pub fn planted(self) -> Vec<Perturbation> {
+    fn planted_natively(self) -> Vec<Perturbation> {
         let clean = clean();
         match self {
             Self::Identity => vec![Perturbation {
