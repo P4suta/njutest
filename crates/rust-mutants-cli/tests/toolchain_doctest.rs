@@ -394,9 +394,9 @@ fn an_example_the_sealed_host_refuses_is_one_uncontrolled_test_of_its_merged_bin
         .collect();
     assert_eq!(
         uncontrolled,
-        [("src/lib.rs - double (line 17)".to_owned(), "panicked")],
-        "the example that starts a thread fails its control, and it is the only one without a \
-         control: {documentation}"
+        [("src/lib.rs - double (line 17)".to_owned(), "refused")],
+        "the example that starts a thread fails its control because the sandbox refused the \
+         thread, and it is the only one without a control: {documentation}"
     );
     for (line, example, when) in [
         (12, "src/lib.rs - after (line 8)", "before"),

@@ -317,6 +317,93 @@ fn a_relative_path_is_read_from_the_working_directory_and_an_absolute_one_throug
 }
 
 #[test]
+fn a_name_the_snapshot_holds_only_in_another_case_is_refused_however_the_build_spelled_it() {
+    let runner = runner();
+    let module = runner
+        .prepare(&program_bytes())
+        .expect("the program is a WASI command");
+    for (root, path) in [
+        (SANDBOX, "Hello.txt".to_owned()),
+        (SANDBOX, format!("{SANDBOX}/LISTING/m.txt")),
+        (WINDOWS_SANDBOX, r"..\Listing\M.TXT".to_owned()),
+        (
+            WINDOWS_SANDBOX,
+            format!(r"{WINDOWS_SANDBOX}\DATA\hello.txt"),
+        ),
+    ] {
+        let transcript = run(
+            &module,
+            &in_working_directory(&["read", &path], root, "data"),
+        );
+        assert_eq!(
+            transcript.stop(),
+            SealedStop::Exited { code: 2 },
+            "{path}: {}",
+            stdout(&transcript)
+        );
+        assert_eq!(
+            transcript.refusals(),
+            [Refusal {
+                function: WasiFunction::PathOpen,
+                reason: RefusalReason::CaseOnly,
+                count: 1,
+            }],
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn the_temp_dir_of_std_panics_in_its_platform_layer_whatever_tmpdir_names() {
+    let runner = runner();
+    let module = runner
+        .prepare(&program_bytes())
+        .expect("the program is a WASI command");
+    let mut asked = invocation(&["temp-dir"]);
+    asked.environment = Environment::new(vec![("TMPDIR".to_owned(), format!("{SANDBOX}/empty"))])
+        .expect("the environment is valid");
+    let transcript = run(&module, &asked);
+    assert_eq!(
+        transcript.stop(),
+        SealedStop::Trapped {
+            kind: TrapKind::Unreachable
+        }
+    );
+    let said = stderr(&transcript);
+    assert!(
+        said.contains("/library/std/src/sys/"),
+        "the panic is located in the standard library's platform layer: {said}"
+    );
+}
+
+#[test]
+fn a_file_made_where_a_variable_names_is_written_read_and_removed_leaving_nothing() {
+    let runner = runner();
+    let module = runner
+        .prepare(&program_bytes())
+        .expect("the program is a WASI command");
+    let mut asked = invocation(&["scratch", "TMPDIR"]);
+    asked.environment = Environment::new(vec![("TMPDIR".to_owned(), format!("{SANDBOX}/empty"))])
+        .expect("the environment is valid");
+    let transcript = run(&module, &asked);
+    assert_eq!(
+        transcript.stop(),
+        SealedStop::Returned,
+        "{}",
+        stderr(&transcript)
+    );
+    assert_eq!(
+        stdout(&transcript),
+        "read \"kept for a moment\"\npresent afterwards false\n"
+    );
+    assert!(
+        transcript.overlay().is_empty(),
+        "a file made and removed leaves nothing: {:?}",
+        transcript.overlay()
+    );
+}
+
+#[test]
 fn an_absolute_path_no_other_preopen_names_is_read_from_the_working_directory() {
     let runner = runner();
     let module = runner

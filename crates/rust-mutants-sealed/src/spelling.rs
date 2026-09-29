@@ -88,7 +88,7 @@ fn drive_rooted(path: &str) -> Option<(u8, &str)> {
 }
 
 /// Whether two names of a Windows path are one name as NTFS compares names: character by character, each in either case where its case is one other character.
-fn one_name(one: &str, other: &str) -> bool {
+pub(crate) fn one_name(one: &str, other: &str) -> bool {
     one.chars().count() == other.chars().count()
         && one.chars().zip(other.chars()).all(|(left, right)| {
             left == right

@@ -26,7 +26,11 @@ Each test of each module runs in its own instance, as `<module> --exact <name> -
 The instance is new, the memory is the module's initial memory, the filesystem is the snapshot with nothing written, and the clock reads zero.
 Its working directory is its package's directory in the snapshot, where cargo runs a test and rustdoc a doctest, so a relative path reads what it reads natively.
 What a test writes for itself lands in directories the instance holds, each empty when it starts and written only to its overlay: `CARGO_TARGET_TMPDIR` at the path the build baked in, which for the sealed target is the target's own directory inside the target directory, and a home and a temporary directory, which `HOME` and `TMPDIR` name.
+What a target's build script wrote, its `OUT_DIR`, the instance holds as the build left it, at the path the build gave the target, so a test that reads it back at run time, through `std::env::var("OUT_DIR")` or `env!("OUT_DIR")`, reads what it reads natively; what a test writes there only its overlay holds, and the build's own directory is never touched.
+Each of these names reaches something sealed on every machine, and the same thing on each: the paths of `HOME`, `TMPDIR` and the scratch are the instance's own, and those of `CARGO_TARGET_TMPDIR` and `OUT_DIR` are the ones the build gave the target, read or made empty when the bench is assembled.
 The standard library of `wasm32-wasip1` has no temporary directory of its own, so `std::env::temp_dir()` panics there whatever `TMPDIR` says, and its home directory is none.
+Code that keeps its files where `TMPDIR` names, as a test that asks the environment does, works sealed, and what it made is gone with the instance.
+A panic of the standard library's own platform layer, `library/std/src/sys/`, as that one is, is a refusal of the sandbox rather than something the test observed: a test whose control fails after it has no control, for `refused`, and an execution that meets it where its control did not is doubted, `refused`, never a detection, since the same code passes natively, as `fixtures/fixture-temporary` shows.
 A path the build baked in, such as `env!("CARGO_MANIFEST_DIR")`, reaches the snapshot as the build spelled it, a Windows build's `C:\…` included, as [the sealed host](sealed-host.md#the-working-directory) says.
 Not yet: an absolute path no directory the instance holds names is read from the working directory rather than refused.
 wasi-libc resolves every path against its own working directory, `/`, and takes the leading `/` off before it matches a preopen, so such a path reaches the host as the relative path it becomes, the same call a relative one makes, and the host cannot refuse the one without the other; closing it needs the guest's own working directory set to its package's directory, so that `.` need not be preopened.
@@ -69,9 +73,9 @@ A refusal returns its error to the guest and is recorded in the transcript, so a
 | `fd_fdstat_get`, `fd_fdstat_set_flags`, `fd_fdstat_set_rights` | On the instance's descriptor table. |
 | `fd_filestat_get`, `path_filestat_get` | Fixed metadata: every timestamp one constant, the inode derived from the path, the size the overlay's. |
 | `fd_filestat_set_times`, `path_filestat_set_times` | Recorded in the overlay and read back; a time never set reads as the constant. |
-| `fd_prestat_get`, `fd_prestat_dir_name` | The snapshot, at the path the build knew it by; the directory the runtime's records land in; a scratch directory of the instance's own, whose empty `home` and `tmp` are what `HOME` and `TMPDIR` name; for a target cargo gives one, an empty directory at the `CARGO_TARGET_TMPDIR` the build baked in; and `.`, the test's working directory in the snapshot. |
+| `fd_prestat_get`, `fd_prestat_dir_name` | The snapshot, at the path the build knew it by; the directory the runtime's records land in; a scratch directory of the instance's own, whose empty `home` and `tmp` are what `HOME` and `TMPDIR` name; for a target cargo gives one, an empty directory at the `CARGO_TARGET_TMPDIR` the build baked in; for a target whose package has a build script, what the script wrote, at the `OUT_DIR` the build gave the target; and `.`, the test's working directory in the snapshot. |
 | `fd_readdir` | Entries in name order, with cookies that are their positions. |
-| `path_open`, `path_create_directory`, `path_remove_directory`, `path_rename`, `path_unlink_file` | Inside the snapshot, on the overlay: a relative path from the working directory, an absolute one below the snapshot's root as the build spelled it. A path outside it is refused, `ENOTCAPABLE`. |
+| `path_open`, `path_create_directory`, `path_remove_directory`, `path_rename`, `path_unlink_file` | Inside the snapshot, on the overlay: a relative path from the working directory, an absolute one below the snapshot's root as the build spelled it. A path outside it is refused, `ENOTCAPABLE`. A name its directory holds only in another case is refused, `ENOTCAPABLE`, since a file system that compares names in either case would have answered it from that name. |
 | `path_readlink` | A link the snapshot holds. |
 | `path_link`, `path_symlink` | Refused, `ENOTSUP`. |
 | `sock_accept`, `sock_recv`, `sock_send`, `sock_shutdown` | Refused, `ENOTSUP`. |
@@ -96,7 +100,7 @@ Both are read, and they must agree.
 | was refused memory | * | stayed within the limit | detected: memory exceeded |
 | exited with status zero before the harness finished | * | * | doubted: exited early |
 | overflowed its stack | * | * | doubted: stack overflow |
-| failed after a refusal, or after the standard library's message for an unsupported operation or a failed allocation | * | met no such refusal | doubted: refused |
+| failed after a refusal, or after the standard library's message for an unsupported operation or a failed allocation, or a panic of its platform layer | * | met no such refusal | doubted: refused |
 | anything else, or the harness disagreeing with what the host saw | * | * | doubted: unaccounted |
 
 A panic's trap with the standard library's message for a failed allocation is a memory bound, not a panic.
@@ -166,6 +170,7 @@ Each is found, not listed: from the build, from the module's imports, and from t
 | The crate does not build for the target | the build's own error, per target with `--keep-going` | build its dependencies for `wasm32-wasip1`, or put what cannot build behind `cfg(not(target_family = "wasm"))` |
 | The module imports what the host does not provide | the import section | the named import, which is not part of `wasi_snapshot_preview1` |
 | A control does not pass sealed | the control | the control's own failure, which names the thread, process, socket or file it needed |
+| A control fails after a refusal of the sandbox, `refused` | the host refused one of its calls, or the standard library printed its message for one, or panicked in its platform layer | what the transcript names it asked for: a socket, a signal, a link, a path outside the tree or named only in another case, or `std::env::temp_dir()`, whose place `TMPDIR` names |
 | The target has no libtest harness | `harness = false` in the build's own record of the target | give it libtest's harness, so that each of its tests says how it ended |
 | The module's harness does not list its tests | `--list` does not close with libtest's count, or the count and the names disagree | the listing's own output, run on wasmtime |
 | A `#[should_panic]` test | libtest reports it ignored | nothing seals it; its mutants rest on the other tests |

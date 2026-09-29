@@ -58,8 +58,8 @@ Floating-point NaNs are canonicalized.
 | `poll_oneoff` | every descriptor is ready at once; where no descriptor is asked about, the clocks move straight to the earliest deadline and the call returns |
 | `random_get` | SHA-256 of the seed and a block counter, so the bytes are a function of the seed and of how many were read before |
 | `fd_write`, `fd_read` on 1, 2, 0 | standard output and standard error are kept as far as their caps and counted past them; standard input is at its end |
-| `path_open`, `fd_read`, `fd_pread`, `fd_seek`, `fd_tell`, `fd_filestat_get`, `path_filestat_get`, `fd_readdir` | the snapshot, as the overlay has changed it |
-| `fd_write`, `fd_pwrite`, `fd_filestat_set_size`, `fd_allocate`, `path_create_directory`, `path_rename`, `path_unlink_file`, `path_remove_directory`, `fd_filestat_set_times`, `path_filestat_set_times` | written into the invocation's own overlay, which later calls in the same invocation see and no other invocation does |
+| `path_open`, `fd_read`, `fd_pread`, `fd_seek`, `fd_tell`, `fd_filestat_get`, `path_filestat_get`, `fd_readdir` | the snapshot, as the overlay has changed it; a name its directory holds only in another case is refused with `notcapable` and recorded, `case-only` |
+| `fd_write`, `fd_pwrite`, `fd_filestat_set_size`, `fd_allocate`, `path_create_directory`, `path_rename`, `path_unlink_file`, `path_remove_directory`, `fd_filestat_set_times`, `path_filestat_set_times` | written into the invocation's own overlay, which later calls in the same invocation see and no other invocation does; a name made, renamed to or removed that its directory holds only in another case is refused, `case-only` |
 | `fd_close`, `fd_renumber`, `fd_fdstat_get`, `fd_fdstat_set_flags`, `fd_fdstat_set_rights`, `fd_prestat_get`, `fd_prestat_dir_name`, `fd_advise`, `fd_sync`, `fd_datasync` | the descriptor table, which gives out the lowest free number |
 | `path_readlink` | nothing is a symbolic link: `inval` for a path that exists, `noent` for one that does not |
 | `proc_exit` | ends the invocation as `Exited` |
@@ -69,6 +69,10 @@ Floating-point NaNs are canonicalized.
 | `path_link`, `path_symlink` | refused with `notsup` and recorded |
 
 A path that leaves what the descriptor it is resolved from may reach, or that is absolute and names no place inside it, is refused with `notcapable` and recorded.
+A name a directory does not hold, where it holds one that differs from it only in case, is refused with `notcapable` and recorded as `case-only`, whether the path looks it up, makes it, renames to it or removes it.
+A snapshot holds names exactly as they were read, while the file system a build ran on may compare them in either case, as NTFS and APFS do by default, and then the name would have reached the other.
+The host does not choose between the two: it answers neither, and says so, on every machine alike, so a transcript does not depend on the file system of the machine that made it.
+Two names are compared as NTFS compares them, character by character, each in either case where its case is one other character.
 A write the overlay has no room left for is refused with `nospc` and recorded.
 A wait on a CPU-time clock, which moves only while the guest runs, is answered with `notsup` in its event and recorded.
 A wait for a deadline past the end of virtual time is a wait nothing ends, so the guest spends its whole budget and stops as `FuelExhausted`.
@@ -93,7 +97,7 @@ A Windows build bakes paths such as `env!("CARGO_MANIFEST_DIR")` into the guest 
 wasi-libc matches a preopen's name only where `/` or nothing follows it, so `C:\tree\pkg/data.txt` never reaches the tree preopened at `C:\tree`, and neither does `C:\tree/data.txt` where the tree was preopened at `C:\tree\`.
 The working directory of a Windows tree answers such a path: one whose names begin with the names of the tree's root resolves from the tree's root.
 The drive letter and every name of the tree's root are compared in either case, as NTFS compares a name: character by character, each in either case where its case is one other character, so a build that spelled the root in another case than the tree was read at still reaches it.
-A name below the root is walked exactly as spelled, as the snapshot holds it.
+A name below the root is walked exactly as spelled, as the snapshot holds it, and one it holds only in another case is refused, as in every tree.
 Any other absolute path, on another drive, below a root it does not spell, rooted without a drive, or on a drive without its root, names no place in the tree and is refused.
 
 ## What a run costs

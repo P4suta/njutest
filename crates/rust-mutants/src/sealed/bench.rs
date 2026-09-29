@@ -66,11 +66,12 @@ const REALTIME_ORIGIN: u64 = 1_767_225_600_000_000_000;
 /// How long the host may take over one invocation before its watchdog stops it, which is never a verdict.
 pub const WATCHDOG: Duration = Duration::from_mins(15);
 
-/// What the standard library prints when the sandbox refused what a test asked for.
-const SANDBOX_WORDS: [&str; 3] = [
+/// What the standard library prints when the sandbox refused what a test asked for: an operation the target does not support, a thread, an allocation, or a panic of its own platform layer, such as the one `std::env::temp_dir` raises on `wasm32-wasip1` whatever `TMPDIR` names.
+const SANDBOX_WORDS: [&str; 4] = [
     "operation not supported on this platform",
     "failed to spawn thread",
     "memory allocation of",
+    "/library/std/src/sys/",
 ];
 
 /// Why a sealed execution could not be set up or run.
@@ -217,6 +218,70 @@ impl Tree {
     }
 }
 
+/// The directory a target's build script wrote, `OUT_DIR`, as the build left it, at the path the build gave the target.
+#[derive(Debug, Clone)]
+struct Built {
+    path: String,
+    snapshot: Snapshot,
+}
+
+impl Built {
+    /// What `target`'s build script left in its `OUT_DIR`, or nothing where no build script ran for it.
+    ///
+    /// # Errors
+    /// A directory that cannot be listed, a file that cannot be read, or a name that is not text.
+    fn of(target: &TestTarget) -> Result<Option<Self>, BenchError> {
+        let Some(out_dir) = target.cargo_env.var("OUT_DIR") else {
+            return Ok(None);
+        };
+        let not_text = |name: String| BenchError::EnvironmentNotText {
+            target: target.id().to_owned(),
+            name,
+        };
+        let root = Path::new(out_dir);
+        let path = root
+            .to_str()
+            .ok_or_else(|| not_text(root.display().to_string()))?
+            .to_owned();
+        let unreadable = |path: &Path| {
+            let path = path.to_path_buf();
+            move |source| BenchError::TreeUnreadable { path, source }
+        };
+        let snapshot = |source| BenchError::Snapshot { source };
+        let mut builder = Snapshot::builder();
+        let mut pending = vec![(root.to_path_buf(), String::new())];
+        while let Some((directory, relative)) = pending.pop() {
+            for entry in std::fs::read_dir(&directory).map_err(unreadable(&directory))? {
+                let entry = entry.map_err(unreadable(&directory))?;
+                let file_name = entry.file_name();
+                let name = file_name
+                    .to_str()
+                    .ok_or_else(|| not_text(entry.path().display().to_string()))?;
+                let below = if relative.is_empty() {
+                    name.to_owned()
+                } else {
+                    format!("{relative}/{name}")
+                };
+                let path = entry.path();
+                if std::fs::metadata(&path)
+                    .map_err(unreadable(&path))?
+                    .is_dir()
+                {
+                    builder = builder.directory(&below).map_err(snapshot)?;
+                    pending.push((path, below));
+                } else {
+                    let bytes = std::fs::read(&path).map_err(unreadable(&path))?;
+                    builder = builder.file(&below, bytes).map_err(snapshot)?;
+                }
+            }
+        }
+        Ok(Some(Self {
+            path,
+            snapshot: builder.build().map_err(snapshot)?,
+        }))
+    }
+}
+
 /// How one test's control ran: what a mutant's execution of the same test is judged against.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Control {
@@ -359,6 +424,7 @@ pub struct Station<'runner> {
     holdings: Vec<Holding<'runner>>,
     target: TestTarget,
     program: String,
+    built: Option<Built>,
     /// Each test the native baseline ran, and its control, or why it has none.
     pub controls: BTreeMap<String, Result<Control, Uncontrolled>>,
 }
@@ -546,6 +612,7 @@ impl<'runner> Bench<'runner> {
             holdings: Vec::new(),
             target: module.target.clone(),
             program,
+            built: Built::of(&module.target)?,
             controls: BTreeMap::new(),
         };
         let Some(tests) = self.listed(&station, &module_of)? else {
@@ -596,6 +663,7 @@ impl<'runner> Bench<'runner> {
             holdings: Vec::new(),
             target: doctests.target.clone(),
             program: "rust_out.wasm".to_owned(),
+            built: Built::of(&doctests.target)?,
             controls: BTreeMap::new(),
         };
         let mut held = Vec::new();
@@ -831,6 +899,11 @@ impl<'runner> Bench<'runner> {
         }
         match came_to {
             Sealed::Passed => {}
+            Sealed::Detected(_) if met_the_sandbox(&transcript) => {
+                return Ok(Err(Uncontrolled::Doubted(
+                    rust_mutants_decision::evidence::Doubt::Refused,
+                )));
+            }
             Sealed::Detected(how) => return Ok(Err(Uncontrolled::Detected(how))),
             Sealed::Doubted(why) => return Ok(Err(Uncontrolled::Doubted(why))),
             Sealed::SetAside => return Ok(Err(unread)),
@@ -852,7 +925,7 @@ impl<'runner> Bench<'runner> {
         }))
     }
 
-    /// Every directory an instance of `station` is given: the tree, the records, its scratch, an empty `target_tmpdir` where cargo names one, and its working directory where the tree holds it.
+    /// Every directory an instance of `station` is given: the tree, the records, its scratch, an empty `target_tmpdir` where cargo names one, what its build script wrote where one did, and its working directory where the tree holds it.
     fn preopens(
         &self,
         station: &Station<'_>,
@@ -880,6 +953,12 @@ impl<'runner> Bench<'runner> {
             preopens.push(Preopen::Tree {
                 path,
                 snapshot: Snapshot::builder().build()?,
+            });
+        }
+        if let Some(built) = &station.built {
+            preopens.push(Preopen::Tree {
+                path: built.path.clone(),
+                snapshot: built.snapshot.clone(),
             });
         }
         if let Some(directory) = self.tree.within(&station.target.cwd) {
@@ -1055,6 +1134,11 @@ fn refusals(transcript: &Transcript) -> BTreeSet<(WasiFunction, RefusalReason)> 
         .iter()
         .map(|refusal| (refusal.function, refusal.reason))
         .collect()
+}
+
+/// Whether the instance met a refusal of the sandbox: the host refused a call, or the standard library printed a message of its own for one.
+fn met_the_sandbox(transcript: &Transcript) -> bool {
+    !transcript.refusals().is_empty() || !sandbox(transcript).is_empty()
 }
 
 /// Every message of the standard library's for a refusal of the sandbox that the instance printed.

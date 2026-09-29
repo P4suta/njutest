@@ -28,6 +28,8 @@ fn main() {
         "write" => write(rest),
         "stat" => stat(rest),
         "rearrange" => rearrange(rest),
+        "temp-dir" => println!("{}", std::env::temp_dir().display()),
+        "scratch" => scratch(rest),
         unknown => fail(&format!("no mode {unknown:?}")),
     }
 }
@@ -235,4 +237,18 @@ fn rearrange(rest: &[String]) {
             Err(error) => println!("{relative} is {:?}", error.kind()),
         }
     }
+}
+
+fn scratch(rest: &[String]) {
+    let Some(directory) = std::env::var_os(text(rest, 0)) else {
+        fail("the variable naming the directory is not set")
+    };
+    let path = std::path::Path::new(&directory).join("scratch.txt");
+    step("write", std::fs::write(&path, "kept for a moment"));
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => println!("read {contents:?}"),
+        Err(error) => fail(&format!("read: {error}")),
+    }
+    step("remove", std::fs::remove_file(&path));
+    println!("present afterwards {}", path.exists());
 }

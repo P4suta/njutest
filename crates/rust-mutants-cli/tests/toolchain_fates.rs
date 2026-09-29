@@ -359,6 +359,11 @@ fn fixture_target_tmpdir() {
 }
 
 #[test]
+fn fixture_temporary() {
+    holds("fixture-temporary");
+}
+
+#[test]
 fn fixture_drifts() {
     holds("fixture-drifts");
 }

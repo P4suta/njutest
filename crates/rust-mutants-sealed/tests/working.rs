@@ -343,3 +343,79 @@ fn a_file_made_through_the_working_directory_is_one_the_tree_holds() {
         "{made:?}"
     );
 }
+
+#[test]
+fn a_name_its_directory_holds_only_in_another_case_is_refused_and_recorded() {
+    for root in ["/work/tree", r"C:\work\tree"] {
+        let transcript = through(
+            root,
+            "pkg",
+            &[
+                Asked {
+                    fd: 4,
+                    path: "DATA.txt",
+                    errno: 76,
+                },
+                Asked {
+                    fd: 4,
+                    path: "Sub/inner.txt",
+                    errno: 76,
+                },
+                Asked {
+                    fd: 4,
+                    path: "../TOP.TXT",
+                    errno: 76,
+                },
+                Asked {
+                    fd: 4,
+                    path: "data.txt",
+                    errno: 0,
+                },
+                Asked {
+                    fd: 4,
+                    path: "missing.txt",
+                    errno: 44,
+                },
+            ],
+        );
+        assert_eq!(transcript.stop(), SealedStop::Returned, "{root}");
+        assert_eq!(transcript.stdout().bytes(), b"data", "{root}");
+        let refusals: Vec<(WasiFunction, &str, u64)> = refused(&transcript)
+            .iter()
+            .map(|refusal| (refusal.function, refusal.reason.name(), refusal.count))
+            .collect();
+        assert_eq!(
+            refusals,
+            [(WasiFunction::PathOpen, "case-only", 3)],
+            "a lookup a case-insensitive file system would answer from another name is refused, \
+             under {root}"
+        );
+    }
+}
+
+#[test]
+fn a_file_made_under_a_name_its_directory_holds_in_another_case_is_refused_and_not_made() {
+    let bytes = command(
+        &["path_open"],
+        "(data (i32.const 100) \"Data.txt\")",
+        "(call $expect (call $path_open (i32.const 4) (i32.const 0) (i32.const 100) (i32.const 8) (i32.const 1) (i64.const -1) (i64.const -1) (i32.const 0) (i32.const 64)) (i32.const 76))",
+    );
+    let mut invoked = invocation();
+    invoked.preopens = Preopens::new(vec![
+        tree("/work/tree", package_tree()),
+        working("/work/tree", "pkg"),
+    ])
+    .expect("the tree and its working directory");
+    let transcript = run(&bytes, &invoked);
+    assert_eq!(transcript.stop(), SealedStop::Returned);
+    assert!(
+        transcript.overlay().is_empty(),
+        "nothing is made beside the name it differs from only in case: {:?}",
+        transcript.overlay()
+    );
+    let refusals: Vec<&str> = refused(&transcript)
+        .iter()
+        .map(|refusal| refusal.reason.name())
+        .collect();
+    assert_eq!(refusals, ["case-only"]);
+}
