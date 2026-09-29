@@ -208,6 +208,19 @@ pub struct Merge {
     /// Write the combined report here rather than to standard output.
     #[arg(long, value_name = "FILE")]
     pub output: Option<PathBuf>,
+    /// Run every sealed execution the whole rests on again on this machine, and write it only where each comes to what its part recorded.
+    #[arg(long)]
+    pub rerun: bool,
+    /// The workspace the parts measured, which `--rerun` runs the executions in.
+    /// The working directory by default.
+    #[arg(long, value_name = "DIR", requires = "rerun")]
+    pub directory: Option<PathBuf>,
+    /// Pass --offline to every cargo command `--rerun` starts.
+    #[arg(long, requires = "rerun")]
+    pub offline: bool,
+    /// Pass --locked to every cargo command `--rerun` starts.
+    #[arg(long, requires = "rerun")]
+    pub locked: bool,
 }
 
 /// `njutest cache`.

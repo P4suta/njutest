@@ -2241,6 +2241,95 @@ fn the_parts_of_one_catalog_merge_into_the_verdict_neither_of_them_could_say() {
     );
 }
 
+/// `report` with the first sealed execution that detected its mutation said to have detected it another way, which a run again of it cannot come to.
+fn detected_otherwise(report: &Path, into: &Path) {
+    let text = std::fs::read_to_string(report).expect("the shard's report");
+    let mut document: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&text).expect("the shard's report is JSON");
+    let rows = document["report"]["builds"][0]["source"]["mutants"]
+        .as_array_mut()
+        .expect("the shard's rows");
+    let ending = rows
+        .iter_mut()
+        .filter(|row| row["evidence"]["kind"] == "sealed")
+        .flat_map(|row| {
+            row["evidence"]["executions"]
+                .as_array_mut()
+                .expect("a sealed row names its executions")
+                .iter_mut()
+        })
+        .map(|execution| &mut execution["came_to"])
+        .find(|came_to| *came_to == "panicked" || *came_to == "failed")
+        .expect("a sealed execution that detected its mutation");
+    *ending = if *ending == "panicked" {
+        serde_json::json!("failed")
+    } else {
+        serde_json::json!("panicked")
+    };
+    std::fs::write(into, document.to_string()).expect("the altered shard");
+}
+
+#[test]
+fn a_merge_asked_to_run_again_writes_the_whole_only_where_each_execution_came_out_the_same() {
+    let fixture = fixture("fixture-assured");
+    let partial = Some(i32::from(njutest::cli::EXIT_INSUFFICIENT));
+    assert_eq!(verify(&fixture, &["--shard", "1/2"]).status.code(), partial);
+    let one = latest(&fixture);
+    assert_eq!(verify(&fixture, &["--shard", "2/2"]).status.code(), partial);
+    let two = latest(&fixture);
+    let root = fixture
+        .root
+        .to_str()
+        .expect("test protocol paths are UTF-8");
+    let merge = |second: &Path| {
+        asked(
+            &of(&fixture.root, &[]),
+            &[
+                "merge",
+                "--rerun",
+                "--directory",
+                root,
+                "--offline",
+                "--locked",
+                one.to_str().expect("test protocol paths are UTF-8"),
+                second.to_str().expect("test protocol paths are UTF-8"),
+            ],
+        )
+    };
+
+    let reproduced = merge(&two);
+    let said = njutest_devkit::process::strict_utf8(&reproduced.stderr);
+    assert_eq!(reproduced.status.code(), Some(0), "{said}");
+    assert!(
+        said.contains("came out the same on this machine"),
+        "a merge runs nothing of its own, and asked to, it runs what its parts rest on: {said}"
+    );
+    assert!(
+        njutest::report::json::parse(&njutest_devkit::process::strict_utf8(&reproduced.stdout))
+            .is_ok(),
+        "and writes the whole once they came out the same"
+    );
+
+    let altered = fixture.root.join("altered-shard.json");
+    detected_otherwise(&two, &altered);
+    let refused = merge(&altered);
+    let said = njutest_devkit::process::strict_utf8(&refused.stderr);
+    assert_eq!(
+        refused.status.code(),
+        Some(i32::from(njutest::cli::EXIT_ERROR)),
+        "{said}"
+    );
+    assert!(
+        said.contains("NJ8006"),
+        "a part whose sealed execution comes to something else on this bench is not \
+         believed (ADR 0046, decision 7): {said}"
+    );
+    assert!(
+        refused.stdout.is_empty(),
+        "and the whole it would have affirmed is not written"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn a_run_that_was_given_a_package_says_it_looked_at_that_one() {

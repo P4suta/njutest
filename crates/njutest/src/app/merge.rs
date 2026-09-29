@@ -6,7 +6,7 @@
 use std::io::Write;
 use std::path::Path;
 
-use crate::cli::{EXIT_ERROR, Merge as Arguments};
+use crate::cli::{EXIT_ERROR, Environment, Merge as Arguments};
 use crate::report::merge::merge;
 use crate::report::{ReportDocument, ShardReport};
 
@@ -32,12 +32,13 @@ enum ReadError {
     Complete { path: std::path::PathBuf },
 }
 
-/// Combines the parts and writes the whole.
+/// Combines the parts and writes the whole, where `--rerun` asks, only once every sealed execution it rests on came out the same on this machine.
 ///
 /// # Errors
 /// Returns the output stream's write failure.
 pub fn run(
     arguments: &Arguments,
+    environment: &Environment,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> std::io::Result<u8> {
@@ -72,6 +73,9 @@ pub fn run(
             return Ok(EXIT_ERROR);
         }
     };
+    if arguments.rerun && !reproduced(arguments, environment, &whole, stderr)? {
+        return Ok(EXIT_ERROR);
+    }
     let verdict = whole.verdict();
     let document = match crate::report::json::document_any(&ReportDocument::Complete(whole)) {
         Ok(document) => document,
@@ -89,6 +93,72 @@ pub fn run(
         super::say(stdout, document.trim_end())?;
     }
     Ok(verdict.exit_code())
+}
+
+/// Whether every sealed execution `whole` rests on came to what its part recorded, run again in the workspace the arguments name; says which did not, or what stopped them, where one did not.
+///
+/// # Errors
+/// Returns the diagnostic stream's write failure.
+fn reproduced(
+    arguments: &Arguments,
+    environment: &Environment,
+    whole: &crate::report::Report,
+    stderr: &mut dyn Write,
+) -> std::io::Result<bool> {
+    let root = environment.rooted(arguments.directory.as_deref());
+    let config = match crate::config::Config::load(&root) {
+        Ok(config) => config,
+        Err(error) => {
+            super::complain(stderr, &error, error.code())?;
+            return Ok(false);
+        }
+    };
+    let run_id = match crate::run_id::mint(jiff::Timestamp::now(), std::process::id()) {
+        Ok(run_id) => run_id,
+        Err(error) => {
+            super::diagnose(stderr, &error.to_string())?;
+            return Ok(false);
+        }
+    };
+    let request = crate::assure::rerun::asking(
+        &root,
+        config,
+        (
+            crate::build::Cargo {
+                offline: arguments.offline,
+                locked: arguments.locked,
+            },
+            run_id,
+            jiff::Timestamp::now(),
+        ),
+    );
+    let trace = crate::trace::Recorder::disabled();
+    let watch = crate::watch::Watch::new(&environment.cancel, &trace);
+    match crate::assure::rerun::rerun(whole, &request, environment, watch) {
+        Ok(crate::assure::rerun::Rerun::NothingSealed) => {
+            super::diagnose(
+                stderr,
+                "the merged report rests on no sealed execution, so nothing was run again",
+            )?;
+            Ok(true)
+        }
+        Ok(crate::assure::rerun::Rerun::Reproduced) => {
+            super::diagnose(
+                stderr,
+                "every sealed execution the merged report rests on came out the same on this \
+                 machine",
+            )?;
+            Ok(true)
+        }
+        Ok(crate::assure::rerun::Rerun::Unreproduced(error)) => {
+            super::complain(stderr, &error, error.code())?;
+            Ok(false)
+        }
+        Err(error) => {
+            super::complain(stderr, &error, error.code())?;
+            Ok(false)
+        }
+    }
 }
 
 /// One part, read from the file a person named.
