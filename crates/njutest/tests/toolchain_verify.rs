@@ -3176,6 +3176,18 @@ fn a_kill_a_checkpoint_kept_is_inherited_only_once_its_executions_come_out_the_s
              and what it came to now; {named} is missing: {note}"
         );
     }
+    let refused: Vec<Option<String>> = events
+        .iter()
+        .filter_map(|event| njutest::testkit::payload::of(&event.payload).route())
+        .filter(|route| route.mutant == display)
+        .map(|route| route.refused.clone())
+        .collect();
+    assert_eq!(
+        refused,
+        vec![Some("unreproduced".to_owned())],
+        "the mutation the run established afresh has the one route every mutation it decides \
+         has, and the route says why the checkpoint's kill was not inherited"
+    );
 }
 
 #[cfg(unix)]

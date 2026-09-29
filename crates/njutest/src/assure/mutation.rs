@@ -901,10 +901,14 @@ fn resumed(
                 }
                 Ok(came)
             }
-            PutAgain::Afresh(afresh) => match afresh {
-                Settled::Came(came) => Ok(came),
-                Settled::Native(lead) => natively(judging, mutant, &route, lead),
-            },
+            PutAgain::Afresh(afresh) => {
+                let refused = Consulted::Refused(store::Refusal::Unreproduced);
+                record(judging, mutant, &route, &refused);
+                match afresh {
+                    Settled::Came(came) => Ok(came),
+                    Settled::Native(lead) => natively(judging, mutant, &route, lead),
+                }
+            }
         };
     }
     if judging.subject.perturbing == Perturbing::Mutants {
