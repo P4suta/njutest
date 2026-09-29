@@ -19,6 +19,7 @@ pub(crate) mod model;
 pub mod mutation;
 pub mod repair;
 pub mod replay;
+pub mod rerun;
 pub mod route;
 pub mod run;
 pub mod sanitize;

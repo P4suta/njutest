@@ -981,6 +981,318 @@ fn a_second_run_of_the_same_work_reads_the_first_run_back_rather_than_doing_it_a
     );
 }
 
+/// One sealed execution as a report's evidence and a trace's `sealed-exec` both name it: the mutant a person types, the target, the test, and what it came to.
+#[cfg(unix)]
+type SealedExecution = (String, String, String, String);
+
+/// The text a report or a recording holds at `value`.
+#[cfg(unix)]
+fn text(value: &serde_json::Value) -> String {
+    value
+        .as_str()
+        .unwrap_or_else(|| panic!("text, not {value}"))
+        .to_owned()
+}
+
+/// Every sealed execution `report` rests on, row by row in catalog order and each row's in the order they ran.
+#[cfg(unix)]
+fn sealed_executions(report: &serde_json::Value) -> Vec<SealedExecution> {
+    let mut executions = Vec::new();
+    for build in report["builds"].as_array().expect("builds") {
+        for part in build["parts"].as_array().expect("parts") {
+            for row in part["mutants"].as_array().expect("mutation rows") {
+                if row["evidence"]["kind"] != "sealed" {
+                    continue;
+                }
+                for execution in row["evidence"]["executions"]
+                    .as_array()
+                    .expect("sealed executions")
+                {
+                    executions.push((
+                        text(&row["display_id"]),
+                        text(&execution["target"]),
+                        text(&execution["test"]),
+                        text(&execution["came_to"]),
+                    ));
+                }
+            }
+        }
+    }
+    executions
+}
+
+/// The runner's recording of the run named `run`, read back.
+#[cfg(unix)]
+fn recording_of(fixture: &Fixture, run: &str) -> Vec<njutest::trace::Event> {
+    let stream = fixture
+        .root
+        .join(".njutest/trace")
+        .join(run)
+        .join(njutest::trace::FILE_NAME);
+    njutest::trace::read_events(std::io::BufReader::new(
+        std::fs::File::open(&stream)
+            .unwrap_or_else(|error| panic!("{}: {error}", stream.display())),
+    ))
+    .unwrap_or_else(|error| panic!("{}: {error}", stream.display()))
+}
+
+/// Every phase a recording began, in the order it began them.
+#[cfg(unix)]
+fn phases_of(events: &[njutest::trace::Event]) -> Vec<&str> {
+    events
+        .iter()
+        .filter_map(|event| {
+            njutest::testkit::payload::of(&event.payload)
+                .phase_start()
+                .map(|phase| phase.name.as_str())
+        })
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn a_stored_answer_is_reissued_once_every_sealed_execution_it_rests_on_ran_again_the_same() {
+    let fixture = fixture("fixture-assured");
+    let first = verify(&fixture, &[]);
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "{}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    let stored = sealed_executions(&document(&fixture));
+    assert!(
+        !stored.is_empty(),
+        "every mutation of the fixture rests on a sealed execution"
+    );
+
+    let second = verify(&fixture, &["--trace"]);
+    let stderr = njutest_devkit::process::strict_utf8(&second.stderr);
+    assert_eq!(second.status.code(), Some(0), "{stderr}");
+    let reissued = document(&fixture);
+    assert_eq!(
+        reissued["provenance"]["cached"], true,
+        "{reissued}\n{stderr}"
+    );
+    let events = recording_of(&fixture, &text(&reissued["run_id"]));
+    let phases = phases_of(&events);
+    assert!(
+        phases.contains(&"rerun"),
+        "a run that reissues a stored answer runs the sealed executions it rests on again first, \
+         and its recording says so: {phases:?}"
+    );
+    let reran: Vec<SealedExecution> = events
+        .iter()
+        .filter_map(|event| njutest::testkit::payload::of(&event.payload).sealed_exec())
+        .map(|sealed| {
+            (
+                sealed.mutant.clone(),
+                sealed.target.clone(),
+                sealed.test.clone(),
+                sealed.came_to.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        reran, stored,
+        "every sealed execution the stored answer rests on ran again, in the order it first ran, \
+         and came to what it came to then"
+    );
+    let problems = njutest::trace::check(&events);
+    assert!(
+        problems.is_empty(),
+        "a recording begins with its run and ends with it, whatever the run answered from: \
+         {problems:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_stored_answer_resting_on_no_sealed_execution_is_reissued_with_nothing_run_again() {
+    let fixture = fixture("fixture-assured");
+    let first = verify(&fixture, &["--no-seal"]);
+    let stderr = njutest_devkit::process::strict_utf8(&first.stderr);
+    assert_eq!(
+        first.status.code(),
+        Some(2),
+        "a run that seals nothing answers with leads: {stderr}"
+    );
+    assert_eq!(
+        sealed_executions(&document(&fixture)),
+        Vec::new(),
+        "and rests on no sealed execution"
+    );
+
+    let second = verify(&fixture, &["--no-seal", "--trace"]);
+    let stderr = njutest_devkit::process::strict_utf8(&second.stderr);
+    assert_eq!(second.status.code(), Some(2), "{stderr}");
+    let reissued = document(&fixture);
+    assert_eq!(
+        reissued["provenance"]["cached"], true,
+        "an answer that affirms nothing sealed is reissued as it is: {reissued}\n{stderr}"
+    );
+    let events = recording_of(&fixture, &text(&reissued["run_id"]));
+    assert_eq!(
+        phases_of(&events),
+        Vec::<&str>::new(),
+        "nothing sealed is there to run again, so nothing runs"
+    );
+    let problems = njutest::trace::check(&events);
+    assert!(
+        problems.is_empty(),
+        "a recording begins with its run and ends with it, whatever the run answered from: \
+         {problems:?}"
+    );
+}
+
+/// The one sealed execution a test contradicted in a stored answer, and what it came to when it ran.
+#[cfg(unix)]
+struct Flipped {
+    mutant: String,
+    target: String,
+    test: String,
+    came_to: String,
+}
+
+/// The count at `cell`, moved by `by`.
+#[cfg(unix)]
+fn moved(cell: &mut serde_json::Value, by: i64) {
+    let now = cell
+        .as_i64()
+        .and_then(|count| count.checked_add(by))
+        .unwrap_or_else(|| panic!("a count that moves by {by}, not {cell}"));
+    *cell = serde_json::json!(now);
+}
+
+/// Flips the first kill of the answer the store holds for `fixture` to a survivor its one sealed execution passed, with every count and finding the audit derives from that row made to agree, and puts it back through the store's own door, which audits it as it audits every answer it keeps.
+#[cfg(unix)]
+fn contradicted(fixture: &Fixture) -> Flipped {
+    let identity = rust_mutants::id::HexDigest::try_from(
+        text(&document(fixture)["provenance"]["identity"]).as_str(),
+    )
+    .expect("a canonical identity");
+    let store = njutest::cache::store::Store::new(
+        &njutest_devkit::paths::cache_beside(&fixture.root).expect("a cache directory"),
+        u64::MAX,
+        std::time::Duration::from_hours(1),
+    );
+    let entry = store.entry(&identity);
+    let mut stored: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(&entry)
+            .unwrap_or_else(|error| panic!("{}: {error}", entry.display())),
+    )
+    .expect("the stored answer is JSON");
+    let part = &mut stored["report"]["builds"][0]["parts"][0];
+    let run = part["run_id"].clone();
+    let rows = part["mutants"].as_array_mut().expect("mutation rows");
+    let row = rows
+        .iter_mut()
+        .find(|row| row["decision"]["outcome"] == "killed")
+        .expect("the fixture kills every mutation");
+    let mutant = text(&row["display_id"]);
+    let executions = row["evidence"]["executions"]
+        .as_array_mut()
+        .expect("sealed executions");
+    assert_eq!(
+        executions.len(),
+        1,
+        "a kill by the first test it was put to"
+    );
+    let execution = &mut executions[0];
+    let flipped = Flipped {
+        mutant,
+        target: text(&execution["target"]),
+        test: text(&execution["test"]),
+        came_to: text(&execution["came_to"]),
+    };
+    execution["came_to"] = serde_json::json!("passed");
+    row["decision"] =
+        serde_json::json!({"outcome": "survived", "killed_by": null, "step_boundary": null});
+    row["routing"]["answered"] =
+        serde_json::json!([{"target": flipped.target, "outcome": "survived"}]);
+    let finding = serde_json::json!({
+        "kind": "surviving-mutant",
+        "subject": flipped.mutant,
+        "detail": format!("no test noticed {} at {}", text(&row["rule"]), text(&row["path"])),
+        "origin": {"scope": "source", "build": "default", "run_id": run, "part": {"kind": "whole"}},
+        "path": row["path"],
+        "position": row["position"],
+    });
+    part["findings"]
+        .as_array_mut()
+        .expect("findings")
+        .push(finding);
+    let counts = &mut part["accounting"]["mutants"];
+    moved(&mut counts["killed"], -1);
+    moved(&mut counts["survived"], 1);
+    moved(&mut counts["observers"]["tests"], -1);
+    moved(&mut counts["observers"]["unnoticed"], 1);
+    let report = njutest::report::json::parse(
+        &serde_json::to_string(&stored).expect("the flipped answer renders"),
+    )
+    .expect("the flipped answer is still an assurance report this release reads");
+    store.put(&report).unwrap_or_else(|error| {
+        panic!("the store takes the flipped answer, which its own audit finds coherent: {error}")
+    });
+    assert!(
+        store
+            .get(&identity)
+            .expect("the store reads the flipped answer back as the answer it claims to be")
+            .is_some(),
+        "the flipped answer is the one the store holds for this identity"
+    );
+    flipped
+}
+
+#[cfg(unix)]
+#[test]
+fn a_stored_answer_one_of_its_sealed_executions_contradicts_is_established_again_and_named() {
+    let fixture = fixture("fixture-assured");
+    let first = verify(&fixture, &[]);
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "{}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    let flipped = contradicted(&fixture);
+
+    let second = verify(&fixture, &[]);
+    let stderr = njutest_devkit::process::strict_utf8(&second.stderr);
+    let answered = document(&fixture);
+    assert_eq!(
+        answered["provenance"]["cached"],
+        false,
+        "a stored answer one of whose sealed executions comes to something else when it runs \
+         again is not believed, so the run establishes everything again; this one exited {:?} \
+         with {} after saying {stderr:?}",
+        second.status.code(),
+        answered["builds"][0]["parts"][0]["accounting"]["mutants"]
+    );
+    assert_eq!(
+        second.status.code(),
+        Some(0),
+        "and what it establishes is what the fixture is: every mutation killed: {stderr}"
+    );
+    let said = stderr
+        .lines()
+        .find(|line| line.contains("NJ8006"))
+        .unwrap_or_else(|| panic!("the run says why it did not believe the store: {stderr}"));
+    for named in [
+        flipped.mutant.as_str(),
+        flipped.target.as_str(),
+        flipped.test.as_str(),
+        "passed",
+        flipped.came_to.as_str(),
+    ] {
+        assert!(
+            said.contains(named),
+            "the run names the execution that differed, what the store said it came to, and \
+             what it came to now; {named} is missing: {said}"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn a_tree_that_changed_is_a_different_question_and_is_answered_again() {

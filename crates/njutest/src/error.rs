@@ -113,6 +113,8 @@ mod table {
         CacheCorrupt,
         /// No port could be listened on in front of a seam, so nothing could be recorded about it.
         WireCannotListen,
+        /// A stored answer's sealed executions did not come out the same when they ran again.
+        CacheUnreproduced,
         /// The reports offered are not the parts of one catalog.
         MergeRefused,
     }
@@ -403,6 +405,12 @@ mod table {
                     remedy: "check this machine allows a listener on the loopback interface, and that nothing has taken every port",
                     sealed: Sealed,
                 },
+                Self::CacheUnreproduced => ErrorCode {
+                    code: "NJ8006",
+                    summary: "a stored answer's sealed executions did not come out the same when they ran again",
+                    remedy: "nothing: the run establishes everything again and stores what it finds, since a stored answer is reissued only when every sealed execution it rests on comes out the same; one that keeps coming out differently on an unchanged tree is a defect in the sealed host, to report with the execution the message names",
+                    sealed: Sealed,
+                },
                 Self::MergeRefused => ErrorCode {
                     code: "NJ9001",
                     summary: "the reports offered are not the parts of one catalog",
@@ -446,6 +454,7 @@ pub(crate) const MEASUREMENT_UNREADABLE: ErrorCode = NjCode::MeasurementUnreadab
 pub(crate) const CACHE_UNUSABLE: ErrorCode = NjCode::CacheUnusable.error_code();
 pub(crate) const CACHE_CORRUPT: ErrorCode = NjCode::CacheCorrupt.error_code();
 pub(crate) const WIRE_CANNOT_LISTEN: ErrorCode = NjCode::WireCannotListen.error_code();
+pub(crate) const CACHE_UNREPRODUCED: ErrorCode = NjCode::CacheUnreproduced.error_code();
 pub(crate) const SCRATCH_UNUSABLE: ErrorCode = NjCode::ScratchUnusable.error_code();
 pub(crate) const MERGE_REFUSED: ErrorCode = NjCode::MergeRefused.error_code();
 pub(crate) const PROVIDER_UNSTARTABLE: ErrorCode = NjCode::ProviderUnstartable.error_code();
