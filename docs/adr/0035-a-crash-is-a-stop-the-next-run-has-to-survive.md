@@ -15,7 +15,7 @@ What holds, as the tree stands on 2026-09-29:
 
 | Decision | Held by |
 | --- | --- |
-| 1, a call that writes | discovery's `crash-after-write`; a call whose value is a future is refused by the compiler through the runtime's `Written` and is `not-put`, in `touch_runtime::a_stop_after_a_call_whose_value_is_a_future_is_one_the_compiler_refuses` |
+| 1, a call that writes | discovery's `crash-after-write`, every writing call of which is a site in `syntax::every_call_that_writes_is_a_place_a_crash_is_put`; a call whose value is a future is refused by the compiler through the runtime's `Written` and is `not-put`, in `touch_runtime::a_stop_after_a_call_whose_value_is_a_future_is_one_the_compiler_refuses` |
 | 2, the stop, the notice and the child | the runtime's `crashed_after` and notice, the engine's `Stop`; a notice published by a process the test started, with the test's own process not stopped, is `undecided` in the runner's `Noticed` and in the audit's re-decision, in `assure::crashes::tests::a_notice_published_by_a_process_the_test_started_is_a_stop_elsewhere` and `crashes::a_stop_in_a_child_the_test_started_leaves_the_crash_undecided_whatever_the_parent_did`; one run per nonce in `crashes::a_nonce_is_one_run_s_and_a_second_run_carrying_it_is_refused` |
 | 3, the next run and its audit | `njutest::assure::crashes` and the proofaudit `crashes` layer, over the steps the recording keeps |
 
@@ -27,7 +27,7 @@ What stands between it and acceptance:
 - Decision 2: no toolchain run puts a crash a child process reaches; the classification is held by unit tests of the runner and the audit.
 - Decision 3: an entry of the crashed scratch whose name is not UTF-8 ends the phase rather than leaving the crash `undecided`, because the engine's walk of what a stop left refuses the entry and the runner does not read that refusal as a run that could not be read; a crash that wrote only to a home the run was given reads as `unshared`.
 - Decision 5: a tree with no write call is known to have nothing to ask only after its crash build and baseline, and a baseline that fails there makes the column `unmeasured`.
-- The runner and the audit are never run together on a real recording; `copy`, `remove_file`, `sync_all`, `sync_data`, `set_len` and `flush` are never sites in a test.
+- The runner and the audit are never run together on a real recording, and no toolchain run puts a crash after `copy`, `remove_file`, `sync_all`, `sync_data`, `set_len` or `flush`.
 
 ## Context
 
