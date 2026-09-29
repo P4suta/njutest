@@ -35,6 +35,9 @@ pub enum SummaryError {
         /// The phase whose end was incomplete.
         phase: String,
     },
+    /// An exec record whose command line names no program, which no recorder writes and the reader refuses.
+    #[error("an exec record's command line names no program")]
+    UnnamedCommand,
 }
 
 /// How long one phase took, by the path a reader would follow to it.
@@ -191,8 +194,10 @@ fn count_exec(
     commands: &mut Vec<CommandTiming>,
     exec: &super::ExecRecord,
 ) -> Result<(), SummaryError> {
-    let command = said(&exec.argv);
-    let program = program_of(&exec.argv);
+    let Some(program) = program_of(&exec.argv) else {
+        return Err(SummaryError::UnnamedCommand);
+    };
+    let command = said(&program, &exec.argv);
     let spent = summary.programs.entry(program.clone()).or_default();
     *spent = spent
         .checked_add(exec.duration_ms)
@@ -358,7 +363,7 @@ fn path_of(open: &[String], name: &str) -> String {
 }
 
 /// The program a command line starts with, by file name, without the suffix a platform puts on an executable.
-fn program_of(argv: &[String]) -> String {
+fn program_of(argv: &[String]) -> Option<String> {
     let named = |first: &String| {
         let name = match std::path::Path::new(first)
             .file_name()
@@ -381,15 +386,12 @@ fn program_of(argv: &[String]) -> String {
             name
         }
     };
-    match argv.first() {
-        Some(first) => named(first),
-        None => String::new(),
-    }
+    argv.first().map(named)
 }
 
-/// The command line as a reader would quote it: the program by name, then its arguments.
-fn said(argv: &[String]) -> String {
-    let mut parts = vec![program_of(argv)];
+/// The command line as a reader would quote it: `program` by name, then its arguments.
+fn said(program: &str, argv: &[String]) -> String {
+    let mut parts = vec![program.to_owned()];
     parts.extend(argv.iter().skip(1).cloned());
     parts.join(" ")
 }

@@ -103,6 +103,7 @@ On GitHub Actions it appends the Markdown report to the step summary, appends `v
 A runner shows ten error annotations per step; past that the summary says how many were shown of how many, and where all of them are.
 An annotation's file is named from the checkout `GITHUB_WORKSPACE` names, so a root outside it is refused (`RM0015`) rather than annotated where the runner cannot place it.
 With `--changed-from REV`, only the survivors on lines that differ from that revision, committed and not, are annotated, and the summary says how many others there are; a revision git cannot answer about is refused (`RM0010`).
+The lines are counted from the commit the revision and `HEAD` share; where git names none, they are counted from the revision itself, which counts what it changed since as changed too and so annotates more rather than fewer, and the summary, the lines and a `change-set` trace note say so.
 Every line of a file git does not track counts as changed.
 On GitLab CI, and with `--host plain`, it writes the lines `report` writes.
 

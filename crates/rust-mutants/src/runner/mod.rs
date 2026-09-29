@@ -686,6 +686,9 @@ pub trait Watch {
 
     /// Records one finished process.
     fn exec(&self, spec: &Spec, result: &RunResult);
+
+    /// Records something the caller decided that no process said, such as what an answer was read against.
+    fn note(&self, kind: &str, detail: &str);
 }
 
 /// The watch the engine's own commands run under: this run's cancellation and this run's trace.
@@ -713,6 +716,10 @@ impl Watch for Watched<'_> {
     fn exec(&self, spec: &Spec, result: &RunResult) {
         self.trace
             .exec_result(crate::trace::ExecRecord::of(spec, result));
+    }
+
+    fn note(&self, kind: &str, detail: &str) {
+        self.trace.note(kind, detail);
     }
 }
 

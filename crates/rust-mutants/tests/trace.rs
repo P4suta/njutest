@@ -822,6 +822,22 @@ fn the_v1_reader_distinguishes_an_explicit_null_from_a_missing_field() {
 }
 
 #[test]
+fn the_reader_refuses_an_exec_record_whose_command_line_names_no_program() {
+    let event = rust_mutants::trace::Event {
+        seq: 1,
+        timestamp: "2027-01-15T08:00:00Z".to_owned(),
+        elapsed_ms: 0,
+        payload: Payload::Exec { exec: exec(&[]) },
+    };
+    let text = serde_json::to_string(&event).expect("the malformed event");
+    let error = read_events(text.as_bytes()).expect_err(
+        "a command line names at least its program, which is what the schema's minItems says, \
+         so an empty one is no record a recorder writes rather than a program named nothing",
+    );
+    assert_eq!(error.line(), 1, "{error}");
+}
+
+#[test]
 fn check_reports_sequence_gaps_a_missing_run_end_and_drops() {
     let recorder = memory_recorder();
     recorder.note("a", "1");
