@@ -3505,8 +3505,12 @@ mod tests {
         );
     }
 
-    /// A binary of one guard at catalog index 0 that reaches it, run with `env` and with no step protocol, as a result the way a supervisor reads one.
-    fn reaching_one_guard(directory: &Path, name: &str, env: &[(&str, &str)]) -> RunResult {
+    /// A binary of the generated runtime with one guard at catalog index 0 and `body` as its `main`, run with `env` and with no step protocol, as a result the way a supervisor reads one.
+    fn generated_binary(
+        directory: &Path,
+        (name, body): (&str, &str),
+        env: &[(&str, &str)],
+    ) -> RunResult {
         let span = crate::span::Span::new(0, 1).expect("a span");
         let placement = crate::instrument::Placement {
             index: 0,
@@ -3534,11 +3538,8 @@ mod tests {
         })
         .expect("render generated runtime");
         let source = directory.join(format!("{name}.rs"));
-        std::fs::write(
-            &source,
-            format!("{module}\nfn main() {{ let _reached = __rm::active(0); }}\n"),
-        )
-        .expect("write generated source");
+        std::fs::write(&source, format!("{module}\nfn main() {{ {body} }}\n"))
+            .expect("write generated source");
         let built = Command::new("rustc")
             .args(["--edition", "2024", "--crate-type", "bin"])
             .arg("--out-dir")
@@ -3563,16 +3564,91 @@ mod tests {
             .expect("the runtime ends the process with a status");
         let mut ended = result(Termination::Exited(ProcessExit::Code(code)));
         ended.output = ran.stderr;
+        ended.stdout = ran.stdout;
         ended
+    }
+
+    /// The `main` that reaches the one guard.
+    const REACHES_THE_GUARD: &str = "let _reached = __rm::active(0);";
+
+    /// The `main` that makes each error a fault can make and prints what each says.
+    const MAKES_EVERY_FAILURE: &str = r#"
+        let io: std::io::Error = __rm::injected();
+        let utf8: std::str::Utf8Error = __rm::injected();
+        let owned: std::string::FromUtf8Error = __rm::injected();
+        let integer: std::num::ParseIntError = __rm::injected();
+        let float: std::num::ParseFloatError = __rm::injected();
+        let narrowed: std::num::TryFromIntError = __rm::injected();
+        println!("{:?}", io.kind());
+        println!("{utf8}");
+        println!("{}", owned.utf8_error());
+        println!("{:?}", integer.kind());
+        println!("{float}");
+        println!("{narrowed}");
+    "#;
+
+    #[test]
+    fn every_error_a_fault_can_make_is_made_and_there_are_exactly_six() {
+        let directory = returned!(tempfile::tempdir(), "tempdir");
+        let made = generated_binary(directory.path(), ("injected", MAKES_EVERY_FAILURE), &[]);
+        let said = std::str::from_utf8(&made.stdout).expect("the binary prints UTF-8");
+        assert_eq!(
+            said.lines().collect::<Vec<&str>>(),
+            [
+                "Other",
+                "invalid utf-8 sequence of 1 bytes from index 0",
+                "invalid utf-8 sequence of 1 bytes from index 0",
+                "Empty",
+                "cannot parse float from empty string",
+                "out of range integral type conversion attempted",
+            ],
+            "each of the six error types a fault can make is made, as the failure the call it \
+             replaces returns (ADR 0032 decision 2): {}",
+            std::str::from_utf8(&made.output).expect("the runtime speaks UTF-8")
+        );
+        let module = crate::instrument::render(&crate::instrument::Rendering {
+            module: "__rm",
+            catalog_digest: CATALOG_A,
+            placements: &[],
+            markers: &[],
+            first_item: 0,
+            item_count: 0,
+            newline: "\n",
+            watched: "/unwatched-runtime-stop",
+        })
+        .expect("render generated runtime");
+        let implemented: std::collections::BTreeSet<&str> = module
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("impl Injectable for "))
+            .filter_map(|rest| rest.strip_suffix(" {"))
+            .collect();
+        assert_eq!(
+            implemented,
+            std::collections::BTreeSet::from([
+                "__rm_std::io::Error",
+                "__rm_std::num::ParseFloatError",
+                "__rm_std::num::ParseIntError",
+                "__rm_std::num::TryFromIntError",
+                "__rm_std::str::Utf8Error",
+                "__rm_std::string::FromUtf8Error",
+            ]),
+            "the runtime makes exactly the error types the engine can make without guessing, and \
+             no other"
+        );
+        assert_eq!(
+            module.matches("impl Injectable for ").count(),
+            12,
+            "and the native module and the sealed one make the same six"
+        );
     }
 
     #[test]
     fn a_process_its_runtime_ended_for_the_apparatus_is_never_a_kill() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
         let log = directory.path().join("absent").join("touch.log");
-        let unrecorded = reaching_one_guard(
+        let unrecorded = generated_binary(
             directory.path(),
-            "unrecorded",
+            ("unrecorded", REACHES_THE_GUARD),
             &[
                 (
                     crate::instrument::TOUCH_ENV,
@@ -3597,9 +3673,9 @@ mod tests {
              own apparatus, and reading its status as a failing test makes a kill of a \
              recording that failed: {said}"
         );
-        let unknown = reaching_one_guard(
+        let unknown = generated_binary(
             directory.path(),
-            "unknown",
+            ("unknown", REACHES_THE_GUARD),
             &[
                 (crate::instrument::ACTIVE_ENV, MUTANT_A),
                 (crate::instrument::CATALOG_ENV, CATALOG_A),
