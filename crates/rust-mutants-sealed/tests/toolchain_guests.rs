@@ -354,6 +354,56 @@ fn a_name_the_snapshot_holds_only_in_another_case_is_refused_however_the_build_s
 }
 
 #[test]
+fn the_temp_dir_of_std_panics_in_its_platform_layer_whatever_tmpdir_names() {
+    let runner = runner();
+    let module = runner
+        .prepare(&program_bytes())
+        .expect("the program is a WASI command");
+    let mut asked = invocation(&["temp-dir"]);
+    asked.environment = Environment::new(vec![("TMPDIR".to_owned(), format!("{SANDBOX}/empty"))])
+        .expect("the environment is valid");
+    let transcript = run(&module, &asked);
+    assert_eq!(
+        transcript.stop(),
+        SealedStop::Trapped {
+            kind: TrapKind::Unreachable
+        }
+    );
+    let said = stderr(&transcript);
+    assert!(
+        said.contains("/library/std/src/sys/"),
+        "the panic is located in the standard library's platform layer: {said}"
+    );
+}
+
+#[test]
+fn a_file_made_where_a_variable_names_is_written_read_and_removed_leaving_nothing() {
+    let runner = runner();
+    let module = runner
+        .prepare(&program_bytes())
+        .expect("the program is a WASI command");
+    let mut asked = invocation(&["scratch", "TMPDIR"]);
+    asked.environment = Environment::new(vec![("TMPDIR".to_owned(), format!("{SANDBOX}/empty"))])
+        .expect("the environment is valid");
+    let transcript = run(&module, &asked);
+    assert_eq!(
+        transcript.stop(),
+        SealedStop::Returned,
+        "{}",
+        stderr(&transcript)
+    );
+    assert_eq!(
+        stdout(&transcript),
+        "read \"kept for a moment\"\npresent afterwards false\n"
+    );
+    assert!(
+        transcript.overlay().is_empty(),
+        "a file made and removed leaves nothing: {:?}",
+        transcript.overlay()
+    );
+}
+
+#[test]
 fn an_absolute_path_no_other_preopen_names_is_read_from_the_working_directory() {
     let runner = runner();
     let module = runner

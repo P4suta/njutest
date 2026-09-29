@@ -66,11 +66,12 @@ const REALTIME_ORIGIN: u64 = 1_767_225_600_000_000_000;
 /// How long the host may take over one invocation before its watchdog stops it, which is never a verdict.
 pub const WATCHDOG: Duration = Duration::from_mins(15);
 
-/// What the standard library prints when the sandbox refused what a test asked for.
-const SANDBOX_WORDS: [&str; 3] = [
+/// What the standard library prints when the sandbox refused what a test asked for: an operation the target does not support, a thread, an allocation, or a panic of its own platform layer, such as the one `std::env::temp_dir` raises on `wasm32-wasip1` whatever `TMPDIR` names.
+const SANDBOX_WORDS: [&str; 4] = [
     "operation not supported on this platform",
     "failed to spawn thread",
     "memory allocation of",
+    "/library/std/src/sys/",
 ];
 
 /// Why a sealed execution could not be set up or run.
@@ -831,6 +832,11 @@ impl<'runner> Bench<'runner> {
         }
         match came_to {
             Sealed::Passed => {}
+            Sealed::Detected(_) if met_the_sandbox(&transcript) => {
+                return Ok(Err(Uncontrolled::Doubted(
+                    rust_mutants_decision::evidence::Doubt::Refused,
+                )));
+            }
             Sealed::Detected(how) => return Ok(Err(Uncontrolled::Detected(how))),
             Sealed::Doubted(why) => return Ok(Err(Uncontrolled::Doubted(why))),
             Sealed::SetAside => return Ok(Err(unread)),
@@ -1055,6 +1061,11 @@ fn refusals(transcript: &Transcript) -> BTreeSet<(WasiFunction, RefusalReason)> 
         .iter()
         .map(|refusal| (refusal.function, refusal.reason))
         .collect()
+}
+
+/// Whether the instance met a refusal of the sandbox: the host refused a call, or the standard library printed a message of its own for one.
+fn met_the_sandbox(transcript: &Transcript) -> bool {
+    !transcript.refusals().is_empty() || !sandbox(transcript).is_empty()
 }
 
 /// Every message of the standard library's for a refusal of the sandbox that the instance printed.
