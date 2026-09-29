@@ -701,6 +701,61 @@ fn a_test_that_reads_where_its_build_script_wrote_passes_its_control_sealed() {
     );
 }
 
+#[test]
+fn a_test_that_keeps_files_where_tmpdir_names_passes_sealed_and_one_that_asks_std_is_refused() {
+    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-temporary");
+    let session = rust_mutants::workspace::Workspace::open(
+        fixture.root(),
+        rust_mutants::testkit::opening::opening(
+            &njutest_devkit::paths::cargo_binary(),
+            fixture.temp(),
+        ),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(
+        &rust_mutants::session::PrepareOptions {
+            sealing: Sealing::On,
+            ..rust_mutants::session::PrepareOptions::new(rust_mutants::rule::Tier::All)
+        },
+        &Cancel::new(),
+    )
+    .expect("prepare");
+    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
+        .expect("the sealed runner starts");
+    let bench = session
+        .bench(&runner, &Cancel::new())
+        .expect("the bench is assembled");
+    let station = bench
+        .stations
+        .get("fixture-temporary/test/scratch")
+        .expect("the integration test has a station");
+    let why: Vec<(&str, Option<&str>)> = station
+        .controls
+        .iter()
+        .map(|(test, control)| {
+            let why = match control {
+                Ok(_control) => None,
+                Err(why) => Some(why.name()),
+            };
+            (test.as_str(), why)
+        })
+        .collect();
+    assert_eq!(
+        why,
+        [
+            (
+                "a_file_kept_in_the_temporary_directory_of_std_reads_back",
+                Some("refused")
+            ),
+            ("a_file_kept_where_tmpdir_names_reads_back", None),
+        ],
+        "a file kept where TMPDIR names is kept in the instance's own temporary directory, and \
+         `std::env::temp_dir`, which panics in the standard library's platform layer on the \
+         sealed target, is a refusal of the sandbox rather than a failure of the test"
+    );
+}
+
 /// The options every preparation of a fixture below is made with, the one that records and the one that runs again alike.
 fn every_rule() -> rust_mutants::session::PrepareOptions {
     rust_mutants::session::PrepareOptions {
