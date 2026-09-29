@@ -155,8 +155,10 @@ pub struct Discovery {
     pub decisions: Vec<Decided>,
     /// The catalog of the candidates.
     pub catalog: Catalog,
-    /// Every file the configuration selects and the change set left out, by path: nothing in it is mutated, and it is instrumented for entry like every other, so what an execution entered does not depend on the change set.
+    /// Every file a report names that nothing is mutated in and that is instrumented for entry all the same, by path: one the configuration or the change set left out, or one only a test compiles, so what an execution entered does not depend on what was selected (ADR 0041).
     pub marked_only: BTreeSet<String>,
+    /// Every file of a member a test program compiles that no report names, by path, with the package whose unit compiled it: an integration test's, a benchmark's, an example's, or one of a member the selection left out, instrumented for entry and never mutated (ADR 0041).
+    pub entered_only: BTreeMap<String, String>,
 }
 
 /// Why discovery failed.
@@ -290,6 +292,7 @@ pub fn discover(
 ) -> Result<Discovery, DiscoverError> {
     let root = input.root;
     let assigner = assigned(input, options)?;
+    let (unassigned, barred) = assigner.unassigned(input.metadata)?;
     let assignments = assigner.assignments;
     let mut files = Vec::new();
     let mut candidates = Vec::new();
@@ -305,11 +308,8 @@ pub fn discover(
         skips.extend(report.skips.iter().cloned());
         files.push(report);
     }
-    let read: Vec<(&String, Result<FileDiscovery, DiscoverError>)> = assignments
-        .keys()
-        .map(|path| (path, walk(root, path, &options.selection)))
-        .collect();
-    let fragments = pasted_in(&read);
+    let (read, fragments, entered_only) =
+        walked(root, (&assignments, &unassigned), &options.selection)?;
     for ((path, discovery), assignment) in read.into_iter().zip(assignments.values()) {
         let mut discovery = match discovery {
             Ok(discovery) => discovery,
@@ -358,6 +358,7 @@ pub fn discover(
     configured_claims(&options.skips, (&configured, &anchored), trace, &mut claims);
     claims.sort_by(|one, other| (&one.path, one.line).cmp(&(&other.path, other.line)));
     let catalog = builder.build()?;
+    marked_only.retain(|path| !barred.contains(path));
     Ok(Discovery {
         files,
         candidates,
@@ -366,7 +367,62 @@ pub fn discover(
         decisions,
         catalog,
         marked_only,
+        entered_only,
     })
+}
+
+/// Every file the units assigned, walked, every file another file pastes in where an expression goes, and the files of `unassigned` the instrumenter can rewrite for entry.
+type Walked<'a> = (
+    Vec<(&'a String, Result<FileDiscovery, DiscoverError>)>,
+    BTreeSet<String>,
+    BTreeMap<String, String>,
+);
+
+/// Walks every file of `assignments` and of `unassigned` once, and says which are pasted in where an expression goes.
+///
+/// # Errors
+/// A file of `unassigned` that could not be read at all.
+fn walked<'a>(
+    root: &Path,
+    (assignments, unassigned): (&'a BTreeMap<String, Assignment>, &BTreeMap<String, String>),
+    selection: &Selection<'_>,
+) -> Result<Walked<'a>, DiscoverError> {
+    let read: Vec<(&String, Result<FileDiscovery, DiscoverError>)> = assignments
+        .keys()
+        .map(|path| (path, walk(root, path, selection)))
+        .collect();
+    let entering: Vec<(&String, &String, Result<FileDiscovery, DiscoverError>)> = unassigned
+        .iter()
+        .map(|(path, package)| (path, package, walk(root, path, selection)))
+        .collect();
+    let fragments = pasted_in(
+        read.iter()
+            .map(|(_, discovery)| discovery)
+            .chain(entering.iter().map(|(_, _, discovery)| discovery)),
+    );
+    let entered_only = entered_only(entering, &fragments)?;
+    Ok((read, fragments, entered_only))
+}
+
+/// The files of `entering` the instrumenter can rewrite for entry: each one that reads as a whole Rust file and that no file pastes in where an expression goes.
+///
+/// # Errors
+/// A file that could not be read at all.
+fn entered_only(
+    entering: Vec<(&String, &String, Result<FileDiscovery, DiscoverError>)>,
+    fragments: &BTreeSet<String>,
+) -> Result<BTreeMap<String, String>, DiscoverError> {
+    let mut kept = BTreeMap::new();
+    for (path, package, discovery) in entering {
+        match discovery {
+            Ok(_) if !fragments.contains(path.as_str()) => {
+                kept.insert(path.clone(), package.clone());
+            }
+            Ok(_) | Err(DiscoverError::Parse(_)) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(kept)
 }
 
 /// Which unit compiled each file the run may mutate, and what each file is to the run.
@@ -552,16 +608,17 @@ fn claimed(
 }
 
 /// Every file another file pastes in where an expression goes.
-fn pasted_in(read: &[(&String, Result<FileDiscovery, DiscoverError>)]) -> BTreeSet<String> {
-    read.iter()
-        .filter_map(|(_, discovery)| match discovery {
-            Ok(discovery) => Some(discovery),
-            Err(_) => None,
-        })
-        .flat_map(|discovery| discovery.includes.iter())
-        .filter(|include| !include.at_item)
-        .map(|include| include.path.clone())
-        .collect()
+fn pasted_in<'a>(
+    read: impl Iterator<Item = &'a Result<FileDiscovery, DiscoverError>>,
+) -> BTreeSet<String> {
+    read.filter_map(|discovery| match discovery {
+        Ok(discovery) => Some(discovery),
+        Err(_) => None,
+    })
+    .flat_map(|discovery| discovery.includes.iter())
+    .filter(|include| !include.at_item)
+    .map(|include| include.path.clone())
+    .collect()
 }
 
 /// The report of a file that is a fragment: no candidate, one skip, and the reason said out loud.
@@ -615,6 +672,9 @@ fn selected_members<'m>(
         })
         .collect()
 }
+
+/// The files no assignment holds that a test program compiles, each with its package, and the files a unit that cannot carry the runtime compiled.
+type Unassigned = (BTreeMap<String, String>, BTreeSet<String>);
 
 /// Gives every file of every target its role, from the units that compiled the target, keeping the higher-priority role when targets disagree.
 struct Assigner<'a> {
@@ -688,6 +748,58 @@ impl Assigner<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Every file a unit of a member compiled that no assignment holds, with the package whose unit compiled it, and apart from them every file a unit that cannot carry the runtime compiled: one that runs in the compiler, or one of a crate that forbids what the runtime allows or has no `std` to lend it, which neither set may instrument for entry alone.
+    fn unassigned(&self, metadata: &Metadata) -> Result<Unassigned, DiscoverError> {
+        let mut found: BTreeMap<String, String> = BTreeMap::new();
+        let mut barred: BTreeSet<String> = BTreeSet::new();
+        for package in metadata.members() {
+            let forbidden = crate::cargo::manifest::forbidden(
+                package.manifest_path.as_path(),
+                Some(&self.workspace_manifest),
+            )?;
+            for target in &package.targets {
+                let compiled: Vec<&Unit> = self
+                    .units
+                    .iter()
+                    .filter(|unit| unit.package_id == package.id && unit.target.name == target.name)
+                    .collect();
+                if compiled.is_empty() {
+                    continue;
+                }
+                let refuses = target.is_custom_build()
+                    || target.is_proc_macro()
+                    || self.refuses(target, &forbidden)?;
+                for source in compiled.iter().flat_map(|unit| unit.sources.iter()) {
+                    let path = match relative(self.root, &self.physical_root, source) {
+                        Ok(path) => path,
+                        Err(DiscoverError::OutsideRoot { .. }) => continue,
+                        Err(error) => return Err(error),
+                    };
+                    if refuses {
+                        barred.insert(path);
+                    } else {
+                        found.entry(path).or_insert_with(|| package.name.clone());
+                    }
+                }
+            }
+        }
+        found.retain(|path, _| !barred.contains(path) && !self.assignments.contains_key(path));
+        Ok((found, barred))
+    }
+
+    /// Whether the crate `target` roots cannot carry the runtime: its root is outside the tree, has no `std` to lend it, or forbids a lint the runtime's module allows.
+    fn refuses(&self, target: &Target, forbidden: &[String]) -> Result<bool, DiscoverError> {
+        let crate_root = match relative(self.root, &self.physical_root, &target.src_path) {
+            Ok(crate_root) => crate_root,
+            Err(DiscoverError::OutsideRoot { .. }) => return Ok(true),
+            Err(error) => return Err(error),
+        };
+        Ok(
+            crate_root_is_freestanding(self.root, &crate_root, &target.edition)?
+                || crate_root_forbids_guard_noise(self.root, &crate_root, forbidden)?,
+        )
     }
 
     fn record(&mut self, path: String, package: &str, role: Role) {
@@ -881,24 +993,26 @@ pub(crate) fn walk(
     Ok(discover_file(path, &bytes, selection)?)
 }
 
-/// Why a file is not mutated, or nothing where it is; a file only the change set left out is also noted as one to instrument for entry.
+/// Why a file is not mutated, or nothing where it is; a file the selection or the tests alone left out is also noted as one to instrument for entry, since a test program runs it all the same.
 fn skipped(
     path: &str,
     role: Role,
     options: &DiscoverOptions<'_>,
     marked_only: &mut BTreeSet<String>,
 ) -> Option<SkipReason> {
-    match role {
-        Role::Forbidden => Some(SkipReason::ForbiddenLints),
-        Role::Mutable if !selected_by_configuration(path, options) => Some(SkipReason::Excluded),
-        Role::Mutable if !selected_by_change(path, options) => {
-            marked_only.insert(path.to_owned());
-            Some(SkipReason::Excluded)
+    let reason = match role {
+        Role::Forbidden => return Some(SkipReason::ForbiddenLints),
+        Role::NoStd => return Some(SkipReason::NoStdCrate),
+        Role::Mutable
+            if selected_by_configuration(path, options) && selected_by_change(path, options) =>
+        {
+            return None;
         }
-        Role::Mutable => None,
-        Role::NoStd => Some(SkipReason::NoStdCrate),
-        Role::TestOnly => Some(SkipReason::TestOnlyFile),
-    }
+        Role::Mutable => SkipReason::Excluded,
+        Role::TestOnly => SkipReason::TestOnlyFile,
+    };
+    marked_only.insert(path.to_owned());
+    Some(reason)
 }
 
 fn selected_by_configuration(path: &str, options: &DiscoverOptions<'_>) -> bool {

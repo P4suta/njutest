@@ -566,6 +566,23 @@ pub struct Recorded<'a> {
     pub engines: &'a [(String, String)],
     /// What the recording kept of each run the audit re-derives from, by the path its exec record gives, held to that record's size and digest.
     pub outputs: &'a [(String, soundness::Kept)],
+    /// What each configured build's engine kept beside its recording of the answers it carried.
+    pub beside: &'a [Beside],
+}
+
+/// The documents one configured build's engine kept beside its recording of the answers it carried (ADR 0041).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Beside {
+    /// The position of the build's recording among [`Recorded::engines`], whose control records P7 is re-derived from.
+    pub engine: usize,
+    /// The directory they were read from.
+    pub path: String,
+    /// `carried-v1.json`: every carried record the build believed, with the plan it was held to.
+    pub carried: serde_json::Value,
+    /// `skeletons-v1.json`: every item's body digest, sealing and start, and every unit's skeleton.
+    pub skeletons: serde_json::Value,
+    /// `touched-v1.json`: the guards' record, with the item catalog.
+    pub touched: serde_json::Value,
 }
 
 /// The runner's recording, where the run kept one, with the path it was read from.
@@ -644,7 +661,11 @@ pub fn audit_with(
             Layer::Killers => killers(&recording, &mut audit),
             Layer::Findings => findings(&recording, &mut audit),
             Layer::Acceptances => acceptances(&recording, &mut audit),
-            Layer::Reuse => reuse(&recording, routing.as_ref(), &mut audit),
+            Layer::Reuse => reuse(
+                &recording,
+                (routing.as_ref(), recorded.beside, &engines),
+                &mut audit,
+            ),
             Layer::Proofs => proofs(&recording, rerouted, &mut audit),
             Layer::Executions => executions(&recording, (routing.as_ref(), &engines), &mut audit),
             Layer::Hollow => hollow(&recording, routing.as_ref(), &mut audit),
@@ -5006,10 +5027,11 @@ fn acceptances(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
 /// Whether every disposition read back from an earlier run names one a reader could go and read, and is one the run's own recording says it read back.
 ///
 /// Re-derived from the runner's route of each: it names the run the report does, nothing of the mutation ran, and a kill's target is one the route still reaches.
-/// Whether each target an answer rests on keeps the behaviour key it had, or a carried answer's premises hold, is not in the report, and is left unaudited.
+/// A carried answer is held to every premise of ADR 0041 again, from what its build kept beside its recording.
+/// Whether each target an exact answer rests on keeps the behaviour key it had is not in the report, and is left unaudited.
 fn reuse(
     recording: &Recording<'_>,
-    routing: Option<&crate::route::Routing>,
+    (routing, beside, engines): (Option<&crate::route::Routing>, &[Beside], &[Engine]),
     audit: &mut Audit,
 ) -> Decided {
     let mut notes = Notes::on(audit, Layer::Reuse);
@@ -5034,6 +5056,7 @@ fn reuse(
             for mutant in &read_back {
                 routed_back(mutant, routing, &mut notes);
             }
+            carried_back(&read_back, routing, (beside, engines), &mut notes);
         }
         None => notes.unaudited(
             "provenance",
@@ -5047,13 +5070,87 @@ fn reuse(
     notes.unaudited(
         "provenance",
         format!(
-            "{} dispositions were read back from an earlier run; whether each target they rest \
-             on keeps the behaviour key it had, or a carried answer's premises hold, is a fact \
-             this report does not carry",
+            "{} dispositions were read back from an earlier run; whether each target an exact \
+             answer rests on keeps the behaviour key it had is a fact this report does not carry",
             read_back.len()
         ),
     );
     notes.looked()
+}
+
+/// Whether every disposition the run's own routes say was carried from an earlier tree rests on a record a build kept beside its recording, says what the report says, and meets every premise of ADR 0041, re-derived from those documents and that build's control records.
+fn carried_back(
+    read_back: &[&MutantRow],
+    routing: &crate::route::Routing,
+    (beside, engines): (&[Beside], &[Engine]),
+    notes: &mut Notes<'_>,
+) {
+    let indices: BTreeMap<String, u64> = read_back
+        .iter()
+        .filter_map(|mutant| Some((mutant.id.clone(), mutant.catalog_index?)))
+        .collect();
+    let mut believed: BTreeMap<String, crate::engineaudit::carry::Rederived> = BTreeMap::new();
+    for kept in beside {
+        let standings = engines
+            .get(kept.engine)
+            .map(|engine| crate::drift::standings(&engine.touched));
+        match crate::engineaudit::carry::rederived(
+            crate::engineaudit::carry::Kept {
+                carried: &kept.carried,
+                skeletons: &kept.skeletons,
+                touched: &kept.touched,
+            },
+            (standings.as_ref(), &indices),
+        ) {
+            Ok(records) => {
+                believed.extend(records.into_iter().map(|one| (one.mutant.clone(), one)));
+            }
+            Err(why) => notes.violated(&kept.path, crate::error::Coded::coded(&why)),
+        }
+    }
+    for mutant in read_back {
+        let carried = routing
+            .route_of(&mutant.id, &mutant.display_id)
+            .is_some_and(|route| route.rule.as_deref() == Some("carried"));
+        if !carried {
+            continue;
+        }
+        let Some(record) = believed.get(&mutant.id) else {
+            notes.violated(
+                mutant.label(),
+                "the disposition was carried from an earlier tree, and no build kept the record \
+                 it rests on beside its recording, so no premise of ADR 0041 can be read again"
+                    .to_owned(),
+            );
+            continue;
+        };
+        if record.outcome != mutant.outcome
+            || Some(record.run_id.as_str()) != mutant.read_back_from.as_deref()
+        {
+            notes.violated(
+                mutant.label(),
+                format!(
+                    "the report says {} from {:?}, and the record it carried says {} from {}",
+                    mutant.outcome, mutant.read_back_from, record.outcome, record.run_id
+                ),
+            );
+        }
+        if let Some(why) = &record.fails {
+            notes.violated(
+                mutant.label(),
+                format!("the run carried it though a premise of ADR 0041 fails: {why}"),
+            );
+        }
+        for why in &record.unplanned {
+            notes.violated(
+                mutant.label(),
+                format!("the run held it to a plan the guards' record does not bear out: {why}"),
+            );
+        }
+        for why in &record.unkept {
+            notes.unaudited(mutant.label(), why.clone());
+        }
+    }
 }
 
 /// Whether the run's own route of `mutant`, a disposition read back, says it read it back from the run the report names, ran none of it, and still reaches the target a kill names.

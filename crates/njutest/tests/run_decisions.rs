@@ -67,6 +67,7 @@ fn request(config: Config, packages: &[&str]) -> Request {
         run_id: RunId::try_from("20260909t000000z-000001").expect("a canonical run identity"),
         started: jiff::Timestamp::from_second(1_800_000_000).expect("in range"),
         engine_trace: rust_mutants::trace::Recorder::disabled(),
+        carried_evidence: None,
         evidence: njutest::assure::identity::Evidence::default(),
         changed: None,
         checkpoints: None,

@@ -183,6 +183,12 @@ pub fn every_failure() -> Vec<RunnerError> {
                 source: std::io::Error::other("no"),
             },
         },
+        RunnerError::CarriedEvidence {
+            source: rust_mutants::report::evidence::EvidenceError::Create {
+                path: nowhere.to_path_buf(),
+                source: std::io::Error::other("no"),
+            },
+        },
         RunnerError::Model {
             message: "model artifact could not be retained".to_owned(),
         },
@@ -253,6 +259,7 @@ pub fn every_failure() -> Vec<RunnerError> {
             | RunnerError::Checkpoint(_)
             | RunnerError::MutationEvidence(_)
             | RunnerError::Carry { .. }
+            | RunnerError::CarriedEvidence { .. }
             | RunnerError::Coverage(_)
             | RunnerError::Provider(_)
             | RunnerError::IdentityEnvironment { .. }

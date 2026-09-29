@@ -102,6 +102,76 @@ fn equivalence_builds_leave_an_ambient_cargo_target_directory_untouched() {
     );
 }
 
+/// A cargo that dates `path` of the tree it runs in back to 2000 and then runs the toolchain's own, which is what a clock that disagrees with the file's time looks like to cargo: it keeps what it built before and says the unit is fresh.
+#[cfg(unix)]
+fn dating_cargo(dir: &std::path::Path, path: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::create_dir_all(dir).expect("the wrapper's directory");
+    let wrapper = dir.join("cargo");
+    let cargo = njutest_devkit::paths::cargo_binary();
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\ntouch -c -t 200001010000 '{path}'\nexec '{}' \"$@\"\n",
+            cargo.display()
+        ),
+    )
+    .expect("the wrapper");
+    let mut permissions = std::fs::metadata(&wrapper)
+        .expect("the wrapper's metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&wrapper, permissions).expect("the wrapper runs");
+    std::os::unix::fs::symlink(cargo.with_file_name("rustc"), dir.join("rustc"))
+        .expect("the toolchain's rustc beside the wrapper");
+    wrapper
+}
+
+#[test]
+#[cfg(unix)]
+fn a_spliced_unit_cargo_reused_is_never_compared() {
+    let fixture = Fixture::copy("fixture-shared-path");
+    let cancel = Cancel::new();
+    let mut prover = Prover::open(
+        fixture.root(),
+        &ProveOptions {
+            open: OpenOptions {
+                cargo: Some(dating_cargo(
+                    &fixture.temp().join("dating"),
+                    "shared/util.rs",
+                )),
+                env: toolchain_env(),
+                temp_directory: fixture.temp().to_path_buf(),
+                locked: true,
+                offline: true,
+                ..OpenOptions::default()
+            },
+            ..ProveOptions::default()
+        },
+        &cancel,
+        &Recorder::disabled(),
+    )
+    .expect("the tree is copied and built");
+    let source = std::fs::read(fixture.root().join("shared/util.rs")).expect("the shared file");
+    let selection = rust_mutants::syntax::Selection::tier(&REGISTRY, rust_mutants::rule::Tier::All);
+    let candidate = rust_mutants::syntax::discover_file("shared/util.rs", &source, &selection)
+        .expect("discover")
+        .candidates
+        .into_iter()
+        .find(|found| found.candidate.rule.name == "le-to-lt")
+        .expect("a mutation the compiler renders at every level")
+        .candidate;
+    let answer = prover.identical(&candidate, &cancel).expect("an answer");
+    prover.close().expect("the tree goes away");
+    assert_eq!(
+        answer,
+        Identity::NotEstablished(rust_mutants::equivalence::NOT_RECOMPILED),
+        "`n <= bound` and `n < bound` are two programs, and cargo said every unit that read the \
+         spliced file was fresh, so the executables compared are the ones it built before the \
+         splice: comparing them says nothing about the mutation"
+    );
+}
+
 #[test]
 fn a_mutation_the_compiler_renders_identically_is_identical_and_one_it_renders_is_not() {
     let fixture = Fixture::copy("fixture-equivalent");

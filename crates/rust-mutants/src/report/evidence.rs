@@ -109,6 +109,31 @@ pub fn write(
             source,
         })?;
     written.push(keep(directory, REACHED, &reached)?);
+    written.extend(carried(session, directory)?);
+    let catalog_document =
+        super::catalog::document(session, options).map_err(|source| EvidenceError::Catalog {
+            source: Box::new(source),
+        })?;
+    let catalog =
+        serde_json::to_vec(&catalog_document).map_err(|source| EvidenceError::Serialize {
+            file: CATALOG,
+            source,
+        })?;
+    written.push(keep(directory, CATALOG, &catalog)?);
+    Ok(written)
+}
+
+/// Writes what an audit re-derives every answer the run carried from: the guards' record, the skeletons, and every carried record the run believed, and reports what it wrote (ADR 0041).
+///
+/// # Errors
+/// Returns the first directory, serialization, exact-size, or durable-write failure.
+/// No document is claimed unless its complete bytes were committed.
+pub fn carried(session: &Session, directory: &Path) -> Result<Vec<Written>, EvidenceError> {
+    std::fs::create_dir_all(directory).map_err(|source| EvidenceError::Create {
+        path: directory.to_path_buf(),
+        source,
+    })?;
+    let mut written = Vec::new();
     let touched =
         serde_json::to_vec(session.touched()).map_err(|source| EvidenceError::Serialize {
             file: TOUCHED,
@@ -126,21 +151,11 @@ pub fn write(
         .map_err(|source| EvidenceError::Carried {
             source: Box::new(source),
         })?;
-    let carried = serde_json::to_vec(&believed).map_err(|source| EvidenceError::Serialize {
+    let believed = serde_json::to_vec(&believed).map_err(|source| EvidenceError::Serialize {
         file: CARRIED,
         source,
     })?;
-    written.push(keep(directory, CARRIED, &carried)?);
-    let catalog_document =
-        super::catalog::document(session, options).map_err(|source| EvidenceError::Catalog {
-            source: Box::new(source),
-        })?;
-    let catalog =
-        serde_json::to_vec(&catalog_document).map_err(|source| EvidenceError::Serialize {
-            file: CATALOG,
-            source,
-        })?;
-    written.push(keep(directory, CATALOG, &catalog)?);
+    written.push(keep(directory, CARRIED, &believed)?);
     Ok(written)
 }
 

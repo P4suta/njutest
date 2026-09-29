@@ -59,7 +59,8 @@ pub fn reaching_outside(metadata: &Metadata, root: &Path, patches: &[Patch]) -> 
 }
 
 /// The path with every `.` and `..` it can resolve resolved, and the rest as written.
-fn resolved(path: &Path) -> PathBuf {
+#[must_use]
+pub fn resolved(path: &Path) -> PathBuf {
     match crate::canonical::canonical(path) {
         Ok(resolved) => resolved,
         Err(_path_does_not_exist_yet) => cleaned(path),

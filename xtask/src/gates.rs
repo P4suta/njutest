@@ -2558,11 +2558,12 @@ pub fn proofaudit(
     )
 }
 
-/// The runner's recording and every configured build's engine recording one run kept, each as its path and its text.
+/// The runner's recording and every configured build's engine recording one run kept, each as its path and its text, with what each build kept beside it of the answers it carried.
 struct Recordings {
     runner: Option<(String, String)>,
     engines: Vec<(String, String)>,
     outputs: Vec<(String, proofaudit::soundness::Kept)>,
+    beside: Vec<proofaudit::Beside>,
 }
 
 impl Recordings {
@@ -2575,6 +2576,7 @@ impl Recordings {
                 .map(|(recording_path, text)| (recording_path.as_str(), text.as_str())),
             engines: &self.engines,
             outputs: &self.outputs,
+            beside: &self.beside,
         }
     }
 }
@@ -2601,11 +2603,74 @@ fn recordings(trace: Option<&Path>) -> Result<Recordings, proofaudit::AuditError
         (Some(directory), Some((_path, text))) => kept_outputs(directory, text),
         (None, _) | (_, None) => Vec::new(),
     };
+    let beside = match trace {
+        Some(directory) => engine_beside(directory)?,
+        None => Vec::new(),
+    };
     Ok(Recordings {
         runner,
         engines,
         outputs,
+        beside,
     })
+}
+
+/// What each configured build's engine kept beside its recording of the answers it carried, in namespace order, each with the position of its recording; a build that kept no `carried-v1.json` carried nothing it kept, and one that kept it keeps the skeletons and the guards' record beside it.
+fn engine_beside(trace: &Path) -> Result<Vec<proofaudit::Beside>, proofaudit::AuditError> {
+    let builds = trace.join("builds");
+    let namespaces = match crate::repository::entries(&builds) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => {
+            return Err(proofaudit::AuditError::Unreadable {
+                path: builds.display().to_string(),
+                source,
+            });
+        }
+    };
+    let mut kept = Vec::new();
+    for (engine, namespace) in namespaces.into_iter().enumerate() {
+        let directory = namespace.join("engine");
+        let Some(carried) = beside_document(&directory.join("carried-v1.json"))? else {
+            continue;
+        };
+        let required = |name: &str| {
+            let path = directory.join(name);
+            beside_document(&path)?.ok_or_else(|| proofaudit::AuditError::Unreadable {
+                path: path.display().to_string(),
+                source: std::io::Error::from(std::io::ErrorKind::NotFound),
+            })
+        };
+        kept.push(proofaudit::Beside {
+            engine,
+            path: directory.display().to_string(),
+            carried,
+            skeletons: required("skeletons-v1.json")?,
+            touched: required("touched-v1.json")?,
+        });
+    }
+    Ok(kept)
+}
+
+/// The JSON document at `path`, or nothing where no file is there.
+fn beside_document(path: &Path) -> Result<Option<serde_json::Value>, proofaudit::AuditError> {
+    let label = path.display().to_string();
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(proofaudit::AuditError::Unreadable {
+                path: label,
+                source,
+            });
+        }
+    };
+    crate::strictjson::from_str(&text)
+        .map(Some)
+        .map_err(|source| proofaudit::AuditError::Unparsable {
+            path: label,
+            source,
+        })
 }
 
 /// Whether the merged report at `merged` is the merge of the shards `shards`, each re-decided against its recording under `traces`.

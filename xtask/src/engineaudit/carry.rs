@@ -1488,29 +1488,41 @@ fn planned_reach(
     held: &Held<'_>,
     notes: &mut super::Notes<'_>,
 ) {
-    let reaching = super::evidence::reaching_targets(held.touched, index);
+    for said in planning(index, plan, held.touched) {
+        match said {
+            Planning::Unreached(why) => notes.violated(subject, why),
+            Planning::Unkept(why) => notes.unaudited(subject, why),
+        }
+    }
+}
+
+/// What the guards' record says against one target a plan runs for a mutation.
+enum Planning {
+    /// The record does not bear the plan out: a violation, in words.
+    Unreached(String),
+    /// The record keeps too little to say, in words.
+    Unkept(String),
+}
+
+/// Every target `plan` runs that the guards' record `touched` does not say reaches the mutation at `index`, narrowed to the tests the plan names, and every one it keeps too little of to say.
+fn planning(index: u64, plan: &[Planned], touched: &super::wire::Guarded) -> Vec<Planning> {
+    let reaching = super::evidence::reaching_targets(touched, index);
+    let mut said = Vec::new();
     for planned in plan {
         let target = planned.target.as_str();
         let narrowed = match reaching.get(target) {
             None => {
-                notes.violated(
-                    subject,
-                    format!(
-                        "the plan runs {target}, which the guards' record says reaches nothing \
-                         of it"
-                    ),
-                );
+                said.push(Planning::Unreached(format!(
+                    "the plan runs {target}, which the guards' record says reaches nothing of it"
+                )));
                 continue;
             }
             Some(Err(unkept)) => {
-                notes.unaudited(
-                    subject,
-                    format!(
-                        "the plan runs {target}, and the guards' record keeps no {} for it, so \
-                         whether it reaches this cannot be re-derived",
-                        unkept.word()
-                    ),
-                );
+                said.push(Planning::Unkept(format!(
+                    "the plan runs {target}, and the guards' record keeps no {} for it, so \
+                     whether it reaches this cannot be re-derived",
+                    unkept.word()
+                )));
                 continue;
             }
             Some(Ok(narrowed)) => narrowed,
@@ -1520,15 +1532,13 @@ fn planned_reach(
             .as_ref()
             .map(|tests| tests.iter().cloned().collect());
         if filter.is_some() && filter.as_ref() != narrowed.as_ref() {
-            notes.violated(
-                subject,
-                format!(
-                    "the plan narrows {target} to {filter:?}, and the guards' record narrows it \
-                     to {narrowed:?}"
-                ),
-            );
+            said.push(Planning::Unreached(format!(
+                "the plan narrows {target} to {filter:?}, and the guards' record narrows it to \
+                 {narrowed:?}"
+            )));
         }
     }
+    said
 }
 
 /// Whether every target a carried answer rests on held its reach, re-derived from the control records the run kept (P7).
@@ -1538,19 +1548,208 @@ fn reach_held(
     standings: &std::collections::BTreeMap<String, crate::drift::Standing>,
     notes: &mut super::Notes<'_>,
 ) {
-    for target in targets {
-        let standing = match standings.get(target) {
-            Some(crate::drift::Standing::Held) => continue,
-            Some(other) => other.name(),
-            None => "without a baseline to compare a control with",
-        };
+    for why in targets
+        .into_iter()
+        .filter_map(|target| unheld(target, standings))
+    {
         notes.violated(
             subject,
-            format!(
-                "the run carried it though a premise of ADR 0041 fails: reach-moved: the run's own \
-                 records make {target} {standing}"
-            ),
+            format!("the run carried it though a premise of ADR 0041 fails: {why}"),
         );
+    }
+}
+
+/// Why `target` did not hold its reach under a control of the run's tree, as the run's own records make it, or nothing where it held (P7).
+fn unheld(
+    target: &str,
+    standings: &std::collections::BTreeMap<String, crate::drift::Standing>,
+) -> Option<String> {
+    let standing = match standings.get(target) {
+        Some(crate::drift::Standing::Held) => return None,
+        Some(other) => other.name(),
+        None => "without a baseline to compare a control with",
+    };
+    Some(format!(
+        "reach-moved: the run's own records make {target} {standing}"
+    ))
+}
+
+/// What one configured build of a runner kept beside its engine recording of the answers it carried: the documents the engine writes for them.
+#[derive(Debug, Clone, Copy)]
+pub struct Kept<'a> {
+    /// `carried-v1.json`.
+    pub carried: &'a serde_json::Value,
+    /// `skeletons-v1.json`.
+    pub skeletons: &'a serde_json::Value,
+    /// `touched-v1.json`.
+    pub touched: &'a serde_json::Value,
+}
+
+/// One carried answer a runner's build believed, as this audit reads it again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rederived {
+    /// The full identity of the mutant it answered for.
+    pub mutant: String,
+    /// What the record says the answer was.
+    pub outcome: String,
+    /// The run the record says established it.
+    pub run_id: String,
+    /// The first premise of ADR 0041 it fails, in the words the trace uses, or nothing where every one holds.
+    pub fails: Option<String>,
+    /// Every target its plan runs that the guards' record does not say reaches the mutation as the plan narrows it, in words.
+    pub unplanned: Vec<String>,
+    /// What the guards' record or the report keeps too little of to say whether each planned target reaches the mutation, in words.
+    pub unkept: Vec<String>,
+}
+
+/// Why what a runner's build kept beside its recording is not the carry evidence this audit reads.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum KeptError {
+    /// A document does not decode into the shape this audit reads.
+    #[error("{file} is not the {document} document this audit reads: {source}")]
+    Undecodable {
+        /// The document's file name.
+        file: &'static str,
+        /// The document it should be.
+        document: &'static str,
+        /// What the decoder said.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// A document says it is another document, or another version of it.
+    #[error("{file} says it is {said} version {version}, not {document} version 2")]
+    Other {
+        /// The document's file name.
+        file: &'static str,
+        /// What it says it is.
+        said: String,
+        /// The version it says.
+        version: u64,
+        /// The document it should be.
+        document: &'static str,
+    },
+    /// The guards' record keeps no item catalog, so no body can be named.
+    #[error("touched-v1.json keeps no item catalog")]
+    Uncataloged,
+}
+
+impl crate::error::Coded for KeptError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Undecodable { .. } | Self::Other { .. } | Self::Uncataloged => {
+                crate::error::XtCode::EngineEvidence
+            }
+        }
+    }
+}
+
+/// Every carried answer a runner's build believed, held to every premise of ADR 0041 again.
+///
+/// P1 to P6 and P8 are read from what the build kept beside its recording and P7 from the control records `standings` re-derives, with nothing of the engine's.
+/// The plan each was held to is held to the guards' record at the catalog index `indices` gives its mutant.
+///
+/// # Errors
+/// The first document that is not the one this audit reads, in words.
+pub fn rederived(
+    kept: Kept<'_>,
+    (standings, indices): (
+        Option<&std::collections::BTreeMap<String, crate::drift::Standing>>,
+        &std::collections::BTreeMap<String, u64>,
+    ),
+) -> Result<Vec<Rederived>, KeptError> {
+    let skeletons =
+        serde_json::from_value::<Skeletons>(kept.skeletons.clone()).map_err(|source| {
+            KeptError::Undecodable {
+                file: "skeletons-v1.json",
+                document: "rust-mutants/skeletons",
+                source,
+            }
+        })?;
+    if skeletons.document_type != "rust-mutants/skeletons" || skeletons.schema_version != 2 {
+        return Err(KeptError::Other {
+            file: "skeletons-v1.json",
+            said: skeletons.document_type,
+            version: skeletons.schema_version,
+            document: "rust-mutants/skeletons",
+        });
+    }
+    let touched =
+        super::wire::read_touched(kept.touched).map_err(|source| KeptError::Undecodable {
+            file: "touched-v1.json",
+            document: "guards' record",
+            source,
+        })?;
+    let spans = spans(&touched).ok_or(KeptError::Uncataloged)?;
+    let carried = serde_json::from_value::<Believed>(kept.carried.clone()).map_err(|source| {
+        KeptError::Undecodable {
+            file: "carried-v1.json",
+            document: "rust-mutants/carried",
+            source,
+        }
+    })?;
+    if carried.document_type != "rust-mutants/carried" || carried.schema_version != 2 {
+        return Err(KeptError::Other {
+            file: "carried-v1.json",
+            said: carried.document_type,
+            version: carried.schema_version,
+            document: "rust-mutants/carried",
+        });
+    }
+    let held = Held::of(&skeletons, &touched, &spans);
+    Ok(carried
+        .records
+        .iter()
+        .map(|entry| rederive(entry, &held, (standings, indices)))
+        .collect())
+}
+
+/// One carried record a runner's build believed, held to every premise of ADR 0041 and its plan to the guards' record.
+fn rederive(
+    entry: &BelievedRecord,
+    held: &Held<'_>,
+    (standings, indices): (
+        Option<&std::collections::BTreeMap<String, crate::drift::Standing>>,
+        &std::collections::BTreeMap<String, u64>,
+    ),
+) -> Rederived {
+    let record = &entry.record;
+    let fails = premise_fails(record, &entry.plan, held).or_else(|| {
+        standings.and_then(|standings| {
+            resting_targets(record, &entry.plan)
+                .into_iter()
+                .find_map(|target| unheld(target, standings))
+        })
+    });
+    let (unplanned, unkept) = match indices.get(&entry.mutant) {
+        Some(index) => planning(*index, &entry.plan, held.touched)
+            .into_iter()
+            .fold(
+                (Vec::new(), Vec::new()),
+                |(mut unplanned, mut unkept), said| {
+                    match said {
+                        Planning::Unreached(why) => unplanned.push(why),
+                        Planning::Unkept(why) => unkept.push(why),
+                    }
+                    (unplanned, unkept)
+                },
+            ),
+        None => (
+            Vec::new(),
+            vec![
+                "the report names no catalog index for it, so whether each planned target \
+                 reaches it cannot be re-derived"
+                    .to_owned(),
+            ],
+        ),
+    };
+    Rederived {
+        mutant: entry.mutant.clone(),
+        outcome: record.outcome.clone(),
+        run_id: record.run_id.clone(),
+        fails,
+        unplanned,
+        unkept,
     }
 }
 
