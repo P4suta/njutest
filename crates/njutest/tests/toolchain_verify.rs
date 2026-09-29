@@ -224,6 +224,20 @@ fn findings_of(fixture: &Fixture, kind: &str) -> Vec<serde_json::Value> {
     .collect()
 }
 
+/// Whether a file named `name` is anywhere below `directory`.
+#[cfg(unix)]
+fn filed(directory: &Path, name: &str) -> bool {
+    std::fs::read_dir(directory)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| {
+            let path = entry.path();
+            path.file_name().is_some_and(|file| file == name)
+                || (path.is_dir() && filed(&path, name))
+        })
+}
+
 #[cfg(unix)]
 #[test]
 fn a_target_whose_reach_moved_has_every_disposition_resting_on_it_run_again() {
@@ -247,6 +261,47 @@ fn a_target_whose_reach_moved_has_every_disposition_resting_on_it_run_again() {
         "the mutations of `return_visit` were `unreached` only on the word of a baseline the \
          control contradicted, so each was run against the moved target and decided by that \
          execution instead: {unreached:?}\n{stderr}"
+    );
+    let stale: Vec<&serde_json::Value> = part["mutants"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the part lists its mutants: {document}"))
+        .iter()
+        .filter(|mutant| {
+            mutant["routing"]["reaching"]
+                .as_array()
+                .is_some_and(|reaching| reaching.iter().any(|one| one == target))
+        })
+        .filter(|mutant| {
+            mutant["routing"]["granularity"] == "unreached"
+                || mutant["routing"]["discharged"]
+                    .as_array()
+                    .is_some_and(|removed| removed.iter().any(|one| one["target"] == target))
+        })
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "a disposition decided again by a run against the moved target is routed to that \
+         target, and the route the proof decided on the baseline, which said no target reached \
+         it, is not the one it now stands on: {stale:?}"
+    );
+    let cache = njutest_devkit::paths::cache_beside(&fixture.root).expect("the cache");
+    let unfiled: Vec<&str> = part["mutants"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the part lists its mutants: {document}"))
+        .iter()
+        .filter(|mutant| {
+            mutant["decision"]["outcome"] == "survived"
+                && mutant["routing"]["reaching"]
+                    .as_array()
+                    .is_some_and(|reaching| reaching.iter().any(|one| one == target))
+        })
+        .filter_map(|mutant| mutant["id"].as_str())
+        .filter(|id| !filed(&cache, &format!("{id}.json")))
+        .collect();
+    assert!(
+        unfiled.is_empty(),
+        "the evidence store keeps what the run established after the repair, as the report \
+         does, rather than what the moved record said before it: {unfiled:?}"
     );
     assert!(
         findings_of(&fixture, "unstable-baseline").is_empty(),

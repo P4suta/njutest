@@ -583,6 +583,57 @@ impl Route {
         }
     }
 
+    /// This route with `target` put to the mutation with every test and no proof's removal of it standing, which is what a run of the mutation against `target` that reached its site makes of a route decided on a baseline the target's reach contradicted (ADR 0036 decision 1).
+    #[must_use]
+    pub fn reached_by(&self, target: &str) -> Self {
+        let put = Reaches {
+            target: target.to_owned(),
+            tests: Asked::Every,
+        };
+        let kept = |discharged: &[Discharge]| -> Vec<Discharge> {
+            discharged
+                .iter()
+                .filter(|one| one.target != target)
+                .cloned()
+                .collect()
+        };
+        match self {
+            Self::All { reaching, fallback } => Self::All {
+                reaching: reaching
+                    .iter()
+                    .filter(|one| *one != target)
+                    .cloned()
+                    .chain(std::iter::once(target.to_owned()))
+                    .collect(),
+                fallback: *fallback,
+            },
+            Self::Block {
+                reaching,
+                discharged,
+                fallback,
+            } => Self::Block {
+                reaching: reaching
+                    .iter()
+                    .filter(|one| one.target != target)
+                    .cloned()
+                    .chain(std::iter::once(put))
+                    .collect(),
+                discharged: kept(discharged),
+                fallback: *fallback,
+            },
+            Self::Discharged { discharged } => Self::Block {
+                reaching: vec![put],
+                discharged: kept(discharged),
+                fallback: None,
+            },
+            Self::Unreached { .. } => Self::Block {
+                reaching: vec![put],
+                discharged: Vec::new(),
+                fallback: None,
+            },
+        }
+    }
+
     /// The record of this decision, with the targets that actually ran.
     #[must_use]
     pub fn record(&self, mutant: &Mutant, executed: Vec<String>) -> crate::trace::RouteRecord {

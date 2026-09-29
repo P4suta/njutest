@@ -2077,11 +2077,23 @@ fn repair(
     measured: &Measured,
 ) -> Result<bool, crate::error::RunnerError> {
     let was = judged.disposition.name();
-    let (fact, reach) = against_reaching(judging, mutant, measured)?;
+    let rerouted = match &judged.disposition {
+        Disposition::Survived { route } => route.reached_by(target),
+        Disposition::Rejected { .. }
+        | Disposition::Killed { .. }
+        | Disposition::StepLimitReached { .. }
+        | Disposition::Waited { .. }
+        | Disposition::Unreached
+        | Disposition::Equivalent { .. }
+        | Disposition::Unconfirmed { .. }
+        | Disposition::Errored { .. }
+        | Disposition::Declined { .. } => judging.subject.session.route(mutant).reached_by(target),
+    };
+    let (fact, reach, ran) = against_reaching(judging, mutant, measured)?;
     let mut aggregation = Aggregation::new();
     let (now, answered) = match aggregation.observe(judging, (mutant, target), fact)? {
         Some(decided) => (decided, aggregation.answered),
-        None => aggregation.finish(judging, mutant, judging.subject.session.route(mutant))?,
+        None => aggregation.finish(judging, mutant, rerouted.clone())?,
     };
     let reached = match reach {
         rust_mutants::session::SiteReach::Reached => crate::trace::SiteReached::Reached,
@@ -2098,21 +2110,36 @@ fn repair(
         reached,
     });
     if replaced {
+        let asked_before = match judged.routing.take() {
+            Some(routing) => routing.answered,
+            None => Vec::new(),
+        };
+        let asked: Vec<crate::report::Answered> =
+            asked_before.into_iter().chain(answered).collect();
+        let evidence = match &judged.evidence {
+            Some(evidence) => evidence.clone(),
+            None => RestsOn::not_sealed(),
+        };
+        left_for_later(
+            judging,
+            mutant,
+            (&rerouted, &asked, std::slice::from_ref(&ran)),
+            (&now, &evidence),
+        )?;
+        judged.routing = Some(crate::report::Routing::of(&rerouted, asked));
+        judged.source_run_id = None;
         judged.disposition = now;
-        if let Some(routing) = judged.routing.as_mut() {
-            routing.reaching.push(target.to_owned());
-            routing.answered.extend(answered);
-        }
     }
     Ok(replaced)
 }
 
-/// What one mutation comes to against one target whose reach moved, run with its guards recording, and whether that run reached the mutation's site (ADR 0036).
+/// What one mutation comes to against one target whose reach moved, run with its guards recording, whether that run reached the mutation's site, and the execution that decided both (ADR 0036).
 fn against_reaching(
     judging: &Judging<'_>,
     mutant: &Mutant,
     measured: &Measured,
-) -> Result<(TargetFact, rust_mutants::session::SiteReach), crate::error::RunnerError> {
+) -> Result<(TargetFact, rust_mutants::session::SiteReach, MutantResult), crate::error::RunnerError>
+{
     let (session, options, watch) = (judging.subject.session, judging.options, judging.watch);
     let request = request_for(
         mutant.id.as_str(),
@@ -2151,7 +2178,7 @@ fn against_reaching(
             },
         )?;
     }
-    Ok((fact_of(request, Some(measured), &result), reach))
+    Ok((fact_of(request, Some(measured), &result), reach, result))
 }
 
 /// What one execution of a mutation against one target says, before the route aggregates every target.

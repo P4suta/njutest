@@ -1541,11 +1541,13 @@ fn rested(
     }
     let (expected_was, by) = match before {
         Some(now) => (now, "the repair of it before this one made it"),
-        None if route.is_some_and(|route| {
-            route.reaching.is_empty() && route.granularity != DISCHARGED
-        }) =>
+        None if route
+            .is_some_and(|route| route.reaching.is_empty() && route.granularity != DISCHARGED) =>
         {
-            (UNREACHED, "its route reaches no target and a proof removed none, which makes it")
+            (
+                UNREACHED,
+                "its route reaches no target and a proof removed none, which makes it",
+            )
         }
         None => (SURVIVED, "its route makes it"),
     };
