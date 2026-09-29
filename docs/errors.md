@@ -181,7 +181,7 @@ The first digit names an area: 0 the gates, their ledgers, and what runs them (t
 | `XT0007` | A decision record under the ADR directory is misnamed, shares its number, carries another's heading, is listed wrongly in the book, or is named by a link to no record. | fix the record, the book, or the link the message names |
 | `XT0008` | `docflows` could not check the workflows the documentation shows: a page could not be read, or actionlint could not be run or said something other than which workflows it refused. | check `actionlint` is installed, or name it with `--actionlint`, and read what it said |
 | `XT0009` | actionlint refused a workflow the documentation shows. | fix the snippet the message names, so a reader who copies it has a workflow that runs |
-| `XT0010` | The registry of critical decisions names an item the tree does not define, leaves a layer open that the gaps ledger does not give an owner, or lists a hole it does not have. | fix the cell, the ledger line, or the item the message names; a new critical decision arrives with what holds it |
+| `XT0010` | The registry of critical decisions names what resolves to no item of the tree, to several, or to one of another kind than its layer is held by, leaves a layer open that the gaps ledger does not give an owner, or lists a hole it does not have. | name the one item the message's candidates say holds the layer, qualified where several share its name, or fix the ledger line; a new critical decision arrives with what holds it |
 | `XT0101` | The push names something the pre-push gate cannot check: an update Git did not give whole, an object other than the checked-out commit, a remote commit that is not here, a move that is not a fast-forward, or only deletions. | fetch the remote ref and push the checked-out commit as a fast-forward of it |
 | `XT0102` | The tree the pre-push gate checks stopped being the pushed commit while it ran, or the check changed it. | leave the worktree alone while a push runs, then push again |
 | `XT0103` | The check the pre-push gate runs failed. | read the check's own output above, fix what it names, and push again |
@@ -237,7 +237,7 @@ The first digit names an area: 0 the gates, their ledgers, and what runs them (t
 | `XT4102` | A retained model artifact is outside the run directory or cannot be read. | audit the run directory the artifacts were retained in |
 | `XT4103` | A retained Kani export is not the pinned schema, or does not establish the answer the report gives. | read the model record the message names |
 | `XT5001` | An audit specimen could not be laid out in a temporary directory. | check the temporary directory is writable |
-| `XT5002` | An event of an audit specimen's recording is not an object, or lacks its envelope. | fix the specimen in the sentinel module the gate names |
+| `XT5002` | An event of an audit specimen's recording is not an object, lacks its envelope, or states one its writer keeps: a sequence number that is not after every one before it, or a clock. | fix the specimen in the sentinel module the gate names |
 | `XT5003` | A flat audit specimen could not be completed into the document a run writes. | fix the specimen in the sentinel module the gate names |
 | `XT5101` | A planted text of the lint sentinels is not the header-and-files shape they are read in. | fix the planted text under `xtask/sentinels/` the message names |
 | `XT6001` | An identity field exceeds the length prefix of the recipe it is minted by. | report it; an identity this recipe cannot spell is not one to truncate |

@@ -60,8 +60,6 @@ pub(crate) enum RepositoryGate {
     Surfaces,
     /// Every public function of an incidental surface is reached by something that ships.
     Reached,
-    /// No audit reader supplies more values its input never gave than its ceiling allows.
-    Defaulted,
     /// A second opinion, by body shape alone, on every catch-all the ledger waives.
     Waivers,
     /// Nothing a build writes is committed: no tracked path lies under a directory named `target`.
@@ -86,7 +84,6 @@ impl RepositoryGate {
             Self::Ratchets => ratchets(root),
             Self::Surfaces => surfaces(root),
             Self::Reached => reached(root),
-            Self::Defaulted => defaulted(root),
             Self::Waivers => waivers(root),
             Self::Tracked => tracked(root),
             Self::Skipped => skipped(root),
@@ -2318,10 +2315,12 @@ fn declared_targets(metadata: &cargo_metadata::Metadata) -> BTreeSet<String> {
     declared
 }
 
-/// Every critical decision has a row saying what holds it at every layer, each cell naming an item the tree defines, and every open layer is a hole the gaps ledger gives an owner.
+/// Every critical decision has a row saying what holds it at every layer, and every open layer is a hole the gaps ledger gives an owner.
+///
+/// Each name a cell holds resolves to one definition of the tree, of the kind its layer is held by.
 ///
 /// # Errors
-/// The registry or ledger cannot be read or is malformed, or they and the tree disagree.
+/// The registry or ledger cannot be read or is malformed, a source cannot be read or parsed, or they and the tree disagree.
 pub fn invariants(root: &Path) -> Result<String, GateError> {
     let read = |relative: &str| {
         std::fs::read_to_string(root.join(relative))
@@ -2332,27 +2331,39 @@ pub fn invariants(root: &Path) -> Result<String, GateError> {
     };
     let rows = crate::invariants::rows(&read("docs/invariants.md")?).map_err(coded)?;
     let gaps = crate::invariants::gaps(&read("xtask/invariant_gaps.txt")?).map_err(coded)?;
-    let mut defined = BTreeSet::new();
+    let declared = declared_surfaces(root)?;
+    let mut definitions = Vec::new();
     for path in all_sources(root)? {
         let text = std::fs::read_to_string(&path)
             .map_err(|error| GateError(format!("invariants: {}: {error}", path.display())))?;
-        defined.extend(crate::invariants::defined(&text));
+        let label = relative_slash(root, &path)?;
+        definitions.extend(
+            crate::invariants::definitions(&label, &text, ships_from(&declared, &path))
+                .map_err(|error| GateError(format!("invariants: {label}: {error}")))?,
+        );
     }
-    let (decisions, held) =
-        crate::invariants::check(&rows, &gaps, &defined).map_err(|refused| {
-            GateError(format!(
-                "invariants: the registry and the tree disagree:\n  {}",
-                refused
-                    .iter()
-                    .map(crate::error::Coded::coded)
-                    .collect::<Vec<_>>()
-                    .join("\n  ")
-            ))
-        })?;
+    let mut reached = BTreeSet::new();
+    for names in references(root, &declared)?.ships.into_values() {
+        reached.extend(names);
+    }
+    let tree = crate::invariants::Tree {
+        definitions,
+        reached,
+    };
+    let (decisions, held) = crate::invariants::check(&rows, &gaps, &tree).map_err(|refused| {
+        GateError(format!(
+            "invariants: the registry and the tree disagree:\n  {}",
+            refused
+                .iter()
+                .map(crate::error::Coded::coded)
+                .collect::<Vec<_>>()
+                .join("\n  ")
+        ))
+    })?;
     Ok(format!(
-        "invariants: {decisions} critical decisions, {held} layer cells each naming what the tree \
-         defines, and {} open, each owned in xtask/invariant_gaps.txt; `ratchets` holds them to \
-         the base",
+        "invariants: {decisions} critical decisions, {held} layer cells each naming one \
+         definition of the kind its layer is held by, and {} open, each owned in \
+         xtask/invariant_gaps.txt; `ratchets` holds them to the base",
         gaps.len()
     ))
 }
@@ -3350,22 +3361,39 @@ fn declared_surfaces(root: &Path) -> Result<Vec<(String, Surface, PathBuf)>, Gat
     Ok(declared)
 }
 
-/// Every public function of an incidental surface is one something other than a test reaches.
-///
-/// A capability with a test is a capability somebody believed shipped (ADR 0023).
-/// `Interposer::during()` had a test, passed it, and production never called it, so the test was evidence about a function nothing used.
-/// Where a crate's public surface is an API, a function with no caller here is ordinary and this says nothing.
-/// Where it is public only because Rust needed it to be, a function only a test reaches is one nothing reaches.
+/// What the code of every declared crate references, by the name it references.
+struct References {
+    /// Every name the production code of each crate that ships references, by crate.
+    ships: BTreeMap<String, BTreeSet<String>>,
+    /// Every name any code of each crate references, tests included, by crate.
+    tested: BTreeMap<String, BTreeSet<String>>,
+    /// Every public function of an incidental surface, with its crate.
+    candidates: Vec<(String, String)>,
+}
+
+/// Whether `file` is production code of a crate that ships: under the `src` of a declared crate whose surface is not test support.
+fn ships_from(declared: &[(String, Surface, PathBuf)], file: &Path) -> bool {
+    declared
+        .iter()
+        .filter(|(_, _, directory)| file.starts_with(directory))
+        .max_by_key(|(_, _, directory)| directory.components().count())
+        .is_some_and(|(_, surface, directory)| {
+            *surface != Surface::TestSupport && file.starts_with(directory.join("src"))
+        })
+}
+
+/// What the code of every crate of `declared` references, read from every Rust file under it.
 ///
 /// # Errors
-/// Returns every such function, and refuses a surface nobody declared.
-pub fn reached(root: &Path) -> Result<String, GateError> {
-    let declared = declared_surfaces(root)?;
-
+/// A file that cannot be listed, read, or parsed.
+fn references(
+    root: &Path,
+    declared: &[(String, Surface, PathBuf)],
+) -> Result<References, GateError> {
     let mut ships: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut tested: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut candidates = Vec::new();
-    for (name, surface, directory) in &declared {
+    for (name, surface, directory) in declared {
         for file in rust_files_under(root, directory)? {
             let text = std::fs::read_to_string(&file)
                 .map_err(|error| GateError(format!("{}: {error}", file.display())))?;
@@ -3394,6 +3422,29 @@ pub fn reached(root: &Path) -> Result<String, GateError> {
             }
         }
     }
+    Ok(References {
+        ships,
+        tested,
+        candidates,
+    })
+}
+
+/// Every public function of an incidental surface is one something other than a test reaches.
+///
+/// A capability with a test is a capability somebody believed shipped (ADR 0023).
+/// `Interposer::during()` had a test, passed it, and production never called it, so the test was evidence about a function nothing used.
+/// Where a crate's public surface is an API, a function with no caller here is ordinary and this says nothing.
+/// Where it is public only because Rust needed it to be, a function only a test reaches is one nothing reaches.
+///
+/// # Errors
+/// Returns every such function, and refuses a surface nobody declared.
+pub fn reached(root: &Path) -> Result<String, GateError> {
+    let declared = declared_surfaces(root)?;
+    let References {
+        ships,
+        tested,
+        candidates,
+    } = references(root, &declared)?;
 
     let mut only_tests: Vec<String> = candidates
         .into_iter()
@@ -3439,49 +3490,6 @@ pub fn reached(root: &Path) -> Result<String, GateError> {
          under the ceiling of {ceiling}",
         only_tests.len()
     ))
-}
-
-/// Every audit reader supplies no more values its input never gave than `xtask/defaulted_ceiling.txt` allows it, and exactly that many.
-///
-/// # Errors
-/// Every file above or below its ceiling, and a source or ceiling that does not read.
-pub fn defaulted(root: &Path) -> Result<String, GateError> {
-    let mut counted = BTreeMap::new();
-    for file in rust_files_under(root, &root.join("xtask/src"))? {
-        let relative = file
-            .strip_prefix(root)
-            .map_err(|error| GateError(format!("{}: {error}", file.display())))?
-            .components()
-            .map(|part| {
-                part.as_os_str().to_str().ok_or_else(|| {
-                    GateError(format!("{}: a path that is not UTF-8", file.display()))
-                })
-            })
-            .collect::<Result<Vec<&str>, GateError>>()?
-            .join("/");
-        if !crate::defaulted::reads_for_an_audit(&relative) {
-            continue;
-        }
-        let text = std::fs::read_to_string(&file)
-            .map_err(|error| GateError(format!("{}: {error}", file.display())))?;
-        let count = crate::defaulted::defaulted_in(&text)
-            .map_err(|error| GateError(format!("{relative}: {error}")))?;
-        counted.insert(relative, count);
-    }
-    let ceiling = root.join("xtask/defaulted_ceiling.txt");
-    let written = std::fs::read_to_string(&ceiling)
-        .map_err(|error| GateError(format!("{}: {error}", ceiling.display())))?;
-    match crate::defaulted::held(&counted, &written) {
-        Ok(total) => Ok(format!(
-            "defaulted: {total} value(s) supplied where an audit reader's input gave none, each \
-             file at its ceiling"
-        )),
-        Err(refused) => Err(GateError(format!(
-            "defaulted: an audit reader holds a record to a schema and then answers for an absent \
-             field anyway:\n  {}",
-            refused.join("\n  ")
-        ))),
-    }
 }
 
 /// Every `.rs` file under `directory`, skipping anything built.

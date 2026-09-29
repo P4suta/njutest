@@ -238,8 +238,8 @@ impl XtCode {
             ),
             Self::InvariantRegistry => (
                 "XT0010",
-                "The registry of critical decisions names an item the tree does not define, leaves a layer open that the gaps ledger does not give an owner, or lists a hole it does not have.",
-                "fix the cell, the ledger line, or the item the message names; a new critical decision arrives with what holds it",
+                "The registry of critical decisions names what resolves to no item of the tree, to several, or to one of another kind than its layer is held by, leaves a layer open that the gaps ledger does not give an owner, or lists a hole it does not have.",
+                "name the one item the message's candidates say holds the layer, qualified where several share its name, or fix the ledger line; a new critical decision arrives with what holds it",
             ),
             Self::PushUnverifiable => (
                 "XT0101",
@@ -518,7 +518,7 @@ impl XtCode {
             ),
             Self::SpecimenEvent => (
                 "XT5002",
-                "An event of an audit specimen's recording is not an object, or lacks its envelope.",
+                "An event of an audit specimen's recording is not an object, lacks its envelope, or states one its writer keeps: a sequence number that is not after every one before it, or a clock.",
                 "fix the specimen in the sentinel module the gate names",
             ),
             Self::SpecimenIncomplete => (

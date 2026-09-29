@@ -7,6 +7,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
+use super::wire::{
+    Guarded, GuardedItem, GuardedNarrowing, GuardedSeen, GuardedTarget, Measurement,
+};
 use super::{
     Audit, BRANCH_NEVER_TAKEN, CheckedEvidence, DISCHARGED, Decided, Granularity, KILLED, Layer,
     NEVER_INFECTED, NOT_RUN, Notes, Report, RouteDecision, Row, UNPROVEN_DISCHARGED, count, number,
@@ -231,7 +234,7 @@ pub(super) fn merge(report: &Report, evidence: &CheckedEvidence<'_>, audit: &mut
 }
 
 /// Re-derives every discharge the run claimed from the evidence it kept.
-fn measured_every_target(report: &Report, reached: Option<&Value>, notes: &mut Notes<'_>) {
+fn measured_every_target(report: &Report, reached: Option<&Measurement>, notes: &mut Notes<'_>) {
     let Some(reached) = reached else {
         notes.unaudited(
             "measurement",
@@ -241,11 +244,7 @@ fn measured_every_target(report: &Report, reached: Option<&Value>, notes: &mut N
         );
         return;
     };
-    let named: BTreeSet<&str> = reached
-        .get("targets")
-        .and_then(Value::as_object)
-        .map(|targets| targets.keys().map(String::as_str).collect())
-        .unwrap_or_default();
+    let named: BTreeSet<&str> = reached.targets.keys().map(String::as_str).collect();
     if named.is_empty() {
         notes.unaudited(
             "measurement",
@@ -253,17 +252,7 @@ fn measured_every_target(report: &Report, reached: Option<&Value>, notes: &mut N
         );
         return;
     }
-    let excused: BTreeSet<String> = reached
-        .get("limitations")
-        .and_then(Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .filter_map(Value::as_str)
-                .filter_map(|one| one.split_once(':').map(|(_, target)| target.to_owned()))
-                .collect()
-        })
-        .unwrap_or_default();
+    let excused = excused(&reached.limitations);
     for target in &report.targets {
         if target.contains("/doc/") {
             continue;
@@ -282,7 +271,7 @@ fn measured_every_target(report: &Report, reached: Option<&Value>, notes: &mut N
 }
 
 /// Every route the guards decided, re-decided from what the guards recorded.
-pub(super) fn touch(report: &Report, touched: Option<&Value>, audit: &mut Audit) -> Decided {
+pub(super) fn touch(report: &Report, touched: Option<&Guarded>, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Touch);
     let routed = report
         .mutants
@@ -367,7 +356,20 @@ fn re_decided(row: &Row, route: &RouteDecision, recorded: &Recorded, notes: &mut
         if removed.contains(target) {
             continue;
         }
-        let reaching = touches.reaching(row.index, &recorded.narrowing);
+        let reaching = match touches.reaching(row.index, &recorded.narrowing) {
+            Ok(reaching) => reaching,
+            Err(unkept) => {
+                notes.unaudited(
+                    row.label(),
+                    format!(
+                        "the record keeps no {} for {target}, so whether the route should keep \
+                         it, and for which of its tests, cannot be re-derived",
+                        unkept.word()
+                    ),
+                );
+                continue;
+            }
+        };
         let named = route.reaching.iter().any(|one| one == target);
         match (&reaching, named) {
             (Reaching::Nothing, true) => notes.violated(
@@ -387,35 +389,66 @@ fn re_decided(row: &Row, route: &RouteDecision, recorded: &Recorded, notes: &mut
                 ),
             ),
         }
-        let asked: BTreeSet<&String> = route
-            .tests
-            .get(target)
-            .map(|named| named.iter().collect())
-            .unwrap_or_default();
-        match reaching {
-            Reaching::Tests(expected) if named => {
+        let asked = Asked::of(route, target);
+        match (reaching, &asked) {
+            (Reaching::Tests(expected), asked) if named => {
                 let expected: BTreeSet<&String> = expected.iter().collect();
-                if asked != expected {
+                if asked.tests() != Some(&expected) {
                     notes.violated(
                         row.label(),
                         format!(
                             "the route puts this mutation to {} of {target} and the record says \
                              the tests that reached it are {}",
-                            asked_for(&asked),
+                            asked.said(),
                             listed(&expected)
                         ),
                     );
                 }
             }
-            Reaching::Whole if !asked.is_empty() => notes.violated(
+            (Reaching::Whole, Asked::These(_)) => notes.violated(
                 row.label(),
                 format!(
                     "the route narrows {target} to {} and the record cannot attribute what \
                      reached this mutation to any test of it",
-                    listed(&asked)
+                    asked.said()
                 ),
             ),
-            Reaching::Nothing | Reaching::Tests(_) | Reaching::Whole => {}
+            (Reaching::Nothing | Reaching::Tests(_), _) | (Reaching::Whole, Asked::Every) => {}
+        }
+    }
+}
+
+/// What a route asked one target for: every test of it where the route names none of its tests, and the tests it names otherwise, which may be none.
+enum Asked<'a> {
+    /// The route names no tests of the target, which asks every test it has.
+    Every,
+    /// The tests the route names, perhaps none.
+    These(BTreeSet<&'a String>),
+}
+
+impl<'a> Asked<'a> {
+    /// What `route` asked `target` for.
+    fn of(route: &'a RouteDecision, target: &str) -> Self {
+        match route.tests.get(target) {
+            None => Self::Every,
+            Some(named) => Self::These(named.iter().collect()),
+        }
+    }
+
+    /// The tests asked, where the route named them.
+    const fn tests(&self) -> Option<&BTreeSet<&'a String>> {
+        match self {
+            Self::Every => None,
+            Self::These(named) => Some(named),
+        }
+    }
+
+    /// What was asked, as a reader reads it.
+    fn said(&self) -> String {
+        match self {
+            Self::Every => "every test".to_owned(),
+            Self::These(named) if named.is_empty() => "no test".to_owned(),
+            Self::These(named) => listed(named),
         }
     }
 }
@@ -432,16 +465,8 @@ fn listed(names: &BTreeSet<&String>) -> String {
         .join(", ")
 }
 
-/// What a route asked one target for, where naming nothing means every test it has.
-fn asked_for(names: &BTreeSet<&String>) -> String {
-    if names.is_empty() {
-        return "every test".to_owned();
-    }
-    listed(names)
-}
-
 /// What the guards recorded, read as data with no help from the engine that wrote it.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Recorded {
     targets: BTreeMap<String, Touches>,
     excused: BTreeSet<String>,
@@ -449,77 +474,88 @@ struct Recorded {
 }
 
 impl Recorded {
-    fn of(document: &Value) -> Self {
-        let targets = document
-            .get("targets")
-            .and_then(Value::as_object)
-            .map(|named| {
-                named
-                    .iter()
-                    .map(|(target, touches)| (target.clone(), Touches::of(touches)))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let excused = document
-            .get("limitations")
-            .and_then(Value::as_array)
-            .map(|entries| {
-                entries
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .filter_map(|one| one.split_once(':').map(|(_, target)| target.to_owned()))
-                    .collect()
-            })
-            .unwrap_or_default();
+    fn of(document: &Guarded) -> Self {
         Self {
-            targets,
-            excused,
-            narrowing: Narrowing::of(document.get("narrowing")),
+            targets: document
+                .targets
+                .iter()
+                .map(|(target, touches)| (target.clone(), Touches::of(touches)))
+                .collect(),
+            excused: excused(&document.limitations),
+            narrowing: Narrowing::of(document.narrowing.as_ref()),
         }
     }
 }
 
-/// Which of the records the tree could say anything about, which is what turns an absence into evidence.
-#[derive(Debug, Default)]
+/// The targets a list of limitations excuses, each written `<limitation>:<target>`.
+fn excused(limitations: &[String]) -> BTreeSet<String> {
+    limitations
+        .iter()
+        .filter_map(|one| one.split_once(':').map(|(_, target)| target.to_owned()))
+        .collect()
+}
+
+/// Which of the records the tree could say anything about, which is what turns an absence into evidence; a list the record does not keep establishes nothing about any mutant.
+#[derive(Debug)]
 struct Narrowing {
-    /// Every mutant whose guard evaluates its two branches, so `infected` is about it.
-    compared: BTreeSet<u64>,
-    /// The marker each mutant's branch proof rests on, so `bodies` is about it.
-    bodies: BTreeMap<u64, u64>,
+    /// Every mutant whose guard evaluates its two branches, so `infected` is about it, where the record keeps the list.
+    compared: Option<BTreeSet<u64>>,
+    /// The marker each mutant's branch proof rests on, so `bodies` is about it, where the record keeps the map.
+    bodies: Option<BTreeMap<u64, u64>>,
 }
 
 impl Narrowing {
-    fn of(value: Option<&Value>) -> Self {
-        let Some(value) = value else {
-            return Self::default();
-        };
+    fn of(narrowing: Option<&GuardedNarrowing>) -> Self {
         Self {
-            compared: value
-                .get("compared")
-                .and_then(Value::as_array)
-                .map(|entries| entries.iter().filter_map(Value::as_u64).collect())
-                .unwrap_or_default(),
-            bodies: value
-                .get("bodies")
-                .and_then(Value::as_object)
-                .map(|named| {
-                    named
-                        .iter()
-                        .filter_map(|(index, marker)| {
-                            match (index.parse::<u64>(), marker.as_u64()) {
-                                (Ok(index), Some(marker)) => Some((index, marker)),
-                                (Err(_) | Ok(_), None) | (Err(_), Some(_)) => None,
-                            }
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
+            compared: narrowing
+                .and_then(|one| one.compared.as_ref())
+                .map(|compared| compared.iter().copied().collect()),
+            bodies: narrowing.and_then(|one| one.bodies.clone()),
+        }
+    }
+
+    /// Whether the record says the guard of the mutant at `index` compares its two branches.
+    fn compares(&self, index: u64) -> bool {
+        self.compared
+            .as_ref()
+            .is_some_and(|compared| compared.contains(&index))
+    }
+
+    /// The marker the branch proof of the mutant at `index` rests on, where the record says there is one.
+    fn marker(&self, index: u64) -> Option<u64> {
+        self.bodies
+            .as_ref()
+            .and_then(|bodies| bodies.get(&index).copied())
+    }
+}
+
+/// One kind of record a target's guards keep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Kept {
+    /// The mutant sites each test reached.
+    Reached,
+    /// The branch bodies each test entered.
+    Bodies,
+    /// The mutations each test saw a guard's branches part over.
+    Infected,
+    /// The items each test entered.
+    Entered,
+}
+
+impl Kept {
+    /// The record's own word for it.
+    pub(super) const fn word(self) -> &'static str {
+        match self {
+            Self::Reached => "`reached`",
+            Self::Bodies => "`bodies`",
+            Self::Infected => "`infected`",
+            Self::Entered => "`entered`",
         }
     }
 }
 
 /// One kind of thing the guards report, by the thread that reported it.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Seen {
     /// What each named test of the target reported.
     tests: BTreeMap<String, BTreeSet<u64>>,
@@ -528,36 +564,23 @@ struct Seen {
 }
 
 impl Seen {
-    fn of(value: &Value, kind: &str) -> Self {
-        Self {
-            tests: value
-                .get(kind)
-                .and_then(|seen| seen.get("tests"))
-                .and_then(Value::as_object)
-                .map(|named| {
-                    named
-                        .iter()
-                        .map(|(test, sites)| {
-                            (
-                                test.clone(),
-                                sites
-                                    .as_array()
-                                    .map(|entries| {
-                                        entries.iter().filter_map(Value::as_u64).collect()
-                                    })
-                                    .unwrap_or_default(),
-                            )
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
-            loose: value
-                .get(kind)
-                .and_then(|seen| seen.get("loose"))
-                .and_then(Value::as_array)
-                .map(|entries| entries.iter().filter_map(Value::as_u64).collect())
-                .unwrap_or_default(),
-        }
+    /// What one kind of record says, where the target's record keeps that kind.
+    ///
+    /// The engine leaves out an empty map of tests and an empty list of loose sites, so a kind kept without one of them reports nothing there.
+    fn of(kind: Option<&GuardedSeen>) -> Option<Self> {
+        let kind = kind?;
+        let tests = match &kind.tests {
+            Some(tests) => tests
+                .iter()
+                .map(|(test, sites)| (test.clone(), sites.iter().copied().collect()))
+                .collect(),
+            None => BTreeMap::new(),
+        };
+        let loose = match &kind.loose {
+            Some(loose) => loose.iter().copied().collect(),
+            None => BTreeSet::new(),
+        };
+        Some(Self { tests, loose })
     }
 
     /// Whether this test reported `index`, where a report nothing could attribute is one every test made.
@@ -584,78 +607,75 @@ impl Seen {
     }
 }
 
-/// What one target's guards recorded.
-#[derive(Debug, Default)]
+/// What one target's guards recorded, each kind where the record keeps it.
+#[derive(Debug)]
 struct Touches {
     /// The mutant sites each test reached.
-    reached: Seen,
+    reached: Option<Seen>,
     /// The proved bodies each test entered, by the marker at the body's first statement.
-    bodies: Seen,
+    bodies: Option<Seen>,
     /// The mutations each test saw a guard's two branches part over.
-    infected: Seen,
+    infected: Option<Seen>,
     /// The items whose bodies each test entered, by item index.
-    entered: Seen,
+    entered: Option<Seen>,
     /// How many tests of this target the baseline ran, which is what "all of them" counts against.
     ran: usize,
 }
 
 impl Touches {
-    fn of(value: &Value) -> Self {
+    fn of(target: &GuardedTarget) -> Self {
         Self {
-            reached: Seen::of(value, "reached"),
-            bodies: Seen::of(value, "bodies"),
-            infected: Seen::of(value, "infected"),
-            entered: Seen::of(value, "entered"),
-            ran: value
-                .get("ran")
-                .and_then(Value::as_array)
-                .map_or(0, Vec::len),
+            reached: Seen::of(target.reached.as_ref()),
+            bodies: Seen::of(target.bodies.as_ref()),
+            infected: Seen::of(target.infected.as_ref()),
+            entered: Seen::of(target.entered.as_ref()),
+            ran: target.ran.len(),
         }
     }
 
-    /// Which of this target's tests could have noticed the mutation at `index`, re-derived from the record alone.
-    fn reaching(&self, index: u64, narrowing: &Narrowing) -> Reaching {
-        if self.reached.loose.contains(&index) {
-            return Reaching::Whole;
+    /// Which of this target's tests could have noticed the mutation at `index`, re-derived from the record alone, or the kind of record it rests on that the target's record does not keep.
+    fn reaching(&self, index: u64, narrowing: &Narrowing) -> Result<Reaching, Kept> {
+        let reached = self.reached.as_ref().ok_or(Kept::Reached)?;
+        if reached.loose.contains(&index) {
+            return Ok(Reaching::Whole);
         }
-        let named = self.reached.who(index);
-        if named.is_empty() {
-            return Reaching::Nothing;
-        }
-        if named.len() >= self.ran {
-            return Reaching::Whole;
-        }
-        let kept: BTreeSet<String> = named
-            .into_iter()
-            .filter(|test| {
-                narrowing
-                    .bodies
-                    .get(&index)
-                    .is_none_or(|marker| self.bodies.by(test, *marker))
-            })
-            .filter(|test| !narrowing.compared.contains(&index) || self.infected.by(test, index))
-            .collect();
+        let mut kept = reached.who(index);
         if kept.is_empty() {
-            return Reaching::Nothing;
+            return Ok(Reaching::Nothing);
         }
-        Reaching::Tests(kept)
+        if kept.len() >= self.ran {
+            return Ok(Reaching::Whole);
+        }
+        if let Some(marker) = narrowing.marker(index) {
+            let bodies = self.bodies.as_ref().ok_or(Kept::Bodies)?;
+            kept.retain(|test| bodies.by(test, marker));
+        }
+        if narrowing.compares(index) {
+            let infected = self.infected.as_ref().ok_or(Kept::Infected)?;
+            kept.retain(|test| infected.by(test, index));
+        }
+        if kept.is_empty() {
+            return Ok(Reaching::Nothing);
+        }
+        Ok(Reaching::Tests(kept))
     }
 }
 
-/// Every target whose tests could have noticed the mutation at `index`, re-derived from what the guards recorded: each with the tests it narrows to, or with nothing where every test of it could.
+/// Every target whose tests could have noticed the mutation at `index`, re-derived from what the guards recorded: each with the tests it narrows to, with nothing where every test of it could, or with the kind of record the answer rests on that the target's record does not keep.
 pub(super) fn reaching_targets(
-    touched: &Value,
+    touched: &Guarded,
     index: u64,
-) -> BTreeMap<String, Option<BTreeSet<String>>> {
+) -> BTreeMap<String, Result<Option<BTreeSet<String>>, Kept>> {
     let recorded = Recorded::of(touched);
     recorded
         .targets
         .iter()
         .filter_map(
             |(target, touches)| match touches.reaching(index, &recorded.narrowing) {
-                Reaching::Nothing => None,
-                Reaching::Whole => Some((target.clone(), None)),
-                Reaching::Tests(tests) => Some((target.clone(), Some(tests))),
+                Ok(Reaching::Nothing) => None,
+                Ok(Reaching::Whole) => Some((target.clone(), Ok(None))),
+                Ok(Reaching::Tests(tests)) => Some((target.clone(), Ok(Some(tests)))),
+                Err(unkept) => Some((target.clone(), Err(unkept))),
             },
         )
         .collect()
@@ -795,31 +815,39 @@ enum Observation {
     Unavailable,
 }
 
-/// Whether the record says `claim`'s target entered the body its branch proof names.
+/// Whether the record says `claim`'s target entered the body its branch proof names; a target whose record keeps no `bodies` says nothing either way.
 fn entered_the_body(recorded: &Recorded, claim: &Discharged) -> Observation {
-    let Some(marker) = recorded.narrowing.bodies.get(&claim.index).copied() else {
+    let Some(marker) = recorded.narrowing.marker(claim.index) else {
         return Observation::Unavailable;
     };
-    let Some(touches) = recorded.targets.get(&claim.target) else {
+    let Some(bodies) = recorded
+        .targets
+        .get(&claim.target)
+        .and_then(|touches| touches.bodies.as_ref())
+    else {
         return Observation::Unavailable;
     };
-    if touches.bodies.any(marker) {
+    if bodies.any(marker) {
         Observation::Observed
     } else {
         Observation::Absent
     }
 }
 
-/// Whether the record says `claim`'s target ever saw the guard's two branches part.
+/// Whether the record says `claim`'s target ever saw the guard's two branches part; a target whose record keeps no `infected` says nothing either way.
 fn saw_a_difference(recorded: &Recorded, claim: &Discharged) -> Observation {
     let index = claim.index;
-    if !recorded.narrowing.compared.contains(&index) {
+    if !recorded.narrowing.compares(index) {
         return Observation::Unavailable;
     }
-    let Some(touches) = recorded.targets.get(&claim.target) else {
+    let Some(infected) = recorded
+        .targets
+        .get(&claim.target)
+        .and_then(|touches| touches.infected.as_ref())
+    else {
         return Observation::Unavailable;
     };
-    if touches.infected.any(index) {
+    if infected.any(index) {
         Observation::Observed
     } else {
         Observation::Absent
@@ -925,7 +953,7 @@ fn mutant_row<'a>(catalog: &'a Value, display_id: &str) -> Option<&'a Value> {
 }
 
 /// Whether the target's measured run covered a region beginning inside the body.
-fn ran_the_body(reached: &Value, target: &str, path: &str, body: &Value) -> Observation {
+fn ran_the_body(reached: &Measurement, target: &str, path: &str, body: &Value) -> Observation {
     let (Some(start_line), Some(start_column), Some(end_line), Some(end_column)) = (
         number(body, "start_line"),
         number(body, "start_column"),
@@ -936,27 +964,11 @@ fn ran_the_body(reached: &Value, target: &str, path: &str, body: &Value) -> Obse
     };
     let start = (start_line, start_column);
     let end = (end_line, end_column);
-    let Some(blocks) = reached
-        .get("targets")
-        .and_then(|targets| targets.get(target))
-        .and_then(Value::as_array)
-    else {
+    let Some(blocks) = reached.targets.get(target) else {
         return Observation::Unavailable;
     };
-    for block in blocks {
-        let Some(file) = string(block, "file") else {
-            return Observation::Unavailable;
-        };
-        if file != path {
-            continue;
-        }
-        let Some(at) = block.get("start") else {
-            return Observation::Unavailable;
-        };
-        let (Some(line), Some(column)) = (number(at, "line"), number(at, "column")) else {
-            return Observation::Unavailable;
-        };
-        let position = (line, column);
+    for block in blocks.iter().filter(|block| block.file == path) {
+        let position = (block.start.line, block.start.column);
         if position >= start && position < end {
             return Observation::Observed;
         }
@@ -1039,26 +1051,24 @@ struct CatalogItem {
 }
 
 impl CatalogItem {
-    /// Every item the record's catalog holds, in the order it holds them; the wire check has already refused an item missing a field.
-    fn all(document: &Value) -> Vec<Self> {
+    /// Every item the record's catalog holds, in the order it holds them, where the record keeps a catalog.
+    fn all(document: &Guarded) -> Option<Vec<Self>> {
         document
-            .get("items")
-            .and_then(Value::as_array)
-            .map(|items| items.iter().filter_map(Self::of).collect())
-            .unwrap_or_default()
+            .items
+            .as_ref()
+            .map(|items| items.iter().map(Self::of).collect())
     }
 
-    /// One item, when every field it needs is there.
-    fn of(item: &Value) -> Option<Self> {
-        let body = item.get("body")?;
-        Some(Self {
-            index: number(item, "index")?,
-            path: string(item, "path")?,
-            name: string(item, "name")?,
-            start_byte: number(body, "start")?,
-            end_byte: number(body, "end")?,
-            measurable: item.get("measurable")?.as_bool()?,
-        })
+    /// One item of the catalog.
+    fn of(item: &GuardedItem) -> Self {
+        Self {
+            index: item.index,
+            path: item.path.clone(),
+            name: item.name.clone(),
+            start_byte: item.body.start,
+            end_byte: item.body.end,
+            measurable: item.measurable,
+        }
     }
 
     /// The innermost item whose body holds every byte of `row`'s edit.
@@ -1077,7 +1087,7 @@ impl CatalogItem {
 }
 
 /// Every reached site and every kill, held to the items the entry markers say each test entered.
-pub(super) fn entry(report: &Report, touched: Option<&Value>, audit: &mut Audit) -> Decided {
+pub(super) fn entry(report: &Report, touched: Option<&Guarded>, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Entry);
     let Some(record) = touched else {
         notes.unaudited(
@@ -1087,7 +1097,14 @@ pub(super) fn entry(report: &Report, touched: Option<&Value>, audit: &mut Audit)
         );
         return notes.looked();
     };
-    let items = CatalogItem::all(record);
+    let Some(items) = CatalogItem::all(record) else {
+        notes.unaudited(
+            "items",
+            "the record keeps no item catalog, so what a test entered cannot be held to anything"
+                .to_owned(),
+        );
+        return notes.looked();
+    };
     if items.is_empty() {
         notes.unaudited(
             "items",
@@ -1125,13 +1142,15 @@ pub(super) fn entry(report: &Report, touched: Option<&Value>, audit: &mut Audit)
     notes.looked()
 }
 
-/// Every index the record says a test entered is an item of the catalog.
+/// Every index the record says a test entered is an item of the catalog; a target whose record keeps no `entered` names none.
 fn named_entries(target: &str, touches: &Touches, items: &[CatalogItem], notes: &mut Notes<'_>) {
-    let named = touches
-        .entered
+    let Some(entered) = &touches.entered else {
+        return;
+    };
+    let named = entered
         .loose
         .iter()
-        .chain(touches.entered.tests.values().flat_map(|held| held.iter()));
+        .chain(entered.tests.values().flat_map(|held| held.iter()));
     for index in named {
         if *index >= count(items.len()) {
             notes.violated(
@@ -1186,14 +1205,41 @@ fn sitting_in<'a>(
     Some(item)
 }
 
-/// A site a test reached is inside an item that test entered.
+/// A site a test reached is inside an item that test entered; a target whose record keeps no `reached`, or reached something and keeps no `entered`, cannot be held to it, which is said.
 fn reached_entered(
     target: &str,
     touches: &Touches,
     (rows, items): (&BTreeMap<u64, &Row>, &[CatalogItem]),
     notes: &mut Notes<'_>,
 ) {
-    for (test, sites) in &touches.reached.tests {
+    let (reached, entered) = match (&touches.reached, &touches.entered) {
+        (Some(reached), Some(entered)) => (reached, entered),
+        (None, _) => {
+            notes.unaudited(
+                target,
+                format!(
+                    "the record keeps no {} for {target}, so the sites its tests reached cannot \
+                     be held to the items they entered",
+                    Kept::Reached.word()
+                ),
+            );
+            return;
+        }
+        (Some(reached), None) => {
+            if !reached.tests.is_empty() || !reached.loose.is_empty() {
+                notes.unaudited(
+                    target,
+                    format!(
+                        "the record keeps no {} for {target}, so the sites its tests reached \
+                         cannot be held to the items they entered",
+                        Kept::Entered.word()
+                    ),
+                );
+            }
+            return;
+        }
+    };
+    for (test, sites) in &reached.tests {
         for site in sites {
             let Some(row) = rows.get(site) else {
                 continue;
@@ -1201,7 +1247,7 @@ fn reached_entered(
             let Some(item) = sitting_in(row, items, notes) else {
                 continue;
             };
-            if !touches.entered.by(test, item.index) {
+            if !entered.by(test, item.index) {
                 notes.violated(
                     row.label(),
                     format!(
@@ -1213,14 +1259,14 @@ fn reached_entered(
             }
         }
     }
-    for site in &touches.reached.loose {
+    for site in &reached.loose {
         let Some(row) = rows.get(site) else {
             continue;
         };
         let Some(item) = sitting_in(row, items, notes) else {
             continue;
         };
-        if !touches.entered.loose.contains(&item.index) {
+        if !entered.loose.contains(&item.index) {
             notes.violated(
                 row.label(),
                 format!(
@@ -1250,8 +1296,21 @@ fn killed_entered(row: &Row, recorded: &Recorded, items: &[CatalogItem], notes: 
     let Some(item) = sitting_in(row, items, notes) else {
         return;
     };
+    let Some(entered) = &touches.entered else {
+        notes.unaudited(
+            row.label(),
+            format!(
+                "{} noticed it and the record keeps no {} for that target, so whether what \
+                 noticed it entered {} cannot be re-derived",
+                row.target,
+                Kept::Entered.word(),
+                item.name
+            ),
+        );
+        return;
+    };
     if row.killed_by.is_empty() {
-        if !touches.entered.any(item.index) {
+        if !entered.any(item.index) {
             notes.violated(
                 row.label(),
                 format!(
@@ -1264,7 +1323,7 @@ fn killed_entered(row: &Row, recorded: &Recorded, items: &[CatalogItem], notes: 
         return;
     }
     for test in &row.killed_by {
-        if !touches.entered.by(test, item.index) {
+        if !entered.by(test, item.index) {
             notes.violated(
                 row.label(),
                 format!(

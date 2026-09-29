@@ -693,51 +693,54 @@ impl FindingWire {
     }
 }
 
-/// Proves that a reached-v1 document has its exact owned shape before the independent audit reads facts out of its JSON value.
-pub(super) fn validate_reached(value: &Value) -> Result<(), serde_json::Error> {
-    match serde_json::from_value::<ReachedEvidence>(value.clone()) {
-        Ok(document) => {
-            drop(document);
-            Ok(())
-        }
-        Err(error) => Err(error),
-    }
+/// A reached-v1 document in its exact owned shape, which is what the audit reads its facts from.
+pub(super) fn read_reached(value: &Value) -> Result<Measurement, serde_json::Error> {
+    serde_json::from_value::<Measurement>(value.clone())
 }
 
-/// Proves that a touched-v1 document has its exact owned shape before the independent audit interprets absence as evidence.
-pub(super) fn validate_touched(value: &Value) -> Result<(), serde_json::Error> {
-    let document = serde_json::from_value::<TouchedEvidence>(value.clone())?;
-    reject_touched_nulls(value)?;
-    drop(document);
-    Ok(())
+/// A touched-v1 document in its exact owned shape, which is what the audit reads its facts from.
+///
+/// A record in any form but the objects the engine writes, or a null where it writes a value or nothing, is refused, since either would read as a record of nothing.
+pub(super) fn read_touched(value: &Value) -> Result<Guarded, serde_json::Error> {
+    let document = serde_json::from_value::<Guarded>(value.clone())?;
+    reject_unowned_touched_forms(value)?;
+    Ok(document)
 }
 
-fn reject_touched_nulls(value: &Value) -> Result<(), serde_json::Error> {
-    let Some(root) = value.as_object() else {
-        return Err(serde_json::Error::custom(
-            "a touched document must be an object",
-        ));
-    };
+fn reject_unowned_touched_forms(value: &Value) -> Result<(), serde_json::Error> {
+    let root = owned_object(value, "a touched document")?;
     reject_null(root.get("narrowing"), "touched narrowing")?;
     reject_null(root.get("items"), "the touched item catalog")?;
-    let Some(targets) = root.get("targets").and_then(Value::as_object) else {
+    if let Some(narrowing) = root.get("narrowing") {
+        let narrowing = owned_object(narrowing, "touched narrowing")?;
+        reject_null(narrowing.get("compared"), "the touched compared list")?;
+        reject_null(narrowing.get("bodies"), "the touched body markers")?;
+    }
+    let Some(targets) = root.get("targets") else {
         return Ok(());
     };
-    for target in targets.values() {
-        let Some(target) = target.as_object() else {
-            continue;
-        };
+    for target in owned_object(targets, "the touched targets")?.values() {
+        let target = owned_object(target, "a touched target record")?;
         for kind in ["reached", "bodies", "infected", "entered"] {
-            let seen = target.get(kind);
-            reject_null(seen, "a touched target record")?;
-            let Some(seen) = seen.and_then(Value::as_object) else {
+            let Some(seen) = target.get(kind) else {
                 continue;
             };
+            let seen = owned_object(seen, "a touched kind record")?;
             reject_null(seen.get("tests"), "a touched test map")?;
             reject_null(seen.get("loose"), "a touched loose-site list")?;
         }
     }
     Ok(())
+}
+
+/// `value` as the object the engine writes there, or a refusal naming what it should have been.
+fn owned_object<'a>(
+    value: &'a Value,
+    what: &str,
+) -> Result<&'a serde_json::Map<String, Value>, serde_json::Error> {
+    value.as_object().ok_or_else(|| {
+        serde_json::Error::custom(format!("{what} must be an object, as the engine writes it"))
+    })
 }
 
 fn reject_null(value: Option<&Value>, what: &str) -> Result<(), serde_json::Error> {
@@ -749,107 +752,116 @@ fn reject_null(value: Option<&Value>, what: &str) -> Result<(), serde_json::Erro
     Ok(())
 }
 
+/// What the coverage layer measured, as a run keeps it in `reached-v1.json`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ReachedEvidence {
-    #[serde(rename = "targets")]
-    _targets: BTreeMap<String, Vec<CoverageBlock>>,
+pub(super) struct Measurement {
+    /// The blocks each target's measured run covered, by target.
+    pub(super) targets: BTreeMap<String, Vec<CoverageBlock>>,
     #[serde(rename = "instrumented")]
     _instrumented: Vec<CoverageBlock>,
-    #[serde(rename = "limitations")]
-    _limitations: Vec<String>,
+    /// Why a target the run built was not measured, each `<limitation>:<target>`.
+    pub(super) limitations: Vec<String>,
 }
 
+/// One block a measured run covered.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CoverageBlock {
-    #[serde(rename = "file")]
-    _file: String,
-    #[serde(rename = "start")]
-    _start: CoveragePoint,
+pub(super) struct CoverageBlock {
+    /// The file it lies in.
+    pub(super) file: String,
+    /// Where it begins.
+    pub(super) start: CoveragePoint,
     #[serde(rename = "end")]
     _end: CoveragePoint,
 }
 
+/// A place in a file, by line and column.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CoveragePoint {
-    #[serde(rename = "line")]
-    _line: u64,
-    #[serde(rename = "column")]
-    _column: u64,
+pub(super) struct CoveragePoint {
+    /// The line.
+    pub(super) line: u64,
+    /// The column.
+    pub(super) column: u64,
 }
 
+/// What the guards of a whole run recorded, as a run keeps it in `touched-v1.json`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct TouchedEvidence {
-    #[serde(rename = "targets")]
-    _targets: BTreeMap<String, TouchedTarget>,
-    #[serde(rename = "limitations")]
-    _limitations: Vec<String>,
-    #[serde(rename = "narrowing")]
-    _narrowing: Option<TouchedNarrowing>,
-    #[serde(rename = "items")]
-    _items: Option<Vec<TouchedItem>>,
+pub(super) struct Guarded {
+    /// What each target's guards recorded, by target.
+    pub(super) targets: BTreeMap<String, GuardedTarget>,
+    /// Why a target the run built is not in `targets`, each `<limitation>:<target>`.
+    pub(super) limitations: Vec<String>,
+    /// Which of the records are facts about which mutant, where the record keeps it.
+    pub(super) narrowing: Option<GuardedNarrowing>,
+    /// Every item of every instrumented file, where the record keeps the catalog.
+    pub(super) items: Option<Vec<GuardedItem>>,
 }
 
+/// One item of the catalog the guards' record keeps.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct TouchedItem {
-    #[serde(rename = "index")]
-    _index: u64,
+pub(super) struct GuardedItem {
+    /// The index an entry marker names it by.
+    pub(super) index: u64,
     #[serde(rename = "package")]
     _package: String,
-    #[serde(rename = "path")]
-    _path: String,
-    #[serde(rename = "name")]
-    _name: String,
+    /// The workspace-relative path.
+    pub(super) path: String,
+    /// The item as a reader writes it.
+    pub(super) name: String,
     #[serde(rename = "span")]
-    _span: TouchedSpan,
-    #[serde(rename = "body")]
-    _body: TouchedSpan,
-    #[serde(rename = "measurable")]
-    _measurable: bool,
+    _span: GuardedSpan,
+    /// Its body's bytes.
+    pub(super) body: GuardedSpan,
+    /// Whether the tree records entering it.
+    pub(super) measurable: bool,
 }
 
+/// A byte range of a file.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct TouchedSpan {
-    #[serde(rename = "start")]
-    _start: u64,
-    #[serde(rename = "end")]
-    _end: u64,
+pub(super) struct GuardedSpan {
+    /// The first byte.
+    pub(super) start: u64,
+    /// One past the last byte.
+    pub(super) end: u64,
 }
 
+/// Which records are facts about which mutant, each list where the record keeps it.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct TouchedNarrowing {
-    #[serde(rename = "compared")]
-    _compared: Option<Vec<u64>>,
-    #[serde(rename = "bodies")]
-    _bodies: Option<BTreeMap<u64, u64>>,
+pub(super) struct GuardedNarrowing {
+    /// Every mutant whose guard compares its two branches.
+    pub(super) compared: Option<Vec<u64>>,
+    /// The marker each mutant's branch proof rests on.
+    pub(super) bodies: Option<BTreeMap<u64, u64>>,
 }
 
+/// What one target's guards recorded, each kind where the record keeps it.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct TouchedTarget {
-    #[serde(rename = "reached")]
-    _reached: Option<TouchedSeen>,
-    #[serde(rename = "bodies")]
-    _bodies: Option<TouchedSeen>,
-    #[serde(rename = "infected")]
-    _infected: Option<TouchedSeen>,
-    #[serde(rename = "entered")]
-    _entered: Option<TouchedSeen>,
-    #[serde(rename = "ran")]
-    _ran: Vec<String>,
+pub(super) struct GuardedTarget {
+    /// The mutant sites each test reached.
+    pub(super) reached: Option<GuardedSeen>,
+    /// The branch bodies each test entered.
+    pub(super) bodies: Option<GuardedSeen>,
+    /// The mutations each test saw a guard's branches part over.
+    pub(super) infected: Option<GuardedSeen>,
+    /// The items each test entered.
+    pub(super) entered: Option<GuardedSeen>,
+    /// Every test the baseline ran.
+    pub(super) ran: Vec<String>,
 }
 
+/// One kind of record, by the test that made it; the engine leaves out an empty map and an empty list.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct TouchedSeen {
-    #[serde(rename = "tests")]
-    _tests: Option<BTreeMap<String, Vec<u64>>>,
-    #[serde(rename = "loose")]
-    _loose: Option<Vec<u64>>,
+pub(super) struct GuardedSeen {
+    /// What each named test reported.
+    pub(super) tests: Option<BTreeMap<String, Vec<u64>>>,
+    /// What was reported where nothing named a test.
+    pub(super) loose: Option<Vec<u64>>,
 }

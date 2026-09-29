@@ -422,10 +422,10 @@ struct CheckedEvidence<'a> {
     shards: Vec<(&'a str, Report)>,
     ledger: Option<Ledger>,
     sites: bool,
-    reached: Option<Value>,
+    reached: Option<wire::Measurement>,
     catalog: Option<Value>,
     probe_logs: &'a [String],
-    touched: Option<Value>,
+    touched: Option<wire::Guarded>,
     skeletons: Option<Value>,
     carried: Option<Value>,
     root: Option<&'a std::path::Path>,
@@ -500,13 +500,13 @@ impl<'a> Evidence<'a> {
             sites: self.sites,
             reached: self
                 .reached
-                .map(|source| parse_typed_evidence(source, wire::validate_reached))
+                .map(|source| parse_typed_evidence(source, wire::read_reached))
                 .transpose()?,
             catalog: self.catalog.map(parse_evidence).transpose()?,
             probe_logs: &self.probe_logs,
             touched: self
                 .touched
-                .map(|source| parse_typed_evidence(source, wire::validate_touched))
+                .map(|source| parse_typed_evidence(source, wire::read_touched))
                 .transpose()?,
             skeletons: self.skeletons.map(parse_evidence).transpose()?,
             carried: self.carried.map(parse_evidence).transpose()?,
@@ -542,16 +542,16 @@ fn parse_evidence(source: Source<'_>) -> Result<Value, AuditError> {
     })
 }
 
-fn parse_typed_evidence(
+/// The evidence document at `source`, read in the exact owned shape `read` gives it.
+fn parse_typed_evidence<T>(
     source: Source<'_>,
-    validate: fn(&Value) -> Result<(), serde_json::Error>,
-) -> Result<Value, AuditError> {
+    read: fn(&Value) -> Result<T, serde_json::Error>,
+) -> Result<T, AuditError> {
     let value = parse_evidence(source)?;
-    validate(&value).map_err(|error| AuditError::MalformedEvidence {
+    read(&value).map_err(|error| AuditError::MalformedEvidence {
         path: source.path.to_owned(),
         source: error,
-    })?;
-    Ok(value)
+    })
 }
 
 /// What a layer hands back to show it said how far it got, which only [`Notes::looked`] and [`Notes::absent`] make.
@@ -1117,28 +1117,21 @@ impl Report {
     }
 }
 
-/// One array field, empty when it is absent.
-fn array<'a>(value: &'a Value, key: &str) -> Vec<&'a Value> {
-    value
-        .get(key)
-        .and_then(Value::as_array)
-        .map(|entries| entries.iter().collect())
-        .unwrap_or_default()
+/// One array field, or nothing where it is absent or not an array.
+fn array<'a>(value: &'a Value, key: &str) -> Option<&'a [Value]> {
+    value.get(key)?.as_array().map(Vec::as_slice)
 }
 
-/// One array of numbers, empty when it is absent.
-fn numbers(value: &Value, key: &str) -> Vec<u64> {
-    array(value, key)
-        .into_iter()
-        .filter_map(Value::as_u64)
-        .collect()
+/// One array of indices, or nothing where it is absent, not an array, or holds anything that is not an index.
+fn numbers(value: &Value, key: &str) -> Option<Vec<u64>> {
+    array(value, key)?.iter().map(Value::as_u64).collect()
 }
 
-/// One array of strings, empty when it is absent.
-fn strings(value: &Value, key: &str) -> Vec<String> {
-    array(value, key)
-        .into_iter()
-        .filter_map(|entry| entry.as_str().map(str::to_owned))
+/// One array of strings, or nothing where it is absent, not an array, or holds anything but strings.
+fn strings(value: &Value, key: &str) -> Option<Vec<String>> {
+    array(value, key)?
+        .iter()
+        .map(|entry| entry.as_str().map(str::to_owned))
         .collect()
 }
 

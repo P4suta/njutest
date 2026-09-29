@@ -498,8 +498,9 @@ pub(super) fn findings(report: &Report, audit: &mut Audit) -> Decided {
                 finding
                     .mutant
                     .as_deref()
-                    .map(|mutant| report.row(mutant).map_or(mutant, Row::label))
+                    .and_then(|mutant| report.row(mutant))
             })
+            .map(Row::label)
             .collect();
         if reported != derived {
             notes.violated(
@@ -635,15 +636,15 @@ pub(super) fn expectations(report: &Report, audit: &mut Audit) -> Decided {
 /// Every row a reviewer accepted, and every claim the run contradicted, against what the findings say.
 fn accounted(report: &Report, met: &BTreeMap<String, usize>, notes: &mut Notes<'_>) {
     for row in report.mutants.iter().filter(|row| row.expected) {
-        match met.get(row.label()).copied().unwrap_or_default() {
-            1 => {}
-            0 => notes.violated(
+        match met.get(row.label()).copied() {
+            Some(1) => {}
+            None | Some(0) => notes.violated(
                 row.label(),
                 "the row is marked expected and no claim was met by it; a row nobody \
                  accounted for is a finding"
                     .to_owned(),
             ),
-            several => notes.violated(
+            Some(several) => notes.violated(
                 row.label(),
                 format!("{several} claims were met by one row; a mutant is accepted once"),
             ),

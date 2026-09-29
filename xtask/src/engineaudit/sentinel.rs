@@ -473,29 +473,42 @@ impl Perturbation {
     }
 }
 
+/// What every carried file holds before the body of its one function.
+const SIGNATURE: &str = "pub fn larger(a: u32, b: u32) -> u32 ";
+
+/// A body the carry specimens call sealed.
+const SEALED_BODY: &str = "{ if a > b { a } else { b } }";
+
+/// A body that invokes a macro off the page's list.
+const MACRO_BODY: &str = "{ foo!(a, b) }";
+
 /// A function whose body is `body`, as a file of the measured tree.
 fn carried_source(body: &str) -> String {
-    format!("pub fn larger(a: u32, b: u32) -> u32 {body}\n")
+    format!("{SIGNATURE}{body}\n")
 }
 
-/// The carry evidence for `source`: the guards' record of its one item's body span, and the skeletons document with `claims` laid over that item and `units` as the units.
+/// The file [`carried_source`] writes for `body`, and the bytes its body spans there, found by writing it rather than by searching it.
+fn carried_span(body: &str) -> (String, usize, usize) {
+    let mut source = String::from(SIGNATURE);
+    let start = source.len();
+    source.push_str(body);
+    let end = source.len();
+    source.push('\n');
+    (source, start, end)
+}
+
+/// The carry evidence for the file [`carried_source`] writes for `body`: the guards' record of its one item's body span, and the skeletons document with `claims` laid over that item and `units` as the units.
 fn carry_beside(
     path: &str,
-    source: &str,
+    body: &str,
     claims: &Value,
     units: &Value,
 ) -> Vec<(&'static str, Value)> {
-    let braces = source
-        .find('{')
-        .zip(source.rfind('}').and_then(|at| at.checked_add(1)));
-    let Some((start, end)) = braces else {
-        return Vec::new();
-    };
-    let body = source.as_bytes().get(start..end).unwrap_or_default();
+    let (source, start, end) = carried_span(body);
     let mut item = json!({
         "index": 0, "name": "larger",
         "item": { "package": "demo", "path": path, "ordinal": 0 },
-        "body_digest": crate::engineaudit::carry::digest_of(body),
+        "body_digest": crate::engineaudit::carry::digest_of(body.as_bytes()),
         "sealed": true, "unsealed": null,
         "start": { "line": 1, "column": start.checked_add(1) }
     });
@@ -589,18 +602,11 @@ fn believed_beside(
     planted: fn(&mut Value),
 ) -> Perturbation {
     let path = "src/lib.rs";
-    let source = carried_source("{ if a > b { a } else { b } }");
-    let (Some(start), Some(site)) = (
-        source.find('{'),
-        source.find("a > b").and_then(|at| at.checked_add(2)),
-    ) else {
-        return Perturbation { name, ..clean() };
-    };
-    let Some(end) = source.rfind('}').and_then(|at| at.checked_add(1)) else {
-        return Perturbation { name, ..clean() };
-    };
-    let body = source.as_bytes().get(start..end).unwrap_or_default();
-    let digest = crate::engineaudit::carry::digest_of(body);
+    let (before, after) = ("{ if a ", "> b { a } else { b } }");
+    let body = format!("{before}{after}");
+    let (_, start, _) = carried_span(&body);
+    let (_, _, site) = carried_span(before);
+    let digest = crate::engineaudit::carry::digest_of(body.as_bytes());
     let item = json!({ "package": "demo", "path": path, "ordinal": 0 });
     let (rule, replacement) = if row == 0 {
         ("gt-to-ge@1", ">=")
@@ -634,14 +640,16 @@ fn believed_beside(
             "replacement": replacement, "source_run_id": "earlier-run"
         });
     }
-    let mut beside = carry_beside(path, &source, &json!({}), &json!([]));
+    let mut beside = carry_beside(path, &body, &json!({}), &json!([]));
     for (file, document) in &mut beside {
         if *file == "touched-v1.json" {
             merge(
                 document,
                 json!({ "targets": {
-                    TARGET: { "reached": { "loose": [0, 1] }, "ran": [] },
-                    other: { "reached": { "loose": [0, 1] }, "ran": [] }
+                    TARGET: { "reached": { "loose": [0, 1] }, "bodies": {}, "infected": {},
+                              "entered": {}, "ran": [] },
+                    other: { "reached": { "loose": [0, 1] }, "bodies": {}, "infected": {},
+                             "entered": {}, "ran": [] }
                 } }),
             );
         }
@@ -744,7 +752,7 @@ fn believed_plants() -> Vec<Perturbation> {
 /// The defects planted in where the run places a body and where it says the compiler reads a position.
 fn placement_plants() -> Vec<Perturbation> {
     let clean = clean();
-    let sealed = carried_source("{ if a > b { a } else { b } }");
+    let sealed = carried_source(SEALED_BODY);
     vec![
         Perturbation {
             name: "an item placed where its body does not start, in the file the run measured",
@@ -754,7 +762,7 @@ fn placement_plants() -> Vec<Perturbation> {
             ] })),
             beside: carry_beside(
                 "src/lib.rs",
-                &sealed,
+                SEALED_BODY,
                 &json!({ "start": { "line": 3, "column": 1 } }),
                 &json!([]),
             ),
@@ -771,7 +779,7 @@ fn placement_plants() -> Vec<Perturbation> {
                 let folded = format!("$positions/$root/src/other.rs\0{digest}\n");
                 carry_beside(
                     "src/other.rs",
-                    &sealed,
+                    SEALED_BODY,
                     &json!({}),
                     &json!([{
                         "package": "demo", "target": "demo", "kind": "lib", "test": false,
@@ -789,15 +797,15 @@ fn placement_plants() -> Vec<Perturbation> {
 /// The defects planted for the carry layer.
 fn carry_plants() -> Vec<Perturbation> {
     let clean = clean();
-    let sealed = carried_source("{ if a > b { a } else { b } }");
-    let macro_body = carried_source("{ foo!(a, b) }");
+    let sealed = carried_source(SEALED_BODY);
+    let macro_body = carried_source(MACRO_BODY);
     let mut plants = believed_plants();
     plants.extend(placement_plants());
     plants.extend([
         Perturbation {
             name: "a body called sealed that invokes a macro off the page's list",
-            beside: carry_beside("src/other.rs", &macro_body, &json!({}), &json!([])),
-            tree: vec![("src/other.rs", macro_body.clone())],
+            beside: carry_beside("src/other.rs", MACRO_BODY, &json!({}), &json!([])),
+            tree: vec![("src/other.rs", macro_body)],
             ..clean.clone()
         },
         Perturbation {
@@ -808,7 +816,7 @@ fn carry_plants() -> Vec<Perturbation> {
             ] })),
             beside: carry_beside(
                 "src/lib.rs",
-                &sealed,
+                SEALED_BODY,
                 &json!({ "body_digest": "0".repeat(64) }),
                 &json!([]),
             ),
@@ -819,7 +827,7 @@ fn carry_plants() -> Vec<Perturbation> {
             name: "an item named by another place than its own among its file's items",
             beside: carry_beside(
                 "src/other.rs",
-                &sealed,
+                SEALED_BODY,
                 &json!({ "item": { "ordinal": 1 } }),
                 &json!([]),
             ),
@@ -829,7 +837,7 @@ fn carry_plants() -> Vec<Perturbation> {
         Perturbation {
             name: "an item whose carry evidence omits whether its body is sealed",
             beside: {
-                let mut beside = carry_beside("src/other.rs", &sealed, &json!({}), &json!([]));
+                let mut beside = carry_beside("src/other.rs", SEALED_BODY, &json!({}), &json!([]));
                 for (file, document) in &mut beside {
                     if let ("skeletons-v1.json", Some(item)) = (
                         *file,
@@ -849,7 +857,7 @@ fn carry_plants() -> Vec<Perturbation> {
             name: "a skeleton that is not the fold of the entries it keeps",
             beside: carry_beside(
                 "src/other.rs",
-                &sealed,
+                SEALED_BODY,
                 &json!({}),
                 &json!([{
                     "package": "demo", "target": "demo", "kind": "lib", "test": false,

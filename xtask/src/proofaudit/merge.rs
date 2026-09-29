@@ -217,8 +217,7 @@ pub fn merged_with(
         targets: shards
             .iter()
             .map(|shard| shard.audit.targets)
-            .max()
-            .unwrap_or_default(),
+            .fold(0, usize::max),
         remarks: Vec::new(),
         coverage: std::collections::BTreeMap::new(),
     };
@@ -310,10 +309,16 @@ fn broke(notes: &mut Notes<'_>, rule: MergeRule, subject: &str, detail: &str) {
 
 /// Whether the composition and the builds of `merged` are one complete division of its catalog, the merged run is none of its inputs, and it completes no model batch.
 fn divided(merged: &Complete, sources: &[Source], notes: &mut Notes<'_>) {
-    let of = sources
-        .first()
-        .map(|source| source.shard.of)
-        .unwrap_or_default();
+    let Some(first) = sources.first() else {
+        broke(
+            notes,
+            MergeRule::Division,
+            "composition",
+            "the report names no shard it was merged from",
+        );
+        return;
+    };
+    let of = first.shard.of;
     let indices: Vec<u64> = sources.iter().map(|source| source.shard.index).collect();
     let expected: Vec<u64> = (1..=of).collect();
     if of == 0 || sources.iter().any(|source| source.shard.of != of) || indices != expected {
@@ -360,11 +365,20 @@ fn placed(merged: &Complete, sources: &[Source], notes: &mut Notes<'_>) {
         })
         .collect();
     for build in &merged.builds {
-        let placed: Vec<Value> = build
+        let Some(placed) = build
             .parts
             .iter()
-            .map(|part| part.get("part").cloned().unwrap_or(Value::Null))
-            .collect();
+            .map(|part| part.get("part").cloned())
+            .collect::<Option<Vec<Value>>>()
+        else {
+            broke(
+                notes,
+                MergeRule::Parts,
+                &build.name,
+                "a part of the build does not say which shard it is",
+            );
+            continue;
+        };
         if placed != owed {
             broke(
                 notes,
