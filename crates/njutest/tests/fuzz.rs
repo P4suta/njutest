@@ -254,6 +254,63 @@ mod driving {
     }
 
     #[test]
+    fn an_input_larger_than_a_corpus_keeps_is_a_crash_and_no_candidate() {
+        let dir = tree(&["parse"]);
+        let large = dir.path().join("large-input");
+        std::fs::write(&large, vec![0_u8; 2 << 20]).expect("a large input");
+        let mut env = saying(
+            "thread panicked",
+            77,
+            Some("fuzz/artifacts/parse/crash-large"),
+        );
+        env.set(
+            "FAKE_CARGO_ARTIFACT_FROM",
+            large.to_str().expect("a UTF-8 temporary path"),
+        );
+        let done = driven(env, dir.path(), &[]);
+        assert!(
+            done.crashes.is_empty(),
+            "an input past the bound a corpus keeps is read no further than the bound and \
+             offered to nothing: {} bytes were kept",
+            done.crashes
+                .iter()
+                .map(|one| one.content.len())
+                .sum::<usize>()
+        );
+        let found = done.findings.first().expect("a finding");
+        assert_eq!(
+            found.kind,
+            FindingKind::FailingTest,
+            "the crash is still one"
+        );
+        assert!(found.detail.contains("larger than"), "{}", found.detail);
+    }
+
+    #[test]
+    fn an_artifact_that_is_no_regular_file_is_never_read_as_an_input() {
+        let dir = tree(&["parse"]);
+        let mut env = saying(
+            "thread panicked",
+            77,
+            Some("fuzz/artifacts/parse/crash-pipe"),
+        );
+        env.set("FAKE_CARGO_ARTIFACT_FIFO", "1");
+        let done = driven(env, dir.path(), &[]);
+        assert!(
+            done.crashes.is_empty(),
+            "a pipe is no input: {:?}",
+            done.crashes
+        );
+        assert!(
+            done.findings
+                .iter()
+                .any(|one| one.kind == FindingKind::NotMeasured),
+            "what could not be read as an input is said to be: {:?}",
+            done.findings
+        );
+    }
+
+    #[test]
     fn an_artifact_that_was_already_there_is_not_a_crash_this_run_found() {
         let dir = tree(&["parse"]);
         std::fs::create_dir_all(dir.path().join("fuzz/artifacts/parse")).expect("mkdir");

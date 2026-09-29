@@ -244,12 +244,30 @@ fn fuzz_spec(fuzzing: &Fuzzing<'_>, target: &str) -> Spec {
     )
 }
 
+/// The most of one crashing input a run reads and offers to the corpus.
+pub const CRASH_INPUT_LIMIT: u64 = 1 << 20;
+
 fn record_crashes(done: &mut Fuzzed, target: &str, left: Vec<Artifact>) {
     for artifact in left {
-        let content = match std::fs::read(&artifact.on_disk) {
-            Ok(content) => content,
-            Err(error) => {
-                unavailable(done, target, &error);
+        let read = match crate::observe::bytes_within(&artifact.on_disk, CRASH_INPUT_LIMIT) {
+            Ok(read) => read,
+            Err(exhausted) => {
+                unavailable(done, target, &io::Error::other(exhausted.to_string()));
+                continue;
+            }
+        };
+        let content = match read {
+            crate::observe::Bounded::Present(content) => Some(content),
+            crate::observe::Bounded::Oversized => None,
+            crate::observe::Bounded::Absent | crate::observe::Bounded::Unreadable => {
+                unavailable(
+                    done,
+                    target,
+                    &io::Error::other(format!(
+                        "{} is no regular file the run could read",
+                        artifact.reported
+                    )),
+                );
                 continue;
             }
         };
@@ -257,20 +275,31 @@ fn record_crashes(done: &mut Fuzzed, target: &str, left: Vec<Artifact>) {
             Some(name) if !name.is_empty() => name.to_owned(),
             _ => artifact.reported.clone(),
         };
+        let detail = match &content {
+            Some(_) => format!("{target} crashed on the input {} kept", artifact.reported),
+            None => format!(
+                "{target} crashed on the input {} kept, which is larger than the \
+                 {CRASH_INPUT_LIMIT} bytes a run offers to the corpus, so it was read no \
+                 further and offered to nothing",
+                artifact.reported
+            ),
+        };
         done.findings.push(Finding {
             kind: FindingKind::FailingTest,
             subject: format!("fuzz:{target}"),
-            detail: format!("{target} crashed on the input {} kept", artifact.reported),
+            detail,
             origin: crate::report::FindingOrigin::Global,
             path: None,
             position: None,
         });
-        done.crashes.push(Crash {
-            target: target.to_owned(),
-            artifact: artifact.reported,
-            corpus: format!("{CORPUS}/{target}/{name}"),
-            content,
-        });
+        if let Some(content) = content {
+            done.crashes.push(Crash {
+                target: target.to_owned(),
+                artifact: artifact.reported,
+                corpus: format!("{CORPUS}/{target}/{name}"),
+                content,
+            });
+        }
     }
 }
 

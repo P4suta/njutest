@@ -17,7 +17,13 @@ case " $* " in
 esac
 if [ -n "${FAKE_CARGO_ARTIFACT:-}" ]; then
   mkdir -p "$(dirname "${FAKE_CARGO_ARTIFACT}")"
-  printf '%s' "${FAKE_CARGO_ARTIFACT_CONTENT:-bad input}" >"${FAKE_CARGO_ARTIFACT}"
+  if [ -n "${FAKE_CARGO_ARTIFACT_FROM:-}" ]; then
+    cp "${FAKE_CARGO_ARTIFACT_FROM}" "${FAKE_CARGO_ARTIFACT}"
+  elif [ -n "${FAKE_CARGO_ARTIFACT_FIFO:-}" ]; then
+    mkfifo "${FAKE_CARGO_ARTIFACT}"
+  else
+    printf '%s' "${FAKE_CARGO_ARTIFACT_CONTENT:-bad input}" >"${FAKE_CARGO_ARTIFACT}"
+  fi
 fi
 if [ -n "${FAKE_CARGO_ARTIFACT_TWO:-}" ]; then
   mkdir -p "$(dirname "${FAKE_CARGO_ARTIFACT_TWO}")"
