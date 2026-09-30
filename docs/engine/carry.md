@@ -122,7 +122,7 @@ rustfmt
 
 ## Body digests
 
-An item's `body_digest` is the lowercase hex SHA-256 of the bytes `touched-v1.json`'s `items[].body` names, braces included, as the pristine file holds them.
+An item's `body_digest` is the lowercase hex SHA-256 of the bytes `touched-v1.json`'s `items[].body` names, braces included, as the pristine file holds them, or `null` where no unit read the file or its body could not be located in what a unit read: a digest of empty bytes would make two unread bodies one, and a record a run carried names no such body.
 Every item is named by `item`, the reference an entered union names it by: its package, its file, and its `ordinal`.
 `files` keeps, for every file an item is in that a unit read, the lowercase hex SHA-256 of all its bytes, whether or not the run mutated anything in it.
 It is what proves a file an audit reads again from the tree is the file the run measured, so a body digest or a `start` of a file only a test compiles, which no mutation's source digest names, is held as surely as one of a mutated file.

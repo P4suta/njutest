@@ -38,8 +38,8 @@ pub struct Tree {
     pub skeleton: String,
     /// Every item's body, by the name a record keeps.
     pub items: BTreeMap<ItemRef, Body>,
-    /// Every item's name and body digest, by its index in this catalog.
-    by_index: BTreeMap<u32, (ItemRef, String)>,
+    /// Every item's name and body digest, by its index in this catalog, or nothing where no unit read its body, which is nothing to carry.
+    by_index: BTreeMap<u32, (ItemRef, Option<String>)>,
 }
 
 impl Session {
@@ -89,6 +89,7 @@ impl Session {
             })
             .max_by_key(|item| item.body.start)?;
         let (named, digest) = self.carried_tree().by_index.get(&item.index)?;
+        let digest = digest.as_ref()?;
         let replacement = match String::from_utf8(mutant.candidate.replacement.clone()) {
             Ok(text) => text,
             Err(_not_text) => return None,
@@ -209,7 +210,7 @@ impl Session {
                         let body = tree.items.get(item)?;
                         Some(Entered {
                             item: item.clone(),
-                            body_digest: body.digest.clone(),
+                            body_digest: body.digest.clone()?,
                             start: body.start?,
                         })
                     })

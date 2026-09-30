@@ -1282,7 +1282,8 @@ fn layers_of(name: &str) -> &'static [Layer] {
         | "a survival carried though the route runs a target no recorded execution ran"
         | "a kill carried across a skeleton that has changed since"
         | "a kill carried by an execution whose record omits what it entered"
-        | "a kill carried through a target whose control reached other than its baseline" => {
+        | "a kill carried through a target whose control reached other than its baseline"
+        | "a carried answer resting on a body no unit of the run read" => {
             &[Layer::Identity, Layer::Work, Layer::Entry]
         }
         _ => &[],

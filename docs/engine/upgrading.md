@@ -10,6 +10,9 @@ A change that needs nothing is not listed.
 
 ## Unreleased
 
+**A body no unit read carries no digest.** The skeletons document is `schema_version` 4: an item's `body_digest` is `null` where no unit read its file or its body could not be located in what a unit read, where version 3 wrote the digest of empty bytes, so a document of version 3 is refused.
+Two unread bodies can no longer collide on one digest: a run writes no carried answer about such a body, and one an earlier run wrote is refused as resting on a body nobody read.
+
 **A target's test count is the one its own baseline counted, and `null` where its baseline did not run.** The run report is `schema_version` 5: `targets[].tests` is nullable, where version 4 wrote `1` for a target no baseline had counted and `1` for one whose baseline ran no test, so a report of version 4 is refused.
 The work a report states counts a target that ran no test as none, and says `tests are not counted` where a baseline did not run, as under `--no-verify`, rather than a number of tests nothing counted.
 

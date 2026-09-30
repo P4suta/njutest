@@ -503,8 +503,8 @@ struct Skeletons {
     units: Vec<Unit>,
 }
 
-/// The version of the skeletons document this audit reads, the first to keep every file's digest.
-const SKELETONS_VERSION: u64 = 3;
+/// The version of the skeletons document this audit reads, the first to say which bodies it never read.
+const SKELETONS_VERSION: u64 = 4;
 
 /// What the run claims of one cataloged item's body.
 #[derive(Debug, serde::Deserialize)]
@@ -513,7 +513,8 @@ struct ItemClaim {
     index: u64,
     item: NamedItem,
     name: String,
-    body_digest: String,
+    #[serde(deserialize_with = "super::wire::required_option")]
+    body_digest: Option<String>,
     sealed: bool,
     #[serde(rename = "unsealed", deserialize_with = "super::wire::required_option")]
     _unsealed: Option<serde_json::Value>,
@@ -691,7 +692,7 @@ struct Cataloged {
     claimed: (String, u64),
     name: String,
     body: std::ops::Range<usize>,
-    digest: String,
+    digest: Option<String>,
     sealed: bool,
     start: Option<Place>,
 }
@@ -957,6 +958,39 @@ impl<'a> Tree<'a> {
     }
 }
 
+/// The remark an item whose body no unit read draws: nothing proves a read of it now is a read of what the run measured.
+fn unread(item: &Cataloged, subject: &str, notes: &mut super::Notes<'_>) {
+    notes.unaudited(
+        subject,
+        format!(
+            "{} keeps no body digest, because no unit read its body, so no read of it now is a \
+             read of what the run measured",
+            item.name
+        ),
+    );
+}
+
+/// Whether the body `read` hashes to the `claimed` digest, saying a violation or an unaudited remark where it does not.
+fn digest_holds(
+    (read, claimed): (&[u8], &str),
+    proven: bool,
+    (name, subject, notes): (&str, &str, &mut super::Notes<'_>),
+) -> bool {
+    if sha256(read) == claimed {
+        return true;
+    }
+    let detail = format!(
+        "{name} keeps a body digest its body's bytes do not hash to, so an edit inside it would \
+         not be told from none"
+    );
+    if proven {
+        notes.violated(subject, detail);
+    } else {
+        notes.unaudited(subject, detail);
+    }
+    false
+}
+
 /// One item's body digest and sealing, read again.
 fn bodies(
     item: &Cataloged,
@@ -979,17 +1013,15 @@ fn bodies(
         );
         return;
     };
-    if sha256(body) != item.digest {
-        let detail = format!(
-            "{} keeps a body digest its body's bytes do not hash to, so an edit inside it would \
-             not be told from none",
-            item.name
-        );
-        if proven {
-            notes.violated(&subject, detail);
-        } else {
-            notes.unaudited(&subject, detail);
-        }
+    let Some(claimed) = &item.digest else {
+        unread(item, &subject, notes);
+        return;
+    };
+    if !digest_holds(
+        (body, claimed.as_str()),
+        proven,
+        (&item.name, &subject, notes),
+    ) {
         return;
     }
     if !placed_as_claimed(item, (&text, proven), &subject, notes) {
@@ -1395,8 +1427,8 @@ impl<'ast> Visit<'ast> for Candidates<'_> {
 /// The evidence a believed record is held to, read once.
 struct Held<'a> {
     tree: String,
-    bodies: std::collections::BTreeMap<NamedItem, (String, bool, Option<Place>)>,
-    by_index: std::collections::BTreeMap<u64, (NamedItem, String)>,
+    bodies: std::collections::BTreeMap<NamedItem, (Option<String>, bool, Option<Place>)>,
+    by_index: std::collections::BTreeMap<u64, (NamedItem, Option<String>)>,
     spans: &'a Spans,
     touched: &'a super::wire::Guarded,
 }
@@ -1857,7 +1889,14 @@ fn read_again(
             "its body span lies outside {path}, the file the run measured"
         ));
     };
-    if sha256(read) != claim.body_digest {
+    let Some(claimed) = &claim.body_digest else {
+        return violated(format!(
+            "the build kept no body digest of {}, which a carried answer rests on, so it rests \
+             on a body nobody read",
+            claim.name
+        ));
+    };
+    if sha256(read) != *claimed {
         return violated(format!(
             "the build kept a body digest of {} that its body's bytes in {path}, the file the run \
              measured, do not hash to, so an answer carried across it rests on a body nobody read",
@@ -2145,6 +2184,11 @@ fn locus_differs(row: &Edit<'_>, locus: &Locus, held: &Held<'_>) -> Option<Strin
     let Some((item, digest)) = held.by_index.get(index) else {
         return Some(format!("item {index} has no carry evidence"));
     };
+    let Some(read) = digest else {
+        return Some(format!(
+            "item {index} has no body a unit read, so no locus names it"
+        ));
+    };
     let (Some(start), Some(end)) = (
         row.start_byte.checked_sub(body.start),
         row.end_byte.checked_sub(body.start),
@@ -2153,7 +2197,7 @@ fn locus_differs(row: &Edit<'_>, locus: &Locus, held: &Held<'_>) -> Option<Strin
     };
     let expected = Locus {
         item: item.clone(),
-        body_digest: digest.clone(),
+        body_digest: read.clone(),
         start,
         end,
         replacement: row.replacement.to_owned(),
@@ -2221,7 +2265,7 @@ fn execution_fails(execution: &Execution, enough: &[&str], held: &Held<'_>) -> O
     }
     for entered in &execution.entered {
         match held.bodies.get(&entered.item) {
-            Some((now, _, _)) if *now != entered.body_digest => {
+            Some((now, _, _)) if now.as_deref() != Some(entered.body_digest.as_str()) => {
                 return Some(format!("item-changed: {}", entered.item));
             }
             Some((_, false, _)) => return Some(format!("unsealed: {}", entered.item)),

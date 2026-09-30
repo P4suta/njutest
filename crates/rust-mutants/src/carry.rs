@@ -192,8 +192,8 @@ pub struct Now<'a> {
 /// One item's body now.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Body {
-    /// Its digest.
-    pub digest: String,
+    /// Its digest, or nothing where no unit read its body, which no record can be held to.
+    pub digest: Option<String>,
     /// Whether it is sealed.
     pub sealing: Sealing,
     /// Where its opening brace stands, or nothing where its file cannot say.
@@ -366,7 +366,7 @@ fn held(execution: &Execution, now: &Now<'_>, enough: &[Completeness]) -> Result
         let Some(body) = now.items.get(&entered.item) else {
             return Err(Refusal::ItemChanged);
         };
-        if body.digest != entered.body_digest {
+        if body.digest.as_deref() != Some(entered.body_digest.as_str()) {
             return Err(Refusal::ItemChanged);
         }
         if body.sealing == Sealing::Unsealed {
