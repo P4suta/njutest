@@ -96,7 +96,7 @@ pub struct FileReport {
     pub package: String,
     /// Candidates the file yielded; zero for a file skipped as a whole.
     pub candidates: usize,
-    /// The skips: the walk's own for a mutable file, or the one whole-file reason with the count of candidates it hid.
+    /// The skips: the walk's own for a mutable file, or the whole-file tally when it hid at least one candidate.
     pub skips: Vec<Skip>,
     /// The whole-file reason, when there is one.
     pub whole_file: Option<SkipReason>,
@@ -1039,11 +1039,15 @@ fn report(
                         count: discovery.candidates.len(),
                     }
                 })?;
-            let hidden = vec![Skip {
-                reason,
-                path: discovery.path.clone(),
-                count,
-            }];
+            let hidden = if count == 0 {
+                Vec::new()
+            } else {
+                vec![Skip {
+                    reason,
+                    path: discovery.path.clone(),
+                    count,
+                }]
+            };
             (0, hidden)
         }
     };
@@ -1056,7 +1060,7 @@ fn report(
     })
 }
 
-/// The trace record: the walk's decisions for a mutable file, the one whole-file tally otherwise.
+/// The trace record: the walk's decisions for a mutable file, or the nonempty whole-file tally otherwise.
 fn record(
     discovery: &FileDiscovery,
     report: &FileReport,

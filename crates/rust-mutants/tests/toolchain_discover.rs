@@ -11,6 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
+use njutest_devkit::fixture::Fixture;
 use njutest_devkit::result::{ResultState::Refused, result_state};
 use rust_mutants::cargo::{
     CompileKind, CompileOptions, Driver, LocateOptions, Metadata, MetadataOptions, Toolchain,
@@ -563,6 +564,44 @@ fn discovery_is_deterministic_and_traced_per_file() {
             ("crates/core/src/util.rs".to_owned(), 4),
         ]
     );
+}
+
+#[test]
+fn a_whole_file_skip_with_no_candidates_keeps_its_reason_without_a_zero_tally() {
+    let fixture = Fixture::copy("fixture-simple");
+    fixture.write("src/lib.rs", b"pub struct Marker;\n");
+    fixture.write("tests/parity.rs", b"pub struct TestMarker;\n");
+    let prepared = prepare_at(fixture.root().to_path_buf());
+    let mut opts = options();
+    opts.exclude = vec![Pattern::compile("**/*.rs").expect("pattern")];
+    let recorder = Recorder::wall(
+        Sink::Memory(MemorySink::unbounded()),
+        rust_mutants::testkit::trace::standalone_context(),
+    );
+    let discovery = run(&prepared, &opts, &recorder);
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
+        .expect("trace closes");
+    assert_eq!(discovery.files.len(), 1);
+    assert_eq!(discovery.files[0].whole_file, Some(SkipReason::Excluded));
+    for file in &discovery.files {
+        assert_eq!(file.candidates, 0);
+        assert!(file.skips.is_empty(), "no candidate was hidden: {file:?}");
+    }
+    assert!(discovery.skips.is_empty());
+    let events = recorder.events();
+    let files: Vec<&DiscoverFileRecord> = events
+        .iter()
+        .filter_map(|event| match relevant_payload(&event.payload) {
+            RelevantPayload::DiscoverFile(discover) => Some(discover),
+            RelevantPayload::Exec(_) | RelevantPayload::Other => None,
+        })
+        .collect();
+    assert_eq!(files.len(), 1);
+    for file in files {
+        assert_eq!(file.candidates, 0);
+        assert!(file.skips.is_empty());
+    }
 }
 
 #[test]
