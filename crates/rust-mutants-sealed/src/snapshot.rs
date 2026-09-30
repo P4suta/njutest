@@ -34,8 +34,8 @@ pub(crate) struct Node {
     pub(crate) inode: u64,
     /// The directory holding it; the root holds itself.
     pub(crate) parent: NodeId,
-    /// Its access and modification times.
-    pub(crate) times: Times,
+    /// Its access and modification times, where the snapshot gave any; a node the instance dates itself holds none.
+    pub(crate) times: Option<Times>,
 }
 
 /// The access and modification times of a node, in nanoseconds since the Unix epoch.
@@ -45,14 +45,6 @@ pub(crate) struct Times {
     pub(crate) accessed: u64,
     /// When it was last written.
     pub(crate) modified: u64,
-}
-
-impl Times {
-    /// The times of every node a snapshot is given without any: the host's constant.
-    pub(crate) const UNSET: Self = Self {
-        accessed: crate::host::FILE_TIME,
-        modified: crate::host::FILE_TIME,
-    };
 }
 
 /// A read-only tree of files and directories a guest may be given at a preopened path.
@@ -144,7 +136,7 @@ impl Snapshot {
     fn laid(draft: Draft) -> Self {
         let mut layout = Layout {
             nodes: Vec::new(),
-            encoder: Encoder::new("rust-mutants-sealed/snapshot/v2"),
+            encoder: Encoder::new("rust-mutants-sealed/snapshot/v3"),
         };
         draft.lay_out((ROOT, ROOT_INODE), "", &mut layout);
         Self {
@@ -207,7 +199,7 @@ impl SnapshotBuilder {
     /// # Errors
     /// [`SealedError::SnapshotPath`] where a path is a file in one place and a directory in another.
     pub fn build(self) -> Result<Snapshot, SealedError> {
-        let mut draft = Draft::Directory(BTreeMap::new(), Times::UNSET);
+        let mut draft = Draft::Directory(BTreeMap::new(), None);
         for (path, entry) in self.entries {
             draft.place(&path, entry)?;
         }
@@ -226,10 +218,10 @@ struct Layout {
 /// A snapshot as a nested tree, before it is laid out in an arena.
 #[derive(Debug)]
 enum Draft {
-    /// A file with these bytes and times.
-    File(Vec<u8>, Times),
-    /// A directory with these entries and times.
-    Directory(BTreeMap<String, Self>, Times),
+    /// A file with these bytes and times, where any were given.
+    File(Vec<u8>, Option<Times>),
+    /// A directory with these entries and times, where any were given.
+    Directory(BTreeMap<String, Self>, Option<Times>),
 }
 
 impl Draft {
@@ -248,12 +240,12 @@ impl Draft {
             if names.peek().is_some() {
                 here = entries
                     .entry(name.to_owned())
-                    .or_insert_with(|| Self::Directory(BTreeMap::new(), Times::UNSET));
+                    .or_insert_with(|| Self::Directory(BTreeMap::new(), None));
                 continue;
             }
             let placed = match entry {
-                Given::File(contents) => Self::File(contents, Times::UNSET),
-                Given::Directory => Self::Directory(BTreeMap::new(), Times::UNSET),
+                Given::File(contents) => Self::File(contents, None),
+                Given::Directory => Self::Directory(BTreeMap::new(), None),
             };
             return match entries.insert(name.to_owned(), placed) {
                 None => Ok(()),
@@ -272,10 +264,10 @@ impl Draft {
         if path.is_empty() {
             return match (self, state) {
                 (Self::Directory(_, times), OverlayState::Directory { accessed, modified }) => {
-                    *times = Times {
+                    *times = Some(Times {
                         accessed: *accessed,
                         modified: *modified,
-                    };
+                    });
                     Ok(())
                 }
                 (
@@ -314,17 +306,17 @@ impl Draft {
                 accessed,
                 modified,
             } => {
-                let times = Times {
+                let times = Some(Times {
                     accessed: *accessed,
                     modified: *modified,
-                };
+                });
                 entries.insert(name.to_owned(), Self::File(contents.clone(), times));
             }
             OverlayState::Directory { accessed, modified } => {
-                let times = Times {
+                let times = Some(Times {
                     accessed: *accessed,
                     modified: *modified,
-                };
+                });
                 match entries.get_mut(name) {
                     Some(Self::Directory(_, held)) => *held = times,
                     Some(Self::File(..)) | None => {
@@ -344,13 +336,12 @@ impl Draft {
         let id = layout.nodes.len();
         match self {
             Self::File(contents, times) => {
-                layout
+                let encoded = layout
                     .encoder
                     .tag(b'F')
                     .text(path)
-                    .digest(&SealedDigest::of(&contents))
-                    .number(times.accessed)
-                    .number(times.modified);
+                    .digest(&SealedDigest::of(&contents));
+                Self::encoded_times(encoded, times);
                 layout.nodes.push(Node {
                     body: Body::File(contents.into()),
                     inode,
@@ -359,13 +350,8 @@ impl Draft {
                 });
             }
             Self::Directory(children, times) => {
-                layout
-                    .encoder
-                    .tag(b'D')
-                    .text(path)
-                    .count(children.len())
-                    .number(times.accessed)
-                    .number(times.modified);
+                let encoded = layout.encoder.tag(b'D').text(path).count(children.len());
+                Self::encoded_times(encoded, times);
                 layout.nodes.push(Node {
                     body: Body::Directory(Arc::new(BTreeMap::new())),
                     inode,
@@ -385,6 +371,21 @@ impl Draft {
                 if let Some(node) = layout.nodes.get_mut(id) {
                     node.body = Body::Directory(Arc::new(entries));
                 }
+            }
+        }
+    }
+
+    /// Adds `times` to `encoded`, a node without any and one with some encoded so they cannot read as each other.
+    fn encoded_times(encoded: &mut Encoder, times: Option<Times>) {
+        match times {
+            Some(times) => {
+                encoded
+                    .tag(b'T')
+                    .number(times.accessed)
+                    .number(times.modified);
+            }
+            None => {
+                encoded.tag(b'N');
             }
         }
     }

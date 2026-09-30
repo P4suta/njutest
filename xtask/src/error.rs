@@ -162,6 +162,16 @@ pub enum XtCode {
     BundleVersion,
     /// The archive could not be written, or did not read back as planned.
     BundleUnwritten,
+    /// The expectations of the WASI test suite could not be read.
+    SuiteExpectations,
+    /// The pinned WASI test suite could not be fetched.
+    SuiteFetch,
+    /// The cached WASI test suite is not the pinned commit, whole and unchanged.
+    SuiteCheckout,
+    /// The harness of the WASI test suite could not be run, or ran nothing.
+    SuiteUnrun,
+    /// A test of the WASI test suite ended otherwise than its expectation says.
+    SuiteDeparted,
 }
 
 impl XtCode {
@@ -580,6 +590,31 @@ impl XtCode {
                 "XT7006",
                 "The archive or its checksum could not be written, a file it holds could not be read, or the archive read back is not exactly what was planned.",
                 "check the output directory is writable and read what the message names; nothing is written under the archive's name until it reads back as planned",
+            ),
+            Self::SuiteExpectations => (
+                "XT8001",
+                "`wasi-testsuite` could not read `crates/rust-mutants/tests/wasi-testsuite.toml`, or it does not name the repository, the full commit id and a result for each test.",
+                "fix the file the message names",
+            ),
+            Self::SuiteFetch => (
+                "XT8002",
+                "`wasi-testsuite` could not fetch the pinned commit of WebAssembly/wasi-testsuite into its cache: the cache could not be written, or git could not fetch, check out or verify the commit.",
+                "check the network and that git is on the path, and read what git said; nothing half-fetched is kept",
+            ),
+            Self::SuiteCheckout => (
+                "XT8003",
+                "The cached checkout of WebAssembly/wasi-testsuite is not the pinned commit as it was fetched: its HEAD is another commit, or a file of it was changed, added or removed.",
+                "remove the checkout the message names; the next run fetches it afresh",
+            ),
+            Self::SuiteUnrun => (
+                "XT8004",
+                "`wasi-testsuite` could not start `cargo test` for the harness, or the harness ran no test of the suite, so nothing was established.",
+                "read what cargo said; the harness's test is `every_preview1_test_ends_as_the_expectations_say` of `crates/rust-mutants/tests/wasi_testsuite.rs`",
+            ),
+            Self::SuiteDeparted => (
+                "XT8005",
+                "A preview1 test of WebAssembly/wasi-testsuite ended on the sealed host otherwise than `crates/rust-mutants/tests/wasi-testsuite.toml` says, or the suite and the file name different tests.",
+                "read each departure the harness names: fix the host where it is a defect, or name the result and the row of the import table that documents it where the host refuses the call by design",
             ),
         }
     }

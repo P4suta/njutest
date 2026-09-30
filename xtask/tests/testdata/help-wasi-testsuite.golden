@@ -1,0 +1,15 @@
+Run every preview1 test of WebAssembly/wasi-testsuite on the sealed host as a sealed test instance
+runs, and fail unless each ends as crates/rust-mutants/tests/wasi-testsuite.toml says.
+
+The commit the file pins is fetched once into the cache, verified by its id every time, and a test
+the file does not name, or a name the suite does not hold, fails too.
+
+Usage: xtask wasi-testsuite [OPTIONS]
+
+Options:
+      --cache <DIR>
+          Where the suite is fetched to, one checkout per pinned commit; `target/wasi-testsuite` of
+          the workspace where it is not named
+
+  -h, --help
+          Print help (see a summary with '-h')

@@ -70,9 +70,9 @@ A refusal returns its error to the guest and is recorded in the transcript, so a
 | `fd_close`, `fd_renumber` | On the instance's descriptor table. |
 | `fd_advise`, `fd_datasync`, `fd_sync` | Succeed; there is no disk. |
 | `fd_allocate`, `fd_filestat_set_size` | Grow or shrink the overlay's copy. |
-| `fd_fdstat_get`, `fd_fdstat_set_flags`, `fd_fdstat_set_rights` | On the instance's descriptor table. |
-| `fd_filestat_get`, `path_filestat_get` | Fixed metadata: every timestamp one constant, the inode derived from the path, the size the overlay's. |
-| `fd_filestat_set_times`, `path_filestat_set_times` | Recorded in the overlay and read back; a time never set reads as the constant. |
+| `fd_fdstat_get`, `fd_fdstat_set_flags`, `fd_fdstat_set_rights` | On the instance's descriptor table, whose rights every call they govern asks for: a right narrowed away is gone, and opening through a directory does not give it back. |
+| `fd_filestat_get`, `path_filestat_get` | Fixed metadata: every timestamp what the realtime clock reads when the instance starts, the inode derived from the path, the size the overlay's. |
+| `fd_filestat_set_times`, `path_filestat_set_times` | Recorded in the overlay and read back; a time never set reads as the instance's start. |
 | `fd_prestat_get`, `fd_prestat_dir_name` | The snapshot, at the path the build knew it by; the directory the runtime's records land in; a scratch directory of the instance's own, whose empty `home` and `tmp` are what `HOME` and `TMPDIR` name; for a target cargo gives one, an empty directory at the `CARGO_TARGET_TMPDIR` the build baked in; for a target whose package has a build script, what the script wrote, at the `OUT_DIR` the build gave the target; and `.`, the test's working directory in the snapshot. |
 | `fd_readdir` | Entries in name order, with cookies that are their positions. |
 | `path_open`, `path_create_directory`, `path_remove_directory`, `path_rename`, `path_unlink_file` | Inside the snapshot, on the overlay: a relative path from the working directory, an absolute one below the snapshot's root as the build spelled it. A path outside it is refused, `ENOTCAPABLE`. A name its directory holds only in another case is refused, `ENOTCAPABLE`, since a file system that compares names in either case would have answered it from that name. |

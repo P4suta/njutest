@@ -92,6 +92,8 @@ mod tasks;
 mod tracked;
 #[path = "waiver_key.rs"]
 mod waiver_key;
+#[path = "wasi_testsuite.rs"]
+mod wasi_testsuite;
 #[path = "wire.rs"]
 mod wire;
 #[path = "workflows.rs"]

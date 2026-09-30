@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::abi::Errno;
-use crate::snapshot::{Body, Node, NodeId, Times};
+use crate::snapshot::{Body, Node, NodeId};
 use crate::transcript::{OverlayEntry, OverlayState};
 
 use super::fs::{Contents, Filesystem, Held, Live};
@@ -36,13 +36,19 @@ impl Walk<'_> {
         }
     }
 
-    /// Whether the live node `held` carries other times than the snapshot's node `base`, which a node the snapshot does not hold carries the constant for.
+    /// Whether the live node `held` carries other times than the snapshot's node `base`, which a node the snapshot does not hold or holds without times is dated at by the instance.
     fn retimed(&self, base: NodeId, held: &Live) -> bool {
         let times = match self.base.get(base) {
             Some(node) => node.times,
-            None => Times::UNSET,
+            None => None,
         };
-        held.accessed != times.accessed || held.modified != times.modified
+        match times {
+            Some(times) => held.accessed != times.accessed || held.modified != times.modified,
+            None => {
+                let started = self.filesystem.started();
+                held.accessed != started || held.modified != started
+            }
+        }
     }
 
     /// The entries of the snapshot's directory `node`.

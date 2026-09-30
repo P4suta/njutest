@@ -30,6 +30,9 @@ const SANDBOX: &str = "/home/runner/work/snapshot";
 /// Enough fuel for any guest here that ends by itself.
 const PLENTY: u64 = 20_000_000_000;
 
+/// What the realtime clock reads when a guest here starts, and so the time every file carries until the guest sets another.
+const STARTED: u64 = 1_750_000_000_000_000_000;
+
 /// A runner for one test.
 fn runner() -> SealedRunner {
     SealedRunner::new(WATCHDOG).expect("the sealed runner starts")
@@ -68,7 +71,7 @@ fn invocation(arguments: &[&str]) -> Invocation {
             overlay: 16 << 20,
         },
         clock: ClockPolicy {
-            realtime_origin: 1_750_000_000_000_000_000,
+            realtime_origin: STARTED,
             monotonic_origin: 1_000_000_000_000,
             nanos_per_fuel: NonZeroU64::MIN,
         },
@@ -536,8 +539,8 @@ fn writes_are_seen_by_later_reads_and_by_no_other_invocation() {
             path: fresh,
             state: OverlayState::File {
                 contents: b"written in the overlay".to_vec(),
-                accessed: 0,
-                modified: 0,
+                accessed: STARTED,
+                modified: STARTED,
             },
         }]
     );
@@ -570,8 +573,8 @@ fn the_overlay_holds_exactly_what_the_guest_changed() {
                 path: at("data/hello.txt"),
                 state: OverlayState::File {
                     contents: b"hello".to_vec(),
-                    accessed: 0,
-                    modified: 0,
+                    accessed: STARTED,
+                    modified: STARTED,
                 },
             },
             OverlayEntry {
@@ -581,15 +584,15 @@ fn the_overlay_holds_exactly_what_the_guest_changed() {
             OverlayEntry {
                 path: at("out"),
                 state: OverlayState::Directory {
-                    accessed: 0,
-                    modified: 0,
+                    accessed: STARTED,
+                    modified: STARTED,
                 },
             },
             OverlayEntry {
                 path: at("out/b.txt"),
                 state: OverlayState::File {
                     contents: b"moved".to_vec(),
-                    accessed: 0,
+                    accessed: STARTED,
                     modified: 1_000_000_000_000,
                 },
             },

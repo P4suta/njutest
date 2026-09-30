@@ -135,6 +135,8 @@ mod userdirs;
 mod validate;
 #[path = "vars.rs"]
 mod vars;
+#[path = "wasi_testsuite.rs"]
+mod wasi_testsuite;
 #[path = "wire_names.rs"]
 mod wire_names;
 #[path = "witness.rs"]

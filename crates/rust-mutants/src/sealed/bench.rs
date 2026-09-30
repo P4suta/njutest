@@ -63,6 +63,21 @@ const OVERLAY_CAP: u64 = 256 << 20;
 /// What the realtime clock reads when an instance starts: 2026-01-01T00:00:00Z.
 const REALTIME_ORIGIN: u64 = 1_767_225_600_000_000_000;
 
+/// The ceilings every instance runs under.
+pub const LIMITS: Limits = Limits {
+    memory: MEMORY,
+    stdout: OUTPUT_CAP,
+    stderr: OUTPUT_CAP,
+    overlay: OVERLAY_CAP,
+};
+
+/// How every instance's clocks read: from the realtime origin and from zero, each moved one nanosecond by every unit of fuel spent.
+pub const CLOCK: ClockPolicy = ClockPolicy {
+    realtime_origin: REALTIME_ORIGIN,
+    monotonic_origin: 0,
+    nanos_per_fuel: NonZeroU64::MIN,
+};
+
 /// How long the host may take over one invocation before its watchdog stops it, which is never a verdict.
 pub const WATCHDOG: Duration = Duration::from_mins(15);
 
@@ -1135,17 +1150,8 @@ impl<'runner> Bench<'runner> {
             preopens: self.preopens(station, target_tmpdir).map_err(host)?,
             seed: seed(station.target.id()),
             fuel,
-            limits: Limits {
-                memory: MEMORY,
-                stdout: OUTPUT_CAP,
-                stderr: OUTPUT_CAP,
-                overlay: OVERLAY_CAP,
-            },
-            clock: ClockPolicy {
-                realtime_origin: REALTIME_ORIGIN,
-                monotonic_origin: 0,
-                nanos_per_fuel: NonZeroU64::MIN,
-            },
+            limits: LIMITS,
+            clock: CLOCK,
             halt,
         })
     }
@@ -1258,7 +1264,8 @@ fn inside<'a>(root: &str, path: &'a str) -> Option<&'a str> {
 }
 
 /// The seed of every instance of `target`, the same for its control and for every mutant's execution.
-fn seed(target: &str) -> u64 {
+#[must_use]
+pub fn seed(target: &str) -> u64 {
     let digest = crate::id::digest(target.as_bytes());
     let mut seed: u64 = 0;
     for byte in digest.as_bytes().iter().take(16) {

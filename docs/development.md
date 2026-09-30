@@ -492,6 +492,16 @@ Without `UPDATE_GOLDEN=1` the comparison is read-only, and a missing file is a f
 `TRYBUILD=overwrite` is the same switch for the compile-error goldens of the attribute macros.
 The fuzz seeds that copy something of this repository are goldens too, recorded by the same switch from what they copy, as [the fuzz README](../fuzz/README.md#seeds) says.
 
+### The WASI conformance suite
+
+`cargo xtask wasi-testsuite [--cache <dir>]` holds the sealed host to WebAssembly/wasi-testsuite's preview1 tests, as [the sealed host](engine/sealed-host.md#the-official-conformance-suite) says; `mise run wasi-testsuite` runs it with its cache in the user's cache directory, `mise run check:full` runs that, and so does the CI job `wasi-testsuite`.
+The suite is not in this repository, since its prebuilt Rust tests carry their debug information and the whole is 97 MB.
+The command fetches the commit `crates/rust-mutants/tests/wasi-testsuite.toml` pins into the cache once, with git, and verifies it by its id on every run; a checkout that differs from its commit is refused (`XT8003`), and removing it has the next run fetch it afresh.
+The harness is `rust-mutants`' ignored test `wasi_testsuite::every_preview1_test_ends_as_the_expectations_say`, which the command runs with the checkout named in `NJUTEST_WASI_TESTSUITE`, and which fails naming every departure (`XT8005`).
+The rest of `crates/rust-mutants/tests/wasi_testsuite.rs` runs in the inner loop and holds the expectations without the suite: every test named once, every refusal a function and a reason of the host, and every refused test tied to the row of the import table that documents it.
+To move the pin, change `commit`, run the command, and write what the host gives for each test it names: a test added upstream is one the file does not name, and one removed is a name the suite does not hold.
+A result that is neither a pass nor a refusal the import table documents is a defect of the host, closed there with a test of its own in `crates/rust-mutants-sealed/tests/`.
+
 ### Fixture projects
 
 `fixtures/` holds independent cargo projects the suites drive with a real `cargo`, offline.

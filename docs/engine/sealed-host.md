@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # The sealed host
 
-**Status: implemented, and not yet read by the engine.** `crates/rust-mutants-sealed` runs a WebAssembly guest compiled for `wasm32-wasip1`; a later change has the engine run each test of an instrumented snapshot through it.
+**Status: implemented, and held to the official WASI preview1 conformance suite.** `crates/rust-mutants-sealed` runs a WebAssembly guest compiled for `wasm32-wasip1`, and the engine runs each test of an instrumented snapshot through it, as [sealed execution](sealed.md) says.
 
 A sealed invocation is a pure function of content-addressed inputs.
 The same module, run with the same invocation under the same configuration, gives a transcript that is the same byte for byte, down to its digest.
@@ -73,6 +73,13 @@ Floating-point NaNs are canonicalized.
 | `proc_raise` | refused with `nosys` and recorded |
 | `path_link`, `path_symlink` | refused with `notsup` and recorded |
 
+Every descriptor carries the rights WASI gives it, and a call a right governs asks the descriptor it names for that right before it does anything.
+A descriptor without it is answered `notcapable`, or `badf` where the right is reading or writing, as POSIX answers a descriptor not open for them, and nothing is recorded: a right the guest gave up is its own narrowing, not the sandbox refusing.
+A preopen carries every right a directory can and passes every right on; a descriptor `path_open` gives out carries what it asked for of what its directory passes on and of what its kind can carry, never more; and `fd_fdstat_set_rights` narrows, never widens.
+`path_open` needs `path_open`, with `path_create_file` to make the file and `path_filestat_set_size` to truncate it; `path_rename` needs `path_rename_source` of the one descriptor and `path_rename_target` of the other; `fd_pread` and `fd_pwrite` need `fd_seek` besides reading or writing; asking the position without moving it needs `fd_tell` or `fd_seek`; and a descriptor waited on in `poll_oneoff` needs `poll_fd_readwrite`.
+Every other call a right is named after needs that right: `fd_advise`, `fd_allocate`, `fd_datasync`, `fd_fdstat_set_flags`, `fd_filestat_get`, `fd_filestat_set_size`, `fd_filestat_set_times`, `fd_readdir`, `fd_seek`, `fd_sync`, `fd_tell`, `path_create_directory`, `path_filestat_get`, `path_filestat_set_times`, `path_readlink`, `path_remove_directory` and `path_unlink_file`.
+The standard streams carry reading or writing, polling, asking their metadata and setting their flags.
+
 A path that leaves what the descriptor it is resolved from may reach, or that is absolute and names no place inside it, is refused with `notcapable` and recorded.
 A name a directory does not hold, where it holds one that differs from it only in case, is refused with `notcapable` and recorded as `case-only`, whether the path looks it up, makes it, renames to it or removes it.
 A snapshot holds names exactly as they were read, while the file system a build ran on may compare them in either case, as NTFS and APFS do by default, and then the name would have reached the other.
@@ -83,7 +90,9 @@ A wait on a CPU-time clock, which moves only while the guest runs, is answered w
 A wait for a deadline past the end of virtual time is a wait nothing ends, so the guest spends its whole budget and stops as `FuelExhausted`.
 
 A directory lists `.` and `..` and then its entries in the order of their names.
-Every file and directory reads the same metadata in every invocation: its times are zero until the guest sets them, its inode is a digest of its path, its device is the number of its preopen, and it has one link.
+Every file and directory reads the same metadata in every invocation.
+Its times are what the realtime clock reads when the invocation starts, a file or directory the guest makes as much as the snapshot's, until the guest sets them, so no time is one the guest's own clock could never have read.
+Its inode is a digest of its path, its device is the number of its preopen, and it has one link.
 
 ## The working directory
 
@@ -152,3 +161,19 @@ That is why the configuration digest names the target and its CPU features: two 
 `cargo nextest run -p rust-mutants-sealed` runs the suite: hand-written WebAssembly commands, one for each host call, and the laws over generated inputs.
 `toolchain_guests` compiles Rust guests with the toolchain `rust-toolchain.toml` pins, for `wasm32-wasip1`, which the same file installs; a test that finds the target missing fails and names `rustup target add wasm32-wasip1 --toolchain 1.98.0`.
 It keeps compiled guests under `target/tmp/sealed-guests`, each under the digest of its sources, the compiler, and its flags.
+
+### The official conformance suite
+
+`cargo xtask wasi-testsuite` holds the host to [WebAssembly/wasi-testsuite](https://github.com/WebAssembly/wasi-testsuite): every one of its preview1 tests, prebuilt from AssemblyScript, C and Rust, at the commit `crates/rust-mutants/tests/wasi-testsuite.toml` pins.
+The command fetches that commit once into a cache, `target/wasi-testsuite` of the workspace or the directory `--cache` names, and verifies it by its id every time it runs: its `HEAD` is the commit, and nothing of its tree is changed, added or ignored beside it.
+It then runs the harness, the module `wasi_testsuite` of `rust-mutants`' suite, which runs each test on this host exactly as a sealed test instance runs: the engine's fuel, limits, clock and seed, the test's root preopened at `/` as the suite's own runners preopen it, its arguments and environment as its JSON gives them, and standard input at its end.
+A test passes where it ends with the exit code its JSON names, zero where it names none, and writes exactly the output it names.
+
+The expectations name every test with what the host must give: `pass`, or `refused`, for a test that fails because the host refuses what it asks by design.
+Each names every refusal the host records while the test runs, and a refused one also how the test then ends and the row of the import table above that documents the refusal; a test of the harness holds every such row to this page, listing the function and answering it as the reason says.
+The command fails on a test that ends otherwise, on a test the file does not name, and on a name the suite does not hold, so a test added upstream is caught when the pin moves.
+At the pinned commit 63 tests pass and 9 are refused.
+Three of the 63 pass past a refusal: one tests for the answer an escaping path is given, and two skip what they test once a symbolic link cannot be made.
+Of the 9, two call `sock_shutdown`, which the host refuses with every socket call, and seven make a hard or symbolic link, which it refuses too.
+A result that is neither a pass nor a refusal the import table documents is a defect of the host, fixed with a test of its own in this crate so that it is held without the suite.
+`mise run wasi-testsuite` runs the command with its cache in the user's cache directory, and the CI job of the same name runs that task.

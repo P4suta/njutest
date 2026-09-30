@@ -54,6 +54,7 @@ pub mod shapes;
 pub mod specimen;
 pub mod strictjson;
 pub mod surface;
+pub mod wasitestsuite;
 pub mod wire;
 pub mod work;
 
@@ -130,6 +131,14 @@ enum ExecutionGate {
     KaniLawsAudit {
         /// The fresh JSON document written by pinned Kani 0.68.
         export: std::path::PathBuf,
+    },
+    /// Run every preview1 test of WebAssembly/wasi-testsuite on the sealed host as a sealed test instance runs, and fail unless each ends as crates/rust-mutants/tests/wasi-testsuite.toml says.
+    ///
+    /// The commit the file pins is fetched once into the cache, verified by its id every time, and a test the file does not name, or a name the suite does not hold, fails too.
+    WasiTestsuite {
+        /// Where the suite is fetched to, one checkout per pinned commit; `target/wasi-testsuite` of the workspace where it is not named.
+        #[arg(long, value_name = "DIR")]
+        cache: Option<std::path::PathBuf>,
     },
     /// Whether a completed run's verdicts are the ones its own recording supports (ADR 0004).
     Proofaudit {
@@ -289,6 +298,14 @@ fn run_execution(
             package,
         } => receipt::write(root, process.cargo, (&decision, &package, &module)),
         ExecutionGate::KaniLaws { cache } => kanilaws::laws(root, process.cargo, &cache),
+        ExecutionGate::WasiTestsuite { cache } => {
+            let cache = cache.map_or_else(
+                || root.join(wasitestsuite::DEFAULT_CACHE),
+                |named| process.directory.join(named),
+            );
+            wasitestsuite::run(root, process.cargo, &cache)
+                .map_err(|error| gates::GateError(error.coded()))
+        }
         ExecutionGate::KaniLawsAudit { export } => kaniaudit::audit(&export, root)
             .map(|()| format!("kani-laws: {} production harnesses, every assertion reachable, every cover satisfiable, and each within its ceiling", kanilaws::harnesses().len()))
             .map_err(|error| gates::GateError(error.coded())),

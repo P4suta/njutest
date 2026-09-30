@@ -390,7 +390,7 @@ fn descriptors_renumber_close_advise_allocate_sync_and_narrow_their_rights() {
          (call $expect (call $fd_datasync (i32.const 4)) (i32.const 0))
          (call $expect (call $fd_sync (i32.const 4)) (i32.const 0))
          (call $expect (call $fd_fdstat_set_flags (i32.const 4) (i32.const 1)) (i32.const 0))
-         (call $expect (call $fd_fdstat_set_rights (i32.const 4) (i64.const 2) (i64.const 0)) (i32.const 0))
+         (call $expect (call $fd_fdstat_set_rights (i32.const 4) (i64.const 2097154) (i64.const 0)) (i32.const 0))
          (call $expect (call $fd_fdstat_set_rights (i32.const 4) (i64.const 64) (i64.const 0)) (i32.const 76))
          (call $expect (call $fd_renumber (i32.const 4) (i32.const 2)) (i32.const 0))
          (call $expect (call $fd_filestat_get (i32.const 2) (i32.const 200)) (i32.const 0))
@@ -522,6 +522,381 @@ fn a_misuse_is_answered_with_the_error_number_posix_gives_it() {
     }
 }
 
+/// The rights of WASI preview1 by the bit the specification gives each, written from it rather than from the crate's constants, so each checks the other.
+mod right {
+    /// Flushing a file's data.
+    pub(super) const FD_DATASYNC: u64 = 1 << 0;
+    /// Reading.
+    pub(super) const FD_READ: u64 = 1 << 1;
+    /// Moving the position, which implies asking it.
+    pub(super) const FD_SEEK: u64 = 1 << 2;
+    /// Setting the descriptor's flags.
+    pub(super) const FD_FDSTAT_SET_FLAGS: u64 = 1 << 3;
+    /// Flushing a file's data and metadata.
+    pub(super) const FD_SYNC: u64 = 1 << 4;
+    /// Asking the position.
+    pub(super) const FD_TELL: u64 = 1 << 5;
+    /// Writing.
+    pub(super) const FD_WRITE: u64 = 1 << 6;
+    /// Advising how a file will be used.
+    pub(super) const FD_ADVISE: u64 = 1 << 7;
+    /// Allocating space in a file.
+    pub(super) const FD_ALLOCATE: u64 = 1 << 8;
+    /// Making a directory.
+    pub(super) const PATH_CREATE_DIRECTORY: u64 = 1 << 9;
+    /// Opening a file that is made where it is absent.
+    pub(super) const PATH_CREATE_FILE: u64 = 1 << 10;
+    /// Opening a path.
+    pub(super) const PATH_OPEN: u64 = 1 << 13;
+    /// Reading a directory's entries.
+    pub(super) const FD_READDIR: u64 = 1 << 14;
+    /// Reading a symbolic link.
+    pub(super) const PATH_READLINK: u64 = 1 << 15;
+    /// Renaming from a directory.
+    pub(super) const PATH_RENAME_SOURCE: u64 = 1 << 16;
+    /// Renaming into a directory.
+    pub(super) const PATH_RENAME_TARGET: u64 = 1 << 17;
+    /// Asking the metadata of a path.
+    pub(super) const PATH_FILESTAT_GET: u64 = 1 << 18;
+    /// Opening a file that is truncated.
+    pub(super) const PATH_FILESTAT_SET_SIZE: u64 = 1 << 19;
+    /// Setting the times of a path.
+    pub(super) const PATH_FILESTAT_SET_TIMES: u64 = 1 << 20;
+    /// Asking the metadata of what the descriptor reaches.
+    pub(super) const FD_FILESTAT_GET: u64 = 1 << 21;
+    /// Setting the size of a file through its descriptor.
+    pub(super) const FD_FILESTAT_SET_SIZE: u64 = 1 << 22;
+    /// Setting the times of what the descriptor reaches.
+    pub(super) const FD_FILESTAT_SET_TIMES: u64 = 1 << 23;
+    /// Removing a directory.
+    pub(super) const PATH_REMOVE_DIRECTORY: u64 = 1 << 25;
+    /// Removing a file.
+    pub(super) const PATH_UNLINK_FILE: u64 = 1 << 26;
+    /// Waiting on the descriptor in `poll_oneoff`.
+    pub(super) const POLL_FD_READWRITE: u64 = 1 << 27;
+}
+
+/// Which descriptor a case takes rights away from before its call.
+#[derive(Debug, Clone, Copy)]
+enum Narrowed {
+    /// The preopen's own rights.
+    Preopen,
+    /// The rights the preopen passes on to what is opened through it, before `seen.txt` is opened through it as descriptor 4.
+    PassedOn,
+    /// The rights of `seen.txt`, opened through the preopen with every right as descriptor 4.
+    File,
+}
+
+/// A call a right governs: what it is, the descriptor the rights are taken from, the rights taken, the functions it imports, and the call checked by `$expect` against the answer it must now give.
+type Governed = (
+    &'static str,
+    Narrowed,
+    u64,
+    &'static [&'static str],
+    &'static str,
+);
+
+/// Every call a right governs, each made once the right is taken away, and each answered as a descriptor without it: `notcapable`, or `badf` for reading and writing, as POSIX answers a descriptor not open for them.
+const GOVERNED: [Governed; 33] = [
+    (
+        "path_create_directory without path_create_directory",
+        Narrowed::Preopen,
+        right::PATH_CREATE_DIRECTORY,
+        &["path_create_directory"],
+        "(call $expect (call $path_create_directory (i32.const 3) (i32.const 120) (i32.const 4)) (i32.const 76))",
+    ),
+    (
+        "path_open creating a file without path_create_file",
+        Narrowed::Preopen,
+        right::PATH_CREATE_FILE,
+        &["path_open"],
+        "(call $expect (call $path_open (i32.const 3) (i32.const 0) (i32.const 120) (i32.const 4) (i32.const 1) (i64.const 0) (i64.const 0) (i32.const 0) (i32.const 64)) (i32.const 76))",
+    ),
+    (
+        "path_open without path_open",
+        Narrowed::Preopen,
+        right::PATH_OPEN,
+        &["path_open"],
+        "(call $expect (call $path_open (i32.const 3) (i32.const 0) (i32.const 100) (i32.const 8) (i32.const 0) (i64.const 0) (i64.const 0) (i32.const 0) (i32.const 64)) (i32.const 76))",
+    ),
+    (
+        "path_open truncating a file without path_filestat_set_size",
+        Narrowed::Preopen,
+        right::PATH_FILESTAT_SET_SIZE,
+        &["path_open"],
+        "(call $expect (call $path_open (i32.const 3) (i32.const 0) (i32.const 100) (i32.const 8) (i32.const 8) (i64.const 0) (i64.const 0) (i32.const 0) (i32.const 64)) (i32.const 76))",
+    ),
+    (
+        "fd_readdir without fd_readdir",
+        Narrowed::Preopen,
+        right::FD_READDIR,
+        &["fd_readdir"],
+        "(call $expect (call $fd_readdir (i32.const 3) (i32.const 700) (i32.const 256) (i64.const 0) (i32.const 64)) (i32.const 76))",
+    ),
+    (
+        "path_readlink without path_readlink",
+        Narrowed::Preopen,
+        right::PATH_READLINK,
+        &["path_readlink"],
+        "(call $expect (call $path_readlink (i32.const 3) (i32.const 100) (i32.const 8) (i32.const 700) (i32.const 64) (i32.const 64)) (i32.const 76))",
+    ),
+    (
+        "path_rename without path_rename_source",
+        Narrowed::Preopen,
+        right::PATH_RENAME_SOURCE,
+        &["path_rename"],
+        "(call $expect (call $path_rename (i32.const 3) (i32.const 100) (i32.const 8) (i32.const 3) (i32.const 120) (i32.const 4)) (i32.const 76))",
+    ),
+    (
+        "path_rename without path_rename_target",
+        Narrowed::Preopen,
+        right::PATH_RENAME_TARGET,
+        &["path_rename"],
+        "(call $expect (call $path_rename (i32.const 3) (i32.const 100) (i32.const 8) (i32.const 3) (i32.const 120) (i32.const 4)) (i32.const 76))",
+    ),
+    (
+        "path_filestat_get without path_filestat_get",
+        Narrowed::Preopen,
+        right::PATH_FILESTAT_GET,
+        &["path_filestat_get"],
+        "(call $expect (call $path_filestat_get (i32.const 3) (i32.const 0) (i32.const 100) (i32.const 8) (i32.const 200)) (i32.const 76))",
+    ),
+    (
+        "path_filestat_set_times without path_filestat_set_times",
+        Narrowed::Preopen,
+        right::PATH_FILESTAT_SET_TIMES,
+        &["path_filestat_set_times"],
+        "(call $expect (call $path_filestat_set_times (i32.const 3) (i32.const 0) (i32.const 100) (i32.const 8) (i64.const 0) (i64.const 0) (i32.const 1)) (i32.const 76))",
+    ),
+    (
+        "path_remove_directory without path_remove_directory",
+        Narrowed::Preopen,
+        right::PATH_REMOVE_DIRECTORY,
+        &["path_remove_directory"],
+        "(call $expect (call $path_remove_directory (i32.const 3) (i32.const 140) (i32.const 5)) (i32.const 76))",
+    ),
+    (
+        "path_unlink_file without path_unlink_file",
+        Narrowed::Preopen,
+        right::PATH_UNLINK_FILE,
+        &["path_unlink_file"],
+        "(call $expect (call $path_unlink_file (i32.const 3) (i32.const 100) (i32.const 8)) (i32.const 76))",
+    ),
+    (
+        "fd_filestat_get of a directory without fd_filestat_get",
+        Narrowed::Preopen,
+        right::FD_FILESTAT_GET,
+        &["fd_filestat_get"],
+        "(call $expect (call $fd_filestat_get (i32.const 3) (i32.const 200)) (i32.const 76))",
+    ),
+    (
+        "fd_filestat_set_times of a directory without fd_filestat_set_times",
+        Narrowed::Preopen,
+        right::FD_FILESTAT_SET_TIMES,
+        &["fd_filestat_set_times"],
+        "(call $expect (call $fd_filestat_set_times (i32.const 3) (i64.const 0) (i64.const 0) (i32.const 1)) (i32.const 76))",
+    ),
+    (
+        "fd_fdstat_set_flags without fd_fdstat_set_flags",
+        Narrowed::Preopen,
+        right::FD_FDSTAT_SET_FLAGS,
+        &["fd_fdstat_set_flags"],
+        "(call $expect (call $fd_fdstat_set_flags (i32.const 3) (i32.const 0)) (i32.const 76))",
+    ),
+    (
+        "fd_sync without fd_sync",
+        Narrowed::Preopen,
+        right::FD_SYNC,
+        &["fd_sync"],
+        "(call $expect (call $fd_sync (i32.const 3)) (i32.const 76))",
+    ),
+    (
+        "fd_datasync without fd_datasync",
+        Narrowed::Preopen,
+        right::FD_DATASYNC,
+        &["fd_datasync"],
+        "(call $expect (call $fd_datasync (i32.const 3)) (i32.const 76))",
+    ),
+    (
+        "a file opened through a directory that no longer passes on fd_write",
+        Narrowed::PassedOn,
+        right::FD_WRITE,
+        &["fd_write", "fd_fdstat_get"],
+        "(call $expect (call $fd_write (i32.const 4) (i32.const 300) (i32.const 1) (i32.const 64)) (i32.const 8))
+         (call $expect (call $fd_fdstat_get (i32.const 4) (i32.const 400)) (i32.const 0))
+         (call $expect (i32.wrap_i64 (i64.and (i64.load (i32.const 408)) (i64.const 64))) (i32.const 0))",
+    ),
+    (
+        "fd_read without fd_read",
+        Narrowed::File,
+        right::FD_READ,
+        &["fd_read"],
+        "(call $expect (call $fd_read (i32.const 4) (i32.const 300) (i32.const 1) (i32.const 64)) (i32.const 8))",
+    ),
+    (
+        "fd_write without fd_write",
+        Narrowed::File,
+        right::FD_WRITE,
+        &["fd_write"],
+        "(call $expect (call $fd_write (i32.const 4) (i32.const 300) (i32.const 1) (i32.const 64)) (i32.const 8))",
+    ),
+    (
+        "fd_pread without fd_read",
+        Narrowed::File,
+        right::FD_READ,
+        &["fd_pread"],
+        "(call $expect (call $fd_pread (i32.const 4) (i32.const 300) (i32.const 1) (i64.const 0) (i32.const 64)) (i32.const 8))",
+    ),
+    (
+        "fd_pread without fd_seek",
+        Narrowed::File,
+        right::FD_SEEK,
+        &["fd_pread"],
+        "(call $expect (call $fd_pread (i32.const 4) (i32.const 300) (i32.const 1) (i64.const 0) (i32.const 64)) (i32.const 76))",
+    ),
+    (
+        "fd_pwrite without fd_write",
+        Narrowed::File,
+        right::FD_WRITE,
+        &["fd_pwrite"],
+        "(call $expect (call $fd_pwrite (i32.const 4) (i32.const 300) (i32.const 1) (i64.const 0) (i32.const 64)) (i32.const 8))",
+    ),
+    (
+        "fd_pwrite without fd_seek",
+        Narrowed::File,
+        right::FD_SEEK,
+        &["fd_pwrite"],
+        "(call $expect (call $fd_pwrite (i32.const 4) (i32.const 300) (i32.const 1) (i64.const 0) (i32.const 64)) (i32.const 76))",
+    ),
+    (
+        "fd_seek moving the position without fd_seek, where fd_tell still asks it",
+        Narrowed::File,
+        right::FD_SEEK,
+        &["fd_seek", "fd_tell"],
+        "(call $expect (call $fd_seek (i32.const 4) (i64.const 1) (i32.const 0) (i32.const 64)) (i32.const 76))
+         (call $expect (call $fd_seek (i32.const 4) (i64.const 0) (i32.const 1) (i32.const 64)) (i32.const 0))
+         (call $expect (call $fd_tell (i32.const 4) (i32.const 64)) (i32.const 0))",
+    ),
+    (
+        "fd_tell without fd_tell, where fd_seek still implies it",
+        Narrowed::File,
+        right::FD_TELL,
+        &["fd_tell"],
+        "(call $expect (call $fd_tell (i32.const 4) (i32.const 64)) (i32.const 0))",
+    ),
+    (
+        "fd_tell without fd_tell or fd_seek",
+        Narrowed::File,
+        right::FD_TELL | right::FD_SEEK,
+        &["fd_seek", "fd_tell"],
+        "(call $expect (call $fd_tell (i32.const 4) (i32.const 64)) (i32.const 76))
+         (call $expect (call $fd_seek (i32.const 4) (i64.const 0) (i32.const 1) (i32.const 64)) (i32.const 76))",
+    ),
+    (
+        "fd_advise without fd_advise",
+        Narrowed::File,
+        right::FD_ADVISE,
+        &["fd_advise"],
+        "(call $expect (call $fd_advise (i32.const 4) (i64.const 0) (i64.const 4) (i32.const 1)) (i32.const 76))",
+    ),
+    (
+        "fd_allocate without fd_allocate",
+        Narrowed::File,
+        right::FD_ALLOCATE,
+        &["fd_allocate"],
+        "(call $expect (call $fd_allocate (i32.const 4) (i64.const 0) (i64.const 16)) (i32.const 76))",
+    ),
+    (
+        "fd_filestat_set_size without fd_filestat_set_size",
+        Narrowed::File,
+        right::FD_FILESTAT_SET_SIZE,
+        &["fd_filestat_set_size"],
+        "(call $expect (call $fd_filestat_set_size (i32.const 4) (i64.const 0)) (i32.const 76))",
+    ),
+    (
+        "fd_filestat_get of a file without fd_filestat_get",
+        Narrowed::File,
+        right::FD_FILESTAT_GET,
+        &["fd_filestat_get"],
+        "(call $expect (call $fd_filestat_get (i32.const 4) (i32.const 200)) (i32.const 76))",
+    ),
+    (
+        "fd_filestat_set_times of a file without fd_filestat_set_times",
+        Narrowed::File,
+        right::FD_FILESTAT_SET_TIMES,
+        &["fd_filestat_set_times"],
+        "(call $expect (call $fd_filestat_set_times (i32.const 4) (i64.const 0) (i64.const 0) (i32.const 1)) (i32.const 76))",
+    ),
+    (
+        "poll_oneoff waiting to read without poll_fd_readwrite",
+        Narrowed::File,
+        right::POLL_FD_READWRITE,
+        &["poll_oneoff"],
+        "(i32.store8 (i32.const 508) (i32.const 1))
+         (i32.store (i32.const 516) (i32.const 4))
+         (call $expect (call $poll_oneoff (i32.const 500) (i32.const 600) (i32.const 1) (i32.const 64)) (i32.const 0))
+         (call $expect (i32.load16_u (i32.const 608)) (i32.const 76))",
+    ),
+];
+
+/// The WAT that takes `taken` away from the rights `narrowed` names, leaving `seen.txt` open as descriptor 4 where the case is about a file.
+fn narrowing(narrowed: Narrowed, taken: u64) -> String {
+    let kept = (!taken).cast_signed();
+    let open = "(call $expect (call $path_open (i32.const 3) (i32.const 0) (i32.const 100) (i32.const 8) (i32.const 0) (i64.const -1) (i64.const -1) (i32.const 0) (i32.const 64)) (i32.const 0))
+         (call $expect (i32.load (i32.const 64)) (i32.const 4))";
+    let (descriptor, base, passed_on) = match narrowed {
+        Narrowed::Preopen => (3, kept, -1_i64),
+        Narrowed::PassedOn => (3, -1_i64, kept),
+        Narrowed::File => (4, kept, -1_i64),
+    };
+    let narrow = format!(
+        "(call $expect (call $fd_fdstat_get (i32.const {descriptor}) (i32.const 400)) (i32.const 0))
+         (call $expect (call $fd_fdstat_set_rights (i32.const {descriptor}) (i64.and (i64.load (i32.const 408)) (i64.const {base})) (i64.and (i64.load (i32.const 416)) (i64.const {passed_on}))) (i32.const 0))"
+    );
+    match narrowed {
+        Narrowed::Preopen => narrow,
+        Narrowed::PassedOn => format!("{narrow}\n{open}"),
+        Narrowed::File => format!("{open}\n{narrow}"),
+    }
+}
+
+#[test]
+fn a_right_taken_away_refuses_every_call_it_governs() {
+    let mut granted = Vec::new();
+    for (case, narrowed, taken, imports, call) in GOVERNED {
+        let narrowing_imports = ["path_open", "fd_fdstat_get", "fd_fdstat_set_rights"];
+        let mut all = narrowing_imports.to_vec();
+        all.extend(
+            imports
+                .iter()
+                .filter(|name| !narrowing_imports.contains(name)),
+        );
+        let bytes = command(
+            &all,
+            "(data (i32.const 100) \"seen.txt\")
+             (data (i32.const 120) \"made\")
+             (data (i32.const 140) \"empty\")
+             (data (i32.const 300) \"\\40\\01\\00\\00\\04\\00\\00\\00\")",
+            &format!("{}\n{call}", narrowing(narrowed, taken)),
+        );
+        let transcript = run(&bytes, &invocation());
+        if transcript.stop() != SealedStop::Returned {
+            granted.push(format!("{case}: {:?}", transcript.stop()));
+        }
+        assert!(
+            transcript.refusals().is_empty(),
+            "{case}: a right the guest gave up is its own narrowing, never the sandbox refusing it"
+        );
+    }
+    assert!(
+        granted.is_empty(),
+        "a right taken away is one the descriptor no longer has, so the call it governs is \
+         answered as a descriptor without it; each of these was carried out, or answered \
+         otherwise, and exited 1000 plus the error number it was given:\n  {}",
+        granted.join("\n  ")
+    );
+}
+
 #[test]
 fn a_rename_from_one_preopen_into_another_is_answered_xdev() {
     let bytes = command(
@@ -582,6 +957,56 @@ fn the_preopen_is_named_to_the_guest_and_no_path_is_a_symbolic_link() {
     let transcript = run(&bytes, &invocation());
     assert_eq!(transcript.stop(), SealedStop::Returned);
     assert_eq!(transcript.stdout().bytes(), b"/sandbox");
+}
+
+#[test]
+fn every_file_carries_the_time_the_realtime_clock_starts_at_until_the_guest_sets_another() {
+    let bytes = command(
+        &[
+            "path_open",
+            "path_create_directory",
+            "path_filestat_get",
+            "fd_filestat_get",
+            "path_filestat_set_times",
+        ],
+        "(data (i32.const 100) \"seen.txt\")
+         (data (i32.const 120) \"made\")
+         (data (i32.const 140) \"dir\")",
+        "(call $expect (call $fd_filestat_get (i32.const 3) (i32.const 200)) (i32.const 0))
+         (i64.store (i32.const 800) (i64.load (i32.const 240)))
+         (i64.store (i32.const 808) (i64.load (i32.const 248)))
+         (call $expect (call $path_filestat_get (i32.const 3) (i32.const 0) (i32.const 100) (i32.const 8) (i32.const 200)) (i32.const 0))
+         (i64.store (i32.const 816) (i64.load (i32.const 240)))
+         (i64.store (i32.const 824) (i64.load (i32.const 248)))
+         (call $expect (call $path_open (i32.const 3) (i32.const 0) (i32.const 120) (i32.const 4) (i32.const 1) (i64.const -1) (i64.const -1) (i32.const 0) (i32.const 64)) (i32.const 0))
+         (call $expect (call $path_filestat_get (i32.const 3) (i32.const 0) (i32.const 120) (i32.const 4) (i32.const 200)) (i32.const 0))
+         (i64.store (i32.const 832) (i64.load (i32.const 240)))
+         (i64.store (i32.const 840) (i64.load (i32.const 248)))
+         (call $expect (call $path_create_directory (i32.const 3) (i32.const 140) (i32.const 3)) (i32.const 0))
+         (call $expect (call $path_filestat_get (i32.const 3) (i32.const 0) (i32.const 140) (i32.const 3) (i32.const 200)) (i32.const 0))
+         (i64.store (i32.const 848) (i64.load (i32.const 240)))
+         (i64.store (i32.const 856) (i64.load (i32.const 248)))
+         (call $expect (call $path_filestat_set_times (i32.const 3) (i32.const 0) (i32.const 100) (i32.const 8) (i64.const 0) (i64.sub (i64.load (i32.const 824)) (i64.const 100)) (i32.const 4)) (i32.const 0))
+         (call $expect (call $path_filestat_get (i32.const 3) (i32.const 0) (i32.const 100) (i32.const 8) (i32.const 200)) (i32.const 0))
+         (i64.store (i32.const 864) (i64.load (i32.const 240)))
+         (i64.store (i32.const 872) (i64.load (i32.const 248)))
+         (call $emit (i32.const 800) (i32.const 80))",
+    );
+    let started = invocation();
+    let origin = started.clock.realtime_origin;
+    let set = origin.checked_sub(100).expect("the origin is past 100");
+    let transcript = run(&bytes, &started);
+    assert_eq!(transcript.stop(), SealedStop::Returned);
+    assert_eq!(
+        emitted(&transcript),
+        [
+            origin, origin, origin, origin, origin, origin, origin, origin, origin, set
+        ],
+        "the preopen, a file of the snapshot, a file made and a directory made are each accessed \
+         and modified at the time the realtime clock starts at, never at a time before it that \
+         the guest's own clock could not have read, and a time the guest sets is the one it reads \
+         back"
+    );
 }
 
 #[test]

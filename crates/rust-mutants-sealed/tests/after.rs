@@ -75,19 +75,40 @@ fn a_snapshot_after_an_overlay_is_the_snapshot_built_with_what_it_left() {
         accessed: 0,
         modified: 0,
     };
+    let left = [
+        ("made", &made),
+        ("made/note", &note),
+        ("seen.txt", &OverlayState::Removed),
+    ];
     let after = snapshot()
-        .after([
-            ("made", &made),
-            ("made/note", &note),
-            ("seen.txt", &OverlayState::Removed),
-        ])
+        .after(left)
         .expect("each change is below a directory the snapshot holds");
+    let again = snapshot()
+        .after(left)
+        .expect("each change is below a directory the snapshot holds");
+    assert_eq!(
+        after.digest(),
+        again.digest(),
+        "the same changes over the same tree leave the same tree"
+    );
+    assert_eq!(
+        after.digest(),
+        after
+            .after([])
+            .expect("a tree its own overlay leaves alone is held")
+            .digest(),
+        "one tree, one digest"
+    );
     let built = Snapshot::builder()
         .directory("empty")
         .and_then(|built| built.file("made/note", b"kept".to_vec()))
         .and_then(rust_mutants_sealed::SnapshotBuilder::build)
         .expect("the snapshot is valid");
-    assert_eq!(after.digest(), built.digest(), "one tree, one digest");
+    assert_ne!(
+        after.digest(),
+        built.digest(),
+        "the times the overlay set are part of what the tree holds, which a tree built without any does not"
+    );
     let retimed = OverlayState::File {
         contents: b"kept".to_vec(),
         accessed: 5,
@@ -98,7 +119,7 @@ fn a_snapshot_after_an_overlay_is_the_snapshot_built_with_what_it_left() {
         .expect("each change is below a directory the snapshot holds");
     assert_ne!(
         later.digest(),
-        built.digest(),
+        after.digest(),
         "a time the overlay set is part of what the tree holds"
     );
 }

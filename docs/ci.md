@@ -40,7 +40,7 @@ To diagnose a run that only misbehaves on the runner, set `NJUTEST_TRACE: '1'` o
 
 | Workflow | Jobs | When |
 | --- | --- | --- |
-| `ci.yml` | the cross-platform test matrix, lint (fmt, clippy, rustdoc, the `cargo xtask` gates, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, the coverage ratchet which is also the Linux suite, `package-install` on every platform the release builds an archive for, the `book` build, `soundness`, `action-smoke`, `action-smoke-rust-mutants`, and `required` which gathers them | every pull request, weekly on `main`, and on request |
+| `ci.yml` | the cross-platform test matrix, lint (fmt, clippy, rustdoc, the `cargo xtask` gates, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, the coverage ratchet which is also the Linux suite, `package-install` on every platform the release builds an archive for, the `book` build, `soundness`, `kani-verified`, `wasi-testsuite`, which holds the sealed host to WebAssembly/wasi-testsuite, `action-smoke`, `action-smoke-rust-mutants`, and `required` which gathers them | every pull request, weekly on `main`, and on request |
 | `main.yml` | `tested-tree` proves that the tree a push to `main` brings is the tree a pull request head passed `required` with | every push to `main` |
 | `mutation.yml` | `whole` runs `cargo-mutants` over the workspace | weekly, and on request |
 | `dogfood.yml` | `whole` runs the engine over its own catalog in one job through the `rust-mutants` action, checks the recording, and re-decides the run against the ledger | weekly, and on request |

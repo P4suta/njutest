@@ -23,7 +23,7 @@ use crate::invocation::{ClockPolicy, Halt, Invocation};
 use crate::random::RandomStream;
 use crate::transcript::{Captured, Denials, OverlayEntry, Refusal, RefusalReason};
 
-use self::fs::{Fault, Filesystem, Stream, TimesRequest};
+use self::fs::{Fault, Filesystem, Flush, Needs, Stream, TimesRequest};
 use self::memory::{Access, GuestMemory};
 
 pub(crate) use self::limiter::{Limiter, TABLE_ELEMENTS};
@@ -33,9 +33,6 @@ pub(crate) const CALL_FUEL: u64 = 64;
 
 /// The fuel every byte of guest memory a host call reads or writes costs.
 pub(crate) const BYTE_FUEL: u64 = 1;
-
-/// The time every file and directory of a snapshot carries until the guest sets another.
-pub(crate) const FILE_TIME: u64 = 0;
 
 /// The resolution every clock reports, in nanoseconds.
 pub(crate) const RESOLUTION: u64 = 1;
@@ -182,8 +179,11 @@ impl Host {
             .variables()
             .map(|(name, value)| c_string(format!("{name}={value}").as_bytes()))
             .collect();
-        let files = Filesystem::new(&invocation.preopens, invocation.limits.overlay)
-            .map_err(|_numbering| Invariant::Width)?;
+        let files = Filesystem::new(
+            &invocation.preopens,
+            (invocation.limits.overlay, invocation.clock.realtime_origin),
+        )
+        .map_err(|_numbering| Invariant::Width)?;
         Ok(Self {
             arguments,
             environment,
@@ -274,7 +274,8 @@ impl Host {
                     .allocate(params.w(0)?, params.l(1)?, params.l(2)?)?)
             }
             WasiFunction::FdClose => Ok(self.files.close(params.w(0)?)?),
-            WasiFunction::FdDatasync | WasiFunction::FdSync => Ok(self.files.sync(params.w(0)?)?),
+            WasiFunction::FdDatasync => Ok(self.files.sync(params.w(0)?, Flush::Data)?),
+            WasiFunction::FdSync => Ok(self.files.sync(params.w(0)?, Flush::Everything)?),
             WasiFunction::FdFdstatGet => {
                 io::fdstat(&self.files, memory, params.w(0)?, params.w(1)?)
             }
@@ -385,7 +386,7 @@ impl Host {
         let fd = params.w(0)?;
         let buffers = memory.buffers(params.w(1)?, params.w(2)?)?;
         let data = memory.gather(&buffers)?;
-        let written = match self.files.stream(fd, RIGHTS_FD_WRITE)? {
+        let written = match self.files.stream(fd, Needs::All(RIGHTS_FD_WRITE))? {
             Stream::Stdout => {
                 self.stdout.keep(&data, self.caps.0)?;
                 data.len()
