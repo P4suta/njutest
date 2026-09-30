@@ -16,7 +16,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 2. **Instrumentation happens once.** Every compilable mutant of a file lives dormant behind a guard in the snapshot; the test binaries are built once;
    `RUST_MUTANTS_ACTIVE=<64 hex id>` activates one mutant per test process.
 3. **Bytes are spliced, never pretty-printed.** Comments, whitespace, and CRLF are preserved, and every splice keeps its line count, so coverage regions and mutant positions agree line for line with the pristine file.
-   A file the build reads as text is read as it was written: each `include_str!` or `include_bytes!` of a Rust source of the tree is pointed at a copy of that source beside the reader, in bytes of the same length, as [limitations](../limitations.md) says.
+   A file the build reads as text is read as it was written: each `include_str!` or `include_bytes!` of a Rust source of the tree is pointed at a copy of that source beside the reader, in bytes of the same length, and a source the build only reads as text, that no guard is placed in, is left as it was copied, as [limitations](../limitations.md) says.
 4. **Phases are types.** `Workspace::open → Workspace::prepare(self) → Session`;
    a session executes any number of (mutant, target) pairs without rebuilding.
 

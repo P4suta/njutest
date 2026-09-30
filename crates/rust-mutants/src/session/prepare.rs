@@ -825,7 +825,12 @@ struct Gated {
     read: Digested,
 }
 
+/// The bytes every planned file is compiled from, with the includes the plan kept, which name the files the build reads as text.
+type Compiled = (BTreeMap<String, Vec<u8>>, Vec<crate::verbatim::Kept>);
+
 /// The bytes every file of `sources` is compiled from: its pristine bytes, but for a file that reads a Rust source of the tree as text, whose include now reads the source as it was copied, in bytes of the same length on the same lines, so every position of the pristine file holds in it.
+///
+/// The includes the plan kept are named with the bytes, so a file the build only reads as text can be left as it was copied.
 ///
 /// # Errors
 /// What [`Workspace::keep_includes_verbatim`] refuses, and a rewritten file that cannot be read back or has another length.
@@ -833,7 +838,7 @@ fn compiled(
     workspace: &mut Workspace,
     units: &[crate::cargo::Unit],
     sources: &BTreeMap<String, Vec<u8>>,
-) -> Result<BTreeMap<String, Vec<u8>>, EngineError> {
+) -> Result<Compiled, EngineError> {
     let kept = workspace.keep_includes_verbatim(units)?;
     let mut compiled = sources.clone();
     for one in &kept {
@@ -857,7 +862,7 @@ fn compiled(
         }
         *bytes = now;
     }
-    Ok(compiled)
+    Ok((compiled, kept))
 }
 
 /// What the build read, as digests a later run or a selection compares against, what each unit read, and what it compiled.
@@ -972,10 +977,16 @@ fn selection_plan(
     trace: &crate::trace::Recorder,
 ) -> Result<Plan, EngineError> {
     let phase = trace.phase("plan");
-    let (sources, placements) = plan_tree(workspace.snapshot_root(), discovery)?;
+    let (mut sources, placements) = plan_tree(workspace.snapshot_root(), discovery)?;
     let eligible = eligible(discovery, &sources, options.validation_filter.as_ref())?;
-    let placements = selected_placements(placements, &eligible);
-    let compiled = compiled(workspace, units, &sources)?;
+    let mut placements = selected_placements(placements, &eligible);
+    let (mut compiled, verbatim) = compiled(workspace, units, &sources)?;
+    for read in verbatim.iter().map(|kept| kept.read.as_str()) {
+        if placements.get(read).is_none_or(Vec::is_empty) && sources.remove(read).is_some() {
+            compiled.remove(read);
+            placements.remove(read);
+        }
+    }
     phase.end();
     Ok(Plan {
         sources,
