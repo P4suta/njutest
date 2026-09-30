@@ -13,6 +13,54 @@ use rust_mutants::testkit::opening::opening;
 use rust_mutants::workspace::Workspace;
 
 #[test]
+fn a_fault_is_carried_beside_the_deletion_of_the_question_it_answers() {
+    let fixture = Fixture::copy("fixture-faulted-ignore");
+    let session = Workspace::open(
+        fixture.root(),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(
+        &PrepareOptions {
+            operators: vec![
+                "inject-error".to_owned(),
+                "question-to-unwrap".to_owned(),
+                "ignore-question-statement".to_owned(),
+            ],
+            touch: true,
+            ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
+        },
+        &Cancel::new(),
+    )
+    .expect("prepare");
+    let beside: Vec<(String, String)> = session
+        .catalog()
+        .mutants()
+        .iter()
+        .filter_map(|mutant| {
+            session.fault_beside(mutant).map(|fault| {
+                (
+                    mutant.candidate.rule.name.to_owned(),
+                    fault.index.to_string(),
+                )
+            })
+        })
+        .collect();
+    assert_eq!(
+        beside,
+        vec![
+            ("question-to-unwrap".to_owned(), "0".to_owned()),
+            ("ignore-question-statement".to_owned(), "0".to_owned()),
+        ],
+        "a fault nests inside both alternatives that ask about the call it fails: the unwrap \
+         that answers the failure, and the deletion of the question that swallows it, since a \
+         survivor that swallows the failure is exactly the one the fault can tell apart \
+         (ADR 0032 decision 6): {beside:?}"
+    );
+}
+
+#[test]
 fn a_failed_call_is_noticed_where_a_test_checks_it_and_refused_where_nothing_can_be_made() {
     let fixture = Fixture::copy("fixture-faulted");
     let session = Workspace::open(

@@ -80,6 +80,7 @@ fn written(report: &Report, said: &[Said]) -> Result<String, super::CountError> 
                 );
             }
         }
+        append_beside(&conclusion.beside, mutant.display_id(), &mut out);
         out.push('\n');
     }
     for finding in &conclusion.findings {
@@ -105,6 +106,21 @@ fn written(report: &Report, said: &[Said]) -> Result<String, super::CountError> 
     record(&mut out, "VERDICT", &[&verdict_name(report)]);
     out.push('\n');
     Ok(out)
+}
+
+/// The evidence under a fault one survivor gained, as the lines under its own record.
+fn append_beside(beside: &[super::faults::BesideRecord], mutant: &str, out: &mut String) {
+    for evidence in beside.iter().filter(|evidence| evidence.mutant == mutant) {
+        append(
+            out,
+            &format!(
+                "observable_under_fault={} failed={} by={}",
+                evidence.fault,
+                evidence.failed.name(),
+                evidence.target
+            ),
+        );
+    }
 }
 
 /// Where a reader goes from a wall of findings, which is the next thing they want.

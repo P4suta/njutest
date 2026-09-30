@@ -136,6 +136,95 @@ fn named<'a>(
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the evidence is checked where it is drawn, one drawing at a time"
+)]
+fn a_surviving_ignore_question_statement_is_told_apart_by_the_call_failing_beside_it() {
+    let fixture = fixture("fixture-faulted-ignore");
+    let output = verify(&fixture, &["--faults", "--trace"]);
+    let part = part(&fixture);
+    let survivors: Vec<&serde_json::Value> = part["mutants"]
+        .as_array()
+        .expect("the mutants")
+        .iter()
+        .filter(|mutant| {
+            mutant["rule"] == "ignore-question-statement"
+                && mutant["decision"]["outcome"] == "survived"
+        })
+        .collect();
+    assert_eq!(
+        survivors.len(),
+        1,
+        "deleting the `?` of `leave` leaves the failure unread and the answer `Ok`, so nothing \
+         notices: {part}\n{}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let survivor = survivors[0]["display_id"].as_str().expect("a survivor");
+    let evidence: Vec<&serde_json::Value> = part["beside"]
+        .as_array()
+        .expect("the evidence beside a fault")
+        .iter()
+        .filter(|beside| beside["mutant"] == survivor)
+        .collect();
+    assert_eq!(
+        evidence.len(),
+        1,
+        "the survivor gains its evidence from the call at its own site failing, which is what \
+         makes it no equivalence (ADR 0032 decision 6): {part}"
+    );
+    assert_eq!(
+        (
+            evidence[0]["failed"].as_str(),
+            part["faults"]
+                .as_array()
+                .expect("the fault records")
+                .iter()
+                .find(|fault| fault["display_id"] == evidence[0]["fault"])
+                .and_then(|fault| fault["decision"]["decision"].as_str())
+        ),
+        (Some("alone"), Some("noticed")),
+        "the fault alone fails the write and the `?` answers it, and beside the deletion nobody \
+         reads the failure: {part}"
+    );
+    let run = njutest::app::reports::pointed_at(&fixture.root, njutest::app::reports::Index::Any)
+        .expect("the index is readable")
+        .expect("the index names a run");
+    let said = |name: &str| {
+        std::fs::read_to_string(
+            fixture
+                .root
+                .join(njutest::config::DEFAULT_REPORTS_DIRECTORY)
+                .join("runs")
+                .join(run.as_str())
+                .join(name),
+        )
+        .unwrap_or_else(|_absent| String::new())
+    };
+    let fault = evidence[0]["fault"].as_str().expect("the fault");
+    let lines = said(njutest::report::lines::FILE_NAME);
+    assert!(
+        lines.contains("observable_under_fault=") && lines.contains(fault),
+        "the lines drawing states the evidence under the survivor it belongs to: {lines}"
+    );
+    let html = said(njutest::app::reports::HTML_NAME);
+    assert!(
+        html.contains("Evidence under a fault") && html.contains(fault),
+        "the HTML drawing states it too: {html}"
+    );
+    let sarif = said(njutest::app::reports::SARIF_NAME);
+    assert!(
+        sarif.contains("observable-under-fault") && sarif.contains(survivor),
+        "the SARIF drawing carries it as a note a code-scanning reader sees: {sarif}"
+    );
+    let junit = said(njutest::app::reports::JUNIT_NAME);
+    assert!(
+        junit.contains("evidence-under-fault") && junit.contains(fault),
+        "the JUnit drawing carries it as a passing testcase beside the findings: {junit}"
+    );
+}
+
+#[test]
 fn a_run_asked_for_faults_says_which_failed_calls_the_suite_noticed() {
     let fixture = fixture("fixture-faulted");
     let output = verify(&fixture, &["--faults"]);

@@ -165,6 +165,17 @@ pub enum Failed {
     Alone,
 }
 
+impl Failed {
+    /// The name a drawing spells it with.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Beside => "beside",
+            Self::Alone => "alone",
+        }
+    }
+}
+
 /// What a survivor a target told from the original only with the call at its own site failing is called: evidence it is no equivalence, in no kill count and no score (ADR 0032 decision 6).
 pub const OBSERVABLE_UNDER_FAULT: &str = "observable-under-fault";
 

@@ -337,6 +337,7 @@ A `stale-expectation` or `unmatched-expectation` finding is derived from its exp
 JSON is canonical.
 Terminal output is tab-separated with the record kind first and verdict last; untrusted text is escaped.
 HTML, SARIF and JUnit carry the same audit identity and findings.
+Every drawing states a survivor's evidence under a fault, as `observable-under-fault`: the line output appends it under the survivor's own record, HTML holds a table of it, SARIF carries it as a `note` result a code-scanning reader sees beside the findings, and JUnit holds it as a passing testcase of an `evidence-under-fault` suite, counted as a test and never as a failure.
 
 ## Exit codes
 
