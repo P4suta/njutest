@@ -1095,7 +1095,10 @@ fn a_preparation_to_rerun_starts_no_test_natively_and_reproduces_every_execution
 fn a_run_again_names_every_doctest_of_a_merged_binary_whatever_stopped_it_running() {
     let fixture = njutest_devkit::fixture::Fixture::copy("fixture-doctest-refused");
     let recorded = recorded_by_a_run(&fixture);
-    let past = "src/lib.rs - half (line 27)";
+    let past = format!(
+        "{} - half (line 27)",
+        Path::new("src").join("lib.rs").display()
+    );
     assert!(
         recorded
             .iter()
