@@ -72,6 +72,9 @@ fn a_failed_call_is_noticed_where_a_test_checks_it_and_refused_where_nothing_can
     .prepare(
         &PrepareOptions {
             operators: vec!["inject-error".to_owned()],
+            mutant_timeout: rust_mutants::session::Timeout::Fixed(std::time::Duration::from_secs(
+                2,
+            )),
             touch: true,
             ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
         },
@@ -122,6 +125,9 @@ fn a_failed_call_is_noticed_where_a_test_checks_it_and_refused_where_nothing_can
             ("measured".to_owned(), "unnoticed".to_owned()),
             ("ours".to_owned(), "not-put".to_owned()),
             ("maybe".to_owned(), "not-put".to_owned()),
+            ("spare".to_owned(), "not_run".to_owned()),
+            ("linger".to_owned(), "waited".to_owned()),
+            ("refused".to_owned(), "not_run".to_owned()),
         ]),
         "a read that fails is seen by the test that checks it and by nobody where the answer is \
          thrown away; an error type the engine cannot make, and an `Option`, are never guessed \

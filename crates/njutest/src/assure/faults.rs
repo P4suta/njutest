@@ -60,7 +60,7 @@ pub fn put(
         return Ok(());
     }
     let before = written(&session)?;
-    baselined(&session, watch);
+    baselined(&session, watch)?;
     let judged = mutation::run_resuming(
         Subject {
             session: &session,
@@ -284,7 +284,13 @@ fn written(
 }
 
 /// What each target's faulted baseline reached, recorded before any fault is routed over it, so a route's reaching is held to the baseline and not to the route's own word (ADR 0032 decision 4).
-fn baselined(session: &rust_mutants::session::Session, watch: Watch<'_>) {
+///
+/// # Errors
+/// An unknown target in the session's baseline cannot be recorded as a known target.
+fn baselined(
+    session: &rust_mutants::session::Session,
+    watch: Watch<'_>,
+) -> Result<(), RunnerError> {
     let sites: Vec<u32> = session
         .catalog()
         .mutants()
@@ -303,6 +309,19 @@ fn baselined(session: &rust_mutants::session::Session, watch: Watch<'_>) {
         })
         .collect();
     for target in session.touched().targets.keys() {
+        let Some(doc) = doc.get(target.as_str()).copied() else {
+            return Err(rust_mutants::EngineError::from(
+                rust_mutants::workspace::SessionError::UnknownTarget {
+                    name: target.to_owned(),
+                    available: session
+                        .targets()
+                        .iter()
+                        .map(|one| one.id().to_owned())
+                        .collect(),
+                },
+            )
+            .into());
+        };
         let reached = sites
             .iter()
             .copied()
@@ -317,10 +336,11 @@ fn baselined(session: &rust_mutants::session::Session, watch: Watch<'_>) {
             .trace
             .fault_baseline(crate::trace::FaultBaselineRecord {
                 target: target.to_owned(),
-                doc: doc.get(target.as_str()).copied().unwrap_or(false),
+                doc,
                 reached,
             });
     }
+    Ok(())
 }
 
 /// What the tree says the faults wrote: a `broken-under-fault` finding for each path one fault is tied to, and one `not-measured` finding naming the rest.

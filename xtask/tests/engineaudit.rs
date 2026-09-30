@@ -1337,7 +1337,7 @@ const SAMPLES: [(&str, usize, usize); 6] = [
     ("engine-run-unreached", 8, 0),
     ("engine-run-declined", 29, 0),
     ("engine-run-doctest", 12, 0),
-    ("engine-run-faulted", 3, 2),
+    ("engine-run-faulted", 6, 2),
 ];
 
 #[test]

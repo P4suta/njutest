@@ -25,3 +25,11 @@ fn ours_and_maybe_answer() {
     assert_eq!(fixture_faulted::ours(), Ok(7));
     assert_eq!(fixture_faulted::maybe(Some(3)), Some(3));
 }
+
+#[test]
+fn a_failed_read_is_waited_out() {
+    match fixture_faulted::linger(Path::new("Cargo.toml")) {
+        Ok(text) => assert!(text.contains("fixture-faulted"), "the manifest reads"),
+        Err(_failed) => std::thread::sleep(std::time::Duration::from_secs(60)),
+    }
+}

@@ -4468,7 +4468,7 @@ fn mint(
         String,
         String,
     ),
-) -> Result<String, IdentityWidth> {
+) -> Result<String, IdentityWidthError> {
     let mut hasher = sha2::Sha256::new();
     let (version, start, end) = (rule_version.to_string(), start.to_string(), end.to_string());
     for field in [
@@ -4482,7 +4482,8 @@ fn mint(
         &hex::encode(sha2::Sha256::digest(original.as_bytes())),
         &hex::encode(sha2::Sha256::digest(replacement.as_bytes())),
     ] {
-        let length = u32::try_from(field.len()).map_err(|_overflow| IdentityWidth)?;
+        let length = u32::try_from(field.len())
+            .map_err(|_overflow| IdentityWidthError { bytes: field.len() })?;
         hasher.update(length.to_be_bytes());
         hasher.update(field.as_bytes());
     }
@@ -4491,10 +4492,13 @@ fn mint(
 
 /// An identity field longer than the length prefix it is minted with can say.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("an identity field exceeds the u32 length prefix")]
-struct IdentityWidth;
+#[non_exhaustive]
+#[error("an identity field of {bytes} bytes exceeds the u32 length prefix")]
+struct IdentityWidthError {
+    bytes: usize,
+}
 
-impl crate::error::Coded for IdentityWidth {
+impl crate::error::Coded for IdentityWidthError {
     fn code(&self) -> crate::error::XtCode {
         crate::error::XtCode::IdentityField
     }
@@ -4577,13 +4581,29 @@ fn minted_faults(recording: &Recording<'_>, notes: &mut Notes<'_>) {
     }
 }
 
+/// One required identity field, or the violation naming its absence.
+fn fault_text(row: &serde_json::Value, key: &str, notes: &mut Notes<'_>) -> Option<String> {
+    match field(row, key) {
+        Some(text) => Some(text),
+        None => {
+            notes.violated(
+                "fault",
+                format!("the fault record lacks its required {key}"),
+            );
+            None
+        }
+    }
+}
+
 /// One fault site's record held to the identity its own fields mint and the digest the report holds of its file.
 fn minted_fault(
     row: &serde_json::Value,
     sources: Option<&serde_json::Value>,
     notes: &mut Notes<'_>,
 ) {
-    let fault = field(row, "display_id").unwrap_or_default();
+    let Some(fault) = fault_text(row, "display_id", notes) else {
+        return;
+    };
     let text_of = |key: &str| field(row, key);
     let number = |key: &str| match row.get(key).and_then(serde_json::Value::as_u64) {
         Some(value) => match u32::try_from(value) {
@@ -4626,7 +4646,9 @@ fn minted_fault(
         );
         return;
     };
-    let id = text_of("id").unwrap_or_default();
+    let Some(id) = fault_text(row, "id", notes) else {
+        return;
+    };
     match mint((
         path.clone(),
         rule,

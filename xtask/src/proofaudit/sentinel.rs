@@ -846,6 +846,7 @@ fn faults_owing(clean: &Perturbation) -> Vec<Perturbation> {
 
 /// A route and an execution for each mutant of [`base`], then one fault the one target ran to `outcome`, and the site the run said it came to `decision`.
 fn fault_recorded(decision: &Value, outcome: &str) -> Vec<Value> {
+    let fault = fault_site(decision);
     routes()
         .into_iter()
         .chain([
@@ -858,7 +859,7 @@ fn fault_recorded(decision: &Value, outcome: &str) -> Vec<Value> {
             }),
             json!({
                 "type": "fault",
-                "fault": fault_site(decision)
+                "fault": fault
             }),
         ])
         .collect()
