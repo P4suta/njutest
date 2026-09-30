@@ -255,6 +255,60 @@ fn a_windows_path_given_to_the_root_reaches_the_tree_however_it_goes_on() {
 }
 
 #[test]
+fn a_windows_path_given_to_the_directory_the_guest_started_in_reaches_the_tree_it_names() {
+    let scratch = Snapshot::builder()
+        .file("kept", b"kept".to_vec())
+        .and_then(rust_mutants_sealed::SnapshotBuilder::build)
+        .expect("the tree is valid");
+    let mut invoked = invocation();
+    invoked.preopens = Preopens::new(vec![
+        tree(r"C:\work\snap", package_tree()),
+        tree(r"C:\work\tmp", scratch),
+        root(),
+    ])
+    .expect("the trees and the root");
+    let transcript = run(
+        &opening(&[
+            Asked {
+                fd: 3,
+                path: r"C:\work\tmp\kept",
+                errno: 0,
+            },
+            Asked {
+                fd: 3,
+                path: r"C:\work\tmp/kept",
+                errno: 0,
+            },
+            Asked {
+                fd: 3,
+                path: r"C:\work\snap\pkg\data.txt",
+                errno: 0,
+            },
+            Asked {
+                fd: 3,
+                path: r"D:\elsewhere\kept",
+                errno: 76,
+            },
+        ]),
+        &invoked,
+    );
+    assert_eq!(transcript.stop(), SealedStop::Returned);
+    assert_eq!(transcript.stdout().bytes(), b"keptkeptdata");
+    assert_eq!(
+        refused(&transcript),
+        [Refusal {
+            function: WasiFunction::PathOpen,
+            reason: RefusalReason::Escape,
+            count: 1,
+        }],
+        "a Windows build's standard library asks for an absolute path by handing it to the \
+         directory it started in, the only descriptor it has, so that directory reads a \
+         drive-rooted path the way the root does: the tree it names answers, and a drive no tree \
+         holds is an escape"
+    );
+}
+
+#[test]
 fn a_windows_path_outside_the_trees_root_is_refused_as_an_escape() {
     let transcript = through(
         r"C:\work\tree",
@@ -297,18 +351,22 @@ fn a_windows_path_outside_the_trees_root_is_refused_as_an_escape() {
             Asked {
                 fd: 3,
                 path: r"C:\work\tree\top.txt",
-                errno: 76,
+                errno: 0,
             },
         ],
     );
     assert_eq!(transcript.stop(), SealedStop::Returned);
+    assert_eq!(transcript.stdout().bytes(), b"top");
     assert_eq!(
         refused(&transcript),
         [Refusal {
             function: WasiFunction::PathOpen,
             reason: RefusalReason::Escape,
-            count: 8,
-        }]
+            count: 7,
+        }],
+        "a path naming no tree is refused, whichever descriptor it is given to, and one naming \
+         the tree itself reaches it through the directory the guest started in as through the \
+         root, which is how a Windows build's standard library asks for an absolute path"
     );
 }
 

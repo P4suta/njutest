@@ -330,7 +330,7 @@ fn a_seed_the_same_as_a_file_of_this_repository_is_recorded_from_it() {
             .unwrap_or_else(|error| panic!("{}: {error}", seed.display()))
             .to_str()
             .unwrap_or_else(|| panic!("{} is not a path this ledger can name", seed.display()))
-            .to_owned();
+            .replace('\\', "/");
         let copied = elsewhere.iter().any(|(file, size)| {
             size == length
                 && std::fs::read(file).unwrap_or_else(|error| panic!("{}: {error}", file.display()))

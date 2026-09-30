@@ -1193,6 +1193,7 @@ fn a_process_that_lost_the_runs_environment_says_so_where_the_run_looks() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_window_bound_past_what_a_clock_holds_leaves_that_side_open_rather_than_narrowed() {
     let latest = std::time::UNIX_EPOCH

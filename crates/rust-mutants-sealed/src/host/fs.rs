@@ -954,9 +954,17 @@ impl Filesystem {
                 let spelling = &self.trees.get(tree).ok_or(errno(Errno::Badf))?.spelling;
                 match spelling.read(path) {
                     Reading::Relative(names) => (tree, node, names),
-                    Reading::Rooted(_) | Reading::Elsewhere => {
-                        return Err(Fault::Refused(RefusalReason::Escape));
-                    }
+                    Reading::Rooted(_) | Reading::Elsewhere => match spelling {
+                        Spelling::Windows { .. } => {
+                            let (tree, names) = self
+                                .rooted(path)
+                                .ok_or(Fault::Refused(RefusalReason::Escape))?;
+                            (tree, ROOT, names)
+                        }
+                        Spelling::Posix => {
+                            return Err(Fault::Refused(RefusalReason::Escape));
+                        }
+                    },
                 }
             }
             Object::Root => {
