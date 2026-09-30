@@ -21,6 +21,8 @@ pub struct Put {
     pub test: String,
     /// What the execution came to.
     pub came_to: Sealed,
+    /// The digest of the transcript the verdict rests on, which is what an execution of one tree is named by wherever it is remembered.
+    pub transcript: String,
 }
 
 /// A mutant's standing, and the sealed executions it rests on, in the order they ran.
@@ -57,16 +59,12 @@ pub fn answer(
             if !bench.compiles(mutant.index) && !control.reached.contains(&mutant.index) {
                 continue;
             }
-            let Some(came_to) = bench.put(target, test, mutant.id.as_str())? else {
+            let Some(put) = bench.put(target, test, mutant.id.as_str())? else {
                 continue;
             };
-            executions.push(Execution::Sealed(came_to));
-            puts.push(Put {
-                target: target.clone(),
-                test: test.clone(),
-                came_to,
-            });
-            if matches!(came_to, Sealed::Detected(_)) {
+            executions.push(Execution::Sealed(put.came_to));
+            puts.push(put.clone());
+            if matches!(put.came_to, Sealed::Detected(_)) {
                 break 'stations;
             }
         }

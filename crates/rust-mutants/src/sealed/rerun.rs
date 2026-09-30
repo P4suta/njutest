@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use rust_mutants_sealed::SealedRunner;
+use rust_mutants_sealed::{Counted, SealedRunner, Transcripts};
 
 use super::bench::{Bench, BenchError, Controlled, Tree, Uncontrolled};
 use super::record::{Came, SealedRun};
@@ -61,10 +61,15 @@ impl std::fmt::Display for Unmade {
 }
 
 /// What a recorded execution comes to now.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Now {
-    /// It ran again, and came to this.
-    Came(Came),
+    /// It ran again, came to this, and rested on the transcript this digest names.
+    Came {
+        /// What it came to.
+        came_to: Came,
+        /// The digest of the transcript the verdict rests on.
+        transcript: String,
+    },
     /// It could not be made again, and why.
     Unmade(Unmade),
 }
@@ -72,7 +77,7 @@ pub enum Now {
 impl std::fmt::Display for Now {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Came(came) => write!(f, "{}", came.name()),
+            Self::Came { came_to, .. } => write!(f, "{}", came_to.name()),
             Self::Unmade(why) => write!(f, "nothing, since {why}"),
         }
     }
@@ -91,7 +96,7 @@ impl Reran {
     /// Whether it came to what it was recorded as.
     #[must_use]
     pub fn same(&self) -> bool {
-        self.now == Now::Came(self.recorded.came_to)
+        matches!(&self.now, Now::Came { came_to, .. } if *came_to == self.recorded.came_to)
     }
 }
 
@@ -282,10 +287,15 @@ impl<'runner> Rerun<'runner> {
         (runner, cancel): (&'runner SealedRunner, crate::runner::Cancel),
         (sealed, named): (&SealedBuild, &BTreeMap<String, BTreeSet<String>>),
         (tree, harness): (Tree, &Configured),
-        (catalog, bounds): (&str, crate::touch::Bounds),
+        (catalog, bounds, counted): (&str, crate::touch::Bounds, Counted),
     ) -> Result<Self, BenchError> {
-        let mut bench =
-            Bench::unassembled((runner, cancel), sealed, (tree, harness), (catalog, bounds));
+        counted.assembled();
+        let mut bench = Bench::unassembled(
+            (runner, cancel),
+            sealed,
+            (tree, harness),
+            (catalog, bounds, Transcripts::under(None), counted),
+        );
         for (id, tests) in named {
             let only = Controlled::Only(tests);
             let station = if let Some(module) = sealed.modules.get(id) {
@@ -336,7 +346,10 @@ impl<'runner> Rerun<'runner> {
             return Ok(Now::Unmade(Unmade::Unreached));
         }
         Ok(match self.bench.put(target, test, mutant.id.as_str())? {
-            Some(sealed) => Now::Came(Came::of(sealed)),
+            Some(put) => Now::Came {
+                came_to: Came::of(put.came_to),
+                transcript: put.transcript,
+            },
             None => Now::Unmade(Unmade::Uncontrolled(Uncontrolled::Unsealed)),
         })
     }

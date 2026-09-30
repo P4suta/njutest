@@ -20,7 +20,7 @@ use jiff::Timestamp;
 use rust_mutants::glob::Pattern;
 use rust_mutants::snapshot::{
     CLEANUP_ATTEMPTS, CLEANUP_BACKOFF, DIR_PREFIX, Drift, Entry, Options, STABLE_NAME_HEX_LENGTH,
-    SnapshotErrorKind, TREE_NAME, WORKSPACE_DOMAIN, cleanup_guard, create, stable_name, survey,
+    SnapshotErrorKind, TREE_NAME, WORKSPACE_DOMAIN, cleanup_guard, create, survey,
     workspace_digest,
 };
 use rust_mutants::tempowner::{self, read_marker};
@@ -164,19 +164,23 @@ fn the_workspace_digest_ignores_sizes_because_the_content_hash_already_pins_them
 }
 
 #[test]
-fn the_stable_name_is_the_prefix_plus_sixteen_hex_of_the_path_digest() {
-    assert_eq!(
-        stable_name(Path::new("/home/alice/project")),
-        "rust-mutants-snap-9c2098df26004b24"
-    );
-    assert_eq!(
-        stable_name(Path::new("/home/alice/project/")),
-        "rust-mutants-snap-f83c1dd91efbeafc"
-    );
-    assert_eq!(
-        stable_name(Path::new("/x")).len(),
-        DIR_PREFIX.len() + STABLE_NAME_HEX_LENGTH
-    );
+fn the_snapshot_directory_is_named_by_what_the_tree_holds() {
+    let fx = fixture();
+    let snap = create(&options(&fx), now()).expect("create");
+    let digest: String = snap
+        .workspace_digest()
+        .chars()
+        .take(STABLE_NAME_HEX_LENGTH)
+        .collect();
+    let name = snap
+        .dir()
+        .file_name()
+        .expect("snapshot name")
+        .to_str()
+        .expect("snapshot name is exact UTF-8")
+        .to_owned();
+    assert_eq!(name, format!("{DIR_PREFIX}{digest}"));
+    assert_eq!(name.len(), DIR_PREFIX.len() + STABLE_NAME_HEX_LENGTH);
 }
 
 #[test]
@@ -193,14 +197,6 @@ fn create_copies_the_tree_byte_for_byte_and_records_a_sorted_manifest() {
     assert_eq!(snap.parent(), fx.dest);
     assert_eq!(snap.root(), snap.dir().join(TREE_NAME));
     assert!(snap.stable_dir());
-    assert_eq!(
-        snap.dir()
-            .file_name()
-            .expect("snapshot name")
-            .to_str()
-            .expect("snapshot name is exact UTF-8"),
-        stable_name(&fx.source)
-    );
 
     let rel: Vec<&str> = snap
         .manifest()
@@ -516,7 +512,9 @@ fn a_second_live_snapshot_of_the_same_root_falls_back_to_a_random_name() {
 #[test]
 fn an_abandoned_stable_directory_is_swept_and_the_name_reused_never_adopted() {
     let fx = fixture();
-    let dir = fx.dest.join(stable_name(&fx.source));
+    let named = create(&options(&fx), now()).expect("the name this tree pins");
+    let dir = named.dir().to_path_buf();
+    named.cleanup().expect("cleanup the named snapshot");
     fs::create_dir_all(dir.join(TREE_NAME).join("src")).expect("mkdir");
     write(
         &dir.join(TREE_NAME),
@@ -563,7 +561,9 @@ fn a_kept_stable_directory_is_not_reused() {
 #[test]
 fn a_young_unowned_stable_directory_is_spared_and_the_name_not_taken() {
     let fx = fixture();
-    let dir = fx.dest.join(stable_name(&fx.source));
+    let named = create(&options(&fx), now()).expect("the name this tree pins");
+    let dir = named.dir().to_path_buf();
+    drop(named);
     fs::create_dir_all(&dir).expect("mkdir");
     let snap = create(&options(&fx), now()).expect("create");
     assert!(!snap.stable_dir());
@@ -1066,4 +1066,30 @@ fn two_surveys_taken_under_different_rules_say_so() {
         plain.rules, excluding.rules,
         "a file a rule leaves out would vanish from one survey with nobody having edited it"
     );
+}
+
+#[test]
+fn two_roots_of_one_tree_get_one_snapshot_name() {
+    let first = fixture();
+    let second = fixture();
+    let one = create(&options(&first), now()).expect("first root");
+    let (pinned, first_was_stable) = (one.dir().to_path_buf(), one.stable_dir());
+    one.cleanup().expect("cleanup the first root's snapshot");
+    let two = create(&options_for(&second.source, &first.dest), now()).expect("second root");
+    assert!(
+        first_was_stable,
+        "the first copy carries the name its content pins"
+    );
+    assert!(
+        two.stable_dir(),
+        "and so does the second, from another root"
+    );
+    assert_eq!(
+        pinned,
+        two.dir(),
+        "the snapshot a build compiles from is spelled by what the tree holds, so the paths a \
+         sealed module bakes are the same from any root and one execution of one tree is one \
+         execution wherever the tree was"
+    );
+    two.cleanup().expect("cleanup the second root's snapshot");
 }

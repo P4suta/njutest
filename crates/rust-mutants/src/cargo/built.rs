@@ -195,6 +195,16 @@ impl BuildDir {
         Ok(())
     }
 
+    /// A directory at `path` that builds these same members with its own record.
+    #[must_use]
+    pub(crate) fn at(&self, path: PathBuf) -> Self {
+        Self {
+            path,
+            members: self.members.clone(),
+            root: self.root.clone(),
+        }
+    }
+
     /// Makes cargo compile again every unit of a member whose files differ from what this directory last built it from, and dates every member's files back to when their bytes last moved, never forward.
     ///
     /// A later time would make stale what another directory built from the same bytes, and bytes this directory never built are compiled again because their units are forgotten, whatever their time.
@@ -229,11 +239,10 @@ impl BuildDir {
                     )
                 })?;
             for (name, digest) in moved {
-                let reads = ledger
-                    .members
-                    .remove(name)
-                    .map(|settled| settled.reads)
-                    .unwrap_or_default();
+                let reads = match ledger.members.remove(name) {
+                    Some(settled) => settled.reads,
+                    None => std::collections::BTreeSet::new(),
+                };
                 ledger.members.insert(
                     name.to_owned(),
                     Settled {

@@ -164,6 +164,10 @@ name = "toolchain_run_documents"
 path = "tests/toolchain_run_documents.rs"
 
 [[test]]
+name = "toolchain_sharded_runs"
+path = "tests/toolchain_sharded_runs.rs"
+
+[[test]]
 name = "toolchain_select"
 path = "tests/toolchain_select.rs"
 

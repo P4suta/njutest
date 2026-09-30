@@ -168,7 +168,7 @@ fn const_bodies_stay_const_when_an_unvalidated_source_can_evaluate_them() {
         "macro_rules! documented { () => { #[doc = \"```\\nconst VALUE: u32 = fixture_two_bodies::value(1);\\n```\"] pub struct Example; } }\ndocumented!();",
         "use crate::outside as std;",
     ] {
-        let fixture = njutest_devkit::fixture::Fixture::copy("fixture-two-bodies");
+        let fixture = Fixture::copy("fixture-two-bodies");
         std::fs::write(
             fixture.root().join("src/lib.rs"),
             "pub mod outside;\npub const fn value(n: u32) -> u32 { n + 2 }\npub fn ordinary(n: u32) -> u32 { n + 3 }\n",
@@ -218,7 +218,7 @@ fn const_bodies_stay_const_when_an_unvalidated_source_can_evaluate_them() {
 
 #[test]
 fn an_unselected_dependent_member_s_unvalidated_use_keeps_its_dependency_const() {
-    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-two-bodies");
+    let fixture = Fixture::copy("fixture-two-bodies");
     std::fs::create_dir_all(fixture.root().join("consumer/src")).expect("the consumer");
     std::fs::write(
         fixture.root().join("Cargo.toml"),

@@ -19,7 +19,7 @@ pub const FILE: &str = "skeletons-v1.json";
 pub const DOCUMENT_TYPE: &str = "rust-mutants/skeletons";
 
 /// The version of that shape: 3 since it keeps the digest of every file an item of the catalog is in.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// The standard macros a sealed body may invoke: each expands to an expression or a statement and declares nothing.
 pub const SEALABLE_MACROS: [&str; 28] = [
@@ -116,8 +116,9 @@ pub struct ItemEvidence {
     pub item: ItemRef,
     /// The item as a reader writes it.
     pub name: String,
-    /// The lowercase hex SHA-256 of its body's bytes, braces included.
-    pub body_digest: String,
+    /// The lowercase hex SHA-256 of its body's bytes, braces included, or nothing where no unit read its file or its body could not be located in what a unit read.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub body_digest: Option<String>,
     /// Whether everything the body contributes to the program is its own execution.
     pub sealed: bool,
     /// Why it is not sealed, absent exactly when it is.
@@ -301,7 +302,7 @@ pub fn evidence(units: &[UnitSource], items: &[(&Item, &ItemRef)]) -> Skeletons 
             index: item.index,
             item: (*reference).clone(),
             name: item.name.clone(),
-            body_digest: crate::id::digest(body.unwrap_or_default()),
+            body_digest: body.map(crate::id::digest),
             sealed: unsealed.is_none(),
             unsealed,
             start: source.and_then(|bytes| position(bytes, item.body.start)),

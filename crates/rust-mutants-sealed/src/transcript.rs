@@ -9,7 +9,8 @@ use crate::error::Invariant;
 use crate::imports::WasiFunction;
 
 /// How a guest invocation ended; every way is an answer about the guest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "stopped", rename_all = "snake_case", deny_unknown_fields)]
 #[expect(
     variant_size_differences,
     reason = "an exit code is four bytes and a trap kind one; boxing the code to even out the ratio would make every stop an allocation"
@@ -36,7 +37,20 @@ pub enum SealedStop {
 }
 
 /// Every trap wasmtime raises, but running out of fuel and being interrupted, which are stops of their own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, njutest_macros::AllVariants)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    njutest_macros::AllVariants,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum TrapKind {
     /// An `unreachable` instruction, which is how a Rust guest aborts after a panic.
     Unreachable,
@@ -264,7 +278,20 @@ impl TrapKind {
 }
 
 /// Why the host refused a guest's call, each reason answered with one error number.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, njutest_macros::AllVariants)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    njutest_macros::AllVariants,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum RefusalReason {
     /// A socket call: a sealed guest has no network.
     Network,
@@ -310,7 +337,10 @@ impl RefusalReason {
 }
 
 /// How many times the guest was refused one thing by one function.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(deny_unknown_fields)]
 pub struct Refusal {
     /// The function refused.
     pub function: WasiFunction,
@@ -321,7 +351,8 @@ pub struct Refusal {
 }
 
 /// One output stream as far as its cap, and how many bytes past the cap were counted and not kept.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Captured {
     /// The bytes kept.
     bytes: Vec<u8>,
@@ -367,7 +398,8 @@ impl Captured {
 }
 
 /// What the limits refused the guest's memory and tables.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Denials {
     /// The sizes in bytes the first refused memory growths asked for, in the order they were asked.
     memory_requests: Vec<u64>,
@@ -430,7 +462,8 @@ impl Denials {
 }
 
 /// One path of a preopened tree whose final state differs from its snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OverlayEntry {
     /// The guest path: the preopen's guest path and the path below it.
     pub path: String,
@@ -439,7 +472,8 @@ pub struct OverlayEntry {
 }
 
 /// What a path holds at the end of an invocation, where that differs from its snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OverlayState {
     /// A file with these bytes and times.
     File {
@@ -462,7 +496,8 @@ pub enum OverlayState {
 }
 
 /// Everything one invocation did, under a digest of its inputs and a digest of itself.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Transcript {
     /// The digest of everything the invocation was a function of.
     invocation: SealedDigest,
@@ -641,6 +676,31 @@ impl Transcript {
     #[must_use]
     pub const fn digest(&self) -> &SealedDigest {
         &self.digest
+    }
+
+    /// This transcript as it reads back, or nothing where its bytes are not what they say they are: the invocation it says it was a function of must be the one asked about, and the digest of everything it holds, taken again, must be the one it names.
+    #[must_use]
+    pub fn checked(self, invocation: &SealedDigest) -> Option<Self> {
+        if self.invocation != *invocation {
+            return None;
+        }
+        let digest = self.digest;
+        let resealed = Self::seal(Parts {
+            invocation: self.invocation,
+            stop: self.stop,
+            fuel_spent: self.fuel_spent,
+            peak_memory: self.peak_memory,
+            stdout: self.stdout,
+            stderr: self.stderr,
+            refusals: self.refusals,
+            denials: self.denials,
+            waited: self.waited,
+            overlay: self.overlay,
+        });
+        if digest != resealed.digest {
+            return None;
+        }
+        Some(resealed)
     }
 }
 

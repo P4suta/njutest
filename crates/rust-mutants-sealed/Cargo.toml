@@ -22,7 +22,10 @@ surface = "public"
 [dependencies]
 njutest-macros = { workspace = true }
 hex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 sha2 = { workspace = true }
+tempfile = { workspace = true }
 thiserror = { workspace = true }
 wasmparser = { workspace = true }
 wasmtime = { workspace = true }
@@ -30,8 +33,6 @@ wasmtime = { workspace = true }
 [dev-dependencies]
 njutest-devkit = { workspace = true }
 proptest = { workspace = true }
-serde_json = { workspace = true }
-tempfile = { workspace = true }
 wat = { workspace = true }
 
 [lints]

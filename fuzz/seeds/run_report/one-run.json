@@ -1,6 +1,6 @@
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 4,
+  "schema_version": 5,
   "tool_version": "0.1.0",
   "run": {
     "id": "current-v1",

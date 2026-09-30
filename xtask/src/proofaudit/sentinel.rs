@@ -1783,7 +1783,7 @@ const CARRIED_SOURCE: &str = "//\n//\n//\n//\n// xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 /// The skeletons a specimen's build keeps beside its recording: [`carried_item`] with the body `digest` starting at `now`, in [`CARRIED_SOURCE`].
 fn carried_skeletons(digest: &str, now: &Value) -> Value {
     json!({
-        "document_type": "rust-mutants/skeletons", "schema_version": 3,
+        "document_type": "rust-mutants/skeletons", "schema_version": 4,
         "items": [{
             "index": 0, "item": carried_item(), "name": "negated",
             "body_digest": digest, "sealed": true, "unsealed": null, "start": now

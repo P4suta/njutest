@@ -11,9 +11,9 @@ use std::time::Duration;
 use rust_mutants_decision::evidence::Sealed;
 use rust_mutants_decision::judgement::{Account, Ending, Harness, Observed, judged};
 use rust_mutants_sealed::{
-    Arguments, ClockPolicy, Environment, Interrupt, Invocation, Limits, OverlayEntry, OverlayState,
-    Preopen, Preopens, RefusalReason, SealedError, SealedModule, SealedRunner, SealedStop,
-    Snapshot, Start, Transcript, TrapKind, WasiFunction,
+    Arguments, ClockPolicy, Counted, Environment, Interrupt, Invocation, Limits, OverlayEntry,
+    OverlayState, Preopen, Preopens, RefusalReason, SealedError, SealedModule, SealedRunner,
+    SealedStop, Snapshot, Start, Transcript, Transcripts, TrapKind, WasiFunction,
 };
 
 use super::doctest::{Expects, NO_SUCH_INDEX, RUN_ONE, listed};
@@ -509,11 +509,15 @@ pub struct Bench<'runner> {
     catalog: String,
     bounds: crate::touch::Bounds,
     interrupt: Interrupt,
+    /// Where what sealed invocations established in earlier runs is remembered, and this run's own answers are kept for the next one.
+    transcripts: Transcripts,
+    /// What the host spends on sealed executions, shared with every bench of one run.
+    counted: Counted,
 }
 
-/// `path`, read, its standard library made to answer the temporary and the home directory from the environment, and prepared on `runner` as a module of `target`.
+/// `path`, read, its standard library made to answer the temporary and the home directory from the environment, and prepared on `runner` as a module of `target`, the compile counted.
 fn prepared<'runner>(
-    runner: &'runner SealedRunner,
+    (runner, counted): (&'runner SealedRunner, &Counted),
     path: &Path,
     target: &str,
 ) -> Result<SealedModule<'runner>, BenchError> {
@@ -527,7 +531,9 @@ fn prepared<'runner>(
     };
     let answering =
         rust_mutants_sealed::redirected(&bytes, &super::platform::REDIRECTS).map_err(host)?;
-    runner.prepare(&answering.bytes).map_err(host)
+    let module = runner.prepare(&answering.bytes).map_err(host)?;
+    counted.compiled().map_err(host)?;
+    Ok(module)
 }
 
 impl<'runner> Bench<'runner> {
@@ -539,10 +545,15 @@ impl<'runner> Bench<'runner> {
         (runner, cancel): (&'runner SealedRunner, crate::runner::Cancel),
         (sealed, natives): (&SealedBuild, &BTreeMap<String, Ran>),
         (tree, harness): (Tree, &Configured),
-        (catalog, bounds): (&str, crate::touch::Bounds),
+        (catalog, bounds, transcripts, counted): (&str, crate::touch::Bounds, Transcripts, Counted),
     ) -> Result<Self, BenchError> {
-        let mut bench =
-            Self::unassembled((runner, cancel), sealed, (tree, harness), (catalog, bounds));
+        counted.assembled();
+        let mut bench = Self::unassembled(
+            (runner, cancel),
+            sealed,
+            (tree, harness),
+            (catalog, bounds, transcripts, counted),
+        );
         for (id, module) in &sealed.modules {
             let Some(mut station) = bench.station(runner, (id, module), Controlled::Every)? else {
                 bench.unsealed.insert(id.clone(), Unsealed::NotListed);
@@ -582,12 +593,12 @@ impl<'runner> Bench<'runner> {
         Ok(bench)
     }
 
-    /// A bench with no station yet, every target `sealed` built no module for unsealed for the reason it gives, whose executions will run inside `tree` with `harness`, reading touch logs against `catalog` within `bounds`, and stop when `interrupt` is raised.
+    /// A bench with no station yet, every target `sealed` built no module for unsealed for the reason it gives, whose executions will run inside `tree` with `harness`, reading touch logs against `catalog` within `bounds`, stop when `interrupt` is raised, are remembered through `transcripts`, and are counted into `counted`.
     pub(super) fn unassembled(
         (runner, cancel): (&'runner SealedRunner, crate::runner::Cancel),
         sealed: &SealedBuild,
         (tree, harness): (Tree, &Configured),
-        (catalog, bounds): (&str, crate::touch::Bounds),
+        (catalog, bounds, transcripts, counted): (&str, crate::touch::Bounds, Transcripts, Counted),
     ) -> Self {
         Self {
             runner,
@@ -600,6 +611,8 @@ impl<'runner> Bench<'runner> {
             harness: harness.clone(),
             catalog: catalog.to_owned(),
             bounds,
+            transcripts,
+            counted,
         }
     }
 
@@ -609,20 +622,36 @@ impl<'runner> Bench<'runner> {
             (self.runner, self.cancel.clone()),
             sealed,
             (self.tree.clone(), &self.harness),
-            (&self.catalog, self.bounds),
+            (
+                &self.catalog,
+                self.bounds,
+                self.transcripts.clone(),
+                self.counted.clone(),
+            ),
         );
         bench.compiled = Some(index);
         let none = BTreeSet::new();
         for (id, original) in &self.stations {
-            let names: Vec<String> = original.controls.keys().cloned().collect();
+            let panicking = original
+                .holdings
+                .iter()
+                .flat_map(|holding| &holding.tests)
+                .filter_map(|(name, run)| match run {
+                    Run::Doctest {
+                        expects: Expects::Panic,
+                        ..
+                    } => Some(name.clone()),
+                    Run::Libtest
+                    | Run::Doctest {
+                        expects: Expects::Return,
+                        ..
+                    } => None,
+                })
+                .collect();
             let station = if let Some(module) = sealed.modules.get(id) {
                 bench.station(self.runner, (id, module), Controlled::Only(&none))?
             } else if let Some(doctests) = sealed.doctests.get(id) {
-                bench.documented(
-                    self.runner,
-                    (doctests, Some(&names)),
-                    Controlled::Only(&none),
-                )?
+                bench.documented(self.runner, (doctests, &panicking), Controlled::Only(&none))?
             } else {
                 continue;
             };
@@ -674,7 +703,7 @@ impl<'runner> Bench<'runner> {
             Some(program) => program.to_owned(),
             None => "test".to_owned(),
         };
-        let module_of = prepared(runner, &module.target.executable, id)?;
+        let module_of = prepared((runner, &self.counted), &module.target.executable, id)?;
         let mut station = Station {
             holdings: Vec::new(),
             target: module.target.clone(),
@@ -735,7 +764,7 @@ impl<'runner> Bench<'runner> {
         };
         let mut ignored = BTreeSet::new();
         for binary in &doctests.captured.ignored {
-            let module = prepared(runner, binary, id)?;
+            let module = prepared((runner, &self.counted), binary, id)?;
             let Some(names) = self.ignored(&station, &module)? else {
                 return Ok(None);
             };
@@ -743,7 +772,7 @@ impl<'runner> Bench<'runner> {
         }
         let mut held = Vec::new();
         for binary in &doctests.captured.merged {
-            let module = prepared(runner, binary, id)?;
+            let module = prepared((runner, &self.counted), binary, id)?;
             let Some(names) = self.merged(&station, &module)? else {
                 return Ok(None);
             };
@@ -767,7 +796,7 @@ impl<'runner> Bench<'runner> {
             held.push(Holding { module, tests });
         }
         for alone in &doctests.captured.alone {
-            let module = prepared(runner, &alone.binary, id)?;
+            let module = prepared((runner, &self.counted), &alone.binary, id)?;
             let run = Run::Doctest {
                 index: None,
                 expects: alone.expects,
@@ -866,13 +895,19 @@ impl<'runner> Bench<'runner> {
         target: &str,
         test: &str,
         mutant: &str,
-    ) -> Result<Option<Sealed>, BenchError> {
+    ) -> Result<Option<super::standing::Put>, BenchError> {
         let Some(asked) = self.asked(target, test) else {
             return Ok(None);
         };
         let invocation = asked.invocation(self, Active::Mutant(mutant))?;
         let transcript = self.invoke(asked.station, asked.module, &invocation)?;
-        Ok(Some(asked.judged(&transcript)?))
+        let came_to = asked.judged(&transcript)?;
+        Ok(Some(super::standing::Put {
+            target: target.to_owned(),
+            test: test.to_owned(),
+            came_to,
+            transcript: transcript.digest().to_string(),
+        }))
     }
 
     /// Whether this bench answers for `test` of `target` at the guard `index`: its station holds the test, and the test's control passed and reached the guard.
@@ -984,7 +1019,7 @@ impl<'runner> Bench<'runner> {
             .for_process()
             .find(|(name, _)| name.to_str() == Some(TARGET_TMPDIR))
             .and_then(|(_, value)| value.to_str().map(ToOwned::to_owned));
-        let below = inside(SCRATCH_TMP, &entry.path)
+        let named = inside(SCRATCH_TMP, &entry.path)
             .map(ToOwned::to_owned)
             .or_else(|| inside(SCRATCH_HOME, &entry.path).map(|rest| format!("~/{rest}")))
             .or_else(|| {
@@ -992,8 +1027,11 @@ impl<'runner> Bench<'runner> {
                     inside(root, &entry.path).map(|rest| format!("$CARGO_TARGET_TMPDIR/{rest}"))
                 })
             })
-            .or_else(|| inside(&self.tree.root, &entry.path).map(|rest| format!("./{rest}")))
-            .unwrap_or_else(|| entry.path.clone());
+            .or_else(|| inside(&self.tree.root, &entry.path).map(|rest| format!("./{rest}")));
+        let below = match named {
+            Some(below) => below,
+            None => entry.path.clone(),
+        };
         match entry.state {
             OverlayState::File { .. } => below,
             OverlayState::Directory { .. } if below.ends_with('/') => below,
@@ -1002,15 +1040,26 @@ impl<'runner> Bench<'runner> {
         }
     }
 
-    /// What `module` of `station` did under `invocation`, unless the run was interrupted first.
+    /// What `module` of `station` did under `invocation`, unless the run was interrupted first: what an identical invocation established in an earlier run, where one is remembered, and what the host saw otherwise, remembered for the next one.
     fn invoke(
         &self,
         station: &Station<'_>,
         module: &SealedModule<'_>,
         invocation: &Invocation,
     ) -> Result<Transcript, BenchError> {
-        module
-            .invoke(invocation, &self.interrupt)
+        if self.interrupt.raised() {
+            return Err(BenchError::Interrupted);
+        }
+        let of = invocation.digest(module.digest(), module.configuration());
+        if let Some(remembered) = self.transcripts.recall(&of) {
+            self.counted.answered().map_err(|source| BenchError::Host {
+                target: station.target.id().to_owned(),
+                source,
+            })?;
+            return Ok(remembered);
+        }
+        let transcript = module
+            .invoke_counted(invocation, &self.interrupt, &self.counted)
             .map_err(|source| {
                 if matches!(source, SealedError::Interrupted) {
                     BenchError::Interrupted
@@ -1020,7 +1069,9 @@ impl<'runner> Bench<'runner> {
                         source,
                     }
                 }
-            })
+            })?;
+        self.transcripts.remember(&of, &transcript);
+        Ok(transcript)
     }
 
     fn listed(

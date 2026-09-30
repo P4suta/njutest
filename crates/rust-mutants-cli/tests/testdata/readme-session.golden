@@ -14,7 +14,7 @@ OUTCOMES  killed=9 survived=1 unproven=0 step_limit_reached=0 waited=0 inconclus
 OF THOSE  Those 8 add to the 10 cataloged. Within them, not run is 0 unreached, not run is 0 declined, survived is 0 expected, unproven is 0 killed natively, unproven is 0 survived natively, unproven is 0 unreached natively, unproven is 0 discharged by a native proof.
 SCORE     90.0%  (9 detected of 10 decided)
 WORK      started=0 of 30 pairs across 3 targets; 100.0% removed (unreached=20 sealed=9 never-infected=1)
-          tests=0 of 30; 100.0% removed
+          tests=0 of 20; 100.0% removed
 REPORT    ./reports/mutation/<run>/run-report-v1.json
 NEXT      rust-mutants explain src/lib.rs:max:gt-to-ge@11
           says which tests reached one of these, and writes the block that records a reason for it

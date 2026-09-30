@@ -1656,6 +1656,10 @@ pub fn opening(
 /// Returns the engine's refusal of a pattern the configuration or the change set narrowed the run to.
 pub fn preparing(request: &Request) -> Result<rust_mutants::session::PrepareOptions, RunnerError> {
     let include = narrowing(request).map_err(rust_mutants::EngineError::from)?;
+    let transcripts = request
+        .evidence_store
+        .as_ref()
+        .map(|root| root.join(rust_mutants::sealed::TRANSCRIPTS_LAYOUT));
     Ok(rust_mutants::session::PrepareOptions {
         packages: request.packages.clone(),
         include,
@@ -1670,6 +1674,7 @@ pub fn preparing(request: &Request) -> Result<rust_mutants::session::PrepareOpti
             .then_some(request.config.execution.steps),
         skip_targets: request.config.execution.skip_targets.clone(),
         coverage: request.config.execution.coverage,
+        transcripts,
         ..crate::assure::engine::switches(request.config.mutation.sealing())
     })
 }

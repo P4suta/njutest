@@ -695,6 +695,8 @@ pub struct PrepareOptions {
     pub skips: Vec<discover::SkipRule>,
     /// Where to remember successful measurements of this exact tree.
     pub measurements: Option<PathBuf>,
+    /// Where to remember sealed transcripts by invocation digest; `None` establishes everything afresh.
+    pub transcripts: Option<PathBuf>,
     /// Run every test target once with nothing active, and refuse to hand back a session whose instrumented baseline does not pass.
     pub verify: bool,
     /// Ask the guards, on that same run, which of each target's tests reached them, so a mutation is put to the tests that reached it rather than to every test of every target that did.
@@ -747,6 +749,7 @@ impl PrepareOptions {
             packages: Vec::new(),
             skips: Vec::new(),
             measurements: None,
+            transcripts: None,
             harness_args: Vec::new(),
             verify: true,
             touch: true,
@@ -967,6 +970,8 @@ pub struct Session {
     /// The instrumented tree built for the sealed target, or why it was not (ADR 0046).
     sealed: crate::sealed::SealedBuild,
     compile_time: compiled::Compiler,
+    /// Where to remember exact sealed invocations across runs.
+    transcripts: Option<PathBuf>,
 }
 
 /// One separately built mutant, holding the outputs until its modules or native targets have finished using them.
@@ -1115,7 +1120,12 @@ impl Session {
             (runner, cancel.clone()),
             (&self.sealed, &natives),
             (tree, &self.harness_args),
-            (self.catalog.digest(), bounds),
+            (
+                self.catalog.digest(),
+                bounds,
+                rust_mutants_sealed::Transcripts::under(self.transcripts.as_deref()),
+                self.trace().sealed_counts(),
+            ),
         )?;
         for (target, station) in &bench.stations {
             for (test, control) in &station.controls {
@@ -1625,6 +1635,15 @@ impl Session {
     #[must_use]
     pub const fn verified(&self) -> &Verified {
         &self.verified
+    }
+
+    /// How many tests one target's own baseline ran, or nothing where its baseline did not run.
+    #[must_use]
+    pub fn baseline_tests(&self, target: &str) -> Option<u32> {
+        self.verified
+            .targets
+            .get(target)
+            .map(|measured| measured.baseline().tests)
     }
 
     /// How many tests one target's baseline ran, which is what asking the whole of it about one mutation costs.

@@ -394,6 +394,9 @@ pub fn every_payload() -> Vec<Payload> {
         },
         Payload::SealedExec {
             sealed: SealedExecRecord {
+                transcript: Some(
+                    "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8".to_owned(),
+                ),
                 mutant: "abcdef".to_owned(),
                 index: 1,
                 target: "demo/lib/demo".to_owned(),
@@ -413,6 +416,11 @@ pub fn every_payload() -> Vec<Payload> {
                 error: Some("one failure".to_owned()),
                 events_emitted: 22,
                 events_dropped: 1,
+                sealed: Some(rust_mutants_sealed::Spent {
+                    compiles: 1,
+                    instances: 2,
+                    answered: 3,
+                }),
             },
         },
     ];

@@ -23,10 +23,12 @@ Two questions must be answerable about a directory found in a temporary root: *w
 1. **One scratch directory per run, and everything below it.** A run makes `njutest-run-*` under the configured temporary root before it writes anything: `build/` for per-run Cargo isolation, `baseline-*` per round,
    `candidate-*` per validated candidate, `control-fuzz-*` for a fuzzing original control.
 2. **A run that cannot make or claim one still runs**, under the temporary root and the names the sweep knows.
-3. **The lock is the liveness signal, not the pid.** A claimed directory holds `owner.lock`, an exclusive advisory lock held open for the whole run.
-   A lock that can be taken means its holder is gone; a pid wraps.
-4. **The marker is for people, and for one bit.** `owner.json` is a `njutest-temp-owner-v1` document naming the run, the process, the start time, the repository, and `kept`.
-   The sweep reads only `kept`.
+3. **The marker says who holds the directory, and the lock answers where it cannot** (revised 2026-09-30; the first form read "the lock is the liveness signal, not the pid").
+   A claimed directory holds `owner.lock`, an exclusive advisory lock held open for the whole run, and a marker naming its holder the way ADR 0030's lane records do: the holder's pid, when it started as the operating system spells it, and the boot it started in.
+   A holder that lets the directory go writes `released` into the marker first, and a sweep believes that word, and a named holder the operating system says is gone, whenever the operating system gets round to releasing its lock — Windows releases an ended process's file locks in its own time, and a `cache --gc` that waited for the lock alone would read a finished run's cache as still in use.
+   A pid alone still wraps, which is why the start time and the boot are recorded beside it; where the marker names no holder, or cannot be read, the lock answers as before, and a half-written marker still cannot make a dead directory immortal.
+4. **The marker is for people, and for what a sweep asks.** `owner.json` is a `njutest-temp-owner-v1` document naming the run, the process, the start time, the repository, `kept`, the holder of decision 3, and whether it was released.
+   The sweep reads `kept`, the holder, and `released`.
 5. **An unowned directory is judged by age, and 24 hours is the number.**
 6. **Sweeping is what a run does before it writes, and what `cache gc` does on demand.** The engine sweeps its own prefixes in `Workspace::open`; the runner reports that rather than duplicating it.
 7. **A keep is recorded where it outlives the run**, in `.njutest/kept-temp-v1.json`, so a successful untraced run still accounts for what it left behind.
@@ -37,6 +39,7 @@ Two questions must be answerable about a directory found in a temporary root: *w
 ## Consequences
 
 - The lock is released before the directory is removed, everywhere; on Windows an open handle inside a directory is what makes removal fail.
+- Reading a holder's start time crosses a foreign boundary, so it lives in the one module the `unsafe-outside-ffi` lint names for the lock, `tempowner/lock.rs`: `/proc` on Linux, `ps` and `sysctl` elsewhere on Unix, and `GetProcessTimes` on Windows, whose creation time already tells one boot's process from another's, so no boot id is recorded there.
 - Two runs on one machine never contend: each holds its own lock, and a sweep that meets a live one counts it and moves on.
 - The engine's and the runner's sweeps leave each other's directories alone by prefix and would agree about any directory they both looked at.
 - A kept directory whose marker was removed waits for a person; that is the safe side of the trade.

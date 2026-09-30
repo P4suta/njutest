@@ -248,6 +248,12 @@ impl SealedModule<'_> {
         &self.digest
     }
 
+    /// The digest of everything about the engine and the host that a transcript of an invocation of this module depends on.
+    #[must_use]
+    pub const fn configuration(&self) -> &SealedDigest {
+        self.runner.configuration()
+    }
+
     /// Runs the module's `_start` once in a fresh instance, as `invocation` says, until it ends or `interrupt` is raised.
     ///
     /// # Errors
@@ -256,6 +262,23 @@ impl SealedModule<'_> {
         &self,
         invocation: &Invocation,
         interrupt: &Interrupt,
+    ) -> Result<Transcript, SealedError> {
+        self.invoke_counted(
+            invocation,
+            interrupt,
+            &crate::transcripts::Counted::default(),
+        )
+    }
+
+    /// Runs one invocation as [`Self::invoke`] does, counting the instance when it starts.
+    ///
+    /// # Errors
+    /// The same runtime, interruption and watchdog failures as [`Self::invoke`].
+    pub fn invoke_counted(
+        &self,
+        invocation: &Invocation,
+        interrupt: &Interrupt,
+        counted: &crate::transcripts::Counted,
     ) -> Result<Transcript, SealedError> {
         if interrupt.raised() {
             return Err(SealedError::Interrupted);
@@ -283,6 +306,7 @@ impl SealedModule<'_> {
             }
             Ok(UpdateDeadline::Continue(1))
         });
+        counted.instantiated()?;
         let stop = match self.pre.instantiate(&mut store) {
             Ok(instance) => {
                 let memory = instance.get_memory(&mut store, "memory").ok_or(

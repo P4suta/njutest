@@ -1067,6 +1067,7 @@ fn one_of_each_execution(recorder: &Recorder) {
         target: "demo/lib/demo".to_owned(),
         test: "demo::tests::le_bound".to_owned(),
         came_to: "panicked".to_owned(),
+        transcript: Some("d".repeat(64)),
     });
     recorder.cache(rust_mutants::trace::CacheRecord {
         mutant: "b".repeat(20),
@@ -1114,6 +1115,11 @@ fn every_event_type_has_one_golden_line_and_validates_against_the_schema() {
     one_of_each_preparation(&recorder);
     one_of_each_measurement(&recorder);
     phase.end();
+    let counted = recorder.sealed_counts();
+    counted.assembled();
+    counted.compiled().expect("the count fits");
+    counted.instantiated().expect("the count fits");
+    counted.answered().expect("the count fits");
     recorder
         .run_end(rust_mutants::trace::RunOutcome::Detected, None)
         .expect("trace closes");
@@ -1258,6 +1264,7 @@ fn a_phase_that_never_ended_is_a_problem_a_reader_is_told_about() {
                     error: Some("killed".to_owned()),
                     events_emitted: 3,
                     events_dropped: 0,
+                    sealed: None,
                 },
             },
         ),
@@ -1309,6 +1316,7 @@ fn a_phase_that_began_and_ended_is_no_problem() {
                     error: None,
                     events_emitted: 6,
                     events_dropped: 0,
+                    sealed: None,
                 },
             },
         ),

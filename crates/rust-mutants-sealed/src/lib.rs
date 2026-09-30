@@ -21,7 +21,9 @@ mod redirect;
 mod runner;
 mod snapshot;
 mod spelling;
+mod strictjson;
 mod transcript;
+mod transcripts;
 mod validate;
 
 pub use abi::Errno;
@@ -42,4 +44,7 @@ pub use snapshot::{Snapshot, SnapshotBuilder};
 pub use transcript::{
     Captured, Denials, OverlayEntry, OverlayState, Refusal, RefusalReason, SealedStop, Transcript,
     TrapKind,
+};
+pub use transcripts::{
+    Counted, LAYOUT as TRANSCRIPTS_LAYOUT, SCHEMA as TRANSCRIPTS_SCHEMA, Spent, Transcripts,
 };

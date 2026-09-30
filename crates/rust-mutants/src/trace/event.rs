@@ -1012,6 +1012,9 @@ pub struct SealedExecRecord {
     pub test: String,
     /// What it came to, as a report spells it.
     pub came_to: String,
+    /// The digest of the transcript the verdict rests on: everything the invocation was a function of and everything it did, which one execution of one tree is named by wherever it is remembered.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcript: Option<String>,
 }
 
 /// What the outcome store was asked about one mutant.
@@ -1124,4 +1127,7 @@ pub struct RunRecord {
     pub events_emitted: u64,
     /// Events the sink could not keep before this one.
     pub events_dropped: u64,
+    /// What the host spent on sealed executions, where the run assembled a bench: the modules it compiled, the instances it started, and the invocations a remembered transcript answered instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sealed: Option<rust_mutants_sealed::Spent>,
 }

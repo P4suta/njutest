@@ -23,6 +23,8 @@ mod pins;
 mod redirect;
 #[path = "snapshot.rs"]
 mod snapshot;
+#[path = "transcripts.rs"]
+mod transcripts;
 #[path = "validation.rs"]
 mod validation;
 #[path = "working.rs"]

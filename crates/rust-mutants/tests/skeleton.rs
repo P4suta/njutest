@@ -106,6 +106,18 @@ fn a_body_whose_unit_file_cannot_be_read_is_never_sealed() {
         Some(Unsealing::Unlocated),
         "bytes that cannot be read as the cataloged Rust file locate no body, so the body cannot be sealed"
     );
+    assert_eq!(
+        item(&missing, "f").body_digest,
+        None,
+        "a body nothing read is no body of empty bytes, and a record that says a digest \
+         where none was read makes two unread bodies one"
+    );
+    let read = evidence_of(&unit(&cataloged), &cataloged);
+    assert_eq!(
+        item(&read, "f").body_digest,
+        Some(rust_mutants::id::digest(b"{ 1 }")),
+        "a body a unit read carries the digest of its own bytes, braces included"
+    );
 }
 
 #[test]

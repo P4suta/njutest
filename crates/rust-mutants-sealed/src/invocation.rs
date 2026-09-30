@@ -408,12 +408,9 @@ impl Invocation {
         Err(SealedError::Halt { path: path.clone() })
     }
 
-    /// The digest of this invocation of the module `module` under the configuration `configuration`.
-    pub(crate) fn digest(
-        &self,
-        module: &SealedDigest,
-        configuration: &SealedDigest,
-    ) -> SealedDigest {
+    /// The digest of this invocation of the module `module` under the configuration `configuration`, which is what one execution of one tree is named by wherever it is remembered.
+    #[must_use]
+    pub fn digest(&self, module: &SealedDigest, configuration: &SealedDigest) -> SealedDigest {
         let mut encoder = Encoder::new("rust-mutants-sealed/invocation/v3");
         encoder.digest(configuration).digest(module);
         encoder.count(self.arguments.0.len());

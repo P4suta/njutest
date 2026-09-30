@@ -8,7 +8,9 @@ use std::fmt;
 use sha2::{Digest as _, Sha256};
 
 /// A SHA-256 digest of content this crate addressed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct SealedDigest([u8; 32]);
 
 impl SealedDigest {

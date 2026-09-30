@@ -22,7 +22,8 @@ pub const AUDIT_READERS: [&str; 11] = [
 pub const RUNNER_DECIDERS: [&str; 2] = ["crates/njutest/src/assure/", "crates/njutest/src/report/"];
 
 /// The engine's sources that decide a standing, a record, a count or a report row from what a run observed, testkit included, by directory.
-pub const ENGINE_DECIDERS: [&str; 2] = [
+pub const ENGINE_DECIDERS: [&str; 3] = [
+    "crates/rust-mutants/src/",
     "crates/rust-mutants-sealed/src/",
     "crates/rust-mutants-cli/src/",
 ];

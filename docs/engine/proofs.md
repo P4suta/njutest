@@ -31,6 +31,7 @@ WORK  started=15 of 42 pairs across 3 targets; 64.3% removed
 ```
 
 `rust_mutants::work::Work` derives that from the stored report alone, so an audit re-derives it without the engine, and `engine-audit`'s `work` layer holds the total to the `mutant-exec` records the recording kept.
+A test is counted only where a baseline counted it: a target whose baseline ran no test counts none, and where a baseline did not run, as under `--no-verify`, the `tests=` line says `tests are not counted` rather than a number.
 Every removal is labelled with what kind it is:
 
 | Kind | What it means | Still the whole answer |

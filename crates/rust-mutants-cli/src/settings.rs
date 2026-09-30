@@ -152,6 +152,7 @@ impl Settings {
                 .map(crate::config::Skip::rule)
                 .collect::<Result<Vec<_>, _>>()?,
             measurements: None,
+            transcripts: None,
             failing: rust_mutants::session::Failing::Refuse,
             max_rounds: rust_mutants::validate::DEFAULT_MAX_ROUNDS,
             validation_filter: None,

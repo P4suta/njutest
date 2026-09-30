@@ -24,8 +24,11 @@
 # to instances of the sealed module, which this file does not count yet (ADR 0046).
 # What is left here is the native work a run still does, for its leads.
 #
+# A test is counted where a baseline counted it: a target whose baseline ran no
+# test holds none, so a whole run asks it about no test rather than one.
+#
 # fixture             whole  started  tests  tests_started
-fixture-simple           39        0     39              0
-fixture-coverage        114        0    266              0
-fixture-unreached        16        0     16              0
-fixture-baseline         63        0     63              0
+fixture-simple           39        0     26              0
+fixture-coverage        114        0    228              0
+fixture-unreached        16        0      8              0
+fixture-baseline         63        0     42              0

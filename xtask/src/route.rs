@@ -240,6 +240,8 @@ pub struct Sealed {
     pub test: String,
     /// What it came to, as a report spells it.
     pub came_to: String,
+    /// The digest of the transcript the verdict rests on, which an engine that named no transcripts does not say.
+    pub transcript: Option<String>,
 }
 
 /// One sealed control: one test of one module run with nothing active, and every guard it reached.
@@ -502,6 +504,15 @@ fn sealed(record: &Value) -> Result<Sealed, ReadCauseError> {
         target: required(record, "target", owned)?,
         test: required(record, "test", owned)?,
         came_to: required(record, "came_to", owned)?,
+        transcript: match record.get("transcript") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(transcript)) => Some(transcript.clone()),
+            Some(other) => {
+                return Err(ReadCauseError::Absent {
+                    field: format!("transcript a reader can read: {other}"),
+                });
+            }
+        },
     })
 }
 

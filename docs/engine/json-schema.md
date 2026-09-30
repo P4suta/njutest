@@ -69,7 +69,7 @@ Written by `rust-mutants run` to `<reports.directory>/<run id>/run-report-v1.jso
 ```jsonc
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 4,
+  "schema_version": 5,
   "tool_version": "0.1.0",
   "run": { "id": "20260905T132650666Z", "started_at": "…", "finished_at": "…",
            "duration_ms": 812, "interrupted": false, "exit_code": 1 },
@@ -133,6 +133,7 @@ A mutation every target of which a proof removed is a lead, since the proof read
 An `unmatched-skip` is a `rust-mutants: skip` marker that hid nothing, which is a claim about code that has moved or gone.
 
 A mutant's `evidence` says what its verdict rests on ([ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md)).
+A target's `tests` is how many tests its own baseline ran, and `null` where its baseline did not run, as under `--no-verify`, so that nothing counted them; schema version 5 made it nullable, where version 4 wrote `1` for a target nothing had counted.
 A target's `sealed` says where the reasons come from: `state` is `sealed` where the target has sealed tests, or the reason it has none, with `remedy` saying what to do about it; `uncontrolled` names each test its native baseline ran that has no sealed control, and why — what its control came to, `unbuilt`, or `not-held` where the sealed build does not hold it; a test whose control declined to measure has a control, which holds its words (ADR 0043).
 A route to a target that is not sealed, or to one of its uncontrolled tests, is what `test-absent` in a mutant's `evidence` is.
 `sealed` lists the sealed executions that established it, in the order they ran, each with its target, its test, and what it came to; a reader decides the verdict again from them, and refuses a report whose outcome is not that verdict.
@@ -201,7 +202,8 @@ They are the premises its proof layers rest on: what each target's guards record
 which says so, the body digests, sealing and unit skeletons an answer would be carried across an edit by ([carrying an answer](carry.md)), every carried record the run believed, with every execution each rests on, and the catalog with the branch bodies the compiler vouched for.
 `cargo xtask engine-audit` reads them and re-decides every route without the engine that produced them, which is what makes a report's `discharged` a proof rather than a claim.
 
-`skeletons-v1.json` is at schema version 3: version 3 added `files`, the digest of every file an item of the catalog is in, and by the rule above that is a new identity, so a reader of this release reads version 3 and refuses 2 rather than read a document without the digests it proves files by.
+`skeletons-v1.json` is at schema version 4: version 3 added `files`, the digest of every file an item of the catalog is in, and version 4 made `items[].body_digest` nullable where no unit read the body.
+A reader of this release refuses earlier versions rather than trust a digest nobody measured.
 The file keeps its name, which names the family of documents, and the version inside it says which of them it is.
 
 Writing them never fails a run.

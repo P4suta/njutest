@@ -533,7 +533,7 @@ fn carry_beside(
         (
             "skeletons-v1.json",
             json!({
-                "document_type": "rust-mutants/skeletons", "schema_version": 3,
+                "document_type": "rust-mutants/skeletons", "schema_version": 4,
                 "items": [item],
                 "files": { path: crate::engineaudit::carry::digest_of(source.as_bytes()) },
                 "units": units
@@ -752,7 +752,28 @@ fn believed_plants() -> Vec<Perturbation> {
                 );
             },
         ),
+        unread_body_plant(),
     ]
+}
+
+/// The defect planted in a carried answer that rests on a body no unit of the run read: the skeletons keep no digest of it, so no locus names it and no read of it now is a read of what the run measured.
+fn unread_body_plant() -> Perturbation {
+    let mut unread = believed_beside(
+        "a carried answer resting on a body no unit of the run read",
+        (1, "survived", "demo/test/other"),
+        |_| {},
+    );
+    for (file, document) in &mut unread.beside {
+        if let ("skeletons-v1.json", Some(item)) = (
+            *file,
+            document
+                .pointer_mut("/items/0")
+                .and_then(Value::as_object_mut),
+        ) {
+            item.insert("body_digest".to_owned(), Value::Null);
+        }
+    }
+    unread
 }
 
 /// The defects planted in where the run places a body and where it says the compiler reads a position.

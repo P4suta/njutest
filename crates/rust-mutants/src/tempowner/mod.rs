@@ -40,14 +40,13 @@ pub enum Role {
 }
 
 /// The JSON document in a claimed directory.
-/// Written once at creation and rewritten only to record a deliberate keep.
+/// Written at creation, and rewritten to record a deliberate keep and the release that ends the claim.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Marker {
     /// [`SCHEMA`].
     pub schema: String,
-    /// The process that claimed the directory.
-    /// Diagnostic only: liveness is the lock's job.
+    /// The process that claimed the directory, as a person reads it; [`Marker::holder`] is what a sweep asks about.
     pub pid: u32,
     /// When the directory was claimed, in UTC.
     pub started: Timestamp,
@@ -60,6 +59,112 @@ pub struct Marker {
     /// The tree a cache is keyed to, so a sweep can tell a cache a run will look up from one nothing can name again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keyed_to: Option<String>,
+    /// The process holding the directory, as a sweep asks after it (ADR 0006 decision 3).
+    /// Absent in a marker written before holders were recorded, or where the claim could not read when its own process started, which only the lock can judge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holder: Option<Holder>,
+    /// Whether the holder let the directory go, which a sweep believes over a lock the operating system has not yet released.
+    #[serde(default)]
+    pub released: bool,
+}
+
+/// The process that claimed a directory, as a sweep asks after it: its pid, when it started, and the boot its start is counted from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Holder {
+    /// The process.
+    pub pid: u32,
+    /// When it started, as the operating system spells it, so a pid a later process reuses is not taken for this one.
+    pub started: String,
+    /// The boot its start is counted from, where one is: none on Windows, whose start of a process no process of another boot shares.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub boot: Option<String>,
+}
+
+/// Whether the process a marker names is still the one that claimed the directory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Liveness {
+    /// Its pid names a process that started when it did, in the boot it did.
+    Alive,
+    /// No process of its pid runs, or the one that does started at another time or in another boot.
+    Gone,
+    /// The operating system would not say, which counts as alive.
+    Unread,
+}
+
+impl Holder {
+    /// This process, where the operating system says when it started; nothing where it will not.
+    #[must_use]
+    pub fn this_process() -> Option<Self> {
+        let pid = std::process::id();
+        match lock::start_of(pid) {
+            lock::Start::Running(started) => Some(Self {
+                pid,
+                started,
+                boot: lock::boot(),
+            }),
+            lock::Start::Absent | lock::Start::Unread => None,
+        }
+    }
+
+    /// Whether this holder still runs, asked of the operating system now.
+    #[must_use]
+    pub fn liveness(&self) -> Liveness {
+        if let Some(recorded) = &self.boot {
+            match lock::boot() {
+                Some(now) if now == *recorded => {}
+                Some(_another) => return Liveness::Gone,
+                None => return Liveness::Unread,
+            }
+        }
+        match lock::start_of(self.pid) {
+            lock::Start::Running(started) if started == self.started => Liveness::Alive,
+            lock::Start::Running(_) | lock::Start::Absent => Liveness::Gone,
+            lock::Start::Unread => Liveness::Unread,
+        }
+    }
+}
+
+/// What a claimed directory's marker says of whether anybody still holds it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Said {
+    /// The marker could not be read, which leaves the question to the lock.
+    Unreadable,
+    /// The holder let the directory go.
+    Released,
+    /// The marker names no holder, which leaves the question to the lock.
+    Unnamed,
+    /// The marker names a holder, which is this alive, gone, or unread.
+    Named(Liveness),
+}
+
+/// Whether anybody still holds a claimed directory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Holding {
+    /// Somebody does, or nothing can say nobody does.
+    Held,
+    /// Nobody does.
+    Free,
+}
+
+/// Whether anybody holds a directory whose marker `said` what it did (ADR 0006 decision 3).
+///
+/// A named holder that is alive or unread holds it, and one that is gone or let go does not, whenever the operating system gets round to releasing its lock; only where the marker cannot say is `lock_free` asked.
+///
+/// # Errors
+/// The failure to ask the lock, where it was asked.
+pub fn holding(said: Said, lock_free: impl FnOnce() -> io::Result<bool>) -> io::Result<Holding> {
+    match said {
+        Said::Released | Said::Named(Liveness::Gone) => Ok(Holding::Free),
+        Said::Named(Liveness::Alive | Liveness::Unread) => Ok(Holding::Held),
+        Said::Unreadable | Said::Unnamed => {
+            if lock_free()? {
+                Ok(Holding::Free)
+            } else {
+                Ok(Holding::Held)
+            }
+        }
+    }
 }
 
 /// The meaning of an absent role in the historical v1 marker shape.
@@ -210,6 +315,8 @@ fn claim_with(dir: &Path, now: Timestamp, claiming: Claiming<'_>) -> Result<Owne
         kept: false,
         role,
         keyed_to,
+        holder: Holder::this_process(),
+        released: false,
     };
     if let Err(source) = write_marker(dir, &marker) {
         drop(lock);
@@ -251,16 +358,30 @@ impl Owner {
         &self.marker
     }
 
-    /// Closes the lock without touching the directory.
+    /// Records in the marker that the claim is let go, then closes the lock, without touching anything else in the directory.
     /// Idempotent, and it must be called before the directory is removed: on Windows an open handle inside a directory is what makes the removal fail.
+    /// The record is what a sweep believes, since the operating system releases the lock of a process that has ended when it gets round to it.
     ///
     /// # Errors
-    /// Returns the unlock or close failure.
+    /// Returns the marker write failure, other than a directory already gone, or the unlock or close failure; the lock is closed either way.
     pub fn release(&mut self) -> io::Result<()> {
-        match self.lock.take() {
-            Some(mut lock) => lock.release(),
-            None => Ok(()),
-        }
+        let Some(mut lock) = self.lock.take() else {
+            return Ok(());
+        };
+        let released = Marker {
+            released: true,
+            ..self.marker.clone()
+        };
+        let written = match write_marker(&self.dir, &released) {
+            Ok(()) => {
+                self.marker = released;
+                Ok(())
+            }
+            Err(gone) if gone.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        };
+        let unlocked = lock.release();
+        written.and(unlocked)
     }
 
     /// Removes everything in the directory but its lock and marker, while the lock is held.
@@ -291,12 +412,14 @@ impl Owner {
         let mut marker = self.marker.clone();
         marker.kept = true;
         let written = write_marker(&self.dir, &marker);
+        if written.is_ok() {
+            self.marker = marker;
+        }
         let released = self.release();
         written.map_err(|source| ClaimError::Marker {
             dir: self.dir.clone(),
             source,
         })?;
-        self.marker = marker;
         released.map_err(|source| ClaimError::Lock {
             dir: self.dir.clone(),
             source,
@@ -574,26 +697,8 @@ fn collect_entry(
         return Ok(());
     }
     let dir = parent.join(name);
-    let verdict = cache_verdict(judge(&dir, &entry, pass.now), &dir, pass.caches_too);
+    let verdict = judge(&dir, &entry, pass);
     record_verdict(result, verdict, dir, pass.remove)
-}
-
-fn cache_verdict(
-    verdict: io::Result<Verdict>,
-    dir: &Path,
-    caches_too: bool,
-) -> io::Result<Verdict> {
-    match verdict {
-        Ok(Verdict::Cache) if caches_too => match acquire(&lock_path(dir)) {
-            Ok(None) => Ok(Verdict::Live),
-            Ok(Some(mut lock)) => match lock.release() {
-                Ok(()) => Ok(Verdict::Abandoned),
-                Err(source) => Err(source),
-            },
-            Err(source) => Err(source),
-        },
-        other => other,
-    }
 }
 
 fn record_verdict(
@@ -661,23 +766,46 @@ enum Verdict {
     Spared,
 }
 
-/// A marker that cannot be read at all is treated as a marker that does not say kept, deliberately: the lock has already answered the only question that matters, and a half-written marker must not make a dead directory immortal.
-fn judge(dir: &Path, entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict> {
-    match read_marker(dir) {
+/// A marker that cannot be read at all does not say kept, deliberately, and leaves whether anybody holds the directory to its lock: a half-written marker must not make a dead directory immortal.
+/// A cache is spared unless the pass asks for caches too or the tree it is keyed to is gone.
+fn judge(dir: &Path, entry: &fs::DirEntry, pass: &Pass<'_>) -> io::Result<Verdict> {
+    let said = match read_marker(dir) {
         Ok(marker) if marker.kept => return Ok(Verdict::Kept),
-        Ok(marker) if marker.role == Role::Cache => {
-            if !orphaned(marker.keyed_to.as_deref())? {
-                return Ok(Verdict::Cache);
-            }
+        Ok(marker)
+            if marker.role == Role::Cache
+                && !pass.caches_too
+                && !orphaned(marker.keyed_to.as_deref())? =>
+        {
+            return Ok(Verdict::Cache);
         }
-        Err(MarkerError::Missing { .. }) => return legacy(entry, now),
-        Ok(_) | Err(_) => {}
+        Ok(marker) => said_by(&marker),
+        Err(MarkerError::Missing { .. }) => return legacy(entry, pass.now),
+        Err(MarkerError::Io { .. } | MarkerError::Malformed { .. }) => Said::Unreadable,
+    };
+    match holding(said, || lock_free(dir))? {
+        Holding::Held => Ok(Verdict::Live),
+        Holding::Free => Ok(Verdict::Abandoned),
     }
+}
+
+/// What `marker` says of whether anybody holds its directory, asking the operating system after the holder it names.
+fn said_by(marker: &Marker) -> Said {
+    if marker.released {
+        return Said::Released;
+    }
+    match &marker.holder {
+        Some(holder) => Said::Named(holder.liveness()),
+        None => Said::Unnamed,
+    }
+}
+
+/// Whether nobody holds the lock of `dir`, found by taking it and letting it go.
+fn lock_free(dir: &Path) -> io::Result<bool> {
     match acquire(&lock_path(dir))? {
-        None => Ok(Verdict::Live),
+        None => Ok(false),
         Some(mut lock) => {
             lock.release()?;
-            Ok(Verdict::Abandoned)
+            Ok(true)
         }
     }
 }

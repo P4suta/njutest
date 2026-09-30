@@ -333,11 +333,13 @@ fn every_mutant_a_fixture_kills_natively_is_detected_by_a_sealed_execution_of_a_
                 let said = bench
                     .put(target, test, mutant.id.as_str())
                     .expect("the host runs the execution");
-                if matches!(
-                    said,
-                    Some(rust_mutants_decision::evidence::Sealed::Detected(_))
-                ) {
-                    standing = said;
+                if let Some(put) = said
+                    && matches!(
+                        put.came_to,
+                        rust_mutants_decision::evidence::Sealed::Detected(_)
+                    )
+                {
+                    standing = Some(put.came_to);
                 }
             }
         }
@@ -413,6 +415,100 @@ fn every_mutant_of_a_sealable_fixture_stands_on_sealed_executions_alone() {
             rust_mutants_decision::evidence::Standing::Established(_)
         )),
         "every mutant of a fixture that builds and passes sealed has a verdict: {other:?}"
+    );
+}
+
+#[test]
+fn a_sealed_build_refused_before_its_modules_exist_releases_its_cache() {
+    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-simple");
+    let config = fixture.root().join(".cargo");
+    std::fs::create_dir_all(&config).expect("the cargo configuration directory");
+    std::fs::write(
+        config.join("config.toml"),
+        "[target.'cfg(debug_assertions)']\nrustflags = []\n",
+    )
+    .expect("a predicate only cargo decides");
+    let session = rust_mutants::workspace::Workspace::open(
+        fixture.root(),
+        rust_mutants::testkit::opening::opening(
+            &njutest_devkit::paths::cargo_binary(),
+            fixture.temp(),
+        ),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(&every_rule(), &Cancel::new())
+    .expect("prepare");
+    assert!(session.sealed().modules.is_empty());
+    assert!(
+        session
+            .sealed()
+            .unsealed
+            .values()
+            .all(|why| *why == Unsealed::FlagsUnmerged),
+        "the target's flags could not be merged"
+    );
+    let cache = std::fs::read_dir(fixture.temp())
+        .expect("the build caches")
+        .map(|entry| entry.expect("a build cache").path())
+        .find(|path| {
+            path.file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .is_some_and(|name| name.starts_with("rust-mutants-target-sealed-"))
+        })
+        .expect("the claimed sealed build cache");
+    assert!(
+        rust_mutants::tempowner::read_marker(&cache)
+            .expect("the owner marker")
+            .released,
+        "no modules hold a refused build's cache even while its process lives"
+    );
+}
+
+#[test]
+fn the_sealed_build_cache_is_released_only_when_its_last_modules_are_dropped() {
+    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-simple");
+    let session = rust_mutants::workspace::Workspace::open(
+        fixture.root(),
+        rust_mutants::testkit::opening::opening(
+            &njutest_devkit::paths::cargo_binary(),
+            fixture.temp(),
+        ),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(
+        &rust_mutants::session::PrepareOptions::new(rust_mutants::rule::Tier::All),
+        &Cancel::new(),
+    )
+    .expect("prepare");
+    let modules = session.sealed().clone();
+    assert!(
+        !modules.modules.is_empty(),
+        "the session holds sealed modules"
+    );
+    let cache = std::fs::read_dir(fixture.temp())
+        .expect("the build caches")
+        .map(|entry| entry.expect("a build cache").path())
+        .find(|path| {
+            path.file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .is_some_and(|name| name.starts_with("rust-mutants-target-sealed-"))
+        })
+        .expect("the content-addressed sealed build cache");
+    session.close().expect("the session closes");
+    assert!(
+        !rust_mutants::tempowner::read_marker(&cache)
+            .expect("the owner marker")
+            .released,
+        "a copy of the modules still holds the build cache"
+    );
+    drop(modules);
+    assert!(
+        rust_mutants::tempowner::read_marker(&cache)
+            .expect("the owner marker")
+            .released,
+        "the last modules let the build cache go even while their process lives"
     );
 }
 
@@ -833,7 +929,7 @@ fn a_mutant_that_sends_a_test_to_an_absolute_path_meets_a_refusal_rather_than_th
         let said = bench
             .put(target, test, mutant.id.as_str())
             .expect("the host runs the execution");
-        came_to.push((mutant.candidate.rule.name, said));
+        came_to.push((mutant.candidate.rule.name, said.map(|put| put.came_to)));
     }
     assert_eq!(
         came_to,
@@ -958,21 +1054,30 @@ fn a_preparation_to_rerun_starts_no_test_natively_and_reproduces_every_execution
          execution names its test and no native baseline has to say which tests are the suite's: \
          {phases:?}"
     );
-    assert_eq!(
-        prepared
-            .rerun(&recorded, &Cancel::new())
-            .expect("the host runs every execution again"),
-        Reproduction::Reproduced(
-            recorded
-                .iter()
-                .map(|one| Reran {
-                    recorded: one.clone(),
-                    now: Now::Came(one.came_to),
-                })
-                .collect()
-        ),
+    let Reproduction::Reproduced(again) = prepared
+        .rerun(&recorded, &Cancel::new())
+        .expect("the host runs every execution again")
+    else {
+        panic!("every recorded execution is reproduced");
+    };
+    assert_eq!(again.len(), recorded.len());
+    assert!(
+        again.iter().zip(&recorded).all(|(again, recorded)| {
+            again.recorded == *recorded
+                && again.same()
+                && matches!(&again.now, Now::Came { transcript, .. } if transcript.len() == 64)
+        }),
         "every recorded execution runs again, each test's control first, and comes to what it \
          came to"
+    );
+    let spent = trace
+        .sealed_counts()
+        .spent()
+        .expect("the trace counts the host's work when reproducing a stored report");
+    assert!(spent.compiles > 0 && spent.instances >= 12);
+    assert_eq!(
+        spent.answered, 0,
+        "a report reissue runs every execution again"
     );
     let cancel = Cancel::new();
     cancel.cancel();
@@ -1031,12 +1136,16 @@ fn running_recorded_executions_again_stops_at_the_first_that_comes_to_something_
     else {
         panic!("a recorded pass the mutant is detected by now is a difference");
     };
+    let came_to_now = |now: &Now| match now {
+        Now::Came { came_to, .. } => Some(*came_to),
+        Now::Unmade(_) => None,
+    };
     assert_eq!(
-        (agreed.len(), Some(&first.recorded), Some(first.now)),
+        (agreed.len(), Some(&first.recorded), came_to_now(&first.now)),
         (
             flipped,
             contradicted.get(flipped),
-            recorded.get(flipped).map(|truly| Now::Came(truly.came_to))
+            recorded.get(flipped).map(|truly| truly.came_to)
         ),
         "the executions before the contradicted one agree, it comes to what it truly comes to, \
          and nothing after it runs"

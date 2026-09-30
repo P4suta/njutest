@@ -747,7 +747,7 @@ fn the_lines_say_how_much_of_a_whole_run_this_one_did_not_do() {
             id: "demo/lib/demo".to_owned(),
             kind: "lib".to_owned(),
             harness: true,
-            tests: 4,
+            tests: Some(4),
             limitations: Vec::new(),
             sealed: rust_mutants_cli::report::run::SealedTargetDocument {
                 state: "sealed".to_owned(),
@@ -759,7 +759,7 @@ fn the_lines_say_how_much_of_a_whole_run_this_one_did_not_do() {
             id: "demo/test/parity".to_owned(),
             kind: "test".to_owned(),
             harness: true,
-            tests: 2,
+            tests: Some(2),
             limitations: Vec::new(),
             sealed: rust_mutants_cli::report::run::SealedTargetDocument {
                 state: "sealed".to_owned(),

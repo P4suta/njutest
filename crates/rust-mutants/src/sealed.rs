@@ -12,6 +12,9 @@ use crate::execute::TestTarget;
 /// The target a sealed build compiles for.
 pub const TARGET: &str = "wasm32-wasip1";
 
+/// The transcript store's directory below the caller's cache root.
+pub const TRANSCRIPTS_LAYOUT: &str = rust_mutants_sealed::TRANSCRIPTS_LAYOUT;
+
 /// The builds that make the sealed modules, in order: every test harness but an example's, which keeps going past one that refuses, then the examples.
 pub const BUILDS: [crate::cargo::CompileKind; 2] = [
     crate::cargo::CompileKind::SealedTests,
@@ -168,11 +171,17 @@ impl Flags {
             crate::cargo::config::RUSTFLAGS,
         ))? {
             Some(flags) => flags,
-            None => compile_targeted.unwrap_or_else(|| layered.build.clone()),
+            None => match compile_targeted {
+                Some(targeted) => targeted,
+                None => layered.build.clone(),
+            },
         };
         let mut document = match inherited((ENCODED_RUSTDOCFLAGS, RUSTDOCFLAGS))? {
             Some(flags) => flags,
-            None => document_targeted.unwrap_or_else(|| layered.build_doc.clone()),
+            None => match document_targeted {
+                Some(targeted) => targeted,
+                None => layered.build_doc.clone(),
+            },
         };
         compile.extend(linked.iter().cloned());
         document.extend(linked.iter().cloned());
@@ -278,6 +287,8 @@ pub struct Doctests {
 /// What the sealed build produced for each native test target, and why it produced nothing for the rest.
 #[derive(Debug, Clone, Default)]
 pub struct SealedBuild {
+    /// The build cache's claim, shared until the last copy of these modules is dropped.
+    owner: Option<std::sync::Arc<BuildClaim>>,
     /// Each native target's sealed module, by target identity.
     pub modules: BTreeMap<String, Module>,
     /// Each native documentation target's captured doctests, by target identity.
@@ -286,11 +297,34 @@ pub struct SealedBuild {
     pub unsealed: BTreeMap<String, Unsealed>,
 }
 
+/// A sealed build cache's claim, released when the last shared set of its modules is dropped.
+#[derive(Debug)]
+pub(crate) struct BuildClaim {
+    owner: crate::tempowner::Owner,
+}
+
+impl BuildClaim {
+    /// A claim that writes its release whenever the build or its last modules let it go.
+    pub(crate) const fn new(owner: crate::tempowner::Owner) -> Self {
+        Self { owner }
+    }
+}
+
+impl Drop for BuildClaim {
+    fn drop(&mut self) {
+        match self.owner.release() {
+            Ok(()) => {}
+            Err(_unreleased) => {}
+        }
+    }
+}
+
 impl SealedBuild {
     /// A tree with nothing sealed, each of `native` for `why`.
     #[must_use]
     pub fn none(native: &[TestTarget], why: Unsealed) -> Self {
         Self {
+            owner: None,
             modules: BTreeMap::new(),
             doctests: BTreeMap::new(),
             unsealed: native
@@ -298,6 +332,12 @@ impl SealedBuild {
                 .map(|target| (target.id().to_owned(), why))
                 .collect(),
         }
+    }
+
+    /// Keeps the build cache claimed while these modules may be read or run.
+    pub(crate) fn keeping(mut self, owner: Option<std::sync::Arc<BuildClaim>>) -> Self {
+        self.owner = owner;
+        self
     }
 
     /// What the sealed builds, each of [`BUILDS`] as `compiled` into `target_dir`, and each documentation target's captured doctests or why there are none, answer for each of `native`.
@@ -378,6 +418,7 @@ impl SealedBuild {
         unsealed.extend(refused);
         modules.retain(|id, _| native.iter().any(|target| target.id() == id));
         Ok(Self {
+            owner: None,
             modules,
             doctests,
             unsealed,

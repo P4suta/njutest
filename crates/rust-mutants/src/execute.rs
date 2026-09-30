@@ -1647,7 +1647,10 @@ fn stop_said_agrees(output: &[u8], reading: Option<(&str, i32)>) -> bool {
     let Some(last) = last else {
         return reading.is_none();
     };
-    let last = last.strip_suffix(b"\r").unwrap_or(last);
+    let last = match last.strip_suffix(b"\r") {
+        Some(without) => without,
+        None => last,
+    };
     let opening = |check: &str| format!("{STOP_SCHEMA}\t{STEP_PROTOCOL_EXIT}\t{check}\t");
     match reading {
         Some((check, os)) => {

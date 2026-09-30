@@ -3,7 +3,7 @@
   "report": {
     "schema": "njutest-assurance-report-v1",
     "schema_version": 3,
-    "run_id": "20260929t000329776z-00cf39",
+    "run_id": "20260930t132115034z-003714",
     "run_kind": "full",
     "contract": "standard-v1",
     "tool": {
@@ -27,7 +27,7 @@
       }
     },
     "provenance": {
-      "identity": "c5b9a510745f8cd992d5100ec873774b5ffc295da21f88c7d64ef86e2fe864c1",
+      "identity": "46b4eb3568b465e0a9c2bd8d8834384bfcc7389dde5a9d4388d9e9d08fb37572",
       "cached": false,
       "source_run_id": null
     },
@@ -46,14 +46,14 @@
       "kind": "merged",
       "sources": [
         {
-          "run_id": "20260929t000318323z-00c0f2",
+          "run_id": "20260930t132100398z-0018f2",
           "shard": {
             "index": 1,
             "of": 2
           }
         },
         {
-          "run_id": "20260929t000324305z-00c796",
+          "run_id": "20260930t132108536z-002ef6",
           "shard": {
             "index": 2,
             "of": 2
@@ -76,7 +76,7 @@
         },
         "parts": [
           {
-            "run_id": "20260929t000318323z-00c0f2-b0000000000",
+            "run_id": "20260930t132100398z-0018f2-b0000000000",
             "part": {
               "kind": "shard",
               "index": 1,
@@ -90,9 +90,9 @@
               "arch": "aarch64"
             },
             "timing": {
-              "started": "2026-09-29T00:03:18.32396Z",
-              "finished": "2026-09-29T00:03:24.274517Z",
-              "duration_ms": 5950
+              "started": "2026-09-30T13:21:00.398325Z",
+              "finished": "2026-09-30T13:21:08.484496Z",
+              "duration_ms": 8086
             },
             "accounting": {
               "targets": {
@@ -168,7 +168,7 @@
                 "name": "fixture-assured/lib/fixture_assured",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 33,
+                "duration_ms": 275,
                 "message": null
               },
               {
@@ -176,7 +176,7 @@
                 "name": "fixture-assured/test/doubling",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 30,
+                "duration_ms": 232,
                 "message": null
               }
             ],
@@ -300,7 +300,7 @@
               },
               {
                 "name": "skipped-test-code",
-                "detail": "1 place was not mutated: test-code"
+                "detail": "3 places were not mutated: test-code"
               },
               {
                 "name": "schedule-not-explored",
@@ -371,7 +371,7 @@
             ]
           },
           {
-            "run_id": "20260929t000324305z-00c796-b0000000000",
+            "run_id": "20260930t132108536z-002ef6-b0000000000",
             "part": {
               "kind": "shard",
               "index": 2,
@@ -385,9 +385,9 @@
               "arch": "aarch64"
             },
             "timing": {
-              "started": "2026-09-29T00:03:24.30583Z",
-              "finished": "2026-09-29T00:03:29.744954Z",
-              "duration_ms": 5439
+              "started": "2026-09-30T13:21:08.536112Z",
+              "finished": "2026-09-30T13:21:15.003376Z",
+              "duration_ms": 6467
             },
             "accounting": {
               "targets": {
@@ -459,19 +459,19 @@
             "crashes": [],
             "targets": [
               {
-                "id": "0b5ea454999460c0a53634e86a9e7309570b188029bb88b3f0d443f4b0c8a293",
-                "name": "fixture-assured/test/doubling",
-                "package": "fixture-assured",
-                "status": "passed",
-                "duration_ms": 32,
-                "message": null
-              },
-              {
                 "id": "f491db7e81bc24114916f323f607ff0e5f356316ed1934a798ed3d01579ab131",
                 "name": "fixture-assured/lib/fixture_assured",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 28,
+                "duration_ms": 236,
+                "message": null
+              },
+              {
+                "id": "0b5ea454999460c0a53634e86a9e7309570b188029bb88b3f0d443f4b0c8a293",
+                "name": "fixture-assured/test/doubling",
+                "package": "fixture-assured",
+                "status": "passed",
+                "duration_ms": 226,
                 "message": null
               }
             ],
@@ -595,7 +595,7 @@
               },
               {
                 "name": "skipped-test-code",
-                "detail": "1 place was not mutated: test-code"
+                "detail": "3 places were not mutated: test-code"
               },
               {
                 "name": "schedule-not-explored",

@@ -4831,7 +4831,16 @@ fn a_real_crash_run_is_re_decided_clean_sealed_and_native() {
 /// One shard of the recorded sharded run: its run directory, its report rewritten by `edit`, and its recordings.
 fn recorded_shard(edit: impl FnOnce(&mut serde_json::Value)) -> Audit {
     let recorded = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/sharded-run");
-    let shard = "20260929t000318323z-00c0f2";
+    let mut shards: Vec<std::path::PathBuf> = std::fs::read_dir(recorded.join("runs"))
+        .expect("the recorded shards")
+        .map(|entry| entry.expect("a readable shard").path())
+        .collect();
+    shards.sort();
+    let shard = shards
+        .first()
+        .expect("the first recorded shard")
+        .file_name()
+        .expect("the shard's run identity");
     let text = std::fs::read_to_string(recorded.join("runs").join(shard).join(REPORT_FILE))
         .expect("the recorded shard's report");
     let mut report: serde_json::Value =

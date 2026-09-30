@@ -9,7 +9,20 @@ use wasmtime::ValType;
 pub const IMPORT_MODULE: &str = "wasi_snapshot_preview1";
 
 /// One function of WASI preview1; the whole set is everything a sealed guest may import.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, njutest_macros::AllVariants)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    njutest_macros::AllVariants,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum WasiFunction {
     /// `args_get`: the arguments, as C strings.
     ArgsGet,

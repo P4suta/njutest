@@ -33,6 +33,7 @@ impl Rerunnable {
                 verify: false,
                 coverage: false,
                 measurements: None,
+                transcripts: None,
                 sealing: crate::sealed::Sealing::On,
                 ..options.clone()
             },
@@ -58,7 +59,11 @@ impl Rerunnable {
                 (runner, cancel.clone()),
                 (&session.sealed, &named(recorded)),
                 (session.sealed_tree()?, &session.harness_args),
-                (session.catalog.digest(), session.touch_bounds()?),
+                (
+                    session.catalog.digest(),
+                    session.touch_bounds()?,
+                    session.trace().sealed_counts(),
+                ),
             )?),
             None => None,
         };
@@ -124,13 +129,18 @@ impl Rerunnable {
         let now = rerun.put(&recorded.target, &recorded.test, mutant)?;
         drop(rebuilt);
         drop(compiled);
-        if let Now::Came(came_to) = now {
+        if let Now::Came {
+            came_to,
+            transcript,
+        } = &now
+        {
             session.trace().sealed_exec(crate::trace::SealedExecRecord {
                 mutant: mutant.display_id.to_string(),
                 index: mutant.index,
                 target: recorded.target.clone(),
                 test: recorded.test.clone(),
                 came_to: came_to.name().to_owned(),
+                transcript: Some(transcript.clone()),
             });
         }
         Ok(now)

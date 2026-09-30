@@ -330,6 +330,18 @@ fn remembered_measurements(command: &cli::Command, environment: &Environment) ->
     )
 }
 
+/// Where a run may remember what one sealed execution established, so a later invocation of the same module under the same world is answered rather than run.
+fn remembered_transcripts(command: &cli::Command, environment: &Environment) -> Option<PathBuf> {
+    if matches!(command, cli::Command::Run { no_cache: true, .. }) {
+        return None;
+    }
+    Some(
+        environment
+            .cache_directory
+            .join(rust_mutants::sealed::TRANSCRIPTS_LAYOUT),
+    )
+}
+
 /// What a command says while it is preparing, if anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Displayed {
@@ -477,6 +489,7 @@ fn preparation_options(
 ) -> Result<(session::PrepareOptions, Option<run::Filter>), CliError> {
     let mut options = running.settings.prepare_options()?;
     options.measurements = remembered_measurements(command, running.environment);
+    options.transcripts = remembered_transcripts(command, running.environment);
     harness(command, &mut options);
     if let Some(changed) = changed {
         options.narrowing = changed;
