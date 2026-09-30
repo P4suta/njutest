@@ -1457,13 +1457,30 @@ fn the_instrumenter_records_exactly_the_pairs_whose_fault_it_carried() {
         "pub fn g(p: &str) -> Result<(), std::num::ParseIntError> {\n    p.parse::<u8>()?;\n    Ok(())\n}\n",
         &selection,
     );
+    assert_eq!(
+        rules(&statement, &catalog),
+        vec![
+            ("question-to-unwrap".to_owned(), "inject-error".to_owned()),
+            (
+                "ignore-question-statement".to_owned(),
+                "inject-error".to_owned()
+            ),
+        ],
+        "both rewrites preserve the failed call, so both carry exactly its fault"
+    );
+    let ignored = catalog
+        .mutants()
+        .iter()
+        .find(|mutant| mutant.candidate.rule.name == "ignore-question-statement")
+        .expect("the statement mutant");
+    let branch = statement
+        .branches
+        .iter()
+        .find(|branch| branch.index == ignored.index)
+        .expect("its recorded alternative");
     assert!(
-        !rules(&statement, &catalog)
-            .iter()
-            .any(|(mutant, _)| mutant == "ignore-question-statement"),
-        "a statement's rewrite sits above the `?` node, so the call's fault is not its child and \
-         is not carried; no pair is recorded that the tree does not hold: {:?}",
-        rules(&statement, &catalog)
+        statement.text[branch.span.start as usize..branch.span.end as usize].contains("injected()"),
+        "the recorded pair is backed by a fault guard inside the statement alternative"
     );
 }
 
