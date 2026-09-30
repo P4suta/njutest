@@ -135,24 +135,21 @@ Its failure status is `ExitCode::FAILURE`, which `main` reports a doctest's erro
 
 ## Doctests
 
-rustdoc builds a library's doctests for the sealed target with `cargo test --doc --target wasm32-wasip1 -- --test-threads=1`, and runs every binary it built through the target's runner, which the engine sets to a capture of its own.
-The capture keeps each binary under the next free claim, prints the claim, and fails, so that rustdoc's own report says which doctest each claim holds:
+rustdoc builds a library's doctests for the sealed target with `cargo test --doc --target wasm32-wasip1 -- --test-threads=1 --list`, and hands every merged binary it builds to the target's runner, which the engine sets to a capture of its own.
+A merged binary takes no command line: `--list` is baked into it at compile time, so it lists the doctests it holds when it runs, and rustdoc, which cannot run the doctests it did not merge through a listing, lists those itself instead of running them.
 
-- A doctest compiled alone that fails with a claim printed is one that passes by returning, and the claim is its binary.
-- A doctest compiled alone that passes although the capture failed it is one that should panic; its claim is the next in the order rustdoc ran them in, which the printed claims around it confirm.
-- A doctest that fails with no claim did not build for the sealed target: it runs natively and has no sealed execution.
-- A claim printed before rustdoc announces its own tests is a merged binary, which edition 2024 compiles every mergeable doctest into.
-- A doctest rustdoc only compiles, `no_run` or `compile_fail`, or ignores, is not run natively, and has no binary.
+The capture keeps each merged binary under the next free claim, prints the claim, and fails.
+A claim printed before rustdoc lists anything of its own is a merged binary, and each name rustdoc lists itself, closed by its count, is a doctest compiled alone.
+The library is built again without `--list` where rustdoc named any doctest itself: rustdoc then runs each alone binary through the capture, which claims and fails it, so a doctest that passes although the capture failed it is one that should panic, and one that fails with no claim did not build for the sealed target and runs natively.
+Where the first build holds merged binaries, it is built once more with `--list --ignored`: each binary so built, run the same way, lists the doctests it holds that the sealed target ignores.
 
-A merged binary names its doctests when it runs them all in one instance, sorted by name as rustdoc indexes them, and runs one alone when `RUSTDOC_DOCTEST_RUN_NB_TEST` gives its index.
-A doctest that fails on the sealed target aborts that instance inside itself, so the listing then names each doctest the binary finished and the one it stopped in, and nothing past it.
-Before any of them counts, the index the binary announced as its count must be refused as naming no doctest, so a listing that left one out, or a binary built to leave some out, is caught.
-The doctest the listing stopped in is then a test like the others, whose control fails.
-The doctests past it are named from the native run, where it passed every doctest it ran and ignored none, where the library has one merged binary, and where the native run names exactly as many doctests past the listing as the binary announced, each sorting after the last the binary printed and none held in a binary of its own; they take the indexes past the listing in the order rustdoc sorts them in.
-A doctest named so is held only where its control reached a guard, because one the sealed target ignores runs as nothing by index, and is otherwise not held; a run again of a stored report has no native run to name them from, so it holds none past the listing.
-Where they cannot be named, they are not held.
+A merged binary names its doctests when it runs with no index, its harness's own listing, in the order it holds them, whatever any of them does when it runs, and runs one alone when `RUSTDOC_DOCTEST_RUN_NB_TEST` gives its index.
+Before any of them counts, the index past the last the binary listed must be refused as naming no doctest, so a listing that left one out, or a binary built to leave some out, is caught.
+What each doctest passes by comes from the native run, whose harness names the tests that should panic; its listing says nothing of it.
+A doctest the sealed target ignores, which the listing of the `--ignored` build names, runs as nothing when asked for by index, so the station holds none of them: a route to the mutant it alone reaches meets a test the sealed build cannot answer for.
+A run again of a stored report has no native run to ask what each doctest passes by, so it judges every merged doctest by returning, and one that should panic fails its control there — a difference the re-run names, and the run establishes afresh.
 Each doctest is then a test like any other: its control records what it reached and spent, and a mutant is put to it alone.
-A report that does not account for every claim the capture gave out, or a merged binary that does not name its doctests, leaves the documentation target unsealed.
+A report that does not account for every claim the capture gave out, or a merged binary that does not list its doctests, leaves the documentation target unsealed.
 
 ## The standing of a mutant
 
@@ -191,7 +188,7 @@ Each is found, not listed: from the build, from the module's imports, and from t
 | A target whose baseline did not run | `--no-verify` | let the run verify its baselines |
 | A target whose baseline did not name every test it ran | its passed tests do not come to its summary's count | keep libtest's own report whole: a test that prints over it leaves its tests unnamed |
 | A doctest that does not build for the target | rustdoc's report fails it with no claim printed | put what cannot build behind `cfg(not(target_family = "wasm"))`, or mark the example `ignore-wasm32` |
-| rustdoc's report does not account for the capture | a claim the report does not name, one out of order, or a merged binary that does not name its doctests | run `cargo test --doc --target wasm32-wasip1` to see what rustdoc reported |
+| rustdoc's report does not account for the capture | a claim the report does not name, one out of order, or a merged binary that does not list its doctests | run `cargo test --doc --target wasm32-wasip1 -- --list` to see what rustdoc reported |
 
 A mutant that no sealed test can answer for is unproven, and its native lead is still reported.
 The report says of every target which of these it is, as `targets[].sealed`, and names each test the native baseline ran that has no sealed control and why; the run's own output lists them under `SEALED`, each reason once with what to do about it.

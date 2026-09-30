@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use super::{
-    Alone, Captured, Expects, Held, Listed, Printed, Uncaptured, captured, listed, printed,
+    Alone, Captured, Expects, Held, Listing, Uncaptured, captured, listed, listing, merged_binaries,
 };
 
 const EDITION_2021: &str = "
@@ -30,7 +30,6 @@ Test executable failed (exit status: 1).
 
 stdout:
 rust-mutants-captured 2
-
 
 
 failures:
@@ -102,16 +101,31 @@ test result: FAILED. 3 passed; 3 failed; 1 ignored; 0 measured; 0 filtered out; 
 all doctests ran in 0.48s; merged doctests compilation took 0.05s
 ";
 
-const ALL_IN_ONE: &str = "
-running 5 tests
-test src/lib.rs - add (line 11) - compile ... ok
-test src/lib.rs - add (line 15) ... ignored
-test src/lib.rs - add (line 3) ... ok
-test src/lib.rs - add (line 7) - should panic ... ignored
-test src/lib.rs - sub (line 26) ... ok
+/// What a build with `--list` among the doctests' test arguments printed, where one doctest was compiled alone and the rest merged.
+const LISTED_MIXED: &str = "rust-mutants-captured 0
+src/lib.rs - add (line 19) - compile fail: test
 
-test result: ok. 3 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+1 test, 0 benchmarks
+";
 
+/// What a build with `--list` among the doctests' test arguments printed, where every doctest merged.
+const LISTED_MERGED: &str = "rust-mutants-captured 0
+all doctests ran in 0.12s; merged doctests compilation took 0.11s
+";
+
+/// What a build with `--list` among the doctests' test arguments printed, where two doctests were compiled alone and none merged.
+const LISTED_ALONE: &str = "src/lib.rs - add (line 3): test
+src/lib.rs - sub (line 26) - should panic: test
+
+2 tests, 0 benchmarks
+";
+
+/// What a merged binary built with `--list` among its test arguments prints when it runs with no index.
+const MERGED_LISTING: &str = "src/lib.rs - add (line 3): test
+src/lib.rs - add (line 7): test
+src/lib.rs - sub (line 26): test
+
+3 tests, 0 benchmarks
 ";
 
 fn held(claims: u64) -> Held {
@@ -136,6 +150,7 @@ fn doctests_compiled_alone_are_named_by_the_marker_rustdoc_printed_for_them_and_
     assert_eq!(
         captured(EDITION_2021.as_bytes(), &held(3)),
         Ok(Captured {
+            ignored: Vec::new(),
             merged: Vec::new(),
             alone: vec![
                 alone("src/lib.rs - add (line 3)", 0, Expects::Return),
@@ -153,6 +168,7 @@ fn a_merged_compilation_is_the_claim_printed_before_rustdoc_announces_its_own() 
     assert_eq!(
         captured(EDITION_2024.as_bytes(), &held(1)),
         Ok(Captured {
+            ignored: Vec::new(),
             merged: vec![PathBuf::from("0.wasm")],
             alone: Vec::new(),
             unbuilt: Vec::new(),
@@ -161,6 +177,7 @@ fn a_merged_compilation_is_the_claim_printed_before_rustdoc_announces_its_own() 
     assert_eq!(
         captured(ONLY_MERGED.as_bytes(), &held(1)),
         Ok(Captured {
+            ignored: Vec::new(),
             merged: vec![PathBuf::from("0.wasm")],
             alone: Vec::new(),
             unbuilt: Vec::new(),
@@ -174,6 +191,7 @@ fn a_doctest_that_did_not_build_for_the_sealed_target_is_named_unbuilt() {
     assert_eq!(
         captured(MERGE_REFUSED.as_bytes(), &held(3)),
         Ok(Captured {
+            ignored: Vec::new(),
             merged: Vec::new(),
             alone: vec![
                 alone("src/lib.rs - add (line 3)", 0, Expects::Return),
@@ -258,142 +276,181 @@ fn a_line_that_is_not_part_of_a_report_of_doctests_is_refused() {
 }
 
 #[test]
-fn a_merged_binary_lists_its_doctests_in_index_order_with_what_each_passes_by() {
+fn a_build_with_list_names_the_merged_claims_and_the_doctests_rustdoc_listed_itself() {
     assert_eq!(
-        listed(ALL_IN_ONE.as_bytes()),
-        Some(vec![
-            Listed {
-                name: "src/lib.rs - add (line 11) - compile".to_owned(),
-                expects: Expects::Return,
-                ignored: false,
-            },
-            Listed {
-                name: "src/lib.rs - add (line 15)".to_owned(),
-                expects: Expects::Return,
-                ignored: true,
-            },
-            Listed {
-                name: "src/lib.rs - add (line 3)".to_owned(),
-                expects: Expects::Return,
-                ignored: false,
-            },
-            Listed {
-                name: "src/lib.rs - add (line 7)".to_owned(),
-                expects: Expects::Panic,
-                ignored: true,
-            },
-            Listed {
-                name: "src/lib.rs - sub (line 26)".to_owned(),
-                expects: Expects::Return,
-                ignored: false,
-            },
-        ])
+        listing(LISTED_MIXED.as_bytes()),
+        Ok(Listing {
+            merged: vec![0],
+            standalone: vec!["src/lib.rs - add (line 19) - compile fail".to_owned()],
+        }),
+        "rustdoc runs the merged binary through the capture and lists the doctest it did not \
+         merge itself, closing with their count"
+    );
+    assert_eq!(
+        listing(LISTED_MERGED.as_bytes()),
+        Ok(Listing {
+            merged: vec![0],
+            standalone: Vec::new(),
+        }),
+        "where every doctest merged, rustdoc closes with its timing and lists nothing itself"
+    );
+    assert_eq!(
+        listing(LISTED_ALONE.as_bytes()),
+        Ok(Listing {
+            merged: Vec::new(),
+            standalone: vec![
+                "src/lib.rs - add (line 3)".to_owned(),
+                "src/lib.rs - sub (line 26) - should panic".to_owned(),
+            ],
+        }),
+        "a listing names a doctest that should panic as it names any other, so what each passes \
+         by comes from the native run"
     );
 }
 
 #[test]
-fn a_listing_that_filtered_a_doctest_out_or_did_not_close_names_nothing() {
-    let filtered = ALL_IN_ONE.replace("0 filtered out", "1 filtered out");
+fn a_listing_that_never_closes_or_counts_is_refused() {
+    assert_eq!(
+        listing(b"rust-mutants-captured 0\n"),
+        Err(Uncaptured::CountsDisagree {
+            announced: 0,
+            accounted: 0,
+        }),
+        "a merged compilation whose report never closed may have stopped before it handed on \
+         every binary"
+    );
+    let unclosed = LISTED_MIXED.replace("1 test, 0 benchmarks", "");
+    assert_eq!(
+        listing(unclosed.as_bytes()),
+        Err(Uncaptured::CountsDisagree {
+            announced: 0,
+            accounted: 1,
+        }),
+        "a doctest named and never counted may have stopped the report after it"
+    );
+    assert_eq!(listing(b""), Err(Uncaptured::Unreported));
+    let short = LISTED_ALONE.replace("2 tests", "3 tests");
+    assert_eq!(
+        listing(short.as_bytes()),
+        Err(Uncaptured::CountsDisagree {
+            announced: 3,
+            accounted: 2,
+        })
+    );
+}
+
+#[test]
+fn a_line_after_a_listing_closed_or_a_claim_after_it_listed_is_refused() {
+    let trailing = format!("{LISTED_ALONE}rust-mutants-captured 0\n");
+    assert_eq!(
+        listing(trailing.as_bytes()),
+        Err(Uncaptured::Unread {
+            line: "rust-mutants-captured 0".to_owned(),
+        }),
+        "a binary claimed after rustdoc began listing is not one this report accounts for"
+    );
+    let trailing = format!("{LISTED_ALONE}one more line\n");
+    assert_eq!(
+        listing(trailing.as_bytes()),
+        Err(Uncaptured::Unread {
+            line: "one more line".to_owned(),
+        }),
+        "a line after the count is no doctest's name"
+    );
+}
+
+#[test]
+fn the_merged_binaries_of_a_listing_are_its_claims_where_none_is_missing_or_beyond_it() {
+    assert_eq!(
+        merged_binaries(
+            &Listing {
+                merged: vec![0, 1],
+                standalone: Vec::new(),
+            },
+            &held(2)
+        ),
+        Ok(vec![PathBuf::from("0.wasm"), PathBuf::from("1.wasm")])
+    );
+    assert_eq!(
+        merged_binaries(&Listing::default(), &held(0)),
+        Ok(Vec::new()),
+        "a library whose doctests all merged into none claims nothing"
+    );
+    assert_eq!(
+        merged_binaries(
+            &Listing {
+                merged: vec![1],
+                standalone: Vec::new(),
+            },
+            &held(1)
+        ),
+        Err(Uncaptured::OutOfOrder {
+            name: "a merged compilation".to_owned(),
+            said: 1,
+            expected: 0,
+        })
+    );
+    let mut lost = held(2);
+    lost.binaries.remove(&1);
+    assert_eq!(
+        merged_binaries(
+            &Listing {
+                merged: vec![0, 1],
+                standalone: Vec::new(),
+            },
+            &lost
+        ),
+        Err(Uncaptured::Missing { claim: 1 })
+    );
+    assert_eq!(
+        merged_binaries(
+            &Listing {
+                merged: vec![0],
+                standalone: Vec::new(),
+            },
+            &held(2)
+        ),
+        Err(Uncaptured::ClaimsDisagree {
+            reported: 1,
+            held: 2,
+        }),
+        "a claim the capture gave out that the report does not account for is a binary nobody \
+         knows the doctests of"
+    );
+}
+
+#[test]
+fn a_merged_binary_names_its_doctests_in_index_order_whatever_one_does_when_it_runs() {
+    assert_eq!(
+        listed(MERGED_LISTING.as_bytes()),
+        Some(vec![
+            "src/lib.rs - add (line 3)".to_owned(),
+            "src/lib.rs - add (line 7)".to_owned(),
+            "src/lib.rs - sub (line 26)".to_owned(),
+        ]),
+        "a listing is the harness's own, so it names every doctest the binary holds whether any \
+         of them would refuse, panic or hang when it runs"
+    );
+}
+
+#[test]
+fn a_listing_that_filtered_a_doctest_out_did_not_close_or_names_one_twice_names_nothing() {
+    let filtered = MERGED_LISTING.replace("3 tests", "2 tests");
     assert_eq!(
         listed(filtered.as_bytes()),
         None,
-        "a doctest filtered out moves every index after it"
+        "a count short of the names holds the listing to no index"
     );
-    let unclosed = ALL_IN_ONE.replace("test result:", "text result:");
+    let unclosed = MERGED_LISTING.replace("3 tests, 0 benchmarks", "");
     assert_eq!(listed(unclosed.as_bytes()), None);
-    let short = ALL_IN_ONE.replace("running 5 tests", "running 6 tests");
-    assert_eq!(listed(short.as_bytes()), None);
-}
-
-const STOPPED: &str = "
-running 3 tests
-test src/lib.rs - after (line 8) ... ok
-test src/lib.rs - double (line 17) ... ";
-
-#[test]
-fn a_merged_binary_stopped_inside_a_doctest_names_each_it_finished_and_the_one_it_stopped_in() {
-    let returning = |name: &str| Listed {
-        name: name.to_owned(),
-        expects: Expects::Return,
-        ignored: false,
-    };
-    assert_eq!(
-        printed(STOPPED.as_bytes()),
-        Some(Printed {
-            announced: 3,
-            finished: vec![returning("src/lib.rs - after (line 8)")],
-            stopped: Some(returning("src/lib.rs - double (line 17)")),
-            whole: false,
-        })
+    let twice = MERGED_LISTING.replace(
+        "src/lib.rs - add (line 7): test",
+        "src/lib.rs - add (line 3): test",
     );
     assert_eq!(
-        listed(STOPPED.as_bytes()),
+        listed(twice.as_bytes()),
         None,
-        "a listing that stopped names only the doctests before the one it stopped in"
+        "one doctest at two indexes is a listing no binary holds"
     );
-    let resumed = format!("{STOPPED}\ntest src/lib.rs - half (line 27) ... ok\n");
-    assert_eq!(
-        printed(resumed.as_bytes()),
-        None,
-        "a harness that began another doctest after one it never finished is not one run in order"
-    );
-}
-
-#[test]
-fn doctests_past_a_stopped_listing_are_named_from_the_native_run_in_the_order_rustdoc_indexes_them()
-{
-    let listed = |name: &str, expects: Expects| Listed {
-        name: name.to_owned(),
-        expects,
-        ignored: false,
-    };
-    let captured = Captured {
-        merged: vec![PathBuf::from("0.wasm")],
-        alone: vec![alone("src/lib.rs - kept (line 40)", 1, Expects::Return)],
-        unbuilt: vec!["src/lib.rs - unbuilt (line 50)".to_owned()],
-    };
-    let printed = [
-        listed("src/lib.rs - after (line 8)", Expects::Return),
-        listed("src/lib.rs - double (line 17)", Expects::Return),
-    ];
-    let native: Vec<String> = [
-        "src/lib.rs - half (line 3)",
-        "src/lib.rs - after (line 8)",
-        "src/lib.rs - half (line 27) - should panic",
-        "src/lib.rs - example (line 60) - compile",
-        "src/lib.rs - failing (line 70) - compile fail",
-        "src/lib.rs - kept (line 40)",
-        "src/lib.rs - unbuilt (line 50)",
-        "src/lib.rs - double (line 17)",
-    ]
-    .map(str::to_owned)
-    .to_vec();
-    assert_eq!(
-        super::unprinted(&native, &captured, &printed),
-        Some(vec![
-            listed("src/lib.rs - example (line 60) - compile", Expects::Return),
-            listed("src/lib.rs - half (line 27)", Expects::Panic),
-            listed("src/lib.rs - half (line 3)", Expects::Return),
-        ]),
-        "a doctest held apart, compiled only, or printed is not past the listing"
-    );
-    let earlier = [
-        native.clone(),
-        vec!["src/lib.rs - before (line 1)".to_owned()],
-    ]
-    .concat();
-    assert_eq!(
-        super::unprinted(&earlier, &captured, &printed),
-        None,
-        "a doctest that sorts before one the binary printed is not one this binary holds past it"
-    );
-    let two = Captured {
-        merged: vec![PathBuf::from("0.wasm"), PathBuf::from("2.wasm")],
-        ..captured
-    };
-    assert_eq!(
-        super::unprinted(&native, &two, &printed),
-        None,
-        "two merged binaries leave which one holds a doctest unsaid"
-    );
+    assert_eq!(listed(b""), None);
 }

@@ -16,7 +16,7 @@ use rust_mutants_sealed::{
     Snapshot, Start, Transcript, TrapKind, WasiFunction,
 };
 
-use super::doctest::{Expects, Listed, NO_SUCH_INDEX, RUN_ONE, printed};
+use super::doctest::{Expects, NO_SUCH_INDEX, RUN_ONE, listed};
 use super::{SealedBuild, Unsealed};
 use crate::execute::TestTarget;
 use crate::libtest::{Asked, Configured, Own, account};
@@ -369,13 +369,8 @@ pub struct Ran {
     pub whole: bool,
     /// How many tests it ignored.
     pub ignored: u32,
-}
-
-impl Ran {
-    /// The names of every test it passed where they are every test it named at all, which leaves no test it ignored or failed unnamed.
-    fn named(&self) -> Option<&[String]> {
-        (self.whole && self.ignored == 0).then_some(self.tests.as_slice())
-    }
+    /// Every test its harness said should panic, which is how a doctest a merged binary lists is to pass.
+    pub should_panic: Vec<String>,
 }
 
 /// How one test of a station runs.
@@ -416,14 +411,6 @@ impl Run {
             },
         }
     }
-}
-
-/// The doctests a merged binary holds, in index order from the first.
-struct Indexed {
-    /// Each the binary printed when it ran them in one instance.
-    printed: Vec<Listed>,
-    /// Each past those, named from the native run.
-    past: Vec<Listed>,
 }
 
 /// One module of a station, and how each test it holds runs.
@@ -567,9 +554,12 @@ impl<'runner> Bench<'runner> {
             }
         }
         for (id, doctests) in &sealed.doctests {
-            let native = natives.get(id).and_then(Ran::named);
+            let panicking: BTreeSet<String> = match natives.get(id) {
+                Some(ran) => ran.should_panic.iter().cloned().collect(),
+                None => BTreeSet::new(),
+            };
             let Some(mut station) =
-                bench.documented(runner, (doctests, native), Controlled::Every)?
+                bench.documented(runner, (doctests, &panicking), Controlled::Every)?
             else {
                 bench
                     .unsealed
@@ -669,11 +659,11 @@ impl<'runner> Bench<'runner> {
         answering
     }
 
-    /// The station of one library's captured doctests, with the control of each `controlled` asks for, or nothing where a merged binary did not name the doctests it holds; a doctest a merged binary holds past the one that stopped its listing is named from `native`, the names the native run passed the library's doctests under, where there are any.
+    /// The station of one library's captured doctests, with the control of each `controlled` asks for, or nothing where a merged binary did not list the doctests it holds; a merged doctest passes by panicking where its name is among `panicking`, the doctests the native run said should panic, and by returning otherwise, and one the sealed target ignores, which runs as nothing when asked for by index, is not held at all.
     pub(super) fn documented(
         &self,
         runner: &'runner SealedRunner,
-        (doctests, native): (&super::Doctests, Option<&[String]>),
+        (doctests, panicking): (&super::Doctests, &BTreeSet<String>),
         controlled: Controlled<'_>,
     ) -> Result<Option<Station<'runner>>, BenchError> {
         let id = doctests.target.id();
@@ -684,27 +674,35 @@ impl<'runner> Bench<'runner> {
             built: Built::of(&doctests.target)?,
             controls: BTreeMap::new(),
         };
-        let mut held = Vec::new();
-        let mut unprinted_names = BTreeSet::new();
-        for binary in &doctests.captured.merged {
+        let mut ignored = BTreeSet::new();
+        for binary in &doctests.captured.ignored {
             let module = prepared(runner, binary, id)?;
-            let Some(Indexed { printed, past }) =
-                self.merged(&station, &module, (native, doctests))?
-            else {
+            let Some(names) = self.ignored(&station, &module)? else {
                 return Ok(None);
             };
-            unprinted_names.extend(past.iter().map(|doctest| doctest.name.clone()));
-            let tests = printed
+            ignored.extend(names);
+        }
+        let mut held = Vec::new();
+        for binary in &doctests.captured.merged {
+            let module = prepared(runner, binary, id)?;
+            let Some(names) = self.merged(&station, &module)? else {
+                return Ok(None);
+            };
+            let tests = names
                 .into_iter()
-                .chain(past)
                 .enumerate()
-                .filter(|(_, doctest)| !doctest.ignored || doctest.expects == Expects::Panic)
-                .map(|(index, doctest)| {
+                .filter(|(_, name)| !ignored.contains(name.as_str()))
+                .map(|(index, name)| {
+                    let expects = if panicking.contains(&name) {
+                        Expects::Panic
+                    } else {
+                        Expects::Return
+                    };
                     let run = Run::Doctest {
                         index: Some(index),
-                        expects: doctest.expects,
+                        expects,
                     };
-                    (doctest.name, run)
+                    (name, run)
                 })
                 .collect();
             held.push(Holding { module, tests });
@@ -719,10 +717,7 @@ impl<'runner> Bench<'runner> {
             held.push(Holding { module, tests });
         }
         for holding in held {
-            let shared = holding.tests.keys().any(|name| station.names(name));
-            let listed_twice =
-                holding.tests.len() != holding.tests.keys().collect::<BTreeSet<_>>().len();
-            if shared || listed_twice {
+            if holding.tests.keys().any(|name| station.names(name)) {
                 return Ok(None);
             }
             for (name, run) in holding
@@ -730,12 +725,7 @@ impl<'runner> Bench<'runner> {
                 .iter()
                 .filter(|(name, _)| controlled.asks(name))
             {
-                let control = match self.control(&station, &holding.module, (name, *run))? {
-                    Ok(control) if control.reached.is_empty() && unprinted_names.contains(name) => {
-                        Err(Uncontrolled::Unsealed)
-                    }
-                    control => control,
-                };
+                let control = self.control(&station, &holding.module, (name, *run))?;
                 station.controls.insert(name.clone(), control);
             }
             station.holdings.push(holding);
@@ -748,13 +738,12 @@ impl<'runner> Bench<'runner> {
         Ok(Some(station))
     }
 
-    /// The doctests the merged binary `module` of `station` holds, in index order from the first, where it holds no doctest past the last it announced: every one, where it named them all when it ran them in one instance, or each it finished and the one that stopped the instance, where one did, and then every one past those, where `native` names exactly as many as the binary announced beyond them, and nothing past them otherwise.
+    /// The doctests the merged binary `module` of `station` holds, in index order from the first, as its harness lists them when it runs with no index, where the binary refuses the index past the last it listed, which holds the listing to every doctest it holds.
     fn merged(
         &self,
         station: &Station<'_>,
         module: &SealedModule<'_>,
-        (native, doctests): (Option<&[String]>, &super::Doctests),
-    ) -> Result<Option<Indexed>, BenchError> {
+    ) -> Result<Option<Vec<String>>, BenchError> {
         let all = Asking {
             arguments: Vec::new(),
             index: None,
@@ -764,35 +753,15 @@ impl<'runner> Bench<'runner> {
             module,
             &self.invocation(station, all, (Active::Control, CONTROL_FUEL))?,
         )?;
-        let ended = matches!(
-            transcript.stop(),
-            SealedStop::Returned | SealedStop::Exited { code: 101 }
-        );
-        let stopped_inside =
-            transcript.stop() != SealedStop::Returned && transcript.stdout().truncated() == 0;
-        let Some(printed) = printed(transcript.stdout().bytes()) else {
+        if transcript.stop() != SealedStop::Returned {
             return Ok(None);
-        };
-        let listed = match printed.stopped {
-            None if printed.whole && ended => printed.finished,
-            Some(stopped) if stopped_inside => [printed.finished, vec![stopped]].concat(),
-            None | Some(_) => return Ok(None),
-        };
-        let Ok(announced) = usize::try_from(printed.announced) else {
+        }
+        let Some(names) = listed(transcript.stdout().bytes()) else {
             return Ok(None);
-        };
-        let Some(beyond_listed) = announced.checked_sub(listed.len()) else {
-            return Ok(None);
-        };
-        let past = match native
-            .and_then(|native| super::doctest::unprinted(native, &doctests.captured, &listed))
-        {
-            Some(past) if past.len() == beyond_listed => past,
-            Some(_) | None => Vec::new(),
         };
         let after = Asking {
             arguments: Vec::new(),
-            index: Some(announced),
+            index: Some(names.len()),
         };
         let beyond = self.invoke(
             station,
@@ -805,10 +774,28 @@ impl<'runner> Bench<'runner> {
                 kind: TrapKind::Unreachable
             }
         ) && holds(beyond.stderr().bytes(), NO_SUCH_INDEX);
-        Ok(refused.then_some(Indexed {
-            printed: listed,
-            past,
-        }))
+        Ok(refused.then_some(names))
+    }
+
+    /// The doctests the merged binary `module` of `station` holds that the sealed target ignores, as its harness lists them when it runs with no index, where the binary was built to list those alone.
+    fn ignored(
+        &self,
+        station: &Station<'_>,
+        module: &SealedModule<'_>,
+    ) -> Result<Option<Vec<String>>, BenchError> {
+        let all = Asking {
+            arguments: Vec::new(),
+            index: None,
+        };
+        let transcript = self.invoke(
+            station,
+            module,
+            &self.invocation(station, all, (Active::Control, CONTROL_FUEL))?,
+        )?;
+        if transcript.stop() != SealedStop::Returned {
+            return Ok(None);
+        }
+        Ok(listed(transcript.stdout().bytes()))
     }
 
     /// What `test` of `target` comes to with `mutant` active, judged against its control, or nothing where there is no control to judge it against.

@@ -24,6 +24,8 @@ pub struct DoctestCapture<'a> {
     pub capture: (&'a Path, &'a Path),
     /// The rest of the compilation, as the sealed build of the tests asked for it.
     pub compile: &'a CompileOptions,
+    /// Which test arguments the doctests are built with, which a merged binary bakes in.
+    pub baked: crate::sealed::doctest::Baked,
 }
 
 /// The command line that builds `capture.package`'s doctests with the capture for their runner.
@@ -73,6 +75,14 @@ pub fn capture_arguments(capture: &DoctestCapture<'_>) -> Result<Vec<OsString>, 
     args.push(OsString::from(format!("target.{target}.runner={runner}")));
     args.push(OsString::from("--"));
     args.push(OsString::from("--test-threads=1"));
+    match capture.baked {
+        crate::sealed::doctest::Baked::Run => {}
+        crate::sealed::doctest::Baked::List => args.push(OsString::from("--list")),
+        crate::sealed::doctest::Baked::ListIgnored => {
+            args.push(OsString::from("--list"));
+            args.push(OsString::from("--ignored"));
+        }
+    }
     Ok(args)
 }
 

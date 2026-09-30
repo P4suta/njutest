@@ -1265,6 +1265,8 @@ fn sealed_compile(
 
 /// Each documentation target's doctests, built for the sealed target the way `compile` built its tests and handed to a capture, or why they were not.
 ///
+/// Every library is built once with `--list` among the doctests' test arguments, which lists each merged binary's doctests when it runs and makes rustdoc list the rest itself rather than running them; once more with `--list --ignored`, which lists each merged binary's doctests the sealed target ignores, where it has any; and once without either, where rustdoc listed any doctest itself, so each doctest compiled alone runs as itself and one that did not build for the target is known.
+///
 /// # Errors
 /// A capture that could not be built or emptied, and a cargo that could not run or was cancelled.
 fn sealed_doctests(
@@ -1275,8 +1277,6 @@ fn sealed_doctests(
     BTreeMap<String, Result<crate::sealed::doctest::Captured, crate::sealed::Unsealed>>,
     EngineError,
 > {
-    use crate::sealed::Unsealed;
-    use crate::sealed::doctest::{Held, Uncaptured, captured};
     let documented: Vec<&TestTarget> = targets
         .iter()
         .filter(|target| target.kind() == execute::TargetKind::Doc)
@@ -1289,35 +1289,108 @@ fn sealed_doctests(
     let root = compile.target_dir.path().join("doctests");
     let program = crate::cargo::build_capture(&driver, &root.join("capture"))?;
     for target in documented {
-        let directory = root.join("kept").join(target.package());
-        crate::cargo::empty_capture(&directory)?;
-        let stdout = crate::cargo::capture_doctests(
-            &driver,
-            &crate::cargo::DoctestCapture {
-                package: target.package(),
-                capture: (&program, &directory),
-                compile,
-            },
-        )?;
-        let held = Held::read(&directory).map_err(|error| {
-            crate::cargo::CargoError::new(
-                crate::cargo::CargoErrorKind::BuildLedger,
-                format!("{}: {error}", directory.display()),
-            )
-        })?;
-        let answer = match captured(&stdout, &held) {
-            Ok(captured) => Ok(captured),
-            Err(Uncaptured::Unreported) => Err(Unsealed::NotBuilt),
-            Err(uncaptured) => {
-                building
-                    .trace
-                    .note("sealed-doctests", &format!("{}: {uncaptured}", target.id()));
-                Err(Unsealed::DoctestsUnaccounted)
-            }
-        };
+        let answer = captured_library(building, (&driver, &program, &root), (target, compile))?;
         answers.insert(target.id().to_owned(), answer);
     }
     Ok(answers)
+}
+
+/// One documentation target's doctests, built for the sealed target the way `compile` built its tests and handed to a capture under `root`, or why they were not.
+///
+/// The library is built once with `--list` among the doctests' test arguments, which lists each merged binary's doctests when it runs and makes rustdoc list the rest itself rather than running them; once more with `--list --ignored`, which lists each merged binary's doctests the sealed target ignores, where it has any; and once without either, where rustdoc listed any doctest itself, so each doctest compiled alone runs as itself and one that did not build for the target is known.
+///
+/// # Errors
+/// A capture that could not be emptied, a cargo that could not run or was cancelled, and a capture ledger that cannot be read.
+fn captured_library(
+    building: &Building<'_>,
+    (driver, program, root): (&crate::cargo::Driver<'_>, &Path, &Path),
+    (target, compile): (&TestTarget, &CompileOptions),
+) -> Result<Result<crate::sealed::doctest::Captured, crate::sealed::Unsealed>, EngineError> {
+    use crate::sealed::Unsealed;
+    use crate::sealed::doctest::{Baked, Captured, Uncaptured, captured, listing, merged_binaries};
+    let refused = |uncaptured: Uncaptured| match uncaptured {
+        Uncaptured::Unreported => Unsealed::NotBuilt,
+        uncaptured @ (Uncaptured::Unread { .. }
+        | Uncaptured::Unclosed { .. }
+        | Uncaptured::CountsDisagree { .. }
+        | Uncaptured::OutOfOrder { .. }
+        | Uncaptured::ClaimsDisagree { .. }
+        | Uncaptured::Missing { .. }) => {
+            building
+                .trace
+                .note("sealed-doctests", &format!("{}: {uncaptured}", target.id()));
+            Unsealed::DoctestsUnaccounted
+        }
+    };
+    let capture = |kind: &str, baked: Baked| {
+        captured_doctests(
+            driver,
+            (program, &root.join(kind).join(target.package())),
+            (target.package(), compile, baked),
+        )
+    };
+    let (stdout, held) = capture("listed", Baked::List)?;
+    let (listed, merged) = match listing(&stdout)
+        .and_then(|listed| merged_binaries(&listed, &held).map(|merged| (listed, merged)))
+    {
+        Ok(listed) => listed,
+        Err(uncaptured) => return Ok(Err(refused(uncaptured))),
+    };
+    let ignored = if merged.is_empty() {
+        Vec::new()
+    } else {
+        let (stdout, held) = capture("ignored", Baked::ListIgnored)?;
+        match listing(&stdout).and_then(|listed| merged_binaries(&listed, &held)) {
+            Ok(ignored) => ignored,
+            Err(uncaptured) => return Ok(Err(refused(uncaptured))),
+        }
+    };
+    Ok(if listed.standalone.is_empty() {
+        Ok(Captured {
+            merged,
+            ignored,
+            alone: Vec::new(),
+            unbuilt: Vec::new(),
+        })
+    } else {
+        let (stdout, held) = capture("kept", Baked::Run)?;
+        match captured(&stdout, &held) {
+            Ok(ran) => Ok(Captured {
+                merged,
+                ignored,
+                ..ran
+            }),
+            Err(uncaptured) => Err(refused(uncaptured)),
+        }
+    })
+}
+
+/// What rustdoc printed while it built `package`'s doctests as `compile` asks, with `baked` among their test arguments, with every binary handed to the capture `program` keeping them in `directory`, and what the capture holds after.
+///
+/// # Errors
+/// A capture directory that could not be emptied, a cargo that could not run or was cancelled, and a capture ledger that cannot be read.
+fn captured_doctests(
+    driver: &crate::cargo::Driver<'_>,
+    (program, directory): (&Path, &Path),
+    (package, compile, baked): (&str, &CompileOptions, crate::sealed::doctest::Baked),
+) -> Result<(Vec<u8>, crate::sealed::doctest::Held), EngineError> {
+    crate::cargo::empty_capture(directory)?;
+    let stdout = crate::cargo::capture_doctests(
+        driver,
+        &crate::cargo::DoctestCapture {
+            package,
+            capture: (program, directory),
+            compile,
+            baked,
+        },
+    )?;
+    let held = crate::sealed::doctest::Held::read(directory).map_err(|error| {
+        crate::cargo::CargoError::new(
+            crate::cargo::CargoErrorKind::BuildLedger,
+            format!("{}: {error}", directory.display()),
+        )
+    })?;
+    Ok((stdout, held))
 }
 
 /// Turns the mutable-file snapshot into the text a prepared session exposes.

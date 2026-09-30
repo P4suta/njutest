@@ -293,7 +293,7 @@ impl<'runner> Rerun<'runner> {
                     .ok_or(Unsealed::NotListed)
             } else if let Some(doctests) = sealed.doctests.get(id) {
                 bench
-                    .documented(runner, (doctests, None), only)?
+                    .documented(runner, (doctests, &BTreeSet::new()), only)?
                     .ok_or(Unsealed::DoctestsUnaccounted)
             } else {
                 continue;

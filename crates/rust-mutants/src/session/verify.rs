@@ -366,6 +366,7 @@ fn baseline_of(result: &MutantResult, home: execute::Home) -> Result<Baseline, S
         },
         ignored: trace_count("ignored baseline tests", result.ignored_tests.len())?,
         ran: result.passed_tests.clone(),
+        should_panic: result.should_panic_tests.clone(),
         output: match refused {
             Some(refused) => refused,
             None if passes => String::new(),
@@ -485,7 +486,7 @@ const BASELINE_NOT_REMEMBERED: &str = "baseline-not-remembered";
 
 /// The recipe of a remembered baseline.
 /// The engine version is also in every key; this number makes a semantic invalidation explicit within one build.
-const BASELINE_ABI: u32 = 6;
+const BASELINE_ABI: u32 = 7;
 
 /// The on-disk shape of one passing baseline.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -508,6 +509,7 @@ struct RememberedBaseline {
     tests: u32,
     ignored: u32,
     ran: Vec<String>,
+    should_panic: Vec<String>,
     tests_run: Option<u32>,
     home: execute::Home,
     declined: Vec<crate::decline::Decline>,
@@ -930,6 +932,7 @@ impl Remembering {
                     tests: baseline.tests,
                     ignored: baseline.ignored,
                     ran: baseline.ran.clone(),
+                    should_panic: baseline.should_panic.clone(),
                     tests_run: *observed_tests_run,
                     home: baseline.home,
                     declined: baseline.declined.clone(),
@@ -985,6 +988,7 @@ fn recalled(remembered: Remembered, path: &Path) -> Result<Recalled, BaselineCac
             tests: baseline.tests,
             ignored: baseline.ignored,
             ran: baseline.ran,
+            should_panic: baseline.should_panic,
             output: String::new(),
             home: baseline.home,
             declined: baseline.declined,
@@ -1499,6 +1503,8 @@ pub struct Baseline {
     pub ignored: u32,
     /// Every test it passed, as its harness named them, which a sealed build has to hold every one of before it answers for the target as a whole.
     pub ran: Vec<String>,
+    /// Every test its harness said should panic, which a sealed build judges a merged doctest by, its listing saying nothing of it.
+    pub should_panic: Vec<String>,
     /// What it printed, kept only where it did not pass, because that is the only time anybody reads it.
     pub output: String,
     /// The home it ran with, which every execution against it runs with too (ADR 0044).

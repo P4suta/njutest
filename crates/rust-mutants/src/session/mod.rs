@@ -1094,6 +1094,7 @@ impl Session {
                     tests: baseline.ran.clone(),
                     whole: named,
                     ignored: baseline.ignored,
+                    should_panic: baseline.should_panic.clone(),
                 };
                 (id.clone(), ran)
             })
@@ -4384,6 +4385,7 @@ const fn unreached() -> MutantResult {
         failed_tests: Vec::new(),
         passed_tests: Vec::new(),
         ignored_tests: Vec::new(),
+        should_panic_tests: Vec::new(),
         leader: None,
         stopped: execute::Stopped::NotStarted {
             cause: execute::StartFailure::NotAsked,
