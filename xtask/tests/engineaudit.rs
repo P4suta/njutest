@@ -1330,13 +1330,14 @@ fn every_layer_is_silent_on_the_clean_run_and_loud_on_the_perturbations_that_are
     assert!(wrong.is_empty(), "{}", wrong.join("\n\n"));
 }
 
-/// The runs of three fixtures, recorded by the engine and committed beside this test.
-const SAMPLES: [(&str, usize, usize); 5] = [
+/// The runs of six fixtures, recorded by the engine and committed beside this test, the last asking for the fault family by name.
+const SAMPLES: [(&str, usize, usize); 6] = [
     ("engine-run-simple", 13, 0),
     ("engine-run-rejected", 16, 4),
     ("engine-run-unreached", 8, 0),
     ("engine-run-declined", 29, 0),
     ("engine-run-doctest", 12, 0),
+    ("engine-run-faulted", 3, 2),
 ];
 
 #[test]
