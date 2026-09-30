@@ -1329,12 +1329,18 @@ fn audited(fixture: &Fixture, run: &str) -> String {
         .arg(&reports)
         .arg("--trace")
         .arg(fixture.root.join(".njutest/trace").join(run))
+        .arg("--root")
+        .arg(&fixture.root)
         .current_dir(njutest_devkit::paths::workspace_root())
         .output()
         .expect("the audit starts");
     let audit = njutest_devkit::process::strict_utf8(&audited.stdout);
     assert!(
-        audit.contains("; 0 violations"),
+        audited
+            .status
+            .code()
+            .is_some_and(|code| code == 0 || code == 3)
+            && audit.contains("; 0 violations"),
         "the audit ran to its own end over the reissued report: {audit}\n{}",
         njutest_devkit::process::strict_utf8(&audited.stderr)
     );
@@ -3272,6 +3278,78 @@ fn a_traced_run_keeps_what_every_answer_it_carried_rests_on_beside_the_engine_re
             "and {kept}, which the records are read against"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_native_whole_contract_carries_only_what_its_source_and_trace_can_audit() {
+    let fixture = fixture("fixture-two-bodies");
+    std::fs::write(
+        fixture.root.join(".njutest.toml"),
+        "version = 1\ncontract = \"whole-v1\"\n[execution]\ntest_binary_args = [\"--test-threads=1\"]\n",
+    )
+    .expect("the whole contract");
+    let source = fixture.root.join("src/lib.rs");
+    let text = std::fs::read_to_string(&source).expect("the library");
+    let text = format!(
+        "{text}\n\
+         /// ```\n\
+         /// const EARLY: u32 = fixture_two_bodies::evaluated_later(3);\n\
+         /// assert_eq!(EARLY, 5);\n\
+         /// ```\n\
+         pub const fn evaluated_later(value: u32) -> u32 {{ value + 2 }}\n\
+         #[cfg(any())]\n\
+         const DISABLED: u32 = evaluated_later(7);\n"
+    );
+    std::fs::write(&source, &text).expect("uses outside the validation build");
+    let first = verify(&fixture, &["--no-seal", "--trace"]);
+    assert!(
+        first.status.code().is_some_and(|code| code < 3),
+        "a doctest keeps the const it evaluates: {}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    assert_eq!(
+        document(&fixture)["builds"][0]["parts"][0]["accounting"]["targets"]["failed"],
+        0,
+        "a const use in the doctest must keep its baseline passing"
+    );
+    std::fs::write(&source, text.replace("left + right", "right + left"))
+        .expect("an edit inside total alone");
+    let carried = verify(&fixture, &["--no-seal", "--trace"]);
+    assert!(
+        carried.status.code().is_some_and(|code| code < 3),
+        "{}",
+        njutest_devkit::process::strict_utf8(&carried.stderr)
+    );
+    let report = document(&fixture);
+    assert_eq!(report["contract"], "whole-v1", "{report}");
+    let rows = rows_by_place(&report);
+    assert!(
+        rows.values().any(|row| row["reuse"]["reused"] == true),
+        "the unchanged over body carries at least one answer: {report}"
+    );
+    assert!(
+        report.to_string().contains("skipped-unvalidated-const-use"),
+        "the source gate states why the const body stays unchanged: {report}"
+    );
+    let audit = audited(
+        &fixture,
+        report["run_id"].as_str().expect("the carried run identity"),
+    );
+    assert!(
+        audit.contains("layer: reuse:"),
+        "the audit re-decides the carried answers of a real whole-v1 run: {audit}"
+    );
+    let unmeasured: Vec<&str> = audit
+        .lines()
+        .filter(|line| line.starts_with("unaudited:"))
+        .collect();
+    assert!(
+        unmeasured.len() == 1
+            && unmeasured[0].starts_with("unaudited: concurrency:")
+            && unmeasured[0].contains("a scan of every package they link"),
+        "the carry and source premises are all audited; the concurrency source scan is stated: {audit}"
+    );
 }
 
 /// The answers every row of the latest run's first part was given, by where and what it mutates.

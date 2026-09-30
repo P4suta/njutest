@@ -829,6 +829,74 @@ fn carried_remarks(perturbation: &sentinel::Perturbation) -> Vec<(Standing, Stri
 }
 
 #[test]
+fn a_native_documentation_plan_is_conservative_and_cannot_claim_a_guard_filter() {
+    let (line, column) = sentinel::BODY_START;
+    let mut specimen = sentinel::carried(
+        "documentation",
+        sentinel::clean(),
+        &serde_json::json!({ "line": line, "column": column }),
+    );
+    let documentation = "pkg/doc/docs";
+    let touched = specimen
+        .beside
+        .iter_mut()
+        .find(|(name, _)| *name == "touched-v1.json")
+        .expect("the guards' record");
+    let targets = touched
+        .1
+        .get_mut("targets")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("the guarded targets");
+    targets.insert(
+        documentation.to_owned(),
+        serde_json::json!({
+            "reached": { "tests": {}, "loose": [] },
+            "bodies": { "tests": {}, "loose": [] },
+            "infected": { "tests": {}, "loose": [] },
+            "entered": { "tests": {}, "loose": [] },
+            "ran": ["docs::one"]
+        }),
+    );
+    for (target, filter) in [
+        (documentation, serde_json::Value::Null),
+        (documentation, serde_json::json!(["docs::one"])),
+        ("pkg/doc/missing", serde_json::Value::Null),
+    ] {
+        let carried = specimen
+            .beside
+            .iter_mut()
+            .find(|(name, _)| *name == "carried-v1.json")
+            .expect("the carried record");
+        *carried.1.pointer_mut("/records/0/plan").expect("the plan") = serde_json::json!([
+            { "target": TARGET, "filter": null },
+            { "target": target, "filter": filter }
+        ]);
+        let remarks = carried_remarks(&specimen);
+        if target == documentation && filter.is_null() {
+            assert!(
+                remarks.is_empty(),
+                "the carried kill is fully re-decided; native documentation claims no measured reach: {remarks:?}"
+            );
+        } else if !filter.is_null() {
+            assert!(
+                remarks.iter().any(|(standing, _, detail)| {
+                    *standing == Standing::Violated
+                        && detail.contains("narrows native documentation target")
+                }),
+                "the guard record cannot prove a documentation test filter: {remarks:?}"
+            );
+        } else {
+            assert!(
+                remarks.iter().any(|(standing, _, detail)| {
+                    *standing == Standing::Violated && detail.contains("pkg/doc/missing")
+                }),
+                "a documentation name cannot excuse an unrecorded target: {remarks:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_carried_answer_is_held_to_every_premise_again_from_what_its_build_kept() {
     let (line, column) = sentinel::BODY_START;
     let held = carried_remarks(&sentinel::carried(

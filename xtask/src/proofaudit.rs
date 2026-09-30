@@ -6367,14 +6367,24 @@ fn reuse(
             ),
         ),
     }
-    notes.unaudited(
-        "provenance",
-        format!(
-            "{} dispositions were read back from an earlier run; whether each target an exact \
-             answer rests on keeps the behaviour key it had is a fact this report does not carry",
-            believed.len()
-        ),
-    );
+    let exact = believed
+        .iter()
+        .filter(|mutant| {
+            match routing.and_then(|routing| routing.route_of(&mutant.id, &mutant.display_id)) {
+                Some(route) => route.rule.as_deref() != Some("carried"),
+                None => true,
+            }
+        })
+        .count();
+    if exact > 0 {
+        notes.unaudited(
+            "provenance",
+            format!(
+                "{exact} dispositions were read back from an earlier run; whether each target an exact \
+                 answer rests on keeps the behaviour key it had is a fact this report does not carry"
+            ),
+        );
+    }
     notes.looked()
 }
 
