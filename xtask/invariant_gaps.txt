@@ -7,5 +7,3 @@
 # A new decision enters with the holes it has, each owned here.
 # A line leaves when its cell names what holds the decision there, and `cargo xtask invariants`
 # refuses a line the table no longer leaves open, so a closed hole cannot stay listed.
-
-step-transition mutation njutest-14
