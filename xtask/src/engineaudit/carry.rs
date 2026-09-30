@@ -499,8 +499,12 @@ struct Skeletons {
     document_type: String,
     schema_version: u64,
     items: Vec<ItemClaim>,
+    files: std::collections::BTreeMap<String, String>,
     units: Vec<Unit>,
 }
+
+/// The version of the skeletons document this audit reads, the first to keep every file's digest.
+const SKELETONS_VERSION: u64 = 3;
 
 /// What the run claims of one cataloged item's body.
 #[derive(Debug, serde::Deserialize)]
@@ -791,11 +795,14 @@ fn documents(
         ("skeletons-v1.json", "rust-mutants/skeletons"),
         notes,
     )?;
-    if skeletons.document_type != "rust-mutants/skeletons" || skeletons.schema_version != 2 {
+    if skeletons.document_type != "rust-mutants/skeletons"
+        || skeletons.schema_version != SKELETONS_VERSION
+    {
         notes.violated(
             "skeletons-v1.json",
             format!(
-                "the document says it is {} version {}, not rust-mutants/skeletons version 2",
+                "the document says it is {} version {}, not rust-mutants/skeletons version \
+                 {SKELETONS_VERSION}",
                 skeletons.document_type, skeletons.schema_version
             ),
         );
@@ -876,11 +883,7 @@ pub(super) fn layer(
             return notes.looked();
         }
     };
-    let measured: std::collections::BTreeMap<&str, &str> = report
-        .mutants
-        .iter()
-        .map(|row| (row.path.as_str(), row.source_digest.as_str()))
-        .collect();
+    let measured = measured(&skeletons, report, &mut notes);
     let items = cataloged(&skeletons, &spans, &mut notes);
     let mut read = Tree::new(root, &measured);
     for item in &items {
@@ -889,6 +892,32 @@ pub(super) fn layer(
     refs(&items, &mut notes);
     skeleton_folds((&skeletons, &items, page.lists()), &mut read, &mut notes);
     notes.looked()
+}
+
+/// The digest of every file the run measured, as the skeletons keep it for every file an item is in and as each row's source digest says it, every disagreement between the two said.
+fn measured<'r>(
+    skeletons: &'r Skeletons,
+    report: &'r super::Report,
+    notes: &mut super::Notes<'_>,
+) -> std::collections::BTreeMap<&'r str, &'r str> {
+    let mut measured: std::collections::BTreeMap<&str, &str> = skeletons
+        .files
+        .iter()
+        .map(|(path, digest)| (path.as_str(), digest.as_str()))
+        .collect();
+    for row in &report.mutants {
+        match measured.insert(row.path.as_str(), row.source_digest.as_str()) {
+            Some(kept) if kept != row.source_digest => notes.violated(
+                &row.display_id,
+                format!(
+                    "the row says {} was measured as {}, and the skeletons keep it as {kept}",
+                    row.path, row.source_digest
+                ),
+            ),
+            Some(_) | None => {}
+        }
+    }
+    measured
 }
 
 /// The files of the measured tree, each read once and proved to be the file the run measured where the report can say.
@@ -1457,7 +1486,7 @@ fn believed(
                 ),
             );
         }
-        if let Some(why) = locus_differs(row, &record.locus, held) {
+        if let Some(why) = locus_differs(&Edit::of_row(row), &record.locus, held) {
             notes.violated(
                 subject,
                 format!("the record's locus is not the mutation's: {why}"),
@@ -1583,6 +1612,273 @@ pub struct Kept<'a> {
     pub skeletons: &'a serde_json::Value,
     /// `touched-v1.json`.
     pub touched: &'a serde_json::Value,
+    /// `catalog-v1.json`, whose edits every locus is derived from.
+    pub catalog: &'a serde_json::Value,
+}
+
+/// What a runner's report row says of the mutation a carried answer is for: where its edit is, and what it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reported {
+    /// Its catalog index.
+    pub index: u64,
+    /// Its file.
+    pub path: String,
+    /// The line of its edit.
+    pub line: u64,
+    /// The byte column of its edit.
+    pub column: u64,
+    /// The bytes its edit replaces.
+    pub original: String,
+    /// What they become.
+    pub replacement: String,
+}
+
+/// One mutation of the catalog a build kept beside its recording, as the engine writes it, with the branch a proof names where it names one.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CatalogEdit {
+    index: u64,
+    id: String,
+    #[serde(rename = "display_id")]
+    _display_id: String,
+    path: String,
+    #[serde(rename = "package")]
+    _package: String,
+    #[serde(rename = "family")]
+    _family: String,
+    rule: String,
+    #[serde(rename = "item")]
+    _item: String,
+    rule_version: u64,
+    line: u64,
+    column: u64,
+    start_byte: u64,
+    end_byte: u64,
+    #[serde(rename = "source_digest")]
+    _source_digest: String,
+    original: String,
+    replacement: String,
+    #[serde(rename = "branch")]
+    _branch: Option<serde_json::Value>,
+}
+
+/// Where a mutation's edit is and what it is, which is all a locus is derived from.
+struct Edit<'e> {
+    path: &'e str,
+    start_byte: u64,
+    end_byte: u64,
+    replacement: &'e str,
+    rule: &'e str,
+    rule_version: u64,
+}
+
+impl<'e> Edit<'e> {
+    /// The edit of an engine report's row.
+    fn of_row(row: &'e super::Row) -> Self {
+        Self {
+            path: &row.path,
+            start_byte: row.start_byte,
+            end_byte: row.end_byte,
+            replacement: &row.replacement,
+            rule: &row.rule,
+            rule_version: row.rule_version,
+        }
+    }
+
+    /// The edit of a mutation a kept catalog holds.
+    fn of_catalog(mutation: &'e CatalogEdit) -> Self {
+        Self {
+            path: &mutation.path,
+            start_byte: mutation.start_byte,
+            end_byte: mutation.end_byte,
+            replacement: &mutation.replacement,
+            rule: &mutation.rule,
+            rule_version: mutation.rule_version,
+        }
+    }
+}
+
+/// Every mutation of the catalog document `catalog`, or why it is not the one this audit reads.
+fn catalog_of(catalog: &serde_json::Value) -> Result<Vec<CatalogEdit>, KeptError> {
+    let said = |key: &str| catalog.get(key).ok_or(KeptError::Uncataloged);
+    let document_type = said("document_type")?
+        .as_str()
+        .ok_or(KeptError::Uncataloged)?;
+    let version = said("schema_version")?
+        .as_u64()
+        .ok_or(KeptError::Uncataloged)?;
+    if document_type != "rust-mutants/catalog" || version != 1 {
+        return Err(KeptError::OtherCatalog {
+            said: document_type.to_owned(),
+            version,
+        });
+    }
+    said("mutants")?
+        .as_array()
+        .ok_or(KeptError::Uncataloged)?
+        .iter()
+        .map(|mutation| {
+            serde_json::from_value::<CatalogEdit>(mutation.clone()).map_err(|source| {
+                KeptError::Undecodable {
+                    file: "catalog-v1.json",
+                    document: "rust-mutants/catalog",
+                    source,
+                }
+            })
+        })
+        .collect()
+}
+
+/// What reading one body a carried answer rests on again from the tree said.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadAgain {
+    /// The file is proved the one the run measured, and what the build kept of the body is not what its bytes make.
+    Violated {
+        /// The item, as the carry evidence names it.
+        subject: String,
+        /// What it kept and what the bytes make.
+        detail: String,
+    },
+    /// What the build kept could not be held to the bytes: the file cannot be read from the tree, or is not the one the run measured.
+    Unaudited {
+        /// The item, as the carry evidence names it.
+        subject: String,
+        /// Why.
+        detail: String,
+    },
+}
+
+/// Every body the carried answers a runner's build believed rest on, read again from the tree at `root` and held to the digest and start the build kept of it.
+///
+/// A body is read only in a file whose digest in the skeletons proves it the one the run measured, and every body counts: each locus's own and every one an execution entered.
+///
+/// # Errors
+/// The first document that is not the one this audit reads, in words.
+pub fn bodies_again(kept: Kept<'_>, root: &std::path::Path) -> Result<Vec<ReadAgain>, KeptError> {
+    let skeletons =
+        serde_json::from_value::<Skeletons>(kept.skeletons.clone()).map_err(|source| {
+            KeptError::Undecodable {
+                file: "skeletons-v1.json",
+                document: "rust-mutants/skeletons",
+                source,
+            }
+        })?;
+    if skeletons.document_type != "rust-mutants/skeletons"
+        || skeletons.schema_version != SKELETONS_VERSION
+    {
+        return Err(KeptError::Other {
+            file: "skeletons-v1.json",
+            said: skeletons.document_type,
+            version: skeletons.schema_version,
+            document: "rust-mutants/skeletons",
+            expected: SKELETONS_VERSION,
+        });
+    }
+    let touched =
+        super::wire::read_touched(kept.touched).map_err(|source| KeptError::Undecodable {
+            file: "touched-v1.json",
+            document: "guards' record",
+            source,
+        })?;
+    let spans = spans(&touched).ok_or(KeptError::Uncataloged)?;
+    let carried = serde_json::from_value::<Believed>(kept.carried.clone()).map_err(|source| {
+        KeptError::Undecodable {
+            file: "carried-v1.json",
+            document: "rust-mutants/carried",
+            source,
+        }
+    })?;
+    let resting: std::collections::BTreeSet<&NamedItem> = carried
+        .records
+        .iter()
+        .flat_map(|entry| {
+            std::iter::once(&entry.record.locus.item).chain(
+                entry
+                    .record
+                    .executions
+                    .iter()
+                    .flat_map(|execution| execution.entered.iter().map(|one| &one.item)),
+            )
+        })
+        .collect();
+    Ok(resting
+        .into_iter()
+        .filter_map(|item| {
+            let claim = skeletons.items.iter().find(|claim| claim.item == *item)?;
+            read_again(item, claim, (&skeletons.files, &spans), root)
+        })
+        .collect())
+}
+
+/// What reading `claim`'s body again from `root` says against what the build kept of it, or nothing where it holds.
+fn read_again(
+    item: &NamedItem,
+    claim: &ItemClaim,
+    (files, spans): (&std::collections::BTreeMap<String, String>, &Spans),
+    root: &std::path::Path,
+) -> Option<ReadAgain> {
+    let subject = item.to_string();
+    let unaudited = |detail: String| {
+        Some(ReadAgain::Unaudited {
+            subject: subject.clone(),
+            detail,
+        })
+    };
+    let Some((path, body)) = spans.get(&claim.index) else {
+        return unaudited("the guards' record keeps no body span for it".to_owned());
+    };
+    let Ok(bytes) = std::fs::read(root.join(path)) else {
+        return unaudited(format!("{path} cannot be read from the tree"));
+    };
+    match files.get(path) {
+        Some(digest) if *digest == sha256(&bytes) => {}
+        Some(_) => return unaudited(format!("{path} is not the file the run measured")),
+        None => {
+            return unaudited(format!(
+                "the skeletons keep no digest of {path}, so no file read again is proved the one \
+                 the run measured"
+            ));
+        }
+    }
+    let violated = |detail: String| {
+        Some(ReadAgain::Violated {
+            subject: subject.clone(),
+            detail,
+        })
+    };
+    let (Ok(start), Ok(end)) = (usize::try_from(body.start), usize::try_from(body.end)) else {
+        return violated(format!(
+            "its body span does not fit this machine's addresses, so no byte of {path} is its body"
+        ));
+    };
+    let range = start..end;
+    let Some(read) = bytes.get(range.clone()) else {
+        return violated(format!(
+            "its body span lies outside {path}, the file the run measured"
+        ));
+    };
+    if sha256(read) != claim.body_digest {
+        return violated(format!(
+            "the build kept a body digest of {} that its body's bytes in {path}, the file the run \
+             measured, do not hash to, so an answer carried across it rests on a body nobody read",
+            claim.name
+        ));
+    }
+    let start = match bytes
+        .split_at_checked(range.start)
+        .map(|(before, _)| std::str::from_utf8(before))
+    {
+        Some(Ok(before)) => placed(before, before.len()),
+        Some(Err(_)) | None => None,
+    };
+    (start != claim.start).then(|| ReadAgain::Violated {
+        subject: subject.clone(),
+        detail: format!(
+            "the build kept {} as starting at {:?}, and its body starts at {start:?} in {path}, \
+             the file the run measured",
+            claim.name, claim.start
+        ),
+    })
 }
 
 /// One carried answer a runner's build believed, as this audit reads it again.
@@ -1600,6 +1896,8 @@ pub struct Rederived {
     pub unplanned: Vec<String>,
     /// What the guards' record or the report keeps too little of to say whether each planned target reaches the mutation, in words.
     pub unkept: Vec<String>,
+    /// Why the record's locus is not the one the mutation's edit makes, as the catalog kept beside the recording and the report's row say it, or nothing where it is.
+    pub misplaced: Option<String>,
 }
 
 /// Why what a runner's build kept beside its recording is not the carry evidence this audit reads.
@@ -1618,7 +1916,7 @@ pub enum KeptError {
         source: serde_json::Error,
     },
     /// A document says it is another document, or another version of it.
-    #[error("{file} says it is {said} version {version}, not {document} version 2")]
+    #[error("{file} says it is {said} version {version}, not {document} version {expected}")]
     Other {
         /// The document's file name.
         file: &'static str,
@@ -1628,18 +1926,31 @@ pub enum KeptError {
         version: u64,
         /// The document it should be.
         document: &'static str,
+        /// The version it should be.
+        expected: u64,
     },
-    /// The guards' record keeps no item catalog, so no body can be named.
-    #[error("touched-v1.json keeps no item catalog")]
+    /// The guards' record keeps no item catalog, or the kept catalog no mutation list, so no body or edit can be named.
+    #[error("touched-v1.json keeps no item catalog, or catalog-v1.json no mutations")]
     Uncataloged,
+    /// The kept catalog says it is another document, or another version of it.
+    #[error(
+        "catalog-v1.json says it is {said} version {version}, not rust-mutants/catalog version 1"
+    )]
+    OtherCatalog {
+        /// What it says it is.
+        said: String,
+        /// The version it says.
+        version: u64,
+    },
 }
 
 impl crate::error::Coded for KeptError {
     fn code(&self) -> crate::error::XtCode {
         match self {
-            Self::Undecodable { .. } | Self::Other { .. } | Self::Uncataloged => {
-                crate::error::XtCode::EngineEvidence
-            }
+            Self::Undecodable { .. }
+            | Self::Other { .. }
+            | Self::Uncataloged
+            | Self::OtherCatalog { .. } => crate::error::XtCode::EngineEvidence,
         }
     }
 }
@@ -1647,17 +1958,18 @@ impl crate::error::Coded for KeptError {
 /// Every carried answer a runner's build believed, held to every premise of ADR 0041 again.
 ///
 /// P1 to P6 and P8 are read from what the build kept beside its recording and P7 from the control records `standings` re-derives, with nothing of the engine's.
-/// The plan each was held to is held to the guards' record at the catalog index `indices` gives its mutant.
+/// Each locus is derived again from the edit the kept catalog holds for its mutant, which must be the edit the report's row in `reported` says, and the plan each was held to is held to the guards' record at that row's catalog index.
 ///
 /// # Errors
 /// The first document that is not the one this audit reads, in words.
 pub fn rederived(
     kept: Kept<'_>,
-    (standings, indices): (
+    (standings, reported): (
         Option<&std::collections::BTreeMap<String, crate::drift::Standing>>,
-        &std::collections::BTreeMap<String, u64>,
+        &std::collections::BTreeMap<String, Reported>,
     ),
 ) -> Result<Vec<Rederived>, KeptError> {
+    let catalog = catalog_of(kept.catalog)?;
     let skeletons =
         serde_json::from_value::<Skeletons>(kept.skeletons.clone()).map_err(|source| {
             KeptError::Undecodable {
@@ -1666,12 +1978,15 @@ pub fn rederived(
                 source,
             }
         })?;
-    if skeletons.document_type != "rust-mutants/skeletons" || skeletons.schema_version != 2 {
+    if skeletons.document_type != "rust-mutants/skeletons"
+        || skeletons.schema_version != SKELETONS_VERSION
+    {
         return Err(KeptError::Other {
             file: "skeletons-v1.json",
             said: skeletons.document_type,
             version: skeletons.schema_version,
             document: "rust-mutants/skeletons",
+            expected: SKELETONS_VERSION,
         });
     }
     let touched =
@@ -1694,23 +2009,69 @@ pub fn rederived(
             said: carried.document_type,
             version: carried.schema_version,
             document: "rust-mutants/carried",
+            expected: 2,
         });
     }
     let held = Held::of(&skeletons, &touched, &spans);
     Ok(carried
         .records
         .iter()
-        .map(|entry| rederive(entry, &held, (standings, indices)))
+        .map(|entry| rederive(entry, (&held, &catalog), (standings, reported)))
         .collect())
 }
 
-/// One carried record a runner's build believed, held to every premise of ADR 0041 and its plan to the guards' record.
+/// Why the locus `entry` was carried under is not the one its mutation's edit makes: the kept catalog holds no edit of that identity, holds one the report's row does not say, or makes another locus of it.
+fn misplaced(
+    entry: &BelievedRecord,
+    (held, catalog): (&Held<'_>, &[CatalogEdit]),
+    reported: Option<&Reported>,
+) -> Option<String> {
+    let Some(mutation) = catalog.iter().find(|one| one.id == entry.mutant) else {
+        return Some(
+            "the catalog kept beside the recording holds no edit of that identity, so no locus \
+             can be derived for it"
+                .to_owned(),
+        );
+    };
+    let Some(reported) = reported else {
+        return Some(
+            "the report holds no row of that identity with a catalog index, so which edit the \
+             catalog's is cannot be held to it"
+                .to_owned(),
+        );
+    };
+    let kept = (
+        mutation.index,
+        mutation.path.as_str(),
+        mutation.line,
+        mutation.column,
+        mutation.original.as_str(),
+        mutation.replacement.as_str(),
+    );
+    let said = (
+        reported.index,
+        reported.path.as_str(),
+        reported.line,
+        reported.column,
+        reported.original.as_str(),
+        reported.replacement.as_str(),
+    );
+    if kept != said {
+        return Some(format!(
+            "the catalog kept beside the recording holds the edit {kept:?} under that identity, \
+             and the report's row says {said:?}"
+        ));
+    }
+    locus_differs(&Edit::of_catalog(mutation), &entry.record.locus, held)
+}
+
+/// One carried record a runner's build believed, held to every premise of ADR 0041, its locus to the edit its mutation makes, and its plan to the guards' record.
 fn rederive(
     entry: &BelievedRecord,
-    held: &Held<'_>,
-    (standings, indices): (
+    (held, catalog): (&Held<'_>, &[CatalogEdit]),
+    (standings, reported): (
         Option<&std::collections::BTreeMap<String, crate::drift::Standing>>,
-        &std::collections::BTreeMap<String, u64>,
+        &std::collections::BTreeMap<String, Reported>,
     ),
 ) -> Rederived {
     let record = &entry.record;
@@ -1721,19 +2082,19 @@ fn rederive(
                 .find_map(|target| unheld(target, standings))
         })
     });
-    let (unplanned, unkept) = match indices.get(&entry.mutant) {
-        Some(index) => planning(*index, &entry.plan, held.touched)
-            .into_iter()
-            .fold(
-                (Vec::new(), Vec::new()),
-                |(mut unplanned, mut unkept), said| {
-                    match said {
-                        Planning::Unreached(why) => unplanned.push(why),
-                        Planning::Unkept(why) => unkept.push(why),
-                    }
-                    (unplanned, unkept)
-                },
-            ),
+    let row = reported.get(&entry.mutant);
+    let misplaced = misplaced(entry, (held, catalog), row);
+    let (unplanned, unkept) = match row.map(|row| row.index) {
+        Some(index) => planning(index, &entry.plan, held.touched).into_iter().fold(
+            (Vec::new(), Vec::new()),
+            |(mut unplanned, mut unkept), said| {
+                match said {
+                    Planning::Unreached(why) => unplanned.push(why),
+                    Planning::Unkept(why) => unkept.push(why),
+                }
+                (unplanned, unkept)
+            },
+        ),
         None => (
             Vec::new(),
             vec![
@@ -1750,6 +2111,7 @@ fn rederive(
         fails,
         unplanned,
         unkept,
+        misplaced,
     }
 }
 
@@ -1768,8 +2130,8 @@ fn resting_targets<'r>(record: &'r Carried, plan: &'r [Planned]) -> Vec<&'r str>
     plan.iter().map(|one| one.target.as_str()).collect()
 }
 
-/// Why a record's locus is not the mutation at `row`: another item, another body, another place in it, another edit, or another rule.
-fn locus_differs(row: &super::Row, locus: &Locus, held: &Held<'_>) -> Option<String> {
+/// Why a record's locus is not the one `row`'s edit makes: another item, another body, another place in it, another edit, or another rule.
+fn locus_differs(row: &Edit<'_>, locus: &Locus, held: &Held<'_>) -> Option<String> {
     let Some((index, (_, body))) = held
         .spans
         .iter()
@@ -1794,7 +2156,7 @@ fn locus_differs(row: &super::Row, locus: &Locus, held: &Held<'_>) -> Option<Str
         body_digest: digest.clone(),
         start,
         end,
-        replacement: row.replacement.clone(),
+        replacement: row.replacement.to_owned(),
         rule: format!("{}@{}", row.rule, row.rule_version),
     };
     (*locus != expected)

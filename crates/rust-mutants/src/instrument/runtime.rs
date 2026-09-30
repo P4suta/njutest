@@ -23,9 +23,9 @@ pub const COMPILED_CATALOG_ENV: &str = "RUST_MUTANTS_COMPILED_CATALOG";
 /// The exit status of a test process whose tree was built from a different catalog than the one activating it.
 pub const STALE_CATALOG_EXIT: i32 = 97;
 
-/// Names the number of times the active mutant's guard may be taken before the process is stopped.
+/// Names how many boundaries of the instrumented workspace, test code included, an execution may pass once the active mutant's guard has been taken, before the process is stopped.
 ///
-/// The per-process allowance for takes of the selected mutant's guard.
+/// The allowance every process of the execution spends together once the selected mutant's guard has activated.
 /// It is an execution bound, not a proof that the program would not terminate.
 /// Unset, or `0`, spends nothing and counts nothing.
 pub const STEPS_ENV: &str = "RUST_MUTANTS_STEPS";

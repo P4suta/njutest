@@ -2530,7 +2530,7 @@ pub fn all(root: &Path) -> Result<String, GateError> {
     Ok(report.trim_end().to_owned())
 }
 
-/// Whether a completed run's verdicts are the ones its own recording supports.
+/// Whether a completed run's verdicts are the ones its own recording supports, every body an answer it carried rests on read again from the tree at `root` where one is named.
 ///
 /// # Errors
 /// A run directory whose report could not be read, is not JSON, or is not the assurance report.
@@ -2538,6 +2538,7 @@ pub fn proofaudit(
     checkers: &crate::schemas::Checkers,
     run: &Path,
     trace: Option<&Path>,
+    root: Option<&Path>,
 ) -> Result<proofaudit::Audit, proofaudit::AuditError> {
     let path = run.join(proofaudit::REPORT_FILE);
     let label = path.display().to_string();
@@ -2553,7 +2554,10 @@ pub fn proofaudit(
             path: &label,
             text: &text,
         },
-        kept.recorded(),
+        proofaudit::Recorded {
+            root,
+            ..kept.recorded()
+        },
         Some(run),
     )
 }
@@ -2577,6 +2581,7 @@ impl Recordings {
             engines: &self.engines,
             outputs: &self.outputs,
             beside: &self.beside,
+            root: None,
         }
     }
 }
@@ -2615,7 +2620,7 @@ fn recordings(trace: Option<&Path>) -> Result<Recordings, proofaudit::AuditError
     })
 }
 
-/// What each configured build's engine kept beside its recording of the answers it carried, in namespace order, each with the position of its recording; a build that kept no `carried-v1.json` carried nothing it kept, and one that kept it keeps the skeletons and the guards' record beside it.
+/// What each configured build's engine kept beside its recording of the answers it carried, in namespace order, each with the position of its recording; a build that kept no `carried-v1.json` carried nothing it kept, and one that kept it keeps the skeletons, the guards' record and the catalog beside it.
 fn engine_beside(trace: &Path) -> Result<Vec<proofaudit::Beside>, proofaudit::AuditError> {
     let builds = trace.join("builds");
     let namespaces = match crate::repository::entries(&builds) {
@@ -2647,6 +2652,7 @@ fn engine_beside(trace: &Path) -> Result<Vec<proofaudit::Beside>, proofaudit::Au
             carried,
             skeletons: required("skeletons-v1.json")?,
             touched: required("touched-v1.json")?,
+            catalog: required("catalog-v1.json")?,
         });
     }
     Ok(kept)
@@ -3071,7 +3077,7 @@ fn proofaudit_specimen(
         .map_err(|error| GateError(format!("proofaudit: specimen `{name}`: {error}")))?;
     let shards: Vec<PathBuf> = laid.shards().into_iter().map(Path::to_path_buf).collect();
     if shards.is_empty() {
-        proofaudit(checkers, laid.run(), laid.trace())
+        proofaudit(checkers, laid.run(), laid.trace(), laid.root())
     } else {
         proofaudit_merged(checkers, laid.run(), &shards, laid.traces())
     }

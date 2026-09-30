@@ -533,8 +533,10 @@ fn carry_beside(
         (
             "skeletons-v1.json",
             json!({
-                "document_type": "rust-mutants/skeletons", "schema_version": 2,
-                "items": [item], "units": units
+                "document_type": "rust-mutants/skeletons", "schema_version": 3,
+                "items": [item],
+                "files": { path: crate::engineaudit::carry::digest_of(source.as_bytes()) },
+                "units": units
             }),
         ),
     ]
@@ -798,6 +800,21 @@ fn placement_plants() -> Vec<Perturbation> {
     ]
 }
 
+/// The defect planted for the carry layer in a file no mutation of the run is in: a body digest its bytes do not hash to, in a file only a test compiles, which the skeletons' digest of the file proves the one measured.
+fn entered_only(clean: Perturbation, sealed: &str) -> Perturbation {
+    Perturbation {
+        name: "a body digest its bytes do not hash to, in a file only a test compiles",
+        beside: carry_beside(
+            "tests/it.rs",
+            SEALED_BODY,
+            &json!({ "body_digest": "0".repeat(64) }),
+            &json!([]),
+        ),
+        tree: vec![("tests/it.rs", sealed.to_owned())],
+        ..clean
+    }
+}
+
 /// The defects planted for the carry layer.
 fn carry_plants() -> Vec<Perturbation> {
     let clean = clean();
@@ -827,6 +844,7 @@ fn carry_plants() -> Vec<Perturbation> {
             tree: vec![("src/lib.rs", sealed.clone())],
             ..clean.clone()
         },
+        entered_only(clean.clone(), &sealed),
         Perturbation {
             name: "an item named by another place than its own among its file's items",
             beside: carry_beside(

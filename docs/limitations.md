@@ -435,7 +435,7 @@ The outcome is therefore unresolved and excluded from both score and cache.
 The guard can reach that boundary only where it is *inside* the part that keeps running.
 
 The guard is not only where the mutation is.
-Every mutable file is given control-flow checkpoints — function entries, loop bodies, async blocks, and closure invocations — including a file with no mutant of its own, and a checkpoint charges the allowance once the selected mutation has been reached.
+Every file of a member a test program compiles is given control-flow checkpoints — function entries, loop bodies, async blocks, and closure invocations — test code and a file with no mutant of its own included, and a checkpoint charges the allowance once the selected mutation has been reached ([what a step counts](assurance-contract.md#what-a-step-counts)).
 So a mutation *outside* a loop that makes the loop non-terminating is caught by the count as surely as one inside it:
 
 ```rust

@@ -3210,7 +3210,7 @@ fn a_traced_run_keeps_what_every_answer_it_carried_rests_on_beside_the_engine_re
         "every answer the build carried is one whose record it keeps beside its recording, which \
          is what an audit holds to ADR 0041 again"
     );
-    for kept in ["skeletons-v1.json", "touched-v1.json"] {
+    for kept in ["skeletons-v1.json", "touched-v1.json", "catalog-v1.json"] {
         assert!(
             engine.join(kept).is_file(),
             "and {kept}, which the records are read against"

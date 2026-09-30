@@ -1526,6 +1526,36 @@ fn the_schema_names_every_granularity_and_every_fallback_a_route_can_carry() {
 }
 
 #[test]
+fn every_word_a_carry_refusal_has_is_one_the_published_schema_allows() {
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(include_str!(
+        "../../../schema/rust-mutants-trace-v1.json"
+    ))
+    .expect("the schema is JSON");
+    let refused = schema["properties"]["payload"]["oneOf"]
+        .as_array()
+        .expect("the payload alternatives")
+        .iter()
+        .find(|alternative| alternative["properties"]["type"]["const"] == "cache")
+        .map(|cache| cache["properties"]["cache"]["properties"]["refused"]["enum"].clone())
+        .expect("a cache record");
+    let published: Vec<Option<&str>> = refused
+        .as_array()
+        .expect("a closed list")
+        .iter()
+        .map(serde_json::Value::as_str)
+        .collect();
+    let mut written: Vec<Option<&str>> = rust_mutants::carry::Refusal::ALL
+        .iter()
+        .map(|refusal| Some(refusal.name()))
+        .collect();
+    written.push(None);
+    assert_eq!(
+        published, written,
+        "a carried lookup's cache record names the premise that failed, so the schema lists each"
+    );
+}
+
+#[test]
 fn every_reason_a_select_record_can_carry_is_one_the_published_schema_allows() {
     let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(include_str!(
         "../../../schema/rust-mutants-trace-v1.json"

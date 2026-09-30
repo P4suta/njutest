@@ -613,14 +613,14 @@ fn skipped(limitations: &[Limitation]) -> (Vec<String>, Vec<String>) {
     let mut chosen = Vec::new();
     let mut unspoken = Vec::new();
     for limitation in limitations {
-        match limitation.name.parse::<crate::limitation::Name>() {
-            Ok(crate::limitation::Name::Skipped(
+        match limitation.named() {
+            crate::limitation::Name::Skipped(
                 SkipReason::Excluded | SkipReason::Annotated | SkipReason::Configured,
-            )) => chosen.push(format!(
+            ) => chosen.push(format!(
                 "{}: {}, which another run could mutate",
                 limitation.name, limitation.detail
             )),
-            Ok(crate::limitation::Name::Skipped(
+            crate::limitation::Name::Skipped(
                 SkipReason::ConstContext
                 | SkipReason::MacroInvocation
                 | SkipReason::CfgAttribute
@@ -636,9 +636,8 @@ fn skipped(limitations: &[Limitation]) -> (Vec<String>, Vec<String>) {
                 | SkipReason::OpenRange
                 | SkipReason::UnstatedReturnType
                 | SkipReason::LoopValue,
-            )) => unspoken.push(limitation.name.clone()),
-            Ok(crate::limitation::Name::Runner(_) | crate::limitation::Name::Engine(_)) => {}
-            Err(unread) => chosen.push(format!("{unread}, which the column cannot place")),
+            ) => unspoken.push(limitation.name.clone()),
+            crate::limitation::Name::Runner(_) | crate::limitation::Name::Engine(_) => {}
         }
     }
     unspoken.sort();

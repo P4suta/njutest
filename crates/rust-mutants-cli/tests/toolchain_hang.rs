@@ -241,3 +241,75 @@ fn a_mutation_outside_a_loop_in_a_file_nothing_mutates_is_counted_at_the_boundar
         "the loop's own file is one the run does not mutate"
     );
 }
+
+/// A stride only a test walks by, in a module of its own.
+const STRIDE: &str = "// SPDX-FileCopyrightText: 2026 njutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A stride a test walks by in a loop of its own.
+
+/// How far one pace takes a walker.
+#[must_use]
+pub fn stride() -> u32 {
+    1
+}
+";
+
+/// A test whose own loop a stride of zero keeps from ending.
+const WALKER: &str = "// SPDX-FileCopyrightText: 2026 njutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A loop in test code, which is where a mutation of the stride stops a run ending.
+
+#[test]
+fn walking_ten_by_the_library_s_stride_ends_at_ten() {
+    let stride = fixture_hang::spin::stride();
+    let mut at = 0;
+    while at < 10 {
+        at += stride;
+    }
+    assert_eq!(at, 10);
+}
+";
+
+#[test]
+fn a_loop_in_test_code_a_mutation_keeps_going_is_counted_like_any_other() {
+    let fixture = Fixture::copy("fixture-hang");
+    let library = fixture.root().join("src/lib.rs");
+    let text = std::fs::read_to_string(&library).expect("the library");
+    std::fs::write(&library, format!("{text}\npub mod spin;\n")).expect("declare the stride");
+    std::fs::write(fixture.root().join("src/spin.rs"), STRIDE).expect("write the stride");
+    std::fs::write(fixture.root().join("tests/spin.rs"), WALKER).expect("write the walker");
+    let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
+    command.env("NO_COLOR", "1");
+    command.envs(njutest_devkit::paths::temporary_directory(fixture.temp()));
+    command.env("XDG_CACHE_HOME", fixture.cache());
+    command.arg("run");
+    command.args(["--root", njutest_devkit::paths::utf8(fixture.root())]);
+    command.args(["--tier", "all", "--offline", "--locked", "--no-seal"]);
+    command.args(["--include", "src/spin.rs"]);
+    let output = command.output().expect("rust-mutants runs");
+    assert!(
+        output.status.code() == Some(2),
+        "{}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let stopped = row(&fixture, "int-decrement", 9);
+    assert_eq!(
+        stopped["outcome"].as_str(),
+        Some("step_limit_reached"),
+        "a stride of zero leaves the walker's loop in tests/spin.rs spinning, test code the \
+         library never enters again once the stride is read, and a step counts every boundary \
+         of the workspace's instrumented source, test code included.{}: {stopped}",
+        outran_by_the_clock(&stopped)
+    );
+    assert_eq!(
+        (
+            &stopped["step_notice"]["limit"],
+            &stopped["step_notice"]["observed"]
+        ),
+        (&serde_json::json!(10), &serde_json::json!(11)),
+        "the count ends it at exactly one past the allowance, as it does in library code: \
+         {stopped}"
+    );
+}

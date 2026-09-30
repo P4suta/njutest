@@ -834,6 +834,7 @@
                 "why": "unparsed"
               }
             ],
+            "repaired": [],
             "knobs": [],
             "concurrency": [
               {

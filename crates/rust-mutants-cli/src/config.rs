@@ -155,7 +155,7 @@ pub struct Mutation {
     /// `auto` is a multiple of what the target's own baseline took.
     #[serde(deserialize_with = "timeout", serialize_with = "timeout_text")]
     pub timeout: Timeout,
-    /// How many times the active mutant's guard may be taken before its process is stopped.
+    /// How many boundaries of the workspace's instrumented source, test code included, an execution may pass once the active mutant's guard has been taken, before its process is stopped.
     /// `0` disables this execution bound.
     pub steps: u64,
     /// How long a build may take.

@@ -18,8 +18,8 @@ pub const FILE: &str = "skeletons-v1.json";
 /// Names the shape of [`Skeletons`].
 pub const DOCUMENT_TYPE: &str = "rust-mutants/skeletons";
 
-/// The version of that shape.
-pub const SCHEMA_VERSION: u32 = 2;
+/// The version of that shape: 3 since it keeps the digest of every file an item of the catalog is in.
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// The standard macros a sealed body may invoke: each expands to an expression or a statement and declares nothing.
 pub const SEALABLE_MACROS: [&str; 28] = [
@@ -100,6 +100,8 @@ pub struct Skeletons {
     pub schema_version: u32,
     /// Every cataloged item, by item index.
     pub items: Vec<ItemEvidence>,
+    /// Every file an item of the catalog is in that a unit read, by its workspace-relative path, with the SHA-256 of its bytes, which is what proves a file read again is the file the run measured.
+    pub files: BTreeMap<String, String>,
     /// Every compiled unit, sorted by its name.
     pub units: Vec<UnitSkeleton>,
 }
@@ -326,8 +328,23 @@ pub fn evidence(units: &[UnitSource], items: &[(&Item, &ItemRef)]) -> Skeletons 
         document_type: DOCUMENT_TYPE.to_owned(),
         schema_version: SCHEMA_VERSION,
         items: item_evidence,
+        files: file_digests(units, items),
         units: unit_skeletons,
     }
+}
+
+/// The digest of every file an item of `items` is in, as the first unit that read it holds its bytes.
+fn file_digests(units: &[UnitSource], items: &[(&Item, &ItemRef)]) -> BTreeMap<String, String> {
+    items
+        .iter()
+        .filter_map(|(item, _)| {
+            let name = format!("$root/{}", item.path);
+            units
+                .iter()
+                .find_map(|unit| unit.files.get(&name))
+                .map(|bytes| (item.path.clone(), crate::id::digest(bytes)))
+        })
+        .collect()
 }
 
 /// Why the measurable body at `span` of a file judged as `file` is not sealed, its own reasons before its unit's.

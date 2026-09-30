@@ -336,7 +336,7 @@ pub struct Execution {
     /// The upper bound on one measurement, which is one test binary run against one mutation.
     #[serde(deserialize_with = "duration", serialize_with = "as_millis")]
     pub timeout: Duration,
-    /// How many times a mutation's guard may be taken before its process is stopped.
+    /// How many boundaries of the workspace's instrumented source, test code included, an execution may pass once its mutation's guard has been taken, before its process is stopped.
     /// `0` counts nothing and leaves `timeout` as the only thing that can end a mutation that does not end.
     ///
     /// A clock measures partly the machine, so two runs of one catalogue on one commit can disagree about a mutation that never returns.

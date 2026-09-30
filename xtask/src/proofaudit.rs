@@ -602,6 +602,8 @@ pub struct Recorded<'a> {
     pub outputs: &'a [(String, soundness::Kept)],
     /// What each configured build's engine kept beside its recording of the answers it carried.
     pub beside: &'a [Beside],
+    /// The tree the run measured, which every body a carried answer rests on is read again from, or nothing where no `--root` names it.
+    pub root: Option<&'a Path>,
 }
 
 /// The documents one configured build's engine kept beside its recording of the answers it carried (ADR 0041).
@@ -617,6 +619,8 @@ pub struct Beside {
     pub skeletons: serde_json::Value,
     /// `touched-v1.json`: the guards' record, with the item catalog.
     pub touched: serde_json::Value,
+    /// `catalog-v1.json`: every mutation's edit, which each carried record's locus is derived from again.
+    pub catalog: serde_json::Value,
 }
 
 /// The runner's recording, where the run kept one, with the path it was read from.
@@ -656,17 +660,7 @@ pub fn audit_with(
             path: path.to_owned(),
             cause,
         })?;
-    let runner = recorded
-        .runner
-        .map(|(recording_path, text)| {
-            crate::route::Checked::read(text, checkers)
-                .map(|checked| (recording_path, checked))
-                .map_err(|source| AuditError::MalformedRecording {
-                    path: recording_path.to_owned(),
-                    source,
-                })
-        })
-        .transpose()?;
+    let runner = checked_runner(recorded.runner, checkers)?;
     recording.verdict = runner.as_ref().and_then(|(_, checked)| concluded(checked));
     let RunnerEvidence {
         routing,
@@ -691,17 +685,19 @@ pub fn audit_with(
         coverage: BTreeMap::new(),
     };
     let held = (routing.as_ref(), &executions, engines.as_slice());
+    let reusing: Reusing<'_> = (
+        routing.as_ref(),
+        (recorded.beside, recorded.root),
+        &engines,
+        &executions,
+    );
     for layer in Layer::ALL {
         let Decided(()) = match layer {
             Layer::Accounting => accounting(&recording, &mut audit),
             Layer::Killers => killers(&recording, &mut audit),
             Layer::Findings => findings(&recording, &mut audit),
             Layer::Acceptances => acceptances(&recording, &mut audit),
-            Layer::Reuse => reuse(
-                &recording,
-                (routing.as_ref(), recorded.beside, &engines, &executions),
-                &mut audit,
-            ),
+            Layer::Reuse => reuse(&recording, reusing, &mut audit),
             Layer::Proofs => proofs(&recording, rerouted, &executions, &mut audit),
             Layer::Executions => executions_held(&recording, held, &mut audit),
             Layer::Hollow => hollow(&recording, &executions, &mut audit),
@@ -729,6 +725,23 @@ pub fn audit_with(
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
+}
+
+/// The runner's recording, where the run kept one, read and checked against the runner's schema.
+fn checked_runner<'a>(
+    runner: Option<(&'a str, &'a str)>,
+    checkers: &crate::schemas::Checkers,
+) -> Result<Option<(&'a str, crate::route::Checked<crate::schemas::RunnerLines>)>, AuditError> {
+    runner
+        .map(|(recording_path, text)| {
+            crate::route::Checked::read(text, checkers)
+                .map(|checked| (recording_path, checked))
+                .map_err(|source| AuditError::MalformedRecording {
+                    path: recording_path.to_owned(),
+                    source,
+                })
+        })
+        .transpose()
 }
 
 /// What each engine recording says of touch and perturbed controls, read from its stream alone.
@@ -2245,11 +2258,36 @@ struct MutantRow {
     id: String,
     display_id: String,
     catalog_index: Option<u64>,
+    edit: RowEdit,
     outcome: String,
     acceptance: AcceptanceFact,
     killed_by: Option<String>,
     read_back_from: Option<String>,
     rests: Rests,
+}
+
+/// Where a row says its mutation's edit is, and what it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RowEdit {
+    path: String,
+    line: u64,
+    column: u64,
+    original: String,
+    replacement: String,
+}
+
+impl RowEdit {
+    /// The edit `row` says, from its required columns.
+    fn read(row: &serde_json::Value) -> Option<Self> {
+        let position = row.get("position")?;
+        Some(Self {
+            path: row.get("path")?.as_str()?.to_owned(),
+            line: position.get("line")?.as_u64()?,
+            column: position.get("column")?.as_u64()?,
+            original: row.get("original")?.as_str()?.to_owned(),
+            replacement: row.get("replacement")?.as_str()?.to_owned(),
+        })
+    }
 }
 
 /// One sealed execution, as a report's evidence names it and an engine recording holds it.
@@ -5209,6 +5247,11 @@ impl<'a> Recording<'a> {
                     id: required(row, "id", text)?,
                     display_id: required(row, "display_id", text)?,
                     catalog_index: row.get("catalog_index").and_then(serde_json::Value::as_u64),
+                    edit: RowEdit::read(row).ok_or_else(|| {
+                        crate::route::ReadCauseError::Absent {
+                            field: "position".to_owned(),
+                        }
+                    })?,
                     outcome: required(decision, "outcome", text)?,
                     acceptance: AcceptanceFact::from_json(row.get("accepted")),
                     killed_by: field(decision, "killed_by"),
@@ -5936,12 +5979,7 @@ fn acceptances(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
 /// Whether each target an exact answer rests on keeps the behaviour key it had is not in the report, and is left unaudited.
 fn reuse(
     recording: &Recording<'_>,
-    (routing, beside, engines, executions): (
-        Option<&crate::route::Routing>,
-        &[Beside],
-        &[Engine],
-        &Executions<'_>,
-    ),
+    (routing, (beside, root), engines, executions): Reusing<'_>,
     audit: &mut Audit,
 ) -> Decided {
     let mut notes = Notes::on(audit, Layer::Reuse);
@@ -5967,6 +6005,7 @@ fn reuse(
                 routed_back(mutant, routing, executions, &mut notes);
             }
             carried_back(&read_back, routing, (beside, engines), &mut notes);
+            bodies_read_again(&read_back, routing, (beside, root), &mut notes);
         }
         None => notes.unaudited(
             "provenance",
@@ -5988,6 +6027,86 @@ fn reuse(
     notes.looked()
 }
 
+/// Whether every body an answer the run carried rests on is, in the tree `root` names, the body the build kept the digest and start of, in a file the skeletons' digest proves the one measured; unaudited where no `--root` names the tree.
+fn bodies_read_again(
+    read_back: &[&MutantRow],
+    routing: &crate::route::Routing,
+    (beside, root): (&[Beside], Option<&Path>),
+    notes: &mut Notes<'_>,
+) {
+    let carried = read_back.iter().any(|mutant| {
+        routing
+            .route_of(&mutant.id, &mutant.display_id)
+            .is_some_and(|route| route.rule.as_deref() == Some("carried"))
+    });
+    if !carried || beside.is_empty() {
+        return;
+    }
+    let Some(root) = root else {
+        notes.unaudited(
+            "root",
+            "no --root names the tree the run measured, so the bodies its carried answers rest on \
+             are held to the digests the run kept of them, not read again"
+                .to_owned(),
+        );
+        return;
+    };
+    for kept in beside {
+        let said = crate::engineaudit::carry::bodies_again(
+            crate::engineaudit::carry::Kept {
+                carried: &kept.carried,
+                skeletons: &kept.skeletons,
+                touched: &kept.touched,
+                catalog: &kept.catalog,
+            },
+            root,
+        );
+        match said {
+            Ok(said) => {
+                for one in said {
+                    match one {
+                        crate::engineaudit::carry::ReadAgain::Violated { subject, detail } => {
+                            notes.violated(&subject, detail);
+                        }
+                        crate::engineaudit::carry::ReadAgain::Unaudited { subject, detail } => {
+                            notes.unaudited(&subject, detail);
+                        }
+                    }
+                }
+            }
+            Err(why) => notes.violated(&kept.path, crate::error::Coded::coded(&why)),
+        }
+    }
+}
+
+/// What the reuse layer reads beside the report: the run's routes, what each build kept of the answers it carried with the tree they are read again from, each build's engine recording, and the executions the recording holds.
+type Reusing<'a> = (
+    Option<&'a crate::route::Routing>,
+    (&'a [Beside], Option<&'a Path>),
+    &'a [Engine],
+    &'a Executions<'a>,
+);
+
+/// What each row read back says of its mutation's edit and catalog index, by identity, for a row that names its index.
+fn reported_of(read_back: &[&MutantRow]) -> BTreeMap<String, crate::engineaudit::carry::Reported> {
+    read_back
+        .iter()
+        .filter_map(|mutant| {
+            Some((
+                mutant.id.clone(),
+                crate::engineaudit::carry::Reported {
+                    index: mutant.catalog_index?,
+                    path: mutant.edit.path.clone(),
+                    line: mutant.edit.line,
+                    column: mutant.edit.column,
+                    original: mutant.edit.original.clone(),
+                    replacement: mutant.edit.replacement.clone(),
+                },
+            ))
+        })
+        .collect()
+}
+
 /// Whether every disposition the run's own routes say was carried from an earlier tree rests on a record a build kept beside its recording, says what the report says, and meets every premise of ADR 0041, re-derived from those documents and that build's control records.
 fn carried_back(
     read_back: &[&MutantRow],
@@ -5995,10 +6114,7 @@ fn carried_back(
     (beside, engines): (&[Beside], &[Engine]),
     notes: &mut Notes<'_>,
 ) {
-    let indices: BTreeMap<String, u64> = read_back
-        .iter()
-        .filter_map(|mutant| Some((mutant.id.clone(), mutant.catalog_index?)))
-        .collect();
+    let reported = reported_of(read_back);
     let mut believed: BTreeMap<String, crate::engineaudit::carry::Rederived> = BTreeMap::new();
     for kept in beside {
         let standings = engines
@@ -6009,8 +6125,9 @@ fn carried_back(
                 carried: &kept.carried,
                 skeletons: &kept.skeletons,
                 touched: &kept.touched,
+                catalog: &kept.catalog,
             },
-            (standings.as_ref(), &indices),
+            (standings.as_ref(), &reported),
         ) {
             Ok(records) => {
                 believed.extend(records.into_iter().map(|one| (one.mutant.clone(), one)));
@@ -6043,6 +6160,12 @@ fn carried_back(
                     "the report says {} from {:?}, and the record it carried says {} from {}",
                     mutant.outcome, mutant.read_back_from, record.outcome, record.run_id
                 ),
+            );
+        }
+        if let Some(why) = &record.misplaced {
+            notes.violated(
+                mutant.label(),
+                format!("the record's locus is not the mutation's: {why}"),
             );
         }
         if let Some(why) = &record.fails {

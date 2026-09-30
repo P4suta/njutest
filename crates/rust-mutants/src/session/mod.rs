@@ -654,9 +654,9 @@ pub enum Reachability {
     Unreached,
 }
 
-/// How many times the active mutant's guard may be taken before its process is stopped, when nobody says.
+/// How many boundaries an execution may pass once the active mutant's guard has been taken, before its process is stopped, when nobody says.
 ///
-/// Fifty million takes of one site is a number a test written by a person does not approach, and every machine agrees on the number itself.
+/// Fifty million boundaries, test code included, is a number a test written by a person does not approach, and every machine agrees on the number itself.
 /// What they do not agree on is what it costs: this was sized for the in-memory counter the durable step protocol replaced, where it passed in about a second.
 /// Measured since, a take is about half a microsecond on one developer machine with the per-take `fsync` lifted out, so fifty million spend about twenty-five seconds against a thirty-second derived floor -- and were 7.3ms each on Windows before that, where they would have spent days.
 /// So the ceiling does not reliably stop an unbounded execution before the clock does, and which of the two answers is a fact about the machine (ADR 0023).
@@ -709,7 +709,7 @@ pub struct PrepareOptions {
     pub build_timeout: Option<Duration>,
     /// How long one mutant execution may take, when the caller does not say.
     pub mutant_timeout: Timeout,
-    /// How many times the active mutant's guard may be taken before its process is stopped.
+    /// How many boundaries of the instrumented workspace, test code included, an execution may pass once the active mutant's guard has been taken, before its process is stopped.
     ///
     /// A mutant that does not terminate has to be stopped by something, and a clock is the wrong something: the same mutant on a loaded machine and on a quiet one is two verdicts.
     /// A count of guard takes is the number every machine agrees on, and the guard of the selected mutant sits where the mutation does — so a loop whose condition was mutated takes it once an iteration and an unbounded execution is counted as it runs.

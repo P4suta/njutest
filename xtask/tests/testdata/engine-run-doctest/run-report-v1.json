@@ -3,10 +3,10 @@
   "schema_version": 4,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260929t084110504z",
-    "started_at": "2026-09-29T08:41:10.504822Z",
-    "finished_at": "2026-09-29T08:41:16.470888Z",
-    "duration_ms": 1181,
+    "id": "20260930t015128166z",
+    "started_at": "2026-09-30T01:51:28.166739Z",
+    "finished_at": "2026-09-30T01:51:32.683044Z",
+    "duration_ms": 861,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -18,7 +18,7 @@
   "workspace": {
     "root_name": "fixture-doctest",
     "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-    "workspace_digest": "cd9c6e394889fe4eb6d0d0f23fc3430ecd7ffbb1a4555de08dc8c71502bb2e98",
+    "workspace_digest": "b271fc86b14a55a004c21e89a72dcc1390208db6488b1e7288287db61fdb6c5c",
     "catalog_digest": "8bd86d6c7fe175c2b89cf9c48aa92c9f06e5527f4b1641e1338118f1eb3fc2e0",
     "platform": {
       "os": "darwin",
@@ -112,7 +112,7 @@
       "step_notice": null,
       "target": "fixture-doctest/doc/fixture_doctest",
       "exit_code": -1,
-      "duration_ms": 20,
+      "duration_ms": 37,
       "tests_run": 1,
       "killed_by": [
         "src/lib.rs - double (line 8)"
@@ -137,6 +137,7 @@
       "expected": false,
       "unreached": false,
       "source_run_id": null,
+      "part_run_id": null,
       "evidence": {
         "kind": "sealed",
         "executions": [
@@ -169,7 +170,7 @@
       "step_notice": null,
       "target": "fixture-doctest/doc/fixture_doctest",
       "exit_code": -1,
-      "duration_ms": 32,
+      "duration_ms": 27,
       "tests_run": 1,
       "killed_by": [
         "src/lib.rs - double (line 8)"
@@ -194,6 +195,7 @@
       "expected": false,
       "unreached": false,
       "source_run_id": null,
+      "part_run_id": null,
       "evidence": {
         "kind": "sealed",
         "executions": [
@@ -226,7 +228,7 @@
       "step_notice": null,
       "target": "fixture-doctest/doc/fixture_doctest",
       "exit_code": -1,
-      "duration_ms": 36,
+      "duration_ms": 22,
       "tests_run": 1,
       "killed_by": [
         "src/lib.rs - double (line 8)"
@@ -251,6 +253,7 @@
       "expected": false,
       "unreached": false,
       "source_run_id": null,
+      "part_run_id": null,
       "evidence": {
         "kind": "sealed",
         "executions": [
@@ -283,7 +286,7 @@
       "step_notice": null,
       "target": "fixture-doctest/doc/fixture_doctest",
       "exit_code": -1,
-      "duration_ms": 20,
+      "duration_ms": 39,
       "tests_run": 1,
       "killed_by": [
         "src/lib.rs - double (line 8)"
@@ -308,6 +311,7 @@
       "expected": false,
       "unreached": false,
       "source_run_id": null,
+      "part_run_id": null,
       "evidence": {
         "kind": "sealed",
         "executions": [
@@ -340,7 +344,7 @@
       "step_notice": null,
       "target": "fixture-doctest/doc/fixture_doctest",
       "exit_code": -1,
-      "duration_ms": 30,
+      "duration_ms": 15,
       "tests_run": 1,
       "killed_by": [
         "src/lib.rs - half (line 17)"
@@ -364,6 +368,7 @@
       "expected": false,
       "unreached": false,
       "source_run_id": null,
+      "part_run_id": null,
       "evidence": {
         "kind": "sealed",
         "executions": [
@@ -396,7 +401,7 @@
       "step_notice": null,
       "target": "fixture-doctest/doc/fixture_doctest",
       "exit_code": -1,
-      "duration_ms": 30,
+      "duration_ms": 12,
       "tests_run": 1,
       "killed_by": [
         "src/lib.rs - half (line 17)"
@@ -420,6 +425,7 @@
       "expected": false,
       "unreached": false,
       "source_run_id": null,
+      "part_run_id": null,
       "evidence": {
         "kind": "sealed",
         "executions": [
@@ -452,7 +458,7 @@
       "step_notice": null,
       "target": "fixture-doctest/doc/fixture_doctest",
       "exit_code": -1,
-      "duration_ms": 19,
+      "duration_ms": 22,
       "tests_run": 1,
       "killed_by": [
         "src/lib.rs - half (line 17)"
@@ -476,6 +482,7 @@
       "expected": false,
       "unreached": false,
       "source_run_id": null,
+      "part_run_id": null,
       "evidence": {
         "kind": "sealed",
         "executions": [
@@ -508,7 +515,7 @@
       "step_notice": null,
       "target": "fixture-doctest/doc/fixture_doctest",
       "exit_code": -1,
-      "duration_ms": 18,
+      "duration_ms": 16,
       "tests_run": 1,
       "killed_by": [
         "src/lib.rs - half (line 17)"
@@ -532,6 +539,7 @@
       "expected": false,
       "unreached": false,
       "source_run_id": null,
+      "part_run_id": null,
       "evidence": {
         "kind": "sealed",
         "executions": [
@@ -564,7 +572,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 14,
+      "duration_ms": 13,
       "tests_run": 0,
       "killed_by": [],
       "signal": null,
@@ -586,6 +594,7 @@
       "expected": false,
       "unreached": true,
       "source_run_id": null,
+      "part_run_id": null,
       "evidence": {
         "kind": "sealed",
         "executions": []
@@ -612,7 +621,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 15,
+      "duration_ms": 14,
       "tests_run": 0,
       "killed_by": [],
       "signal": null,
@@ -634,6 +643,7 @@
       "expected": false,
       "unreached": true,
       "source_run_id": null,
+      "part_run_id": null,
       "evidence": {
         "kind": "sealed",
         "executions": []
@@ -660,7 +670,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 14,
+      "duration_ms": 3,
       "tests_run": 0,
       "killed_by": [],
       "signal": null,
@@ -682,6 +692,7 @@
       "expected": false,
       "unreached": true,
       "source_run_id": null,
+      "part_run_id": null,
       "evidence": {
         "kind": "sealed",
         "executions": []
@@ -708,7 +719,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 13,
+      "duration_ms": 18,
       "tests_run": 0,
       "killed_by": [],
       "signal": null,
@@ -730,6 +741,7 @@
       "expected": false,
       "unreached": true,
       "source_run_id": null,
+      "part_run_id": null,
       "evidence": {
         "kind": "sealed",
         "executions": []
