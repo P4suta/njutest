@@ -91,6 +91,33 @@ const CONFINEMENT_COVERS: &[&str] = &[
     "njutest-law-branch:escaped",
     REACHED_COVER,
 ];
+const ANSWERED_COVERS: &[&str] = &[
+    "njutest-law-branch:answered",
+    "njutest-law-branch:unanswered",
+    "njutest-law-branch:contradicted",
+    REACHED_COVER,
+];
+const GROUP_COVERS: &[&str] = &[
+    "njutest-law-branch:group",
+    "njutest-law-branch:leader-only",
+    "njutest-law-branch:failed",
+    REACHED_COVER,
+];
+const OPENER_COVERS: &[&str] = &[
+    "njutest-law-branch:held",
+    "njutest-law-branch:not-held",
+    REACHED_COVER,
+];
+const STALL_SAID_COVERS: &[&str] = &[
+    "njutest-law-branch:said",
+    "njutest-law-branch:unsayable",
+    REACHED_COVER,
+];
+const STALL_BEAT_COVERS: &[&str] = &[
+    "njutest-law-branch:clamped",
+    "njutest-law-branch:shared",
+    REACHED_COVER,
+];
 const ATTEMPT_LEDGER_ASSERTIONS: &[&str] = &[
     "njutest-law-assertion:attempt-retry-constructs",
     "njutest-law-assertion:attempt-count-closed",
@@ -164,6 +191,36 @@ pub(crate) enum Harness {
     ConfinementGit,
     #[serde(rename = "confinement::kani_laws::the_first_escape_is_the_one_named")]
     ConfinementFirst,
+    #[serde(
+        rename = "answered::kani_laws::an_answer_is_decided_by_the_wait_and_the_named_failure_alone"
+    )]
+    AnswerDecides,
+    #[serde(
+        rename = "answered::kani_laws::a_reported_answer_agrees_exactly_where_the_observation_decides"
+    )]
+    AnswerAgrees,
+    #[serde(rename = "group::kani_laws::a_stop_agrees_exactly_with_what_the_kernel_answered")]
+    GroupAgrees,
+    #[serde(
+        rename = "said::kani_laws::every_number_spelled_as_the_runtime_spells_one_reads_back_itself"
+    )]
+    NumberReadsBack,
+    #[serde(rename = "said::kani_laws::a_stated_stop_requires_its_own_status_and_a_known_check")]
+    StatedNames,
+    #[serde(
+        rename = "shape::kani_laws::a_block_opener_is_held_and_a_word_that_is_no_opener_is_not"
+    )]
+    OpenerHeld,
+    #[serde(
+        rename = "stall::kani_laws::a_look_that_saw_no_change_moves_nothing_and_one_that_did_restarts_the_watch"
+    )]
+    LookedRestarts,
+    #[serde(rename = "stall::kani_laws::a_process_that_moves_within_its_window_is_never_stalled")]
+    MovingNotStalled,
+    #[serde(
+        rename = "stall::kani_laws::a_quiet_window_is_never_told_to_beat_faster_than_the_floor"
+    )]
+    BeatFloor,
     #[serde(rename = "step_laws::a_counting_checkpoint_counts")]
     CountingCounts,
     #[serde(rename = "step_laws::a_counting_checkpoint_never_stops")]
@@ -209,7 +266,7 @@ impl Harness {
     const fn ceiling(self) -> u64 {
         match self {
             Self::JudgedPass => 5_200,
-            Self::JudgedRefusal | Self::JudgedUndecidable => 5_000,
+            Self::JudgedRefusal | Self::JudgedUndecidable | Self::LookedRestarts => 5_000,
             Self::JudgedShouldPanic => 2_600,
             Self::JudgedUnmatched => 5_300,
             Self::DeclinedAlone => 12_100,
@@ -228,6 +285,14 @@ impl Harness {
             Self::ConfinementOneName => 46_500,
             Self::ConfinementGit => 42_000,
             Self::ConfinementFirst => 57_000,
+            Self::AnswerDecides => 810,
+            Self::AnswerAgrees => 960,
+            Self::GroupAgrees => 2_700,
+            Self::NumberReadsBack => 450_000,
+            Self::StatedNames => 66_000,
+            Self::OpenerHeld => 1_300_000,
+            Self::MovingNotStalled => 4_000,
+            Self::BeatFloor => 3_500,
             Self::CountingCounts => 1_800,
             Self::CountingNeverStops | Self::DormantCheckpoint => 1_300,
             Self::CountingUnreachable => 5_800,
@@ -247,6 +312,10 @@ impl Harness {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one total match spells every harness's name, so a harness added without one does not compile"
+    )]
     pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::JudgedPass => {
@@ -288,6 +357,33 @@ impl Harness {
             Self::ConfinementOneName => "confinement::kani_laws::one_changed_name_is_the_escape",
             Self::ConfinementGit => "confinement::kani_laws::a_given_git_identity_is_an_escape",
             Self::ConfinementFirst => "confinement::kani_laws::the_first_escape_is_the_one_named",
+            Self::AnswerDecides => {
+                "answered::kani_laws::an_answer_is_decided_by_the_wait_and_the_named_failure_alone"
+            }
+            Self::AnswerAgrees => {
+                "answered::kani_laws::a_reported_answer_agrees_exactly_where_the_observation_decides"
+            }
+            Self::GroupAgrees => {
+                "group::kani_laws::a_stop_agrees_exactly_with_what_the_kernel_answered"
+            }
+            Self::NumberReadsBack => {
+                "said::kani_laws::every_number_spelled_as_the_runtime_spells_one_reads_back_itself"
+            }
+            Self::StatedNames => {
+                "said::kani_laws::a_stated_stop_requires_its_own_status_and_a_known_check"
+            }
+            Self::OpenerHeld => {
+                "shape::kani_laws::a_block_opener_is_held_and_a_word_that_is_no_opener_is_not"
+            }
+            Self::LookedRestarts => {
+                "stall::kani_laws::a_look_that_saw_no_change_moves_nothing_and_one_that_did_restarts_the_watch"
+            }
+            Self::MovingNotStalled => {
+                "stall::kani_laws::a_process_that_moves_within_its_window_is_never_stalled"
+            }
+            Self::BeatFloor => {
+                "stall::kani_laws::a_quiet_window_is_never_told_to_beat_faster_than_the_floor"
+            }
             Self::CountingCounts => "step_laws::a_counting_checkpoint_counts",
             Self::CountingNeverStops => "step_laws::a_counting_checkpoint_never_stops",
             Self::DormantCheckpoint => "step_laws::a_dormant_checkpoint_cannot_spend",
@@ -351,15 +447,24 @@ impl Harness {
             | Self::DeclineConcluded
             | Self::ConfinementOneName
             | Self::ConfinementGit
-            | Self::ConfinementFirst => ("rust_mutants_decision", "rust-mutants-decision"),
-            Self::CountingCounts
+            | Self::ConfinementFirst
+            | Self::AnswerDecides
+            | Self::AnswerAgrees
+            | Self::GroupAgrees
+            | Self::NumberReadsBack
+            | Self::StatedNames
+            | Self::OpenerHeld
+            | Self::LookedRestarts
+            | Self::MovingNotStalled
+            | Self::BeatFloor
+            | Self::CountingCounts
             | Self::CountingNeverStops
             | Self::CountingUnreachable
             | Self::DormantCheckpoint
             | Self::Activation
             | Self::ActiveCheckpoint
-            | Self::Stopping
-            | Self::AttemptDuration
+            | Self::Stopping => ("rust_mutants_decision", "rust-mutants-decision"),
+            Self::AttemptDuration
             | Self::AttemptLedger
             | Self::CancellationBeforeRetry
             | Self::CancelledRetry
@@ -398,13 +503,24 @@ impl Harness {
             Self::ConfinementOneName | Self::ConfinementGit | Self::ConfinementFirst => {
                 "crates/rust-mutants-decision/src/confinement/kani_laws.rs"
             }
+            Self::AnswerDecides | Self::AnswerAgrees => {
+                "crates/rust-mutants-decision/src/answered/kani_laws.rs"
+            }
+            Self::GroupAgrees => "crates/rust-mutants-decision/src/group/kani_laws.rs",
+            Self::NumberReadsBack | Self::StatedNames => {
+                "crates/rust-mutants-decision/src/said/kani_laws.rs"
+            }
+            Self::OpenerHeld => "crates/rust-mutants-decision/src/shape/kani_laws.rs",
+            Self::LookedRestarts | Self::MovingNotStalled | Self::BeatFloor => {
+                "crates/rust-mutants-decision/src/stall/kani_laws.rs"
+            }
             Self::CountingCounts
             | Self::CountingNeverStops
             | Self::CountingUnreachable
             | Self::DormantCheckpoint
             | Self::Activation
             | Self::ActiveCheckpoint
-            | Self::Stopping => "crates/rust-mutants/src/instrument/runtime.rs",
+            | Self::Stopping => "crates/rust-mutants-decision/src/step_laws.rs",
             Self::AttemptDuration
             | Self::AttemptLedger
             | Self::CancellationBeforeRetry
@@ -419,6 +535,10 @@ impl Harness {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one total match states every harness's covers, so a harness added without any does not compile"
+    )]
     const fn expected_covers(self) -> &'static [&'static str] {
         match self {
             Self::JudgedPass => JUDGED_PASS_COVERS,
@@ -445,6 +565,11 @@ impl Harness {
             Self::DeclineHeld => DECLINE_HELD_COVERS,
             Self::DeclineConcluded => DECLINE_CONCLUDED_COVERS,
             Self::ConfinementOneName | Self::ConfinementGit => CONFINEMENT_COVERS,
+            Self::AnswerDecides | Self::AnswerAgrees => ANSWERED_COVERS,
+            Self::GroupAgrees => GROUP_COVERS,
+            Self::OpenerHeld => OPENER_COVERS,
+            Self::LookedRestarts => STALL_SAID_COVERS,
+            Self::BeatFloor => STALL_BEAT_COVERS,
             Self::ActiveCheckpoint => &[
                 "njutest-law-branch:advance",
                 "njutest-law-branch:boundary",
@@ -495,10 +620,17 @@ impl Harness {
             | Self::JudgedRefusal
             | Self::SwapBinding
             | Self::ClaimNarrows
-            | Self::ConfinementFirst => &[REACHED_COVER],
+            | Self::ConfinementFirst
+            | Self::NumberReadsBack
+            | Self::StatedNames
+            | Self::MovingNotStalled => &[REACHED_COVER],
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one total match states every harness's assertions, so a harness added without any does not compile"
+    )]
     const fn expected_assertions(self) -> &'static [&'static str] {
         match self {
             Self::JudgedPass => &["njutest-law-assertion:pass-iff-its-harness-passes"],
@@ -536,6 +668,31 @@ impl Harness {
             Self::ConfinementOneName => &["njutest-law-assertion:escapes-by-the-one-name"],
             Self::ConfinementGit => &["njutest-law-assertion:git-global-escapes"],
             Self::ConfinementFirst => &["njutest-law-assertion:first-escape-named"],
+            Self::AnswerDecides => &["njutest-law-assertion:answer-as-the-wait-says"],
+            Self::AnswerAgrees => &[
+                "njutest-law-assertion:true-agrees-only-with-decided",
+                "njutest-law-assertion:false-agrees-only-with-undecided",
+            ],
+            Self::GroupAgrees => &[
+                "njutest-law-assertion:stop-as-the-kernel-says",
+                "njutest-law-assertion:agrees-only-with-the-decision",
+            ],
+            Self::NumberReadsBack => &["njutest-law-assertion:spelled-number-reads-back"],
+            Self::StatedNames => &["njutest-law-assertion:stated-only-for-its-check-and-status"],
+            Self::OpenerHeld => &[
+                "njutest-law-assertion:opener-held-alone",
+                "njutest-law-assertion:opener-held-before-anything",
+                "njutest-law-assertion:word-of-eight-held-not",
+            ],
+            Self::LookedRestarts => &[
+                "njutest-law-assertion:unchanged-look-still",
+                "njutest-law-assertion:change-restarts",
+            ],
+            Self::MovingNotStalled => &["njutest-law-assertion:moving-within-the-window"],
+            Self::BeatFloor => &[
+                "njutest-law-assertion:never-faster-than-the-floor",
+                "njutest-law-assertion:a-quarter-of-the-quiet",
+            ],
             Self::DormantCheckpoint => &["njutest-law-assertion:dormant-inert"],
             Self::Activation => &["njutest-law-assertion:activation-idempotent"],
             Self::ActiveCheckpoint => &[

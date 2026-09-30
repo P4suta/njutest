@@ -3,10 +3,10 @@
   "decision": "step-stop-said",
   "package": "rust-mutants-decision",
   "module": "crates/rust-mutants-decision/src/said.rs",
-  "source_sha256": "8b0e663912ec649b7e37e8f16b442f71066d474d7a486404f0766e30eafbc68d",
+  "source_sha256": "c264269019bbbc3652579a729389d917016228b257313750ab868d689f1c82c5",
   "mutants": [
     {
-      "display_id": "1db62c0f99b641a9f904",
+      "display_id": "3413d0a664c4972698fc",
       "position": "62:46",
       "rule": "question-to-unwrap",
       "outcome": "killed",
@@ -20,7 +20,7 @@
       ]
     },
     {
-      "display_id": "f3cab8d8bf65716225e3",
+      "display_id": "9f9a72fa055cae10e1e4",
       "position": "64:30",
       "rule": "eq-to-neq",
       "outcome": "killed",
@@ -39,7 +39,7 @@
       ]
     },
     {
-      "display_id": "e342dcdae847799ddad2",
+      "display_id": "66440ca4672d67cd94dc",
       "position": "71:48",
       "rule": "question-to-unwrap",
       "outcome": "killed",
@@ -53,7 +53,7 @@
       ]
     },
     {
-      "display_id": "48b577336e02a39d04ca",
+      "display_id": "2bf3d4a8f4826ea3f3e1",
       "position": "71:68",
       "rule": "question-to-unwrap",
       "outcome": "killed",
@@ -67,7 +67,7 @@
       ]
     },
     {
-      "display_id": "c96cc734f76190e50fa4",
+      "display_id": "372366493df6f086ce75",
       "position": "72:49",
       "rule": "question-to-unwrap",
       "outcome": "killed",
@@ -81,7 +81,7 @@
       ]
     },
     {
-      "display_id": "f57b641bc7146a42b602",
+      "display_id": "86fa5baeb912b9d07adf",
       "position": "73:44",
       "rule": "question-to-unwrap",
       "outcome": "killed",
@@ -95,7 +95,7 @@
       ]
     },
     {
-      "display_id": "e7f7168f29b24bc28ecc",
+      "display_id": "01d63e7847588bf6676a",
       "position": "74:5",
       "rule": "return-default",
       "outcome": "killed",
@@ -114,7 +114,7 @@
       ]
     },
     {
-      "display_id": "1f37479f019a9f46ebb0",
+      "display_id": "d217d5d2fcdf4cfd3f10",
       "position": "75:34",
       "rule": "question-to-unwrap",
       "outcome": "killed",
@@ -133,7 +133,7 @@
       ]
     },
     {
-      "display_id": "db229fb9b145e4ad55d4",
+      "display_id": "2132c27add6cd3e84669",
       "position": "77:26",
       "rule": "question-to-unwrap",
       "outcome": "killed",
@@ -147,7 +147,7 @@
       ]
     },
     {
-      "display_id": "86512c25d48ffcc07852",
+      "display_id": "99ad21436474f7d0e454",
       "position": "84:5",
       "rule": "negate-bool-method",
       "outcome": "killed",
@@ -161,7 +161,7 @@
       ]
     },
     {
-      "display_id": "0476c6ddb76ab075f652",
+      "display_id": "5462ccc460c573cae0ed",
       "position": "84:5",
       "rule": "return-true",
       "outcome": "killed",
@@ -175,7 +175,7 @@
       ]
     },
     {
-      "display_id": "7a2734b054ffc0dccfa9",
+      "display_id": "48821d68e3c29df1c4ac",
       "position": "90:5",
       "rule": "return-default",
       "outcome": "killed",
@@ -199,7 +199,7 @@
       ]
     },
     {
-      "display_id": "4acfaa09823ed30bc272",
+      "display_id": "5a5e4b5a0fb18f98a39d",
       "position": "91:23",
       "rule": "remove-match-guard",
       "outcome": "killed",
@@ -213,8 +213,36 @@
       ]
     },
     {
-      "display_id": "440bce2454c06b813f2a",
-      "position": "91:35",
+      "display_id": "fc8e31ac5756405a2be3",
+      "position": "91:46",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "said::tests::every_step_check_is_known_and_nothing_else_is",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "fe30ee9a8344cebbd719",
+      "position": "98:5",
+      "rule": "return-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "said::tests::a_record_for_another_status_or_an_unknown_check_is_read_and_names_no_step_stop",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "9d0270482ee6fc359297",
+      "position": "98:17",
       "rule": "eq-to-neq",
       "outcome": "killed",
       "accepted": false,
@@ -232,8 +260,8 @@
       ]
     },
     {
-      "display_id": "f33a808e5eb20efab16d",
-      "position": "91:45",
+      "display_id": "2f5ab0ffc23001c85b20",
+      "position": "98:27",
       "rule": "and-to-or",
       "outcome": "killed",
       "accepted": false,
@@ -246,22 +274,8 @@
       ]
     },
     {
-      "display_id": "1d3cddd69617a731d648",
-      "position": "91:74",
-      "rule": "return-default",
-      "outcome": "killed",
-      "accepted": false,
-      "executions": [
-        {
-          "target": "rust-mutants-decision/lib/rust_mutants_decision",
-          "test": "said::tests::every_step_check_is_known_and_nothing_else_is",
-          "came_to": "panicked"
-        }
-      ]
-    },
-    {
-      "display_id": "b6491a91f869b00eb67f",
-      "position": "102:19",
+      "display_id": "d69b96382a2682cb5430",
+      "position": "107:19",
       "rule": "remove-not",
       "outcome": "killed",
       "accepted": false,
@@ -279,8 +293,8 @@
       ]
     },
     {
-      "display_id": "96c1ee33eec4291c60f6",
-      "position": "102:19",
+      "display_id": "a17f78f82a88d712c06a",
+      "position": "107:19",
       "rule": "and-to-or",
       "outcome": "killed",
       "accepted": false,
@@ -298,8 +312,8 @@
       ]
     },
     {
-      "display_id": "210739f4240be1c1cff2",
-      "position": "102:19",
+      "display_id": "b6e4f5cface035b9c0b8",
+      "position": "107:19",
       "rule": "and-to-or",
       "outcome": "killed",
       "accepted": false,
@@ -317,8 +331,8 @@
       ]
     },
     {
-      "display_id": "785da35ec3452767bbe0",
-      "position": "103:27",
+      "display_id": "ba31fd2fe3301306d520",
+      "position": "108:27",
       "rule": "all-to-any",
       "outcome": "killed",
       "accepted": false,
@@ -336,8 +350,8 @@
       ]
     },
     {
-      "display_id": "e26cf4ca1f23c7e0e0f5",
-      "position": "103:38",
+      "display_id": "60bdd0c7d72c2dd88102",
+      "position": "108:38",
       "rule": "negate-bool-method",
       "outcome": "killed",
       "accepted": false,
@@ -355,8 +369,8 @@
       ]
     },
     {
-      "display_id": "d2ceb16f669c0deffd07",
-      "position": "104:20",
+      "display_id": "d839f864afe9bf5971a7",
+      "position": "109:20",
       "rule": "eq-to-neq",
       "outcome": "killed",
       "accepted": false,
@@ -374,8 +388,8 @@
       ]
     },
     {
-      "display_id": "3da61f76e656f1a8da30",
-      "position": "104:23",
+      "display_id": "662159346c218bd12b65",
+      "position": "109:23",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -393,8 +407,8 @@
       ]
     },
     {
-      "display_id": "61bca6d211936ebef425",
-      "position": "104:27",
+      "display_id": "b73e737c2e259fff19d3",
+      "position": "109:27",
       "rule": "or-to-and",
       "outcome": "killed",
       "accepted": false,
@@ -412,8 +426,8 @@
       ]
     },
     {
-      "display_id": "cbdff39bfc6598747f99",
-      "position": "104:30",
+      "display_id": "5a0c37a1d87320df70bb",
+      "position": "109:30",
       "rule": "remove-not",
       "outcome": "killed",
       "accepted": false,
@@ -431,8 +445,8 @@
       ]
     },
     {
-      "display_id": "c78f808abc6a1f88b045",
-      "position": "105:9",
+      "display_id": "162d9a15054b02e7c607",
+      "position": "110:9",
       "rule": "and-to-or",
       "outcome": "killed",
       "accepted": false,
@@ -450,8 +464,8 @@
       ]
     },
     {
-      "display_id": "20897dad488c5736269e",
-      "position": "105:18",
+      "display_id": "54f02ba9373f53695574",
+      "position": "110:18",
       "rule": "neq-to-eq",
       "outcome": "killed",
       "accepted": false,
@@ -469,8 +483,8 @@
       ]
     },
     {
-      "display_id": "0b3b34a78a6cbd13625d",
-      "position": "105:21",
+      "display_id": "e806bb08039e000c4a3c",
+      "position": "110:21",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -488,8 +502,8 @@
       ]
     },
     {
-      "display_id": "6875b7b95057ee550e1b",
-      "position": "106:8",
+      "display_id": "2a187ccb92d09afe44eb",
+      "position": "111:8",
       "rule": "negate-condition",
       "outcome": "killed",
       "accepted": false,
@@ -507,8 +521,8 @@
       ]
     },
     {
-      "display_id": "38e068fc67caa3394858",
-      "position": "106:8",
+      "display_id": "6f6a74ffcc2a11e87498",
+      "position": "111:8",
       "rule": "remove-not",
       "outcome": "killed",
       "accepted": false,
@@ -526,8 +540,8 @@
       ]
     },
     {
-      "display_id": "5b3f05b648d8aa3167b1",
-      "position": "106:8",
+      "display_id": "78dd089ad87d2e7e9d12",
+      "position": "111:8",
       "rule": "condition-to-true",
       "outcome": "killed",
       "accepted": false,
@@ -545,8 +559,8 @@
       ]
     },
     {
-      "display_id": "9f14dd1bb55cb9607d6f",
-      "position": "106:8",
+      "display_id": "72edb38e72c3bebbd56a",
+      "position": "111:8",
       "rule": "condition-to-false",
       "outcome": "killed",
       "accepted": false,
@@ -564,8 +578,8 @@
       ]
     },
     {
-      "display_id": "929f9936a0864ee6feb9",
-      "position": "107:16",
+      "display_id": "d7473ee29db676bd62d6",
+      "position": "112:16",
       "rule": "return-some-default",
       "outcome": "killed",
       "accepted": false,
@@ -578,8 +592,8 @@
       ]
     },
     {
-      "display_id": "1013f70a369c0714bce7",
-      "position": "109:5",
+      "display_id": "8c477bdf05348bf8e9d8",
+      "position": "114:5",
       "rule": "return-default",
       "outcome": "killed",
       "accepted": false,
@@ -597,8 +611,8 @@
       ]
     },
     {
-      "display_id": "c7580f9d6da14aeed38c",
-      "position": "109:5",
+      "display_id": "02e14257612c7f8cf29d",
+      "position": "114:5",
       "rule": "return-some-default",
       "outcome": "killed",
       "accepted": false,
@@ -616,8 +630,8 @@
       ]
     },
     {
-      "display_id": "ed16e555eab8f1fd9003",
-      "position": "110:23",
+      "display_id": "1f91a3a0583927852658",
+      "position": "115:23",
       "rule": "return-default",
       "outcome": "killed",
       "accepted": false,
@@ -635,8 +649,8 @@
       ]
     },
     {
-      "display_id": "7fe775431ca62d8fbe5f",
-      "position": "110:23",
+      "display_id": "8624ae6a52918dc8ebc2",
+      "position": "115:23",
       "rule": "return-some-default",
       "outcome": "killed",
       "accepted": false,
@@ -654,8 +668,8 @@
       ]
     },
     {
-      "display_id": "13d51d5c8c297b4e09e4",
-      "position": "111:34",
+      "display_id": "2133a1fd3615f0dd4524",
+      "position": "116:34",
       "rule": "return-some-default",
       "outcome": "killed",
       "accepted": false,

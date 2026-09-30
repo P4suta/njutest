@@ -28,3 +28,6 @@ pub fn opens_a_block(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(kani)]
+mod kani_laws;

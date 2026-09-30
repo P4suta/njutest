@@ -135,6 +135,11 @@ fn every_production_kani_harness_is_proved_by_the_exact_local_and_ci_task() {
         xtask::kanilaws::INPUTS.contains(&"crates/rust-mutants-decision/src"),
         "the cached proof key must include the kernel source"
     );
+    assert!(
+        xtask::kanilaws::INPUTS.contains(&"crates/rust-mutants-adapt/src")
+            && xtask::kanilaws::INPUTS.contains(&"crates/rust-mutants-adapt/Cargo.toml"),
+        "a cached proof must include the adapter crate its production laws compile against"
+    );
     assert_eq!(
         asked.len(),
         xtask::kanilaws::harnesses().len(),

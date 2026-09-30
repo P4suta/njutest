@@ -3,10 +3,10 @@
   "decision": "instrument-shape",
   "package": "rust-mutants-decision",
   "module": "crates/rust-mutants-decision/src/shape.rs",
-  "source_sha256": "83c5f73515952b3b5f3b829145b7c506907c3354d1f0100c2996e925ffb3fcb3",
+  "source_sha256": "f57f540a94df87041fbf01fb09f5635e45313d9eb3b29f1b1c983f458c21fd03",
   "mutants": [
     {
-      "display_id": "dea796d2966e3807ae10",
+      "display_id": "e625ea3e4733d4271d86",
       "position": "17:8",
       "rule": "negate-condition",
       "outcome": "killed",
@@ -20,7 +20,7 @@
       ]
     },
     {
-      "display_id": "168990cc75551adb208e",
+      "display_id": "90a730104faf617a89c8",
       "position": "17:8",
       "rule": "condition-to-true",
       "outcome": "killed",
@@ -34,7 +34,7 @@
       ]
     },
     {
-      "display_id": "edaa22d3160ba145fc11",
+      "display_id": "ec18607c507c973092bb",
       "position": "17:8",
       "rule": "condition-to-false",
       "outcome": "killed",
@@ -53,7 +53,7 @@
       ]
     },
     {
-      "display_id": "39b4889e8ceac9fc878e",
+      "display_id": "05658fb7e8f9b24cde2c",
       "position": "18:16",
       "rule": "true-to-false",
       "outcome": "killed",
@@ -67,7 +67,7 @@
       ]
     },
     {
-      "display_id": "6fdfa78d58043c2b08fb",
+      "display_id": "e7ced59692a8465aba14",
       "position": "21:41",
       "rule": "negate-bool-method",
       "outcome": "killed",
@@ -81,7 +81,7 @@
       ]
     },
     {
-      "display_id": "31bb0a8b0d238f503238",
+      "display_id": "d2a1ffb7208f32600272",
       "position": "21:75",
       "rule": "or-to-and",
       "outcome": "killed",
@@ -95,7 +95,7 @@
       ]
     },
     {
-      "display_id": "a9e16c319d80a313242e",
+      "display_id": "6e171c4884c895ee819e",
       "position": "21:88",
       "rule": "eq-to-neq",
       "outcome": "killed",
@@ -109,7 +109,7 @@
       ]
     },
     {
-      "display_id": "57da2a2eab04ad2616ed",
+      "display_id": "89f375e026d4f36a1c10",
       "position": "26:5",
       "rule": "negate-bool-method",
       "outcome": "killed",
@@ -123,7 +123,7 @@
       ]
     },
     {
-      "display_id": "3904f70557082af9025c",
+      "display_id": "f6f37d171111787786a9",
       "position": "26:5",
       "rule": "return-true",
       "outcome": "killed",
