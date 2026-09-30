@@ -86,6 +86,8 @@ fn owned(
         kept,
         role,
         keyed_to: keyed_to.map(|tree| tree.display().to_string()),
+        holder: None,
+        released: false,
     };
     std::fs::write(
         rust_mutants::tempowner::marker_path(directory),
