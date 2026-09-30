@@ -13,8 +13,8 @@ A library whose only example of one function is marked `ignore-wasm32`: it runs 
 | `thrice` | with an example that runs everywhere | killed by it, sealed |
 
 The first row is what a sealed station has to hold to be honest.
-The merged binary built for the sealed target still names the ignored example, and runs it as nothing when asked for it by index, so a station that went by name would put `twice` to an example that never calls it and call its mutants unreached.
-A station holds exactly the tests the native baseline ran, and an example the sealed build ignores is one it does not hold, so the route to `twice` meets a test the sealed build cannot answer for.
+The merged binary built to list its doctests still names the ignored example, and runs it as nothing when asked for it by index, so a station that went by that listing alone would put `twice` to an example that never calls it and call its mutants unreached.
+The binary built to list the doctests it ignores names it, and an example so named is one the station does not hold, so the route to `twice` meets a test the sealed build cannot answer for.
 
 ## Fates
 

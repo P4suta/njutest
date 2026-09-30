@@ -588,7 +588,7 @@
                     }
                   ]
                 },
-                "outcome": { "enum": ["not_run", "killed", "survived", "step_limit_reached", "waited", "inconclusive", "errored", "halted", "passed", "panicked", "failed", "trapped", "fuel-exceeded", "memory-exceeded", "declined", "exited-early", "stack-overflow", "refused", "unaccounted", "unmatched", "set-aside"] },
+                "outcome": { "enum": ["not_run", "killed", "survived", "step_limit_reached", "waited", "inconclusive", "errored", "halted", "unstartable", "passed", "panicked", "failed", "trapped", "fuel-exceeded", "memory-exceeded", "declined", "exited-early", "stack-overflow", "refused", "unaccounted", "unmatched", "set-aside"] },
                 "left": { "type": "array", "items": { "type": "string" } },
                 "unnamed": { "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1 }] },
                 "failed": { "type": "array", "items": { "type": "string" } }

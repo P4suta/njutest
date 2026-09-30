@@ -411,6 +411,8 @@ pub struct Lines {
     pub failed: Vec<String>,
     /// Every test that was ignored.
     pub ignored: Vec<String>,
+    /// Every test the harness said should panic, whatever came of it, which is not part of its name.
+    pub should_panic: Vec<String>,
 }
 
 impl Lines {
@@ -438,9 +440,12 @@ pub fn parse_lines(output: &[u8]) -> Result<Lines, LibtestOutputError> {
 fn parse_lines_text(text: &str) -> Lines {
     let mut lines = Lines::default();
     for line in text.lines() {
-        let Some((name, verdict)) = verdict_of(line) else {
+        let Some((name, verdict, should_panic)) = verdict_of(line) else {
             continue;
         };
+        if should_panic {
+            lines.should_panic.push(name.to_owned());
+        }
         match verdict {
             "ok" => lines.passed.push(name.to_owned()),
             "FAILED" => lines.failed.push(name.to_owned()),
@@ -454,16 +459,16 @@ fn parse_lines_text(text: &str) -> Lines {
 /// What libtest writes after the name of a test that expects a panic, which is not part of the name.
 const SHOULD_PANIC: &str = " - should panic";
 
-/// The name and verdict of one `test <name> ... <verdict>` line.
-fn verdict_of(line: &str) -> Option<(&str, &str)> {
+/// The name and verdict of one `test <name> ... <verdict>` line, and whether the harness said the test should panic.
+fn verdict_of(line: &str) -> Option<(&str, &str, bool)> {
     let rest = line.trim_end().strip_prefix("test ")?;
     let (name, verdict) = rest.rsplit_once(" ... ")?;
-    let name = match name.strip_suffix(SHOULD_PANIC) {
-        Some(expecting_a_panic) => expecting_a_panic,
-        None => name,
-    }
-    .trim();
-    (!name.is_empty()).then_some((name, verdict.trim()))
+    let (name, should_panic) = match name.strip_suffix(SHOULD_PANIC) {
+        Some(expecting_a_panic) => (expecting_a_panic, true),
+        None => (name, false),
+    };
+    let name = name.trim();
+    (!name.is_empty()).then_some((name, verdict.trim(), should_panic))
 }
 
 /// Reads the last `test result:` line of a captured output.
@@ -2518,6 +2523,8 @@ pub struct MutantResult {
     pub passed_tests: Vec<String>,
     /// Every test the harness was told to skip.
     pub ignored_tests: Vec<String>,
+    /// Every test the harness said should panic, by name without what it appends to say so.
+    pub should_panic_tests: Vec<String>,
     /// The items the whole process entered, when the execution was asked to record them and could.
     pub entered: Option<crate::touch::Entered>,
     /// The one way the process ended, which is what an account of it can claim to be whole on.
@@ -2606,6 +2613,7 @@ impl MutantResult {
             failed_tests: Vec::new(),
             passed_tests: Vec::new(),
             ignored_tests: Vec::new(),
+            should_panic_tests: Vec::new(),
             leader: None,
             lingered: false,
             declines: crate::decline::Declines::none(),
@@ -2836,6 +2844,7 @@ fn finished(
         failed_tests: lines.failed,
         passed_tests: lines.passed,
         ignored_tests: lines.ignored,
+        should_panic_tests: lines.should_panic,
         leader: result.leader,
         lingered,
         stopped: observation.stopped,

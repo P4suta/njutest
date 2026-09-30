@@ -439,6 +439,9 @@ fn rests_on_sealed(steps: &[&Step]) -> bool {
 /// What a sealed crash instance the host halted where its runtime publishes the notice is recorded as, written out again from the runner's contract rather than read from its code.
 pub const HALTED: &str = "halted";
 
+/// What a sealed next instance that could not start over what the stop left is recorded as, which decides nothing either way.
+pub const UNSTARTABLE: &str = "unstartable";
+
 /// What a sealed instance comes to judged against its control, and of those the ones that detect, written out again from the engine's contract rather than read from its code.
 pub const SEALED_OUTCOMES: [&str; 13] = [
     "passed",
@@ -569,7 +572,8 @@ fn unkind(run: &Run) -> Option<&'static str> {
             return Some("is a sealed fresh run, which one sealed round never makes");
         }
         let halted = run.outcome == HALTED && run.stage == "crash";
-        if !halted && !SEALED_OUTCOMES.contains(&run.outcome.as_str()) {
+        let unstartable = run.outcome == UNSTARTABLE && run.stage == "next";
+        if !halted && !unstartable && !SEALED_OUTCOMES.contains(&run.outcome.as_str()) {
             return Some("is sealed and names an outcome no sealed instance comes to");
         }
         return None;

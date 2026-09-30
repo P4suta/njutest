@@ -17,7 +17,7 @@ The middle row is why this fixture exists.
 A mutation only a documented example can notice used to be reported as surviving, which is a finding that is not a gap in the tests, and then as unproven, because nothing sealed a doctest.
 
 rustdoc on edition 2024 merges a library's examples into one binary, and a sealed run gets it by handing rustdoc a runner that keeps each binary it is given.
-The merged binary names its examples when it runs them all in one instance, and runs one of them alone when it is given that one's index, so each example is a test of its own with a control of its own, as a test of any other target is.
+The merged binary is built to list its examples when it runs, and runs one of them alone when it is given that one's index, so each example is a test of its own with a control of its own, as a test of any other target is.
 The route still reaches every mutation of the library through the documentation, as `doctests-routed-by-file` says, because a native run cannot tell which example reached what; the sealed controls can, so the third row is unreached rather than survived.
 The third row's example is why rustdoc prints two reports here, the merged binary's and its own for the example it compiles alone, and a native run of the documentation is one run that accounts for both.
 

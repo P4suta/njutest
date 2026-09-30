@@ -987,6 +987,31 @@ fn a_preparation_to_rerun_starts_no_test_natively_and_reproduces_every_execution
 }
 
 #[test]
+fn a_run_again_names_every_doctest_of_a_merged_binary_whatever_stopped_it_running() {
+    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-doctest-refused");
+    let recorded = recorded_by_a_run(&fixture);
+    let past = "src/lib.rs - half (line 27)";
+    assert!(
+        recorded
+            .iter()
+            .any(|one| one.test == past && one.came_to.detected()),
+        "a mutation of `half` is detected by its example, which sorts after the one the sealed \
+         host refuses: {recorded:?}"
+    );
+    let prepared = rerunnable(&fixture, Recorder::disabled());
+    let now = prepared
+        .rerun(&recorded, &Cancel::new())
+        .expect("the host runs every execution again");
+    assert!(
+        matches!(now, Reproduction::Reproduced(_)),
+        "a run again has no native run to name a doctest by, and the merged binary's own listing \
+         names every one it holds whatever a doctest does when it runs, so each recorded \
+         execution is made again: {now:?}"
+    );
+    prepared.close().expect("the snapshot is removed");
+}
+
+#[test]
 fn running_recorded_executions_again_stops_at_the_first_that_comes_to_something_else_now() {
     let fixture = njutest_devkit::fixture::Fixture::copy("fixture-simple");
     let recorded = recorded_by_a_run(&fixture);

@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 # fixture-doctest-alone
 
 A library on an edition before 2024, whose doctests rustdoc compiles one binary each rather than merged into one.
-A sealed run hands each binary rustdoc would run to a capture, names it by what rustdoc printed, and runs it alone.
+A sealed run builds them once with `--list` baked in, which makes rustdoc list each doctest itself rather than running it, then again without it, handing each binary rustdoc would run to a capture, and runs each alone.
 
 | Function | Documented | Fate |
 | --- | --- | --- |

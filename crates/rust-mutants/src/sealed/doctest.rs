@@ -86,11 +86,24 @@ pub struct Alone {
     pub expects: Expects,
 }
 
+/// Which test arguments a capture builds the doctests with, which a merged binary bakes in at compile time and answers whatever else it is asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Baked {
+    /// None beyond the run's own: each doctest runs as itself when its binary runs.
+    Run,
+    /// `--list`: a merged binary lists the doctests it holds when it runs, and rustdoc lists the doctests it did not merge itself rather than running them.
+    List,
+    /// `--list --ignored`: a merged binary lists the doctests it holds that the sealed target ignores, which run as nothing when asked for by index.
+    ListIgnored,
+}
+
 /// Every doctest of one library that rustdoc runs, as the capture received them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Captured {
     /// Each binary holding the doctests of one merged compilation, which run one at a time by index.
     pub merged: Vec<PathBuf>,
+    /// Each binary holding the doctests of one merged compilation, built to list the ones the sealed target ignores, one per entry of `merged`, in its order.
+    pub ignored: Vec<PathBuf>,
     /// Each doctest compiled alone.
     pub alone: Vec<Alone>,
     /// Each doctest rustdoc runs whose compilation for the sealed target failed, by name.
@@ -454,142 +467,163 @@ pub fn natively_run(native: &str) -> Option<String> {
     )
 }
 
-/// One doctest a merged binary holds, at its index there.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Listed {
-    /// Its name, as rustdoc names it.
-    pub name: String,
-    /// What it passes by.
-    pub expects: Expects,
-    /// Whether the binary's harness ignored it, which it does to one ignored for the sealed target and to every one that should panic.
-    pub ignored: bool,
+/// What a build of one library's doctests with `--list` among their test arguments printed: the claim of every merged binary, each of which lists the doctests it holds when it runs, and the name of every doctest rustdoc listed itself, which it did not merge.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Listing {
+    /// The claim of each merged binary, in the order rustdoc ran them.
+    pub merged: Vec<u64>,
+    /// Every doctest rustdoc listed itself, by name.
+    pub standalone: Vec<String>,
 }
 
-/// What a merged binary's own harness printed of the doctests it ran in one instance.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Printed {
-    /// How many doctests it announced it would run.
-    pub announced: u32,
-    /// Each doctest it finished, in index order.
-    pub finished: Vec<Listed>,
-    /// The doctest it began after those and never finished, where it stopped inside one.
-    pub stopped: Option<Listed>,
-    /// Whether it finished every doctest it announced, filtered none out, and closed with counts that agree.
-    pub whole: bool,
-}
+/// What libtest prints after the name of each test it lists.
+const LISTED: &str = ": test";
 
-/// The doctest a result line of a merged binary's harness names.
-fn listing(name: &str, ignored: bool) -> Listed {
-    match name.strip_suffix(SHOULD_PANIC) {
-        Some(name) => Listed {
-            name: name.to_owned(),
-            expects: Expects::Panic,
-            ignored,
-        },
-        None => Listed {
-            name: name.to_owned(),
-            expects: Expects::Return,
-            ignored,
-        },
-    }
-}
-
-/// What a merged binary's own harness printed when it ran its doctests in one instance, where it announced them and began none after one it never finished.
-#[must_use]
-pub fn printed(stdout: &[u8]) -> Option<Printed> {
-    let Ok(text) = std::str::from_utf8(stdout) else {
-        return None;
+/// The count of tests and of benchmarks a listing closes with, `N tests, M benchmarks`.
+fn discovered(line: &str) -> Option<(u32, u32)> {
+    let (tests, benchmarks) = line.trim_end().split_once(", ")?;
+    let count = |part: &str, noun: &str| -> Option<u32> {
+        let (number, word) = part.split_once(' ')?;
+        let number = match number.parse::<u32>() {
+            Ok(number) => number,
+            Err(_not_a_count) => return None,
+        };
+        let expected = if number == 1 {
+            noun.to_owned()
+        } else {
+            format!("{noun}s")
+        };
+        (word == expected).then_some(number)
     };
-    let mut announced = None;
-    let mut finished = Vec::new();
-    let mut stopped = None;
-    let mut summary = None;
+    Some((count(tests, "test")?, count(benchmarks, "benchmark")?))
+}
+
+/// What rustdoc printed on its standard output while it built one library's doctests with `--list` among their test arguments and handed every merged binary to the capture.
+///
+/// # Errors
+/// [`Uncaptured::Unreported`] where it printed nothing it listed or ran, and every other way the report fails to be one, the first found.
+pub fn listing(stdout: &[u8]) -> Result<Listing, Uncaptured> {
+    let text = std::str::from_utf8(stdout).map_err(|_not_text| Uncaptured::Unread {
+        line: crate::telling::LosslessBytes::new(stdout).to_string(),
+    })?;
+    let mut listing = Listing::default();
+    let mut counted = None;
+    let mut merged_closed = false;
     for line in text.lines() {
-        if announced.is_none() {
-            announced = crate::libtest::announcement(line);
+        let unread = || Uncaptured::Unread {
+            line: line.to_owned(),
+        };
+        if line.trim().is_empty() {
             continue;
         }
-        if let Some(closing) = crate::execute::parse_summary_line(line) {
-            summary = Some(closing);
-            break;
+        if line.starts_with(MERGED_CLOSING) {
+            merged_closed = true;
+            continue;
         }
-        if let Some((name, word)) = line
-            .strip_prefix("test ")
-            .and_then(|rest| rest.split_once(" ... "))
-        {
-            if stopped.is_some() {
-                return None;
+        let listed_yet = !listing.standalone.is_empty() || counted.is_some();
+        if let Some(claim) = marker(line) {
+            if listed_yet {
+                return Err(unread());
             }
-            if word.is_empty() {
-                stopped = Some(listing(name, false));
-            } else {
-                finished.push(listing(name, word.starts_with("ignored")));
-            }
+            listing.merged.push(claim);
+            continue;
         }
+        if counted.is_some() {
+            return Err(unread());
+        }
+        if let Some(count) = discovered(line) {
+            counted = Some(count);
+            continue;
+        }
+        let name = line.strip_suffix(LISTED).ok_or_else(unread)?;
+        listing.standalone.push(name.to_owned());
     }
-    let announced = announced?;
-    let whole = stopped.is_none()
-        && summary.is_some_and(|summary| {
-            let accounted = summary
-                .passed
-                .checked_add(summary.failed)
-                .and_then(|sum| sum.checked_add(summary.ignored))
-                .and_then(|sum| sum.checked_add(summary.measured));
-            let listed = u32::try_from(finished.len()).is_ok_and(|listed| listed == announced);
-            listed && accounted == Some(announced) && summary.filtered_out == 0
+    let named =
+        u32::try_from(listing.standalone.len()).map_err(|_wide| Uncaptured::CountsDisagree {
+            announced: u32::MAX,
+            accounted: u64::MAX,
+        })?;
+    match counted {
+        Some((tests, 0)) if tests == named => {}
+        Some((tests, _)) => {
+            return Err(Uncaptured::CountsDisagree {
+                announced: tests,
+                accounted: u64::from(named),
+            });
+        }
+        None if !listing.standalone.is_empty() => {
+            return Err(Uncaptured::CountsDisagree {
+                announced: 0,
+                accounted: u64::from(named),
+            });
+        }
+        None if !listing.merged.is_empty() && merged_closed => {}
+        None if !listing.merged.is_empty() => {
+            return Err(Uncaptured::CountsDisagree {
+                announced: 0,
+                accounted: 0,
+            });
+        }
+        None => return Err(Uncaptured::Unreported),
+    }
+    Ok(listing)
+}
+
+/// The binary each claim `listing` printed holds, in the order rustdoc ran them, where the claims are every one the capture gave out and none is out of order.
+///
+/// # Errors
+/// A claim out of order, one the capture holds no binary for, or claims the capture gave out that the report does not account for.
+pub fn merged_binaries(listing: &Listing, held: &Held) -> Result<Vec<PathBuf>, Uncaptured> {
+    let mut next: u64 = 0;
+    let mut binaries = Vec::with_capacity(listing.merged.len());
+    for claim in &listing.merged {
+        if *claim != next {
+            return Err(Uncaptured::OutOfOrder {
+                name: "a merged compilation".to_owned(),
+                said: *claim,
+                expected: next,
+            });
+        }
+        binaries.push(kept(held, *claim)?);
+        next = next
+            .checked_add(1)
+            .ok_or(Uncaptured::Missing { claim: *claim })?;
+    }
+    if next != held.claims {
+        return Err(Uncaptured::ClaimsDisagree {
+            reported: next,
+            held: held.claims,
         });
-    Some(Printed {
-        announced,
-        finished,
-        stopped,
-        whole,
-    })
-}
-
-/// The name rustdoc indexes a doctest of a merged binary by: its name, less what libtest appends to one it only compiles.
-fn indexed(listed: &Listed) -> &str {
-    match listed.name.strip_suffix(COMPILED_ONLY[0]) {
-        Some(run) => run,
-        None => listed.name.as_str(),
     }
+    Ok(binaries)
 }
 
-/// The doctests the only merged binary of `captured` holds past the ones its harness `printed` before it stopped, named from `native`, the names the native run passed its doctests under: each that rustdoc merged, being neither one that must fail to compile nor one `captured` holds apart, in the order rustdoc indexes them; nothing where `captured` has another merged binary, which leaves which of them holds a doctest unsaid, or where one of them sorts before a doctest printed, which no binary that runs its doctests in order can hold.
+/// The doctests a merged binary built with `--list` among its test arguments names when it runs with no index, in index order: its harness lists every one it holds, in the order it holds them, whatever any of them does when it runs, and closes with their count.
 #[must_use]
-pub fn unprinted(
-    native: &[String],
-    captured: &Captured,
-    printed: &[Listed],
-) -> Option<Vec<Listed>> {
-    if captured.merged.len() != 1 {
-        return None;
+pub fn listed(stdout: &[u8]) -> Option<Vec<String>> {
+    let text = match std::str::from_utf8(stdout) {
+        Ok(text) => text,
+        Err(_not_text) => return None,
+    };
+    let mut names = Vec::new();
+    let mut counted = None;
+    for line in text.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        if counted.is_some() {
+            return None;
+        }
+        if let Some(count) = discovered(line) {
+            counted = Some(count);
+            continue;
+        }
+        names.push(line.strip_suffix(LISTED)?.to_owned());
     }
-    let apart: BTreeSet<&str> = captured
-        .alone
-        .iter()
-        .map(|alone| alone.name.as_str())
-        .chain(captured.unbuilt.iter().map(String::as_str))
-        .chain(printed.iter().map(|listed| listed.name.as_str()))
-        .collect();
-    let mut past: Vec<Listed> = native
-        .iter()
-        .filter(|name| !name.ends_with(COMPILED_ONLY[1]))
-        .map(|name| listing(name, false))
-        .filter(|listed| !apart.contains(listed.name.as_str()))
-        .collect();
-    past.sort_by(|one, other| indexed(one).cmp(indexed(other)));
-    let last = printed.last().map(indexed);
-    past.iter()
-        .all(|listed| last.is_none_or(|last| indexed(listed) > last))
-        .then_some(past)
-}
-
-/// The doctests a merged binary's own harness names when it runs every one of them in one instance, in index order, where it announced them, filtered none out, and closed.
-#[must_use]
-pub fn listed(stdout: &[u8]) -> Option<Vec<Listed>> {
-    printed(stdout)
-        .filter(|printed| printed.whole)
-        .map(|printed| printed.finished)
+    let (tests, benchmarks) = counted?;
+    let whole = benchmarks == 0 && usize::try_from(tests).is_ok_and(|tests| tests == names.len());
+    let unique = names.iter().collect::<BTreeSet<_>>().len() == names.len();
+    (whole && unique).then_some(names)
 }
 
 #[cfg(test)]

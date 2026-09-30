@@ -4,10 +4,10 @@
 //! An invocation can start where another stopped: its trees are the snapshots as the other's overlay left them.
 
 use rust_mutants_sealed::{
-    Invocation, OverlayEntry, OverlayState, SealedError, SealedStop, Snapshot,
+    Invocation, OverlayEntry, OverlayState, Preopens, SealedError, SealedStop, Snapshot,
 };
 
-use crate::common::{command, invocation, run, snapshot};
+use crate::common::{command, invocation, root_starting_in, run, snapshot, tree};
 
 /// A guest that makes `made/note` holding `kept` and removes `seen.txt`.
 fn writes() -> Vec<u8> {
@@ -121,6 +121,25 @@ fn a_snapshot_after_an_overlay_is_the_snapshot_built_with_what_it_left() {
         later.digest(),
         after.digest(),
         "a time the overlay set is part of what the tree holds"
+    );
+}
+
+#[test]
+fn an_overlay_that_removed_the_working_directory_is_no_state_an_invocation_starts_in() {
+    let preopens = Preopens::new(vec![
+        tree("/sandbox", snapshot()),
+        root_starting_in("/sandbox", "empty"),
+    ])
+    .expect("the working directory is a directory of the tree");
+    let removed = OverlayEntry {
+        path: "/sandbox/empty".to_owned(),
+        state: OverlayState::Removed,
+    };
+    let refused = preopens.after(&[removed]);
+    assert_eq!(
+        refused.map(|_| ()).map_err(|error| error.code().code()),
+        Err("RS0005"),
+        "the directory the guest runs in is gone, so the invocation cannot be given it"
     );
 }
 
