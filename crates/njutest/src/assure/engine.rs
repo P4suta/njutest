@@ -19,6 +19,7 @@ pub const fn switches(sealing: Sealing) -> PrepareOptions {
         packages: Vec::new(),
         skips: Vec::new(),
         measurements: None,
+        transcripts: None,
         harness_args: Vec::new(),
         verify: true,
         touch: true,

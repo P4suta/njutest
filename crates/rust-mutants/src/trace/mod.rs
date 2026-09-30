@@ -221,6 +221,7 @@ struct Inner {
     clock: Clock,
     started: Timestamp,
     state: Mutex<State>,
+    sealed: rust_mutants_sealed::Counted,
 }
 
 #[derive(Default)]
@@ -267,6 +268,7 @@ impl Recorder {
             clock,
             started,
             state: Mutex::new(State::default()),
+            sealed: rust_mutants_sealed::Counted::default(),
         });
         let recorder = Self { inner: Some(inner) };
         recorder.emit_at(
@@ -481,6 +483,15 @@ impl Recorder {
         });
     }
 
+    /// What the host spent on sealed executions, counted into this recording as its benches run; a handle of its own for a recording that records nothing.
+    #[must_use]
+    pub fn sealed_counts(&self) -> rust_mutants_sealed::Counted {
+        match &self.inner {
+            Some(inner) => inner.sealed.clone(),
+            None => rust_mutants_sealed::Counted::default(),
+        }
+    }
+
     /// Closes the recording with the outcome, the error that ended the run if there was one, and the event accounting, then closes the sink.
     ///
     /// # Errors
@@ -511,6 +522,7 @@ impl Recorder {
             }
             let events_dropped = state.observed_drops(inner.sink.dropped());
             let events_emitted = state.emitted(events_dropped);
+            let sealed = inner.sealed.spent();
             inner.deliver(
                 &mut state,
                 moment,
@@ -520,6 +532,7 @@ impl Recorder {
                         error,
                         events_emitted,
                         events_dropped,
+                        sealed,
                     },
                 },
             );

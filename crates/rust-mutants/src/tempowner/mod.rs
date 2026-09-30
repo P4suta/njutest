@@ -352,12 +352,6 @@ impl Owner {
         &self.dir
     }
 
-    /// Says the claimed directory was moved to `dir`, so a later release or keep writes its marker where the directory now is.
-    /// The claim itself never moved: the lock is a file inside the directory, and it moved with it.
-    pub fn moved(&mut self, dir: &Path) {
-        self.dir = dir.to_path_buf();
-    }
-
     /// The marker as written.
     #[must_use]
     pub const fn marker(&self) -> &Marker {

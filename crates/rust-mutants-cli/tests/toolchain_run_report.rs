@@ -412,7 +412,7 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
     let listed = asked(&at, &["cache"]);
     let text = stdout(&listed);
     assert_eq!(listed.status.code(), Some(0), "{text}");
-    assert!(text.contains("caches       1 reclaimable"), "{text}");
+    assert!(text.contains("caches       2 reclaimable"), "{text}");
     assert!(
         text.contains("snapshots    0 reclaimable"),
         "a finished run removes its snapshot and keeps its cache: {text}"
@@ -421,14 +421,14 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
     let swept = asked(&at, &["cache", "--gc"]);
     let text = stdout(&swept);
     assert!(
-        text.contains("caches       0 removed") && text.contains("1 kept for the next run"),
+        text.contains("caches       0 removed") && text.contains("2 kept for the next run"),
         "a sweep keeps the build caches a later run can still look up, so the next run \
          is still fast: {text}"
     );
 
     let collected = asked(&at, &["cache", "--gc", "--all"]);
     let text = stdout(&collected);
-    assert!(text.contains("caches       1 removed"), "{text}");
+    assert!(text.contains("caches       2 removed"), "{text}");
     let left: Vec<PathBuf> = std::fs::read_dir(&temp)
         .expect("the temporary directory")
         .map(|entry| entry.expect("read a temporary-directory entry"))

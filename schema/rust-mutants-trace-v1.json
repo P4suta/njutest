@@ -2100,6 +2100,10 @@
                     "unmatched",
                     "set-aside"
                   ]
+                },
+                "transcript": {
+                  "type": "string",
+                  "description": "The digest of the transcript the verdict rests on: everything the invocation was a function of and everything it did, which one execution of one tree is named by wherever it is remembered. Optional because a recording made before transcripts were named says none."
                 }
               }
             }
@@ -2513,6 +2517,33 @@
                 "events_dropped": {
                   "type": "integer",
                   "minimum": 0
+                },
+                "sealed": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "answered",
+                    "compiles",
+                    "instances"
+                  ],
+                  "description": "What the host spent on sealed executions, where the run assembled a bench. Optional because a run that assembled none says nothing.",
+                  "properties": {
+                    "compiles": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Modules compiled for the sealed target."
+                    },
+                    "instances": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Instances started on the host."
+                    },
+                    "answered": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Invocations a remembered transcript answered instead."
+                    }
+                  }
                 }
               }
             }

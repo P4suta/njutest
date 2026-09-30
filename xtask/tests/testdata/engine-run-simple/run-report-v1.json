@@ -3,10 +3,10 @@
   "schema_version": 5,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260930t063111159z",
-    "started_at": "2026-09-30T06:31:11.159601Z",
-    "finished_at": "2026-09-30T06:31:16.938868Z",
-    "duration_ms": 1372,
+    "id": "20260930t131916808z",
+    "started_at": "2026-09-30T13:19:16.808673Z",
+    "finished_at": "2026-09-30T13:19:21.332571Z",
+    "duration_ms": 933,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -18,7 +18,7 @@
   "workspace": {
     "root_name": "fixture-simple",
     "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-    "workspace_digest": "fe8deefcbf1aa78279a75728b6c0e071a49a977a765334c592bbed134b80a6a4",
+    "workspace_digest": "e29ff7b2ae2da49c14dc5253dccb7dbd1412a4d13943fb8f84711921204de66d",
     "catalog_digest": "82946360d0657b5f03d7a76baf4c58b9b82b9853b602678b838583310f27d624",
     "platform": {
       "os": "darwin",
@@ -125,7 +125,7 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": -1,
-      "duration_ms": 21,
+      "duration_ms": 16,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -182,7 +182,7 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": -1,
-      "duration_ms": 21,
+      "duration_ms": 36,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -239,7 +239,7 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": -1,
-      "duration_ms": 45,
+      "duration_ms": 15,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -296,7 +296,7 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": -1,
-      "duration_ms": 28,
+      "duration_ms": 20,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -353,7 +353,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 21,
+      "duration_ms": 15,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -411,7 +411,7 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": -1,
-      "duration_ms": 22,
+      "duration_ms": 16,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -468,7 +468,7 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": -1,
-      "duration_ms": 18,
+      "duration_ms": 19,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -582,7 +582,7 @@
       "step_notice": null,
       "target": "fixture-simple/test/parity",
       "exit_code": -1,
-      "duration_ms": 52,
+      "duration_ms": 18,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -639,7 +639,7 @@
       "step_notice": null,
       "target": "fixture-simple/test/parity",
       "exit_code": -1,
-      "duration_ms": 20,
+      "duration_ms": 19,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -696,7 +696,7 @@
       "step_notice": null,
       "target": "fixture-simple/test/parity",
       "exit_code": -1,
-      "duration_ms": 19,
+      "duration_ms": 27,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -753,7 +753,7 @@
       "step_notice": null,
       "target": "fixture-simple/test/parity",
       "exit_code": -1,
-      "duration_ms": 25,
+      "duration_ms": 22,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -810,7 +810,7 @@
       "step_notice": null,
       "target": "fixture-simple/test/parity",
       "exit_code": -1,
-      "duration_ms": 12,
+      "duration_ms": 21,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"

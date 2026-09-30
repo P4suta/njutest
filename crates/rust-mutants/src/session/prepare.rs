@@ -1097,6 +1097,7 @@ pub fn prepare(
         harness_args: crate::libtest::Configured::new(options.harness_args.clone()),
         scratch_working_directory: options.scratch_working_directory,
         sealed,
+        transcripts: options.transcripts.clone(),
         workspace,
     })
 }
@@ -1143,11 +1144,11 @@ fn sealed_build(
     if !held {
         return Ok(SealedBuild::none(targets, Unsealed::TargetMissing));
     }
-    let flags = match sealed_flags(building)? {
+    let (dir, owner) = workspace.sealed_build_dir();
+    let flags = match sealed_flags(building, &dir)? {
         Ok(flags) => flags,
         Err(why) => return Ok(SealedBuild::none(targets, why)),
     };
-    let dir = workspace.build_dir().nested("sealed");
     let examples = targets
         .iter()
         .any(|target| target.kind() == execute::TargetKind::Example);
@@ -1180,7 +1181,7 @@ fn sealed_build(
             sealed.doctests.len()
         ),
     );
-    Ok(sealed)
+    Ok(sealed.keeping(owner))
 }
 
 /// The flags the sealed build compiles with, or why which flags cargo would use for the sealed target is not known.
@@ -1189,6 +1190,7 @@ fn sealed_build(
 /// A toolchain that cannot say what the sealed target is.
 fn sealed_flags(
     building: &Building<'_>,
+    directory: &crate::cargo::BuildDir,
 ) -> Result<Result<crate::sealed::Flags, crate::sealed::Unsealed>, EngineError> {
     use crate::sealed::TARGET;
     let Building {
@@ -1197,11 +1199,7 @@ fn sealed_flags(
         trace,
         ..
     } = *building;
-    let root = workspace
-        .build_dir()
-        .nested("sealed")
-        .path()
-        .join("platform");
+    let root = directory.path().join("platform");
     let object = match crate::sealed::platform::ready(&workspace.driver(cancel), &root)? {
         crate::sealed::platform::Readied::Object(object) => object,
         crate::sealed::platform::Readied::Unanswered(said) => {

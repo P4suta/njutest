@@ -227,8 +227,8 @@ fn reproduced(
 
 /// Records `again`, one execution `row` rests on, in the trace, where it ran.
 fn traced(watch: Watch<'_>, row: &MutantRecord, again: &Reran) {
-    match again.now {
-        Now::Came(came_to) => watch.trace.sealed_exec(crate::trace::SealedExecRecord {
+    match &again.now {
+        Now::Came { came_to, .. } => watch.trace.sealed_exec(crate::trace::SealedExecRecord {
             mutant: row.display_id.clone(),
             target: again.recorded.target.clone(),
             test: again.recorded.test.clone(),

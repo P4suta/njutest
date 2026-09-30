@@ -90,6 +90,15 @@ impl BuildDir {
         }
     }
 
+    /// A directory at `path` that builds these same members with its own record.
+    #[must_use]
+    pub(crate) fn at(&self, path: PathBuf) -> Self {
+        Self {
+            path,
+            members: self.members.clone(),
+        }
+    }
+
     /// Makes cargo compile again every unit of a member whose files differ from what this directory last built it from, and dates every member's files back to when their bytes last moved, never forward.
     ///
     /// A later time would make stale what another directory built from the same bytes, and bytes this directory never built are compiled again because their units are forgotten, whatever their time.

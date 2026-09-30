@@ -95,6 +95,11 @@ Those boundaries must use checked arithmetic and keep overflow in a typed result
 The `wrapping-counter` lint rejects `fetch_add`, `fetch_sub`, and `wrapping_*` through direct, qualified, renamed, and macro-token forms.
 Atomic counters use `fetch_update` with checked arithmetic and retain exhaustion as typed or sticky state, so release-mode wraparound cannot impersonate an earlier event.
 
+The `defaulted-absence` lint holds audit readers and the engine's `crates/rust-mutants/src/` to explicit absence decisions.
+An unread item's body digest and an unverified target's test count are nullable evidence, never invented empty-body digests or counts of one.
+Missing mutation positions, catalog attribution, judgement attribution, phase durations and listed targets are named refusals.
+A compilation cannot add cargo variables unless the toolchain was given an explicit environment.
+
 The `unchecked-cast` lint covers platform source that the host compiler cannot type-check: the modules `unsafe-outside-ffi` names.
 Integer and pointer `as` casts are refused there, including macro tokens; conversions use `TryFrom` or preserve the exact FFI pointer type so an unrepresentable value retains a failure branch on every target.
 
@@ -190,6 +195,9 @@ A complete report holds its facts per configured build and per catalog part; the
 A report states no verdict — the verdict is derived from its records — so the verdict is re-decided against the `run-end` the runner recorded, and is `unaudited` where the recording holds none.
 Every document is validated against its published schema before any layer reads it.
 So is every specimen the audits plant, when it is written rather than when an audit first reads it: `specimens::every_proofaudit_specimen_is_on_the_published_schemas` and `every_engine_audit_specimen_is_on_the_published_schemas` lay each as its audit lays it and hold its report and recordings to the schemas a run's own output is held to.
+`njutest::toolchain_sharded_runs` compares the committed sharded recordings and proofaudit specimen with the shapes a real run still writes.
+`UPDATE_SHARDED_RUNS=1` records `fixture-assured` in two shards and merges them, sealed and with `--no-seal`; `UPDATE_SPECIMEN_REPORT=1` regenerates the specimen report.
+Run the `toolchain_sharded_runs` nextest binary in the `njutest` package with the relevant variable set, then review the recording diff, as with `UPDATE_ENGINE_RUNS=1` for the committed engine runs.
 Two real runs of `fixture-durable-calls` with `--crashes` under `standard-v1`, one sealed and one `--no-seal`, are committed under `xtask/tests/testdata/crash-run-*/`, each as its report, the runner's recording and the engine's, and `proofaudit::a_real_crash_run_is_re_decided_clean_sealed_and_native` re-decides both; a change to what a crash run records records them again, with `njutest verify --locked --offline --no-cache --trace --crashes`, and the diff is the review.
 Each published schema is compiled once per command, into `schemas::Checkers`, which the command passes to every audit it runs, planted defects included.
 A recording is read and held to its schema once, into a `route::Checked` whose type names the producer, and every reader takes that rather than the text, so no reader recompiles a schema, reads a recording again, or can be handed the other producer's lines.

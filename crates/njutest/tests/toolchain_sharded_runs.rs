@@ -422,21 +422,17 @@ fn emptied(produced: &serde_json::Value) -> serde_json::Value {
         "global_findings".to_owned(),
         serde_json::Value::Array(Vec::new()),
     );
-    for build in report
+    let builds = report
         .get_mut("builds")
         .and_then(serde_json::Value::as_array_mut)
-        .into_iter()
-        .flatten()
-    {
-        for part in build
+        .expect("a complete report's builds");
+    for build in builds {
+        let parts = build
             .get_mut("parts")
             .and_then(serde_json::Value::as_array_mut)
-            .into_iter()
-            .flatten()
-        {
-            let Some(fields) = part.as_object_mut() else {
-                continue;
-            };
+            .expect("a complete build's parts");
+        for part in parts {
+            let fields = part.as_object_mut().expect("a complete catalog part");
             let unlisted: Vec<String> = fields
                 .iter()
                 .filter(|(_, field)| field.is_array())

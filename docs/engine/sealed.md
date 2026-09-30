@@ -5,12 +5,13 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Sealed execution
 
-**Status: implemented, with the gap below.** This page is the contract [ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md) decided.
+**Status: implemented**.
+This page is the contract [ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md) decided.
 A run seals by default: it builds the instrumented tree for `wasm32-wasip1`, lists each module's tests and runs each one's control on the host, puts every mutant to the tests whose controls reached it, and writes the verdict they establish, with its `evidence`, into the report.
 [The standing of a mutant](#the-standing-of-a-mutant) is `rust_mutants_decision::evidence::standing` and [the judgement of one execution](#judging-one-execution) is `rust_mutants_decision::judgement::judged`, both held to their rules by exhaustive comparisons and Kani.
 `--no-seal`, or `[mutation] seal = false`, builds nothing for the sealed target, and then every answer is a lead.
 A report `verify` stored is reissued only once every sealed execution it rests on has run again and come out the same, and a sealed verdict kept for one mutant is believed only once its executions, put again on the run's own bench, come out the same, as [Reproducing a sealed verdict](#reproducing-a-sealed-verdict) says.
-Not yet: a sealed result is cached by its digest nowhere: a report records what each sealed execution came to rather than the digest of its transcript, so running one again compares what it came to.
+Sealed transcripts are cached by invocation digest, and every execution's trace names its transcript, as [Remembering what one execution established](#remembering-what-one-execution-established) says.
 
 A verdict is what a sealed run observed.
 A sealed run is the instrumented snapshot, built for `wasm32-wasip1`, with each test run alone in a fresh WebAssembly instance on a host that answers every question the same way every time.
@@ -229,13 +230,27 @@ The kept verdict is believed, or the kept kill inherited, only where the executi
 The comparison is over the whole sequence: an execution the record left out, one it names that the bench cannot make again, because its target has no station, its test no control or its control no reach of the mutant, and a survival that a test now reaching the mutant natively leaves unproven all part from it.
 Where they part, the mutant is established afresh from those same executions, never read back, and the trace carries an `unreproduced` note naming the first execution that parted: its place, its target and test, what it was kept as and what it came to now, or the verdict they establish where the one kept is another.
 A run that seals nothing cannot make a kept execution again, so it establishes the mutant natively, and what it says is a lead.
-Believing a kept verdict costs one fresh answer: the executions a fresh answer makes are the ones compared, one instance each, and nothing is built for them that the run does not build anyway.
-So a kept sealed verdict no longer saves an instance; it says which run first established the verdict.
-On fixture-simple, a `verify` whose whole report is gone, so that each of its ten mutations asks the store, and a `verify --no-cache` of the same tree each assembled the same bench, put the mutations to 10 sealed executions, and ran the same 8 cargo invocations; the first believed the 9 kills it had kept, each after its one execution came out the same, and established the survivor, which it had not kept.
-Trusting the 9 kept kills, as a run did before, skipped those 9 executions.
+Believing a kept verdict asks for the same invocations a fresh answer makes, and nothing is built for them that the run does not build anyway.
+Identical invocations may be answered by the transcript cache below; each missing transcript costs one fresh instance.
+The kept verdict says which run first established it, and the invocation digest alone decides whether an earlier transcript answers the present inputs.
 A kept lead is not a verdict, so nothing is run again for it: sealing is tried first, as for a mutant nothing was kept about.
 A sealed verdict njutest finds resting on a target whose native reach moved is put again the same way, by `rust_mutants::run::sealed_along`, with that target counted among the ones reaching it natively and nothing recorded a second time, and the verdict that put establishes, or the lead it leaves, replaces the one that rested on the moved record ([ADR 0036](../adr/0036-what-rested-on-a-moved-reach-is-run-again.md)).
 An answer carried across an edit ([carrying an answer](carry.md)) rests on native executions, so it is always such a lead.
+
+## Remembering what one execution established
+
+The sealed host is deterministic: one invocation of one module is a pure function of content-addressed inputs, so the same invocation gives the same transcript on any machine.
+The snapshot and the sealed build cache are named by what the tree holds, so their guest paths, environment values and linker object paths are identical for one tree from two source roots under the same configured temporary root.
+The invocation digest covers the module bytes as prepared, the host's and wasmtime's versions, the arguments, the environment, the snapshot, the seed, the clock policy, the fuel and the limits.
+
+Under the user's cache directory, beside the outcome store, the engine remembers what each invocation established, keyed by that digest, and a later invocation of the same digest is answered from what was remembered rather than run: the controls a bench assembles every run, and the executions of mutants no stored verdict answered, cost nothing on the second run of the same tree.
+This is memoization of a pure function, not the replay ADR 0003 declines: nothing stands in for an execution whose inputs are not the recorded ones, because the digest is of the inputs themselves and a difference anywhere is a different digest and a fresh execution; the judgement that turns a transcript into a verdict is made by the same code either way, and a record whose bytes are not what its digests say they are answers nothing.
+A run asked to establish everything afresh, by `--no-cache`, reads and writes none of it, and a reissue of a stored report runs its executions again rather than trusting what they came to before.
+Records are read through a strict JSON boundary that refuses duplicate keys and unknown fields at every owned object; a missing, malformed or unwritable record costs a fresh execution.
+
+What the host spent is counted in the recording's `run-end`: the modules it compiled, the instances it started, and the invocations a remembered transcript answered instead, which is the hit rate over the run.
+The native build cache stays keyed to the source root, and the sealed build cache has the same owner marker, lock and garbage collection as that cache.
+A changed temporary root, build script output, module or invocation is a different input and executes afresh.
 
 ## Crashes
 

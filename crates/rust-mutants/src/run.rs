@@ -1930,6 +1930,7 @@ fn sealing(
                 came_to: crate::sealed::record::Came::of(put.came_to)
                     .name()
                     .to_owned(),
+                transcript: Some(put.transcript.clone()),
             });
         }
     }

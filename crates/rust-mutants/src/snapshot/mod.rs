@@ -488,7 +488,7 @@ pub fn create(options: &Options, now: Timestamp) -> Result<Snapshot, SnapshotErr
     }
 }
 
-/// Renames a finished snapshot to the name its content pins, when nothing else holds that name: the paths a guest is given — the tree's preopen and the environment the build baked into its modules — are the same for one tree wherever it was checked out, which is what lets one sealed execution of it mean the same thing from any root.
+/// Places a finished snapshot at the name its content pins, under a new claim before moving its payload: neither claim's open lock moves, so Windows can move the copied trees and no sweep can take either directory in between.
 /// A run that finds the name held, by a live run of the same tree or one kept on purpose, keeps the provisional name: what it holds is no less a copy, only one another run cannot name again.
 fn settled(
     snapshot: &mut Snapshot,
@@ -498,26 +498,58 @@ fn settled(
     let wanted = snapshot
         .dest_parent
         .join(content_name(&snapshot.workspace_digest));
-    if wanted != snapshot.dir && path_holds(&wanted, now)? {
+    if wanted == snapshot.dir {
+        snapshot.stable_dir = true;
         return Ok(());
     }
+    if path_holds(&wanted, now)? {
+        return Ok(());
+    }
+    match fs::create_dir(&wanted) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Ok(()),
+        Err(source) => {
+            return Err(SnapshotError::new(
+                SnapshotErrorKind::Destination,
+                wanted.display().to_string(),
+                "cannot create the snapshot directory its content pins",
+            )
+            .with_source(source));
+        }
+    }
     let moved = options.layout.under(wanted.join(TREE_NAME));
-    fs::rename(&snapshot.dir, &wanted).map_err(|source| {
+    let placed = Snapshot {
+        source_root: moved.source_root().to_path_buf(),
+        root: moved.root().to_path_buf(),
+        dest_parent: snapshot.dest_parent.clone(),
+        manifest: snapshot.manifest.clone(),
+        passed_over: snapshot.passed_over.clone(),
+        workspace_digest: snapshot.workspace_digest.clone(),
+        stable_dir: true,
+        owner: Some(claim_destination(&wanted, now)?),
+        dir: wanted,
+        state: State::Live,
+    };
+    let move_payload = || -> io::Result<()> {
+        for entry in fs::read_dir(&snapshot.dir)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            if name == tempowner::LOCK_NAME || name == tempowner::MARKER_NAME {
+                continue;
+            }
+            fs::rename(entry.path(), placed.dir.join(name))?;
+        }
+        Ok(())
+    };
+    move_payload().map_err(|source| {
         SnapshotError::new(
             SnapshotErrorKind::Destination,
-            wanted.display().to_string(),
-            "cannot move the snapshot to the name its content pins",
+            placed.dir.display().to_string(),
+            "cannot move the snapshot's payload to the name its content pins",
         )
         .with_source(source)
     })?;
-    snapshot.source_root = moved.source_root().to_path_buf();
-    snapshot.root = moved.root().to_path_buf();
-    snapshot.dir = wanted;
-    snapshot.stable_dir = true;
-    if let Some(owner) = snapshot.owner.as_mut() {
-        owner.moved(&snapshot.dir);
-    }
-    Ok(())
+    std::mem::replace(snapshot, placed).cleanup()
 }
 
 /// Whether `dir` is still there after a sweep of its name: held by a live run or preserved on purpose, both of which a sweep leaves alone.
@@ -530,7 +562,7 @@ fn path_holds(dir: &Path, now: Timestamp) -> Result<bool, SnapshotError> {
                 "the snapshot destination names no directory it was created in",
             )
         })?,
-        &[&dir
+        &[dir
             .file_name()
             .ok_or_else(|| {
                 SnapshotError::new(
@@ -539,7 +571,14 @@ fn path_holds(dir: &Path, now: Timestamp) -> Result<bool, SnapshotError> {
                     "the snapshot destination names no directory it was created in",
                 )
             })?
-            .to_string_lossy()],
+            .to_str()
+            .ok_or_else(|| {
+                SnapshotError::new(
+                    SnapshotErrorKind::Destination,
+                    dir.display().to_string(),
+                    "the snapshot destination name is not UTF-8",
+                )
+            })?],
         now,
     )
     .map_err(|source| {
@@ -1181,7 +1220,7 @@ pub(crate) fn stable_key(abs_source_root: &Path) -> String {
     hex.chars().take(STABLE_NAME_HEX_LENGTH).collect()
 }
 
-/// Creates a freshly named directory a snapshot of `abs_src` will own inside `parent` and takes it, until the copy is finished and the directory can move to the name its content pins.
+/// Creates and claims a freshly named directory for a snapshot of `abs_src` inside `parent`, until the finished copy can be placed at the name its content pins.
 fn provisional(
     parent: &Path,
     abs_src: &Path,

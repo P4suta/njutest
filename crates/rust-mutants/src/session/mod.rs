@@ -693,6 +693,8 @@ pub struct PrepareOptions {
     pub skips: Vec<discover::SkipRule>,
     /// Where to remember successful measurements of this exact tree.
     pub measurements: Option<PathBuf>,
+    /// Where to remember sealed transcripts by invocation digest; `None` establishes everything afresh.
+    pub transcripts: Option<PathBuf>,
     /// Run every test target once with nothing active, and refuse to hand back a session whose instrumented baseline does not pass.
     pub verify: bool,
     /// Ask the guards, on that same run, which of each target's tests reached them, so a mutation is put to the tests that reached it rather than to every test of every target that did.
@@ -745,6 +747,7 @@ impl PrepareOptions {
             packages: Vec::new(),
             skips: Vec::new(),
             measurements: None,
+            transcripts: None,
             harness_args: Vec::new(),
             verify: true,
             touch: true,
@@ -964,6 +967,8 @@ pub struct Session {
     manifests: String,
     /// The instrumented tree built for the sealed target, or why it was not (ADR 0046).
     sealed: crate::sealed::SealedBuild,
+    /// Where to remember what one sealed execution established, which is what a later run of the same inputs is answered from.
+    transcripts: Option<PathBuf>,
 }
 
 /// What the carry rule has taken of a session so far: its tree, once, and each target's reach as it is first asked about.
@@ -1102,7 +1107,12 @@ impl Session {
             (runner, rust_mutants_sealed::Interrupt::of(cancel.flags())),
             (&self.sealed, &natives),
             (tree, &self.harness_args),
-            (self.catalog.digest(), bounds),
+            (
+                self.catalog.digest(),
+                bounds,
+                rust_mutants_sealed::Transcripts::under(self.transcripts.as_deref()),
+                self.trace().sealed_counts(),
+            ),
         )?;
         for (target, station) in &bench.stations {
             for (test, control) in &station.controls {

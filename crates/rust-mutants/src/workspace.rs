@@ -1329,6 +1329,22 @@ impl Workspace {
         crate::cargo::BuildDir::new(self.target_dir.clone(), members)
     }
 
+    /// A sealed build cache named by the tree's content, with ownership held until its modules are dropped.
+    pub(crate) fn sealed_build_dir(
+        &self,
+    ) -> (
+        crate::cargo::BuildDir,
+        Option<std::sync::Arc<crate::sealed::BuildClaim>>,
+    ) {
+        let key: String = self.snapshot.workspace_digest().chars().take(16).collect();
+        let path = self
+            .target_dir
+            .with_file_name(format!("{TARGET_DIR_PREFIX}sealed-{key}"));
+        let owner = claim_target(&path, jiff::Timestamp::now(), self.root())
+            .map(|owner| std::sync::Arc::new(crate::sealed::BuildClaim::new(owner)));
+        (self.build_dir().at(path).nested("sealed"), owner)
+    }
+
     /// Ends every process this run started that is still running, having left every execution's process group, and says so in the trace.
     fn stop_escaped(&self) {
         let found = match crate::escaped::working_under(&[self.snapshot.dir(), &self.scratch_dir]) {

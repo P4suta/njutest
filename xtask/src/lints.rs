@@ -449,10 +449,11 @@ fn shipped_source(file: &str) -> bool {
 /// The only modules allowed to touch `serde_json`'s last-key-wins readers.
 ///
 /// Repository-relative equality matters: a suffix match would let an arbitrary nested `strictjson.rs` grant itself the parser capability.
-const STRICT_JSON_READERS: [&str; 5] = [
+const STRICT_JSON_READERS: [&str; 6] = [
     "crates/njutest/src/strictjson.rs",
     "crates/njutest-devkit/src/strictjson.rs",
     "crates/rust-mutants-cli/src/strictjson.rs",
+    "crates/rust-mutants-sealed/src/strictjson.rs",
     "crates/rust-mutants/src/strictjson.rs",
     "xtask/src/strictjson.rs",
 ];
