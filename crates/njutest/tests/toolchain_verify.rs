@@ -2367,6 +2367,7 @@ fn the_parts_of_one_catalog_merge_into_the_verdict_neither_of_them_could_say() {
 }
 
 /// `report` with the first sealed execution that detected its mutation said to have detected it another way, which a run again of it cannot come to.
+#[cfg(unix)]
 fn detected_otherwise(report: &Path, into: &Path) {
     let text = std::fs::read_to_string(report).expect("the shard's report");
     let mut document: serde_json::Value =
@@ -2394,6 +2395,7 @@ fn detected_otherwise(report: &Path, into: &Path) {
     std::fs::write(into, document.to_string()).expect("the altered shard");
 }
 
+#[cfg(unix)]
 #[test]
 fn a_merge_asked_to_run_again_writes_the_whole_only_where_each_execution_came_out_the_same() {
     let fixture = fixture("fixture-assured");
