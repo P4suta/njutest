@@ -1,12 +1,12 @@
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 4,
+  "schema_version": 5,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260930t141535268z",
-    "started_at": "2026-09-30T14:15:35.268901Z",
-    "finished_at": "2026-09-30T14:15:41.140668Z",
-    "duration_ms": 1616,
+    "id": "20260930t200016259z",
+    "started_at": "2026-09-30T20:00:16.259957Z",
+    "finished_at": "2026-09-30T20:00:22.464818Z",
+    "duration_ms": 2070,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -18,7 +18,7 @@
   "workspace": {
     "root_name": "fixture-faulted",
     "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-    "workspace_digest": "514f91b77ccdd0882569b8ffdeae74a80c993b9894ad5fd433027abae5f64849",
+    "workspace_digest": "64cb79bba375114af824a20abe985a356ebf3dcca0b00c0b5bbfa2535d620875",
     "catalog_digest": "b9eb2637fbb668ab1274db73374a862f1ebd5a7e91fa3b967dafeb1f714d43d3",
     "platform": {
       "os": "darwin",
@@ -68,7 +68,7 @@
       "id": "fixture-faulted/lib/fixture_faulted",
       "kind": "lib",
       "harness": true,
-      "tests": 1,
+      "tests": 0,
       "limitations": [],
       "sealed": {
         "state": "sealed",
@@ -116,7 +116,7 @@
       "id": "fixture-faulted/doc/fixture_faulted",
       "kind": "doc",
       "harness": true,
-      "tests": 1,
+      "tests": 0,
       "limitations": [
         "doctests-routed-by-file",
         "doctests-none"
@@ -151,7 +151,7 @@
       "step_notice": null,
       "target": "fixture-faulted/test/calls",
       "exit_code": -1,
-      "duration_ms": 24,
+      "duration_ms": 37,
       "tests_run": 1,
       "killed_by": [
         "the_manifest_loads"
@@ -213,7 +213,7 @@
       "step_notice": null,
       "target": "fixture-faulted/test/calls",
       "exit_code": -1,
-      "duration_ms": 37,
+      "duration_ms": 22,
       "tests_run": 1,
       "killed_by": [
         "seven_is_a_number"
@@ -274,7 +274,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 18,
+      "duration_ms": 48,
       "tests_run": 2,
       "killed_by": [],
       "signal": null,
@@ -339,7 +339,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 12,
+      "duration_ms": 7,
       "tests_run": 0,
       "killed_by": [],
       "signal": null,
@@ -386,7 +386,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 10,
+      "duration_ms": 12,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -445,7 +445,7 @@
       "step_notice": null,
       "target": "fixture-faulted/test/declines",
       "exit_code": 0,
-      "duration_ms": 33,
+      "duration_ms": 29,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -491,7 +491,7 @@
       "path": "src/lib.rs",
       "rule": "inject-error",
       "code": "E0277",
-      "diagnostic": "error[E0277]: the trait bound `Refused: Injectable` is not satisfied\n   --> src/lib.rs:46:150\n    |\n 46 | ...ctive(3) { ::core::result::Result::Err(__rm_b1a35a68::injected()) } else { inner() })?;\n    |                                           ^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound\n    |\nhelp: the trait `Injectable` is not implemented for `Refused`\n   --> src/lib.rs:39:1\n    |\n 39 | pub struct Refused;\n    | ^^^^^^^^^^^^^^^^^^\n    = help: the following other types implement trait `Injectable`:\n              FromUtf8Error\n              ParseFloatError\n              ParseIntError\n              TryFromIntError\n              Utf8Error\n              std::io::Error\nnote: required by a bound in `injected`\n   --> src/lib.rs:402:31\n    |\n402 |     pub(crate) fn injected<E: Injectable>() -> E {\n    |                               ^^^^^^^^^^ required by this bound in `injected`\n\n",
+      "diagnostic": "error[E0277]: the trait bound `Refused: Injectable` is not satisfied\n   --> src/lib.rs:46:150\n    |\n 46 | ...ctive(3) { ::core::result::Result::Err(__rm_b1a35a68::injected()) } else { inner() })?;\n    |                                           ^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound\n    |\nhelp: the trait `Injectable` is not implemented for `Refused`\n   --> src/lib.rs:39:1\n    |\n 39 | pub struct Refused;\n    | ^^^^^^^^^^^^^^^^^^\n    = help: the following other types implement trait `Injectable`:\n              FromUtf8Error\n              ParseFloatError\n              ParseIntError\n              TryFromIntError\n              Utf8Error\n              std::io::Error\nnote: required by a bound in `injected`\n   --> src/lib.rs:455:31\n    |\n455 |     pub(crate) fn injected<E: Injectable>() -> E {\n    |                               ^^^^^^^^^^ required by this bound in `injected`\n\n",
       "isolated": true,
       "reason": "compiler-refused"
     },

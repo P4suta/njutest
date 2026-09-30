@@ -3913,10 +3913,15 @@ fn a_documentation_target_s_route_is_its_package_s_and_the_hold_spares_it() {
 #[test]
 fn a_recording_of_routes_without_any_faulted_baseline_says_so_rather_than_believing_them() {
     let mut document = base();
+    let fault = sentinel::fault_site(&serde_json::json!({ "decision": "unnoticed" }));
     merge(
         &mut document,
         serde_json::json!({
-            "faults": [sentinel::fault_site(&serde_json::json!({ "decision": "unnoticed" }))],
+            "sources": [{
+                "path": fault.get("path").expect("the fault's source path"),
+                "digest": fault.get("source_digest").expect("the fault's source digest")
+            }],
+            "faults": [fault],
             "accounting": { "faults": { "sites": 1, "unnoticed": 1 } },
             "findings": [{}, {
                 "kind": "unnoticed-fault",

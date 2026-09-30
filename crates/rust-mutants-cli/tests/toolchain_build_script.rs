@@ -67,9 +67,17 @@ fn a_file_a_build_script_wrote_is_skipped_by_name_and_the_rest_is_measured() {
     );
     assert_eq!(
         document["accounting"]["cataloged"].as_u64(),
-        Some(5),
-        "and the library itself is measured, `tag` among it, a const fn only the tests call \
-         (ADR 0047): {document}"
+        Some(4),
+        "the runtime body is measured while opaque expansion keeps tag const (ADR 0047): \
+         {document}"
+    );
+    assert!(
+        skips.iter().any(|skip| {
+            skip["reason"].as_str() == Some("unvalidated-const-use")
+                && skip["path"].as_str() == Some("src/lib.rs")
+                && skip["count"].as_u64() == Some(1)
+        }),
+        "the candidate of tag is explicitly counted rather than silently absent: {skips:?}"
     );
 }
 
@@ -85,7 +93,7 @@ fn a_test_process_sees_out_dir_and_the_build_scripts_environment() {
     let document = report(&fixture);
     assert_eq!(
         document["accounting"]["killed"].as_u64(),
-        Some(5),
+        Some(4),
         "the fixture's own test reads OUT_DIR, and a run that did not say where the build \
          directory is would fail it for a reason that is not the mutation: {document}"
     );

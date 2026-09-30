@@ -29,6 +29,9 @@ for a reason that is not the mutation.
 The instance holds that directory as the build left it, at the same path, so the test reads `table.rs` there and passes its control sealed, where before it failed its control and had no sealed answer at all.
 `toolchain_sealed_build`'s `a_test_that_reads_where_its_build_script_wrote_passes_its_control_sealed` holds it.
 
+The generated source and opaque macro expansion keep `tag` const, with its one candidate counted as `unvalidated-const-use` ([ADR 0047](../../docs/adr/0047-a-const-fn-is-mutated-where-nothing-evaluates-it-early.md)).
+The four candidates in `one_more_than_total` are measured and killed.
+
 `FIXTURE_BUILD_SCRIPT_PAUSE_MS` makes the build script take that many
 milliseconds, and `FIXTURE_BUILD_SCRIPT_MARKER` names a file it creates before
 it waits, so a test about interrupting a run can wait until the run is
@@ -48,5 +51,4 @@ src/lib.rs:11:5 return-default killed
 src/lib.rs:11:21 add-to-sub killed
 src/lib.rs:11:23 int-decrement killed
 src/lib.rs:11:23 int-increment killed
-src/lib.rs:17:5 return-default killed
 ```
