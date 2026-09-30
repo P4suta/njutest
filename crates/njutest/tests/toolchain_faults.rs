@@ -253,6 +253,78 @@ fn a_faulted_session_compares_no_reach_and_runs_nothing_again() {
 }
 
 #[test]
+fn the_faulted_baseline_s_reach_is_recorded_so_every_route_s_reaching_holds_to_it() {
+    let fixture = fixture("fixture-faulted");
+    let output = verify(&fixture, &["--faults", "--trace"]);
+    let part = part(&fixture);
+    let events = recording(&fixture);
+    let index_of = |fault: &str| -> Option<u64> {
+        part["faults"]
+            .as_array()
+            .expect("the fault records")
+            .iter()
+            .find(|row| row["display_id"].as_str() == Some(fault))?["catalog_index"]
+            .as_u64()
+    };
+    let baselines: Vec<(&str, bool, &Vec<u32>)> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            njutest::trace::Payload::FaultBaseline { baseline } => {
+                Some((baseline.target.as_str(), baseline.doc, &baseline.reached))
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !baselines.is_empty(),
+        "the run records what each target's faulted baseline reached before routing a fault \
+         over it, so a route's reaching is held to the baseline and not to the route's own word: \
+         {}\n{}",
+        events
+            .iter()
+            .map(|event| event.payload.type_name())
+            .collect::<Vec<&str>>()
+            .join(", "),
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let routed_faults: Vec<(&str, &Vec<String>)> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            njutest::trace::Payload::FaultRoute { route } => {
+                Some((route.fault.as_str(), &route.reaching))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        routed_faults.len(),
+        3,
+        "every fault the run put was routed first: {routed_faults:?}"
+    );
+    for (fault, reaching) in routed_faults {
+        let index = u32::try_from(index_of(fault).expect("a routed fault is one the report holds"))
+            .expect("a catalog index fits");
+        for (target, doc, sites) in &baselines {
+            let (reached, routed) = (
+                sites.contains(&index),
+                reaching.iter().any(|one| one == target),
+            );
+            assert!(
+                !reached || routed,
+                "the faulted baseline of {target} reached {fault}'s site and the route leaves it \
+                 out, which is a discharge or a narrowed route, exactly what a fault may not \
+                 rest on (ADR 0032 decision 4)"
+            );
+            assert!(
+                !routed || reached || *doc,
+                "the route puts {target} at {fault} and that target's faulted baseline never \
+                 reached its site, which only a documentation target may be"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_run_not_asked_for_faults_puts_none() {
     let fixture = fixture("fixture-faulted");
     let output = verify(&fixture, &[]);

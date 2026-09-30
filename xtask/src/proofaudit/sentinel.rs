@@ -21,7 +21,7 @@ pub const SURVIVED: &str = "bbbbbbbbbbbbbbbbbbbb";
 /// The one target the specimen run tested with.
 pub const TARGET: &str = "pkg/test/lib";
 /// The display identity of the fault a planted defect puts.
-pub const FAULTED: &str = "cccccccccccccccccccc";
+pub const FAULTED: &str = "07b38d4b4abead8b3ab4";
 /// The question about the status of the one exchange [`went_past`] holds.
 pub const ASKED: &str = "f714f108a1ce93e4cae5d149115f5f2efc4d4ceb620ccecc762f1c4b914022ed";
 
@@ -650,9 +650,69 @@ fn faults_planted(clean: &Perturbation) -> Vec<Perturbation> {
         },
     ]
     .into_iter()
+    .chain(faults_planted_routed(clean))
     .chain(faults_owing(clean))
     .chain(faults_fated(clean))
     .collect()
+}
+
+/// The faults layer's planted defects about what a route's reaching rests on: a baseline that reaches a site the route leaves out, and a route that puts a target at a site its baseline never reached.
+fn faults_planted_routed(clean: &Perturbation) -> Vec<Perturbation> {
+    let disagreed = |name: &'static str, route: Value, baseline: Value| Perturbation {
+        name,
+        document: with(json!({
+            "faults": [fault_site(&json!({ "decision": "unnoticed" }))],
+            "accounting": { "faults": { "sites": 1, "unnoticed": 1 } },
+            "findings": [{}, {
+                "kind": "unnoticed-fault",
+                "subject": FAULTED,
+                "detail": "nothing noticed the call failing",
+                "position": null
+            }]
+        })),
+        events: Some(
+            routes()
+                .into_iter()
+                .chain([
+                    route,
+                    baseline,
+                    json!({
+                        "type": "fault-exec",
+                        "fault": {
+                            "fault": FAULTED, "role": "first", "target": TARGET, "args": [],
+                            "outcome": "survived", "duration_ms": 5, "alone": false
+                        }
+                    }),
+                    json!({
+                        "type": "fault",
+                        "fault": fault_site(&json!({ "decision": "unnoticed" }))
+                    }),
+                ])
+                .collect(),
+        ),
+        ..clean.clone()
+    };
+    vec![
+        disagreed(
+            "a fault route that leaves out a target its faulted baseline says reached the site",
+            json!({ "type": "fault-route", "route": { "fault": FAULTED, "reaching": [] } }),
+            json!({
+                "type": "fault-baseline",
+                "baseline": { "target": TARGET, "doc": false, "reached": [0] }
+            }),
+        ),
+        disagreed(
+            "a fault route that puts a target at a site its faulted baseline never reached",
+            json!({
+                "type": "fault-route",
+                "route": { "fault": FAULTED, "reaching": [TARGET] }
+            }),
+            json!({
+                "type": "fault-baseline",
+                "baseline": { "target": TARGET, "doc": false, "reached": [] }
+            }),
+        ),
+    ]
 }
 
 /// The faults layer's planted defects about where a failure went: an absorbed fault whose run again read the failure, and an unnoticed one whose every run again dropped it unread.

@@ -484,6 +484,32 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "baseline"],
+          "properties": {
+            "type": { "const": "fault-baseline" },
+            "baseline": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["target", "doc", "reached"],
+              "properties": {
+                "target": { "type": "string", "minLength": 1 },
+                "doc": {
+                  "description": "Whether the target is a documentation one, which a route puts at every fault of its package whatever its own guards said.",
+                  "type": "boolean"
+                },
+                "reached": {
+                  "description": "Every fault site the target's faulted baseline reached, by the fault catalog's index, which is what a route's reaching rests on.",
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": { "type": "integer", "minimum": 0 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "rejected"],
           "properties": {
             "type": { "const": "fault-rejected" },

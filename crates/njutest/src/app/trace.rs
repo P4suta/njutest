@@ -141,6 +141,7 @@ pub fn slowest(events: &[Event]) -> Vec<(u64, String)> {
             | Payload::FaultAttribution { .. }
             | Payload::FaultFate { .. }
             | Payload::FaultRoute { .. }
+            | Payload::FaultBaseline { .. }
             | Payload::FaultRejected { .. }
             | Payload::Sentinel { .. }
             | Payload::Model { .. }

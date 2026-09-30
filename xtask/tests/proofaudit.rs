@@ -12,7 +12,8 @@ use std::path::Path;
 
 use xtask::gates;
 use xtask::proofaudit::sentinel::{
-    self, ASKED, KILLED, RUN, SURVIVED, TARGET, base, merge, routes, was_put, went_past, with,
+    self, ASKED, FAULTED, KILLED, RUN, SURVIVED, TARGET, base, merge, routes, was_put, went_past,
+    with,
 };
 use xtask::proofaudit::{
     Audit, AuditError, Coverage, EXIT_UNREADABLE, Layer, REPORT_FILE, Standing,
@@ -3628,6 +3629,206 @@ fn a_fault_record_whose_fields_do_not_mint_its_identity_is_refused() {
             "the violation names the minting, so a reader learns which half to distrust: {audit}"
         );
     }
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one direction of the disagreement per half, which is the point of the test"
+)]
+fn a_fault_route_whose_reaching_disagrees_with_the_faulted_baseline_is_refused() {
+    let mut document = base();
+    merge(
+        &mut document,
+        serde_json::json!({
+            "faults": [sentinel::fault_site(&serde_json::json!({ "decision": "unnoticed" }))],
+            "accounting": { "faults": { "sites": 1, "unnoticed": 1 } },
+            "findings": [{}, {
+                "kind": "unnoticed-fault",
+                "subject": FAULTED,
+                "detail": "nothing noticed the call failing",
+                "position": null
+            }]
+        }),
+    );
+    let put = |route: serde_json::Value, baseline: serde_json::Value| {
+        routes()
+            .into_iter()
+            .chain([
+                route,
+                baseline,
+                serde_json::json!({
+                    "type": "fault-exec",
+                    "fault": {
+                        "fault": FAULTED, "role": "first", "target": TARGET,
+                        "args": [], "outcome": "survived", "duration_ms": 5, "alone": false
+                    }
+                }),
+                serde_json::json!({
+                    "type": "fault",
+                    "fault": sentinel::fault_site(&serde_json::json!({ "decision": "unnoticed" }))
+                }),
+            ])
+            .collect::<Vec<_>>()
+    };
+    let narrowed = put(
+        serde_json::json!({
+            "type": "fault-route",
+            "route": { "fault": FAULTED, "reaching": [] }
+        }),
+        serde_json::json!({
+            "type": "fault-baseline",
+            "baseline": { "target": TARGET, "doc": false, "reached": [0] }
+        }),
+    );
+    let audit = audited_with(&document, &narrowed);
+    assert!(
+        audit.violated(Layer::Faults),
+        "a route that leaves out a target whose faulted baseline reached the site is a fault \
+         asked of less than the suite: {audit}"
+    );
+    assert!(
+        audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Faults
+                && remark.detail.contains("faulted baseline")
+                && remark.detail.contains("never puts it there")),
+        "the violation names the baseline and what it says, so a reader learns which half to \
+         distrust: {audit}"
+    );
+    let widened = put(
+        serde_json::json!({
+            "type": "fault-route",
+            "route": { "fault": FAULTED, "reaching": [TARGET] }
+        }),
+        serde_json::json!({
+            "type": "fault-baseline",
+            "baseline": { "target": TARGET, "doc": false, "reached": [] }
+        }),
+    );
+    let audit = audited_with(&document, &widened);
+    assert!(
+        audit.violated(Layer::Faults),
+        "a route that puts a target at a site its faulted baseline never reached is a fault \
+         asked of more: {audit}"
+    );
+    assert!(
+        audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Faults
+                && remark.detail.contains("faulted baseline")
+                && remark.detail.contains("never reached its site")),
+        "the violation names the baseline and what it says: {audit}"
+    );
+}
+
+#[test]
+fn a_documentation_target_s_route_is_its_package_s_and_the_hold_spares_it() {
+    let mut document = base();
+    merge(
+        &mut document,
+        serde_json::json!({
+            "faults": [sentinel::fault_site(&serde_json::json!({ "decision": "unnoticed" }))],
+            "accounting": { "faults": { "sites": 1, "unnoticed": 1 } },
+            "findings": [{}, {
+                "kind": "unnoticed-fault",
+                "subject": FAULTED,
+                "detail": "nothing noticed the call failing",
+                "position": null
+            }]
+        }),
+    );
+    let doc = "pkg/doc/lib";
+    let events = routes()
+        .into_iter()
+        .chain([
+            serde_json::json!({
+                "type": "fault-route",
+                "route": { "fault": FAULTED, "reaching": [doc] }
+            }),
+            serde_json::json!({
+                "type": "fault-baseline",
+                "baseline": { "target": doc, "doc": true, "reached": [] }
+            }),
+            serde_json::json!({
+                "type": "fault-exec",
+                "fault": {
+                    "fault": FAULTED, "role": "first", "target": doc,
+                    "args": [], "outcome": "survived", "duration_ms": 5, "alone": false
+                }
+            }),
+            serde_json::json!({
+                "type": "fault",
+                "fault": sentinel::fault_site(&serde_json::json!({ "decision": "unnoticed" }))
+            }),
+        ])
+        .collect::<Vec<_>>();
+    let audit = audited_with(&document, &events);
+    assert!(
+        !audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Faults
+                && (remark.detail.contains("never puts it there")
+                    || remark.detail.contains("never reached its site"))),
+        "a documentation target is put at every fault of its package whatever its own guards \
+         said, so its route saying more than its baseline is the rule, not a defect: {audit}"
+    );
+}
+
+#[test]
+fn a_recording_of_routes_without_any_faulted_baseline_says_so_rather_than_believing_them() {
+    let mut document = base();
+    merge(
+        &mut document,
+        serde_json::json!({
+            "faults": [sentinel::fault_site(&serde_json::json!({ "decision": "unnoticed" }))],
+            "accounting": { "faults": { "sites": 1, "unnoticed": 1 } },
+            "findings": [{}, {
+                "kind": "unnoticed-fault",
+                "subject": FAULTED,
+                "detail": "nothing noticed the call failing",
+                "position": null
+            }]
+        }),
+    );
+    let events = routes()
+        .into_iter()
+        .chain([
+            serde_json::json!({
+                "type": "fault-route",
+                "route": { "fault": FAULTED, "reaching": [] }
+            }),
+            serde_json::json!({
+                "type": "fault-exec",
+                "fault": {
+                    "fault": FAULTED, "role": "first", "target": TARGET,
+                    "args": [], "outcome": "survived", "duration_ms": 5, "alone": false
+                }
+            }),
+            serde_json::json!({
+                "type": "fault",
+                "fault": sentinel::fault_site(&serde_json::json!({ "decision": "unnoticed" }))
+            }),
+        ])
+        .collect::<Vec<_>>();
+    let audit = audited_with(&document, &events);
+    assert!(
+        !audit.violated(Layer::Faults),
+        "nothing is held to a baseline the recording never states: {audit}"
+    );
+    assert!(
+        audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Faults
+                && remark.standing == Standing::Unaudited
+                && remark.detail.contains("fault-baseline")),
+        "the audit says what it cannot re-derive rather than reading the route's reaching back \
+         to itself: {audit}"
+    );
 }
 
 #[test]

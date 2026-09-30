@@ -62,6 +62,8 @@ pub struct Faulted {
     pub controls: Vec<Control>,
     /// Which targets reach each fault the run routed, by fault.
     pub routes: Vec<(String, Vec<String>)>,
+    /// What each target's faulted baseline reached, by the fault catalog's index, in recording order.
+    pub baselines: Vec<Baseline>,
     /// Every fault the compiler refused.
     pub rejected: Vec<String>,
     /// Every fault a path the phase left written was tied to: run alone it wrote the path while its test passed, and its test alone without it did not.
@@ -143,6 +145,17 @@ pub fn derived(pairs: &[&Pair]) -> Option<(String, &'static str)> {
     })
 }
 
+/// What one target's faulted baseline reached, as a recording writes it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Baseline {
+    /// The target.
+    pub target: String,
+    /// Whether the target is a documentation one, which a route puts at every fault of its package whatever its own guards said.
+    pub doc: bool,
+    /// Every fault site its baseline reached, by the fault catalog's index.
+    pub reached: Vec<u32>,
+}
+
 /// Everything the recording says about the faults.
 #[must_use]
 pub fn read(recorded: &crate::route::Checked<crate::schemas::RunnerLines>) -> Faulted {
@@ -176,6 +189,16 @@ fn held(faulted: &mut Faulted, kind: &str, event: &Value) -> bool {
             .get("route")
             .and_then(|record| Some((text(record, "fault")?, texts(record, "reaching")?)))
             .map(|one| faulted.routes.push(one)),
+        "fault-baseline" => event
+            .get("baseline")
+            .and_then(|record| {
+                Some(Baseline {
+                    target: text(record, "target")?,
+                    doc: record.get("doc")?.as_bool()?,
+                    reached: numbers(record, "reached")?,
+                })
+            })
+            .map(|one| faulted.baselines.push(one)),
         "fault-attribution" => event.get("attribution").and_then(|record| {
             let flag = |key: &str| record.get(key).and_then(Value::as_bool);
             let fault = text(record, "fault")?;
@@ -616,4 +639,18 @@ fn texts(value: &Value, key: &str) -> Option<Vec<String>> {
         .iter()
         .map(|item| item.as_str().map(ToOwned::to_owned))
         .collect()
+}
+
+/// One list of whole numbers, or nothing where it is not there or holds something that is not one.
+fn numbers(value: &Value, key: &str) -> Option<Vec<u32>> {
+    value.get(key)?.as_array()?.iter().map(small).collect()
+}
+
+/// One whole number a fault catalog can index with, or nothing where it is not one.
+#[must_use]
+pub fn small(item: &Value) -> Option<u32> {
+    match u32::try_from(item.as_u64()?) {
+        Ok(small) => Some(small),
+        Err(_too_large) => None,
+    }
 }

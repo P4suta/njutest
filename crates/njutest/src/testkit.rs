@@ -370,6 +370,7 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::Progress { .. } => "progress",
         Payload::Artifact { .. } => "artifact",
         Payload::Route { .. } | Payload::FaultRoute { .. } => "route",
+        Payload::FaultBaseline { .. } => "baseline",
         Payload::MutantExec { .. } => "mutant",
         Payload::SealedExec { .. } => "sealed",
         Payload::FaultExec { .. } | Payload::Fault { .. } => "fault",
@@ -436,6 +437,8 @@ pub mod payload {
         FaultFate(&'a crate::trace::FaultFateRecord),
         /// A fault's route.
         FaultRoute(&'a crate::trace::FaultRouteRecord),
+        /// What a target's faulted baseline reached.
+        FaultBaseline(&'a crate::trace::FaultBaselineRecord),
         /// A fault the compiler refused.
         FaultRejected(&'a crate::trace::FaultRejectedRecord),
         /// A fault site's decision.
@@ -495,6 +498,7 @@ pub mod payload {
             Payload::FaultExec { fault } => Ref::FaultExec(fault),
             Payload::FaultControl { control } => Ref::FaultControl(control),
             Payload::FaultRoute { route } => Ref::FaultRoute(route),
+            Payload::FaultBaseline { baseline } => Ref::FaultBaseline(baseline),
             Payload::FaultAttribution { attribution } => Ref::FaultAttribution(attribution),
             Payload::FaultFate { fate } => Ref::FaultFate(fate),
             Payload::FaultRejected { rejected } => Ref::FaultRejected(rejected),
@@ -736,6 +740,13 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
             route: crate::trace::FaultRouteRecord {
                 fault: "abcdef".to_owned(),
                 reaching: vec!["demo/test/calls".to_owned()],
+            },
+        },
+        Payload::FaultBaseline {
+            baseline: crate::trace::FaultBaselineRecord {
+                target: "demo/test/calls".to_owned(),
+                doc: false,
+                reached: vec![0],
             },
         },
         Payload::FaultRejected {

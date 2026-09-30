@@ -88,6 +88,11 @@ pub enum Payload {
         /// The record.
         route: FaultRouteRecord,
     },
+    /// What one target's faulted baseline reached, which every fault route's reaching is held to.
+    FaultBaseline {
+        /// The record.
+        baseline: FaultBaselineRecord,
+    },
     /// A fault the compiler refused, so it was never put.
     FaultRejected {
         /// The record.
@@ -224,6 +229,7 @@ impl Payload {
             Self::FaultAttribution { .. } => "fault-attribution",
             Self::FaultFate { .. } => "fault-fate",
             Self::FaultRoute { .. } => "fault-route",
+            Self::FaultBaseline { .. } => "fault-baseline",
             Self::FaultRejected { .. } => "fault-rejected",
             Self::Fault { .. } => "fault",
             Self::Beside { .. } => "beside",
@@ -600,6 +606,18 @@ pub struct FaultRouteRecord {
     pub fault: String,
     /// Every target whose baseline reached the site, which is empty where nothing did.
     pub reaching: Vec<String>,
+}
+
+/// What one target's faulted baseline reached.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultBaselineRecord {
+    /// The target.
+    pub target: String,
+    /// Whether the target is a documentation one, which a route puts at every fault of its package whatever its own guards said.
+    pub doc: bool,
+    /// Every fault site its baseline reached, by the fault catalog's index, which is what a route's reaching rests on.
+    pub reached: Vec<u32>,
 }
 
 /// A fault the compiler refused.

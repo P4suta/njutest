@@ -3588,6 +3588,7 @@ fn faults(
         );
     }
     fault_counts(recording, &reported, &mut notes);
+    routed(recording, faulted, &mut notes);
     minted_faults(recording, &mut notes);
     fault_findings(recording, &reported, &mut notes);
     besides(recording, &reported, faulted, &mut notes);
@@ -4418,15 +4419,15 @@ fn mint(
         String,
         String,
         u32,
-        String,
-        String,
+        u32,
+        u32,
         String,
         String,
         String,
     ),
 ) -> Result<String, IdentityWidth> {
     let mut hasher = sha2::Sha256::new();
-    let version = rule_version.to_string();
+    let (version, start, end) = (rule_version.to_string(), start.to_string(), end.to_string());
     for field in [
         crate::engineaudit::ID_DOMAIN,
         &path,
@@ -4459,6 +4460,72 @@ impl crate::error::Coded for IdentityWidth {
 /// The fixed width of a short identity, as the engine truncates it.
 const DISPLAY_ID_LENGTH: usize = 20;
 
+/// Each fault route's reaching, held to what the targets' faulted baselines reached (ADR 0032 decision 4).
+/// A target whose faulted baseline reached the site the route never puts there is a fault asked of less than the suite, and a target the route puts there whose baseline never reached it is a fault asked of more, which only a documentation target may be, since a route puts one at every fault of its package whatever its own guards said.
+/// Where the recording holds no baseline, the reaching is read back from the route's own word and said so.
+fn routed(
+    recording: &Recording<'_>,
+    faulted: Option<&crate::faults::Faulted>,
+    notes: &mut Notes<'_>,
+) {
+    let Some(faulted) = faulted else {
+        return;
+    };
+    if faulted.routes.is_empty() {
+        return;
+    }
+    if faulted.baselines.is_empty() {
+        notes.unaudited(
+            "faults",
+            "the recording holds no fault-baseline record, so what each route's reaching rests \
+             on cannot be re-derived"
+                .to_owned(),
+        );
+        return;
+    }
+    let index_of: BTreeMap<String, u32> = recording
+        .part
+        .faults
+        .iter()
+        .filter_map(|row| {
+            Some((
+                field(row, "display_id")?,
+                crate::faults::small(row.get("catalog_index")?)?,
+            ))
+        })
+        .collect();
+    for (fault, reaching) in &faulted.routes {
+        let Some(index) = index_of.get(fault).copied() else {
+            continue;
+        };
+        for baseline in &faulted.baselines {
+            let reached = baseline.reached.contains(&index);
+            let routed = reaching.iter().any(|target| target == &baseline.target);
+            if reached && !routed {
+                notes.violated(
+                    fault,
+                    format!(
+                        "the faulted baseline of {} reached this fault's site, and the route \
+                         never puts it there: a discharge or a narrowed route is exactly what a \
+                         fault may not rest on",
+                        baseline.target
+                    ),
+                );
+            }
+            if !reached && routed && !baseline.doc {
+                notes.violated(
+                    fault,
+                    format!(
+                        "the route puts {} at this fault, and that target's faulted baseline \
+                         never reached its site",
+                        baseline.target
+                    ),
+                );
+            }
+        }
+    }
+}
+
 /// What each fault site's record must mint: its identity, from the fields the record carries, and its source digest, against the digest the report holds of the file it is in (ADR 0032 decision 1).
 fn minted_faults(recording: &Recording<'_>, notes: &mut Notes<'_>) {
     let sources = recording.document.get("sources");
@@ -4482,13 +4549,17 @@ fn minted_fault(
         },
         None => None,
     };
-    let span = row.get("span");
+    let bounds = |key: &str| {
+        row.get("span")
+            .and_then(|span| span.get(key))
+            .and_then(crate::faults::small)
+    };
     let fields = (
         text_of("path"),
         text_of("rule"),
         number("rule_version"),
-        span.and_then(|span| field(span, "start")),
-        span.and_then(|span| field(span, "end")),
+        bounds("start"),
+        bounds("end"),
         text_of("source_digest"),
         text_of("original"),
         text_of("replacement"),

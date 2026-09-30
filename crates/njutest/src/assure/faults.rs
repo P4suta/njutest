@@ -60,6 +60,7 @@ pub fn put(
         return Ok(());
     }
     let before = written(&session)?;
+    baselined(&session, watch);
     let judged = mutation::run_resuming(
         Subject {
             session: &session,
@@ -280,6 +281,46 @@ fn written(
         .iter()
         .map(|drift| drift.rel_path().to_owned())
         .collect())
+}
+
+/// What each target's faulted baseline reached, recorded before any fault is routed over it, so a route's reaching is held to the baseline and not to the route's own word (ADR 0032 decision 4).
+fn baselined(session: &rust_mutants::session::Session, watch: Watch<'_>) {
+    let sites: Vec<u32> = session
+        .catalog()
+        .mutants()
+        .iter()
+        .filter(|mutant| mutant.candidate.rule.family == rust_mutants::rule::Family::Fault)
+        .map(|mutant| mutant.index)
+        .collect();
+    let doc: std::collections::BTreeMap<&str, bool> = session
+        .targets()
+        .iter()
+        .map(|target| {
+            (
+                target.id(),
+                target.kind() == rust_mutants::execute::TargetKind::Doc,
+            )
+        })
+        .collect();
+    for target in session.touched().targets.keys() {
+        let reached = sites
+            .iter()
+            .copied()
+            .filter(|index| {
+                session
+                    .touched()
+                    .reaching(target.as_str(), *index)
+                    .is_some_and(|reached| reached != rust_mutants::touch::Reaching::Nothing)
+            })
+            .collect();
+        watch
+            .trace
+            .fault_baseline(crate::trace::FaultBaselineRecord {
+                target: target.to_owned(),
+                doc: doc.get(target.as_str()).copied().unwrap_or(false),
+                reached,
+            });
+    }
 }
 
 /// What the tree says the faults wrote: a `broken-under-fault` finding for each path one fault is tied to, and one `not-measured` finding naming the rest.
