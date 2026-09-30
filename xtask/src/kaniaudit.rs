@@ -164,23 +164,19 @@ pub(crate) enum Harness {
     ConfinementGit,
     #[serde(rename = "confinement::kani_laws::the_first_escape_is_the_one_named")]
     ConfinementFirst,
-    #[serde(rename = "instrument::runtime::kani_laws::a_counting_checkpoint_counts")]
+    #[serde(rename = "step_laws::a_counting_checkpoint_counts")]
     CountingCounts,
-    #[serde(rename = "instrument::runtime::kani_laws::a_counting_checkpoint_never_stops")]
+    #[serde(rename = "step_laws::a_counting_checkpoint_never_stops")]
     CountingNeverStops,
-    #[serde(rename = "instrument::runtime::kani_laws::a_dormant_checkpoint_cannot_spend")]
+    #[serde(rename = "step_laws::a_dormant_checkpoint_cannot_spend")]
     DormantCheckpoint,
-    #[serde(
-        rename = "instrument::runtime::kani_laws::counting_is_not_reachable_from_dormant_or_active"
-    )]
+    #[serde(rename = "step_laws::counting_is_not_reachable_from_dormant_or_active")]
     CountingUnreachable,
-    #[serde(rename = "instrument::runtime::kani_laws::activation_is_idempotent")]
+    #[serde(rename = "step_laws::activation_is_idempotent")]
     Activation,
-    #[serde(
-        rename = "instrument::runtime::kani_laws::an_active_checkpoint_advances_or_reaches_the_exact_boundary"
-    )]
+    #[serde(rename = "step_laws::an_active_checkpoint_advances_or_reaches_the_exact_boundary")]
     ActiveCheckpoint,
-    #[serde(rename = "instrument::runtime::kani_laws::stopping_is_absorbing")]
+    #[serde(rename = "step_laws::stopping_is_absorbing")]
     Stopping,
     #[serde(rename = "session::kani_laws::attempt_duration_is_the_checked_sum_of_every_execution")]
     AttemptDuration,
@@ -292,21 +288,17 @@ impl Harness {
             Self::ConfinementOneName => "confinement::kani_laws::one_changed_name_is_the_escape",
             Self::ConfinementGit => "confinement::kani_laws::a_given_git_identity_is_an_escape",
             Self::ConfinementFirst => "confinement::kani_laws::the_first_escape_is_the_one_named",
-            Self::CountingCounts => "instrument::runtime::kani_laws::a_counting_checkpoint_counts",
-            Self::CountingNeverStops => {
-                "instrument::runtime::kani_laws::a_counting_checkpoint_never_stops"
-            }
-            Self::DormantCheckpoint => {
-                "instrument::runtime::kani_laws::a_dormant_checkpoint_cannot_spend"
-            }
+            Self::CountingCounts => "step_laws::a_counting_checkpoint_counts",
+            Self::CountingNeverStops => "step_laws::a_counting_checkpoint_never_stops",
+            Self::DormantCheckpoint => "step_laws::a_dormant_checkpoint_cannot_spend",
             Self::CountingUnreachable => {
-                "instrument::runtime::kani_laws::counting_is_not_reachable_from_dormant_or_active"
+                "step_laws::counting_is_not_reachable_from_dormant_or_active"
             }
-            Self::Activation => "instrument::runtime::kani_laws::activation_is_idempotent",
+            Self::Activation => "step_laws::activation_is_idempotent",
             Self::ActiveCheckpoint => {
-                "instrument::runtime::kani_laws::an_active_checkpoint_advances_or_reaches_the_exact_boundary"
+                "step_laws::an_active_checkpoint_advances_or_reaches_the_exact_boundary"
             }
-            Self::Stopping => "instrument::runtime::kani_laws::stopping_is_absorbing",
+            Self::Stopping => "step_laws::stopping_is_absorbing",
             Self::AttemptDuration => {
                 "session::kani_laws::attempt_duration_is_the_checked_sum_of_every_execution"
             }

@@ -16,4 +16,14 @@ pub mod judgement;
 pub mod said;
 pub mod shape;
 pub mod stall;
+pub mod step;
 pub mod swap;
+
+/// The step machine's own source, which every generated runtime holds as its module `step`, so the runtime spends its allowance by the one definition this crate tests.
+pub const STEP_SOURCE: &str = include_str!("step.rs");
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(kani)]
+mod step_laws;
