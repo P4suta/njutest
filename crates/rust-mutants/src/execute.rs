@@ -9,6 +9,9 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use rust_mutants_adapt::confinement;
+pub use rust_mutants_adapt::confinement::Home;
+pub use rust_mutants_adapt::decline::Reading;
 use rust_mutants_decision::confinement::{
     CONFINED_HOME, Escape, GIT_GLOBAL_CONFIG, RUNTIME_UNDER_HOME,
 };
@@ -1865,54 +1868,48 @@ pub fn environment(
 
 /// Points `env`'s temporary directories at `scratch`'s, and its home at `scratch`'s own where it has one.
 fn scratched(env: &mut crate::vars::Variables, scratch: &Scratch) {
-    for name in ["TMPDIR", "TMP", "TEMP"] {
-        env.set(name, scratch.tmp.as_os_str().to_owned());
-    }
-    if let Some(home) = &scratch.home {
-        confine(env, home);
+    changed(env, confinement::temporary(scratch.tmp()));
+    if let Some(home) = scratch.layout.home_directory() {
+        let given = env.var(confinement::GIVEN_HOME).map(PathBuf::from);
+        let changes = confinement::confining(
+            home,
+            given.as_deref(),
+            |name| env.holds(name),
+            drive_of(home),
+        );
+        changed(env, changes);
     }
 }
 
-/// The home the run was given, as the platform names it.
-const GIVEN_HOME: &str = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-
-/// Gives `env` the home at `home`, with the homes a build needs pinned where the given home keeps them and nothing left that names the given home's git identity.
-fn confine(env: &mut crate::vars::Variables, home: &Path) {
-    let given = env.var(GIVEN_HOME).map(PathBuf::from);
-    for (name, beside) in PINNED_HOMES {
-        if env.holds(name) {
-            continue;
-        }
-        if let Some(given) = &given {
-            env.set(name, given.join(beside).into_os_string());
+/// Makes each of `changes` to `env`, in order.
+fn changed(env: &mut crate::vars::Variables, changes: Vec<confinement::Change>) {
+    for change in changes {
+        match change {
+            confinement::Change::Set { name, value } => env.set(name, value),
+            confinement::Change::Remove { name } => env.remove(name),
         }
     }
-    env.remove(GIT_GLOBAL_CONFIG);
-    for (name, under) in CONFINED_HOME {
-        env.set(name, home.join(under).into_os_string());
-    }
-    drive_and_rest(env, home);
 }
 
-/// Gives `env` `home` as Windows spells a home in two variables, `HOMEDRIVE` and a `HOMEPATH` under it, where it has a drive.
-fn drive_and_rest(env: &mut crate::vars::Variables, home: &Path) {
+/// The drive `home` is on and its parts after it, where it has one, as the platform reads the path.
+fn drive_of(home: &Path) -> Option<(&std::ffi::OsStr, std::path::Components<'_>)> {
     let mut parts = home.components();
-    let Some(std::path::Component::Prefix(prefix)) = parts.next() else {
-        return;
-    };
-    let rest: PathBuf = parts.collect();
-    let mut under = OsString::from(std::path::MAIN_SEPARATOR_STR);
-    under.push(rest.as_os_str());
-    env.set("HOMEDRIVE", prefix.as_os_str().to_owned());
-    env.set("HOMEPATH", under);
+    match parts.next() {
+        Some(std::path::Component::Prefix(prefix)) => Some((prefix.as_os_str(), parts)),
+        Some(
+            std::path::Component::RootDir
+            | std::path::Component::CurDir
+            | std::path::Component::ParentDir
+            | std::path::Component::Normal(_),
+        )
+        | None => None,
+    }
 }
 
 /// The directories one execution is given, none inside another (ADR 0044): the temporary directory its process sees, the engine's own files about it, and a home of its own where its home is confined.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Scratch {
-    tmp: PathBuf,
-    engine: PathBuf,
-    home: Option<PathBuf>,
+    layout: confinement::Layout,
     /// What making the home put in it, each by its path under the home, a directory with a trailing `/`, with the digest of a file's bytes.
     made: BTreeMap<String, Option<String>>,
 }
@@ -1922,12 +1919,7 @@ impl Scratch {
     #[must_use]
     pub fn under(own: &Path, home: Home) -> Self {
         Self {
-            tmp: own.join("tmp"),
-            engine: own.join("engine"),
-            home: match home {
-                Home::Confined => Some(own.join("home")),
-                Home::Given => None,
-            },
+            layout: confinement::Layout::under(own, home),
             made: BTreeMap::new(),
         }
     }
@@ -1942,38 +1934,37 @@ impl Scratch {
         base: &crate::vars::Variables,
     ) -> Result<Self, SessionError> {
         let mut scratch = Self::under(own, home);
-        for directory in [&scratch.tmp, &scratch.engine] {
+        for directory in [scratch.layout.tmp(), scratch.layout.engine()] {
             std::fs::create_dir_all(directory).map_err(|source| {
                 SessionError::ScratchCreateFailed {
-                    path: directory.clone(),
+                    path: directory.to_path_buf(),
                     source,
                 }
             })?;
         }
-        if let Some(home) = &scratch.home {
+        if let Some(home) = scratch.layout.home_directory() {
+            let mut made = BTreeMap::new();
             for (_, under) in CONFINED_HOME {
                 made_directory(&home.join(under))?;
-                let mut directory = String::new();
-                for part in under.split('/').filter(|part| !part.is_empty()) {
-                    directory.push_str(part);
-                    directory.push('/');
-                    scratch.made.insert(directory.clone(), None);
+                for directory in confinement::directories(under) {
+                    made.insert(directory, None);
                 }
             }
             owner_only(&home.join(RUNTIME_UNDER_HOME))?;
-            for (from, under) in identity(base) {
+            let identity = confinement::identity(
+                base.var(confinement::GIVEN_HOME).map(Path::new),
+                base.var(GIT_GLOBAL_CONFIG),
+                base.var("XDG_CONFIG_HOME"),
+            );
+            for (from, under) in identity {
                 if let Some(digest) = copied_if_present(&from, &home.join(under))? {
-                    if let Some((parent, _)) = under.rsplit_once('/') {
-                        let mut directory = String::new();
-                        for part in parent.split('/') {
-                            directory.push_str(part);
-                            directory.push('/');
-                            scratch.made.insert(directory.clone(), None);
-                        }
+                    for directory in confinement::holding(under) {
+                        made.insert(directory, None);
                     }
-                    scratch.made.insert(under.to_owned(), Some(digest));
+                    made.insert(under.to_owned(), Some(digest));
                 }
             }
+            scratch.made = made;
         }
         Ok(scratch)
     }
@@ -1981,34 +1972,34 @@ impl Scratch {
     /// This layout, keeping the engine's own files in `engine` instead: a run over what another left in the rest.
     #[must_use]
     pub fn with_engine(self, engine: PathBuf) -> Self {
-        Self { engine, ..self }
+        Self {
+            layout: self.layout.with_engine(engine),
+            ..self
+        }
     }
 
     /// The temporary directory the process sees.
     #[must_use]
     pub fn tmp(&self) -> &Path {
-        &self.tmp
+        self.layout.tmp()
     }
 
     /// Where the engine keeps its own files about the process.
     #[must_use]
     pub fn engine(&self) -> &Path {
-        &self.engine
+        self.layout.engine()
     }
 
     /// The home the process is given where it is its own, with what making it put there, each by its path under it, a directory with a trailing `/`, with the digest of a file's bytes.
     #[must_use]
     pub fn made_in_home(&self) -> Option<(&Path, &BTreeMap<String, Option<String>>)> {
-        self.home.as_deref().map(|home| (home, &self.made))
+        self.layout.home_directory().map(|home| (home, &self.made))
     }
 
     /// Which home the process is given.
     #[must_use]
     pub const fn home(&self) -> Home {
-        match self.home {
-            Some(_) => Home::Confined,
-            None => Home::Given,
-        }
+        self.layout.home()
     }
 }
 
@@ -2049,7 +2040,7 @@ fn confinement_held(
     env: &crate::vars::Variables,
     scratch: &Scratch,
 ) -> Result<(), ConfinementError> {
-    let Some(home) = &scratch.home else {
+    let Some(home) = scratch.layout.home_directory() else {
         return Ok(());
     };
     match rust_mutants_decision::confinement::escape(
@@ -2094,31 +2085,6 @@ fn owner_only(directory: &Path) -> Result<(), SessionError> {
 )]
 const fn owner_only(_directory: &Path) -> Result<(), SessionError> {
     Ok(())
-}
-
-/// The files git reads a user's identity from under the home the run was given, each with where a confined home keeps it: `GIT_CONFIG_GLOBAL` in place of `~/.gitconfig` where it is set, and `$XDG_CONFIG_HOME/git/config`, or `~/.config/git/config` where that is unset.
-fn identity(base: &crate::vars::Variables) -> Vec<(PathBuf, &'static str)> {
-    let given = base.var(GIVEN_HOME).map(PathBuf::from);
-    let named = |name: &str| {
-        base.var(name)
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-    };
-    let mut found = Vec::new();
-    match (named(GIT_GLOBAL_CONFIG), &given) {
-        (Some(global), _) => found.push((global, ".gitconfig")),
-        (None, Some(given)) => found.push((given.join(".gitconfig"), ".gitconfig")),
-        (None, None) => {}
-    }
-    let configuration =
-        named("XDG_CONFIG_HOME").or_else(|| given.map(|given| given.join(".config")));
-    if let Some(configuration) = configuration {
-        found.push((
-            configuration.join("git").join("config"),
-            ".config/git/config",
-        ));
-    }
-    found
 }
 
 /// Copies `from` to `to`, making `to`'s directory first, where `from` is a regular file, and answers the digest of what it copied: an absent source, or one that is no regular file as `/dev/null` is when git is told to read no global configuration, is nothing to copy, and every other failure is one.
@@ -2386,19 +2352,6 @@ pub struct Context<'a> {
     pub fate: Option<&'a Path>,
 }
 
-/// Which home a test process is given (ADR 0044).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Home {
-    /// A home of the execution's own, beside its temporary directory, which the scratch's emptying takes with it.
-    Confined,
-    /// The home the run was given, for a target whose tests pass only with it.
-    Given,
-}
-
-/// The homes a build needs where they are, each with the directory it defaults to under the home the run was given.
-const PINNED_HOMES: [(&str, &str); 2] = [("CARGO_HOME", ".cargo"), ("RUSTUP_HOME", ".rustup")];
-
 /// A fresh 128-bit nonce in lowercase hexadecimal, which ties a notice the runtime publishes to exactly one execution.
 ///
 /// # Errors
@@ -2588,17 +2541,6 @@ pub enum Protocol {
     Custom,
     /// No process answered, so no protocol was spoken.
     Unanswered,
-}
-
-/// Whether the tests a run was read as passing are the harness's answer rather than the parser's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
-pub enum Reading {
-    /// libtest's named passing tests come to its own summary's count.
-    Whole,
-    /// libtest's named passing tests do not come to its summary's count, or it printed no summary: a line the suite wrote past the capture read as a result, or split one.
-    Short,
-    /// The protocol names no tests and prints no summary, so there is nothing to fall short of.
-    Unspoken,
 }
 
 impl MutantResult {
@@ -2801,7 +2743,7 @@ pub fn exec(
     spec.leaders = context.leaders.cloned();
     spec.stop_at_first_failure = answered_by_one_failure(target, context);
     spec.dir = Some(match (&request.scratch, request.scratch_cwd) {
-        (Some(scratch), true) => scratch.tmp.clone(),
+        (Some(scratch), true) => scratch.tmp().to_path_buf(),
         _ => target.cwd.clone(),
     });
     let mut env = match environment(context, target, request.scratch.as_ref()) {
@@ -2899,8 +2841,7 @@ fn finished(
         stopped: observation.stopped,
         declines: crate::decline::Declines::none(),
     };
-    answered.declines =
-        crate::decline::Declines::of(notice, answered.reading(), &answered.passed_tests);
+    answered.declines = crate::decline::of(notice, answered.reading(), &answered.passed_tests);
     answered
 }
 

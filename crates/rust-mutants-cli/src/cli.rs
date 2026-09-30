@@ -546,6 +546,8 @@ pub enum TierArg {
     Strong,
     /// Every operator, statement deletion included.
     All,
+    /// All operators, plus const item initializers compiled one mutant at a time.
+    Compiled,
 }
 
 impl TierArg {
@@ -556,6 +558,7 @@ impl TierArg {
             Self::Balanced => rust_mutants::rule::Tier::Balanced,
             Self::Strong => rust_mutants::rule::Tier::Strong,
             Self::All => rust_mutants::rule::Tier::All,
+            Self::Compiled => rust_mutants::rule::Tier::Compiled,
         }
     }
 }

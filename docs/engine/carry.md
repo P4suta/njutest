@@ -23,7 +23,7 @@ A body is not sealed when any of these holds, and `unsealed` names the first tha
 4. `compile-time`: a unit that read the item's file is a procedural macro or a build script, whose code runs in the compiler, where no test enters it, and decides what other code is.
 5. `unit-file-unread`: the item's file could not be read at all — refused as nested or chained deeper than a reading holds (RM0020) or too large to read (RM0018), or left without a thread to read it on — so no rule after this one can be read of the body;
    and otherwise `unlocated`: the catalog's body span is not a function body of the file as the parser reads it.
-6. `attribute`: an attribute off the list is on the file, on an inline `mod`, `impl` or `trait` around the item, or on the item.
+6. `attribute`: an attribute off the list is on the file, on an inline `mod`, `impl`, `trait` or function around the item, or on the item.
    An attribute is on the list when its path is one segment named in `sealable-attributes`, or its first segment is named in `tool-namespaces`.
    A `cfg_attr` is on the list when every attribute it would apply is.
    `test`, `should_panic` and `ignore` are on it because the harness entry they generate is built from the function's name and attributes, which are outside the body.
@@ -126,6 +126,10 @@ An item's `body_digest` is the lowercase hex SHA-256 of the bytes `touched-v1.js
 Every item is named by `item`, the reference an entered union names it by: its package, its file, and its `ordinal`.
 `files` keeps, for every file an item is in that a unit read, the lowercase hex SHA-256 of all its bytes, whether or not the run mutated anything in it.
 It is what proves a file an audit reads again from the tree is the file the run measured, so a body digest or a `start` of a file only a test compiles, which no mutation's source digest names, is held as surely as one of a mutated file.
+
+The carry audit parses each source path once and reuses its tree for every body and unit that refers to it.
+This keeps repeated checks from filling the thread's 32-bit location map with copies of the same source ([ADR 0045](../adr/0045-rust-is-read-on-a-thread-that-ends-with-it.md)).
+An unread source remains distinct from readable text that is not Rust.
 
 An item's `start` is where its body's first byte stands, as the compiler reports a position with `line!()` and `column!()`: a line counted from 1 that only a line feed ends, and a column counted from 1 in characters.
 A leading byte-order mark is no column, a carriage return before a line feed ends no line and stands on the line it ends, and a carriage return alone is a column like any character.

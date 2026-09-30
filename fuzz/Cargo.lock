@@ -1845,6 +1845,7 @@ dependencies = [
  "jiff",
  "njutest-macros",
  "proc-macro2",
+ "rust-mutants-adapt",
  "rust-mutants-decision",
  "rust-mutants-sealed",
  "rustix",
@@ -1855,6 +1856,16 @@ dependencies = [
  "thiserror 2.0.20",
  "toml",
  "windows-sys",
+]
+
+[[package]]
+name = "rust-mutants-adapt"
+version = "0.1.0"
+dependencies = [
+ "njutest-macros",
+ "rust-mutants-decision",
+ "serde",
+ "syn 3.0.6",
 ]
 
 [[package]]

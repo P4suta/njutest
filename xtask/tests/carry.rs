@@ -68,6 +68,30 @@ fn a_body_that_contributes_only_its_own_execution_is_sealed() {
 }
 
 #[test]
+fn a_nested_functions_own_body_is_located_inside_every_item_or_expression() {
+    for source in [
+        "fn outer() { fn f() {} }",
+        "fn outer() { if true { fn f() {} } }",
+        "impl S { fn outer(&self) { struct Local; impl Local { fn f() {} } } }",
+        "trait T { fn outer() { trait Inner { fn f() {} } } }",
+        "const C: () = { fn f() {} };",
+        "static S: () = { fn f() {} };",
+        "impl S { const C: () = { fn f() {} }; }",
+        "trait T { const C: () = { fn f() {} }; }",
+    ] {
+        assert_eq!(sealed(source), Some(Ok(())), "{source}");
+    }
+}
+
+#[test]
+fn an_attribute_of_the_function_containing_a_nested_body_still_applies_to_it() {
+    assert_eq!(
+        sealed("#[external] fn outer() { fn f() {} }"),
+        Some(Err(Unsealed::Attribute))
+    );
+}
+
+#[test]
 fn a_body_that_contributes_more_than_its_execution_names_why() {
     for (source, why) in [
         ("const fn f() -> u32 { 1 }", Unsealed::Evaluated),

@@ -1202,7 +1202,7 @@ pub(super) fn entry(report: &Report, touched: Option<&Guarded>, audit: &mut Audi
     notes.looked()
 }
 
-/// Every index the record says a test entered is an item of the catalog; a target whose record keeps no `entered` names none.
+/// Every index the record says a test entered is an item of the catalog, and one the pristine file lets record its entry; a target whose record keeps no `entered` names none.
 fn named_entries(target: &str, touches: &Touches, items: &[CatalogItem], notes: &mut Notes<'_>) {
     let Some(entered) = &touches.entered else {
         return;
@@ -1221,11 +1221,26 @@ fn named_entries(target: &str, touches: &Touches, items: &[CatalogItem], notes: 
                     items.len()
                 ),
             );
+        } else if match usize::try_from(*index) {
+            Ok(at) => items.get(at),
+            Err(_beyond_the_positions) => None,
+        }
+        .is_some_and(|item| item.index == *index && !item.measurable)
+        {
+            notes.violated(
+                target,
+                format!(
+                    "the record says something of {target} entered item {index}, which the \
+                     pristine file makes a const fn, so no marker of the tree can say it"
+                ),
+            );
         }
     }
 }
 
 /// The item a row sits in, or a violation saying why there is none a change could be routed by.
+///
+/// An item the catalog says nothing records entering is one the pristine file makes a const fn, whose mutants [ADR 0047](../../../docs/adr/0047-a-const-fn-is-mutated-where-nothing-evaluates-it-early.md) measures by the reach of their guards alone: the row names it, and no entered record is asked for or held to it.
 fn sitting_in<'a>(
     row: &Row,
     items: &'a [CatalogItem],
@@ -1242,17 +1257,6 @@ fn sitting_in<'a>(
         );
         return None;
     };
-    if !item.measurable {
-        notes.violated(
-            row.label(),
-            format!(
-                "the innermost item holding it is {}, which the catalog says nothing records \
-                 entering, and a mutation was made in it anyway",
-                item.name
-            ),
-        );
-        return None;
-    }
     if item.name != row.item {
         notes.violated(
             row.label(),
@@ -1307,7 +1311,7 @@ fn reached_entered(
             let Some(item) = sitting_in(row, items, notes) else {
                 continue;
             };
-            if !entered.by(test, item.index) {
+            if item.measurable && !entered.by(test, item.index) {
                 notes.violated(
                     row.label(),
                     format!(
@@ -1326,7 +1330,7 @@ fn reached_entered(
         let Some(item) = sitting_in(row, items, notes) else {
             continue;
         };
-        if !entered.loose.contains(&item.index) {
+        if item.measurable && !entered.loose.contains(&item.index) {
             notes.violated(
                 row.label(),
                 format!(
@@ -1356,6 +1360,9 @@ fn killed_entered(row: &Row, recorded: &Recorded, items: &[CatalogItem], notes: 
     let Some(item) = sitting_in(row, items, notes) else {
         return;
     };
+    if !item.measurable {
+        return;
+    }
     let Some(entered) = &touches.entered else {
         notes.unaudited(
             row.label(),

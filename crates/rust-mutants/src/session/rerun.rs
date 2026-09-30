@@ -55,7 +55,7 @@ impl Rerunnable {
         let runner = crate::run::sealed_runner(session)?;
         let stations = match &runner {
             Some(runner) => Some(Rerun::assemble(
-                (runner, rust_mutants_sealed::Interrupt::of(cancel.flags())),
+                (runner, cancel.clone()),
                 (&session.sealed, &named(recorded)),
                 (session.sealed_tree()?, &session.harness_args),
                 (session.catalog.digest(), session.touch_bounds()?),
@@ -66,7 +66,7 @@ impl Rerunnable {
         for one in recorded {
             let again = Reran {
                 recorded: one.clone(),
-                now: self.now(one, stations.as_ref())?,
+                now: self.now(one, stations.as_ref(), cancel)?,
             };
             if !again.same() {
                 phase.end();
@@ -82,7 +82,12 @@ impl Rerunnable {
     }
 
     /// What `recorded` comes to now on `rerun`, or why it cannot be made again.
-    fn now(&self, recorded: &Recorded, rerun: Option<&Rerun<'_>>) -> Result<Now, EngineError> {
+    fn now(
+        &self,
+        recorded: &Recorded,
+        rerun: Option<&Rerun<'_>>,
+        cancel: &Cancel,
+    ) -> Result<Now, EngineError> {
         let session = &self.session;
         let Some(mutant) = session
             .catalog
@@ -107,7 +112,18 @@ impl Rerunnable {
                 &recorded.target,
             )));
         };
+        let compiled = session.compiled(mutant.index, cancel)?;
+        let rebuilt = compiled
+            .as_ref()
+            .map(|compiled| rerun.rebuilt(&compiled.sealed, mutant.index))
+            .transpose()?;
+        let rerun = match &rebuilt {
+            Some(rebuilt) => rebuilt,
+            None => rerun,
+        };
         let now = rerun.put(&recorded.target, &recorded.test, mutant)?;
+        drop(rebuilt);
+        drop(compiled);
         if let Now::Came(came_to) = now {
             session.trace().sealed_exec(crate::trace::SealedExecRecord {
                 mutant: mutant.display_id.to_string(),

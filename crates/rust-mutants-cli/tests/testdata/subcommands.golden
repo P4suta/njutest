@@ -38,6 +38,7 @@ Options:
           - balanced: The operators worth running everywhere
           - strong:   Balanced, plus the bitwise and compound-assignment families
           - all:      Every operator, statement deletion included
+          - compiled: All operators, plus const item initializers compiled one mutant at a time
 
       --operator <RULE>
           Apply exactly these operators, by name. Repeatable
@@ -245,6 +246,7 @@ Options:
           - balanced: The operators worth running everywhere
           - strong:   Balanced, plus the bitwise and compound-assignment families
           - all:      Every operator, statement deletion included
+          - compiled: All operators, plus const item initializers compiled one mutant at a time
 
       --operator <RULE>
           Apply exactly these operators, by name. Repeatable
@@ -390,6 +392,7 @@ Options:
           - balanced: The operators worth running everywhere
           - strong:   Balanced, plus the bitwise and compound-assignment families
           - all:      Every operator, statement deletion included
+          - compiled: All operators, plus const item initializers compiled one mutant at a time
 
       --operator <RULE>
           Apply exactly these operators, by name. Repeatable
@@ -535,6 +538,7 @@ Options:
           - balanced: The operators worth running everywhere
           - strong:   Balanced, plus the bitwise and compound-assignment families
           - all:      Every operator, statement deletion included
+          - compiled: All operators, plus const item initializers compiled one mutant at a time
 
       --operator <RULE>
           Apply exactly these operators, by name. Repeatable
@@ -679,6 +683,7 @@ Options:
           - balanced: The operators worth running everywhere
           - strong:   Balanced, plus the bitwise and compound-assignment families
           - all:      Every operator, statement deletion included
+          - compiled: All operators, plus const item initializers compiled one mutant at a time
 
       --operator <RULE>
           Apply exactly these operators, by name. Repeatable
@@ -820,6 +825,7 @@ Options:
           - balanced: The operators worth running everywhere
           - strong:   Balanced, plus the bitwise and compound-assignment families
           - all:      Every operator, statement deletion included
+          - compiled: All operators, plus const item initializers compiled one mutant at a time
 
       --operator <RULE>
           Apply exactly these operators, by name. Repeatable
@@ -965,6 +971,7 @@ Options:
           - balanced: The operators worth running everywhere
           - strong:   Balanced, plus the bitwise and compound-assignment families
           - all:      Every operator, statement deletion included
+          - compiled: All operators, plus const item initializers compiled one mutant at a time
 
       --operator <RULE>
           Apply exactly these operators, by name. Repeatable
@@ -1103,6 +1110,7 @@ Options:
           - balanced: The operators worth running everywhere
           - strong:   Balanced, plus the bitwise and compound-assignment families
           - all:      Every operator, statement deletion included
+          - compiled: All operators, plus const item initializers compiled one mutant at a time
 
       --operator <RULE>
           Apply exactly these operators, by name. Repeatable

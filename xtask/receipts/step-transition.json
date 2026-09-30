@@ -1,0 +1,483 @@
+{
+  "schema": "njutest-mutation-receipt-v1",
+  "decision": "step-transition",
+  "package": "rust-mutants-decision",
+  "module": "crates/rust-mutants-decision/src/step.rs",
+  "source_sha256": "91cb7db29e7dd57717260afc7ddd6d5a2e6b3a186602b8465f93d013eec3e02e",
+  "mutants": [
+    {
+      "display_id": "acd0bd4267ecdd773871",
+      "position": "62:8",
+      "rule": "negate-condition",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_allowance_with_no_boundary_past_it_or_none_at_all_is_refused",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "4421dbc4de31d410afae",
+      "position": "62:8",
+      "rule": "condition-to-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_allowance_with_no_boundary_past_it_or_none_at_all_is_refused",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "a205dbc2647dbea01689",
+      "position": "62:8",
+      "rule": "condition-to-false",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_allowance_with_no_boundary_past_it_or_none_at_all_is_refused",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "1befb05ea3ba03bb060c",
+      "position": "62:16",
+      "rule": "eq-to-neq",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_allowance_with_no_boundary_past_it_or_none_at_all_is_refused",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "1d543abfbddeed7e1a1f",
+      "position": "62:19",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_allowance_with_no_boundary_past_it_or_none_at_all_is_refused",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "cf32237ff3f894411799",
+      "position": "62:21",
+      "rule": "or-to-and",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_allowance_with_no_boundary_past_it_or_none_at_all_is_refused",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "486fbfca833a108633fd",
+      "position": "62:32",
+      "rule": "eq-to-neq",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_allowance_with_no_boundary_past_it_or_none_at_all_is_refused",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "bafbcba333930ee1644e",
+      "position": "67:35",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "50bf67945072aa6f07be",
+      "position": "67:35",
+      "rule": "int-decrement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "a68364ae6b95881f5e1f",
+      "position": "72:87",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::every_transition_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "491cdbb549a4c29d41af",
+      "position": "72:87",
+      "rule": "int-decrement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::every_transition_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "b1058e6e507adf10ff5c",
+      "position": "79:61",
+      "rule": "remove-match-guard",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::every_transition_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "ffa9f41c54f0f0c8db24",
+      "position": "79:67",
+      "rule": "gt-to-ge",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::every_transition_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "16015aca88ccee52676d",
+      "position": "79:69",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::every_transition_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "ee0f7d7ad319fd0a6e64",
+      "position": "79:71",
+      "rule": "and-to-or",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::every_transition_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "c6fce81080d09eb9876a",
+      "position": "79:80",
+      "rule": "le-to-lt",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "7b0faebb5656a49684eb",
+      "position": "82:63",
+      "rule": "remove-match-guard",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "0c56c55e8c04a85a8b95",
+      "position": "82:69",
+      "rule": "gt-to-ge",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::every_transition_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "787e6bde051e6c2911e1",
+      "position": "82:71",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "2789393bb29a87841f18",
+      "position": "82:73",
+      "rule": "and-to-or",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "ccabd36d1368115a16fa",
+      "position": "82:82",
+      "rule": "lt-to-le",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "d51508db782726aad696",
+      "position": "83:37",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "4aa47df719eb3feaf612",
+      "position": "83:37",
+      "rule": "int-decrement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "257ada6fb23dbd5ead3c",
+      "position": "88:63",
+      "rule": "remove-match-guard",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::every_transition_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "f84a2b23b49e0e272691",
+      "position": "88:69",
+      "rule": "eq-to-neq",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "4d1361eda71707feeadb",
+      "position": "89:39",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "331ff752f1014b7cdf1d",
+      "position": "89:39",
+      "rule": "int-decrement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "5f4a30dd8c61488d5907",
+      "position": "97:70",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "4a4964b1ad7345c6828f",
+      "position": "97:70",
+      "rule": "int-decrement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "9934df56f05029394a4a",
+      "position": "98:31",
+      "rule": "remove-match-guard",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::every_transition_is_the_one_the_rules_give",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "1073706e79c811ae82fe",
+      "position": "98:37",
+      "rule": "eq-to-neq",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "tests::an_execution_spends_exactly_its_allowance_and_then_parks",
+          "came_to": "panicked"
+        }
+      ]
+    }
+  ]
+}

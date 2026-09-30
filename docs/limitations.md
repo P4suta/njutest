@@ -164,6 +164,7 @@ Tightening an existing store directory to its owner, the system and the administ
 - A Rust source of the tree that the build reads as text is read as it was copied, not as the run rewrites it.
   Each `include_str!` or `include_bytes!` that names one, by a literal path or by `concat!(env!("CARGO_MANIFEST_DIR"), "…")`, is pointed at a copy of the source beside the file that reads it, a hidden file named `.0`, `.1` and so on, and the trace says so with a `verbatim` note for each.
   The reading file keeps its length and its lines, so every position in it is the one the tree has.
+  A source the build only reads as text, that no guard is placed in, is itself left as it was copied: nothing the run executes is compiled from it, and rewriting it would hand every reader of the tree bytes no run committed to.
   Three readings are not pointed: an include whose path is computed any other way, a program that reads its own source while it runs, and a directory listing, which sees the copies beside the file that reads them.
 - The equivalence layer is off by default and proves almost nothing on a project that leaves `[profile.test] opt-level` at cargo's default of zero,
   where two mutations the compiler would render identically at any optimisation level are still two different sets of instructions.
@@ -495,6 +496,7 @@ Five are about a whole file, decided from cargo's metadata rather than by readin
 Ten are about a place inside a file, decided by the walk:
 
 - `skipped-const-context` — the compiler evaluates the code before the program runs, where a runtime guard cannot live: a `const` or `static` initializer, a `const` block, an array length, an enum discriminant, wherever it is written.
+  The `compiled` tier selects expression sites in const item initializers for a build per mutant; the other constant contexts retain this skip ([ADR 0048](adr/0048-const-items-are-mutated-by-a-build-per-mutant.md)).
 - `skipped-macro-invocation` — the body is tokens the walker does not parse,
   counted once for the whole invocation.
 - `skipped-cfg-attribute` — the place is behind a `#[cfg(...)]`, so what the build compiles is not what the walk read.

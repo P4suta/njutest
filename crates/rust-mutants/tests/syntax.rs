@@ -1121,3 +1121,62 @@ fn a_loop_is_not_asked_to_run_forever() {
          whole timeout and the signal is zero: {rendered:?}"
     );
 }
+
+#[test]
+fn const_item_initializers_are_build_mutants_only_when_the_compiled_tier_is_selected() {
+    let source = "const VALUE: u32 = 40 + 2;\nconst FLAG: bool = true;\nstruct Limits;\nimpl Limits { const VALUE: u8 = 7; }\ntrait Defaults { const FLAG: bool = false; }\n";
+    let tier = Tier::Compiled;
+    let selection = Selection::tier(registry(), tier);
+    let all = discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
+    assert_eq!(
+        all.candidates.len(),
+        9,
+        "const item initializers are compiled one mutant at a time"
+    );
+    assert_coherent(source, &all);
+    for found in &all.candidates {
+        assert_eq!(found.hint.form.letter(), "B");
+        assert!(found.hint.const_fn.is_none());
+        assert!(found.branch.is_none() && found.comparable.is_none() && found.probe.is_none());
+    }
+    for tier in [Tier::Balanced, Tier::Strong, Tier::All] {
+        let selection = Selection::tier(registry(), tier);
+        let discovered =
+            discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
+        assert!(
+            discovered.candidates.is_empty(),
+            "{tier} retains the const-context skip"
+        );
+    }
+}
+
+#[test]
+fn an_explicit_compiled_operator_retains_other_constant_skips_and_no_function_owner() {
+    let source = "const A: u32 = 1; static B: u32 = 9; pub const fn f() -> u32 { const LOCAL: u32 = 8; let _ = [0; 2]; const { 3 } }";
+    let selection = Selection::rules(registry(), &["int-increment"])
+        .expect("one operator")
+        .compiling_items(true);
+    let found = discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
+    let built: Vec<_> = found
+        .candidates
+        .iter()
+        .filter(|found| found.hint.form == Form::B)
+        .collect();
+    assert_eq!(built.len(), 2);
+    assert!(built.iter().all(|found| found.hint.const_fn.is_none()
+        && found.branch.is_none()
+        && found.probe.is_none()));
+    assert!(
+        built
+            .iter()
+            .all(|found| found.candidate.rule.name == "int-increment")
+    );
+    assert_eq!(
+        found
+            .skips
+            .iter()
+            .find(|skip| skip.reason == SkipReason::ConstContext)
+            .map(|skip| skip.count),
+        Some(3)
+    );
+}

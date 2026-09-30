@@ -93,3 +93,6 @@ pub fn moved(line: Option<u32>, first: Option<u32>) -> Option<(u32, u32)> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(kani)]
+mod kani_laws;

@@ -89,3 +89,6 @@ pub fn agrees(group: Delivered, leader: Delivered, others: Others, decision: Sto
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(kani)]
+mod kani_laws;

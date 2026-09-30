@@ -60,3 +60,6 @@ pub const fn agrees(observed: Observed, reported_answered: bool) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(kani)]
+mod kani_laws;

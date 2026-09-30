@@ -3,10 +3,10 @@
   "decision": "test-decline",
   "package": "rust-mutants-decision",
   "module": "crates/rust-mutants-decision/src/decline.rs",
-  "source_sha256": "b88c6ef8cadb1677715eb46e8c7b01a0d5374fbad80957b751e690b33edf3701",
+  "source_sha256": "5eafacd717a324b712b5614004bf95fa4555c347b8b3252f72c4a8b90dc408c5",
   "mutants": [
     {
-      "display_id": "75ba76a9169522f20799",
+      "display_id": "367dc7f30888fed781fd",
       "position": "21:38",
       "rule": "remove-not",
       "outcome": "killed",
@@ -20,7 +20,7 @@
       ]
     },
     {
-      "display_id": "de9065f9d79ac4dd52dc",
+      "display_id": "2bed3d41a61dbf1d9670",
       "position": "55:27",
       "rule": "remove-not",
       "outcome": "killed",
@@ -34,7 +34,7 @@
       ]
     },
     {
-      "display_id": "aae473c7ac7bc7c3736a",
+      "display_id": "4cba42990dca73beb070",
       "position": "55:27",
       "rule": "remove-match-guard",
       "outcome": "killed",
@@ -48,7 +48,7 @@
       ]
     },
     {
-      "display_id": "4a55c0b1b2aafdf0faac",
+      "display_id": "5a5d17f6b216880b5715",
       "position": "55:48",
       "rule": "and-to-or",
       "outcome": "killed",
@@ -62,7 +62,7 @@
       ]
     },
     {
-      "display_id": "475dc398fea7507f2db8",
+      "display_id": "aade284b2cd5e8953972",
       "position": "55:66",
       "rule": "eq-to-neq",
       "outcome": "killed",

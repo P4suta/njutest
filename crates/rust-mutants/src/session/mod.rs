@@ -4,6 +4,7 @@
 //! A prepared workspace: every accepted mutant instrumented into one build, and the test binaries that build produced.
 
 mod carry;
+mod compiled;
 pub(crate) mod prepare;
 mod rerun;
 mod route;
@@ -25,6 +26,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
+pub use rust_mutants_adapt::claim::{Named, Resolution};
 pub use rust_mutants_decision::claim::Edit;
 use rust_mutants_decision::claim::Located;
 use rust_mutants_decision::decline::Concluded;
@@ -964,6 +966,16 @@ pub struct Session {
     manifests: String,
     /// The instrumented tree built for the sealed target, or why it was not (ADR 0046).
     sealed: crate::sealed::SealedBuild,
+    compile_time: compiled::Compiler,
+}
+
+/// One separately built mutant, holding the outputs until its modules or native targets have finished using them.
+#[derive(Debug)]
+pub(crate) struct Compiled<'session> {
+    pub(crate) targets: Vec<TestTarget>,
+    pub(crate) sealed: crate::sealed::SealedBuild,
+    pub(crate) apparatus: crate::apparatus::Apparatus,
+    _owning: std::sync::MutexGuard<'session, ()>,
 }
 
 /// What the carry rule has taken of a session so far: its tree, once, and each target's reach as it is first asked about.
@@ -1099,7 +1111,7 @@ impl Session {
             })
             .collect();
         let bench = crate::sealed::bench::Bench::assemble(
-            (runner, rust_mutants_sealed::Interrupt::of(cancel.flags())),
+            (runner, cancel.clone()),
             (&self.sealed, &natives),
             (tree, &self.harness_args),
             (self.catalog.digest(), bounds),
@@ -1166,26 +1178,34 @@ impl Session {
         context: &Context<'_>,
         (cancel, log): (&Cancel, Option<&std::path::Path>),
     ) -> Result<MutantResult, EngineError> {
+        self.observed_on(exec, (context, &self.apparatus), (cancel, log))
+    }
+
+    /// Observes one execution against the apparatus its own compilation left.
+    fn observed_on(
+        &self,
+        exec: &ExecRequest<'_>,
+        (context, apparatus): (&Context<'_>, &crate::apparatus::Apparatus),
+        (cancel, log): (&Cancel, Option<&std::path::Path>),
+    ) -> Result<MutantResult, EngineError> {
         let before = self.orphans();
         let started = std::time::SystemTime::now();
         let mutant = match context.active {
             Some((mutant, _catalog)) => self.display_of(mutant),
             None => String::new(),
         };
-        let began = self
-            .apparatus
+        let began = apparatus
             .running
             .lock()
             .map_err(|_poisoned| SessionError::CoordinationPoisoned)?
             .begin(&mutant);
         let mut result = execute::exec(exec, context, cancel, &self.workspace.trace);
-        let beside = self
-            .apparatus
+        let beside = apparatus
             .running
             .lock()
             .map_err(|_poisoned| SessionError::CoordinationPoisoned)?
             .end(&mutant, began);
-        let changes = self.apparatus.changed();
+        let changes = apparatus.changed();
         if !changes.is_empty() {
             return Err(SessionError::ApparatusChanged {
                 mutant,
@@ -1720,6 +1740,16 @@ impl Session {
     /// Which targets could notice this mutation, and what the answer rests on.
     #[must_use]
     pub fn route(&self, mutant: &Mutant) -> Route {
+        if self.compiled_item(mutant.index) {
+            return Route::All {
+                reaching: self
+                    .targets
+                    .iter()
+                    .map(|target| target.id().to_owned())
+                    .collect(),
+                fallback: Fallback::CompileTime,
+            };
+        }
         if self.verified.touched.measured() {
             let (targets, measurable, also_reaching) = self.among(mutant);
             let among = Routing {
@@ -1738,6 +1768,16 @@ impl Session {
     /// Which targets the coverage measurement alone puts at this mutation, which is how a run routes when the guards recorded nothing.
     #[must_use]
     pub fn route_by_coverage(&self, mutant: &Mutant) -> Route {
+        if self.compiled_item(mutant.index) {
+            return Route::All {
+                reaching: self
+                    .targets
+                    .iter()
+                    .map(|target| target.id().to_owned())
+                    .collect(),
+                fallback: Fallback::CompileTime,
+            };
+        }
         let (targets, measurable, also_reaching) = self.among(mutant);
         let Some(position) = self.position(mutant) else {
             return Route::All {
@@ -2576,7 +2616,8 @@ impl Session {
             mutant,
             beside,
         } = how;
-        let mut targets = self.selected(request.target.as_deref())?;
+        let compiled = self.compiled(mutant.index, cancel)?;
+        let mut targets = self.compiled_targets(request, compiled.as_ref())?;
         if let Some(first) = request.first.as_deref() {
             targets.sort_by_key(|target| target.id() != first);
         }
@@ -2615,7 +2656,12 @@ impl Session {
             } else if let Some(named) = self.filtering(target, chosen, cancel)? {
                 exec = exec.with_tests(named);
             }
-            let result = self.observed(&exec, &context, (cancel, log.as_deref()))?;
+            let apparatus = match &compiled {
+                Some(compiled) => &compiled.apparatus,
+                None => &self.apparatus,
+            };
+            let result =
+                self.observed_on(&exec, (&context, apparatus), (cancel, log.as_deref()))?;
             self.record_mutant_exec(Executed {
                 mutant,
                 target,
@@ -2632,6 +2678,7 @@ impl Session {
                 });
             }
         }
+        drop(compiled);
         let taken = verdict_result(&asked).ok_or_else(|| {
             EngineError::from(SessionError::NoTargets {
                 packages: self.packages(),
@@ -3272,52 +3319,6 @@ pub fn preview(
     Ok(discovery)
 }
 
-/// What one claim of a configuration names in a tree read without building it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Resolution {
-    /// It names as many mutations as it says, by display identity.
-    Names {
-        /// The display identities, in catalog order.
-        mutants: Vec<String>,
-    },
-    /// It names as many mutations as it says, and the line it holds is not where the first of them now is.
-    Moved {
-        /// The display identities, in catalog order.
-        mutants: Vec<String>,
-        /// The line the claim holds.
-        from: u32,
-        /// The line the first of them is on now.
-        to: u32,
-    },
-    /// What it names sits only in a file no unit of this build reads, so it is judged where one does (ADR 0042).
-    Uncompiled,
-    /// It names nothing, or not as many as it says, so a run finds it unmatched.
-    Unmatched {
-        /// Why, in the words a run gives it.
-        why: String,
-    },
-}
-
-impl Resolution {
-    /// Whether the claim says something that is not so: it names nothing, not as many as it says, or a line its mutation left.
-    #[must_use]
-    pub const fn rotted(&self) -> bool {
-        match self {
-            Self::Unmatched { .. } | Self::Moved { .. } => true,
-            Self::Names { .. } | Self::Uncompiled => false,
-        }
-    }
-
-    /// Whether what it names sits only in a file another build reads.
-    #[must_use]
-    pub const fn uncompiled(&self) -> bool {
-        match self {
-            Self::Uncompiled => true,
-            Self::Names { .. } | Self::Moved { .. } | Self::Unmatched { .. } => false,
-        }
-    }
-}
-
 /// What each of `expectations` names in the tree `discovery` read, found by the locator a run finds it by.
 ///
 /// # Errors
@@ -3363,7 +3364,10 @@ pub fn resolve_claims(
                 locator.line,
                 found.first().map(|first| first.found.position.line),
             );
-            (found.iter().map(label).collect::<Vec<_>>(), moved)
+            Named {
+                mutants: found.iter().map(label).collect(),
+                moved,
+            }
         })
     };
     Ok(expectations
@@ -3375,27 +3379,26 @@ pub fn resolve_claims(
                     None => discovery
                         .catalog
                         .resolve_prefix(id)
-                        .map(|mutant| (vec![mutant.display_id.to_string()], None))
+                        .map(|mutant| Named {
+                            mutants: vec![mutant.display_id.to_string()],
+                            moved: None,
+                        })
                         .map_err(|error| error.to_string()),
                 },
                 (None, Some(locator)) => located(locator).map_err(|error| error.to_string()),
                 (None, None) => Err("the claim names no mutant".to_owned()),
             };
             match named {
-                Ok((mutants, None)) => Resolution::Names { mutants },
-                Ok((mutants, Some((from, to)))) => Resolution::Moved { mutants, from, to },
-                Err(_)
-                    if expectation.locator.as_ref().is_some_and(|locator| {
+                Ok(named) => Resolution::named(named),
+                Err(why) => Resolution::unnamed(why, || {
+                    expectation.locator.as_ref().is_some_and(|locator| {
                         unread_in(
                             (workspace.snapshot_root(), &discovery.files),
                             &selection,
                             locator,
                         ) == Unread::Named
-                    }) =>
-                {
-                    Resolution::Uncompiled
-                }
-                Err(why) => Resolution::Unmatched { why },
+                    })
+                }),
             }
         })
         .collect())

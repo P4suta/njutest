@@ -91,28 +91,43 @@ fn the_engine_ledger_names_what_it_measures_and_asks_for_every_proof_layer() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../.rust-mutants.toml"),
     )
     .expect("the engine's own ledger");
-    let settings: String = ledger
-        .lines()
-        .filter(|line| !line.trim_start().starts_with('#'))
-        .collect::<Vec<&str>>()
-        .join("\n");
-    assert!(
-        ledger.contains(
-            "packages = [\"rust-mutants\", \"rust-mutants-decision\", \"rust-mutants-cli\", \"njutest\", \"xtask\"]"
-        ),
+    let settings = ledger.parse::<toml::Table>().expect("the ledger is TOML");
+    let packages: Vec<&str> = settings
+        .get("project")
+        .and_then(|project| project.get("packages"))
+        .and_then(toml::Value::as_array)
+        .expect("the project's packages are an array")
+        .iter()
+        .map(|package| package.as_str().expect("each package is a name"))
+        .collect();
+    assert_eq!(
+        packages,
+        [
+            "rust-mutants",
+            "rust-mutants-decision",
+            "rust-mutants-adapt",
+            "rust-mutants-cli",
+            "njutest",
+            "xtask",
+        ],
         "{ledger}"
     );
-    assert!(
-        ledger.contains("tier = \"all\""),
+    let mutation = settings
+        .get("mutation")
+        .and_then(toml::Value::as_table)
+        .expect("the mutation settings are a table");
+    assert_eq!(
+        mutation.get("tier").and_then(toml::Value::as_str),
+        Some("all"),
         "a tool that asks a project for every operator asks itself for them too: {ledger}"
     );
     assert!(
-        !settings.contains("coverage"),
+        !mutation.contains_key("coverage"),
         "coverage routing is the default now, and a ledger that asks for a default says \
          nothing: {settings}"
     );
     assert!(
-        !settings.contains("probe"),
+        !mutation.contains_key("probe"),
         "the infection layer rides on the run that establishes the baseline, so there is \
          nothing to ask for, and a ledger that asks for a layer there is no switch for \
          reads as a switch somebody could throw: {settings}"

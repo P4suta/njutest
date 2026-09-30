@@ -30,6 +30,7 @@ use rust_mutants::rule::{Registry, Tier};
 use rust_mutants::runner::{Cancel, RunResult, Spec, run};
 use rust_mutants::syntax::Selection;
 use rust_mutants::trace::Recorder;
+use rust_mutants::workspace::Workspace;
 
 static REGISTRY: Registry = Registry::canonical();
 
@@ -344,4 +345,67 @@ fn an_instrumented_tree_builds_its_tests_for_a_sealed_host() {
             tree.binaries
         );
     }
+}
+
+/// A project whose test reads a Rust source of the tree as text, where the file it reads is no module any target compiles.
+fn read_text_project() -> tempfile::TempDir {
+    let project = tempfile::Builder::new()
+        .prefix("rust-mutants-read-text-")
+        .tempdir()
+        .expect("tempdir");
+    let root = project.path().join("readtext");
+    for (path, text) in [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"readtext\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n",
+        ),
+        (
+            "Cargo.lock",
+            "version = 4\n\n[[package]]\nname = \"readtext\"\nversion = \"0.1.0\"\n",
+        ),
+        (
+            "src/lib.rs",
+            "pub fn twice(n: u32) -> u32 {\n    n * 2\n}\n\n#[cfg(test)]\nmod reads {\n    const PASSED: &str = include_str!(\"passaged.rs\");\n\n    #[test]\n    fn the_passage_says_what_it_says() {\n        assert!(PASSED.contains(\"fn guarded\"));\n    }\n}\n",
+        ),
+        (
+            "src/passaged.rs",
+            "pub fn guarded(n: u32) -> u32 {\n    n + 1\n}\n",
+        ),
+    ] {
+        let at = root.join(path);
+        std::fs::create_dir_all(at.parent().expect("a directory")).expect("the directory");
+        std::fs::write(at, text).expect("the file");
+    }
+    project
+}
+
+#[test]
+fn a_file_the_build_only_reads_as_text_is_left_as_it_was_copied() {
+    let project = read_text_project();
+    let root = project.path().join("readtext");
+    let temporary = project.path().join("temp");
+    std::fs::create_dir_all(&temporary).expect("the temporary directory");
+    let cancel = Cancel::new();
+    let workspace = Workspace::open(
+        &root,
+        rust_mutants::testkit::opening::opening(&njutest_devkit::paths::cargo_binary(), &temporary),
+        &cancel,
+    )
+    .expect("open");
+    let snapshot = workspace.snapshot_root().to_path_buf();
+    let session = workspace
+        .prepare(
+            &rust_mutants::session::PrepareOptions::new(Tier::Balanced),
+            &cancel,
+        )
+        .expect("prepare");
+    let passaged = std::fs::read(snapshot.join("src/passaged.rs")).expect("copied");
+    assert_eq!(
+        std::str::from_utf8(&passaged).expect("text"),
+        "pub fn guarded(n: u32) -> u32 {\n    n + 1\n}\n",
+        "the file no target compiles is read as text only, and a run that rewrote it would hand \
+         every reader of the tree bytes no run committed to, while its markers and checkpoints \
+         mark and count nothing the run ever executes"
+    );
+    session.close().expect("close");
 }

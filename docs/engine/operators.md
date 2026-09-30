@@ -57,6 +57,8 @@ Two of them are not mutations, no tier chooses either, and a run asks for each b
 | `durable` | `crash-after-write` | named |
 
 `balanced ⊂ strong ⊂ all`, which the table's order carries: it is non-decreasing in tier, so each profile's rules are a prefix of the next one's, and `tiers_never_decrease_down_the_table` is what holds it there.
+`compiled` selects the same operators as `all` and also discovers expression sites in const item initializers, which cost a separate build per mutant ([ADR 0048](../adr/0048-const-items-are-mutated-by-a-build-per-mutant.md)).
+The other tiers retain their runtime discovery scope and cost.
 
 `delete-match-arm` asks whether a suite notices an arm going away, by making the arm's guard `false`; `remove-match-guard` asks whether it notices the arm widening, by making the guard `true`.
 An arm with no guard is where the guard is written, which is what Form M is for.

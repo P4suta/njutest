@@ -3,10 +3,10 @@
   "decision": "operator-swap",
   "package": "rust-mutants-decision",
   "module": "crates/rust-mutants-decision/src/swap.rs",
-  "source_sha256": "e6f45d872d24afe56177157840b8406582d6b3de305587b229d9cc6f57f0fe2a",
+  "source_sha256": "7128299e6f82a591cf5922d4c9e4868c84bfa20aa571ff95b2d95cb1eeab1f4e",
   "mutants": [
     {
-      "display_id": "37c5fc1ea9bcbb63f308",
+      "display_id": "65375d9e8fff8c2740ea",
       "position": "139:5",
       "rule": "return-true",
       "outcome": "killed",
@@ -20,7 +20,7 @@
       ]
     },
     {
-      "display_id": "6581dddfc2d8ac5bcbcf",
+      "display_id": "517e28159d426ede9d16",
       "position": "140:38",
       "rule": "true-to-false",
       "outcome": "killed",
@@ -34,7 +34,7 @@
       ]
     },
     {
-      "display_id": "6636f924ae39ff3812a6",
+      "display_id": "a11d47aa180aedbde454",
       "position": "141:41",
       "rule": "false-to-true",
       "outcome": "killed",
@@ -48,7 +48,7 @@
       ]
     },
     {
-      "display_id": "6972bd7eb350e0190beb",
+      "display_id": "d0fc2f5d30da6751826d",
       "position": "142:39",
       "rule": "return-true",
       "outcome": "killed",
@@ -62,7 +62,7 @@
       ]
     },
     {
-      "display_id": "deafb2164731340a79e9",
+      "display_id": "5a492ceaef237393bf34",
       "position": "143:33",
       "rule": "true-to-false",
       "outcome": "killed",
@@ -76,7 +76,7 @@
       ]
     },
     {
-      "display_id": "01808be415b3d47fdb34",
+      "display_id": "edf24e33961c71fac0fc",
       "position": "144:32",
       "rule": "return-true",
       "outcome": "killed",
@@ -90,7 +90,7 @@
       ]
     },
     {
-      "display_id": "5ec3bd1c99dd1f4e6f6a",
+      "display_id": "861e7a842637815d332b",
       "position": "152:42",
       "rule": "return-true",
       "outcome": "killed",

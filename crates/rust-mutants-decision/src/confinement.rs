@@ -58,3 +58,6 @@ pub fn escape<V: PartialEq>(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(kani)]
+mod kani_laws;

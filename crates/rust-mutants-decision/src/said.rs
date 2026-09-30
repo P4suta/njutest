@@ -88,9 +88,14 @@ pub fn step_check(check: &str) -> bool {
 #[must_use]
 pub fn stated(output: &[u8], status: i32) -> Option<Record<'_>> {
     match record(output) {
-        Some(said) if said.status == status && step_check(said.check) => Some(said),
+        Some(said) if names(said, status) => Some(said),
         Some(_) | None => None,
     }
+}
+
+/// Whether a parsed record names this status and a check this release knows.
+fn names(said: Record<'_>, status: i32) -> bool {
+    said.status == status && step_check(said.check)
 }
 
 /// The number `field` spells, where it spells it as the runtime writes one: an optional minus and then digits, with no leading zero and never a minus zero.
@@ -114,3 +119,6 @@ fn canonical(field: &str) -> Option<i32> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(kani)]
+mod kani_laws;

@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use rust_mutants_sealed::{Interrupt, SealedRunner};
+use rust_mutants_sealed::SealedRunner;
 
 use super::bench::{Bench, BenchError, Controlled, Tree, Uncontrolled};
 use super::record::{Came, SealedRun};
@@ -279,12 +279,13 @@ impl<'runner> Rerun<'runner> {
     /// # Errors
     /// A module that cannot be read, an environment that is not text, a host that cannot run what it is given, or [`BenchError::Interrupted`].
     pub(crate) fn assemble(
-        (runner, interrupt): (&'runner SealedRunner, Interrupt),
+        (runner, cancel): (&'runner SealedRunner, crate::runner::Cancel),
         (sealed, named): (&SealedBuild, &BTreeMap<String, BTreeSet<String>>),
         (tree, harness): (Tree, &Configured),
         (catalog, bounds): (&str, crate::touch::Bounds),
     ) -> Result<Self, BenchError> {
-        let mut bench = Bench::unassembled(interrupt, sealed, (tree, harness), (catalog, bounds));
+        let mut bench =
+            Bench::unassembled((runner, cancel), sealed, (tree, harness), (catalog, bounds));
         for (id, tests) in named {
             let only = Controlled::Only(tests);
             let station = if let Some(module) = sealed.modules.get(id) {
@@ -311,6 +312,13 @@ impl<'runner> Rerun<'runner> {
         Ok(Self { bench })
     }
 
+    /// The recorded tests put to a separately compiled constant, retaining the original controls.
+    pub(crate) fn rebuilt(&self, sealed: &SealedBuild, index: u32) -> Result<Self, BenchError> {
+        Ok(Self {
+            bench: self.bench.rebuilt(sealed, index)?,
+        })
+    }
+
     /// What `test` of `target` comes to now with `mutant` active, judged against its control as every sealed execution is, or why it cannot be made again.
     ///
     /// # Errors
@@ -324,7 +332,7 @@ impl<'runner> Rerun<'runner> {
             Some(Err(why)) => return Ok(Now::Unmade(Unmade::Uncontrolled(*why))),
             None => return Ok(Now::Unmade(Unmade::Uncontrolled(Uncontrolled::Unsealed))),
         };
-        if !control.reached.contains(&mutant.index) {
+        if !self.bench.compiles(mutant.index) && !control.reached.contains(&mutant.index) {
             return Ok(Now::Unmade(Unmade::Unreached));
         }
         Ok(match self.bench.put(target, test, mutant.id.as_str())? {

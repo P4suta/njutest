@@ -182,6 +182,8 @@ pub enum Fallback {
     CoverageIncomplete,
     /// A target ran and its guards recorded nothing this run can route by, so what it reached is unknown.
     TouchIncomplete,
+    /// A compile-time value has no runtime reach marker, so every test is asked.
+    CompileTime,
 }
 
 impl Fallback {
@@ -194,6 +196,7 @@ impl Fallback {
             Self::OutsideBlocks => "outside-blocks",
             Self::CoverageIncomplete => "coverage-incomplete",
             Self::TouchIncomplete => "touch-incomplete",
+            Self::CompileTime => "compile-time",
         }
     }
 }

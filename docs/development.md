@@ -84,6 +84,9 @@ An intentional ownership transfer is a named owner or state transition, not a va
 
 Every production Kani harness has a ceiling in its entry of the harness table in `xtask/src/kaniaudit.rs`: the most program steps CBMC may unfold it into, which the audit of every export holds (`XT4006`).
 It is a count, which no load moves, set at the measured size times 1.1 rounded up to two significant figures, and a harness added to the table cannot compile without one.
+The decision crate's added laws hold answered stops and group stops over their closed enums, the step machine over its states and allowances, and stall watches over every valid `Duration`.
+The number law holds every canonical `i32` spelling, the stop-name law every named protocol check and every status, and the shape law the opener words with an ASCII separator and every eight-byte ASCII identifier.
+The text laws do not claim that a bounded search holds arbitrary-length text; the parser and instrumenter retain their ordinary tests and sealed mutation receipts.
 It exists because a law pays for every field of what it builds: the ledger's duration law built two whole execution records, a decline payload added to that record took it from 1,855,715 to 2,135,073 steps, and the SAT instance that followed ran a 16 GB runner out of memory.
 A law whose subject carries data it does not reason about runs on a stand-in the law's type admits (the ledger's `Attempt`), passes its subject through `plain`, which demands `Copy`, and leaves the real record's side of the seam to an ordinary test.
 

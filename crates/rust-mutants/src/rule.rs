@@ -14,6 +14,8 @@ pub enum Tier {
     Strong,
     /// Adds statement deletion, the classic source of equivalent mutants in logging and metrics code.
     All,
+    /// Adds const item initializers, each validated and run in a separate compilation.
+    Compiled,
 }
 
 impl Tier {
@@ -24,6 +26,7 @@ impl Tier {
             Self::Balanced => "balanced",
             Self::Strong => "strong",
             Self::All => "all",
+            Self::Compiled => "compiled",
         }
     }
 

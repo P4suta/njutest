@@ -18,7 +18,14 @@
 version = 1
 
 [project]
-packages = ["rust-mutants", "rust-mutants-decision", "rust-mutants-cli", "njutest", "xtask"]
+packages = [
+  "rust-mutants",
+  "rust-mutants-decision",
+  "rust-mutants-adapt",
+  "rust-mutants-cli",
+  "njutest",
+  "xtask",
+]
 
 [mutation]
 tier = "all"

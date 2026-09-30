@@ -3,7 +3,6 @@
 
 //! Rewriting a file so that every compilable mutant of it lives in the file at once, dormant behind a guard.
 
-mod guards;
 mod observable;
 mod runtime;
 mod steps;
@@ -21,6 +20,8 @@ pub fn module_named_for(text: &str, stem: &str) -> Result<String, ModuleNameErro
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use rust_mutants_adapt::guard as guards;
+
 use crate::catalog::Catalog;
 use crate::error::{self, ErrorCode};
 use crate::interval::{self, Item, Node};
@@ -30,13 +31,13 @@ use crate::syntax::branch::Marker;
 use crate::syntax::{ConstFn, Form, Found, SiteHint};
 
 pub use runtime::{
-    ACTIVE_ENV, CATALOG_ENV, COMPILED_CATALOG_ENV, CRASH_EXIT, CRASH_NONCE_ENV, CRASH_NOTICE_ENV,
-    CRASH_NOTICE_SCHEMA, CRASHED_CALL, DELAY_ENV, FAULT_ENV, FAULT_FATE_ENV, FAULT_FATE_SCHEMA,
-    INJECTED, INJECTED_CALL, MODULE_STEM, ModuleNameError, ORPHAN_PREFIX, RUNTIME_MARKER,
-    Rendering, RuntimeRenderError, STALE_CATALOG_EXIT, STEP_BEAT_ENV, STEP_NONCE_ENV,
-    STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_PROTOCOL_EXIT, STEP_STATE_ENV, STEP_STATE_SCHEMA,
-    STEPS_ENV, STOP_SCHEMA, TOUCH_ENV, TOUCH_ITEMS_ENV, TOUCH_UNAVAILABLE_EXIT, WATCHED_ENV,
-    module_name, render,
+    ACTIVE_ENV, CATALOG_ENV, COMPILED_ACTIVE_ENV, COMPILED_CATALOG_ENV, CRASH_EXIT,
+    CRASH_NONCE_ENV, CRASH_NOTICE_ENV, CRASH_NOTICE_SCHEMA, CRASHED_CALL, DELAY_ENV, FAULT_ENV,
+    FAULT_FATE_ENV, FAULT_FATE_SCHEMA, INJECTED, INJECTED_CALL, MODULE_STEM, ModuleNameError,
+    ORPHAN_PREFIX, RUNTIME_MARKER, Rendering, RuntimeRenderError, STALE_CATALOG_EXIT,
+    STEP_BEAT_ENV, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_PROTOCOL_EXIT,
+    STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, STOP_SCHEMA, TOUCH_ENV, TOUCH_ITEMS_ENV,
+    TOUCH_UNAVAILABLE_EXIT, WATCHED_ENV, module_name, render,
 };
 
 /// The first words the runtime prints before it exits [`runtime::STALE_CATALOG_EXIT`].
@@ -1494,7 +1495,10 @@ impl File<'_> {
                 index: placement.index,
                 text: written.text,
                 comparable: self.comparable.contains(&placement.index),
-                probe: self.probed.get(&placement.index).copied(),
+                probe: self
+                    .probed
+                    .get(&placement.index)
+                    .map(|question| question.runtime()),
             });
         }
         let form = match node.alternatives.first() {
@@ -1513,16 +1517,7 @@ impl File<'_> {
             },
             &alternatives,
             &original,
-        )
-        .map_err(|error| {
-            self.error(
-                InstrumentErrorKind::SpliceFailed,
-                format!(
-                    "the guard at {} cannot represent its offsets: {error}",
-                    node.span
-                ),
-            )
-        })?;
+        );
         if count_lines(composed.text.as_bytes()) != count_lines(site.as_bytes()) {
             return Err(self.error(
                 InstrumentErrorKind::LinesMoved,

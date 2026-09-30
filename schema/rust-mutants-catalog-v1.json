@@ -45,7 +45,7 @@
       "additionalProperties": false,
       "required": ["tier", "operators", "include", "exclude", "packages"],
       "properties": {
-        "tier": { "enum": ["balanced", "strong", "all"] },
+        "tier": { "enum": ["balanced", "strong", "all", "compiled"] },
         "operators": { "type": "array", "items": { "type": "string" } },
         "include": { "type": "array", "items": { "type": "string" } },
         "exclude": { "type": "array", "items": { "type": "string" } },

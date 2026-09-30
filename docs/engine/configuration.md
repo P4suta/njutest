@@ -30,7 +30,7 @@ jobs = 0                       # cargo compilation jobs; 0 = cargo decides
 debug = false                  # write debug information; off, because nothing here reads a backtrace
 
 [mutation]
-tier = "balanced"              # balanced | strong | all
+tier = "balanced"              # balanced | strong | all | compiled
 operators = []                 # exactly these rules; empty = the tier
 timeout = "auto"               # auto = 5x the target's own baseline, never below 30s
 steps = 50_000_000             # guard takes one mutant may spend; 0 = no step limit
@@ -253,6 +253,7 @@ an item, a rule and the bytes it replaces.
 With it, two things have to hold at once: the catalog holds exactly that many, so a mutation added or removed at the same place stops the claim instead of joining it, and **every one of them** came to the declared outcome, so a claim covering three stops holding the moment a test kills one of the three.
 With `line` as well, the count is of the mutations on that line: two `?` on one line are `line = 176` with `count = 2`.
 What a locator names, where its line narrows that, and what the count comes to are decided in one place, `rust_mutants_decision::claim`, which a run and `list --claims` both ask.
+What the claim then comes to — named, moved, judged where another build reads it, or unmatched — is decided by `rust_mutants_adapt::claim::Resolution::named` and `Resolution::unnamed`.
 What covered that one is the test,
 and the claim would otherwise go on exempting the other two on its strength.
 

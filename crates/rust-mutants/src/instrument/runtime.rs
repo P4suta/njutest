@@ -20,6 +20,9 @@ pub const CATALOG_ENV: &str = "RUST_MUTANTS_CATALOG";
 /// The catalog identity embedded into binaries compiled from an instrumented tree.
 pub const COMPILED_CATALOG_ENV: &str = "RUST_MUTANTS_COMPILED_CATALOG";
 
+/// The dense index baked into a compile-time mutant's build, or `none` for the original control.
+pub const COMPILED_ACTIVE_ENV: &str = "RUST_MUTANTS_COMPILED_ACTIVE";
+
 /// The exit status of a test process whose tree was built from a different catalog than the one activating it.
 pub const STALE_CATALOG_EXIT: i32 = 97;
 
@@ -200,111 +203,6 @@ fn collect_identifiers(tokens: proc_macro2::TokenStream, names: &mut BTreeSet<St
     }
 }
 
-/// Defines the transition once for both the engine's test/Kani surface and every generated runtime.
-/// Adding a state or action makes the compiler reject both consumers until their exhaustive matches account for it.
-macro_rules! step_machine {
-    ($consumer:ident) => {
-        $consumer! {
-            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-            enum StepAction {
-                Activate,
-                Checkpoint,
-            }
-            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-            enum StepPhase {
-                Dormant,
-                Counting(usize),
-                Active(usize),
-                Stopping(usize),
-            }
-            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-            enum StepAdvance {
-                Continue,
-                Park,
-                Reached { allowed: usize, observed: usize },
-            }
-            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-            enum StepMachineError {
-                Limit,
-                Count,
-            }
-            const fn step_transition(
-                phase: StepPhase,
-                action: StepAction,
-                allowed: usize,
-            ) -> Result<(StepPhase, StepAdvance), StepMachineError> {
-                if allowed == 0 || allowed == usize::MAX {
-                    return Err(StepMachineError::Limit);
-                }
-                match (phase, action) {
-                    (StepPhase::Dormant, StepAction::Activate) => {
-                        Ok((StepPhase::Active(1), StepAdvance::Continue))
-                    }
-                    (StepPhase::Dormant, StepAction::Checkpoint) => {
-                        Ok((StepPhase::Dormant, StepAdvance::Continue))
-                    }
-                    (StepPhase::Counting(seen), StepAction::Checkpoint) => {
-                        match seen.checked_add(1) {
-                            Some(next) => Ok((StepPhase::Counting(next), StepAdvance::Continue)),
-                            None => Err(StepMachineError::Count),
-                        }
-                    }
-                    (StepPhase::Counting(seen), StepAction::Activate) => {
-                        Ok((StepPhase::Counting(seen), StepAdvance::Continue))
-                    }
-                    (StepPhase::Active(spent), StepAction::Activate)
-                        if spent > 0 && spent <= allowed =>
-                    {
-                        Ok((StepPhase::Active(spent), StepAdvance::Continue))
-                    }
-                    (StepPhase::Active(spent), StepAction::Checkpoint)
-                        if spent > 0 && spent < allowed =>
-                    {
-                        match spent.checked_add(1) {
-                            Some(next) => Ok((StepPhase::Active(next), StepAdvance::Continue)),
-                            None => Err(StepMachineError::Count),
-                        }
-                    }
-                    (StepPhase::Active(spent), StepAction::Checkpoint) if spent == allowed => {
-                        match allowed.checked_add(1) {
-                            Some(observed) => Ok((
-                                StepPhase::Stopping(observed),
-                                StepAdvance::Reached { allowed, observed },
-                            )),
-                            None => Err(StepMachineError::Count),
-                        }
-                    }
-                    (StepPhase::Stopping(spent), _) => match allowed.checked_add(1) {
-                        Some(observed) if spent == observed => {
-                            Ok((StepPhase::Stopping(spent), StepAdvance::Park))
-                        }
-                        Some(_) | None => Err(StepMachineError::Count),
-                    },
-                    (StepPhase::Active(_), _) => Err(StepMachineError::Count),
-                }
-            }
-        }
-    };
-}
-
-#[cfg(any(test, kani))]
-macro_rules! compile_step_machine {
-    ($($tokens:tt)*) => {
-        $($tokens)*
-    };
-}
-
-#[cfg(any(test, kani))]
-step_machine!(compile_step_machine);
-
-macro_rules! stringify_step_machine {
-    ($($tokens:tt)*) => {
-        stringify!($($tokens)*)
-    };
-}
-
-const STEP_MACHINE_SOURCE: &str = step_machine!(stringify_step_machine);
-
 /// The expression-grouping macro, emitted only into files whose guards call it.
 /// A statement-only file has no unused generated macro to excuse.
 const VALUE_MACRO: &str = r"    // The invocation is an expression boundary before expansion, while the
@@ -381,7 +279,11 @@ mod {{MODULE}} {
             }
         }
     }
-{{STEP_MACHINE}}
+    // The step machine, as rust-mutants-decision compiles and tests it,
+    // with what that crate exports kept to this one.
+    mod step {
+{{STEP_MACHINE}}    }
+    use self::step::{StepAction, StepAdvance, StepPhase, step_transition};
     // Which check of the step protocol failed, and the operating system's
     // code where a call it made is what failed: the process says both
     // before it stops, so a run names the check rather than only a status.
@@ -606,7 +508,7 @@ mod {{MODULE}} {
         __rm_std::fs::rename(partial, path).ok()
     }
 
-    #[inline(always)]
+{{COMPILED_SELECTOR}}    #[inline(always)]
     pub(crate) fn active(index: u32) -> bool {
         watched();
         touch(index);
@@ -1876,7 +1778,7 @@ mod {{MODULE}} {
         __rm_std::fs::rename(partial, path).ok()
     }
 
-    #[inline(always)]
+{{COMPILED_SELECTOR}}    #[inline(always)]
     pub(crate) fn active(index: u32) -> bool {
         sealed();
         touch(index);
@@ -2252,6 +2154,16 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
     } else {
         ""
     };
+    let step_machine = rust_mutants_decision::STEP_SOURCE.replace("pub ", "pub(crate) ");
+
+    let selector = if placements
+        .iter()
+        .any(|placement| placement.hint.form == crate::syntax::Form::B)
+    {
+        format!("    {COMPILED_SELECTOR}\n")
+    } else {
+        String::new()
+    };
 
     let filled = |template: &str| {
         template
@@ -2269,7 +2181,8 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
             .replace("{{SPAN}}", &reach.span.to_string())
             .replace("{{ITEM_BASE}}", &first_item.to_string())
             .replace("{{ITEM_SPAN}}", &item_count.to_string())
-            .replace("{{STEP_MACHINE}}", STEP_MACHINE_SOURCE)
+            .replace("{{STEP_MACHINE}}", &step_machine)
+            .replace("{{COMPILED_SELECTOR}}", &selector)
             .replace(
                 "{{OBSERVABLE}}",
                 &format!(
@@ -2290,6 +2203,31 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
         Ok(text.replace('\n', newline))
     }
 }
+
+/// The same constant selector in both runtimes, read at compilation rather than execution.
+const COMPILED_SELECTOR: &str = r#"pub(crate) const fn baked(index: u32) -> bool {
+        let bytes = match option_env!("RUST_MUTANTS_COMPILED_ACTIVE") {
+            Some(text) => text.as_bytes(),
+            None => return false,
+        };
+        if bytes.is_empty() { return false; }
+        let mut at = 0;
+        let mut number = 0u32;
+        while at < bytes.len() {
+            let byte = bytes[at];
+            if byte < b'0' || byte > b'9' { return false; }
+            number = match number.checked_mul(10) {
+                Some(value) => value,
+                None => return false,
+            };
+            number = match number.checked_add((byte - b'0') as u32) {
+                Some(value) => value,
+                None => return false,
+            };
+            at += 1;
+        }
+        number == index
+    }"#;
 
 /// What one file's runtime module is generated from.
 #[derive(Debug, Clone, Copy)]
@@ -2355,14 +2293,16 @@ mod tests {
     use super::{
         ACTIVE_ENV, CATALOG_ENV, DELAY_ENV, FAULT_ENV, Rendering, SEALED_TEMPLATE, STEP_NONCE_ENV,
         STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV,
-        StepAction, StepAdvance, StepMachineError, StepPhase, TEMPLATE, TOUCH_ENV, WATCHED_ENV,
-        render, step_transition,
+        TEMPLATE, TOUCH_ENV, WATCHED_ENV, render,
     };
     use crate::instrument::Placement;
     use crate::rule::Tier;
     use crate::runner::{Bound, Cancel, RunResult, Spec, Termination, run};
     use crate::testkit::compile::ScriptedCompile;
     use crate::vars::Variables;
+    use rust_mutants_decision::step::{
+        StepAction, StepAdvance, StepMachineError, StepPhase, step_transition,
+    };
 
     const PLANT_CATALOG: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     const PLANT_NONCE: &str = "0123456789abcdef0123456789abcdef";
@@ -2461,9 +2401,9 @@ mod tests {
             watched: PLANT_WATCHED,
         })
         .expect("generated runtime");
-        let before = "StepPhase :: Active(1), StepAdvance :: Continue";
+        let before = "StepPhase::Active(1), StepAdvance::Continue";
         assert_eq!(module.matches(before).count(), 1);
-        let planted = module.replacen(before, "StepPhase :: Active(2), StepAdvance :: Continue", 1);
+        let planted = module.replacen(before, "StepPhase::Active(2), StepAdvance::Continue", 1);
         let clean = run_step_case(temporary.path(), "clean", &module, selected);
         assert!(clean.result.succeeded(), "{:?}", clean.result.termination);
         assert_eq!(clean.completed, Some(b"completed".to_vec()));
@@ -2821,6 +2761,18 @@ mod tests {
     }
 
     #[test]
+    fn the_runtime_holds_the_step_machine_as_the_decision_crate_writes_it() {
+        let text = rendered();
+        let machine = rust_mutants_decision::STEP_SOURCE.replace("pub ", "pub(crate) ");
+        assert!(
+            text.contains(&format!("mod step {{\n{machine}")),
+            "the machine an execution spends its allowance by is the one \
+             rust-mutants-decision compiles and tests, held as that module whole and never \
+             written a second time"
+        );
+    }
+
+    #[test]
     fn activation_is_idempotent_and_a_dormant_checkpoint_is_inert() {
         for allowed in 1..=8 {
             assert_eq!(
@@ -2912,143 +2864,5 @@ mod tests {
             step_transition(StepPhase::Dormant, StepAction::Activate, usize::MAX),
             Err(StepMachineError::Limit)
         );
-    }
-}
-
-#[cfg(kani)]
-mod kani_laws {
-    use super::{StepAction, StepAdvance, StepPhase, step_transition};
-
-    fn valid_limit() -> usize {
-        let allowed = kani::any::<usize>();
-        kani::assume(allowed > 0 && allowed < usize::MAX);
-        allowed
-    }
-
-    #[kani::proof]
-    fn activation_is_idempotent() {
-        let allowed = valid_limit();
-        let spent = kani::any::<usize>();
-        kani::assume(spent > 0 && spent <= allowed);
-        kani::assert(
-            step_transition(StepPhase::Active(spent), StepAction::Activate, allowed)
-                == Ok((StepPhase::Active(spent), StepAdvance::Continue)),
-            "njutest-law-assertion:activation-idempotent",
-        );
-        kani::cover!(true, "njutest-law-reached");
-    }
-
-    #[kani::proof]
-    fn a_dormant_checkpoint_cannot_spend() {
-        let allowed = valid_limit();
-        kani::assert(
-            step_transition(StepPhase::Dormant, StepAction::Checkpoint, allowed)
-                == Ok((StepPhase::Dormant, StepAdvance::Continue)),
-            "njutest-law-assertion:dormant-inert",
-        );
-        kani::cover!(true, "njutest-law-reached");
-    }
-
-    #[kani::proof]
-    fn a_counting_checkpoint_counts() {
-        let allowed = valid_limit();
-        let seen = kani::any::<usize>();
-        kani::assume(seen < usize::MAX);
-        kani::assert(
-            step_transition(StepPhase::Counting(seen), StepAction::Checkpoint, allowed)
-                == Ok((StepPhase::Counting(seen + 1), StepAdvance::Continue)),
-            "njutest-law-assertion:counting-counts",
-        );
-        kani::cover!(true, "njutest-law-reached");
-    }
-
-    #[kani::proof]
-    fn a_counting_checkpoint_never_stops() {
-        let allowed = valid_limit();
-        let seen = kani::any::<usize>();
-        kani::assume(seen < usize::MAX);
-        kani::assert(
-            !matches!(
-                step_transition(StepPhase::Counting(seen), StepAction::Checkpoint, allowed),
-                Ok((_, StepAdvance::Park)) | Ok((_, StepAdvance::Reached { .. }))
-            ),
-            "njutest-law-assertion:counting-never-stops",
-        );
-        kani::cover!(true, "njutest-law-reached");
-    }
-
-    #[kani::proof]
-    fn counting_is_not_reachable_from_dormant_or_active() {
-        let allowed = valid_limit();
-        let spent = kani::any::<usize>();
-        let action = if kani::any::<bool>() {
-            StepAction::Activate
-        } else {
-            StepAction::Checkpoint
-        };
-        for phase in [StepPhase::Dormant, StepPhase::Active(spent)] {
-            kani::assert(
-                !matches!(
-                    step_transition(phase, action, allowed),
-                    Ok((StepPhase::Counting(_), _))
-                ),
-                "njutest-law-assertion:counting-only-from-the-state-file",
-            );
-        }
-        kani::cover!(true, "njutest-law-reached");
-    }
-
-    #[kani::proof]
-    fn an_active_checkpoint_advances_or_reaches_the_exact_boundary() {
-        let allowed = valid_limit();
-        let spent = kani::any::<usize>();
-        kani::assume(spent > 0 && spent <= allowed);
-        let result = step_transition(StepPhase::Active(spent), StepAction::Checkpoint, allowed);
-        if spent < allowed {
-            kani::assert(
-                result == Ok((StepPhase::Active(spent + 1), StepAdvance::Continue)),
-                "njutest-law-assertion:active-advance",
-            );
-            kani::cover!(true, "njutest-law-branch:advance");
-        } else {
-            kani::assert(
-                result
-                    == Ok((
-                        StepPhase::Stopping(allowed + 1),
-                        StepAdvance::Reached {
-                            allowed,
-                            observed: allowed + 1,
-                        },
-                    )),
-                "njutest-law-assertion:active-boundary",
-            );
-            kani::cover!(true, "njutest-law-branch:boundary");
-        }
-        kani::cover!(true, "njutest-law-reached");
-    }
-
-    #[kani::proof]
-    fn stopping_is_absorbing() {
-        let allowed = valid_limit();
-        let observed = allowed + 1;
-        let action = if kani::any::<bool>() {
-            StepAction::Activate
-        } else {
-            StepAction::Checkpoint
-        };
-        kani::assert(
-            step_transition(StepPhase::Stopping(observed), action, allowed)
-                == Ok((StepPhase::Stopping(observed), StepAdvance::Park)),
-            "njutest-law-assertion:stopping-absorbing",
-        );
-        kani::cover!(
-            matches!(action, StepAction::Activate),
-            "njutest-law-branch:activate"
-        );
-        kani::cover!(
-            matches!(action, StepAction::Checkpoint),
-            "njutest-law-branch:checkpoint"
-        );
-        kani::cover!(true, "njutest-law-reached");
     }
 }

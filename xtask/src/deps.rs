@@ -38,7 +38,9 @@ impl fmt::Display for Edge {
 /// The rule, for the failure message.
 pub const RULE: &str = "The allowed direction is: njutest -> rust-mutants, \
     rust-mutants-cli -> rust-mutants, rust-mutants -> rust-mutants-decision, whose decisions \
-    depend on nothing, rust-mutants -> rust-mutants-sealed, which depends on no crate of the \
+    depend on nothing, rust-mutants -> rust-mutants-adapt, whose adapters depend on the \
+    decisions alone, rust-mutants-adapt -> rust-mutants-decision, rust-mutants -> \
+    rust-mutants-sealed, which depends on no crate of the \
     workspace but njutest-macros; xtask and njutest-devkit share only the pure fixture-tree \
     classifier, and xtask shares the engine's pure decisions in rust-mutants-decision and \
     nothing else of the engine; every crate may use the dependency-free compiler declarations in njutest-macros \
@@ -46,10 +48,12 @@ pub const RULE: &str = "The allowed direction is: njutest -> rust-mutants, \
     and the fixture classifier only to compile the incidental tools as private modules. Nothing else, in particular \
     nothing from the engine towards the runner, and nothing into the sealed host but from the engine.";
 
-const ALLOWED_NORMAL: [(&str, &str); 10] = [
+const ALLOWED_NORMAL: [(&str, &str); 12] = [
     ("njutest", "rust-mutants"),
     ("rust-mutants-cli", "rust-mutants"),
     ("rust-mutants", "rust-mutants-decision"),
+    ("rust-mutants", "rust-mutants-adapt"),
+    ("rust-mutants-adapt", "rust-mutants-decision"),
     ("rust-mutants", "rust-mutants-sealed"),
     ("compiler-surfaces", "rust-mutants"),
     ("compiler-surfaces", "rust-mutants-decision"),
@@ -118,10 +122,11 @@ pub fn prohibited_direct_dependencies<'a>(
 }
 
 /// The crates a release ships, whose dependencies are built with the features their own edges ask for.
-pub const SHIPPED: [&str; 6] = [
+pub const SHIPPED: [&str; 7] = [
     "njutest",
     "njutest-macros",
     "rust-mutants",
+    "rust-mutants-adapt",
     "rust-mutants-cli",
     "rust-mutants-decision",
     "rust-mutants-sealed",

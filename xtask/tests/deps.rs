@@ -74,6 +74,38 @@ fn xtask_may_share_the_engines_pure_decisions_and_nothing_else_of_it() {
 }
 
 #[test]
+fn the_engine_alone_may_depend_on_its_adapters_and_they_on_its_decisions_alone() {
+    let allowed = [
+        edge("rust-mutants", "rust-mutants-adapt", EdgeKind::Normal),
+        edge(
+            "rust-mutants-adapt",
+            "rust-mutants-decision",
+            EdgeKind::Normal,
+        ),
+        edge("rust-mutants-adapt", "njutest-macros", EdgeKind::Normal),
+        edge("rust-mutants-adapt", "njutest-devkit", EdgeKind::Dev),
+    ];
+    assert!(check(&allowed).is_empty(), "{:?}", check(&allowed));
+    let refused = [
+        edge("rust-mutants-adapt", "rust-mutants", EdgeKind::Normal),
+        edge(
+            "rust-mutants-adapt",
+            "rust-mutants-sealed",
+            EdgeKind::Normal,
+        ),
+        edge(
+            "rust-mutants-decision",
+            "rust-mutants-adapt",
+            EdgeKind::Normal,
+        ),
+        edge("njutest", "rust-mutants-adapt", EdgeKind::Normal),
+        edge("rust-mutants-cli", "rust-mutants-adapt", EdgeKind::Normal),
+        edge("xtask", "rust-mutants-adapt", EdgeKind::Normal),
+    ];
+    assert_eq!(check(&refused), refused);
+}
+
+#[test]
 fn the_engine_alone_may_depend_on_the_sealed_host_and_the_host_on_nothing_of_the_workspace() {
     let allowed = [
         edge("rust-mutants", "rust-mutants-sealed", EdgeKind::Normal),

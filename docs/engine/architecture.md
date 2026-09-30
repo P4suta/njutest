@@ -16,7 +16,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 2. **Instrumentation happens once.** Every compilable mutant of a file lives dormant behind a guard in the snapshot; the test binaries are built once;
    `RUST_MUTANTS_ACTIVE=<64 hex id>` activates one mutant per test process.
 3. **Bytes are spliced, never pretty-printed.** Comments, whitespace, and CRLF are preserved, and every splice keeps its line count, so coverage regions and mutant positions agree line for line with the pristine file.
-   A file the build reads as text is read as it was written: each `include_str!` or `include_bytes!` of a Rust source of the tree is pointed at a copy of that source beside the reader, in bytes of the same length, as [limitations](../limitations.md) says.
+   A file the build reads as text is read as it was written: each `include_str!` or `include_bytes!` of a Rust source of the tree is pointed at a copy of that source beside the reader, in bytes of the same length, and a source the build only reads as text, that no guard is placed in, is left as it was copied, as [limitations](../limitations.md) says.
 4. **Phases are types.** `Workspace::open → Workspace::prepare(self) → Session`;
    a session executes any number of (mutant, target) pairs without rebuilding.
 
@@ -235,15 +235,18 @@ and says whether the answer is still the same.
 
 ## Guards
 
-Four forms.
+Five forms.
 **Form C** for a position that is syntactically boolean (an `if` or `while` condition, an operand of `&&`/`||`, a match guard):
 `__rm::value!(__rm::active(3) && __rm::value!(a >= b) || !__rm::active(3) && a > b)`.
 **Form E** for any expression in value position:
 `__rm::value!(if __rm::active(5) { a - b } else { a + b })` — both branches unify to one type, so `Default::default()` is inferred from the original.
 `value!` expands to exactly its expression: it gives the parser one grouped expression without a function-call type-inference boundary, a temporary scope, or lint-producing parentheses.
 A value that opens a block — one that begins with a brace, an attribute or a label, or with `if`, `match`, `loop`, `while`, `for`, `unsafe`, `const` or `async` — ends a statement at its own closing brace, so its Form E guard is the chain itself, which ends where the value did, rather than a `value!` call around it; which values open a block is `rust_mutants_decision::shape::opens_a_block`.
+Every guard is written by `rust_mutants_adapt::guard::compose`, which reads each offset where it writes the text, so no offset is arithmetic that could overflow.
 **Form S** for a statement: `if __rm::active(7) { x -= step; } else { x += step; }`, the original bytes in the `else` so lines are kept.
 **Form M** for a match arm that has no guard, which is the one shape that adds syntax rather than replacing it: the site is the pattern, kept verbatim, and the guard is written after it — `0 if (__rm::active(9) && (false) || !(__rm::active(9)) && (true)) =>`, where the branch that keeps the arm is the guard it did without.
+**Form B** for a const item initializer selected by the `compiled` tier: `__rm::value!(if __rm::baked(5) { __rm::value!(a - b) } else { __rm::value!(a + b) })`.
+The selector is a constant function evaluated with one catalog index baked into that mutant's separate build, and with none in the original control builds ([ADR 0048](../adr/0048-const-items-are-mutated-by-a-build-per-mutant.md)).
 A position where wrapping would move a value out of place — an assignment target, a borrow operand, a method receiver, a scrutinee —
 escalates to its parent expression, then to the statement.
 
