@@ -1753,13 +1753,7 @@ fn what_a_session_cannot_decide_is_refused_rather_than_invented() {
         .first()
         .expect("the fixture catalogs a mutation")
         .clone();
-    let beyond = session
-        .catalog()
-        .mutants()
-        .len()
-        .checked_mul(4)
-        .and_then(|at| u32::try_from(at).ok())
-        .expect("a small catalog");
+    let beyond = u32::try_from(session.catalog().mutants().len() * 4).expect("a small catalog");
 
     let mut unplaced = known.clone();
     unplaced.candidate.path = "src/nowhere.rs".to_owned();
@@ -1771,7 +1765,7 @@ fn what_a_session_cannot_decide_is_refused_rather_than_invented() {
         "the refusal names the file nothing read: {refused}"
     );
 
-    let mut unattributed = known.clone();
+    let mut unattributed = known;
     unattributed.index = beyond;
     let refused = rust_mutants::report::catalog::mutant_document(&session, &unattributed)
         .expect_err("a mutant no item of the catalog is named by has no item to name");
