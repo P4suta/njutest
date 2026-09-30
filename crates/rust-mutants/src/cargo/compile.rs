@@ -429,6 +429,7 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
         }
     };
     let units = units_of(&messages, driver.dir)?;
+    options.target_dir.record_reads(&units)?;
     Ok(Compiled {
         completion,
         messages,

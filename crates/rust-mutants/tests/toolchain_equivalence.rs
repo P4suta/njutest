@@ -129,7 +129,7 @@ fn dating_cargo(dir: &std::path::Path, path: &str) -> std::path::PathBuf {
 
 #[test]
 #[cfg(unix)]
-fn a_spliced_unit_cargo_reused_is_never_compared() {
+fn a_file_a_member_reads_from_outside_its_directory_is_compiled_again_whatever_its_time() {
     let fixture = Fixture::copy("fixture-shared-path");
     let cancel = Cancel::new();
     let mut prover = Prover::open(
@@ -165,10 +165,11 @@ fn a_spliced_unit_cargo_reused_is_never_compared() {
     prover.close().expect("the tree goes away");
     assert_eq!(
         answer,
-        Identity::NotEstablished(rust_mutants::equivalence::NOT_RECOMPILED),
-        "`n <= bound` and `n < bound` are two programs, and cargo said every unit that read the \
-         spliced file was fresh, so the executables compared are the ones it built before the \
-         splice: comparing them says nothing about the mutation"
+        Identity::Differs,
+        "`n <= bound` and `n < bound` are two programs, and shared/util.rs lies under no member's \
+         directory: the target directory's record keeps every file a member's units read, from \
+         the dep-info of the build before, so the splice moves both members and cargo compiles \
+         them again however old the file's time says it is"
     );
 }
 
