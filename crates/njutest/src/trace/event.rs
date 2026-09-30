@@ -88,6 +88,11 @@ pub enum Payload {
         /// The record.
         route: FaultRouteRecord,
     },
+    /// What one target's faulted baseline reached, which every fault route's reaching is held to.
+    FaultBaseline {
+        /// The record.
+        baseline: FaultBaselineRecord,
+    },
     /// A fault the compiler refused, so it was never put.
     FaultRejected {
         /// The record.
@@ -97,6 +102,11 @@ pub enum Payload {
     FaultAttribution {
         /// The record.
         attribution: FaultAttributionRecord,
+    },
+    /// The paths the tree had written before the first fault and after the last, which every unattributed write rests on.
+    FaultWrites {
+        /// The record.
+        writes: FaultWritesRecord,
     },
     /// One fault every reaching test passed, run again on one of them with its runtime recording what became of the failures it made.
     FaultFate {
@@ -222,8 +232,10 @@ impl Payload {
             Self::FaultExec { .. } => "fault-exec",
             Self::FaultControl { .. } => "fault-control",
             Self::FaultAttribution { .. } => "fault-attribution",
+            Self::FaultWrites { .. } => "fault-writes",
             Self::FaultFate { .. } => "fault-fate",
             Self::FaultRoute { .. } => "fault-route",
+            Self::FaultBaseline { .. } => "fault-baseline",
             Self::FaultRejected { .. } => "fault-rejected",
             Self::Fault { .. } => "fault",
             Self::Beside { .. } => "beside",
@@ -565,6 +577,16 @@ pub struct FaultAttributionRecord {
     pub unfaulted: Unfaulted,
 }
 
+/// The paths the tree had written before the first fault and after the last.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultWritesRecord {
+    /// Every path the tree had written before the first fault was put, relative to the workspace root.
+    pub before: Vec<String>,
+    /// Every path the tree had written after the last fault was judged, which is what every attribution question rests on.
+    pub after: Vec<String>,
+}
+
 /// One fault run again on one target that reached it, and what its runtime recorded became of the failures it made (ADR 0032 decision 5).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -600,6 +622,18 @@ pub struct FaultRouteRecord {
     pub fault: String,
     /// Every target whose baseline reached the site, which is empty where nothing did.
     pub reaching: Vec<String>,
+}
+
+/// What one target's faulted baseline reached.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultBaselineRecord {
+    /// The target.
+    pub target: String,
+    /// Whether the target is a documentation one, which a route puts at every fault of its package whatever its own guards said.
+    pub doc: bool,
+    /// Every fault site its baseline reached, by the fault catalog's index, which is what a route's reaching rests on.
+    pub reached: Vec<u32>,
 }
 
 /// A fault the compiler refused.

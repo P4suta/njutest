@@ -999,6 +999,7 @@ fn projected(document: &serde_json::Value) -> Result<Projected, UnprojectableErr
         "run_kind",
         "contract",
         "scope",
+        "provenance",
     ] {
         if let Some(value) = report.get(key) {
             flat.insert(key.to_owned(), value.clone());
@@ -1012,6 +1013,7 @@ fn projected(document: &serde_json::Value) -> Result<Projected, UnprojectableErr
         "limitations",
         "drift",
         "repaired",
+        "sources",
         "faults",
         "beside",
         "knobs",
@@ -3586,6 +3588,8 @@ fn faults(
         );
     }
     fault_counts(recording, &reported, &mut notes);
+    routed(recording, faulted, &mut notes);
+    minted_faults(recording, &mut notes);
     fault_findings(recording, &reported, &mut notes);
     besides(recording, &reported, faulted, &mut notes);
     let Some(faulted) = faulted else {
@@ -4343,7 +4347,31 @@ fn broken(recording: &Recording<'_>, faulted: &crate::faults::Faulted, notes: &m
     }
 }
 
-/// The `fault-write-unattributed` finding, owed wherever a path the phase left written was put to a fault run alone and no such run tied it, and naming every such path, and no path a run tied.
+/// Every path the `fault-write-unattributed` finding owes a reader: where the recording states the write sets, every path the phase left written that no fault run tied; where it does not, only the paths attribution was asked about and no run tied.
+fn owed_by_the_write_sets<'a>(
+    faulted: &'a crate::faults::Faulted,
+    (tied, asked): (&BTreeSet<&'a str>, &BTreeSet<&'a str>),
+) -> BTreeSet<&'a str> {
+    match faulted.written.as_ref() {
+        Some(written) => {
+            let before: BTreeSet<&str> = written.before.iter().map(String::as_str).collect();
+            written
+                .after
+                .iter()
+                .map(String::as_str)
+                .filter(|path| !before.contains(path) && !tied.contains(path))
+                .collect()
+        }
+        None => asked
+            .iter()
+            .copied()
+            .filter(|path| !tied.contains(path))
+            .collect(),
+    }
+}
+
+/// The `fault-write-unattributed` finding, owed wherever a path the phase left written was not tied to a fault run alone, and naming every such path, and no path a run tied or that was written before the first fault.
+/// Where the recording states the paths written before the first fault and after the last, the owed set is every path the phase left written that no run tied; where it does not, only the paths attribution was asked about can be held, as before.
 fn unattributed(
     recording: &Recording<'_>,
     faulted: &crate::faults::Faulted,
@@ -4355,12 +4383,12 @@ fn unattributed(
         .filter(|(_, tied)| *tied)
         .map(|(path, _)| path.as_str())
         .collect();
-    let untied: BTreeSet<&str> = faulted
+    let asked: BTreeSet<&str> = faulted
         .writes
         .iter()
         .map(|(path, _)| path.as_str())
-        .filter(|path| !tied.contains(path))
         .collect();
+    let untied = owed_by_the_write_sets(faulted, (&tied, &asked));
     let details: Vec<Option<String>> = recording
         .part
         .findings
@@ -4398,6 +4426,25 @@ fn unattributed(
                     format!("a fault run alone tied {path}, and the finding calls it unattributed"),
                 );
             }
+            if let Some(written) = faulted.written.as_ref() {
+                let before: BTreeSet<&str> = written.before.iter().map(String::as_str).collect();
+                for path in written
+                    .after
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|path| before.contains(path))
+                {
+                    if detail.contains(path) {
+                        notes.violated(
+                            UNATTRIBUTED_WRITE,
+                            format!(
+                                "the finding calls {path} unattributed, and the tree had it \
+                                 written before the first fault was put"
+                            ),
+                        );
+                    }
+                }
+            }
         }
         several => notes.violated(
             UNATTRIBUTED_WRITE,
@@ -4406,6 +4453,270 @@ fn unattributed(
                 several.len()
             ),
         ),
+    }
+}
+
+/// The identity a fault site's own fields mint: the engine's framing of path, rule, version, span, source digest and the two texts, re-implemented here so the record is held to what it says rather than to the engine.
+fn mint(
+    (path, rule, rule_version, start, end, source_digest, original, replacement): (
+        String,
+        String,
+        u32,
+        u32,
+        u32,
+        String,
+        String,
+        String,
+    ),
+) -> Result<String, IdentityWidthError> {
+    let mut hasher = sha2::Sha256::new();
+    let (version, start, end) = (rule_version.to_string(), start.to_string(), end.to_string());
+    for field in [
+        crate::engineaudit::ID_DOMAIN,
+        &path,
+        &rule,
+        &version,
+        &start,
+        &end,
+        &source_digest,
+        &hex::encode(sha2::Sha256::digest(original.as_bytes())),
+        &hex::encode(sha2::Sha256::digest(replacement.as_bytes())),
+    ] {
+        let length = u32::try_from(field.len())
+            .map_err(|_overflow| IdentityWidthError { bytes: field.len() })?;
+        hasher.update(length.to_be_bytes());
+        hasher.update(field.as_bytes());
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// An identity field longer than the length prefix it is minted with can say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+#[error("an identity field of {bytes} bytes exceeds the u32 length prefix")]
+struct IdentityWidthError {
+    bytes: usize,
+}
+
+impl crate::error::Coded for IdentityWidthError {
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::IdentityField
+    }
+}
+
+/// The fixed width of a short identity, as the engine truncates it.
+const DISPLAY_ID_LENGTH: usize = 20;
+
+/// Each fault route's reaching, held to what the targets' faulted baselines reached (ADR 0032 decision 4).
+/// A target whose faulted baseline reached the site the route never puts there is a fault asked of less than the suite, and a target the route puts there whose baseline never reached it is a fault asked of more, which only a documentation target may be, since a route puts one at every fault of its package whatever its own guards said.
+/// Where the recording holds no baseline, the reaching is read back from the route's own word and said so.
+fn routed(
+    recording: &Recording<'_>,
+    faulted: Option<&crate::faults::Faulted>,
+    notes: &mut Notes<'_>,
+) {
+    let Some(faulted) = faulted else {
+        return;
+    };
+    if faulted.routes.is_empty() {
+        return;
+    }
+    if faulted.baselines.is_empty() {
+        notes.unaudited(
+            "faults",
+            "the recording holds no fault-baseline record, so what each route's reaching rests \
+             on cannot be re-derived"
+                .to_owned(),
+        );
+        return;
+    }
+    let index_of: BTreeMap<String, u32> = recording
+        .part
+        .faults
+        .iter()
+        .filter_map(|row| {
+            Some((
+                field(row, "display_id")?,
+                crate::faults::small(row.get("catalog_index")?)?,
+            ))
+        })
+        .collect();
+    for (fault, reaching) in &faulted.routes {
+        let Some(index) = index_of.get(fault).copied() else {
+            continue;
+        };
+        for baseline in &faulted.baselines {
+            let reached = baseline.reached.contains(&index);
+            let routed = reaching.iter().any(|target| target == &baseline.target);
+            if reached && !routed {
+                notes.violated(
+                    fault,
+                    format!(
+                        "the faulted baseline of {} reached this fault's site, and the route \
+                         never puts it there: a discharge or a narrowed route is exactly what a \
+                         fault may not rest on",
+                        baseline.target
+                    ),
+                );
+            }
+            if !reached && routed && !baseline.doc {
+                notes.violated(
+                    fault,
+                    format!(
+                        "the route puts {} at this fault, and that target's faulted baseline \
+                         never reached its site",
+                        baseline.target
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// What each fault site's record must mint: its identity, from the fields the record carries, and its source digest, against the digest the report holds of the file it is in (ADR 0032 decision 1).
+fn minted_faults(recording: &Recording<'_>, notes: &mut Notes<'_>) {
+    let sources = recording.document.get("sources");
+    for row in recording.part.faults {
+        minted_fault(row, sources, notes);
+    }
+}
+
+/// One required identity field, or the violation naming its absence.
+fn fault_text(row: &serde_json::Value, key: &str, notes: &mut Notes<'_>) -> Option<String> {
+    match field(row, key) {
+        Some(text) => Some(text),
+        None => {
+            notes.violated(
+                "fault",
+                format!("the fault record lacks its required {key}"),
+            );
+            None
+        }
+    }
+}
+
+/// One fault site's record held to the identity its own fields mint and the digest the report holds of its file.
+fn minted_fault(
+    row: &serde_json::Value,
+    sources: Option<&serde_json::Value>,
+    notes: &mut Notes<'_>,
+) {
+    let Some(fault) = fault_text(row, "display_id", notes) else {
+        return;
+    };
+    let text_of = |key: &str| field(row, key);
+    let number = |key: &str| match row.get(key).and_then(serde_json::Value::as_u64) {
+        Some(value) => match u32::try_from(value) {
+            Ok(small) => Some(small),
+            Err(_too_large) => None,
+        },
+        None => None,
+    };
+    let bounds = |key: &str| {
+        row.get("span")
+            .and_then(|span| span.get(key))
+            .and_then(crate::faults::small)
+    };
+    let fields = (
+        text_of("path"),
+        text_of("rule"),
+        number("rule_version"),
+        bounds("start"),
+        bounds("end"),
+        text_of("source_digest"),
+        text_of("original"),
+        text_of("replacement"),
+    );
+    let (
+        Some(path),
+        Some(rule),
+        Some(rule_version),
+        Some(start),
+        Some(end),
+        Some(source_digest),
+        Some(original),
+        Some(replacement),
+    ) = fields
+    else {
+        notes.violated(
+            &fault,
+            "the record does not carry every field its identity is minted from, so none of \
+             it can be believed"
+                .to_owned(),
+        );
+        return;
+    };
+    let Some(id) = fault_text(row, "id", notes) else {
+        return;
+    };
+    match mint((
+        path.clone(),
+        rule,
+        rule_version,
+        start,
+        end,
+        source_digest.clone(),
+        original,
+        replacement,
+    )) {
+        Ok(minted) if minted == id => {}
+        Ok(minted) => {
+            notes.violated(
+                &fault,
+                format!(
+                    "the record's fields mint the identity {minted}, and it says {id}: its \
+                     span, its source digest, its rule or one of its texts is not the one \
+                     the site was cataloged with"
+                ),
+            );
+        }
+        Err(why) => {
+            notes.violated(&fault, why.coded());
+        }
+    }
+    if !id.starts_with(&fault) || fault.len() != DISPLAY_ID_LENGTH {
+        notes.violated(
+            &fault,
+            "the short identity is not the head of the full one the record carries".to_owned(),
+        );
+    }
+    sourced_fault((&fault, &path, &source_digest), sources, notes);
+}
+
+/// One fault site's `source_digest`, held to the digest the report holds of the file it is in.
+fn sourced_fault(
+    (fault, path, source_digest): (&str, &str, &str),
+    sources: Option<&serde_json::Value>,
+    notes: &mut Notes<'_>,
+) {
+    let held = sources
+        .and_then(serde_json::Value::as_array)
+        .and_then(|sources| {
+            sources
+                .iter()
+                .find(|entry| field(entry, "path").as_deref() == Some(path))
+                .and_then(|entry| field(entry, "digest"))
+        });
+    match held {
+        Some(said) if said == source_digest => {}
+        Some(said) => {
+            notes.violated(
+                fault,
+                format!(
+                    "the record says the digest of {path} is {source_digest}, and the report \
+                     read that file at the digest {said}"
+                ),
+            );
+        }
+        None => {
+            notes.violated(
+                fault,
+                format!(
+                    "the report holds no source digest for {path}, so the record's own cannot \
+                     be held to it"
+                ),
+            );
+        }
     }
 }
 
@@ -5167,6 +5478,8 @@ struct Recording<'a> {
     document: &'a serde_json::Value,
     run_id: String,
     contract: String,
+    /// The run the whole report was read back from, where it was; a report this run established names none.
+    restated_from: Option<String>,
     targets: Vec<TargetRow>,
     mutants: Vec<MutantRow>,
     findings: Vec<FindingRow>,
@@ -5219,6 +5532,17 @@ impl<'a> Part<'a> {
     }
 }
 
+/// The run the whole report was read back from, where it was, as its provenance names it; a report established by this run names none.
+fn restated_from(
+    document: &serde_json::Value,
+) -> Result<Option<String>, crate::route::ReadCauseError> {
+    crate::route::required(
+        crate::route::required(document, "provenance", Some)?,
+        "source_run_id",
+        |said: &serde_json::Value| Some(said.as_str().map(str::to_owned)),
+    )
+}
+
 impl<'a> Recording<'a> {
     /// The rows every layer reads, each field its schema requires demanded rather than supplied.
     fn of(
@@ -5227,6 +5551,7 @@ impl<'a> Recording<'a> {
     ) -> Result<Self, crate::route::ReadCauseError> {
         use crate::route::required;
         let text = |value: &serde_json::Value| value.as_str().map(str::to_owned);
+        let restated_from = restated_from(document)?;
         let part = Part::of(document)?;
         let targets = part
             .targets
@@ -5290,6 +5615,7 @@ impl<'a> Recording<'a> {
             document,
             run_id: required(document, "run_id", text)?,
             contract: required(document, "contract", text)?,
+            restated_from,
             targets,
             mutants,
             findings,
@@ -5999,31 +6325,66 @@ fn reuse(
     if read_back.is_empty() {
         return notes.looked();
     }
+    let (restated, believed): (Vec<&MutantRow>, Vec<&MutantRow>) = read_back
+        .into_iter()
+        .partition(|mutant| mutant.read_back_from == recording.restated_from);
+    if let (false, Some(source)) = (restated.is_empty(), recording.restated_from.as_deref()) {
+        notes.unaudited(
+            "provenance",
+            format!(
+                "{} dispositions were restated with the whole report read back from {source}, \
+                 which this audit was not given, so nothing this run recorded holds them but the \
+                 sealed executions it ran again",
+                restated.len()
+            ),
+        );
+        for mutant in &restated {
+            let again: Vec<&SealedRun> = executions
+                .of(mutant)
+                .into_iter()
+                .filter_map(|ran| match ran {
+                    Ran::Native(_) => None,
+                    Ran::Sealed(run) => Some(run),
+                })
+                .collect();
+            reproduced(mutant, &again, executions.sealed, &mut notes);
+        }
+    }
     match routing {
         Some(routing) => {
-            for mutant in &read_back {
+            for mutant in &believed {
                 routed_back(mutant, routing, executions, &mut notes);
             }
-            carried_back(&read_back, routing, (beside, engines), &mut notes);
-            bodies_read_again(&read_back, routing, (beside, root), &mut notes);
+            carried_back(&believed, routing, (beside, engines), &mut notes);
+            bodies_read_again(&believed, routing, (beside, root), &mut notes);
         }
         None => notes.unaudited(
             "provenance",
             format!(
                 "{} dispositions were read back from an earlier run, and the run kept no \
                  recording of the routes it read them back under",
-                read_back.len()
+                believed.len()
             ),
         ),
     }
-    notes.unaudited(
-        "provenance",
-        format!(
-            "{} dispositions were read back from an earlier run; whether each target an exact \
-             answer rests on keeps the behaviour key it had is a fact this report does not carry",
-            read_back.len()
-        ),
-    );
+    let exact = believed
+        .iter()
+        .filter(|mutant| {
+            match routing.and_then(|routing| routing.route_of(&mutant.id, &mutant.display_id)) {
+                Some(route) => route.rule.as_deref() != Some("carried"),
+                None => true,
+            }
+        })
+        .count();
+    if exact > 0 {
+        notes.unaudited(
+            "provenance",
+            format!(
+                "{exact} dispositions were read back from an earlier run; whether each target an exact \
+                 answer rests on keeps the behaviour key it had is a fact this report does not carry"
+            ),
+        );
+    }
     notes.looked()
 }
 

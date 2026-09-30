@@ -508,7 +508,7 @@ Ten are about a place inside a file, decided by the walk:
 - `skipped-unstated-return-type` — the syntax cannot say the return type has a default, so there is no value to return instead.
 - `skipped-loop-value` — the loop decides the jump's value by what it breaks with, so the other jump has no value to carry.
 
-One is about a whole `const fn`, decided by the compiler while validation runs rather than by the walk ([ADR 0047](adr/0047-a-const-fn-is-mutated-where-nothing-evaluates-it-early.md)):
+Two keep a whole `const fn` unchanged, one decided by the compiler while validation runs and one by discovery before validation ([ADR 0047](adr/0047-a-const-fn-is-mutated-where-nothing-evaluates-it-early.md)):
 
 - `skipped-evaluated-before-run` — the compiler evaluates the function before the program runs, because a `const` or `static` initializer, a `const` block or an array length calls it, or a `const fn` that keeps its `const` for that reason does.
   The body of a `const fn` is proposed like any other, and the instrumented tree writes a `const fn` holding a guard without its `const`, together with any `const fn` that calls it and is called only while the program runs.
@@ -516,9 +516,12 @@ One is about a whole `const fn`, decided by the compiler while validation runs r
   It is not a refusal: the edit may well compile, and a test may notice it through what the compiler computed, but no guard can live where it is.
   Each round gives back at least one function's `const` or learns one call, so however long the chain, the build is never refused.
 
-Two uses of such a function are not in the build validation compiles, so it cannot see them: a documented example, which rustdoc compiles only when it runs, and cargo will not compile without running; and code behind a `#[cfg(...)]` the validated build does not enable, such as `target_os = "wasi"` for the sealed build.
-Where one of them evaluates a function the tree wrote without its `const`, that build fails with the same `E0015`: a doctest target whose baseline fails, or a sealed build the target cannot make, each of which the run already refuses or names.
-A `rust-mutants: skip <reason>` marker on the function, and on every `const fn` it calls, keeps them all `const`: a `const fn` holding no guard loses its `const` only to carry the guard of one it calls.
+- `skipped-unvalidated-const-use` — discovery cannot prove how a doctest, conditional early use or opaque expansion evaluates a linked const function.
+  A documentation code block, opaque documentation or expansion, a standard macro that may be replaced or whose arguments carry attributes, conditional early evaluation, an unavailable conditional module, or source outside the snapshot or unreadable as a file keeps the const bodies of its package and dependency closure unchanged.
+  The gate reads test-only, excluded and entered-only files too, follows package dependencies rather than guessed function names, and records the responsible source paths in each skipped candidate's trace decision.
+  This is conservative: const functions no example actually calls may be skipped too, while ordinary runtime bodies remain mutable.
+  Native all-target validation compiles `#[cfg(test)]`, so that condition alone does not trigger this gate.
+
 A site in a `const fn` carries no branch proof, no comparison and no probe, since the witness tree that vouches for them is checked before validation says which functions go without their `const`: such a mutant is run against every test that reaches it.
 
 Two are what a person wrote, and are the two to read first:

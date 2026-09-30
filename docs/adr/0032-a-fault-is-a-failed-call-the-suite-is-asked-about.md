@@ -7,25 +7,22 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 ## Status
 
-Proposed, 2026-09-24.
+Accepted, 2026-10-01.
 The dimension `faulted-v1` of the assurance plan: what a run establishes when a call the program makes fails.
-Implemented by `inject-error`, the runtime's `Injectable` and its record of where a failure went, `njutest::assure::faults` and the proofaudit `faults` layer; `absorbed` landed on 2026-09-29.
-The table says what holds each decision so far, and the list after it what still stands between it and acceptance, as a reading of the tree on 2026-09-29 found it.
+Implemented by `inject-error`, the runtime's `Injectable` and its record of where a failure went, `njutest::assure::faults` and the proofaudit `faults` layer.
+The table names the implementation and independent audit that hold each decision.
 
 | Decision | Held by |
 | --- | --- |
-| 1, a fault site is a `?` in a measured file | not held |
+| 1, a fault site is a `?` in a measured file | the fault record's rule, version, byte span, original, replacement and whole-file source digest; the proofaudit identity layer and engine audit re-mint each fault; the committed `engine-run-faulted` recording holds six accepted and two rejected sites; `syntax::a_fault_is_asked_only_where_a_runtime_can_be_called` holds const contexts and macro expansions to the walker's rules; `proofaudit::a_fault_record_whose_fields_do_not_mint_its_identity_is_refused` plants a mismatched identity |
 | 2, a fault replaces the call with its failure | the six `Injectable` implementations of the generated runtime; `execute::tests::every_error_a_fault_can_make_is_made_and_there_are_exactly_six`, which makes each of them and pins that there are six, in the native and the sealed module; the refused sites of `fixture-faulted` |
 | 3, activated like a mutant, and beside one | `Perturbing`, which has no `PartialEq`, so every stage `run_resuming` shares routes on it by an exhaustive match and a faulted session compares no reach and repairs nothing; `toolchain_faults::a_faulted_session_compares_no_reach_and_runs_nothing_again` |
-| 4, only reach decides where a fault is asked | not re-examined by the reading of 2026-09-29: `record_fault_route` records each route, and the proofaudit `faults` layer holds `unreached` to a route that reached nothing, but nothing checks that no discharge was applied to one |
-| 5, a fault has its own decisions | `FaultDecision` and `njutest::assure::faults`; the proofaudit `faults` layer, which reads a decision from the executions that asked the suite, holds `unnoticed` and `absorbed` to every reaching target, `noticed` to the first target in name order that noticed, and `fault-write-unattributed` to the attribution records; `faults::a_fault_nobody_noticed_was_put_to_every_target_that_reaches_it_and_only_its_own_runs_count`, `faults::a_fault_is_noticed_by_the_first_target_in_name_order_that_notices_it`, and the planted unsaid write of the faults sentinel |
-| 6, a survivor asked again under the fault is not a kill | the `beside` records and the proofaudit's re-derivation of them; the `why` step `observable-under-fault`, held by `toolchain_faults::why_names_a_survivor_the_suite_tells_apart_under_a_fault_observable_under_fault`; the runtime's stop on an unknown fault, which `Observation::refused` reads as never a kill, held by `execute::tests::a_process_its_runtime_ended_for_the_apparatus_is_never_a_kill` |
+| 4, only reach decides where a fault is asked | `Perturbing` keeps faults outside the mutation discharge and repair paths; each fault route's reaching is held to every target in the recorded faulted baseline, with unknown targets refused; `toolchain_faults::the_faulted_baseline_s_reach_is_recorded_so_every_route_s_reaching_holds_to_it` and the proofaudit planted mismatch; the unreached site of `fixture-faulted` |
+| 5, a fault has its own decisions | `FaultDecision` and `njutest::assure::faults`; the proofaudit `faults` layer holds each decision to its executions, every reaching target, attribution records and the recorded before/after write sets; `toolchain_faults::a_run_asked_for_faults_says_which_failed_calls_the_suite_noticed` audits eight sites, including unreached, waited and all-declined outcomes, and the absorbed call reached by two targets; the write and failure-write fixtures and planted unsaid write hold attribution |
+| 6, a survivor asked again under the fault is not a kill | transitive guard propagation, held by `instrument::a_fault_guard_is_carried_into_every_alternative_that_keeps_its_bytes`; the `beside` records and proofaudit's re-derivation of both `failed: alone` and `failed: beside`; the ignore-question toolchain run, audited against its source and recording; `report_lines::every_drawing_states_the_evidence_a_fault_gave_about_a_survivor` and the lines, HTML, SARIF and JUnit goldens; the runtime's stop on an unknown fault, which `Observation::refused` reads as never a kill |
 
-- Decision 1: the engine audit re-mints an `inject-error` row only of `rust-mutants run --operator inject-error`, and no committed engine run holds one; a fault njutest reports carries no rule, span or digest to re-mint from.
-  A `?` in a const context and one a macro expands to are held by the walker's general rules, with no fault test.
-- Decision 5: the paths written before the first fault and after the last are not recorded, so the audit holds the unattributed finding only to the paths attribution was asked about.
-- Decision 6: the evidence is drawn on the `why` page and in the JSON, and in no report drawing; `ignore-question-statement` carries nothing only because njutest selects the whole family.
-- End to end, nothing runs an unreached `?`, a waited or declined fault, a fault several targets reach, or `failed: alone`.
+Every fault toolchain run that asserts audited evidence gives proofaudit its report, trace and source root.
+The extended fixture and the ignore-question fixture hold the end-to-end decisions and drawings to those records.
 
 ## Context
 
@@ -75,13 +72,14 @@ This decision fails a call inside the program, at the place it asks whether the 
    The survivor stays a gap, and the fault dimension says what closes it: the site whose failure the suite would notice, and that no test makes fail.
    The composite rests on the instrumentation: a fault's guard whose every alternative is a fault is carried into the alternative of every mutation of the site it is a child of that keeps the call's bytes, so `RUST_MUTANTS_FAULT` can make it active inside that branch.
    The instrumenter records each pair it carried, the session reads the pair back rather than deriving it again, a request for any other pair is refused, and the runtime stops a process named an unknown fault rather than running the mutation alone.
-   A rewrite above the call's node — `ignore-question-statement` rewrites the whole statement — carries nothing, and its survivors are not asked.
+   This propagation follows retained call bytes through enclosing rewrites, including `ignore-question-statement`, which rewrites the whole statement.
+   An alternative that removes the call carries no fault guard and is not asked beside that fault.
    The faulted session holds the error-propagation mutations beside the faults for that and judges only the faults; each survivor is put beside its fault, target by target in name order, against the fault alone on the same target, and every pair of runs is recorded.
    The first target on which two pairs agree that exactly one run failed is the part's `beside` record — the `observable-under-fault` evidence — and the audit re-derives it from the recorded pairs.
 
 ## Consequences
 
-- Neither accepted survivor of `prove.rs` can gain that evidence: one is an `ignore-question-statement`, which point 6 does not ask, and the other propagates `EngineError`, which the engine does not make, so its fault is `not-put`.
+- The two accepted survivors of `prove.rs` propagate `EngineError`, which the engine does not make, so their faults are `not-put` even though point 6 supports both error-propagation rewrites.
   Both stay in `.rust-mutants.toml` with their reasons until a test fails those calls; removing them would still be the unsound claim of point 6.
 - Every `?` reached by a test costs one more execution, every surviving error-propagation mutant one more, and every fault every reaching test passed one more on each target until one does not bear out that it was absorbed; a site the compiler refuses costs a validation round and nothing after it.
 - A user's own error type is never injected.

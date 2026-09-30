@@ -1586,6 +1586,20 @@ fn planning(index: u64, plan: &[Planned], touched: &super::wire::Guarded) -> Vec
     let mut said = Vec::new();
     for planned in plan {
         let target = planned.target.as_str();
+        let documented = target.contains("/doc/")
+            && (touched.targets.contains_key(target)
+                || touched
+                    .limitations
+                    .iter()
+                    .any(|limited| limited == &format!("touch-not-recorded:{target}")));
+        if documented {
+            if planned.filter.is_some() {
+                said.push(Planning::Unreached(format!(
+                    "the plan narrows native documentation target {target} by guards that do not measure it"
+                )));
+            }
+            continue;
+        }
         let narrowed = match reaching.get(target) {
             None => {
                 said.push(Planning::Unreached(format!(

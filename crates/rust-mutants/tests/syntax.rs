@@ -364,6 +364,7 @@ fn skip_reasons_are_named_explained_and_ranked() {
             "generated-outside-workspace",
             "forbidden-lints",
             "evaluated-before-run",
+            "unvalidated-const-use",
             "let-condition",
             "open-range",
             "unstated-return-type",
@@ -599,6 +600,57 @@ fn the_families_input_exercises_every_rule_and_matches_the_golden() {
     let mut text = lines.join("\n");
     text.push('\n');
     njutest_devkit::golden::golden(&root.join("families.golden"), text.as_bytes()).expect("golden");
+}
+
+#[test]
+fn a_fault_is_asked_only_where_a_runtime_can_be_called() {
+    let source = "macro_rules! fail {\n    () => { std::fs::read_to_string(\"m\")? };\n}\npub fn plain(path: &str) -> std::io::Result<String> {\n    let text = std::fs::read_to_string(path)?;\n    fail!();\n    const PRELUDE: std::io::Result<()> = { std::fs::read_to_string(\"p\")?; Ok(()) };\n    let held = const { std::fs::read_to_string(\"c\")? };\n    let bytes = [0u8; { std::fs::read_to_string(\"a\")?.len() }];\n    let _ = (PRELUDE, held, bytes);\n    Ok(text)\n}\npub const fn sized() -> std::io::Result<u32> {\n    Ok(std::fs::read_to_string(\"f\")?.len() as u32)\n}\n";
+    let found = discover_every_rule(source);
+    assert_coherent(source, &found);
+    let asked: Vec<&str> = found
+        .candidates
+        .iter()
+        .filter(|one| one.candidate.rule.name == "inject-error")
+        .map(|one| {
+            std::str::from_utf8(&one.candidate.original).expect("the fixture is exact UTF-8")
+        })
+        .collect();
+    assert_eq!(
+        asked,
+        [
+            "std::fs::read_to_string(path)",
+            "std::fs::read_to_string(\"f\")",
+        ],
+        "a fault is asked only where a runtime can be called: not in an initializer the \
+         compiler evaluates, not in a const block, not in an array length, not from a macro, \
+         and in the body of a const fn like any other body (ADR 0047): {}",
+        render(&found).join("\n")
+    );
+    let reasons: Vec<&str> = skips(&found)
+        .into_iter()
+        .map(|(reason, _)| reason)
+        .collect();
+    for reason in ["const-context", "macro-invocation"] {
+        assert!(
+            reasons.contains(&reason),
+            "the places passed over are counted under the reason the walker's general rules \
+             give, and {reason} is among them: {reasons:?}"
+        );
+    }
+    let in_const_fn = found
+        .candidates
+        .iter()
+        .find(|one| {
+            one.candidate.rule.name == "inject-error"
+                && std::str::from_utf8(&one.candidate.original)
+                    .is_ok_and(|text| text.contains("\"f\""))
+        })
+        .expect("the const fn body's call is a site");
+    assert!(
+        in_const_fn.hint.const_fn.is_some(),
+        "the site names the const fn whose keyword the instrumented tree takes away, so the \
+         fault's guard is written into a body nothing evaluates before the program runs"
+    );
 }
 
 #[test]

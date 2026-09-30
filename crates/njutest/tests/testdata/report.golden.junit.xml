@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="fixture-workspace" tests="4" failures="2" skipped="0" time="72.000">
+  <testsuite name="targets" tests="2" failures="1" skipped="0">
+    <testcase classname="core" name="core/lib/adds::works" time="0.040">
+      <failure message="assertion failed: left == right"/>
+    </testcase>
+    <testcase classname="core" name="core/lib/adds::rounds" time="0.012"/>
+  </testsuite>
+  <testsuite name="findings" tests="1" failures="1">
+    <testcase classname="surviving-mutant" name="cccccccccccccccccccc">
+      <failure message="no test noticed the edit at crates/core/src/lib.rs:12"/>
+    </testcase>
+  </testsuite>
+  <testsuite name="evidence-under-fault" tests="1" failures="0">
+    <testcase classname="observable-under-fault" name="cccccccccccccccccccc 8c841811e491fadad887">
+      <system-out>failed=alone by=core/lib/adds::rounds</system-out>
+    </testcase>
+  </testsuite>
+  <properties>
+    <property name="schema" value="njutest-assurance-report-v1"/>
+    <property name="run_id" value="20260905t081500z-abcdef"/>
+    <property name="verdict" value="Insufficient"/>
+    <property name="commit" value="unavailable"/>
+    <property name="builds" value="default"/>
+    <property name="mutants_killed" value="0"/>
+    <property name="mutants_survived" value="1"/>
+  </properties>
+</testsuites>

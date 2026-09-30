@@ -171,7 +171,7 @@ fn a_record_this_release_did_not_write_is_refused_rather_than_trusted() {
     for record in [
         "not json",
         r#"{"schema":"rust-mutants-built-v0","members":{}}"#,
-        r#"{"schema":"rust-mutants-built-v1","members":{},"more":1}"#,
+        r#"{"schema":"rust-mutants-built-v2","members":{},"more":1}"#,
     ] {
         write(&target.join(LEDGER_NAME), record);
         let dir = BuildDir::new(target.clone(), vec![member(&tree, "a", &["a/src/lib.rs"])]);
@@ -260,5 +260,104 @@ fn a_second_directory_building_the_tree_never_makes_the_first_one_stale() {
         modified(&a) <= built,
         "the second directory has never built these bytes, and dating them to now would make \
          cargo in the first rebuild what it already built, under a test running beside it"
+    );
+}
+
+#[test]
+fn the_record_an_earlier_release_kept_is_read_as_none_so_every_member_is_compiled_again() {
+    let temp = tempfile::tempdir().expect("a directory");
+    let tree = temp.path().join("tree");
+    let target = temp.path().join("target");
+    write(&tree.join("a/src/lib.rs"), "pub fn a() {}\n");
+    write(&tree.join("b/src/lib.rs"), "pub fn b() {}\n");
+    write(
+        &target.join(LEDGER_NAME),
+        r#"{"schema":"rust-mutants-built-v1","members":{}}"#,
+    );
+    lay_out(&target);
+    BuildDir::new(
+        target.clone(),
+        vec![
+            member(&tree, "a", &["a/src/lib.rs"]),
+            member(&tree, "b", &["b/src/lib.rs"]),
+        ],
+    )
+    .settle()
+    .expect("the earlier record is read as none");
+    assert_eq!(
+        present(&target),
+        Vec::<String>::new(),
+        "that record kept no file a member read from outside its directory, so it vouches for \
+         nothing: every unit goes, and the next build writes the record this release reads"
+    );
+}
+
+/// A unit of member `name`, rooted at `tree/<name>/src/lib.rs`, that read `inputs` of the tree.
+fn unit_of(tree: &Path, name: &str, inputs: &[&str]) -> rust_mutants::cargo::Unit {
+    rust_mutants::cargo::Unit {
+        package_id: name.to_owned(),
+        target: serde_json::from_value(serde_json::json!({
+            "name": name,
+            "kind": ["lib"],
+            "src_path": tree.join(format!("{name}/src/lib.rs")),
+        }))
+        .expect("a target"),
+        test: false,
+        sources: Vec::new(),
+        inputs: inputs.iter().map(|input| tree.join(input)).collect(),
+        env: std::collections::BTreeMap::new(),
+        fresh: false,
+    }
+}
+
+#[test]
+fn a_file_a_member_read_from_outside_its_directory_moves_it_from_the_next_build_on() {
+    let temp = tempfile::tempdir().expect("a directory");
+    let tree = temp.path().join("tree");
+    let target = temp.path().join("target");
+    write(
+        &tree.join("a/src/lib.rs"),
+        "#[path = \"../../shared/util.rs\"] mod util;\n",
+    );
+    write(&tree.join("b/src/lib.rs"), "pub fn b() {}\n");
+    write(
+        &tree.join("shared/util.rs"),
+        "pub fn under(n: u8) -> bool { n <= 9 }\n",
+    );
+    let dir = BuildDir::new(
+        target.clone(),
+        vec![
+            member(&tree, "a", &["a/src/lib.rs"]),
+            member(&tree, "b", &["b/src/lib.rs"]),
+        ],
+    )
+    .rooted(tree.clone());
+    dir.settle().expect("a directory with no record settles");
+    dir.record_reads(&[
+        unit_of(&tree, "a", &["a/src/lib.rs", "a/src/../../shared/util.rs"]),
+        unit_of(&tree, "b", &["b/src/lib.rs"]),
+    ])
+    .expect("the build's reads are kept");
+    lay_out(&target);
+    dir.settle().expect("an unchanged tree settles");
+    assert_eq!(
+        present(&target).len(),
+        4,
+        "keeping what a build read moves nothing by itself"
+    );
+    write(
+        &tree.join("shared/util.rs"),
+        "pub fn under(n: u8) -> bool { n < 9 }\n",
+    );
+    dir.settle().expect("a moved read settles");
+    assert_eq!(
+        present(&target),
+        vec![
+            format!("debug/.fingerprint/b-{HASH}"),
+            format!("x86_64-unknown-linux-gnu/release/.fingerprint/b-{HASH}"),
+        ],
+        "shared/util.rs lies under neither member's directory, and the record keeps that a's \
+         unit read it, however dep-info spelled it: its bytes moved, so every unit of a goes \
+         whatever the file's time, and b, which never read it, keeps its own"
     );
 }

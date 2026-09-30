@@ -185,6 +185,9 @@ A believed record is reported like an exact one, with the run that established i
 An answer is carried only by a run that keeps what it rests on where an audit reads it again.
 njutest keeps the carried records it believed, the skeletons, the guards' record and the catalog beside each build's recording, and `cargo xtask proofaudit` derives each record's locus again from the catalog's edit for its mutant, which must be the edit the report's row says.
 Given `--root`, the audit also reads every body a carried answer rests on again from the tree, in a file the skeletons' `files` digest proves the one measured, a file only a test compiles among them, and holds the build's digest and `start` of it to those bytes.
+Native documentation targets are routed conservatively by their package rather than by guards that cannot measure them, so an unfiltered documentation target in a plan does not claim measured reach.
+A filter claiming to narrow such a target by guards is a violation.
+The audit of a carried answer with those documents and a root re-decides its source premises; the unavailable behaviour key of an exact cache answer is stated only for exact reuse.
 Only a traced run writes that recording, so a run that is not traced files its answers for a later run and carries none: `mutation::Keeping::Nowhere` refuses the lookup before any record is read.
 
 A carried record lists native executions, and keeps no sealed execution, so a carried answer is a lead and never a verdict ([ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md)).

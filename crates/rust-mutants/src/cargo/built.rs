@@ -12,8 +12,11 @@ use sha2::{Digest as _, Sha256};
 
 use super::{CargoError, CargoErrorKind};
 
-/// The schema of the record a target directory keeps of what its members were last built from.
-pub const LEDGER_SCHEMA: &str = "rust-mutants-built-v1";
+/// The schema of the record a target directory keeps of what its members were last built from: 2 since it keeps every file a member's units read from outside its directory.
+pub const LEDGER_SCHEMA: &str = "rust-mutants-built-v2";
+
+/// The schema of the record an earlier release kept, which read no file outside a member's directory: read as no record, so every member is compiled again once.
+const EARLIER_LEDGER_SCHEMA: &str = "rust-mutants-built-v1";
 
 /// The record's file name inside the target directory it describes.
 pub const LEDGER_NAME: &str = "rust-mutants-built-v1.json";
@@ -45,11 +48,12 @@ pub struct Member {
     pub files: Vec<MemberFile>,
 }
 
-/// A directory cargo builds into, with the members whose units it may hold.
+/// A directory cargo builds into, with the members whose units it may hold, and the root of the tree their files are in where a build may read a file outside every member's directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildDir {
     path: PathBuf,
     members: Vec<Member>,
+    root: Option<PathBuf>,
 }
 
 /// The record a target directory keeps: every member's files as the last build that could write its fingerprints found them.
@@ -60,19 +64,33 @@ struct Ledger {
     members: BTreeMap<String, Settled>,
 }
 
-/// What one member's files held when its fingerprints were last removed, and when that was.
+/// What one member's files held when its fingerprints were last removed, and when that was, with every file under the tree's root outside the member's directory its units read when it was last built.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Settled {
     digest: String,
     since: jiff::Timestamp,
+    reads: std::collections::BTreeSet<String>,
 }
 
 impl BuildDir {
     /// A target directory and the members a build into it may compile.
     #[must_use]
     pub const fn new(path: PathBuf, members: Vec<Member>) -> Self {
-        Self { path, members }
+        Self {
+            path,
+            members,
+            root: None,
+        }
+    }
+
+    /// The same directory, whose members' files are in the tree at `root`, so a file a member's units read from outside its directory is one its record keeps.
+    #[must_use]
+    pub fn rooted(self, root: PathBuf) -> Self {
+        Self {
+            root: Some(root),
+            ..self
+        }
     }
 
     /// The directory cargo is told to build into.
@@ -87,7 +105,94 @@ impl BuildDir {
         Self {
             path: self.path.join(name),
             members: self.members.clone(),
+            root: self.root.clone(),
         }
+    }
+
+    /// Every file of `member` a build reads: its own, and every file its units read from outside its directory when this directory last built it.
+    fn files_of(&self, member: &Member, ledger: &Ledger) -> Vec<MemberFile> {
+        let mut files = member.files.clone();
+        if let (Some(root), Some(settled)) = (&self.root, ledger.members.get(&member.name)) {
+            files.extend(settled.reads.iter().map(|rel_path| MemberFile {
+                rel_path: rel_path.clone(),
+                path: root.join(rel_path),
+            }));
+        }
+        files
+    }
+
+    /// Keeps, for every member a unit of `units` belongs to, every file under the tree's root outside its directory the unit read, so the next build compiles the member again when one of those moves, whatever its time; the record's digest of a member whose reads changed is taken again over what was just built from.
+    ///
+    /// # Errors
+    /// [`CargoErrorKind::BuildLedger`] when the record cannot be read or written, or a file it keeps cannot be read.
+    pub fn record_reads(&self, units: &[super::Unit]) -> Result<(), CargoError> {
+        let Some(root) = &self.root else {
+            return Ok(());
+        };
+        let resolved_root = super::resolved(root);
+        let relative = |path: &Path| -> Option<String> {
+            match super::resolved(path).strip_prefix(&resolved_root) {
+                Ok(relative) => match crate::id::slashed(relative) {
+                    Ok(slashed) => Some(slashed),
+                    Err(_not_relative) => None,
+                },
+                Err(_outside_the_root) => None,
+            }
+        };
+        let mut read: BTreeMap<&str, std::collections::BTreeSet<String>> = BTreeMap::new();
+        for unit in units {
+            let Some(source) = relative(&unit.target.src_path) else {
+                continue;
+            };
+            let Some(member) = self
+                .members
+                .iter()
+                .find(|member| member.files.iter().any(|file| file.rel_path == source))
+            else {
+                continue;
+            };
+            let outside = read.entry(member.name.as_str()).or_default();
+            outside.extend(
+                unit.inputs
+                    .iter()
+                    .filter_map(|input| relative(input))
+                    .filter(|rel_path| !member.files.iter().any(|file| file.rel_path == *rel_path)),
+            );
+        }
+        let ledger_path = self.path.join(LEDGER_NAME);
+        let mut ledger = read_ledger(&ledger_path)?;
+        let mut changed = false;
+        for member in &self.members {
+            let (Some(reads), Some(settled)) = (
+                read.remove(member.name.as_str()),
+                ledger.members.get(&member.name),
+            ) else {
+                continue;
+            };
+            if settled.reads == reads {
+                continue;
+            }
+            let since = settled.since;
+            let mut files = member.files.clone();
+            files.extend(reads.iter().map(|rel_path| MemberFile {
+                rel_path: rel_path.clone(),
+                path: root.join(rel_path),
+            }));
+            let digest = member_digest(&files)?;
+            ledger.members.insert(
+                member.name.clone(),
+                Settled {
+                    digest,
+                    since,
+                    reads,
+                },
+            );
+            changed = true;
+        }
+        if changed {
+            write_ledger(&self.path, &ledger_path, &ledger)?;
+        }
+        Ok(())
     }
 
     /// Makes cargo compile again every unit of a member whose files differ from what this directory last built it from, and dates every member's files back to when their bytes last moved, never forward.
@@ -101,7 +206,7 @@ impl BuildDir {
         let mut ledger = read_ledger(&ledger_path)?;
         let mut moved = Vec::new();
         for member in &self.members {
-            let digest = member_digest(member)?;
+            let digest = member_digest(&self.files_of(member, &ledger))?;
             let unchanged = ledger
                 .members
                 .get(&member.name)
@@ -124,9 +229,19 @@ impl BuildDir {
                     )
                 })?;
             for (name, digest) in moved {
-                ledger
+                let reads = ledger
                     .members
-                    .insert(name.to_owned(), Settled { digest, since });
+                    .remove(name)
+                    .map(|settled| settled.reads)
+                    .unwrap_or_default();
+                ledger.members.insert(
+                    name.to_owned(),
+                    Settled {
+                        digest,
+                        since,
+                        reads,
+                    },
+                );
             }
             write_ledger(&self.path, &ledger_path, &ledger)?;
         }
@@ -135,7 +250,7 @@ impl BuildDir {
                 continue;
             };
             let since = std::time::SystemTime::from(settled.since);
-            for file in &member.files {
+            for file in &self.files_of(member, &ledger) {
                 dated(&file.path, since)?;
             }
         }
@@ -148,13 +263,14 @@ fn ledger_error(message: String, source: io::Error) -> CargoError {
 }
 
 fn read_ledger(path: &Path) -> Result<Ledger, CargoError> {
+    let none = || Ledger {
+        schema: LEDGER_SCHEMA.to_owned(),
+        members: BTreeMap::new(),
+    };
     let text = match std::fs::read(path) {
         Ok(text) => text,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(Ledger {
-                schema: LEDGER_SCHEMA.to_owned(),
-                members: BTreeMap::new(),
-            });
+            return Ok(none());
         }
         Err(error) => {
             return Err(ledger_error(
@@ -163,6 +279,16 @@ fn read_ledger(path: &Path) -> Result<Ledger, CargoError> {
             ));
         }
     };
+    let said: serde_json::Value = crate::strictjson::decode_slice(&text).map_err(|error| {
+        CargoError::new(
+            CargoErrorKind::BuildLedger,
+            format!("{} is not a record this release writes", path.display()),
+        )
+        .with_source(error)
+    })?;
+    if said.get("schema").and_then(serde_json::Value::as_str) == Some(EARLIER_LEDGER_SCHEMA) {
+        return Ok(none());
+    }
     let ledger: Ledger = crate::strictjson::decode_slice(&text).map_err(|error| {
         CargoError::new(
             CargoErrorKind::BuildLedger,
@@ -206,9 +332,9 @@ fn write_ledger(dir: &Path, path: &Path, ledger: &Ledger) -> Result<(), CargoErr
 }
 
 /// The digest of a member's files: each path in the tree beside the digest of its bytes, or beside the word that it is gone.
-fn member_digest(member: &Member) -> Result<String, CargoError> {
+fn member_digest(files: &[MemberFile]) -> Result<String, CargoError> {
     let mut hasher = Sha256::new();
-    for file in &member.files {
+    for file in files {
         hasher.update(file.rel_path.as_bytes());
         hasher.update([0]);
         match file_digest(&file.path) {

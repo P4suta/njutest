@@ -7,9 +7,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 ## Status
 
-Proposed, 2026-09-24.
+Accepted, 2026-10-01.
 The repair [ADR 0025](0025-a-reach-that-moves-is-not-a-measurement.md) decision 5 left for the next change.
-The table says what holds each decision so far, and the list after it what still stands between it and acceptance, as a reading of the tree on 2026-09-29 found it.
+The table names the implementation and independent audit that hold each decision.
+Real native and sealed moved-reach reports are re-decided by proofaudit against their traces and source roots.
 
 | Decision | Held by |
 | --- | --- |
@@ -17,7 +18,6 @@ The table says what holds each decision so far, and the list after it what still
 | 2, the pair recorded and re-derived | the `repair` trace record, whose `by` says a native run or a sealed put and carries what the put established; the proofaudit `repair` layer's `one_sealed` and `reestablished`, which hold a sealed put to the verdict its own executions establish, to the executions the engine recorded, and to the row, with a planted defect, held by `proofaudit::a_sealed_put_again_is_held_to_the_verdict_its_own_executions_establish`; the proofaudit `repair` layer, whose `repair::derived` allows exactly what the aggregation can make of an outcome, which pairs a repair with its last touch, reads `was` as `judge` decides it, and whose `owed` holds every resting lead to a repair against each moved target and the repairs to their order; `proofaudit::a_repair_is_allowed_every_disposition_its_own_execution_can_come_to`, `a_repair_measured_again_alone_is_paired_with_the_touch_of_its_last_run`, `a_repair_touch_is_paired_with_the_repair_that_names_its_mutant_and_nothing_else`, `a_lead_resting_on_a_moved_target_that_nothing_ran_again_is_a_violation`, `repairs_out_of_the_order_the_repair_takes_are_a_violation` |
 | 3, what still rests is a finding, and a limitation otherwise | `drift::found` and `drift::repaired`; `concluded_from`, the one function every verdict is drawn from, which reads a moved reach only for a part; the proofaudit `drift` layer's `held_to_findings` and `held_to_repairs`, and `held_to_counts`, which re-derives the counts both details give; `drift::a_moved_target_nothing_rests_on_is_concluded_as_the_published_verdict_concludes_it`, `proofaudit::an_unstable_baseline_finding_counts_what_the_rows_and_routes_leave_resting`, `proofaudit::a_reach_moved_limitation_counts_the_dispositions_the_repairs_replaced`; `reach-moved` counts the dispositions run again, a hole among them, and calls none of them decided, held by `drift::a_moved_target_whose_repair_left_a_hole_says_it_was_run_again_and_not_decided` |
 | 4, a part repairs what it holds and a merge counts the rest | the part record's `repaired`, one `{ target, again }` per moved target, which `validate_repair_records` holds to the part's moved targets and rows when a report is written and read; `stated_by`, which states `reach-moved` over every part's combined drift and rows with the sum of their counts through the same `drift::repaired` a whole run uses; the proofaudit repair layer's `counted`, which holds each part's `repaired` to the repair records that replaced a disposition against each moved target, with its planted defect; the proofaudit merge rule `moved`, which re-derives the `unstable-baseline` findings and `reach-moved` limitations a merge's record stream owes from every part's drift, rows and repair counts, and its planted defect; `report_merge::a_merge_states_reach_moved_with_what_every_part_ran_again`, `report_merge::a_part_whose_repair_counts_are_not_its_moved_targets_is_refused`, `proofaudit::a_merged_stream_is_held_to_the_reach_moved_every_part_s_records_decide`, `proofaudit::a_part_s_repair_count_is_held_to_the_repairs_its_recording_holds` |
-
 
 ## Context
 

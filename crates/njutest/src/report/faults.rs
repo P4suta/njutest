@@ -112,6 +112,18 @@ pub struct FaultRecord {
     pub display_id: String,
     /// The file the `?` is in, relative to the workspace root.
     pub path: String,
+    /// The rule that proposed it, whose name is part of its identity.
+    pub rule: String,
+    /// The version of that rule, which is part of its identity too.
+    pub rule_version: u32,
+    /// The bytes of the file the call it fails covers.
+    pub span: rust_mutants::span::Span,
+    /// The lowercase hex SHA-256 of the whole file as the run read it.
+    pub source_digest: String,
+    /// The call it fails, exactly as the file spells it over `span`.
+    pub original: String,
+    /// What the call becomes under the fault.
+    pub replacement: String,
     /// The item that holds it.
     pub item: String,
     /// Where the call it fails starts.
@@ -151,6 +163,17 @@ pub enum Failed {
     Beside,
     /// The target failed with the call failing, and passed with the mutation beside it.
     Alone,
+}
+
+impl Failed {
+    /// The name a drawing spells it with.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Beside => "beside",
+            Self::Alone => "alone",
+        }
+    }
 }
 
 /// What a survivor a target told from the original only with the call at its own site failing is called: evidence it is no equivalence, in no kill count and no score (ADR 0032 decision 6).

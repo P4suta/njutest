@@ -1327,6 +1327,7 @@ impl Workspace {
             })
             .collect();
         crate::cargo::BuildDir::new(self.target_dir.clone(), members)
+            .rooted(self.snapshot.root().to_path_buf())
     }
 
     /// Ends every process this run started that is still running, having left every execution's process group, and says so in the trace.

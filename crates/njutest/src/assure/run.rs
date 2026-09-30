@@ -101,6 +101,22 @@ pub enum RunInvariantError {
         /// What the finding names.
         subject: String,
     },
+    /// A fault the phase judged is not in the catalog its identity was minted from.
+    #[error("the fault {fault} was judged and its catalog holds no site of that index")]
+    FaultSiteUncataloged {
+        /// The fault.
+        fault: String,
+    },
+    /// The text a fault site covers is not Rust source text, so no record can carry it exactly.
+    #[error("the fault {fault} has {which} text the source does not hold as UTF-8: {source}")]
+    FaultTextNotText {
+        /// The fault.
+        fault: String,
+        /// Which of its two texts it is.
+        which: &'static str,
+        /// Why the bytes are not UTF-8.
+        source: std::str::Utf8Error,
+    },
 }
 
 /// What one run was asked to do.

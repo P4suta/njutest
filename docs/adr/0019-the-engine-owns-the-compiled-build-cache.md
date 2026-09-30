@@ -58,9 +58,12 @@ The fixture reproduction is two runs of `fixture-witness-downstream` sharing a t
    That moment is older than every unit built from those bytes, since the member's older units were removed at it, and newer than every unit built from any others.
    So a file's time says what cargo needs to know whoever wrote it, and bytes the engine writes again the same, as instrumenting an unchanged tree does, compile nothing.
 4. `CompileOptions` names its target directory as a `BuildDir`, which carries the members, so no build into a shared directory can skip the settling.
-5. A directory inside another that keeps its own record, such as `witness`, `coverage` or `pristine`, is another target directory; settling the outer one passes over it.
-   The copy as it was written is checked in `pristine`, apart from the instrumented builds, because one directory given the two trees in turn would compile each of them every run.
-6. A record that cannot be read, or that is not one this release writes, is `RM1022`, rather than a record the run trusts or silently replaces.
+ 5. A directory inside another that keeps its own record, such as `witness`, `coverage` or `pristine`, is another target directory; settling the outer one passes over it.
+    The copy as it was written is checked in `pristine`, apart from the instrumented builds, because one directory given the two trees in turn would compile each of them every run.
+ 6. Since 2026-09-29 the record is `rust-mutants-built-v2`, and a member's files are also every file of the copy outside its directory its units read, which a `#[path]` can name: after each build the record keeps, from the dep-info of that build, every such file each member's units read, and the digest settling compares takes them in with the member's own.
+    A file no member's directory holds therefore moves the member that reads it, where before it moved nothing, and only a clock that disagreed with its time kept cargo from reusing what it built.
+    A `rust-mutants-built-v1` record kept no such file, so it is read as no record: every member is compiled again once, and the next build writes the record this release reads.
+ 7. A record that cannot be read, or that is not one this release writes, is `RM1022`, rather than a record the run trusts or silently replaces.
 
 ### Consequences
 

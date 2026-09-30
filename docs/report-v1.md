@@ -133,6 +133,7 @@ observers.total() = cataloged
 ```
 
 Only killed and survived mutation evidence is reusable, and a stored answer carries what it rests on: a sealed one is read back as it is, and a lead only once this run's sealing is tried and decides nothing.
+A run that reissues a whole stored report (`provenance.cached`, naming the run it read back from) marks every `killed` and `survived` row it restates with that run in its `reuse`, and counts each part's accounting again from the re-marked rows, so a reader or an audit holds those verdicts to the run that established them and asks this one only for the sealed executions it ran again.
 Model answers retain their generated source, raw export, process termination, hashes, pinned tool and backend identity so an independent audit can re-derive the affirmative answer rather than trusting a summary.
 
 Every model identity also carries one closed `crate_input` object.
@@ -207,7 +208,8 @@ The count is the part's own, because only the run that ran them again knows it; 
 
 Every part carries `faults`, one record per site a fault was asked at, in catalog order, and empty unless the run was asked for faults ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
 A fault site is a `?` in a measured file; its catalog is its own, holding the rule `inject-error` and the error-propagation mutations a fault is put beside, so `catalog_index` counts in that catalog and a `K/N` shard owns the faults whose index modulo `N` is `K - 1`, exactly as it owns mutations.
-A record carries the fault's `id` and `display_id`, its `path`, `item` and `position`, and one closed `decision`:
+A record carries the fault's `id` and `display_id`, and every field that identity is minted from, as a mutation's is: its `path`, `rule` (`inject-error`) and `rule_version`, the `span` of bytes the call covers, the `source_digest` of the whole file, the call as the file spells it (`original`) and what it becomes under the fault (`replacement`); `proofaudit` mints each identity again from them and refuses a record whose fields do not mint it.
+It also carries its `item` and `position`, and one closed `decision`:
 
 | `decision` | what it says | carries |
 | --- | --- | --- |
@@ -335,6 +337,7 @@ A `stale-expectation` or `unmatched-expectation` finding is derived from its exp
 JSON is canonical.
 Terminal output is tab-separated with the record kind first and verdict last; untrusted text is escaped.
 HTML, SARIF and JUnit carry the same audit identity and findings.
+Every drawing states a survivor's evidence under a fault, as `observable-under-fault`: the line output appends it under the survivor's own record, HTML holds a table of it, SARIF carries it as a `note` result a code-scanning reader sees beside the findings, and JUnit holds it as a passing testcase of an `evidence-under-fault` suite, counted as a test and never as a failure.
 
 ## Exit codes
 

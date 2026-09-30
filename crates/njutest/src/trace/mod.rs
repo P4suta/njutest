@@ -22,11 +22,12 @@ pub use event::SCHEMA;
 pub use event::{
     ArtifactRecord, AskedRecord, ConfirmRecord, ControlAnswer, ControlRecord, CrashAsked,
     CrashExecRecord, CrashNoticeRecord, CrashStep, CrashStepRecord, DischargeRecord, DriftRecord,
-    Event, ExecRecord, Expected, FaultAttributionRecord, FaultControlRecord, FaultExecRecord,
-    FaultFateRecord, FaultRejectedRecord, FaultRole, FaultRouteRecord, MutantExecRecord,
-    NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RepairRecord,
-    RepairedBy, ResumedRecord, ReuseRule, RouteRecord, RunAccounting, RunRecord, SealedExecRecord,
-    SentinelRecord, SiteReached, StartRecord, Unfaulted, WireExchangeRecord, WireExecRecord,
+    Event, ExecRecord, Expected, FaultAttributionRecord, FaultBaselineRecord, FaultControlRecord,
+    FaultExecRecord, FaultFateRecord, FaultRejectedRecord, FaultRole, FaultRouteRecord,
+    FaultWritesRecord, MutantExecRecord, NoteRecord, Payload, PhaseRecord, ProbeExecRecord,
+    ProgressRecord, Read, RepairRecord, RepairedBy, ResumedRecord, ReuseRule, RouteRecord,
+    RunAccounting, RunRecord, SealedExecRecord, SentinelRecord, SiteReached, StartRecord,
+    Unfaulted, WireExchangeRecord, WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{DirSink, FILE_NAME, OUTPUT_DIRECTORY_NAME, Sink};
@@ -411,9 +412,19 @@ impl Recorder {
         self.emit(Payload::FaultRoute { route: record });
     }
 
+    /// Records what one target's faulted baseline reached, before any fault is routed over it.
+    pub fn fault_baseline(&self, record: FaultBaselineRecord) {
+        self.emit(Payload::FaultBaseline { baseline: record });
+    }
+
     /// Records a fault the compiler refused.
     pub fn fault_rejected(&self, record: FaultRejectedRecord) {
         self.emit(Payload::FaultRejected { rejected: record });
+    }
+
+    /// Records the paths the tree had written before the first fault and after the last.
+    pub fn fault_writes(&self, record: FaultWritesRecord) {
+        self.emit(Payload::FaultWrites { writes: record });
     }
 
     /// Records what the original code did on the target a fault's detection is confirmed against.

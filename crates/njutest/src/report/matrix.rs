@@ -632,6 +632,7 @@ fn skipped(limitations: &[Limitation]) -> (Vec<String>, Vec<String>) {
                 | SkipReason::GeneratedOutsideWorkspace
                 | SkipReason::ForbiddenLints
                 | SkipReason::EvaluatedBeforeRun
+                | SkipReason::UnvalidatedConstUse
                 | SkipReason::LetCondition
                 | SkipReason::OpenRange
                 | SkipReason::UnstatedReturnType

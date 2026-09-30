@@ -154,7 +154,12 @@
             "beside": [],
             "crashes": [],
             "targets": [],
-            "sources": [],
+            "sources": [
+                {
+                    "path": "src/lib.rs",
+                    "digest": "13e24ebcb3280f8a8a3c4313856015665b0658a66808bcc97f51d993e8a53c1e"
+                }
+            ],
             "mutants": [],
             "findings": [],
             "limitations": [],

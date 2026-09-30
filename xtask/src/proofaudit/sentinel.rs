@@ -12,6 +12,8 @@ use super::{Layer, REPORT_FILE};
 
 /// The run the specimen report names.
 pub const RUN: &str = "20260906T101500Z-9f1c2d";
+/// The evidence identity the specimen's answer was keyed on.
+pub const IDENTITY: &str = "d4c1b0e7a2f93e6855b7c4d0a1f23e8b9c6d5a7f0e2b4c6d8a0f2e4c6b8d0a2f4";
 /// The display identity of the specimen's killed mutant.
 pub const KILLED: &str = "aaaaaaaaaaaaaaaaaaaa";
 /// The display identity of the specimen's survivor, which the one finding names.
@@ -19,7 +21,7 @@ pub const SURVIVED: &str = "bbbbbbbbbbbbbbbbbbbb";
 /// The one target the specimen run tested with.
 pub const TARGET: &str = "pkg/test/lib";
 /// The display identity of the fault a planted defect puts.
-pub const FAULTED: &str = "cccccccccccccccccccc";
+pub const FAULTED: &str = "07b38d4b4abead8b3ab4";
 /// The question about the status of the one exchange [`went_past`] holds.
 pub const ASKED: &str = "f714f108a1ce93e4cae5d149115f5f2efc4d4ceb620ccecc762f1c4b914022ed";
 
@@ -32,6 +34,7 @@ pub fn base() -> Value {
         "run_id": RUN,
         "run_kind": "scoped",
         "contract": "standard-v1",
+        "provenance": { "identity": IDENTITY, "cached": false, "source_run_id": null },
         "verdict": "INSUFFICIENT",
         "accounting": {
             "targets": { "selected": 1, "passed": 1, "failed": 0, "skipped": 0, "missing": 0 },
@@ -647,9 +650,69 @@ fn faults_planted(clean: &Perturbation) -> Vec<Perturbation> {
         },
     ]
     .into_iter()
+    .chain(faults_planted_routed(clean))
     .chain(faults_owing(clean))
     .chain(faults_fated(clean))
     .collect()
+}
+
+/// The faults layer's planted defects about what a route's reaching rests on: a baseline that reaches a site the route leaves out, and a route that puts a target at a site its baseline never reached.
+fn faults_planted_routed(clean: &Perturbation) -> Vec<Perturbation> {
+    let disagreed = |name: &'static str, route: Value, baseline: Value| Perturbation {
+        name,
+        document: with(json!({
+            "faults": [fault_site(&json!({ "decision": "unnoticed" }))],
+            "accounting": { "faults": { "sites": 1, "unnoticed": 1 } },
+            "findings": [{}, {
+                "kind": "unnoticed-fault",
+                "subject": FAULTED,
+                "detail": "nothing noticed the call failing",
+                "position": null
+            }]
+        })),
+        events: Some(
+            routes()
+                .into_iter()
+                .chain([
+                    route,
+                    baseline,
+                    json!({
+                        "type": "fault-exec",
+                        "fault": {
+                            "fault": FAULTED, "role": "first", "target": TARGET, "args": [],
+                            "outcome": "survived", "duration_ms": 5, "alone": false
+                        }
+                    }),
+                    json!({
+                        "type": "fault",
+                        "fault": fault_site(&json!({ "decision": "unnoticed" }))
+                    }),
+                ])
+                .collect(),
+        ),
+        ..clean.clone()
+    };
+    vec![
+        disagreed(
+            "a fault route that leaves out a target its faulted baseline says reached the site",
+            json!({ "type": "fault-route", "route": { "fault": FAULTED, "reaching": [] } }),
+            json!({
+                "type": "fault-baseline",
+                "baseline": { "target": TARGET, "doc": false, "reached": [0] }
+            }),
+        ),
+        disagreed(
+            "a fault route that puts a target at a site its faulted baseline never reached",
+            json!({
+                "type": "fault-route",
+                "route": { "fault": FAULTED, "reaching": [TARGET] }
+            }),
+            json!({
+                "type": "fault-baseline",
+                "baseline": { "target": TARGET, "doc": false, "reached": [] }
+            }),
+        ),
+    ]
 }
 
 /// The faults layer's planted defects about where a failure went: an absorbed fault whose run again read the failure, and an unnoticed one whose every run again dropped it unread.
@@ -783,6 +846,7 @@ fn faults_owing(clean: &Perturbation) -> Vec<Perturbation> {
 
 /// A route and an execution for each mutant of [`base`], then one fault the one target ran to `outcome`, and the site the run said it came to `decision`.
 fn fault_recorded(decision: &Value, outcome: &str) -> Vec<Value> {
+    let fault = fault_site(decision);
     routes()
         .into_iter()
         .chain([
@@ -795,19 +859,63 @@ fn fault_recorded(decision: &Value, outcome: &str) -> Vec<Value> {
             }),
             json!({
                 "type": "fault",
-                "fault": fault_site(decision)
+                "fault": fault
             }),
         ])
         .collect()
 }
 
 /// One fault site, decided `decision`.
-fn fault_site(decision: &Value) -> Value {
+///
+/// # Panics
+/// Only where its fixed fields stop fitting the length prefix they are minted with, which is a change to the engine's identity framing.
+#[must_use]
+#[expect(
+    clippy::expect_used,
+    reason = "a sentinel's fixed fields always fit, and a test reads a failure to as a setup failure"
+)]
+pub fn fault_site(decision: &Value) -> Value {
+    let original = "read(path)";
+    let replacement = "::core::result::Result::Err(rust_mutants::injected())";
+    let span = (16_u32, 26_u32);
+    let source_digest = {
+        use sha2::Digest as _;
+        hex::encode(sha2::Sha256::digest(b"pub fn load() {}"))
+    };
+    let id = {
+        use sha2::Digest as _;
+        let mut hasher = sha2::Sha256::new();
+        for field in [
+            crate::engineaudit::ID_DOMAIN,
+            "src/lib.rs",
+            "inject-error",
+            "1",
+            "16",
+            "26",
+            source_digest.as_str(),
+            &hex::encode(sha2::Sha256::digest(original.as_bytes())),
+            &hex::encode(sha2::Sha256::digest(replacement.as_bytes())),
+        ] {
+            hasher.update(
+                u32::try_from(field.len())
+                    .expect("a short field")
+                    .to_be_bytes(),
+            );
+            hasher.update(field.as_bytes());
+        }
+        hex::encode(hasher.finalize())
+    };
     json!({
         "catalog_index": 0,
-        "id": "c".repeat(64),
+        "id": id,
         "display_id": FAULTED,
         "path": "src/lib.rs",
+        "rule": "inject-error",
+        "rule_version": 1,
+        "span": { "start": span.0, "end": span.1 },
+        "source_digest": source_digest,
+        "original": original,
+        "replacement": replacement,
         "item": "load",
         "position": { "line": 13, "column": 16, "character_column": 16 },
         "decision": decision

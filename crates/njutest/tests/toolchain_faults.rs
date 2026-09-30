@@ -84,6 +84,39 @@ fn part(fixture: &Fixture) -> serde_json::Value {
     whole["report"]["builds"][0]["parts"][0].clone()
 }
 
+/// Re-decides the latest faulted run from its own report, source tree and recording.
+fn audited(fixture: &Fixture) {
+    let run = njutest::app::reports::pointed_at(&fixture.root, njutest::app::reports::Index::Any)
+        .expect("the index is readable")
+        .expect("the index names a run");
+    let output = njutest_devkit::paths::command(&njutest_devkit::paths::cargo_binary())
+        .args(["xtask", "proofaudit"])
+        .arg(
+            fixture
+                .root
+                .join(njutest::config::DEFAULT_REPORTS_DIRECTORY)
+                .join("runs")
+                .join(run.as_str()),
+        )
+        .arg("--trace")
+        .arg(fixture.root.join(".njutest/trace").join(run.as_str()))
+        .arg("--root")
+        .arg(&fixture.root)
+        .current_dir(njutest_devkit::paths::workspace_root())
+        .output()
+        .expect("the audit starts");
+    let audit = njutest_devkit::process::strict_utf8(&output.stdout);
+    assert!(
+        output.status.success() && audit.contains("; 0 violations"),
+        "the proof audit re-decides the faulted run: {audit}\n{}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    assert!(
+        !audit.contains("violation:") && !audit.contains("unaudited:"),
+        "every proof layer is held, including the faults and the evidence beside them: {audit}"
+    );
+}
+
 /// The runner's recording of the run the index points at, read back.
 fn recording(fixture: &Fixture) -> Vec<njutest::trace::Event> {
     let run = njutest::app::reports::pointed_at(&fixture.root, njutest::app::reports::Index::Any)
@@ -98,6 +131,57 @@ fn recording(fixture: &Fixture) -> Vec<njutest::trace::Event> {
         std::fs::File::open(&stream).expect("the recording"),
     ))
     .expect("the recording reads back")
+}
+
+/// The fault records these tests read, with every other trace variant left explicit.
+enum FaultEvent<'a> {
+    Baseline(&'a njutest::trace::FaultBaselineRecord),
+    Route(&'a njutest::trace::FaultRouteRecord),
+    Fate(&'a njutest::trace::FaultFateRecord),
+    Writes(&'a njutest::trace::FaultWritesRecord),
+    Other,
+}
+
+const fn fault_event(payload: &njutest::trace::Payload) -> FaultEvent<'_> {
+    use njutest::trace::Payload;
+    match payload {
+        Payload::FaultBaseline { baseline } => FaultEvent::Baseline(baseline),
+        Payload::FaultRoute { route } => FaultEvent::Route(route),
+        Payload::FaultFate { fate } => FaultEvent::Fate(fate),
+        Payload::FaultWrites { writes } => FaultEvent::Writes(writes),
+        Payload::RunStart { .. }
+        | Payload::PhaseStart { .. }
+        | Payload::PhaseEnd { .. }
+        | Payload::Exec { .. }
+        | Payload::Progress { .. }
+        | Payload::Artifact { .. }
+        | Payload::Route { .. }
+        | Payload::MutantExec { .. }
+        | Payload::SealedExec { .. }
+        | Payload::FaultExec { .. }
+        | Payload::FaultRejected { .. }
+        | Payload::FaultAttribution { .. }
+        | Payload::FaultControl { .. }
+        | Payload::Fault { .. }
+        | Payload::Beside { .. }
+        | Payload::BesideRun { .. }
+        | Payload::CrashExec { .. }
+        | Payload::CrashStep { .. }
+        | Payload::Crash { .. }
+        | Payload::ProbeExec { .. }
+        | Payload::WireExchange { .. }
+        | Payload::WireExec { .. }
+        | Payload::Sentinel { .. }
+        | Payload::Model { .. }
+        | Payload::Drift { .. }
+        | Payload::Control { .. }
+        | Payload::Confirm { .. }
+        | Payload::Resumed { .. }
+        | Payload::Repair { .. }
+        | Payload::Knob { .. }
+        | Payload::Note { .. }
+        | Payload::RunEnd { .. } => FaultEvent::Other,
+    }
 }
 
 fn decisions(part: &serde_json::Value) -> Vec<(u64, String)> {
@@ -136,9 +220,106 @@ fn named<'a>(
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the evidence is checked where it is drawn, one drawing at a time"
+)]
+fn a_surviving_ignore_question_statement_is_told_apart_by_the_call_failing_beside_it() {
+    let fixture = fixture("fixture-faulted-ignore");
+    let output = verify(&fixture, &["--faults", "--trace"]);
+    let part = part(&fixture);
+    let survivors: Vec<&serde_json::Value> = part["mutants"]
+        .as_array()
+        .expect("the mutants")
+        .iter()
+        .filter(|mutant| {
+            mutant["rule"] == "ignore-question-statement"
+                && mutant["decision"]["outcome"] == "survived"
+        })
+        .collect();
+    assert_eq!(
+        survivors.len(),
+        1,
+        "deleting the `?` of `leave` leaves the failure unread and the answer `Ok`, so nothing \
+         notices: {part}\n{}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let survivor = survivors[0]["display_id"].as_str().expect("a survivor");
+    let evidence: Vec<&serde_json::Value> = part["beside"]
+        .as_array()
+        .expect("the evidence beside a fault")
+        .iter()
+        .filter(|beside| beside["mutant"] == survivor)
+        .collect();
+    assert_eq!(
+        evidence.len(),
+        1,
+        "the survivor gains its evidence from the call at its own site failing, which is what \
+         makes it no equivalence (ADR 0032 decision 6): {part}"
+    );
+    assert_eq!(
+        (
+            evidence[0]["failed"].as_str(),
+            part["faults"]
+                .as_array()
+                .expect("the fault records")
+                .iter()
+                .find(|fault| fault["display_id"] == evidence[0]["fault"])
+                .and_then(|fault| fault["decision"]["decision"].as_str())
+        ),
+        (Some("alone"), Some("noticed")),
+        "the fault alone fails the write and the `?` answers it, and beside the deletion nobody \
+         reads the failure: {part}"
+    );
+    let run = njutest::app::reports::pointed_at(&fixture.root, njutest::app::reports::Index::Any)
+        .expect("the index is readable")
+        .expect("the index names a run");
+    let said = |name: &str| {
+        std::fs::read_to_string(
+            fixture
+                .root
+                .join(njutest::config::DEFAULT_REPORTS_DIRECTORY)
+                .join("runs")
+                .join(run.as_str())
+                .join(name),
+        )
+        .expect("the run publishes every drawing")
+    };
+    let fault = evidence[0]["fault"].as_str().expect("the fault");
+    let lines = said(njutest::report::lines::FILE_NAME);
+    assert!(
+        lines.contains("observable_under_fault=") && lines.contains(fault),
+        "the lines drawing states the evidence under the survivor it belongs to: {lines}"
+    );
+    let html = said(njutest::app::reports::HTML_NAME);
+    assert!(
+        html.contains("Evidence under a fault") && html.contains(fault),
+        "the HTML drawing states it too: {html}"
+    );
+    let sarif = said(njutest::app::reports::SARIF_NAME);
+    assert!(
+        sarif.contains("observable-under-fault") && sarif.contains(survivor),
+        "the SARIF drawing carries it as a note a code-scanning reader sees: {sarif}"
+    );
+    let junit = said(njutest::app::reports::JUNIT_NAME);
+    let target = evidence[0]["target"].as_str().expect("the target");
+    assert!(
+        junit.contains("evidence-under-fault")
+            && junit.contains(fault)
+            && junit.contains(&format!("failed=alone by={target}")),
+        "the JUnit drawing carries it as a passing testcase beside the findings: {junit}"
+    );
+    audited(&fixture);
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the fixture's fault decisions, identity fields and multi-target evidence are held together"
+)]
 fn a_run_asked_for_faults_says_which_failed_calls_the_suite_noticed() {
     let fixture = fixture("fixture-faulted");
-    let output = verify(&fixture, &["--faults"]);
+    let output = verify(&fixture, &["--faults", "--trace"]);
     let part = part(&fixture);
     assert_eq!(
         decisions(&part),
@@ -148,6 +329,9 @@ fn a_run_asked_for_faults_says_which_failed_calls_the_suite_noticed() {
             (33, "absorbed".to_owned()),
             (46, "not-put".to_owned()),
             (57, "not-put".to_owned()),
+            (66, "unreached".to_owned()),
+            (75, "waited".to_owned()),
+            (84, "undecided".to_owned()),
         ],
         "{part}\n{}",
         njutest_devkit::process::strict_utf8(&output.stderr)
@@ -167,7 +351,7 @@ fn a_run_asked_for_faults_says_which_failed_calls_the_suite_noticed() {
     );
     assert!(
         njutest_devkit::process::strict_utf8(&output.stdout).contains(
-            "FAULTS\tsites=5\tnoticed=2\tunnoticed=0\tabsorbed=1\tunreached=0\twaited=0\tundecided=0\tnot_put=2"
+            "FAULTS\tsites=8\tnoticed=2\tunnoticed=0\tabsorbed=1\tunreached=1\twaited=1\tundecided=1\tnot_put=2"
         ),
         "the run says what the faults came to where it says what the mutations did: {}",
         njutest_devkit::process::strict_utf8(&output.stdout)
@@ -180,11 +364,78 @@ fn a_run_asked_for_faults_says_which_failed_calls_the_suite_noticed() {
     assert_eq!(
         part["accounting"]["faults"],
         serde_json::json!({
-            "sites": 5, "noticed": 2, "unnoticed": 0, "absorbed": 1, "unreached": 0,
-            "waited": 0, "undecided": 0, "not_put": 2
+            "sites": 8, "noticed": 2, "unnoticed": 0, "absorbed": 1, "unreached": 1,
+            "waited": 1, "undecided": 1, "not_put": 2
         }),
         "{part}"
     );
+    for fault in part["faults"].as_array().expect("the fault records") {
+        let path = fault["path"].as_str().expect("a path");
+        assert_eq!(
+            (
+                fault["rule"].as_str(),
+                fault["rule_version"].as_u64(),
+                fault["span"]["start"].is_u64(),
+                fault["span"]["end"].is_u64(),
+                fault["original"]
+                    .as_str()
+                    .is_some_and(|text| !text.is_empty()),
+                fault["replacement"]
+                    .as_str()
+                    .is_some_and(|text| !text.is_empty())
+            ),
+            (Some("inject-error"), Some(1), true, true, true, true),
+            "a fault record carries every field its identity is minted from, as a mutation's \
+             does: {fault}"
+        );
+        let said = part["sources"]
+            .as_array()
+            .expect("the run's source digests")
+            .iter()
+            .find(|entry| entry["path"].as_str() == Some(path));
+        assert_eq!(
+            fault["source_digest"],
+            said.expect("its file is among the run's sources")["digest"],
+            "and the digest of the whole file it is in, as the run read it: {fault}"
+        );
+    }
+    let declined = part["faults"]
+        .as_array()
+        .expect("the faults")
+        .iter()
+        .find(|fault| fault["item"] == "refused")
+        .expect("the fault no test measured");
+    assert!(
+        declined["decision"]["why"].as_str().is_some_and(|why| {
+            why.contains("every test that reached it declined to measure")
+                && why.contains("this machine does not measure a failed read of the manifest")
+        }),
+        "all-declined is undecided for the test's stated reason: {declined}"
+    );
+    let measured = part["faults"]
+        .as_array()
+        .expect("the faults")
+        .iter()
+        .find(|fault| fault["item"] == "measured")
+        .expect("the fault two targets absorb")["display_id"]
+        .as_str()
+        .expect("its short id");
+    let fated: Vec<String> = recording(&fixture)
+        .iter()
+        .filter_map(|event| match fault_event(&event.payload) {
+            FaultEvent::Fate(fate) => (fate.fault == measured).then(|| fate.target.clone()),
+            FaultEvent::Baseline(..)
+            | FaultEvent::Route(..)
+            | FaultEvent::Writes(..)
+            | FaultEvent::Other => None,
+        })
+        .collect();
+    assert_eq!(
+        fated,
+        vec!["fixture-faulted/test/calls", "fixture-faulted/test/second"],
+        "an absorbed fault is asked again of every target that reached it"
+    );
+    audited(&fixture);
 }
 
 #[test]
@@ -223,6 +474,82 @@ fn a_faulted_session_compares_no_reach_and_runs_nothing_again() {
 }
 
 #[test]
+fn the_faulted_baseline_s_reach_is_recorded_so_every_route_s_reaching_holds_to_it() {
+    let fixture = fixture("fixture-faulted");
+    let output = verify(&fixture, &["--faults", "--trace"]);
+    let part = part(&fixture);
+    let events = recording(&fixture);
+    let index_of = |fault: &str| -> Option<u64> {
+        part["faults"]
+            .as_array()
+            .expect("the fault records")
+            .iter()
+            .find(|row| row["display_id"].as_str() == Some(fault))?["catalog_index"]
+            .as_u64()
+    };
+    let baselines: Vec<(&str, bool, &Vec<u32>)> = events
+        .iter()
+        .filter_map(|event| match fault_event(&event.payload) {
+            FaultEvent::Baseline(baseline) => {
+                Some((baseline.target.as_str(), baseline.doc, &baseline.reached))
+            }
+            FaultEvent::Route(..)
+            | FaultEvent::Fate(..)
+            | FaultEvent::Writes(..)
+            | FaultEvent::Other => None,
+        })
+        .collect();
+    assert!(
+        !baselines.is_empty(),
+        "the run records what each target's faulted baseline reached before routing a fault \
+         over it, so a route's reaching is held to the baseline and not to the route's own word: \
+         {}\n{}",
+        events
+            .iter()
+            .map(|event| event.payload.type_name())
+            .collect::<Vec<&str>>()
+            .join(", "),
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let routed_faults: Vec<(&str, &Vec<String>)> = events
+        .iter()
+        .filter_map(|event| match fault_event(&event.payload) {
+            FaultEvent::Route(route) => Some((route.fault.as_str(), &route.reaching)),
+            FaultEvent::Baseline(..)
+            | FaultEvent::Fate(..)
+            | FaultEvent::Writes(..)
+            | FaultEvent::Other => None,
+        })
+        .collect();
+    assert_eq!(
+        routed_faults.len(),
+        6,
+        "every fault the run put was routed first: {routed_faults:?}"
+    );
+    for (fault, reaching) in routed_faults {
+        let index = u32::try_from(index_of(fault).expect("a routed fault is one the report holds"))
+            .expect("a catalog index fits");
+        for (target, doc, sites) in &baselines {
+            let (reached, routed) = (
+                sites.contains(&index),
+                reaching.iter().any(|one| one == target),
+            );
+            assert!(
+                !reached || routed,
+                "the faulted baseline of {target} reached {fault}'s site and the route leaves it \
+                 out, which is a discharge or a narrowed route, exactly what a fault may not \
+                 rest on (ADR 0032 decision 4)"
+            );
+            assert!(
+                !routed || reached || *doc,
+                "the route puts {target} at {fault} and that target's faulted baseline never \
+                 reached its site, which only a documentation target may be"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_run_not_asked_for_faults_puts_none() {
     let fixture = fixture("fixture-faulted");
     let output = verify(&fixture, &[]);
@@ -241,6 +568,64 @@ fn a_run_not_asked_for_faults_puts_none() {
         named(&part, "findings", "kind", "unnoticed-fault").is_empty(),
         "no fault was put, so none went unnoticed: {part}"
     );
+}
+
+#[test]
+fn the_paths_written_before_and_after_the_faults_are_recorded_so_the_unattributed_rests_on_them() {
+    let fixture = fixture("fixture-faulted-failure-writes");
+    let output = verify(&fixture, &["--faults", "--trace"]);
+    let part = part(&fixture);
+    let events = recording(&fixture);
+    let written: Vec<&njutest::trace::FaultWritesRecord> = events
+        .iter()
+        .filter_map(|event| match fault_event(&event.payload) {
+            FaultEvent::Writes(writes) => Some(writes),
+            FaultEvent::Baseline(..)
+            | FaultEvent::Route(..)
+            | FaultEvent::Fate(..)
+            | FaultEvent::Other => None,
+        })
+        .collect();
+    assert_eq!(
+        written.len(),
+        1,
+        "the run states the paths written before the first fault and after the last once, so \
+         the audit holds the unattributed finding to the paths the phase left written and not \
+         only to the ones attribution asked about: {}\n{}",
+        events
+            .iter()
+            .map(|event| event.payload.type_name())
+            .collect::<Vec<&str>>()
+            .join(", "),
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let before: std::collections::BTreeSet<&str> =
+        written[0].before.iter().map(String::as_str).collect();
+    let after: std::collections::BTreeSet<&str> =
+        written[0].after.iter().map(String::as_str).collect();
+    let broke: Vec<&str> = after.difference(&before).copied().collect();
+    assert_eq!(
+        broke,
+        vec!["regressions.txt"],
+        "what the phase left written is what the tests wrote as they failed: {part}"
+    );
+    let unattributed: Vec<&serde_json::Value> = named(&part, "findings", "kind", "not-measured")
+        .into_iter()
+        .filter(|finding| finding["subject"] == "fault-write-unattributed")
+        .collect();
+    assert_eq!(
+        unattributed.len(),
+        1,
+        "and the finding names exactly what broke: {part}"
+    );
+    assert!(
+        unattributed[0]["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("regressions.txt"),
+        "{part}"
+    );
+    audited(&fixture);
 }
 
 #[test]
@@ -444,7 +829,7 @@ fn a_survivor_the_suite_tells_apart_only_under_a_fault_is_evidence_and_never_a_k
         "the evidence is attached to a survivor and leaves it one: no test failed that call"
     );
     assert_eq!(
-        part["accounting"]["mutants"]["killed"], 5,
+        part["accounting"]["mutants"]["killed"], 6,
         "and it is in no kill count: {part}"
     );
 }

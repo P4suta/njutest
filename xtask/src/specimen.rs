@@ -137,13 +137,14 @@ pub(crate) fn completed(producer: Producer, payload: &mut serde_json::Map<String
 }
 
 /// The keys of a flat specimen that belong to the report rather than to its one part.
-const ENVELOPE: [&str; 6] = [
+const ENVELOPE: [&str; 7] = [
     "schema",
     "schema_version",
     "run_id",
     "run_kind",
     "contract",
     "scope",
+    "provenance",
 ];
 
 /// The keys of a flat specimen no complete report holds: what a run concluded is the recording's `run-end`, never the document's.

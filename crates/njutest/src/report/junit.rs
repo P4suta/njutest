@@ -26,7 +26,9 @@ pub fn document(report: &Report) -> Result<String, JunitError> {
     let conclusion = report.conclusion()?;
     let targets = &conclusion.accounting.targets;
     let findings = super::count_of("JUnit findings", conclusion.findings.len())?;
+    let evidence = super::count_of("JUnit evidence", conclusion.beside.len())?;
     let tests = super::add("JUnit tests", targets.selected, findings)?;
+    let tests = super::add("JUnit tests", tests, evidence)?;
     let target_failures = super::add("JUnit target failures", targets.failed, targets.missing)?;
     let failures = super::add("JUnit failures", target_failures, findings)?;
     let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -49,6 +51,7 @@ pub fn document(report: &Report) -> Result<String, JunitError> {
     }
     writeln!(out, "  </testsuite>")?;
     write_findings(&mut out, &conclusion)?;
+    write_besides(&mut out, &conclusion)?;
     writeln!(out, "  <properties>")?;
     for (name, value) in properties(report, &conclusion) {
         writeln!(
@@ -115,6 +118,32 @@ fn write_findings(out: &mut String, report: &super::Conclusion) -> Result<(), st
             escape(&finding.kind_name()),
             escape(&finding.subject),
             escape(&finding.detail)
+        )?;
+    }
+    writeln!(out, "  </testsuite>")?;
+    Ok(())
+}
+
+/// Every survivor a target told apart only with the call at its own site failing, as passing testcases: evidence a reader sees beside the findings, never a failure of the run.
+fn write_besides(out: &mut String, report: &super::Conclusion) -> Result<(), std::fmt::Error> {
+    if report.beside.is_empty() {
+        return Ok(());
+    }
+    writeln!(
+        out,
+        "  <testsuite name=\"evidence-under-fault\" tests=\"{}\" failures=\"0\">",
+        report.beside.len()
+    )?;
+    for evidence in &report.beside {
+        writeln!(
+            out,
+            "    <testcase classname=\"{}\" name=\"{} {}\">\n      \
+             <system-out>failed={} by={}</system-out>\n    </testcase>",
+            escape(super::faults::OBSERVABLE_UNDER_FAULT),
+            escape(&evidence.mutant),
+            escape(&evidence.fault),
+            evidence.failed.name(),
+            escape(&evidence.target)
         )?;
     }
     writeln!(out, "  </testsuite>")?;

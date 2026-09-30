@@ -438,6 +438,11 @@ fn fixture_faulted() {
 }
 
 #[test]
+fn fixture_faulted_ignore() {
+    holds("fixture-faulted-ignore");
+}
+
+#[test]
 fn fixture_faulted_failure_writes() {
     holds("fixture-faulted-failure-writes");
 }

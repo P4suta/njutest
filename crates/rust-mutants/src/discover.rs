@@ -290,7 +290,6 @@ pub fn discover(
     options: &DiscoverOptions<'_>,
     trace: &Recorder,
 ) -> Result<Discovery, DiscoverError> {
-    let root = input.root;
     let assigner = assigned(input, options)?;
     let (unassigned, barred) = assigner.unassigned(input.metadata)?;
     let assignments = assigner.assignments;
@@ -308,8 +307,12 @@ pub fn discover(
         skips.extend(report.skips.iter().cloned());
         files.push(report);
     }
-    let (read, fragments, entered_only) =
-        walked(root, (&assignments, &unassigned), &options.selection)?;
+    let (read, fragments, entered_only, const_uses) = walked(
+        input,
+        &assigner.physical_root,
+        (&assignments, &unassigned),
+        &options.selection,
+    )?;
     for ((path, discovery), assignment) in read.into_iter().zip(assignments.values()) {
         let mut discovery = match discovery {
             Ok(discovery) => discovery,
@@ -325,24 +328,20 @@ pub fn discover(
         let role = skipped(path, assignment.role, options, &mut marked_only);
         if role.is_none() {
             configure(
-                root,
+                input.root,
                 &mut discovery,
                 &options.skips,
                 (&mut configured, &mut anchored),
             )?;
+            if let Some(uses) = const_uses.get(&assignment.package) {
+                keep_const(&mut discovery, uses)?;
+            }
         }
         let report = report(&discovery, &assignment.package, role)?;
         trace.discover_file(record(&discovery, &report)?);
         if role.is_none() {
             claimed(path, &discovery.annotations, trace, &mut claims);
-            decisions.extend(discovery.decisions.iter().map(|one| Decided {
-                path: path.clone(),
-                position: one.position,
-                rule: one.rule.clone(),
-                form: one.form,
-                skip: one.skip,
-                note: one.note.clone(),
-            }));
+            decisions.extend(decisions_of(path, &discovery.decisions));
             for found in discovery.candidates {
                 builder.add(found.candidate.clone())?;
                 candidates.push(Located {
@@ -371,22 +370,43 @@ pub fn discover(
     })
 }
 
+/// The final per-file decisions, including workspace refusals, with the path each report and trace names.
+fn decisions_of<'a>(
+    path: &'a str,
+    decisions: &'a [crate::syntax::Decision],
+) -> impl Iterator<Item = Decided> + 'a {
+    decisions.iter().map(move |one| Decided {
+        path: path.to_owned(),
+        position: one.position,
+        rule: one.rule.clone(),
+        form: one.form,
+        skip: one.skip,
+        note: one.note.clone(),
+    })
+}
+
 /// Every file the units assigned, walked, every file another file pastes in where an expression goes, and the files of `unassigned` the instrumenter can rewrite for entry.
 type Walked<'a> = (
     Vec<(&'a String, Result<FileDiscovery, DiscoverError>)>,
     BTreeSet<String>,
     BTreeMap<String, String>,
+    ConstUses,
 );
+
+/// The files that may evaluate an unvalidated const fn, by each linked member package that must keep its const bodies unchanged.
+type ConstUses = BTreeMap<String, BTreeSet<String>>;
 
 /// Walks every file of `assignments` and of `unassigned` once, and says which are pasted in where an expression goes.
 ///
 /// # Errors
 /// A file of `unassigned` that could not be read at all.
 fn walked<'a>(
-    root: &Path,
+    input: &Input<'_>,
+    physical_root: &Path,
     (assignments, unassigned): (&'a BTreeMap<String, Assignment>, &BTreeMap<String, String>),
     selection: &Selection<'_>,
 ) -> Result<Walked<'a>, DiscoverError> {
+    let root = input.root;
     let read: Vec<(&String, Result<FileDiscovery, DiscoverError>)> = assignments
         .keys()
         .map(|path| (path, walk(root, path, selection)))
@@ -400,8 +420,120 @@ fn walked<'a>(
             .map(|(_, discovery)| discovery)
             .chain(entering.iter().map(|(_, _, discovery)| discovery)),
     );
+    let inspected = read
+        .iter()
+        .map(|(path, discovery)| (path, discovery))
+        .chain(
+            entering
+                .iter()
+                .map(|(path, _, discovery)| (path, discovery)),
+        )
+        .map(|(path, discovery)| {
+            let unvalidated = match discovery {
+                Ok(discovery) => discovery.unvalidated_const_use,
+                Err(_) => true,
+            };
+            ((*path).clone(), unvalidated)
+        })
+        .collect();
+    let const_uses = unvalidated_const_uses(input, physical_root, selection, inspected)?;
     let entered_only = entered_only(entering, &fragments)?;
-    Ok((read, fragments, entered_only))
+    Ok((read, fragments, entered_only, const_uses))
+}
+
+/// Every member linked into a unit whose source can evaluate a const fn outside native validation, including files selection or a structural role barred from mutation.
+fn unvalidated_const_uses(
+    input: &Input<'_>,
+    physical_root: &Path,
+    selection: &Selection<'_>,
+    mut inspected: BTreeMap<String, bool>,
+) -> Result<ConstUses, DiscoverError> {
+    let mut uses: ConstUses = BTreeMap::new();
+    for unit in input.units {
+        if !input.metadata.workspace_members.contains(&unit.package_id) {
+            continue;
+        }
+        for source in &unit.sources {
+            let (path, unvalidated) = match relative(input.root, physical_root, source) {
+                Ok(path) => {
+                    let unvalidated = match inspected.get(&path) {
+                        Some(unvalidated) => *unvalidated,
+                        None => {
+                            let unvalidated = match walk(input.root, &path, selection) {
+                                Ok(discovery) => discovery.unvalidated_const_use,
+                                Err(DiscoverError::Parse(_)) => true,
+                                Err(error) => return Err(error),
+                            };
+                            inspected.insert(path.clone(), unvalidated);
+                            unvalidated
+                        }
+                    };
+                    (path, unvalidated)
+                }
+                Err(DiscoverError::OutsideRoot { .. }) => (generated_name(source)?, true),
+                Err(error) => return Err(error),
+            };
+            if !unvalidated {
+                continue;
+            }
+            for id in input.metadata.closure(&unit.package_id) {
+                if let Some(package) = input.metadata.package(&id) {
+                    uses.entry(package.name.clone())
+                        .or_default()
+                        .insert(path.clone());
+                }
+            }
+        }
+    }
+    Ok(uses)
+}
+
+/// Passes over only const-body candidates and keeps their reason, count and source evidence aligned.
+fn keep_const(discovery: &mut FileDiscovery, uses: &BTreeSet<String>) -> Result<(), DiscoverError> {
+    let hidden: BTreeSet<(u32, String)> = discovery
+        .candidates
+        .iter()
+        .filter(|found| found.hint.const_fn.is_some())
+        .map(|found| {
+            (
+                found.candidate.span.start,
+                found.candidate.rule.name.to_owned(),
+            )
+        })
+        .collect();
+    if hidden.is_empty() {
+        return Ok(());
+    }
+    let count = discovery
+        .candidates
+        .iter()
+        .filter(|found| found.hint.const_fn.is_some())
+        .count();
+    let count =
+        u32::try_from(count).map_err(|_overflow| DiscoverError::CandidateCountTooLarge {
+            path: discovery.path.clone(),
+            count,
+        })?;
+    for decision in &mut discovery.decisions {
+        if hidden.contains(&(decision.offset, decision.rule.clone())) {
+            decision.form = None;
+            decision.skip = Some(SkipReason::UnvalidatedConstUse);
+            decision.note = Some(format!(
+                "unvalidated const use in {}",
+                uses.iter().cloned().collect::<Vec<String>>().join(", ")
+            ));
+        }
+    }
+    discovery
+        .candidates
+        .retain(|found| found.hint.const_fn.is_none());
+    discovery.skips.push(Skip {
+        reason: SkipReason::UnvalidatedConstUse,
+        path: discovery.path.clone(),
+        count,
+    });
+    discovery.skips.sort_by_key(|skip| skip.reason);
+    Ok(())
 }
 
 /// The files of `entering` the instrumenter can rewrite for entry: each one that reads as a whole Rust file and that no file pastes in where an expression goes.

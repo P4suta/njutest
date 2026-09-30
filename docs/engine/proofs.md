@@ -182,8 +182,8 @@ A mutation the compiler refuses establishes nothing either: the question is abou
 A comparison speaks only for a build that compiled the spliced file again.
 Cargo decides whether a unit is fresh from the times of the files it read, and where it says a unit that read the spliced file is fresh, the executable it hands back is the one it built before the splice, so comparing it with the original compares the original with itself.
 The layer's build directory is what makes cargo compile such a unit: it forgets the units of a member whose bytes moved and dates that member's files back to when they moved, never forward.
-A file outside every member's directory, which a `#[path]` can name, is one it cannot see, and a clock that disagrees with a file's time is another way for cargo to reuse what it built.
-So the build's own word is read as well: a mutated build in which a unit that read the spliced file was reused is not established, and neither is one in which no unit read it; a control in which a unit that read the restored file was reused withdraws the layer, as one that builds to other bytes does.
+A member's bytes are its own files and every file outside its directory its units read, which a `#[path]` can name and which the record keeps from the dep-info of the build before, so a splice there moves the member too, and fixture-shared-path holds it: `a_file_a_member_reads_from_outside_its_directory_is_compiled_again_whatever_its_time`, whose cargo dates the file back to 2000, is answered `differs`.
+A clock that disagrees with a file's time is still one more way for cargo to reuse what it built, so the build's own word is read as well: a mutated build in which a unit that read the spliced file was reused is not established, and neither is one in which no unit read it; a control in which a unit that read the restored file was reused withdraws the layer, as one that builds to other bytes does.
 
 ## Where a layer is silent
 

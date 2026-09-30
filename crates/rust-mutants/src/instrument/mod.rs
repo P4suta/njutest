@@ -1653,25 +1653,35 @@ impl File<'_> {
         })
     }
 
-    /// Every child of `node` whose every alternative is a fault, rendered, which is what every alternative of `node` that keeps its bytes carries.
+    /// Every descendant of `node` whose every alternative is a fault, rendered, which is what every alternative of `node` that keeps its bytes carries.
+    /// The walk is transitive on purpose: a fault nested under an intermediate node whose own alternatives ask about the call it fails is still carried past that node, because an alternative of `node` replaces the intermediate node's guard wholesale, and the fault's own branch is what must survive the replacement.
     fn carried(&self, node: &Node<Placement>) -> Result<Vec<Carried>, InstrumentError> {
         let mut carried = Vec::new();
-        for child in node
-            .children
-            .iter()
-            .filter(|child| child.alternatives.iter().all(|placement| placement.carried))
-        {
-            carried.push(Carried {
-                span: child.span,
-                text: self.render(child)?.text,
-                faults: child
-                    .alternatives
-                    .iter()
-                    .map(|placement| placement.index)
-                    .collect(),
-            });
-        }
+        self.gather_faults(&node.children, &mut carried)?;
         Ok(carried)
+    }
+
+    /// Collects every all-fault descendant of `nodes`, in walk order, rendering each.
+    fn gather_faults(
+        &self,
+        nodes: &[Node<Placement>],
+        carried: &mut Vec<Carried>,
+    ) -> Result<(), InstrumentError> {
+        for node in nodes {
+            if node.alternatives.iter().all(|placement| placement.carried) {
+                carried.push(Carried {
+                    span: node.span,
+                    text: self.render(node)?.text,
+                    faults: node
+                        .alternatives
+                        .iter()
+                        .map(|placement| placement.index)
+                        .collect(),
+                });
+            }
+            self.gather_faults(&node.children, carried)?;
+        }
+        Ok(())
     }
 
     /// The pristine bytes of a site before the edit, with every carried guard wholly inside them rendered in place, and the carried guard the edit's replacement begins with.

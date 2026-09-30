@@ -9,6 +9,7 @@ mod position;
 mod regroup;
 mod rules;
 mod shape;
+mod unvalidated;
 mod walk;
 
 use std::collections::BTreeMap;
@@ -176,6 +177,8 @@ pub enum SkipReason {
     ForbiddenLints,
     /// A candidate in a `const fn` the compiler evaluates before the program runs, which validation leaves out so the function keeps its `const` (ADR 0047).
     EvaluatedBeforeRun,
+    /// A candidate in a const fn whose package or a dependent member holds a doctest, conditional early use or opaque expansion the validation build cannot check.
+    UnvalidatedConstUse,
     /// A condition that binds with `let`, whose parts a guard cannot rearrange without moving the binding out of scope.
     LetCondition,
     /// A range with no end, which has no other form to become.
@@ -207,6 +210,7 @@ impl SkipReason {
             Self::GeneratedOutsideWorkspace => "generated-outside-workspace",
             Self::ForbiddenLints => "forbidden-lints",
             Self::EvaluatedBeforeRun => "evaluated-before-run",
+            Self::UnvalidatedConstUse => "unvalidated-const-use",
             Self::LetCondition => "let-condition",
             Self::OpenRange => "open-range",
             Self::UnstatedReturnType => "unstated-return-type",
@@ -253,6 +257,9 @@ impl SkipReason {
             }
             Self::EvaluatedBeforeRun => {
                 "the expression is in a const fn the compiler evaluates before the program runs (a const or static initializer, a const block, an array length, or a const fn that keeps its const calls it), so the function keeps its const and a runtime guard cannot live in it"
+            }
+            Self::UnvalidatedConstUse => {
+                "a doctest, conditional early use or opaque expansion in this package or a dependent member is outside the validation build, so its linked const fn bodies keep their const and carry no runtime guard"
             }
             Self::LetCondition => {
                 "the condition binds with let, and what a guard would have to rearrange is what the binding is in scope for"
@@ -349,6 +356,8 @@ pub struct FileDiscovery {
     pub decisions: Vec<Decision>,
     /// Whether the file carries `#![no_std]`.
     pub no_std: bool,
+    /// Whether source outside the validation build may evaluate a linked const fn before the program runs.
+    pub unvalidated_const_use: bool,
     /// Every file this one pastes in with `include!`, in source order.
     pub includes: Vec<Include>,
     /// Every `rust-mutants: skip` marker the file carries, in source order.
@@ -719,6 +728,7 @@ fn discover_counting_with<'p>(
             skips,
             decisions,
             no_std,
+            unvalidated_const_use: unvalidated::uses(&file),
             annotations,
         },
         grouping.read(),
