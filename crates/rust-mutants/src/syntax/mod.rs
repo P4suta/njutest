@@ -417,6 +417,7 @@ pub struct TraceRecordError {
 pub struct Selection<'r> {
     registry: &'r Registry,
     rules: Vec<Rule>,
+    compile_items: bool,
 }
 
 impl<'r> Selection<'r> {
@@ -426,6 +427,7 @@ impl<'r> Selection<'r> {
         Self {
             registry,
             rules: registry.select_tier(tier),
+            compile_items: tier == Tier::Compiled,
         }
     }
 
@@ -442,7 +444,18 @@ impl<'r> Selection<'r> {
                 })
             })
             .collect::<Result<Vec<Rule>, RuleError>>()?;
-        Ok(Self { registry, rules })
+        Ok(Self {
+            registry,
+            rules,
+            compile_items: false,
+        })
+    }
+
+    /// Whether const item initializers are selected for a build per mutant.
+    #[must_use]
+    pub const fn compiling_items(mut self, selected: bool) -> Self {
+        self.compile_items = selected;
+        self
     }
 
     /// The registry the rules come from.

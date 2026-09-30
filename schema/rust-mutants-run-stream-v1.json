@@ -50,7 +50,8 @@
               "enum": [
                 "balanced",
                 "strong",
-                "all"
+                "all",
+                "compiled"
               ]
             },
             "operators": {

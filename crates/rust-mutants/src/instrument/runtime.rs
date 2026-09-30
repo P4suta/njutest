@@ -20,6 +20,9 @@ pub const CATALOG_ENV: &str = "RUST_MUTANTS_CATALOG";
 /// The catalog identity embedded into binaries compiled from an instrumented tree.
 pub const COMPILED_CATALOG_ENV: &str = "RUST_MUTANTS_COMPILED_CATALOG";
 
+/// The dense index baked into a compile-time mutant's build, or `none` for the original control.
+pub const COMPILED_ACTIVE_ENV: &str = "RUST_MUTANTS_COMPILED_ACTIVE";
+
 /// The exit status of a test process whose tree was built from a different catalog than the one activating it.
 pub const STALE_CATALOG_EXIT: i32 = 97;
 
@@ -505,7 +508,7 @@ mod {{MODULE}} {
         __rm_std::fs::rename(partial, path).ok()
     }
 
-    #[inline(always)]
+{{COMPILED_SELECTOR}}    #[inline(always)]
     pub(crate) fn active(index: u32) -> bool {
         watched();
         touch(index);
@@ -1775,7 +1778,7 @@ mod {{MODULE}} {
         __rm_std::fs::rename(partial, path).ok()
     }
 
-    #[inline(always)]
+{{COMPILED_SELECTOR}}    #[inline(always)]
     pub(crate) fn active(index: u32) -> bool {
         sealed();
         touch(index);
@@ -2153,6 +2156,15 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
     };
     let step_machine = rust_mutants_decision::STEP_SOURCE.replace("pub ", "pub(crate) ");
 
+    let selector = if placements
+        .iter()
+        .any(|placement| placement.hint.form == crate::syntax::Form::B)
+    {
+        format!("    {COMPILED_SELECTOR}\n")
+    } else {
+        String::new()
+    };
+
     let filled = |template: &str| {
         template
             .replace(
@@ -2170,6 +2182,7 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
             .replace("{{ITEM_BASE}}", &first_item.to_string())
             .replace("{{ITEM_SPAN}}", &item_count.to_string())
             .replace("{{STEP_MACHINE}}", &step_machine)
+            .replace("{{COMPILED_SELECTOR}}", &selector)
             .replace(
                 "{{OBSERVABLE}}",
                 &format!(
@@ -2190,6 +2203,31 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
         Ok(text.replace('\n', newline))
     }
 }
+
+/// The same constant selector in both runtimes, read at compilation rather than execution.
+const COMPILED_SELECTOR: &str = r#"pub(crate) const fn baked(index: u32) -> bool {
+        let bytes = match option_env!("RUST_MUTANTS_COMPILED_ACTIVE") {
+            Some(text) => text.as_bytes(),
+            None => return false,
+        };
+        if bytes.is_empty() { return false; }
+        let mut at = 0;
+        let mut number = 0u32;
+        while at < bytes.len() {
+            let byte = bytes[at];
+            if byte < b'0' || byte > b'9' { return false; }
+            number = match number.checked_mul(10) {
+                Some(value) => value,
+                None => return false,
+            };
+            number = match number.checked_add((byte - b'0') as u32) {
+                Some(value) => value,
+                None => return false,
+            };
+            at += 1;
+        }
+        number == index
+    }"#;
 
 /// What one file's runtime module is generated from.
 #[derive(Debug, Clone, Copy)]

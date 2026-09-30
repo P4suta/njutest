@@ -82,11 +82,20 @@ fn normalized(path: &Path) -> PathBuf {
 fn recorded(fixture: &Fixture, args: &[String]) -> (Vec<Fate>, String) {
     let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
+    let tier = if args
+        .iter()
+        .any(|arg| arg == "--tier" || arg.starts_with("--tier="))
+    {
+        Vec::new()
+    } else {
+        vec!["--tier", "all"]
+    };
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
             .chain(["run"])
             .chain(["--root", root.as_str()])
-            .chain(["--tier", "all", "--offline", "--locked"])
+            .chain(tier)
+            .chain(["--offline", "--locked"])
             .chain(args.iter().map(String::as_str))
             .map(OsString::from),
         &environment(fixture),
@@ -511,6 +520,11 @@ fn fixture_macros() {
 #[test]
 fn fixture_modern() {
     holds("fixture-modern");
+}
+
+#[test]
+fn fixture_const_items() {
+    holds("fixture-const-items");
 }
 
 #[test]

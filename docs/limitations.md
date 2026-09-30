@@ -496,6 +496,7 @@ Five are about a whole file, decided from cargo's metadata rather than by readin
 Ten are about a place inside a file, decided by the walk:
 
 - `skipped-const-context` — the compiler evaluates the code before the program runs, where a runtime guard cannot live: a `const` or `static` initializer, a `const` block, an array length, an enum discriminant, wherever it is written.
+  The `compiled` tier selects expression sites in const item initializers for a build per mutant; the other constant contexts retain this skip ([ADR 0048](adr/0048-const-items-are-mutated-by-a-build-per-mutant.md)).
 - `skipped-macro-invocation` — the body is tokens the walker does not parse,
   counted once for the whole invocation.
 - `skipped-cfg-attribute` — the place is behind a `#[cfg(...)]`, so what the build compiles is not what the walk read.

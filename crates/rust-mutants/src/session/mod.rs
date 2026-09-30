@@ -4,6 +4,7 @@
 //! A prepared workspace: every accepted mutant instrumented into one build, and the test binaries that build produced.
 
 mod carry;
+mod compiled;
 pub(crate) mod prepare;
 mod rerun;
 mod route;
@@ -965,6 +966,16 @@ pub struct Session {
     manifests: String,
     /// The instrumented tree built for the sealed target, or why it was not (ADR 0046).
     sealed: crate::sealed::SealedBuild,
+    compile_time: compiled::Compiler,
+}
+
+/// One separately built mutant, holding the outputs until its modules or native targets have finished using them.
+#[derive(Debug)]
+pub(crate) struct Compiled<'session> {
+    pub(crate) targets: Vec<TestTarget>,
+    pub(crate) sealed: crate::sealed::SealedBuild,
+    pub(crate) apparatus: crate::apparatus::Apparatus,
+    _owning: std::sync::MutexGuard<'session, ()>,
 }
 
 /// What the carry rule has taken of a session so far: its tree, once, and each target's reach as it is first asked about.
@@ -1100,7 +1111,7 @@ impl Session {
             })
             .collect();
         let bench = crate::sealed::bench::Bench::assemble(
-            (runner, rust_mutants_sealed::Interrupt::of(cancel.flags())),
+            (runner, cancel.clone()),
             (&self.sealed, &natives),
             (tree, &self.harness_args),
             (self.catalog.digest(), bounds),
@@ -1167,26 +1178,34 @@ impl Session {
         context: &Context<'_>,
         (cancel, log): (&Cancel, Option<&std::path::Path>),
     ) -> Result<MutantResult, EngineError> {
+        self.observed_on(exec, (context, &self.apparatus), (cancel, log))
+    }
+
+    /// Observes one execution against the apparatus its own compilation left.
+    fn observed_on(
+        &self,
+        exec: &ExecRequest<'_>,
+        (context, apparatus): (&Context<'_>, &crate::apparatus::Apparatus),
+        (cancel, log): (&Cancel, Option<&std::path::Path>),
+    ) -> Result<MutantResult, EngineError> {
         let before = self.orphans();
         let started = std::time::SystemTime::now();
         let mutant = match context.active {
             Some((mutant, _catalog)) => self.display_of(mutant),
             None => String::new(),
         };
-        let began = self
-            .apparatus
+        let began = apparatus
             .running
             .lock()
             .map_err(|_poisoned| SessionError::CoordinationPoisoned)?
             .begin(&mutant);
         let mut result = execute::exec(exec, context, cancel, &self.workspace.trace);
-        let beside = self
-            .apparatus
+        let beside = apparatus
             .running
             .lock()
             .map_err(|_poisoned| SessionError::CoordinationPoisoned)?
             .end(&mutant, began);
-        let changes = self.apparatus.changed();
+        let changes = apparatus.changed();
         if !changes.is_empty() {
             return Err(SessionError::ApparatusChanged {
                 mutant,
@@ -1721,6 +1740,16 @@ impl Session {
     /// Which targets could notice this mutation, and what the answer rests on.
     #[must_use]
     pub fn route(&self, mutant: &Mutant) -> Route {
+        if self.compiled_item(mutant.index) {
+            return Route::All {
+                reaching: self
+                    .targets
+                    .iter()
+                    .map(|target| target.id().to_owned())
+                    .collect(),
+                fallback: Fallback::CompileTime,
+            };
+        }
         if self.verified.touched.measured() {
             let (targets, measurable, also_reaching) = self.among(mutant);
             let among = Routing {
@@ -1739,6 +1768,16 @@ impl Session {
     /// Which targets the coverage measurement alone puts at this mutation, which is how a run routes when the guards recorded nothing.
     #[must_use]
     pub fn route_by_coverage(&self, mutant: &Mutant) -> Route {
+        if self.compiled_item(mutant.index) {
+            return Route::All {
+                reaching: self
+                    .targets
+                    .iter()
+                    .map(|target| target.id().to_owned())
+                    .collect(),
+                fallback: Fallback::CompileTime,
+            };
+        }
         let (targets, measurable, also_reaching) = self.among(mutant);
         let Some(position) = self.position(mutant) else {
             return Route::All {
@@ -2577,7 +2616,8 @@ impl Session {
             mutant,
             beside,
         } = how;
-        let mut targets = self.selected(request.target.as_deref())?;
+        let compiled = self.compiled(mutant.index, cancel)?;
+        let mut targets = self.compiled_targets(request, compiled.as_ref())?;
         if let Some(first) = request.first.as_deref() {
             targets.sort_by_key(|target| target.id() != first);
         }
@@ -2616,7 +2656,12 @@ impl Session {
             } else if let Some(named) = self.filtering(target, chosen, cancel)? {
                 exec = exec.with_tests(named);
             }
-            let result = self.observed(&exec, &context, (cancel, log.as_deref()))?;
+            let apparatus = match &compiled {
+                Some(compiled) => &compiled.apparatus,
+                None => &self.apparatus,
+            };
+            let result =
+                self.observed_on(&exec, (&context, apparatus), (cancel, log.as_deref()))?;
             self.record_mutant_exec(Executed {
                 mutant,
                 target,
@@ -2633,6 +2678,7 @@ impl Session {
                 });
             }
         }
+        drop(compiled);
         let taken = verdict_result(&asked).ok_or_else(|| {
             EngineError::from(SessionError::NoTargets {
                 packages: self.packages(),

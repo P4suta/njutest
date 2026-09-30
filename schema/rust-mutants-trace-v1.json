@@ -1247,6 +1247,7 @@
                           "E",
                           "S",
                           "M",
+                          "B",
                           null
                         ]
                       },
@@ -1933,6 +1934,7 @@
                     "outside-blocks",
                     "coverage-incomplete",
                     "touch-incomplete",
+                    "compile-time",
                     null
                   ]
                 },

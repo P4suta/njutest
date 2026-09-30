@@ -54,7 +54,7 @@ pub fn answer(
     'stations: for (target, station) in &bench.stations {
         for (test, control) in &station.controls {
             let Ok(control) = control else { continue };
-            if !control.reached.contains(&mutant.index) {
+            if !bench.compiles(mutant.index) && !control.reached.contains(&mutant.index) {
                 continue;
             }
             let Some(came_to) = bench.put(target, test, mutant.id.as_str())? else {
@@ -94,7 +94,8 @@ fn parity(bench: &Bench<'_>, mutant: &Mutant, route: &Route) -> (Sealability, us
         };
         for test in asked {
             match station.controls.get(test.as_str()) {
-                Some(Ok(control)) if control.reached.contains(&mutant.index) => {}
+                Some(Ok(control))
+                    if bench.compiles(mutant.index) || control.reached.contains(&mutant.index) => {}
                 Some(Ok(_)) => differs = differs || !named.is_empty(),
                 Some(Err(_)) | None => absent = absent.saturating_add(1),
             }

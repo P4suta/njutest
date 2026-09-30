@@ -56,7 +56,7 @@ fn asks(expr: &Expr) -> bool {
             expr,
             ..
         }) => asks(expr),
-        other => matches!(called(other), Some((name, _)) if name == "active"),
+        other => matches!(called(other), Some((name, _)) if name == "active" || name == "baked"),
     }
 }
 
@@ -354,7 +354,7 @@ fn instrumented(source: &str) -> Instrumented {
     let discovery = discover_file(
         "src/lib.rs",
         source.as_bytes(),
-        &Selection::tier(&registry, Tier::All),
+        &Selection::tier(&registry, Tier::Compiled),
     )
     .expect("the generated source is discovered");
     let mut builder = Builder::new();
@@ -471,6 +471,7 @@ const fn source_for(form: Form) -> &'static [(&'static str, &'static str)] {
             ),
         ],
         Form::S => &[("pub fn f() { f(); }\n", "f();")],
+        Form::B => &[("pub const VALUE: u32 = 40 + 2;\n", "40 + 2")],
         Form::M => &[(
             "pub fn f(a: i32) -> i32 { match a { 0 => 1, _ => 2 } }\n",
             "0",

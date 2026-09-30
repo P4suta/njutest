@@ -67,12 +67,12 @@ fn composed(form: Form, alternatives: &[Alternative], original: &str) -> Compose
 fn every_form_is_written_as_its_letter() {
     assert_eq!(
         Form::ALL.map(Form::letter),
-        ["C", "E", "S", "M"],
+        ["C", "E", "S", "M", "B"],
         "a form is named by its letter wherever a report names it"
     );
     assert_eq!(
         Form::ALL.map(|form| form.to_string()),
-        ["C", "E", "S", "M"],
+        ["C", "E", "S", "M", "B"],
         "and shown as it"
     );
 }
@@ -225,6 +225,33 @@ fn a_statement_guard_holds_its_branches_bare_and_compares_nothing() {
 }
 
 #[test]
+fn a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe() {
+    let built = composed(Form::B, &[plain(), compared_and_probed()], ORIGINAL);
+    assert_eq!(
+        built.text,
+        "rt::value!(if rt::baked(7) { rt::value!(false) } else if rt::baked(8) { rt::value!(b()) } else { rt::value!(a() || b()) })"
+    );
+    assert!(built.compared.is_empty());
+    for original in [
+        "{ 1 } + 2",
+        "if flag { 1 } else { 2 }",
+        "&[1, 2]",
+        "\"value\"",
+    ] {
+        let built = composed(
+            Form::B,
+            &[alternative(7, "{ 2 } + 3", true, Some("untrue"))],
+            original,
+        );
+        assert!(!built.text.contains("active("));
+        assert!(!built.text.contains("untrue("));
+        assert!(built.compared.is_empty());
+    }
+    let dormant = composed(Form::B, &[], ORIGINAL);
+    assert_eq!(dormant.text, "rt::value!(a() || b())");
+}
+
+#[test]
 fn an_arm_guard_is_written_after_the_pattern_it_keeps() {
     let arm = composed(Form::M, &[plain(), compared_and_probed()], "0");
     assert_eq!(
@@ -243,7 +270,7 @@ fn an_arm_guard_is_written_after_the_pattern_it_keeps() {
 #[test]
 fn the_original_is_one_operand_whatever_operators_it_holds() {
     let around = |form: Form| match form {
-        Form::C => ("rt::value!(", ")"),
+        Form::C | Form::B => ("rt::value!(", ")"),
         Form::E | Form::S => ("else { ", " }"),
         Form::M => ("", " if "),
     };

@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Composing the four guard forms from a site's alternatives, each offset read where its text is written.
+//! Composing guard forms from a site's alternatives, each offset read where its text is written.
 
 use rust_mutants_decision::shape::opens_a_block;
 
-/// One of the four guard shapes the instrumenter composes a dormant mutant from.
+/// One guard shape the instrumenter composes a dormant mutant from.
 #[derive(
     Debug,
     Clone,
@@ -26,6 +26,8 @@ pub enum Form {
     S,
     /// The guard written onto a match arm that had none, which is the one shape that adds syntax rather than replacing it.
     M,
+    /// The compile-time expression selector, whose single active mutant is baked into a separate build.
+    B,
 }
 
 impl Form {
@@ -37,6 +39,7 @@ impl Form {
             Self::E => "E",
             Self::S => "S",
             Self::M => "M",
+            Self::B => "B",
         }
     }
 }
@@ -132,6 +135,50 @@ pub fn compose(
             (Holds::Statements, String::new()),
         ),
         Form::M => arm(paths, alternatives, original),
+        Form::B => compiled(paths, alternatives, original),
+    }
+}
+
+/// Form B: a constant selector whose branches retain their coercion site and never call a runtime probe.
+fn compiled(paths: &Paths<'_>, alternatives: &[Alternative], original: &str) -> Composed {
+    let mut text = String::new();
+    let grouped = !alternatives.is_empty() && !opens_a_block(original);
+    if grouped {
+        put(&mut text, &[&paths.of("value"), "!("]);
+    }
+    let mut spans = Vec::with_capacity(alternatives.len());
+    for (at, one) in alternatives.iter().enumerate() {
+        put(
+            &mut text,
+            &[
+                if at == 0 { "if " } else { " else if " },
+                &paths.of("baked"),
+                "(",
+                &one.index.to_string(),
+                ") { ",
+            ],
+        );
+        spans.push((
+            one.index,
+            held(&mut text, &one.text, Some(&paths.of("value"))),
+        ));
+        text.push_str(" }");
+    }
+    if !alternatives.is_empty() {
+        text.push_str(" else { ");
+    }
+    let original_at = held(&mut text, original, Some(&paths.of("value"))).start;
+    if !alternatives.is_empty() {
+        text.push_str(" }");
+    }
+    if grouped {
+        text.push(')');
+    }
+    Composed {
+        text,
+        alternatives: spans,
+        original_at,
+        compared: Vec::new(),
     }
 }
 

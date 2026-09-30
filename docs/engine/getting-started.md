@@ -186,6 +186,7 @@ $ rust-mutants rules                                 # what there is to name
 ```
 
 `--tier balanced` is the default; `strong` and `all` ask more questions and cost more.
+`--tier compiled` also changes const item initializers, compiling each mutant separately and asking every test about its built value ([ADR 0048](../adr/0048-const-items-are-mutated-by-a-build-per-mutant.md)).
 `operators = [...]` in the configuration pins an exact set, so a release that adds an operator does not change what your gate measures until you say so.
 
 ## Continuous integration

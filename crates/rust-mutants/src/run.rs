@@ -1895,7 +1895,25 @@ fn answered(
     route: &crate::session::Route,
 ) -> Result<Option<crate::sealed::standing::Answer>, EngineError> {
     let file = session.snapshot_root().join(&mutant.candidate.path);
-    match crate::sealed::standing::answer((bench, session.sealed()), mutant, &file, route) {
+    let compiled = session.compiled(mutant.index, &bench.cancel)?;
+    let rebuilt = compiled
+        .as_ref()
+        .map(|compiled| bench.rebuilt(&compiled.sealed, mutant.index))
+        .transpose()?;
+    let (bench, sealed) = match (&rebuilt, &compiled) {
+        (Some(bench), Some(compiled)) => (bench, &compiled.sealed),
+        (None, None) => (bench, session.sealed()),
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(crate::validate::ValidateError::AttemptFailed {
+                message: "compile-time modules and their bench parted".to_owned(),
+            }
+            .into());
+        }
+    };
+    let answer = crate::sealed::standing::answer((bench, sealed), mutant, &file, route);
+    drop(rebuilt);
+    drop(compiled);
+    match answer {
         Ok(answer) => Ok(Some(answer)),
         Err(crate::sealed::bench::BenchError::Interrupted) => Ok(None),
         Err(error) => Err(error.into()),

@@ -3,11 +3,11 @@
   "decision": "instrument-shape",
   "package": "rust-mutants-adapt",
   "module": "crates/rust-mutants-adapt/src/guard.rs",
-  "source_sha256": "ae12d3630ce0ee3009f8f60783fbcac2768af0cf8a89645cbd503a83248a7134",
+  "source_sha256": "46ea1c3e4132c3f932f6a33abc6b68f216781d93a047ecd940b7080ecaa06956",
   "mutants": [
     {
-      "display_id": "2cf6e37a5bd9de785932",
-      "position": "35:9",
+      "display_id": "bc436018aab44b4f2d16",
+      "position": "37:9",
       "rule": "return-default",
       "outcome": "killed",
       "accepted": false,
@@ -20,63 +20,7 @@
       ]
     },
     {
-      "display_id": "ab98362293f44b0b8c2d",
-      "position": "36:24",
-      "rule": "return-default",
-      "outcome": "killed",
-      "accepted": false,
-      "executions": [
-        {
-          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
-          "test": "guard::tests::every_form_is_written_as_its_letter",
-          "came_to": "panicked"
-        }
-      ]
-    },
-    {
-      "display_id": "97477b7ddd5b4e9c7441",
-      "position": "36:24",
-      "rule": "string-to-empty",
-      "outcome": "killed",
-      "accepted": false,
-      "executions": [
-        {
-          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
-          "test": "guard::tests::every_form_is_written_as_its_letter",
-          "came_to": "panicked"
-        }
-      ]
-    },
-    {
-      "display_id": "2528acda425924e2bdda",
-      "position": "37:24",
-      "rule": "return-default",
-      "outcome": "killed",
-      "accepted": false,
-      "executions": [
-        {
-          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
-          "test": "guard::tests::every_form_is_written_as_its_letter",
-          "came_to": "panicked"
-        }
-      ]
-    },
-    {
-      "display_id": "a393af1c1149de35ccfe",
-      "position": "37:24",
-      "rule": "string-to-empty",
-      "outcome": "killed",
-      "accepted": false,
-      "executions": [
-        {
-          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
-          "test": "guard::tests::every_form_is_written_as_its_letter",
-          "came_to": "panicked"
-        }
-      ]
-    },
-    {
-      "display_id": "8571ee2ae637e0b61711",
+      "display_id": "01fdc02dd0b8d6c77b0e",
       "position": "38:24",
       "rule": "return-default",
       "outcome": "killed",
@@ -90,7 +34,7 @@
       ]
     },
     {
-      "display_id": "c47286226e26aadf7ba4",
+      "display_id": "a005f6fba6cc5e09d0f1",
       "position": "38:24",
       "rule": "string-to-empty",
       "outcome": "killed",
@@ -104,7 +48,7 @@
       ]
     },
     {
-      "display_id": "fedb08c1d122db3802d2",
+      "display_id": "0cc7c2dbce80029a371b",
       "position": "39:24",
       "rule": "return-default",
       "outcome": "killed",
@@ -118,7 +62,7 @@
       ]
     },
     {
-      "display_id": "c1a75eb23e8006a4114b",
+      "display_id": "c236e2c6365cfeced673",
       "position": "39:24",
       "rule": "string-to-empty",
       "outcome": "killed",
@@ -132,8 +76,92 @@
       ]
     },
     {
-      "display_id": "7d168f02829e9d7a90aa",
-      "position": "54:14",
+      "display_id": "040efc3c5aebdfc65280",
+      "position": "40:24",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::every_form_is_written_as_its_letter",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "8fc3361e2146f3c7e69d",
+      "position": "40:24",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::every_form_is_written_as_its_letter",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "afe3b602c3bfbb0ea81d",
+      "position": "41:24",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::every_form_is_written_as_its_letter",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "2e3d4eac9569a59c9b00",
+      "position": "41:24",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::every_form_is_written_as_its_letter",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "0831283df1fa21881c25",
+      "position": "42:24",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::every_form_is_written_as_its_letter",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "0ec6cad5cb22049021dc",
+      "position": "42:24",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::every_form_is_written_as_its_letter",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "0e62138cc855a4179062",
+      "position": "57:14",
       "rule": "int-increment",
       "outcome": "killed",
       "accepted": false,
@@ -145,14 +173,19 @@
         },
         {
           "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
           "test": "guard::tests::a_runtime_function_is_named_from_as_deep_as_its_site_stands",
           "came_to": "panicked"
         }
       ]
     },
     {
-      "display_id": "e3a5d6f150b346e9b791",
-      "position": "54:15",
+      "display_id": "b5358d9a15ad7b542b9b",
+      "position": "57:15",
       "rule": "range-to-inclusive",
       "outcome": "killed",
       "accepted": false,
@@ -165,8 +198,8 @@
       ]
     },
     {
-      "display_id": "0cf65fa3465950d9d9d2",
-      "position": "55:9",
+      "display_id": "3c9be18896b66d0544ca",
+      "position": "58:9",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -179,8 +212,8 @@
       ]
     },
     {
-      "display_id": "2b40c5311f8c3b1758d7",
-      "position": "55:23",
+      "display_id": "d7fcb54894f181baeb95",
+      "position": "58:23",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -193,64 +226,64 @@
       ]
     },
     {
-      "display_id": "2f29bbb5c3810591e80b",
-      "position": "57:5",
-      "rule": "delete-call-statement",
-      "outcome": "killed",
-      "accepted": false,
-      "executions": [
-        {
-          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
-          "test": "guard::tests::a_boolean_selector_holds_every_branch_and_compares_what_may_be_compared",
-          "came_to": "panicked"
-        }
-      ]
-    },
-    {
-      "display_id": "3e2c998c51e32d948814",
-      "position": "58:5",
-      "rule": "delete-call-statement",
-      "outcome": "killed",
-      "accepted": false,
-      "executions": [
-        {
-          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
-          "test": "guard::tests::a_boolean_selector_holds_every_branch_and_compares_what_may_be_compared",
-          "came_to": "panicked"
-        }
-      ]
-    },
-    {
-      "display_id": "381878425a6acf93ede1",
-      "position": "58:19",
-      "rule": "string-to-empty",
-      "outcome": "killed",
-      "accepted": false,
-      "executions": [
-        {
-          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
-          "test": "guard::tests::a_boolean_selector_holds_every_branch_and_compares_what_may_be_compared",
-          "came_to": "panicked"
-        }
-      ]
-    },
-    {
-      "display_id": "1dbb35889e88a22e0c70",
-      "position": "59:5",
-      "rule": "delete-call-statement",
-      "outcome": "killed",
-      "accepted": false,
-      "executions": [
-        {
-          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
-          "test": "guard::tests::a_boolean_selector_holds_every_branch_and_compares_what_may_be_compared",
-          "came_to": "panicked"
-        }
-      ]
-    },
-    {
-      "display_id": "2d1074ca4336a51fe129",
+      "display_id": "f6cb5adbad1fe3879144",
       "position": "60:5",
+      "rule": "delete-call-statement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_boolean_selector_holds_every_branch_and_compares_what_may_be_compared",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "7dfa20ca57b006094801",
+      "position": "61:5",
+      "rule": "delete-call-statement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_boolean_selector_holds_every_branch_and_compares_what_may_be_compared",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "3716c2d7d018409cd9c0",
+      "position": "61:19",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_boolean_selector_holds_every_branch_and_compares_what_may_be_compared",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "e9019071412f3c2b5571",
+      "position": "62:5",
+      "rule": "delete-call-statement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_boolean_selector_holds_every_branch_and_compares_what_may_be_compared",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "eca1d5824177f0751c85",
+      "position": "63:5",
       "rule": "return-default",
       "outcome": "killed",
       "accepted": false,
@@ -263,8 +296,8 @@
       ]
     },
     {
-      "display_id": "9b96ac5ed805a9ba7008",
-      "position": "102:9",
+      "display_id": "3ad612be8bf1935a1120",
+      "position": "105:9",
       "rule": "return-default",
       "outcome": "killed",
       "accepted": false,
@@ -277,8 +310,8 @@
       ]
     },
     {
-      "display_id": "2af93db1ded10a423bc6",
-      "position": "116:20",
+      "display_id": "b97677ca73bd41dea0d9",
+      "position": "119:20",
       "rule": "remove-match-guard",
       "outcome": "killed",
       "accepted": false,
@@ -291,8 +324,8 @@
       ]
     },
     {
-      "display_id": "ec5607f204fb2a16d9dd",
-      "position": "125:13",
+      "display_id": "1a0e40407461230a9a03",
+      "position": "128:13",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -305,8 +338,582 @@
       ]
     },
     {
-      "display_id": "9c46fdd5fd2ac84c3f6b",
-      "position": "141:22",
+      "display_id": "3bd44cac8e1bb11ff958",
+      "position": "145:19",
+      "rule": "remove-not",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "1c3087dbd57fc6aa465f",
+      "position": "145:44",
+      "rule": "and-to-or",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "64c2fb6072b76ac1c216",
+      "position": "145:47",
+      "rule": "remove-not",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "c86302988b4f56a545ae",
+      "position": "146:8",
+      "rule": "negate-condition",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "dda8f68d768a9e4c913f",
+      "position": "146:8",
+      "rule": "condition-to-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "b06c3d771c50514fa763",
+      "position": "146:8",
+      "rule": "condition-to-false",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "f27ae6a58994a9593c2e",
+      "position": "147:9",
+      "rule": "delete-call-statement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "db14c1191c24c01ddfc7",
+      "position": "147:36",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "17a32494548e8ffb0fd2",
+      "position": "147:46",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "3909760259e620a7fd86",
+      "position": "151:9",
+      "rule": "delete-call-statement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "254c1c23443e368738bb",
+      "position": "154:20",
+      "rule": "negate-condition",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "277e4076c11e8b1f52d3",
+      "position": "154:20",
+      "rule": "condition-to-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "17b68a0ce230379bba12",
+      "position": "154:20",
+      "rule": "condition-to-false",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "95b6798e29e8b4f03447",
+      "position": "154:23",
+      "rule": "eq-to-neq",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "f72bb041c781942d07d6",
+      "position": "154:26",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "40c35c23c3583112b893",
+      "position": "154:30",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "c112c66470827c20c81b",
+      "position": "154:45",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "3960aa42995fd6f129e0",
+      "position": "155:27",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "d4b976cbfbc9866990bc",
+      "position": "156:17",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "03b60b82e366fc7e9b6b",
+      "position": "158:17",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "30b0503ea89ea0ea9ff6",
+      "position": "161:9",
+      "rule": "delete-call-statement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "f6a665d943bd4055d043",
+      "position": "163:55",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "940731d78d97bc187007",
+      "position": "165:9",
+      "rule": "delete-call-statement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "82af6925e11b64b23922",
+      "position": "165:23",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "f65e920af281d44eb432",
+      "position": "167:8",
+      "rule": "negate-condition",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "e0d3b755fee5a2d3fe3e",
+      "position": "167:8",
+      "rule": "remove-not",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "b8861a0f914eb860b614",
+      "position": "167:8",
+      "rule": "condition-to-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "1b62aefa5aa3fe1150ad",
+      "position": "167:8",
+      "rule": "condition-to-false",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "e27fc33fe6d1d0e1402f",
+      "position": "168:9",
+      "rule": "delete-call-statement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "40227b3d3b0937f780ce",
+      "position": "168:23",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "25841a807dd4075e8ec1",
+      "position": "170:64",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "a111e49e96a7710a17c1",
+      "position": "171:8",
+      "rule": "negate-condition",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "4ae75b6a86de3ae1694f",
+      "position": "171:8",
+      "rule": "remove-not",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "b455bc851a5277494287",
+      "position": "171:8",
+      "rule": "condition-to-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "ec31f7bf03d7cd13a1c3",
+      "position": "171:8",
+      "rule": "condition-to-false",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "faf09aa73181d5bcd502",
+      "position": "172:9",
+      "rule": "delete-call-statement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "9e8cda533143854f749f",
+      "position": "172:23",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "470c7feb2e8966fb581e",
+      "position": "174:8",
+      "rule": "negate-condition",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "f1c0421f458dec8cdb9f",
+      "position": "174:8",
+      "rule": "condition-to-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "85f8cf39c065c9b16f78",
+      "position": "174:8",
+      "rule": "condition-to-false",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "d0dd2cd46c1aa78533b7",
+      "position": "175:9",
+      "rule": "delete-call-statement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "1d4bd5abc352bb2fe39b",
+      "position": "188:22",
       "rule": "int-increment",
       "outcome": "killed",
       "accepted": false,
@@ -319,8 +926,8 @@
       ]
     },
     {
-      "display_id": "2adc0920bd44e1b81f01",
-      "position": "142:41",
+      "display_id": "860532f56f52b58d2951",
+      "position": "189:41",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -333,8 +940,8 @@
       ]
     },
     {
-      "display_id": "66031c301a0041212ee8",
-      "position": "157:37",
+      "display_id": "f5e119dfab4413e52789",
+      "position": "204:37",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -347,8 +954,8 @@
       ]
     },
     {
-      "display_id": "6d3223b085d89cdd25af",
-      "position": "157:57",
+      "display_id": "70f1cc1385083cd0c07f",
+      "position": "204:57",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -361,8 +968,8 @@
       ]
     },
     {
-      "display_id": "8117c0a28c1f6a9a2280",
-      "position": "158:5",
+      "display_id": "f83a18be472cdd1294b0",
+      "position": "205:5",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -375,8 +982,8 @@
       ]
     },
     {
-      "display_id": "e5425cecd21a67f3a811",
-      "position": "158:30",
+      "display_id": "fcfa20ea3984193c9e99",
+      "position": "205:30",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -389,8 +996,8 @@
       ]
     },
     {
-      "display_id": "414b98a97816ace3f2b6",
-      "position": "161:9",
+      "display_id": "a4abb5baec813837050e",
+      "position": "208:9",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -403,8 +1010,8 @@
       ]
     },
     {
-      "display_id": "23a3039e9e3778e4483f",
-      "position": "163:24",
+      "display_id": "a1924a03ccd47583822c",
+      "position": "210:24",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -417,8 +1024,8 @@
       ]
     },
     {
-      "display_id": "ac91920bcd3ccad699da",
-      "position": "163:53",
+      "display_id": "0bd02dff13ef0d0223ac",
+      "position": "210:53",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -431,8 +1038,8 @@
       ]
     },
     {
-      "display_id": "77969262eb0dd92512ee",
-      "position": "163:70",
+      "display_id": "dde35b562cacc41641b6",
+      "position": "210:70",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -445,8 +1052,8 @@
       ]
     },
     {
-      "display_id": "b82246c208caa824b1c9",
-      "position": "166:9",
+      "display_id": "b5ad251cffb12f4700db",
+      "position": "213:9",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -459,8 +1066,8 @@
       ]
     },
     {
-      "display_id": "73226ef1ad7331e1aa6d",
-      "position": "167:9",
+      "display_id": "0f61beeb2af980ddc4e3",
+      "position": "214:9",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -473,8 +1080,8 @@
       ]
     },
     {
-      "display_id": "eb4fd9008608f9570341",
-      "position": "168:9",
+      "display_id": "e7ff514c241494cadf77",
+      "position": "215:9",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -487,8 +1094,8 @@
       ]
     },
     {
-      "display_id": "8e7d9c67fa33ae10edc3",
-      "position": "168:23",
+      "display_id": "085a73fb6948e8d9c191",
+      "position": "215:23",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -501,8 +1108,8 @@
       ]
     },
     {
-      "display_id": "f02e58fb0130fdb8d0d4",
-      "position": "171:9",
+      "display_id": "1b580e9e462b6d604784",
+      "position": "218:9",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -515,8 +1122,8 @@
       ]
     },
     {
-      "display_id": "737ad6d88081a4724345",
-      "position": "173:15",
+      "display_id": "b39ea68df493e37c4f01",
+      "position": "220:15",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -529,8 +1136,8 @@
       ]
     },
     {
-      "display_id": "9d38e68c1b2512e7186e",
-      "position": "173:29",
+      "display_id": "dd3356706c09cef4618a",
+      "position": "220:29",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -543,8 +1150,8 @@
       ]
     },
     {
-      "display_id": "3eb5ccad396a425f0d4d",
-      "position": "173:58",
+      "display_id": "46c4cc989e0ee6ef6563",
+      "position": "220:58",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -557,8 +1164,8 @@
       ]
     },
     {
-      "display_id": "83724152497971791236",
-      "position": "177:30",
+      "display_id": "dbf052d9f4826a8b619d",
+      "position": "224:30",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -571,8 +1178,8 @@
       ]
     },
     {
-      "display_id": "cd644c7d504bc6cdf261",
-      "position": "179:9",
+      "display_id": "01fce3c03cc286e61c5b",
+      "position": "226:9",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -585,8 +1192,8 @@
       ]
     },
     {
-      "display_id": "9b92885b64b81a044fca",
-      "position": "181:27",
+      "display_id": "ea02a0382d39ec046a4d",
+      "position": "228:27",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -599,8 +1206,8 @@
       ]
     },
     {
-      "display_id": "da7e123c7c1924f1c233",
-      "position": "181:56",
+      "display_id": "97caf8d748e183cf100a",
+      "position": "228:56",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -613,8 +1220,8 @@
       ]
     },
     {
-      "display_id": "a16ce01a4c6eede5511a",
-      "position": "181:70",
+      "display_id": "171eef0d324d37d88216",
+      "position": "228:70",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -627,8 +1234,8 @@
       ]
     },
     {
-      "display_id": "66065783911f481e6428",
-      "position": "184:16",
+      "display_id": "0f557df0fd56391244a5",
+      "position": "231:16",
       "rule": "negate-bool-method",
       "outcome": "killed",
       "accepted": false,
@@ -641,8 +1248,8 @@
       ]
     },
     {
-      "display_id": "0ccc50dab90b71ffbb2d",
-      "position": "185:8",
+      "display_id": "b697d9c768564ae3041b",
+      "position": "232:8",
       "rule": "negate-condition",
       "outcome": "killed",
       "accepted": false,
@@ -655,8 +1262,8 @@
       ]
     },
     {
-      "display_id": "71104067609db37fe445",
-      "position": "185:8",
+      "display_id": "f294a8695422c758f424",
+      "position": "232:8",
       "rule": "condition-to-true",
       "outcome": "killed",
       "accepted": false,
@@ -669,8 +1276,8 @@
       ]
     },
     {
-      "display_id": "2c39f7858c7220714357",
-      "position": "185:8",
+      "display_id": "e795025d366b8a950749",
+      "position": "232:8",
       "rule": "condition-to-false",
       "outcome": "killed",
       "accepted": false,
@@ -683,8 +1290,8 @@
       ]
     },
     {
-      "display_id": "9d852b1de0b2d9bd8110",
-      "position": "186:9",
+      "display_id": "6fe9e535a2a2ab65717e",
+      "position": "233:9",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -697,8 +1304,8 @@
       ]
     },
     {
-      "display_id": "9e3014d741c79500ea14",
-      "position": "186:34",
+      "display_id": "b6afb44bbc13e07b2b2a",
+      "position": "233:34",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -711,8 +1318,8 @@
       ]
     },
     {
-      "display_id": "370947e5aac7444533bc",
-      "position": "189:5",
+      "display_id": "961282f0d46a66b2c4f6",
+      "position": "236:5",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -725,8 +1332,8 @@
       ]
     },
     {
-      "display_id": "80cbdd70ce6fcb0fa1e1",
-      "position": "190:8",
+      "display_id": "3dcd96865ecd88fcaa80",
+      "position": "237:8",
       "rule": "negate-condition",
       "outcome": "killed",
       "accepted": false,
@@ -739,8 +1346,8 @@
       ]
     },
     {
-      "display_id": "853cc1b6583eb1124465",
-      "position": "190:8",
+      "display_id": "b335c97e7ec77334b9d8",
+      "position": "237:8",
       "rule": "condition-to-true",
       "outcome": "killed",
       "accepted": false,
@@ -753,8 +1360,8 @@
       ]
     },
     {
-      "display_id": "6f9cc52c3708e0dff155",
-      "position": "190:8",
+      "display_id": "f678520376bdbcc5c637",
+      "position": "237:8",
       "rule": "condition-to-false",
       "outcome": "killed",
       "accepted": false,
@@ -767,8 +1374,8 @@
       ]
     },
     {
-      "display_id": "54f39d0b7405be4e70e5",
-      "position": "191:9",
+      "display_id": "42a5b30ced4b66ad4c0c",
+      "position": "238:9",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -781,8 +1388,8 @@
       ]
     },
     {
-      "display_id": "4703930fc5b5b81eb641",
-      "position": "194:9",
+      "display_id": "7026953a9d8bb578808b",
+      "position": "241:9",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -795,8 +1402,8 @@
       ]
     },
     {
-      "display_id": "7f149204cd993e559fe2",
-      "position": "194:26",
+      "display_id": "1643a77b490113cfebfa",
+      "position": "241:26",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -809,8 +1416,8 @@
       ]
     },
     {
-      "display_id": "0057d5d910c450d26c79",
-      "position": "194:44",
+      "display_id": "2b061a5cbca960379a97",
+      "position": "241:44",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -823,8 +1430,8 @@
       ]
     },
     {
-      "display_id": "26ffd687b58645c680f2",
-      "position": "194:61",
+      "display_id": "22cd4c1c0ef3008c1ba1",
+      "position": "241:61",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -837,8 +1444,8 @@
       ]
     },
     {
-      "display_id": "c23a150a6ac329a15ef1",
-      "position": "196:5",
+      "display_id": "973637aac892b30a4937",
+      "position": "243:5",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -851,8 +1458,8 @@
       ]
     },
     {
-      "display_id": "65e5d73a83ae9c4fe639",
-      "position": "223:8",
+      "display_id": "069f50dd0393fa9c0667",
+      "position": "270:8",
       "rule": "negate-condition",
       "outcome": "killed",
       "accepted": false,
@@ -865,8 +1472,8 @@
       ]
     },
     {
-      "display_id": "9baa30c68ef7fa974aa2",
-      "position": "223:8",
+      "display_id": "bde11203b91e93f86884",
+      "position": "270:8",
       "rule": "condition-to-true",
       "outcome": "killed",
       "accepted": false,
@@ -879,8 +1486,8 @@
       ]
     },
     {
-      "display_id": "f7b862fe4b895081a15b",
-      "position": "223:8",
+      "display_id": "5071840395614eb4a66f",
+      "position": "270:8",
       "rule": "condition-to-false",
       "outcome": "killed",
       "accepted": false,
@@ -893,8 +1500,8 @@
       ]
     },
     {
-      "display_id": "e4672ef5bc656f4cb3ac",
-      "position": "225:9",
+      "display_id": "daeb906c4fc8f44e2f3a",
+      "position": "272:9",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -907,8 +1514,8 @@
       ]
     },
     {
-      "display_id": "6e5fe2362a6518f12bbf",
-      "position": "233:37",
+      "display_id": "fc0f97c4e5b00ed933bd",
+      "position": "280:37",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -921,8 +1528,8 @@
       ]
     },
     {
-      "display_id": "92403358c4c88d4b147f",
-      "position": "233:57",
+      "display_id": "4550385391eecae3a1ca",
+      "position": "280:57",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -945,8 +1552,8 @@
       ]
     },
     {
-      "display_id": "386c24373c137a930aa6",
-      "position": "235:31",
+      "display_id": "a8b83364dfcfc0ebe04f",
+      "position": "282:31",
       "rule": "eq-to-neq",
       "outcome": "killed",
       "accepted": false,
@@ -959,8 +1566,8 @@
       ]
     },
     {
-      "display_id": "20bf95eda1a85d7239aa",
-      "position": "235:48",
+      "display_id": "94632d223c407b9ae99c",
+      "position": "282:48",
       "rule": "and-to-or",
       "outcome": "killed",
       "accepted": false,
@@ -973,8 +1580,8 @@
       ]
     },
     {
-      "display_id": "46f4697330b57c1086d2",
-      "position": "245:26",
+      "display_id": "caa98ab4218ab6a2df55",
+      "position": "292:26",
       "rule": "negate-condition",
       "outcome": "killed",
       "accepted": false,
@@ -987,8 +1594,8 @@
       ]
     },
     {
-      "display_id": "aadd2f17d1dd6951ac4e",
-      "position": "245:26",
+      "display_id": "d61ec531059206d39d49",
+      "position": "292:26",
       "rule": "condition-to-true",
       "outcome": "killed",
       "accepted": false,
@@ -1001,8 +1608,8 @@
       ]
     },
     {
-      "display_id": "08dcbd77c121be162353",
-      "position": "245:26",
+      "display_id": "7bcc2409945a812cc462",
+      "position": "292:26",
       "rule": "condition-to-false",
       "outcome": "killed",
       "accepted": false,
@@ -1015,8 +1622,8 @@
       ]
     },
     {
-      "display_id": "beb7e74ab389070fd014",
-      "position": "245:29",
+      "display_id": "4657bd3c08dc09910d21",
+      "position": "292:29",
       "rule": "eq-to-neq",
       "outcome": "killed",
       "accepted": false,
@@ -1029,8 +1636,8 @@
       ]
     },
     {
-      "display_id": "a0fb612c074baa1e7474",
-      "position": "245:32",
+      "display_id": "37f0bbe7d8fd273bdd7a",
+      "position": "292:32",
       "rule": "int-increment",
       "outcome": "killed",
       "accepted": false,
@@ -1043,8 +1650,8 @@
       ]
     },
     {
-      "display_id": "c6e95a409077171bf557",
-      "position": "245:36",
+      "display_id": "1a02fc7441c69ed332b5",
+      "position": "292:36",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -1057,8 +1664,8 @@
       ]
     },
     {
-      "display_id": "2b2a601695f12c651f61",
-      "position": "245:51",
+      "display_id": "349856c207df6030aaec",
+      "position": "292:51",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -1071,8 +1678,8 @@
       ]
     },
     {
-      "display_id": "d9f78bd0d8dd51e9a943",
-      "position": "246:9",
+      "display_id": "fc3860988cf582982dfb",
+      "position": "293:9",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -1085,8 +1692,8 @@
       ]
     },
     {
-      "display_id": "6b512dc48a3c761e5553",
-      "position": "248:33",
+      "display_id": "9f8d2acb7ccc370c21d0",
+      "position": "295:33",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -1099,8 +1706,8 @@
       ]
     },
     {
-      "display_id": "3046a43fb4cfe4b7316e",
-      "position": "248:62",
+      "display_id": "e59786adfc33f6f8cb88",
+      "position": "295:62",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -1113,8 +1720,8 @@
       ]
     },
     {
-      "display_id": "0a08b31d6b3c08dd1dc3",
-      "position": "250:9",
+      "display_id": "1f005d6f1f7a9cf78e3b",
+      "position": "297:9",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -1127,8 +1734,8 @@
       ]
     },
     {
-      "display_id": "413ad44a90f63359c8eb",
-      "position": "251:9",
+      "display_id": "f0c62adc62607184d0e7",
+      "position": "298:9",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -1141,8 +1748,8 @@
       ]
     },
     {
-      "display_id": "f74593bb9801075a2b9e",
-      "position": "251:26",
+      "display_id": "0f948ca8cc26f357423c",
+      "position": "298:26",
       "rule": "negate-condition",
       "outcome": "killed",
       "accepted": false,
@@ -1155,8 +1762,8 @@
       ]
     },
     {
-      "display_id": "9bfb6145807abfa306ec",
-      "position": "251:26",
+      "display_id": "cec554319f611667423d",
+      "position": "298:26",
       "rule": "condition-to-true",
       "outcome": "killed",
       "accepted": false,
@@ -1169,8 +1776,8 @@
       ]
     },
     {
-      "display_id": "545cb25c3fd21b279092",
-      "position": "251:26",
+      "display_id": "5dcf2f428c90a8de081d",
+      "position": "298:26",
       "rule": "condition-to-false",
       "outcome": "killed",
       "accepted": false,
@@ -1183,8 +1790,8 @@
       ]
     },
     {
-      "display_id": "7211e3bebcfc7b14198d",
-      "position": "251:48",
+      "display_id": "c9c0b1de4d0be77cc066",
+      "position": "298:48",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -1197,8 +1804,8 @@
       ]
     },
     {
-      "display_id": "1af370d4d4ed75dba061",
-      "position": "251:61",
+      "display_id": "86f563a609e5d799ca66",
+      "position": "298:61",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -1211,8 +1818,8 @@
       ]
     },
     {
-      "display_id": "6df15e4dd4be1fca7a23",
-      "position": "253:5",
+      "display_id": "f68db799dca144dbe40d",
+      "position": "300:5",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -1225,8 +1832,8 @@
       ]
     },
     {
-      "display_id": "c297d6dc2afdec8dd83e",
-      "position": "253:19",
+      "display_id": "352e68abbdf1ac103a6a",
+      "position": "300:19",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -1239,8 +1846,8 @@
       ]
     },
     {
-      "display_id": "077b7a68dcf462b68362",
-      "position": "255:9",
+      "display_id": "f364878308d3e759c07b",
+      "position": "302:9",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -1253,8 +1860,8 @@
       ]
     },
     {
-      "display_id": "6fddc97c7038dc951bae",
-      "position": "257:35",
+      "display_id": "fe209f59bc5ad4be2f44",
+      "position": "304:35",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -1267,8 +1874,8 @@
       ]
     },
     {
-      "display_id": "a4693338dfd3060ec41c",
-      "position": "257:60",
+      "display_id": "836c0f0e725a2a89eebb",
+      "position": "304:60",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -1281,8 +1888,8 @@
       ]
     },
     {
-      "display_id": "130543ec39fc17e87ea0",
-      "position": "260:21",
+      "display_id": "516c2017d306bef07b25",
+      "position": "307:21",
       "rule": "negate-condition",
       "outcome": "killed",
       "accepted": false,
@@ -1305,8 +1912,8 @@
       ]
     },
     {
-      "display_id": "865301edf30ff1aed3af",
-      "position": "260:21",
+      "display_id": "81b887729fe0e7d74b8b",
+      "position": "307:21",
       "rule": "condition-to-true",
       "outcome": "killed",
       "accepted": false,
@@ -1329,8 +1936,8 @@
       ]
     },
     {
-      "display_id": "55e48755f5f7086d09d9",
-      "position": "260:21",
+      "display_id": "8b5b895524239da2590a",
+      "position": "307:21",
       "rule": "condition-to-false",
       "outcome": "killed",
       "accepted": false,
@@ -1353,8 +1960,8 @@
       ]
     },
     {
-      "display_id": "3032d02a5db3b64a07bc",
-      "position": "267:9",
+      "display_id": "7a6fcef1917fecdd2cbb",
+      "position": "314:9",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -1367,8 +1974,8 @@
       ]
     },
     {
-      "display_id": "00f555c1a0b2a4cfff15",
-      "position": "269:5",
+      "display_id": "1a0add04a1758a29586f",
+      "position": "316:5",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -1381,8 +1988,8 @@
       ]
     },
     {
-      "display_id": "fa420f6e7f9edb861656",
-      "position": "269:19",
+      "display_id": "2d8e0ea879bddbb7a14b",
+      "position": "316:19",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
@@ -1395,8 +2002,8 @@
       ]
     },
     {
-      "display_id": "0fd15a959791585f8974",
-      "position": "281:9",
+      "display_id": "03bbdf0d6fbbc924e8ce",
+      "position": "328:9",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
@@ -1409,137 +2016,132 @@
       ]
     },
     {
-      "display_id": "c0c802946c4bd2c849f4",
-      "position": "288:9",
+      "display_id": "b7bbb3775af3a613f88d",
+      "position": "335:9",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
       "executions": [
         {
           "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
-          "test": "guard::tests::a_value_that_opens_a_block_is_guarded_by_a_chain_holding_every_branch_in_the_macro",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
           "came_to": "panicked"
         }
       ]
     },
     {
-      "display_id": "07d254ac4b0149f948ab",
-      "position": "288:28",
+      "display_id": "a5c4c00a1f944ea5e5f3",
+      "position": "335:28",
       "rule": "string-to-empty",
       "outcome": "killed",
       "accepted": false,
       "executions": [
         {
           "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
-          "test": "guard::tests::a_value_that_opens_a_block_is_guarded_by_a_chain_holding_every_branch_in_the_macro",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
           "came_to": "panicked"
         }
       ]
     },
     {
-      "display_id": "7b94c436c0980f276598",
-      "position": "291:5",
+      "display_id": "ca47e3e0a13c13d379ec",
+      "position": "338:5",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
       "executions": [
         {
           "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
-          "test": "guard::tests::a_statement_guard_holds_its_branches_bare_and_compares_nothing",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
           "came_to": "panicked"
         }
       ]
     },
     {
-      "display_id": "e458d48a264ff1e652c4",
-      "position": "293:8",
+      "display_id": "63f194fa3a1f8fdd0aeb",
+      "position": "340:8",
       "rule": "negate-condition",
       "outcome": "killed",
       "accepted": false,
       "executions": [
         {
           "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
-          "test": "guard::tests::a_statement_guard_holds_its_branches_bare_and_compares_nothing",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
           "came_to": "panicked"
         }
       ]
     },
     {
-      "display_id": "30d32271636518c65338",
-      "position": "293:8",
+      "display_id": "af7514390af2a9b011c8",
+      "position": "340:8",
       "rule": "condition-to-true",
       "outcome": "killed",
       "accepted": false,
       "executions": [
         {
           "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
           "test": "guard::tests::a_statement_guard_holds_its_branches_bare_and_compares_nothing",
           "came_to": "panicked"
         }
       ]
     },
     {
-      "display_id": "c9401e6d49d92a9fe63a",
-      "position": "293:8",
+      "display_id": "7218eceb090ea8135861",
+      "position": "340:8",
       "rule": "condition-to-false",
       "outcome": "killed",
       "accepted": false,
       "executions": [
         {
           "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
-          "test": "guard::tests::a_statement_guard_holds_its_branches_bare_and_compares_nothing",
-          "came_to": "passed"
-        },
-        {
-          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
-          "test": "guard::tests::a_value_chain_asks_every_vouched_probe_around_the_original",
-          "came_to": "passed"
-        },
-        {
-          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
-          "test": "guard::tests::a_value_that_opens_a_block_is_guarded_by_a_chain_holding_every_branch_in_the_macro",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
           "came_to": "panicked"
         }
       ]
     },
     {
-      "display_id": "3ec5aed7e4a1efe1aa82",
-      "position": "293:15",
+      "display_id": "5ebdc56b67e196deed36",
+      "position": "340:15",
       "rule": "is-some-to-is-none",
       "outcome": "killed",
       "accepted": false,
       "executions": [
         {
           "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
-          "test": "guard::tests::a_statement_guard_holds_its_branches_bare_and_compares_nothing",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
           "came_to": "panicked"
         }
       ]
     },
     {
-      "display_id": "197a4ee0f1637515065b",
-      "position": "294:9",
+      "display_id": "7944b14242ff15d52c3c",
+      "position": "341:9",
       "rule": "delete-call-statement",
       "outcome": "killed",
       "accepted": false,
       "executions": [
         {
           "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
-          "test": "guard::tests::a_value_that_opens_a_block_is_guarded_by_a_chain_holding_every_branch_in_the_macro",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
           "came_to": "panicked"
         }
       ]
     },
     {
-      "display_id": "2f06eac63e1163258dc4",
-      "position": "296:5",
+      "display_id": "714efd10e251eaf953f5",
+      "position": "343:5",
       "rule": "return-default",
       "outcome": "killed",
       "accepted": false,
       "executions": [
         {
           "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
-          "test": "guard::tests::a_statement_guard_holds_its_branches_bare_and_compares_nothing",
+          "test": "guard::tests::a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe",
           "came_to": "panicked"
         }
       ]

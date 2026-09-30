@@ -30,7 +30,7 @@ jobs = 0                       # cargo compilation jobs; 0 = cargo decides
 debug = false                  # write debug information; off, because nothing here reads a backtrace
 
 [mutation]
-tier = "balanced"              # balanced | strong | all
+tier = "balanced"              # balanced | strong | all | compiled
 operators = []                 # exactly these rules; empty = the tier
 timeout = "auto"               # auto = 5x the target's own baseline, never below 30s
 steps = 50_000_000             # guard takes one mutant may spend; 0 = no step limit

@@ -510,6 +510,9 @@ impl Controlled<'_> {
 /// Every sealed module of a session, prepared, listed and controlled.
 #[derive(Debug)]
 pub struct Bench<'runner> {
+    runner: &'runner SealedRunner,
+    pub(crate) cancel: crate::runner::Cancel,
+    compiled: Option<u32>,
     /// Each target's station, by target identity.
     pub stations: BTreeMap<String, Station<'runner>>,
     /// Each target with no station, and why.
@@ -546,12 +549,13 @@ impl<'runner> Bench<'runner> {
     /// # Errors
     /// A module that cannot be read, an environment that is not text, a host that cannot run what it is given, or [`BenchError::Interrupted`].
     pub fn assemble(
-        (runner, interrupt): (&'runner SealedRunner, Interrupt),
+        (runner, cancel): (&'runner SealedRunner, crate::runner::Cancel),
         (sealed, natives): (&SealedBuild, &BTreeMap<String, Ran>),
         (tree, harness): (Tree, &Configured),
         (catalog, bounds): (&str, crate::touch::Bounds),
     ) -> Result<Self, BenchError> {
-        let mut bench = Self::unassembled(interrupt, sealed, (tree, harness), (catalog, bounds));
+        let mut bench =
+            Self::unassembled((runner, cancel), sealed, (tree, harness), (catalog, bounds));
         for (id, module) in &sealed.modules {
             let Some(mut station) = bench.station(runner, (id, module), Controlled::Every)? else {
                 bench.unsealed.insert(id.clone(), Unsealed::NotListed);
@@ -590,20 +594,75 @@ impl<'runner> Bench<'runner> {
 
     /// A bench with no station yet, every target `sealed` built no module for unsealed for the reason it gives, whose executions will run inside `tree` with `harness`, reading touch logs against `catalog` within `bounds`, and stop when `interrupt` is raised.
     pub(super) fn unassembled(
-        interrupt: Interrupt,
+        (runner, cancel): (&'runner SealedRunner, crate::runner::Cancel),
         sealed: &SealedBuild,
         (tree, harness): (Tree, &Configured),
         (catalog, bounds): (&str, crate::touch::Bounds),
     ) -> Self {
         Self {
+            runner,
+            interrupt: Interrupt::of(cancel.flags()),
+            cancel,
+            compiled: None,
             stations: BTreeMap::new(),
             unsealed: sealed.unsealed.clone(),
             tree,
             harness: harness.clone(),
             catalog: catalog.to_owned(),
             bounds,
-            interrupt,
         }
+    }
+
+    /// Replaces the modules with one compiled mutant while retaining only the original tests and controls.
+    pub(crate) fn rebuilt(&self, sealed: &SealedBuild, index: u32) -> Result<Self, BenchError> {
+        let mut bench = Self::unassembled(
+            (self.runner, self.cancel.clone()),
+            sealed,
+            (self.tree.clone(), &self.harness),
+            (&self.catalog, self.bounds),
+        );
+        bench.compiled = Some(index);
+        let none = BTreeSet::new();
+        for (id, original) in &self.stations {
+            let names: Vec<String> = original.controls.keys().cloned().collect();
+            let station = if let Some(module) = sealed.modules.get(id) {
+                bench.station(self.runner, (id, module), Controlled::Only(&none))?
+            } else if let Some(doctests) = sealed.doctests.get(id) {
+                bench.documented(
+                    self.runner,
+                    (doctests, Some(&names)),
+                    Controlled::Only(&none),
+                )?
+            } else {
+                continue;
+            };
+            if let Some(mut station) = station {
+                station.controls = original
+                    .controls
+                    .iter()
+                    .map(|(test, control)| {
+                        (
+                            test.clone(),
+                            if station.names(test) {
+                                control.clone()
+                            } else {
+                                Err(Uncontrolled::Unsealed)
+                            },
+                        )
+                    })
+                    .collect();
+                bench.stations.insert(id.clone(), station);
+            } else {
+                bench.unsealed.insert(id.clone(), Unsealed::NotListed);
+            }
+        }
+        Ok(bench)
+    }
+
+    /// Whether this bench holds the separately compiled constant selector of this index.
+    #[must_use]
+    pub(crate) fn compiles(&self, index: u32) -> bool {
+        self.compiled == Some(index)
     }
 
     /// The station of `module`, the sealed module of target `id`, prepared on `runner`: every test its harness lists, with the control of each `controlled` asks for; nothing where its harness does not list its tests.
