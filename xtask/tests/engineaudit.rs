@@ -73,6 +73,29 @@ fn a_clean_run_is_silent_on_every_layer_it_can_re_decide() {
 }
 
 #[test]
+fn a_mutant_of_a_const_fn_is_measured_by_the_reach_of_its_guards_alone() {
+    let run = run_directory(&base());
+    std::fs::write(
+        run.path().join("touched-v1.json"),
+        sentinel::entered(
+            &serde_json::json!({ "tests": { "larger_works": [] } }),
+            false,
+        )
+        .to_string(),
+    )
+    .expect("the guards' record");
+    let audit = gates::engine_audit(&checkers(), &asked(run.path(), None, None))
+        .expect("a report this audit can read");
+    assert!(
+        violations(&audit, Layer::Entry).is_empty(),
+        "the catalog says nothing records entering the item, because the pristine file makes it \
+         a const fn ([ADR 0047](docs/adr/0047)), so its mutants are neither routed nor audited \
+         by entry: {:?}",
+        violations(&audit, Layer::Entry)
+    );
+}
+
+#[test]
 fn every_layer_says_how_far_it_got_even_with_nothing_to_look_at() {
     let said = audited(&base()).to_string();
     for layer in Layer::ALL {

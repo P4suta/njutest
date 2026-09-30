@@ -1306,7 +1306,7 @@ impl Layer {
                     ..clean.clone()
                 },
                 Perturbation {
-                    name: "a site reached inside an item nothing can record entering",
+                    name: "a record that says a test entered an item nothing can record entering",
                     beside: vec![(
                         "touched-v1.json",
                         entered(&json!({ "tests": { "larger_works": [0] } }), false),
