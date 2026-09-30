@@ -1711,3 +1711,80 @@ fn a_request_that_names_its_target_runs_the_tests_its_route_names_only_when_it_a
          answer is held to says it did: {ran:?}"
     );
 }
+
+/// One judged mutant of a session, with every field a stream line reads, named by `index`.
+fn judged_of(index: u32) -> rust_mutants::run::Judged {
+    rust_mutants::run::Judged {
+        index,
+        id: format!("{index:064x}"),
+        display_id: format!("{index:020x}"),
+        outcome: Outcome::Survived,
+        step_notice: None,
+        target: "fixture-simple/lib/fixture_simple".to_owned(),
+        exit_code: 0,
+        start_failure: None,
+        protocol_failure: None,
+        duration: std::time::Duration::from_millis(1),
+        tests_run: Some(1),
+        failed_tests: Vec::new(),
+        signal: None,
+        retried: false,
+        lingered: false,
+        expected: false,
+        not_run_reason: None,
+        route: None,
+        measured: true,
+        identical: rust_mutants::run::CodegenIdentity::NotMeasured,
+        source_run_id: None,
+        declined: Vec::new(),
+        evidence: rust_mutants::sealed::record::Evidence::Unproven {
+            reasons: Vec::new(),
+        },
+    }
+}
+
+#[test]
+fn what_a_session_cannot_decide_is_refused_rather_than_invented() {
+    let fixture = Fixture::copy("fixture-simple");
+    let session = prepare(&fixture);
+    let known = session
+        .catalog()
+        .mutants()
+        .first()
+        .expect("the fixture catalogs a mutation")
+        .clone();
+    let beyond = session
+        .catalog()
+        .mutants()
+        .len()
+        .checked_mul(4)
+        .and_then(|at| u32::try_from(at).ok())
+        .expect("a small catalog");
+
+    let mut unplaced = known.clone();
+    unplaced.candidate.path = "src/nowhere.rs".to_owned();
+    let refused = session
+        .placed(&unplaced)
+        .expect_err("a mutant whose file the session holds no text of has no place");
+    assert!(
+        refused.to_string().contains("src/nowhere.rs"),
+        "the refusal names the file nothing read: {refused}"
+    );
+
+    let mut unattributed = known.clone();
+    unattributed.index = beyond;
+    let refused = rust_mutants::report::catalog::mutant_document(&session, &unattributed)
+        .expect_err("a mutant no item of the catalog is named by has no item to name");
+    assert!(
+        refused.to_string().contains("item"),
+        "the refusal names what nothing attributes: {refused}"
+    );
+
+    let refused = rust_mutants::report::stream::MutantLine::of(&session, &judged_of(beyond))
+        .expect_err("a judgement of a mutant the catalog does not hold is no line of a stream");
+    assert!(
+        refused.to_string().contains(&format!("{beyond:020x}")),
+        "the refusal names the mutant it refuses: {refused}"
+    );
+    session.close().expect("close");
+}
