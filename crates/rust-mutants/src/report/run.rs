@@ -21,7 +21,7 @@ use crate::run::{
 pub const DOCUMENT_TYPE: &str = "rust-mutants/run-report";
 
 /// The version of that shape.
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 
 /// The file one run writes under its own directory.
 pub const FILE_NAME: &str = "run-report-v1.json";
@@ -1210,7 +1210,7 @@ fn target_documents(
             id: target.id().to_owned(),
             kind: target.kind().name().to_owned(),
             harness: target.harness,
-            tests: session.tests_of(target.id()),
+            tests: session.baseline_tests(target.id()),
             limitations: target
                 .limitations
                 .iter()
@@ -1398,8 +1398,9 @@ pub struct TargetDocument {
     pub kind: String,
     /// Whether it is built with the libtest harness, which decides how its silence is read.
     pub harness: bool,
-    /// How many tests its baseline ran, which is what asking the whole of it about one mutation costs.
-    pub tests: u32,
+    /// How many tests its own baseline ran, or null where its baseline did not run and nothing counted them.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub tests: Option<u32>,
     /// What a run could not establish about it, each named.
     pub limitations: Vec<String>,
     /// How the sealed build answers for it.

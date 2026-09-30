@@ -31,7 +31,7 @@ pub const REPORT_FILE: &str = "run-report-v1.json";
 pub const DOCUMENT_TYPE: &str = "rust-mutants/run-report";
 
 /// The current report shape this audit independently re-decides.
-pub const SCHEMA_VERSION: u64 = 4;
+pub const SCHEMA_VERSION: u64 = 5;
 
 /// The current engine recording shape paired with [`SCHEMA_VERSION`].
 pub const TRACE_SCHEMA: &str = "rust-mutants-trace-v1";

@@ -619,13 +619,23 @@ fn work_line(document: &run::RunDocument) -> Result<String, rust_mutants::work::
         let written = write!(line, " ({})", removed.join(" "));
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
-    if work.tests_whole > 0 {
+    let tests = match (work.tests_started, work.tests_whole, work.tests_saved()) {
+        (Some(started), Some(whole), Some(saved)) => Some((started, whole, saved)),
+        (None, _, _) | (_, None, _) | (_, _, None) => {
+            line.push_str(
+                "\n          tests are not counted: a target's baseline did not run, so how many \
+                 tests it holds is not known",
+            );
+            None
+        }
+    };
+    if let Some((started, whole, saved)) = tests
+        && whole > 0
+    {
         let written = write!(
             line,
-            "\n          tests={} of {}; {:.1}% removed",
-            work.tests_started,
-            work.tests_whole,
-            work.tests_saved() * 100.0
+            "\n          tests={started} of {whole}; {:.1}% removed",
+            saved * 100.0
         );
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
         if work.established_tests() > 0 {

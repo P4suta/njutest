@@ -273,8 +273,8 @@ struct Target {
     _kind: String,
     #[serde(rename = "harness")]
     _harness: bool,
-    #[serde(rename = "tests")]
-    _tests: u64,
+    #[serde(rename = "tests", deserialize_with = "required_option")]
+    _tests: Option<u64>,
     #[serde(rename = "limitations")]
     _limitations: Vec<String>,
     #[serde(rename = "sealed")]

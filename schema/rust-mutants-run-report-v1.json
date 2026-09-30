@@ -26,7 +26,7 @@
       "const": "rust-mutants/run-report"
     },
     "schema_version": {
-      "const": 4
+      "const": 5
     },
     "tool_version": {
       "type": "string",
@@ -1147,8 +1147,11 @@
             }
           },
           "tests": {
-            "description": "How many tests this target's baseline ran, which is what asking the whole of it about one mutation costs.",
-            "type": "integer",
+            "description": "How many tests this target's own baseline ran, or null where its baseline did not run and nothing counted them.",
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 0
           },
           "sealed": {

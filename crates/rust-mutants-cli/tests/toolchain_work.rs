@@ -54,7 +54,19 @@ fn ceilings() -> Vec<Ceiling> {
         .collect()
 }
 
-fn measured(name: &str) -> Work {
+/// A run's work, with its test counts, which a run whose every baseline ran counts.
+fn measured(name: &str) -> (Work, u64, u64) {
+    let work = ledger(name);
+    let tests_whole = work
+        .tests_whole
+        .expect("every baseline ran, so a whole run's tests are counted");
+    let tests_started = work
+        .tests_started
+        .expect("every baseline ran, so the tests a run started are counted");
+    (work, tests_whole, tests_started)
+}
+
+fn ledger(name: &str) -> Work {
     let fixture = Fixture::copy(name);
     let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
@@ -95,7 +107,7 @@ fn no_fixture_starts_more_processes_than_the_ceiling_allows() {
     let mut asked = Vec::new();
     let mut measurements = Vec::new();
     for ceiling in ceilings() {
-        let work = measured(&ceiling.fixture);
+        let (work, tests_whole, tests_started) = measured(&ceiling.fixture);
         assert!(
             work.balances().expect("exact balance arithmetic"),
             "{}: a pair nothing accounts for is work nobody can explain: {work:?}",
@@ -103,14 +115,14 @@ fn no_fixture_starts_more_processes_than_the_ceiling_allows() {
         );
         measurements.push(format!(
             "{:<20} {:>5} {:>8} {:>6} {:>14}",
-            ceiling.fixture, work.whole, work.started, work.tests_whole, work.tests_started
+            ceiling.fixture, work.whole, work.started, tests_whole, tests_started
         ));
-        if (work.whole, work.tests_whole) != (ceiling.whole, ceiling.tests_whole) {
+        if (work.whole, tests_whole) != (ceiling.whole, ceiling.tests_whole) {
             asked.push(ceiling.fixture.clone());
         }
         for (unit, started, allowed) in [
             ("pairs", work.started, ceiling.started),
-            ("tests", work.tests_started, ceiling.tests_started),
+            ("tests", tests_started, ceiling.tests_started),
         ] {
             let said = format!(
                 "{}: {started} {unit} started, {allowed} allowed",
@@ -147,7 +159,7 @@ fn no_fixture_starts_more_processes_than_the_ceiling_allows() {
 
 #[test]
 fn every_removal_a_whole_run_still_answers_for_is_a_proof_a_reader_can_name() {
-    let work = measured("fixture-unreached");
+    let work = ledger("fixture-unreached");
     assert!(
         work.answers_for_the_whole(),
         "nothing here was filtered, so this run answers for the whole catalog: {work:?}"

@@ -179,10 +179,10 @@ pub struct Work {
     pub whole: u64,
     /// The pairs this run started a process for, a confirming retry counted again.
     pub started: u64,
-    /// Every test a run that asked every test of every target about every mutant would have started.
-    pub tests_whole: u64,
-    /// The tests this run started, the ones it started to establish a filter included.
-    pub tests_started: u64,
+    /// Every test a run that asked every test of every target about every mutant would have started, or nothing where a target's baseline did not run and nothing counted its tests.
+    pub tests_whole: Option<u64>,
+    /// The tests this run started, the ones it started to establish a filter included, or nothing where it asked the whole of a target nothing counted the tests of.
+    pub tests_started: Option<u64>,
     /// How many of those were started to establish that a filtered set answers on its own.
     pub established: u64,
     /// What removed the rest, the largest first.
@@ -197,20 +197,20 @@ impl Work {
     pub fn of(document: &RunDocument) -> Result<Self, WorkError> {
         let targets = count_u32(WorkQuantity::Targets, document.targets.len())?;
         let cataloged = count_u32(WorkQuantity::CatalogedMutants, document.mutants.len())?;
-        let held: BTreeMap<&str, u64> = document
+        let held: BTreeMap<&str, Option<u64>> = document
             .targets
             .iter()
-            .map(|target| (target.id.as_str(), u64::from(target.tests.max(1))))
+            .map(|target| (target.id.as_str(), target.tests.map(u64::from)))
             .collect();
-        let every = held.values().try_fold(0_u64, |total, tests| {
-            checked_add(total, *tests, WorkQuantity::WholeTests)
+        let every = held.values().try_fold(Some(0_u64), |total, tests| {
+            counted(total, *tests, WorkQuantity::WholeTests)
         })?;
         let mut started: u64 = 0;
-        let mut tests_started: u64 = document.established_tests;
+        let mut tests_started = Some(document.established_tests);
         let mut removed: BTreeMap<String, (Removal, u64, u32)> = BTreeMap::new();
         for mutant in &document.mutants {
             started = checked_add(started, processes(mutant)?, WorkQuantity::StartedProcesses)?;
-            tests_started = checked_add(
+            tests_started = counted(
                 tests_started,
                 tests(mutant, &held)?,
                 WorkQuantity::StartedTests,
@@ -253,7 +253,14 @@ impl Work {
                 WorkQuantity::WholePairs,
             )?,
             started,
-            tests_whole: checked_mul(u64::from(cataloged), every, WorkQuantity::WholeTests)?,
+            tests_whole: match every {
+                Some(every) => Some(checked_mul(
+                    u64::from(cataloged),
+                    every,
+                    WorkQuantity::WholeTests,
+                )?),
+                None => None,
+            },
             tests_started,
             established: document.established_tests,
             removed,
@@ -290,19 +297,22 @@ impl Work {
         self.established
     }
 
-    /// The share of the tests a whole run would have started that this one did not, between 0 and 1.
+    /// The share of the tests a whole run would have started that this one did not, between 0 and 1, or nothing where either is not counted.
     #[must_use]
-    pub fn tests_saved(&self) -> f64 {
-        if self.tests_whole == 0 || self.tests_started >= self.tests_whole {
-            return 0.0;
-        }
-        let Some(saved) = self.tests_whole.checked_sub(self.tests_started) else {
-            return 0.0;
+    pub fn tests_saved(&self) -> Option<f64> {
+        let (Some(whole), Some(started)) = (self.tests_whole, self.tests_started) else {
+            return None;
         };
-        match crate::count::ratio(saved, self.tests_whole) {
+        if whole == 0 || started >= whole {
+            return Some(0.0);
+        }
+        let Some(saved) = whole.checked_sub(started) else {
+            return Some(0.0);
+        };
+        Some(match crate::count::ratio(saved, whole) {
             Some(share) => share,
             None => 0.0,
-        }
+        })
     }
 
     /// The share of a whole run this one did not do, between 0 and 1.
@@ -340,17 +350,20 @@ fn processes(mutant: &RunMutantDocument) -> Result<u64, WorkError> {
     )
 }
 
-/// How many tests one mutant cost, which is what each target it ran was asked for.
-fn tests(mutant: &RunMutantDocument, held: &BTreeMap<&str, u64>) -> Result<u64, WorkError> {
+/// How many tests one mutant cost, which is what each target it ran was asked for, or nothing where it asked the whole of a target nothing counted the tests of.
+fn tests(
+    mutant: &RunMutantDocument,
+    held: &BTreeMap<&str, Option<u64>>,
+) -> Result<Option<u64>, WorkError> {
     if mutant.source_run_id.is_some() {
-        return Ok(0);
+        return Ok(Some(0));
     }
     let Some(route) = mutant.route.as_ref() else {
-        return Ok(0);
+        return Ok(Some(0));
     };
-    let asked = |target: &str| -> Result<u64, WorkError> {
+    let asked = |target: &str| -> Result<Option<u64>, WorkError> {
         match route.tests.get(target) {
-            Some(named) => count_u64(WorkQuantity::NamedTests, named.len()),
+            Some(named) => count_u64(WorkQuantity::NamedTests, named.len()).map(Some),
             None => match held.get(target) {
                 Some(whole) => Ok(*whole),
                 None => Err(WorkError::UnlistedTarget {
@@ -359,15 +372,30 @@ fn tests(mutant: &RunMutantDocument, held: &BTreeMap<&str, u64>) -> Result<u64, 
             },
         }
     };
-    let walked = route.executed.iter().try_fold(0_u64, |total, target| {
-        checked_add(total, asked(target)?, WorkQuantity::StartedTests)
-    })?;
+    let walked = route
+        .executed
+        .iter()
+        .try_fold(Some(0_u64), |total, target| {
+            counted(total, asked(target)?, WorkQuantity::StartedTests)
+        })?;
     let again = if mutant.retried {
         asked(&mutant.target)?
     } else {
-        0
+        Some(0)
     };
-    checked_add(walked, again, WorkQuantity::StartedTests)
+    counted(walked, again, WorkQuantity::StartedTests)
+}
+
+/// The sum of two counts, or nothing where either is not counted.
+fn counted(
+    left: Option<u64>,
+    right: Option<u64>,
+    quantity: WorkQuantity,
+) -> Result<Option<u64>, WorkError> {
+    match (left, right) {
+        (Some(left), Some(right)) => checked_add(left, right, quantity).map(Some),
+        (None, _) | (_, None) => Ok(None),
+    }
 }
 
 /// What removed each of one mutant's pairs, and what kind of removal it was.

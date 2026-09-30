@@ -1606,6 +1606,15 @@ impl Session {
         &self.verified
     }
 
+    /// How many tests one target's own baseline ran, or nothing where its baseline did not run.
+    #[must_use]
+    pub fn baseline_tests(&self, target: &str) -> Option<u32> {
+        self.verified
+            .targets
+            .get(target)
+            .map(|measured| measured.baseline().tests)
+    }
+
     /// How many tests one target's baseline ran, which is what asking the whole of it about one mutation costs.
     #[must_use]
     pub fn tests_of(&self, target: &str) -> u32 {

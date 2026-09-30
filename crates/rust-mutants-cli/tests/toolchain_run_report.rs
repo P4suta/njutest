@@ -123,6 +123,46 @@ fn a_whole_run_judges_every_mutant_scores_the_workspace_and_writes_the_report() 
 }
 
 #[test]
+fn a_target_whose_baseline_did_not_run_counts_no_tests_rather_than_one() {
+    let fixture = Fixture::copy("fixture-simple");
+    let output = against(
+        &fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--no-verify",
+            "--no-seal",
+            "--tier",
+            "all",
+        ],
+    );
+    assert!(
+        output
+            .status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
+        "{}{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    let document = stored(&fixture);
+    let targets = document["targets"].as_array().expect("the targets");
+    assert!(!targets.is_empty(), "the fixture builds test targets");
+    assert!(
+        targets.iter().all(|target| target["tests"].is_null()),
+        "no baseline ran, so nothing counted any target's tests, and the report says so rather \
+         than one each: {targets:?}"
+    );
+    let report = against(&fixture, &["report"]);
+    let lines = stdout(&report);
+    assert!(
+        !lines.contains("tests=") && lines.contains("tests are not counted"),
+        "the work a run did is not said in tests nothing counted: {lines}"
+    );
+}
+
+#[test]
 fn the_report_names_every_mutant_scores_what_it_decided_and_reports_every_gap() {
     let fixture = Fixture::copy("fixture-simple");
     let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
