@@ -120,7 +120,7 @@ fn located(file: &syn::File, start: LineColumn) -> Option<Located> {
         context: Vec::new(),
         found: None,
     };
-    search.items(&file.items);
+    search.visit_file(file);
     search.found
 }
 
@@ -131,45 +131,6 @@ struct Search {
 }
 
 impl Search {
-    fn items(&mut self, items: &[syn::Item]) {
-        for item in items {
-            if self.found.is_some() {
-                return;
-            }
-            self.item(item);
-        }
-    }
-
-    fn item(&mut self, item: &syn::Item) {
-        match item {
-            syn::Item::Fn(function) => {
-                self.candidate(&function.block, &function.sig, &function.attrs);
-            }
-            syn::Item::Mod(module) => {
-                if let Some((_, inner)) = &module.content {
-                    self.within(&module.attrs, |search| search.items(inner));
-                }
-            }
-            syn::Item::Impl(block) => self.within(&block.attrs, |search| {
-                for member in &block.items {
-                    if let syn::ImplItem::Fn(method) = member {
-                        search.candidate(&method.block, &method.sig, &method.attrs);
-                    }
-                }
-            }),
-            syn::Item::Trait(declared) => self.within(&declared.attrs, |search| {
-                for member in &declared.items {
-                    if let syn::TraitItem::Fn(method) = member
-                        && let Some(block) = &method.default
-                    {
-                        search.candidate(block, &method.sig, &method.attrs);
-                    }
-                }
-            }),
-            _ => {}
-        }
-    }
-
     fn within(&mut self, attributes: &[syn::Attribute], inside: impl FnOnce(&mut Self)) {
         let depth = self.context.len();
         self.context.extend(attributes.iter().cloned());
@@ -183,6 +144,9 @@ impl Search {
         signature: &syn::Signature,
         attributes: &[syn::Attribute],
     ) {
+        if self.found.is_some() {
+            return;
+        }
         if block.brace_token.span.open().start() == self.start {
             let mut context = self.context.clone();
             context.extend(attributes.iter().cloned());
@@ -194,7 +158,49 @@ impl Search {
                 opaque: signature.asyncness.is_some() || opaque.0,
                 context,
             });
+        } else {
+            self.within(attributes, |search| search.visit_block(block));
         }
+    }
+}
+
+impl<'ast> Visit<'ast> for Search {
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        if self.found.is_none() {
+            syn::visit::visit_item(self, item);
+        }
+    }
+
+    fn visit_item_fn(&mut self, function: &'ast syn::ItemFn) {
+        self.candidate(&function.block, &function.sig, &function.attrs);
+    }
+
+    fn visit_impl_item_fn(&mut self, function: &'ast syn::ImplItemFn) {
+        self.candidate(&function.block, &function.sig, &function.attrs);
+    }
+
+    fn visit_trait_item_fn(&mut self, function: &'ast syn::TraitItemFn) {
+        if let Some(block) = &function.default {
+            self.candidate(block, &function.sig, &function.attrs);
+        }
+    }
+
+    fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+        self.within(&item.attrs, |search| {
+            syn::visit::visit_item_impl(search, item);
+        });
+    }
+
+    fn visit_item_trait(&mut self, item: &'ast syn::ItemTrait) {
+        self.within(&item.attrs, |search| {
+            syn::visit::visit_item_trait(search, item);
+        });
+    }
+
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        self.within(&item.attrs, |search| {
+            syn::visit::visit_item_mod(search, item);
+        });
     }
 }
 
@@ -920,11 +926,30 @@ fn measured<'r>(
     measured
 }
 
-/// The files of the measured tree, each read once and proved to be the file the run measured where the report can say.
+/// The files of the measured tree, each read and parsed once and proved to be the file the run measured where the report can say.
 struct Tree<'a> {
     root: &'a std::path::Path,
     measured: &'a std::collections::BTreeMap<&'a str, &'a str>,
     files: std::collections::BTreeMap<String, Option<(String, bool)>>,
+    syntax: std::collections::BTreeMap<String, Syntax>,
+}
+
+/// A cached reading that keeps unread sources distinct from readable non-Rust text.
+#[derive(Clone)]
+enum Syntax {
+    File(std::rc::Rc<syn::File>),
+    NotRust,
+    Unread,
+}
+
+impl Syntax {
+    /// The parsed file where the reading made one, retaining its original locations.
+    fn file(self) -> Option<std::rc::Rc<syn::File>> {
+        match self {
+            Self::File(file) => Some(file),
+            Self::NotRust | Self::Unread => None,
+        }
+    }
 }
 
 impl<'a> Tree<'a> {
@@ -936,6 +961,7 @@ impl<'a> Tree<'a> {
             root,
             measured,
             files: std::collections::BTreeMap::new(),
+            syntax: std::collections::BTreeMap::new(),
         }
     }
 
@@ -953,6 +979,22 @@ impl<'a> Tree<'a> {
             },
         };
         self.files.insert(path.to_owned(), read.clone());
+        read
+    }
+
+    /// The one parsing of this file in the audit, including refusals that must not be read again.
+    fn syntax(&mut self, path: &str) -> Syntax {
+        if let Some(known) = self.syntax.get(path) {
+            return known.clone();
+        }
+        let read = match self.text(path) {
+            Some((text, _)) => match crate::lexed::file(&text) {
+                Ok(file) => Syntax::File(std::rc::Rc::new(file)),
+                Err(_not_rust) => Syntax::NotRust,
+            },
+            None => Syntax::Unread,
+        };
+        self.syntax.insert(path.to_owned(), read.clone());
         read
     }
 }
@@ -1009,8 +1051,8 @@ fn bodies(
         );
         return;
     }
-    let (Ok(file), Some(start)) = (
-        crate::lexed::file(&text),
+    let (Some(file), Some(start)) = (
+        tree.syntax(&item.path).file(),
         line_column(&text, item.body.start),
     ) else {
         notes.violated(
@@ -1097,11 +1139,11 @@ fn unit_files(path: &str, skeletons: &Skeletons, tree: &mut Tree<'_>) -> Option<
                 continue;
             }
             let file = entry.strip_prefix("$root/")?;
-            let (text, _) = tree.text(file)?;
-            let Ok(parsed) = crate::lexed::file(&text) else {
-                continue;
-            };
-            files.push(parsed);
+            match tree.syntax(file) {
+                Syntax::File(parsed) => files.push(parsed.as_ref().clone()),
+                Syntax::NotRust => {}
+                Syntax::Unread => return None,
+            }
         }
     }
     Some(files)
@@ -1140,7 +1182,11 @@ fn skeleton_folds(
                 let Some((text, _)) = tree.text(path) else {
                     continue;
                 };
-                match positions_read(path, &text, items, lists) {
+                let listed = tree
+                    .syntax(path)
+                    .file()
+                    .and_then(|file| positions_read(path, (&text, &file), items, lists));
+                match listed {
                     Some(listed) if *digest == sha256(listed.as_bytes()) => {}
                     Some(listed) => notes.violated(
                         &name,
@@ -1211,16 +1257,17 @@ fn rendering(entry: &str, path: &str, text: &str, items: &[Cataloged]) -> Option
 const POSITIONS: &str = "$positions/";
 
 /// Where the page says the compiler reads a position in the file at `path`, one line each in byte order: every body that is not sealed by its ordinal, and outside every cataloged body each item-level macro invocation but a `macro_rules!` definition, each documentation attribute holding a line rustdoc may test, each other attribute off the list, and each array length, enum discriminant, const parameter default and const generic argument that holds a macro invocation or a call; `None` where the file does not parse.
-fn positions_read(path: &str, text: &str, items: &[Cataloged], lists: Lists<'_>) -> Option<String> {
-    let file = match crate::lexed::file(text) {
-        Ok(file) => file,
-        Err(_not_rust) => return None,
-    };
+fn positions_read(
+    path: &str,
+    (text, file): (&str, &syn::File),
+    items: &[Cataloged],
+    lists: Lists<'_>,
+) -> Option<String> {
     let mut found = Candidates {
         lists,
         seen: Vec::new(),
     };
-    found.visit_file(&file);
+    found.visit_file(file);
     let mut in_file: Vec<&Cataloged> = items.iter().filter(|item| item.path == path).collect();
     in_file.sort_by_key(|item| item.index);
     let mut bodies = Vec::new();
@@ -2236,4 +2283,70 @@ fn execution_fails(execution: &Execution, enough: &[&str], held: &Held<'_>) -> O
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::{SKELETONS_VERSION, Skeletons, Tree, Unit, unit_files};
+
+    /// The number of texts kept in this thread's location map, including the probe itself.
+    fn texts_on_this_thread() -> usize {
+        let probe = crate::lexed::parse::<syn::Ident>("probe").expect("a probe identifier");
+        let named = probe.span().file();
+        named
+            .strip_prefix("<parsed string ")
+            .and_then(|rest| rest.strip_suffix('>'))
+            .expect("a lexed token names its source text")
+            .parse::<usize>()
+            .expect("the source texts are numbered")
+    }
+
+    #[test]
+    fn rereading_a_unit_keeps_only_one_copy_of_its_sources_in_the_location_map() {
+        let root = tempfile::tempdir().expect("the source root");
+        std::fs::write(root.path().join("lib.rs"), "pub fn f() {}\n").expect("the source");
+        std::fs::write(root.path().join("data"), "this is not Rust").expect("a text input");
+        let measured = BTreeMap::new();
+        let mut tree = Tree::new(root.path(), &measured);
+        let skeletons = Skeletons {
+            document_type: "rust-mutants/skeletons".to_owned(),
+            schema_version: SKELETONS_VERSION,
+            items: Vec::new(),
+            files: BTreeMap::new(),
+            units: vec![Unit {
+                package: "app".to_owned(),
+                target: "app".to_owned(),
+                kind: "lib".to_owned(),
+                test: false,
+                skeleton: String::new(),
+                entries: BTreeMap::from([
+                    ("$root/lib.rs".to_owned(), String::new()),
+                    ("$root/data".to_owned(), String::new()),
+                ]),
+            }],
+        };
+        assert_eq!(
+            unit_files("lib.rs", &skeletons, &mut tree)
+                .expect("the unit's sources are readable")
+                .len(),
+            1
+        );
+        let before = texts_on_this_thread();
+        for _ in 0..10 {
+            assert_eq!(
+                unit_files("lib.rs", &skeletons, &mut tree)
+                    .expect("the same unit remains readable")
+                    .len(),
+                1
+            );
+        }
+        assert_eq!(
+            texts_on_this_thread(),
+            before + 1,
+            "the audit reads each source once, including non-Rust text; repeated body checks \
+             must not retain more copies until the 32-bit location map wraps"
+        );
+    }
 }
