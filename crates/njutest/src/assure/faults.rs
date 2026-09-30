@@ -332,6 +332,10 @@ fn writes(
 ) -> Result<Vec<Finding>, RunnerError> {
     let mut found = Vec::new();
     let after = written(session)?;
+    watch.trace.fault_writes(crate::trace::FaultWritesRecord {
+        before: before.iter().cloned().collect(),
+        after: after.iter().cloned().collect(),
+    });
     let broke: Vec<&String> = after.difference(before).collect();
     let added = added(session)?;
     let mut unattributed: Vec<&str> = Vec::new();

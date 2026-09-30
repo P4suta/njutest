@@ -3632,6 +3632,70 @@ fn a_fault_record_whose_fields_do_not_mint_its_identity_is_refused() {
 }
 
 #[test]
+fn a_path_the_phase_left_written_that_no_attribution_was_asked_about_is_still_owed_a_finding() {
+    let unattributed = |detail: Option<&str>| {
+        serde_json::json!({
+            "kind": "not-measured",
+            "subject": "fault-write-unattributed",
+            "detail": detail,
+            "position": null
+        })
+    };
+    let document = |finding: Option<serde_json::Value>| {
+        let mut document = base();
+        if let Some(one) = finding {
+            merge(&mut document, serde_json::json!({ "findings": [{}, one] }));
+        }
+        document
+    };
+    let events = || {
+        routes()
+            .into_iter()
+            .chain([serde_json::json!({
+                "type": "fault-writes",
+                "writes": { "before": [], "after": ["left.log"] }
+            })])
+            .collect::<Vec<_>>()
+    };
+    let audit = audited_with(&document(None), &events());
+    assert!(
+        audit.violated(Layer::Faults),
+        "a path the phase left written that no attribution run was asked about is exactly the \
+         one the finding owes a reader, and the recording states it: {audit}"
+    );
+    assert!(
+        audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Faults && remark.detail.contains("left.log")),
+        "the violation names the path the write sets leave unattributed: {audit}"
+    );
+    let audit = audited_with(
+        &document(Some(unattributed(Some(
+            "a test wrote left.log into the tree it was measured in while calls it made were \
+             failing, where nothing had written before any failed (left.log)",
+        )))),
+        &events(),
+    );
+    assert!(
+        !audit.violated(Layer::Faults),
+        "a finding naming every path the write sets leave unattributed is what the run owes: \
+         {audit}"
+    );
+    let audit = audited_with(
+        &document(Some(unattributed(Some(
+            "a test wrote always.log into the tree it was measured in while calls it made were \
+             failing, where nothing had written before any failed (always.log)",
+        )))),
+        &events(),
+    );
+    assert!(
+        audit.violated(Layer::Faults),
+        "the finding names a path that never broke, which owes nobody anything: {audit}"
+    );
+}
+
+#[test]
 #[expect(
     clippy::too_many_lines,
     reason = "one direction of the disagreement per half, which is the point of the test"

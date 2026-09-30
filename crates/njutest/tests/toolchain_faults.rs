@@ -346,6 +346,60 @@ fn a_run_not_asked_for_faults_puts_none() {
 }
 
 #[test]
+fn the_paths_written_before_and_after_the_faults_are_recorded_so_the_unattributed_rests_on_them() {
+    let fixture = fixture("fixture-faulted-failure-writes");
+    let output = verify(&fixture, &["--faults", "--trace"]);
+    let part = part(&fixture);
+    let events = recording(&fixture);
+    let written: Vec<&njutest::trace::FaultWritesRecord> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            njutest::trace::Payload::FaultWrites { writes } => Some(writes),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        written.len(),
+        1,
+        "the run states the paths written before the first fault and after the last once, so \
+         the audit holds the unattributed finding to the paths the phase left written and not \
+         only to the ones attribution asked about: {}\n{}",
+        events
+            .iter()
+            .map(|event| event.payload.type_name())
+            .collect::<Vec<&str>>()
+            .join(", "),
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let before: std::collections::BTreeSet<&str> =
+        written[0].before.iter().map(String::as_str).collect();
+    let after: std::collections::BTreeSet<&str> =
+        written[0].after.iter().map(String::as_str).collect();
+    let broke: Vec<&str> = after.difference(&before).copied().collect();
+    assert_eq!(
+        broke,
+        vec!["regressions.txt"],
+        "what the phase left written is what the tests wrote as they failed: {part}"
+    );
+    let unattributed: Vec<&serde_json::Value> = named(&part, "findings", "kind", "not-measured")
+        .into_iter()
+        .filter(|finding| finding["subject"] == "fault-write-unattributed")
+        .collect();
+    assert_eq!(
+        unattributed.len(),
+        1,
+        "and the finding names exactly what broke: {part}"
+    );
+    assert!(
+        unattributed[0]["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("regressions.txt"),
+        "{part}"
+    );
+}
+
+#[test]
 fn a_write_one_fault_makes_on_its_own_and_its_test_does_not_without_it_is_a_defect() {
     let fixture = fixture("fixture-faulted-writes");
     let output = verify(&fixture, &["--faults", "--trace"]);

@@ -380,6 +380,7 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::CrashStep { .. } => "step",
         Payload::FaultControl { .. } | Payload::Control { .. } => "control",
         Payload::FaultAttribution { .. } => "attribution",
+        Payload::FaultWrites { .. } => "writes",
         Payload::FaultFate { .. } => "fate",
         Payload::FaultRejected { .. } => "rejected",
         Payload::ProbeExec { .. } => "probe",
@@ -433,6 +434,8 @@ pub mod payload {
         FaultControl(&'a crate::trace::FaultControlRecord),
         /// A fault's write attribution.
         FaultAttribution(&'a crate::trace::FaultAttributionRecord),
+        /// The paths written before the first fault and after the last.
+        FaultWrites(&'a crate::trace::FaultWritesRecord),
         /// What became of the failures a fault made on one target.
         FaultFate(&'a crate::trace::FaultFateRecord),
         /// A fault's route.
@@ -500,6 +503,7 @@ pub mod payload {
             Payload::FaultRoute { route } => Ref::FaultRoute(route),
             Payload::FaultBaseline { baseline } => Ref::FaultBaseline(baseline),
             Payload::FaultAttribution { attribution } => Ref::FaultAttribution(attribution),
+            Payload::FaultWrites { writes } => Ref::FaultWrites(writes),
             Payload::FaultFate { fate } => Ref::FaultFate(fate),
             Payload::FaultRejected { rejected } => Ref::FaultRejected(rejected),
             Payload::Fault { fault } => Ref::Fault(fault),
@@ -747,6 +751,12 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 target: "demo/test/calls".to_owned(),
                 doc: false,
                 reached: vec![0],
+            },
+        },
+        Payload::FaultWrites {
+            writes: crate::trace::FaultWritesRecord {
+                before: vec![],
+                after: vec!["left.log".to_owned()],
             },
         },
         Payload::FaultRejected {

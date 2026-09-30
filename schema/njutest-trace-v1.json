@@ -413,6 +413,33 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "writes"],
+          "properties": {
+            "type": { "const": "fault-writes" },
+            "writes": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["before", "after"],
+              "properties": {
+                "before": {
+                  "description": "Every path the tree had written before the first fault was put, relative to the workspace root.",
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": { "type": "string", "minLength": 1 }
+                },
+                "after": {
+                  "description": "Every path the tree had written after the last fault was judged, which is what every attribution question rests on.",
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "attribution"],
           "properties": {
             "type": { "const": "fault-attribution" },

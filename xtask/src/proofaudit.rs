@@ -4347,7 +4347,31 @@ fn broken(recording: &Recording<'_>, faulted: &crate::faults::Faulted, notes: &m
     }
 }
 
-/// The `fault-write-unattributed` finding, owed wherever a path the phase left written was put to a fault run alone and no such run tied it, and naming every such path, and no path a run tied.
+/// Every path the `fault-write-unattributed` finding owes a reader: where the recording states the write sets, every path the phase left written that no fault run tied; where it does not, only the paths attribution was asked about and no run tied.
+fn owed_by_the_write_sets<'a>(
+    faulted: &'a crate::faults::Faulted,
+    (tied, asked): (&BTreeSet<&'a str>, &BTreeSet<&'a str>),
+) -> BTreeSet<&'a str> {
+    match faulted.written.as_ref() {
+        Some(written) => {
+            let before: BTreeSet<&str> = written.before.iter().map(String::as_str).collect();
+            written
+                .after
+                .iter()
+                .map(String::as_str)
+                .filter(|path| !before.contains(path) && !tied.contains(path))
+                .collect()
+        }
+        None => asked
+            .iter()
+            .copied()
+            .filter(|path| !tied.contains(path))
+            .collect(),
+    }
+}
+
+/// The `fault-write-unattributed` finding, owed wherever a path the phase left written was not tied to a fault run alone, and naming every such path, and no path a run tied or that was written before the first fault.
+/// Where the recording states the paths written before the first fault and after the last, the owed set is every path the phase left written that no run tied; where it does not, only the paths attribution was asked about can be held, as before.
 fn unattributed(
     recording: &Recording<'_>,
     faulted: &crate::faults::Faulted,
@@ -4359,12 +4383,12 @@ fn unattributed(
         .filter(|(_, tied)| *tied)
         .map(|(path, _)| path.as_str())
         .collect();
-    let untied: BTreeSet<&str> = faulted
+    let asked: BTreeSet<&str> = faulted
         .writes
         .iter()
         .map(|(path, _)| path.as_str())
-        .filter(|path| !tied.contains(path))
         .collect();
+    let untied = owed_by_the_write_sets(faulted, (&tied, &asked));
     let details: Vec<Option<String>> = recording
         .part
         .findings
@@ -4401,6 +4425,25 @@ fn unattributed(
                     UNATTRIBUTED_WRITE,
                     format!("a fault run alone tied {path}, and the finding calls it unattributed"),
                 );
+            }
+            if let Some(written) = faulted.written.as_ref() {
+                let before: BTreeSet<&str> = written.before.iter().map(String::as_str).collect();
+                for path in written
+                    .after
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|path| before.contains(path))
+                {
+                    if detail.contains(path) {
+                        notes.violated(
+                            UNATTRIBUTED_WRITE,
+                            format!(
+                                "the finding calls {path} unattributed, and the tree had it \
+                                 written before the first fault was put"
+                            ),
+                        );
+                    }
+                }
             }
         }
         several => notes.violated(

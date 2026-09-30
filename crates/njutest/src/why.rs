@@ -217,6 +217,7 @@ fn fault(id: &str, events: &[Event]) -> Why {
             Payload::RunStart { .. }
             | Payload::FaultControl { .. }
             | Payload::FaultAttribution { .. }
+            | Payload::FaultWrites { .. }
             | Payload::FaultFate { .. }
             | Payload::FaultRoute { .. }
             | Payload::FaultBaseline { .. }
@@ -332,6 +333,7 @@ fn followed(
         Payload::RunStart { .. }
         | Payload::FaultControl { .. }
         | Payload::FaultAttribution { .. }
+        | Payload::FaultWrites { .. }
         | Payload::FaultFate { .. }
         | Payload::FaultRoute { .. }
         | Payload::FaultBaseline { .. }
@@ -468,6 +470,7 @@ fn mutations(events: &[Event]) -> usize {
             Payload::RunStart { .. }
             | Payload::FaultControl { .. }
             | Payload::FaultAttribution { .. }
+            | Payload::FaultWrites { .. }
             | Payload::FaultFate { .. }
             | Payload::FaultRoute { .. }
             | Payload::FaultBaseline { .. }

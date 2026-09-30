@@ -70,6 +70,8 @@ pub struct Faulted {
     pub attributed: Vec<String>,
     /// Every path the phase left written that a fault was run alone to tie, with whether that run tied it, in recording order.
     pub writes: Vec<(String, bool)>,
+    /// The paths written before the first fault and after the last, which every unattributed write rests on, where the recording states them.
+    pub written: Option<Written>,
     /// Every site decision, in recording order.
     pub sites: Vec<Site>,
     /// Every survivor told apart beside a fault, in recording order.
@@ -145,6 +147,15 @@ pub fn derived(pairs: &[&Pair]) -> Option<(String, &'static str)> {
     })
 }
 
+/// The paths the tree had written before the first fault and after the last, as a recording writes them.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Written {
+    /// Every path written before the first fault was put.
+    pub before: Vec<String>,
+    /// Every path written after the last fault was judged.
+    pub after: Vec<String>,
+}
+
 /// What one target's faulted baseline reached, as a recording writes it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Baseline {
@@ -199,6 +210,15 @@ fn held(faulted: &mut Faulted, kind: &str, event: &Value) -> bool {
                 })
             })
             .map(|one| faulted.baselines.push(one)),
+        "fault-writes" => event
+            .get("writes")
+            .and_then(|record| {
+                Some(Written {
+                    before: texts(record, "before")?,
+                    after: texts(record, "after")?,
+                })
+            })
+            .map(|one| faulted.written = Some(one)),
         "fault-attribution" => event.get("attribution").and_then(|record| {
             let flag = |key: &str| record.get(key).and_then(Value::as_bool);
             let fault = text(record, "fault")?;

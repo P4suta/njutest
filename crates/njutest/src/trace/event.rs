@@ -103,6 +103,11 @@ pub enum Payload {
         /// The record.
         attribution: FaultAttributionRecord,
     },
+    /// The paths the tree had written before the first fault and after the last, which every unattributed write rests on.
+    FaultWrites {
+        /// The record.
+        writes: FaultWritesRecord,
+    },
     /// One fault every reaching test passed, run again on one of them with its runtime recording what became of the failures it made.
     FaultFate {
         /// The record.
@@ -227,6 +232,7 @@ impl Payload {
             Self::FaultExec { .. } => "fault-exec",
             Self::FaultControl { .. } => "fault-control",
             Self::FaultAttribution { .. } => "fault-attribution",
+            Self::FaultWrites { .. } => "fault-writes",
             Self::FaultFate { .. } => "fault-fate",
             Self::FaultRoute { .. } => "fault-route",
             Self::FaultBaseline { .. } => "fault-baseline",
@@ -569,6 +575,16 @@ pub struct FaultAttributionRecord {
     pub passed: bool,
     /// What the same target did run alone without the fault.
     pub unfaulted: Unfaulted,
+}
+
+/// The paths the tree had written before the first fault and after the last.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultWritesRecord {
+    /// Every path the tree had written before the first fault was put, relative to the workspace root.
+    pub before: Vec<String>,
+    /// Every path the tree had written after the last fault was judged, which is what every attribution question rests on.
+    pub after: Vec<String>,
 }
 
 /// One fault run again on one target that reached it, and what its runtime recorded became of the failures it made (ADR 0032 decision 5).
