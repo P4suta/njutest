@@ -101,6 +101,7 @@ fn row(index: u32, extra: &serde_json::Value) -> serde_json::Value {
         "expected": false,
         "unreached": false,
         "source_run_id": null,
+        "part_run_id": null,
         "evidence": {"kind": "unproven", "reasons": ["not-sealed"]}
     });
     let (Some(object), Some(more)) = (value.as_object_mut(), extra.as_object()) else {

@@ -1982,6 +1982,7 @@
             "miri-timed-out",
             "miri-unavailable",
             "miri-ran-no-test",
+            "miri-failed-isolated",
             "sanitizer-unavailable",
             "fuzz-not-executed",
             "cargo-fuzz-unavailable",

@@ -385,15 +385,18 @@ fn a_sealed_verdict_resting_on_a_moved_target_is_put_again_on_the_sealed_bench()
     );
     assert!(
         sealed.iter().all(|repair| repair.target == target
+            && repair.now == "unreached"
             && matches!(
                 &repair.by,
                 njutest::trace::RepairedBy::Sealed {
-                    evidence: rust_mutants::sealed::record::Evidence::Unproven { .. }
+                    evidence: rust_mutants::sealed::record::Evidence::Sealed { .. }
                 }
             )),
-        "the moved target's own test cannot seal, since it asks for a temporary directory the \
-         sealed target has none of, so no put establishes a verdict with it counted, and each \
-         disposition becomes a lead: {sealed:?}"
+        "the moved target's own test seals, since `TMPDIR` names the instance's own temporary \
+         directory, which lies in no run scratch, so its control takes the first path and never \
+         reaches `return_visit`: each disposition is put again with the target counted among \
+         those reaching it, and stays `unreached` on the sealed controls' word rather than a \
+         lead: {sealed:?}"
     );
     assert!(
         findings_of(&fixture, "unstable-baseline").is_empty(),
