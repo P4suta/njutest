@@ -104,13 +104,15 @@ fn the_sealed_build_keeps_the_flags_cargo_would_choose_and_links_its_own_after_t
         for (name, value) in env {
             given.set(*name, *value);
         }
-        let flags = super::Flags::of(
+        let flags = match super::Flags::of(
             &given,
             &crate::cargo::config::layer(text),
             &wasip1(),
             &linked,
-        )
-        .unwrap_or_else(|why| panic!("{text:?} {env:?}: {}", why.name()));
+        ) {
+            Ok(flags) => flags,
+            Err(why) => panic!("{text:?} {env:?}: {}", why.name()),
+        };
         let with_linked = |before: &[&str]| -> Vec<String> {
             before
                 .iter()

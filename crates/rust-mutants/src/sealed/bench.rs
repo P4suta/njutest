@@ -942,7 +942,7 @@ impl<'runner> Bench<'runner> {
             .for_process()
             .find(|(name, _)| name.to_str() == Some(TARGET_TMPDIR))
             .and_then(|(_, value)| value.to_str().map(ToOwned::to_owned));
-        let below = inside(SCRATCH_TMP, &entry.path)
+        let named = inside(SCRATCH_TMP, &entry.path)
             .map(ToOwned::to_owned)
             .or_else(|| inside(SCRATCH_HOME, &entry.path).map(|rest| format!("~/{rest}")))
             .or_else(|| {
@@ -950,8 +950,11 @@ impl<'runner> Bench<'runner> {
                     inside(root, &entry.path).map(|rest| format!("$CARGO_TARGET_TMPDIR/{rest}"))
                 })
             })
-            .or_else(|| inside(&self.tree.root, &entry.path).map(|rest| format!("./{rest}")))
-            .unwrap_or_else(|| entry.path.clone());
+            .or_else(|| inside(&self.tree.root, &entry.path).map(|rest| format!("./{rest}")));
+        let below = match named {
+            Some(below) => below,
+            None => entry.path.clone(),
+        };
         match entry.state {
             OverlayState::File { .. } => below,
             OverlayState::Directory { .. } if below.ends_with('/') => below,

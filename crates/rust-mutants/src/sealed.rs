@@ -168,11 +168,17 @@ impl Flags {
             crate::cargo::config::RUSTFLAGS,
         ))? {
             Some(flags) => flags,
-            None => compile_targeted.unwrap_or_else(|| layered.build.clone()),
+            None => match compile_targeted {
+                Some(targeted) => targeted,
+                None => layered.build.clone(),
+            },
         };
         let mut document = match inherited((ENCODED_RUSTDOCFLAGS, RUSTDOCFLAGS))? {
             Some(flags) => flags,
-            None => document_targeted.unwrap_or_else(|| layered.build_doc.clone()),
+            None => match document_targeted {
+                Some(targeted) => targeted,
+                None => layered.build_doc.clone(),
+            },
         };
         compile.extend(linked.iter().cloned());
         document.extend(linked.iter().cloned());

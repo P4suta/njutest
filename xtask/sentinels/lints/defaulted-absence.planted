@@ -27,3 +27,7 @@ fn column(v: Option<u8>) -> u8 { v.map_or(0, |one| one) }
 fn size(v: Option<u64>) -> u64 { v.map_or_else(|| 0, |one| one) }
 === command-line source crates/rust-mutants-cli/src/app/mod.rs
 fn say(v: Option<&str>) -> String { format!("{}", v.unwrap_or_else(|| "?")) }
+=== engine-skeleton source crates/rust-mutants/src/skeleton.rs
+fn read(v: Option<u8>) -> u8 { v.unwrap_or_default() }
+=== engine-work source crates/rust-mutants/src/work.rs
+fn counted(v: Option<u64>) -> u64 { v.map_or(1, |one| one) }
