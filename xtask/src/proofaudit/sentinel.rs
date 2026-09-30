@@ -12,6 +12,8 @@ use super::{Layer, REPORT_FILE};
 
 /// The run the specimen report names.
 pub const RUN: &str = "20260906T101500Z-9f1c2d";
+/// The evidence identity the specimen's answer was keyed on.
+pub const IDENTITY: &str = "d4c1b0e7a2f93e6855b7c4d0a1f23e8b9c6d5a7f0e2b4c6d8a0f2e4c6b8d0a2f4";
 /// The display identity of the specimen's killed mutant.
 pub const KILLED: &str = "aaaaaaaaaaaaaaaaaaaa";
 /// The display identity of the specimen's survivor, which the one finding names.
@@ -32,6 +34,7 @@ pub fn base() -> Value {
         "run_id": RUN,
         "run_kind": "scoped",
         "contract": "standard-v1",
+        "provenance": { "identity": IDENTITY, "cached": false, "source_run_id": null },
         "verdict": "INSUFFICIENT",
         "accounting": {
             "targets": { "selected": 1, "passed": 1, "failed": 0, "skipped": 0, "missing": 0 },

@@ -1157,9 +1157,28 @@ fn a_second_run_of_the_same_work_reads_the_first_run_back_rather_than_doing_it_a
     );
     assert_ne!(reused["run_id"], established["run_id"]);
     assert_eq!(parsed(&fixture).verdict(), established_verdict);
+    let mut restated = reused["builds"][0]["parts"][0]["accounting"].clone();
+    for column in ["reused_killed", "reused_survived"] {
+        restated["mutants"][column] =
+            established["builds"][0]["parts"][0]["accounting"]["mutants"][column].clone();
+    }
     assert_eq!(
-        reused["builds"][0]["parts"][0]["accounting"],
-        established["builds"][0]["parts"][0]["accounting"]
+        restated, established["builds"][0]["parts"][0]["accounting"],
+        "a report that restates a stored answer keeps every counter the first run kept, apart \
+         from naming each restated verdict's source in the reuse columns"
+    );
+    assert_eq!(
+        reused["builds"][0]["parts"][0]["mutants"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .filter(|row| row["reuse"]["reused"] == serde_json::Value::Bool(true))
+            .count(),
+        established["builds"][0]["parts"][0]["mutants"]
+            .as_array()
+            .expect("rows")
+            .len(),
+        "every verdict the first run established is marked as read back from it"
     );
 
     let afresh = verify(&fixture, &["--no-cache"]);
@@ -1294,6 +1313,37 @@ fn a_stored_answer_is_reissued_once_every_sealed_execution_it_rests_on_ran_again
         "a recording begins with its run and ends with it, whatever the run answered from: \
          {problems:?}"
     );
+    audited(&fixture, &text(&reissued["run_id"]));
+}
+
+/// Runs the proof audit over the run named `run` of `fixture`, from its report and its recording, and holds it to nothing violated.
+#[cfg(unix)]
+fn audited(fixture: &Fixture, run: &str) -> String {
+    let reports = fixture
+        .root
+        .join(njutest::config::DEFAULT_REPORTS_DIRECTORY)
+        .join("runs")
+        .join(run);
+    let audited = njutest_devkit::paths::command(&njutest_devkit::paths::cargo_binary())
+        .args(["xtask", "proofaudit"])
+        .arg(&reports)
+        .arg("--trace")
+        .arg(fixture.root.join(".njutest/trace").join(run))
+        .current_dir(njutest_devkit::paths::workspace_root())
+        .output()
+        .expect("the audit starts");
+    let audit = njutest_devkit::process::strict_utf8(&audited.stdout);
+    assert!(
+        audit.contains("; 0 violations"),
+        "the audit ran to its own end over the reissued report: {audit}\n{}",
+        njutest_devkit::process::strict_utf8(&audited.stderr)
+    );
+    assert!(
+        !audit.contains("violation:"),
+        "a report reissued from the store is re-decided from what the reissuing run recorded: \
+         {audit}"
+    );
+    audit.into_owned()
 }
 
 #[cfg(unix)]
@@ -1333,6 +1383,7 @@ fn a_stored_answer_resting_on_no_sealed_execution_is_reissued_with_nothing_run_a
         "a recording begins with its run and ends with it, whatever the run answered from: \
          {problems:?}"
     );
+    audited(&fixture, &text(&reissued["run_id"]));
 }
 
 /// The one sealed execution a test contradicted in a stored answer, and what it came to when it ran.

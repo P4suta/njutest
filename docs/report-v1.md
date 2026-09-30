@@ -133,6 +133,7 @@ observers.total() = cataloged
 ```
 
 Only killed and survived mutation evidence is reusable, and a stored answer carries what it rests on: a sealed one is read back as it is, and a lead only once this run's sealing is tried and decides nothing.
+A run that reissues a whole stored report (`provenance.cached`, naming the run it read back from) marks every `killed` and `survived` row it restates with that run in its `reuse`, and counts each part's accounting again from the re-marked rows, so a reader or an audit holds those verdicts to the run that established them and asks this one only for the sealed executions it ran again.
 Model answers retain their generated source, raw export, process termination, hashes, pinned tool and backend identity so an independent audit can re-derive the affirmative answer rather than trusting a summary.
 
 Every model identity also carries one closed `crate_input` object.

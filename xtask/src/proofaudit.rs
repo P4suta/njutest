@@ -999,6 +999,7 @@ fn projected(document: &serde_json::Value) -> Result<Projected, UnprojectableErr
         "run_kind",
         "contract",
         "scope",
+        "provenance",
     ] {
         if let Some(value) = report.get(key) {
             flat.insert(key.to_owned(), value.clone());
@@ -5167,6 +5168,8 @@ struct Recording<'a> {
     document: &'a serde_json::Value,
     run_id: String,
     contract: String,
+    /// The run the whole report was read back from, where it was; a report this run established names none.
+    restated_from: Option<String>,
     targets: Vec<TargetRow>,
     mutants: Vec<MutantRow>,
     findings: Vec<FindingRow>,
@@ -5219,6 +5222,17 @@ impl<'a> Part<'a> {
     }
 }
 
+/// The run the whole report was read back from, where it was, as its provenance names it; a report established by this run names none.
+fn restated_from(
+    document: &serde_json::Value,
+) -> Result<Option<String>, crate::route::ReadCauseError> {
+    crate::route::required(
+        crate::route::required(document, "provenance", Some)?,
+        "source_run_id",
+        |said: &serde_json::Value| Some(said.as_str().map(str::to_owned)),
+    )
+}
+
 impl<'a> Recording<'a> {
     /// The rows every layer reads, each field its schema requires demanded rather than supplied.
     fn of(
@@ -5227,6 +5241,7 @@ impl<'a> Recording<'a> {
     ) -> Result<Self, crate::route::ReadCauseError> {
         use crate::route::required;
         let text = |value: &serde_json::Value| value.as_str().map(str::to_owned);
+        let restated_from = restated_from(document)?;
         let part = Part::of(document)?;
         let targets = part
             .targets
@@ -5290,6 +5305,7 @@ impl<'a> Recording<'a> {
             document,
             run_id: required(document, "run_id", text)?,
             contract: required(document, "contract", text)?,
+            restated_from,
             targets,
             mutants,
             findings,
@@ -5999,20 +6015,45 @@ fn reuse(
     if read_back.is_empty() {
         return notes.looked();
     }
+    let (restated, believed): (Vec<&MutantRow>, Vec<&MutantRow>) = read_back
+        .into_iter()
+        .partition(|mutant| mutant.read_back_from == recording.restated_from);
+    if let (false, Some(source)) = (restated.is_empty(), recording.restated_from.as_deref()) {
+        notes.unaudited(
+            "provenance",
+            format!(
+                "{} dispositions were restated with the whole report read back from {source}, \
+                 which this audit was not given, so nothing this run recorded holds them but the \
+                 sealed executions it ran again",
+                restated.len()
+            ),
+        );
+        for mutant in &restated {
+            let again: Vec<&SealedRun> = executions
+                .of(mutant)
+                .into_iter()
+                .filter_map(|ran| match ran {
+                    Ran::Native(_) => None,
+                    Ran::Sealed(run) => Some(run),
+                })
+                .collect();
+            reproduced(mutant, &again, executions.sealed, &mut notes);
+        }
+    }
     match routing {
         Some(routing) => {
-            for mutant in &read_back {
+            for mutant in &believed {
                 routed_back(mutant, routing, executions, &mut notes);
             }
-            carried_back(&read_back, routing, (beside, engines), &mut notes);
-            bodies_read_again(&read_back, routing, (beside, root), &mut notes);
+            carried_back(&believed, routing, (beside, engines), &mut notes);
+            bodies_read_again(&believed, routing, (beside, root), &mut notes);
         }
         None => notes.unaudited(
             "provenance",
             format!(
                 "{} dispositions were read back from an earlier run, and the run kept no \
                  recording of the routes it read them back under",
-                read_back.len()
+                believed.len()
             ),
         ),
     }
@@ -6021,7 +6062,7 @@ fn reuse(
         format!(
             "{} dispositions were read back from an earlier run; whether each target an exact \
              answer rests on keeps the behaviour key it had is a fact this report does not carry",
-            read_back.len()
+            believed.len()
         ),
     );
     notes.looked()

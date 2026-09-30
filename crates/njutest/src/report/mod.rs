@@ -6397,10 +6397,10 @@ impl Report {
         &self.provenance
     }
 
-    /// Reissues an immutable completed answer under a new response run while retaining every evidence namespace and measurement time that actually established it.
+    /// Reissues an immutable completed answer under a new response run while retaining every evidence namespace and measurement time that actually established it, and marks every reusable verdict it holds as read back from the run that established it, so a reader or an audit holds the verdict to that run and not to this one.
     ///
     /// # Errors
-    /// Refuses model-complete evidence because its retained artifacts are owned by the original final-run namespace.
+    /// Refuses model-complete evidence because its retained artifacts are owned by the original final-run namespace, and any counter a re-marked row no longer fits.
     pub fn read_back_as(
         mut self,
         run_id: &rust_mutants::id::RunId,
@@ -6413,7 +6413,31 @@ impl Report {
         }
         let source = std::mem::replace(&mut self.run_id, run_id.clone());
         self.provenance.facts = Established::ReadBackFrom(source.to_string());
+        self.reads_back_verdicts_from(&source)?;
         Self::checked(self)
+    }
+
+    /// Marks every reusable verdict of every part as read back from `source`, and counts each part's mutation accounting again from its re-marked rows.
+    ///
+    /// # Errors
+    /// Returns [`CompletionError`] where a re-marked row no longer fits a durable counter.
+    fn reads_back_verdicts_from(
+        &mut self,
+        source: &rust_mutants::id::RunId,
+    ) -> Result<(), CompletionError> {
+        for build in std::iter::once(&mut self.builds.first).chain(self.builds.rest.iter_mut()) {
+            for part in std::iter::once(&mut build.parts.first).chain(build.parts.rest.iter_mut()) {
+                for row in &mut part.mutants {
+                    if matches!(row.outcome, Decided::Killed { .. } | Decided::Survived)
+                        && row.reuse.0.read_back().is_none()
+                    {
+                        row.reuse = Reuse(Established::ReadBackFrom(source.to_string()));
+                    }
+                }
+                part.accounting.mutants = count_mutants(&part.mutants)?;
+            }
+        }
+        Ok(())
     }
 
     /// Every configured build in the exact requested order.
