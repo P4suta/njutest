@@ -2708,10 +2708,13 @@ const SETUP_FAILED: &str =
 /// What Miri prints when every test it ran passed.
 const PASSED: &str = "     Running unittests src/lib.rs (x)\n\nrunning 1 test\ntest t ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
 
+/// What Miri prints when a test failed and it said nothing of undefined behaviour.
+const FAILED_WITHOUT_UNDEFINED: &str = "     Running unittests src/lib.rs (x)\n\nrunning 1 test\ntest t ... FAILED\n\nfailures:\n\n---- t stdout ----\nOUT_DIR: NotPresent\n\nfailures:\n    t\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
+
 /// What Miri prints when a test failed and its captured output quotes the words of undefined behaviour.
 const QUOTED_UNDEFINED: &str = "     Running unittests src/lib.rs (x)\n\nrunning 1 test\ntest t ... FAILED\n\nfailures:\n\n---- t stdout ----\nerror: Undefined Behavior: quoted by the test\n\nfailures:\n    t\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
 
-/// The report saying the suite was interpreted and a test failed under the interpreter.
+/// The report saying the suite was interpreted and a test that failed under the interpreter is a defect of the suite.
 fn failing_under_the_interpreter() -> Value {
     with(json!({
         "accounting": { "soundness": { "executed": true } },
@@ -2759,6 +2762,13 @@ fn soundness_planted(clean: &Perturbation) -> Vec<Perturbation> {
             document: failing_under_the_interpreter(),
             events: with_run(101, SETUP_FAILED),
             outputs: vec![("output/100.txt", SETUP_FAILED)],
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a test the interpreter failed without undefined behaviour read as a defect",
+            document: failing_under_the_interpreter(),
+            events: with_run(101, FAILED_WITHOUT_UNDEFINED),
+            outputs: vec![("output/100.txt", FAILED_WITHOUT_UNDEFINED)],
             ..clean.clone()
         },
         Perturbation {

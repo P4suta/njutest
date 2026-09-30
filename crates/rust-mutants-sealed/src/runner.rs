@@ -291,11 +291,12 @@ impl SealedModule<'_> {
                     },
                 )?;
                 store.data_mut().memory = Some(memory);
-                let start = instance
-                    .get_typed_func::<(), ()>(&mut store, "_start")
-                    .map_err(|source| runtime(RuntimeStep::Entry, source))?;
-                let called = start.call(&mut store, ());
-                stopped(store.data(), (RuntimeStep::Entry, called), watchdog)?
+                started(
+                    (&instance, memory),
+                    &mut store,
+                    invocation.preopens.start(),
+                    watchdog,
+                )?
             }
             Err(source) => stopped(
                 store.data(),
@@ -325,6 +326,70 @@ impl SealedModule<'_> {
             waited: ended.waited,
             overlay: ended.overlay,
         }))
+    }
+}
+
+/// The guest's stop from `_start`, entered first through its own `chdir` where `start` names a directory to start in.
+fn started(
+    (instance, memory): (&wasmtime::Instance, wasmtime::Memory),
+    store: &mut Store<Host>,
+    start: Option<&str>,
+    watchdog: Duration,
+) -> Result<SealedStop, SealedError> {
+    let entered = match start {
+        Some(path) => enter((instance, memory), store, path)?,
+        None => Ok(()),
+    };
+    match entered {
+        Ok(()) => {
+            let begin = instance
+                .get_typed_func::<(), ()>(&mut *store, "_start")
+                .map_err(|source| runtime(RuntimeStep::Entry, source))?;
+            let called = begin.call(&mut *store, ());
+            stopped(store.data(), (RuntimeStep::Entry, called), watchdog)
+        }
+        Err(stopped_early) => stopped(
+            store.data(),
+            (RuntimeStep::Start, Err(stopped_early)),
+            watchdog,
+        ),
+    }
+}
+
+/// Enters `path` as the guest's working directory through its own `chdir`, given the path in memory its own `malloc` made, before `_start`, as cargo starts a test in its package's directory: the calls spend the guest's fuel like any of its own code, and where one of them stops the guest, that stop is answered.
+///
+/// # Errors
+/// [`SealedError::StartUnexported`] for a module without the exports, and [`SealedError::StartRefused`] where the guest's `malloc` gives nothing or its `chdir` refuses the path.
+fn enter(
+    (instance, memory): (&wasmtime::Instance, wasmtime::Memory),
+    store: &mut Store<Host>,
+    path: &str,
+) -> Result<wasmtime::Result<()>, SealedError> {
+    let malloc = instance
+        .get_typed_func::<i32, i32>(&mut *store, "malloc")
+        .map_err(|_absent| SealedError::StartUnexported { export: "malloc" })?;
+    let chdir = instance
+        .get_typed_func::<i32, i32>(&mut *store, "chdir")
+        .map_err(|_absent| SealedError::StartUnexported { export: "chdir" })?;
+    let refused = || SealedError::StartRefused {
+        path: path.to_owned(),
+    };
+    let mut bytes = path.as_bytes().to_vec();
+    bytes.push(0);
+    let len = i32::try_from(bytes.len()).map_err(|_wide| refused())?;
+    let at = match malloc.call(&mut *store, len) {
+        Ok(0) => return Err(refused()),
+        Ok(at) => at,
+        Err(stopped_early) => return Ok(Err(stopped_early)),
+    };
+    let offset = usize::try_from(at.cast_unsigned()).map_err(|_wide| refused())?;
+    memory
+        .write(&mut *store, offset, &bytes)
+        .map_err(|_outside| refused())?;
+    match chdir.call(&mut *store, at) {
+        Ok(0) => Ok(Ok(())),
+        Ok(_refused) => Err(refused()),
+        Err(stopped_early) => Ok(Err(stopped_early)),
     }
 }
 
@@ -361,6 +426,7 @@ fn stopped(
                 Ok(SealedStop::MemoryExhausted)
             }
             RuntimeStep::Instantiation
+            | RuntimeStep::Start
             | RuntimeStep::Entry
             | RuntimeStep::Fuel
             | RuntimeStep::Memory => Err(runtime(step, error)),

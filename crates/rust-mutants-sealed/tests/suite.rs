@@ -19,6 +19,8 @@ mod invocation;
 mod laws;
 #[path = "pins.rs"]
 mod pins;
+#[path = "redirect.rs"]
+mod redirect;
 #[path = "snapshot.rs"]
 mod snapshot;
 #[path = "validation.rs"]

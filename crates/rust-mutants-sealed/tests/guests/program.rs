@@ -29,6 +29,11 @@ fn main() {
         "stat" => stat(rest),
         "rearrange" => rearrange(rest),
         "temp-dir" => println!("{}", std::env::temp_dir().display()),
+        "home-dir" => println!("{:?}", std::env::home_dir()),
+        "cwd" => match std::env::current_dir() {
+            Ok(directory) => println!("{}", directory.display()),
+            Err(error) => fail(&format!("{error}")),
+        },
         "scratch" => scratch(rest),
         unknown => fail(&format!("no mode {unknown:?}")),
     }

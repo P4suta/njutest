@@ -48,7 +48,7 @@ pub enum SealedCode {
     SnapshotInvalid,
     /// A preopened guest path that cannot be given.
     PreopenInvalid,
-    /// A working directory no tree preopened before it holds.
+    /// A directory to start in no tree preopened before the root holds.
     WorkingDirectoryInvalid,
     /// A path to halt at that no tree the invocation is given holds a place for.
     HaltInvalid,
@@ -62,6 +62,10 @@ pub enum SealedCode {
     ModuleImport,
     /// A module that is not a WASI command.
     ModuleEntry,
+    /// A module the host cannot start in a directory.
+    ModuleUnstartable,
+    /// A module whose functions cannot be answered through the ones it exports.
+    ModuleUnredirected,
     /// A wasmtime that cannot be configured deterministically.
     EngineUnavailable,
     /// A module wasmtime refused to compile.
@@ -78,6 +82,8 @@ pub enum SealedCode {
     TrapUnclassified,
     /// A guest stopped because whoever ran it stopped.
     Interrupted,
+    /// A guest whose own `chdir` refused the directory it was to start in.
+    StartRefused,
     /// A host that broke an invariant of its own.
     HostInvariant,
 }
@@ -113,8 +119,8 @@ impl SealedCode {
             },
             Self::WorkingDirectoryInvalid => ErrorCode {
                 code: "RS0005",
-                summary: "a working directory that names no tree preopened before it, or a directory that tree does not hold",
-                remedy: "preopen the tree first, and name the directory by `/`-separated names below its root, or by nothing for the root itself",
+                summary: "a directory to start in that names no tree preopened before the root, or a directory that tree does not hold",
+                remedy: "preopen the tree before the root, and name the directory by `/`-separated names below its root, or by nothing for the root itself",
             },
             Self::HaltInvalid => ErrorCode {
                 code: "RS0006",
@@ -145,6 +151,16 @@ impl SealedCode {
                 code: "RS1005",
                 summary: "the module is not a WASI command: no `_start` function of type () -> (), no exported memory, or a start section",
                 remedy: "build a binary crate or a test harness for `wasm32-wasip1`, which exports `_start` and `memory`",
+            },
+            Self::ModuleUnredirected => ErrorCode {
+                code: "RS1007",
+                summary: "the module names a function to answer through one it exports, and does not export it, exports one of another type, or has a code section this version cannot rewrite",
+                remedy: "link the guest with the object and the exports the engine's sealed build adds, which answer the standard library's temporary and home directories; the message names what is missing",
+            },
+            Self::ModuleUnstartable => ErrorCode {
+                code: "RS1006",
+                summary: "the module does not export the `chdir` and `malloc` of type (i32) -> i32 the host starts a guest in a directory through",
+                remedy: "link the guest with `-C link-arg=--undefined=chdir -C link-arg=--export=chdir -C link-arg=--export=malloc`, as the engine's sealed build does",
             },
             Self::EngineUnavailable => ErrorCode {
                 code: "RS2001",
@@ -185,6 +201,11 @@ impl SealedCode {
                 code: "RS3005",
                 summary: "the guest was stopped because whoever ran it stopped, as an interrupted run does; nothing about the guest follows from it",
                 remedy: "nothing is wrong with the guest or the host: run it again to measure it",
+            },
+            Self::StartRefused => ErrorCode {
+                code: "RS3006",
+                summary: "the guest's own `chdir` refused the directory it was to start in, so it cannot start where it was asked to",
+                remedy: "the directory is not one the guest's C library reaches through the preopens; the message names it, so report it with the preopens it was given",
             },
             Self::HostInvariant => ErrorCode {
                 code: "RS9001",
@@ -250,10 +271,8 @@ pub enum SealedError {
         /// What is wrong with it.
         fault: PreopenFault,
     },
-    /// A working directory that cannot be preopened.
-    #[error(
-        "the working directory {directory:?} of the tree at {tree:?} cannot be preopened: {fault}"
-    )]
+    /// A directory to start in that cannot be started in.
+    #[error("the directory {directory:?} of the tree at {tree:?} cannot be started in: {fault}")]
     WorkingDirectory {
         /// The path of the tree it names.
         tree: String,
@@ -300,6 +319,35 @@ pub enum SealedError {
         /// What is missing.
         fault: EntryFault,
     },
+    /// A module that names a function to redirect and does not export the one that answers it.
+    #[error(
+        "the module names a function to answer through its export `{export}`, which it does not have"
+    )]
+    RedirectUnexported {
+        /// The export it does not have.
+        export: &'static str,
+    },
+    /// A function whose type is not that of the export that is to answer it.
+    #[error(
+        "the module's {function} cannot be answered through its export `{export}`, whose type is another"
+    )]
+    RedirectMismatched {
+        /// The function, as the module's name section names it.
+        function: String,
+        /// The export.
+        export: &'static str,
+    },
+    /// A code section this version cannot rewrite.
+    #[error("the module's code section cannot be rewritten to answer a function through an export")]
+    RedirectUnread,
+    /// A module that does not export what the host starts a guest in a directory through.
+    #[error(
+        "the module exports no `{export}` of type (i32) -> i32, which the host starts a guest in a directory through"
+    )]
+    StartUnexported {
+        /// The export it does not have.
+        export: &'static str,
+    },
     /// Wasmtime refused the deterministic configuration.
     #[error("wasmtime could not be configured deterministically: {source}")]
     Engine {
@@ -339,6 +387,12 @@ pub enum SealedError {
     /// The guest was stopped because whoever ran it stopped.
     #[error("the guest was interrupted; nothing about the guest follows from it")]
     Interrupted,
+    /// The guest's own `chdir` refused the directory it was to start in.
+    #[error("the guest's own chdir refused {path:?}, the directory it was to start in")]
+    StartRefused {
+        /// The path its `chdir` was given.
+        path: String,
+    },
     /// The runtime failed outside the guest.
     #[error("the runtime failed outside the guest while {during}: {source}")]
     Runtime {
@@ -384,12 +438,17 @@ impl SealedError {
             Self::ModuleMemory { .. } => SealedCode::ModuleMemory,
             Self::ModuleImport { .. } => SealedCode::ModuleImport,
             Self::ModuleEntry { .. } => SealedCode::ModuleEntry,
+            Self::StartUnexported { .. } => SealedCode::ModuleUnstartable,
+            Self::RedirectUnexported { .. }
+            | Self::RedirectMismatched { .. }
+            | Self::RedirectUnread => SealedCode::ModuleUnredirected,
             Self::Engine { .. } => SealedCode::EngineUnavailable,
             Self::Compile { .. } => SealedCode::ModuleUncompiled,
             Self::Link { .. } => SealedCode::HostUnlinked,
             Self::WatchdogUnavailable { .. } => SealedCode::WatchdogUnavailable,
             Self::WatchdogExpired { .. } => SealedCode::WatchdogExpired,
             Self::Interrupted => SealedCode::Interrupted,
+            Self::StartRefused { .. } => SealedCode::StartRefused,
             Self::Runtime { .. } => SealedCode::RuntimeFailed,
             Self::TrapUnclassified { .. } => SealedCode::TrapUnclassified,
             Self::HostInvariant { .. } => SealedCode::HostInvariant,
@@ -466,10 +525,10 @@ impl fmt::Display for PreopenFault {
     }
 }
 
-/// What makes a working directory one that cannot be preopened.
+/// What makes a directory to start in one the guest cannot start in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 pub enum WorkingFault {
-    /// No tree is preopened at the path it names before it.
+    /// No tree is preopened at the path it names before the root.
     NoTree,
     /// The directory is not `/`-separated names, each neither empty, `.`, `..`, nor holding NUL.
     NotNames,
@@ -480,7 +539,7 @@ pub enum WorkingFault {
 impl fmt::Display for WorkingFault {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::NoTree => "no tree is preopened at that path before it",
+            Self::NoTree => "no tree is preopened at that path before the root",
             Self::NotNames => "it is not a relative path of `/`-separated names",
             Self::NotADirectory => "the tree holds no directory there",
         })
@@ -576,6 +635,8 @@ pub enum RuntimeStep {
     Instantiation,
     /// Reserving memory the limits allowed.
     Memory,
+    /// Entering the directory the guest starts in.
+    Start,
     /// Calling the entry point.
     Entry,
 }
@@ -586,6 +647,7 @@ impl fmt::Display for RuntimeStep {
             Self::Fuel => "keeping the fuel account",
             Self::Instantiation => "instantiating the module",
             Self::Memory => "reserving memory the limits allowed",
+            Self::Start => "entering the directory the guest starts in",
             Self::Entry => "calling `_start`",
         })
     }

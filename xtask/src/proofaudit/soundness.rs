@@ -79,7 +79,7 @@ enum Came {
     Undefined,
     /// It could not interpret the suite whole.
     Unsupported,
-    /// A test failed under it.
+    /// A test failed under it, and it did not say it found undefined behaviour.
     Failed,
     /// Every test it ran passed, and it ran some.
     Passed,
@@ -100,8 +100,9 @@ impl Came {
     fn findings(self) -> BTreeSet<&'static str> {
         match self {
             Self::Undefined => BTreeSet::from(["undefined-behaviour"]),
-            Self::Failed => BTreeSet::from(["failing-test"]),
-            Self::Absent | Self::Unsupported | Self::RanNoTest => BTreeSet::from(["not-measured"]),
+            Self::Absent | Self::Unsupported | Self::Failed | Self::RanNoTest => {
+                BTreeSet::from(["not-measured"])
+            }
             Self::TimedOut | Self::Passed => BTreeSet::new(),
         }
     }
@@ -113,7 +114,8 @@ impl Came {
             Self::TimedOut => BTreeSet::from(["miri-timed-out"]),
             Self::Unsupported => BTreeSet::from(["miri-unsupported"]),
             Self::RanNoTest => BTreeSet::from(["miri-ran-no-test"]),
-            Self::Undefined | Self::Failed | Self::Passed => BTreeSet::new(),
+            Self::Failed => BTreeSet::from(["miri-failed-isolated"]),
+            Self::Undefined | Self::Passed => BTreeSet::new(),
         }
     }
 }

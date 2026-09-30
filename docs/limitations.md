@@ -255,6 +255,9 @@ They are what the run says about its own footing, and each is stated fail-closed
   A run somebody stopped is an interrupted run, and a version probe that ran out of time, ended by a signal, or failed without saying so is a question nobody answered, so what the interpreter's own run said is what is read.
 - The interpreter ended without a test result (`miri-ran-no-test`): no `test result:` line said a test failed, or that every one passed.
   Its status is then about the interpreter — its setup could not start a test binary, or there was no test to run — so it is neither a failing test, which would blame the suite with a defect, nor a pass, which would claim soundness nobody interpreted; it is a `not-measured` finding beside this limitation.
+- A test failed under the interpreter, and the interpreter did not say it found undefined behaviour (`miri-failed-isolated`).
+  The interpreter isolates a test from what it is given natively: it withholds the environment variables cargo sets, such as `OUT_DIR`, and the files and clocks of the machine, so a test that reads its build directory at run time fails there and passes natively.
+  What the interpreter establishes is undefined behaviour, and it did not say it found any, so the failure is the interpreter's limit and not the suite's: it is neither a failing test, which would blame the suite with a defect, nor a pass, which would claim soundness nobody established; it is a `not-measured` finding beside this limitation.
 - A file the soundness inventory walked could not be read as Rust this release understands (`soundness-source-unreadable`), so what it holds is not in the count.
   A count taken over part of a tree and reported as a count over the tree is the one number a reader cannot check.
 

@@ -13,7 +13,7 @@ use rust_mutants_decision::judgement::{Account, Ending, Harness, Observed, judge
 use rust_mutants_sealed::{
     Arguments, ClockPolicy, Environment, Interrupt, Invocation, Limits, OverlayEntry, OverlayState,
     Preopen, Preopens, RefusalReason, SealedError, SealedModule, SealedRunner, SealedStop,
-    Snapshot, Transcript, TrapKind, WasiFunction,
+    Snapshot, Start, Transcript, TrapKind, WasiFunction,
 };
 
 use super::doctest::{Expects, Listed, NO_SUCH_INDEX, RUN_ONE, printed};
@@ -521,7 +521,7 @@ pub struct Bench<'runner> {
     interrupt: Interrupt,
 }
 
-/// `path`, read and prepared on `runner` as a module of `target`.
+/// `path`, read, its standard library made to answer the temporary and the home directory from the environment, and prepared on `runner` as a module of `target`.
 fn prepared<'runner>(
     runner: &'runner SealedRunner,
     path: &Path,
@@ -531,10 +531,13 @@ fn prepared<'runner>(
         path: path.to_path_buf(),
         source,
     })?;
-    runner.prepare(&bytes).map_err(|source| BenchError::Host {
+    let host = |source| BenchError::Host {
         target: target.to_owned(),
         source,
-    })
+    };
+    let answering =
+        rust_mutants_sealed::redirected(&bytes, &super::platform::REDIRECTS).map_err(host)?;
+    runner.prepare(&answering.bytes).map_err(host)
 }
 
 impl<'runner> Bench<'runner> {
@@ -1040,7 +1043,7 @@ impl<'runner> Bench<'runner> {
         }))
     }
 
-    /// Every directory an instance of `station` is given: the tree, the records, its scratch, an empty `target_tmpdir` where cargo names one, what its build script wrote where one did, and its working directory where the tree holds it.
+    /// Every directory an instance of `station` is given: the tree, the records, its scratch, an empty `target_tmpdir` where cargo names one, what its build script wrote where one did, and the root, the instance starting in its package's directory where the tree holds it.
     fn preopens(
         &self,
         station: &Station<'_>,
@@ -1076,12 +1079,14 @@ impl<'runner> Bench<'runner> {
                 snapshot: built.snapshot.clone(),
             });
         }
-        if let Some(directory) = self.tree.within(&station.target.cwd) {
-            preopens.push(Preopen::Working {
+        let start = self
+            .tree
+            .within(&station.target.cwd)
+            .map(|directory| Start {
                 tree: self.tree.root.clone(),
                 directory,
             });
-        }
+        preopens.push(Preopen::Root { start });
         Preopens::new(preopens)
     }
 

@@ -702,7 +702,7 @@ fn a_test_that_reads_where_its_build_script_wrote_passes_its_control_sealed() {
 }
 
 #[test]
-fn a_test_that_keeps_files_where_tmpdir_names_passes_sealed_and_one_that_asks_std_is_refused() {
+fn a_test_that_keeps_files_in_the_temporary_directory_passes_sealed_however_it_asks_for_it() {
     let fixture = njutest_devkit::fixture::Fixture::copy("fixture-temporary");
     let session = rust_mutants::workspace::Workspace::open(
         fixture.root(),
@@ -746,13 +746,113 @@ fn a_test_that_keeps_files_where_tmpdir_names_passes_sealed_and_one_that_asks_st
         [
             (
                 "a_file_kept_in_the_temporary_directory_of_std_reads_back",
-                Some("refused")
+                None
             ),
             ("a_file_kept_where_tmpdir_names_reads_back", None),
         ],
-        "a file kept where TMPDIR names is kept in the instance's own temporary directory, and \
-         `std::env::temp_dir`, which panics in the standard library's platform layer on the \
-         sealed target, is a refusal of the sandbox rather than a failure of the test"
+        "a file kept where TMPDIR names, or where `std::env::temp_dir` answers, which the sealed \
+         build makes the standard library read from TMPDIR, is kept in the instance's own \
+         temporary directory"
+    );
+}
+
+#[test]
+fn a_test_that_keeps_a_setting_under_the_home_directory_passes_its_control_sealed() {
+    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-home");
+    let session = rust_mutants::workspace::Workspace::open(
+        fixture.root(),
+        rust_mutants::testkit::opening::opening(
+            &njutest_devkit::paths::cargo_binary(),
+            fixture.temp(),
+        ),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(&every_rule(), &Cancel::new())
+    .expect("prepare");
+    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
+        .expect("the sealed runner starts");
+    let bench = session
+        .bench(&runner, &Cancel::new())
+        .expect("the bench is assembled");
+    let control = bench
+        .stations
+        .get("fixture-home/test/writes")
+        .and_then(|station| {
+            station
+                .controls
+                .get("a_setting_kept_is_the_setting_recalled")
+        })
+        .expect("the station holds the test");
+    assert!(
+        control.is_ok(),
+        "`std::env::home_dir`, which the sealed target's standard library compiles into its \
+         caller as no home at all, answers the home HOME names in a sealed build, so a test \
+         that keeps a setting there passes its control sealed: {control:?}"
+    );
+}
+
+#[test]
+fn a_mutant_that_sends_a_test_to_an_absolute_path_meets_a_refusal_rather_than_the_package() {
+    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-absolute-path");
+    let session = rust_mutants::workspace::Workspace::open(
+        fixture.root(),
+        rust_mutants::testkit::opening::opening(
+            &njutest_devkit::paths::cargo_binary(),
+            fixture.temp(),
+        ),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(&every_rule(), &Cancel::new())
+    .expect("prepare");
+    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
+        .expect("the sealed runner starts");
+    let bench = session
+        .bench(&runner, &Cancel::new())
+        .expect("the bench is assembled");
+    let target = "fixture-absolute-path/test/reads";
+    let test = "the_setting_beside_the_manifest_is_read_by_a_relative_path";
+    let control = bench
+        .stations
+        .get(target)
+        .and_then(|station| station.controls.get(test))
+        .expect("the station holds the test");
+    assert!(
+        control.is_ok(),
+        "a relative path is read from the package's directory, where the guest starts: {control:?}"
+    );
+    let mut came_to = Vec::new();
+    for mutant in session.catalog().mutants() {
+        if !matches!(
+            mutant.candidate.rule.name,
+            "negate-condition" | "condition-to-true"
+        ) {
+            continue;
+        }
+        let said = bench
+            .put(target, test, mutant.id.as_str())
+            .expect("the host runs the execution");
+        came_to.push((mutant.candidate.rule.name, said));
+    }
+    assert_eq!(
+        came_to,
+        [
+            (
+                "negate-condition",
+                Some(rust_mutants_decision::evidence::Sealed::Doubted(
+                    rust_mutants_decision::evidence::Doubt::Refused
+                ))
+            ),
+            (
+                "condition-to-true",
+                Some(rust_mutants_decision::evidence::Sealed::Doubted(
+                    rust_mutants_decision::evidence::Doubt::Refused
+                ))
+            ),
+        ],
+        "`/setting.txt` names no place in the tree, so it is refused rather than read from the \
+         package's directory, where a file of that name lies and the machine's root holds none"
     );
 }
 

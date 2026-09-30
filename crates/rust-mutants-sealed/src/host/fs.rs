@@ -20,7 +20,7 @@ use crate::abi::{
     RIGHTS_PATH_UNLINK_FILE, RIGHTS_POLL_FD_READWRITE, RIGHTS_STDIN, RIGHTS_STDOUT, WHENCE_CUR,
     WHENCE_END, WHENCE_SET,
 };
-use crate::invocation::{Laid, Preopens, WORKING_NAME};
+use crate::invocation::{Laid, Preopens, ROOT_NAME};
 use crate::snapshot::{Body, NodeId, ROOT, Snapshot, inode_of};
 use crate::spelling::{Reading, Spelling, one_name};
 use crate::transcript::{OverlayEntry, RefusalReason};
@@ -210,18 +210,11 @@ enum Object {
         tree: usize,
         /// The node.
         node: NodeId,
-        /// How the guest was given it, where it was preopened rather than opened.
-        preopen: Option<Entrance>,
+        /// Whether the guest was given it as its tree's root, named by the tree's guest path, rather than opened it.
+        preopened: bool,
     },
-}
-
-/// How a preopened directory was given to the guest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Entrance {
-    /// As its tree's root, named by the tree's guest path.
+    /// The guest's root directory, `/`, which reaches each tree by a path below the tree's root as the tree spells one.
     Root,
-    /// As the working directory, named `.`: a relative path starts there and may climb to the tree's root, and a path below the root as the tree spells it starts at the root.
-    Working,
 }
 
 /// An open regular file: where it is, and where its descriptor stands in it.
@@ -396,7 +389,7 @@ impl Filesystem {
                 .map_err(|_wide| Errno::Mfile)?
                 .checked_add(3)
                 .ok_or(Errno::Mfile)?;
-            let (tree, node, entrance) = match laid {
+            let object = match laid {
                 Laid::Tree {
                     path,
                     snapshot,
@@ -404,18 +397,18 @@ impl Filesystem {
                 } => {
                     trees.push(Tree::grown(path, snapshot, (spelling, started)));
                     let tree = trees.len().checked_sub(1).ok_or(Errno::Mfile)?;
-                    (tree, ROOT, Entrance::Root)
+                    Object::Directory {
+                        tree,
+                        node: ROOT,
+                        preopened: true,
+                    }
                 }
-                Laid::Working { index, node, .. } => (*index, *node, Entrance::Working),
+                Laid::Root { .. } => Object::Root,
             };
             descriptors.insert(
                 number,
                 Descriptor {
-                    object: Object::Directory {
-                        tree,
-                        node,
-                        preopen: Some(entrance),
-                    },
+                    object,
                     flags: 0,
                     rights: RIGHTS_DIRECTORY,
                     inheriting: RIGHTS_ALL,
@@ -474,7 +467,7 @@ impl Filesystem {
             Object::Stdout => Stream::Stdout,
             Object::Stderr => Stream::Stderr,
             Object::File { .. } => Stream::File,
-            Object::Directory { .. } => return Err(Errno::Isdir),
+            Object::Directory { .. } | Object::Root => return Err(Errno::Isdir),
         };
         needs.held_by(descriptor)?;
         Ok(stream)
@@ -492,7 +485,7 @@ impl Filesystem {
                 at: (tree, node),
                 position,
             },
-            Object::Directory { .. } => return Err(Errno::Isdir),
+            Object::Directory { .. } | Object::Root => return Err(Errno::Isdir),
             Object::Stdin | Object::Stdout | Object::Stderr => return Err(Errno::Spipe),
         };
         needs.held_by(descriptor)?;
@@ -621,7 +614,7 @@ impl Filesystem {
                 *position = to;
                 Ok(())
             }
-            Object::Directory { .. } => Err(Errno::Isdir),
+            Object::Directory { .. } | Object::Root => Err(Errno::Isdir),
             Object::Stdin | Object::Stdout | Object::Stderr => Err(Errno::Spipe),
         }
     }
@@ -658,7 +651,7 @@ impl Filesystem {
         let filetype = match descriptor.object {
             Object::Stdin | Object::Stdout | Object::Stderr => FILETYPE_UNKNOWN,
             Object::File { .. } => FILETYPE_REGULAR_FILE,
-            Object::Directory { .. } => FILETYPE_DIRECTORY,
+            Object::Directory { .. } | Object::Root => FILETYPE_DIRECTORY,
         };
         Ok(Fdstat {
             filetype,
@@ -694,10 +687,11 @@ impl Filesystem {
         Ok(())
     }
 
-    /// The `filestat` of what `fd` reaches.
-    pub(crate) fn filestat(&self, fd: u32) -> Result<Filestat, Errno> {
+    /// The `filestat` of what `fd` reaches; the root directory is no place in a tree, so its own is refused.
+    pub(crate) fn filestat(&self, fd: u32) -> Result<Filestat, Fault> {
         match self
-            .descriptor(fd, Needs::All(RIGHTS_FD_FILESTAT_GET))?
+            .descriptor(fd, Needs::All(RIGHTS_FD_FILESTAT_GET))
+            .map_err(errno)?
             .object
         {
             Object::Stdin | Object::Stdout | Object::Stderr => Ok(Filestat {
@@ -709,8 +703,9 @@ impl Filesystem {
                 modified: self.started,
             }),
             Object::File { tree, node, .. } | Object::Directory { tree, node, .. } => {
-                self.node_stat(tree, node)
+                self.node_stat(tree, node).map_err(errno)
             }
+            Object::Root => Err(Fault::Refused(RefusalReason::Escape)),
         }
     }
 
@@ -765,9 +760,11 @@ impl Filesystem {
         let descriptor = self.descriptor(fd, Needs::Nothing)?;
         match descriptor.object {
             Object::File { .. } => Needs::All(RIGHTS_FD_ADVISE).held_by(descriptor)?,
-            Object::Directory { .. } | Object::Stdin | Object::Stdout | Object::Stderr => {
-                return Err(Errno::Badf);
-            }
+            Object::Directory { .. }
+            | Object::Root
+            | Object::Stdin
+            | Object::Stdout
+            | Object::Stderr => return Err(Errno::Badf),
         }
         if advice > 5 {
             return Err(Errno::Inval);
@@ -784,15 +781,18 @@ impl Filesystem {
         self.descriptor(fd, Needs::All(right)).map(|_open| ())
     }
 
-    /// Sets the times of what `fd` reaches.
-    pub(crate) fn set_times(&mut self, fd: u32, request: TimesRequest) -> Result<(), Errno> {
-        let descriptor = self.descriptor(fd, Needs::Nothing)?;
+    /// Sets the times of what `fd` reaches; the root directory is no place in a tree, so its own are refused.
+    pub(crate) fn set_times(&mut self, fd: u32, request: TimesRequest) -> Result<(), Fault> {
+        let descriptor = self.descriptor(fd, Needs::Nothing).map_err(errno)?;
         match descriptor.object {
-            Object::Stdin | Object::Stdout | Object::Stderr => Err(Errno::Badf),
+            Object::Stdin | Object::Stdout | Object::Stderr => Err(errno(Errno::Badf)),
             Object::File { tree, node, .. } | Object::Directory { tree, node, .. } => {
-                Needs::All(RIGHTS_FD_FILESTAT_SET_TIMES).held_by(descriptor)?;
-                self.touch(tree, node, request)
+                Needs::All(RIGHTS_FD_FILESTAT_SET_TIMES)
+                    .held_by(descriptor)
+                    .map_err(errno)?;
+                self.touch(tree, node, request).map_err(errno)
             }
+            Object::Root => Err(Fault::Refused(RefusalReason::Escape)),
         }
     }
 
@@ -837,23 +837,22 @@ impl Filesystem {
         Ok(())
     }
 
-    /// The name `fd` was preopened by: its tree's guest path, or `.` for the working directory.
+    /// The name `fd` was preopened by: its tree's guest path, or `/` for the root directory.
     pub(crate) fn preopened(&self, fd: u32) -> Result<&str, Errno> {
         match self.descriptor(fd, Needs::Nothing)?.object {
             Object::Directory {
                 tree,
-                preopen: Some(Entrance::Root),
+                preopened: true,
                 ..
             } => self
                 .trees
                 .get(tree)
                 .map(|held| held.guest_path.as_str())
                 .ok_or(Errno::Badf),
+            Object::Root => Ok(ROOT_NAME),
             Object::Directory {
-                preopen: Some(Entrance::Working),
-                ..
-            } => Ok(WORKING_NAME),
-            Object::Directory { preopen: None, .. }
+                preopened: false, ..
+            }
             | Object::File { .. }
             | Object::Stdin
             | Object::Stdout
@@ -861,33 +860,33 @@ impl Filesystem {
         }
     }
 
-    /// The entries of the directory `fd` from `cookie` on: `.`, `..`, then every name in order.
-    pub(crate) fn readdir(&self, fd: u32, cookie: u64) -> Result<Vec<Dirent>, Errno> {
+    /// The entries of the directory `fd` from `cookie` on: `.`, `..`, then every name in order; the root directory is no place in a tree, so it lists nothing and is refused.
+    pub(crate) fn readdir(&self, fd: u32, cookie: u64) -> Result<Vec<Dirent>, Fault> {
         let (tree, node) = self.directory(fd, Needs::All(RIGHTS_FD_READDIR))?;
-        let live = self.live(tree, node)?;
+        let live = self.live(tree, node).map_err(errno)?;
         let Held::Directory(entries) = &live.held else {
-            return Err(Errno::Notdir);
+            return Err(errno(Errno::Notdir));
         };
-        let parent = self.live(tree, live.parent)?;
+        let parent = self.live(tree, live.parent).map_err(errno)?;
         let mut all = vec![
             (".".to_owned(), live.inode, FILETYPE_DIRECTORY),
             ("..".to_owned(), parent.inode, FILETYPE_DIRECTORY),
         ];
         for (name, child) in entries.iter() {
-            let child = self.live(tree, *child)?;
+            let child = self.live(tree, *child).map_err(errno)?;
             let filetype = match child.held {
                 Held::File(_) => FILETYPE_REGULAR_FILE,
                 Held::Directory(_) => FILETYPE_DIRECTORY,
             };
             all.push((name.clone(), child.inode, filetype));
         }
-        let skip = usize::try_from(cookie).map_err(|_wide| Errno::Inval)?;
+        let skip = usize::try_from(cookie).map_err(|_wide| errno(Errno::Inval))?;
         let mut dirents = Vec::new();
         for (index, (name, inode, filetype)) in all.into_iter().enumerate().skip(skip) {
             let next = u64::try_from(index)
-                .map_err(|_wide| Errno::Overflow)?
+                .map_err(|_wide| errno(Errno::Overflow))?
                 .checked_add(1)
-                .ok_or(Errno::Overflow)?;
+                .ok_or(errno(Errno::Overflow))?;
             dirents.push(Dirent {
                 next,
                 inode,
@@ -898,10 +897,18 @@ impl Filesystem {
         Ok(dirents)
     }
 
-    /// The tree and node of the directory `fd` reaches, once it is known to hold what the call `needs`.
-    fn directory(&self, fd: u32, needs: Needs) -> Result<(usize, NodeId), Errno> {
-        self.entered(fd, needs)
-            .map(|(tree, node, _preopen)| (tree, node))
+    /// The tree and node of the directory `fd` reaches, refusing the root directory, which is no place in a tree, once it is known to hold what the call `needs`.
+    fn directory(&self, fd: u32, needs: Needs) -> Result<(usize, NodeId), Fault> {
+        let descriptor = self.descriptor(fd, Needs::Nothing).map_err(errno)?;
+        let entered = match descriptor.object {
+            Object::Directory { tree, node, .. } => (tree, node),
+            Object::Root => return Err(Fault::Refused(RefusalReason::Escape)),
+            Object::File { .. } | Object::Stdin | Object::Stdout | Object::Stderr => {
+                return Err(errno(Errno::Notdir));
+            }
+        };
+        needs.held_by(descriptor).map_err(errno)?;
+        Ok(entered)
     }
 
     /// The entries of the directory `node` of tree `tree`.
@@ -933,73 +940,51 @@ impl Filesystem {
         Ok(matches!(self.live(tree, node)?.held, Held::Directory(_)))
     }
 
-    /// The tree and node of the directory `fd` reaches, and how the guest was given it where it was preopened, once it is known to hold what the call `needs`.
-    fn entered(&self, fd: u32, needs: Needs) -> Result<(usize, NodeId, Option<Entrance>), Errno> {
-        let descriptor = self.descriptor(fd, Needs::Nothing)?;
-        let entered = match descriptor.object {
-            Object::Directory {
-                tree,
-                node,
-                preopen,
-            } => (tree, node, preopen),
-            Object::File { .. } | Object::Stdin | Object::Stdout | Object::Stderr => {
-                return Err(Errno::Notdir);
-            }
-        };
-        needs.held_by(descriptor)?;
-        Ok(entered)
-    }
-
-    /// The directories from the root of tree `tree` down to `node`, `node` last, which `..` climbs back through.
-    fn ancestry(&self, tree: usize, node: NodeId) -> Result<Vec<NodeId>, Fault> {
-        let bound = match self.trees.get(tree) {
-            Some(held) => held.nodes.len(),
-            None => return Err(errno(Errno::Badf)),
-        };
-        let mut chain = vec![node];
-        let mut at = node;
-        for _step in 0..=bound {
-            let up = self.live(tree, at).map_err(errno)?.parent;
-            if up == at {
-                chain.reverse();
-                return Ok(chain);
-            }
-            chain.push(up);
-            at = up;
-        }
-        Err(Fault::Refused(RefusalReason::Escape))
-    }
-
-    /// Resolves `path` from the directory `fd` once it is known to hold what the call `needs`, refusing a path that leaves what `fd` reaches: its own directory, or for the working directory its whole tree.
+    /// Resolves `path` from the directory `fd` once it is known to hold what the call `needs`, refusing one that leaves what `fd` reaches: its own directory, or from the root directory every tree whose own spelling of an absolute path the path is not.
     fn resolve(&self, fd: u32, path: &str, needs: Needs) -> Result<Resolved, Fault> {
-        let (tree, start, preopen) = self.entered(fd, needs).map_err(errno)?;
         if path.is_empty() {
             return Err(errno(Errno::Noent));
         }
         if path.contains('\0') {
             return Err(errno(Errno::Inval));
         }
-        let spelling = &self.trees.get(tree).ok_or(errno(Errno::Badf))?.spelling;
-        let (mut chain, names) = match (spelling.read(path), preopen) {
-            (Reading::Relative(names), Some(Entrance::Working)) => {
-                (self.ancestry(tree, start)?, names)
+        let descriptor = self.descriptor(fd, Needs::Nothing).map_err(errno)?;
+        let (tree, start, names) = match descriptor.object {
+            Object::Directory { tree, node, .. } => {
+                let spelling = &self.trees.get(tree).ok_or(errno(Errno::Badf))?.spelling;
+                match spelling.read(path) {
+                    Reading::Relative(names) => (tree, node, names),
+                    Reading::Rooted(_) | Reading::Elsewhere => {
+                        return Err(Fault::Refused(RefusalReason::Escape));
+                    }
+                }
             }
-            (Reading::Relative(names), Some(Entrance::Root) | None) => (vec![start], names),
-            (Reading::Rooted(names), Some(Entrance::Working)) => (vec![ROOT], names),
-            (Reading::Rooted(_), Some(Entrance::Root) | None) | (Reading::Elsewhere, _) => {
-                return Err(Fault::Refused(RefusalReason::Escape));
+            Object::Root => {
+                let (tree, names) = self
+                    .rooted(path)
+                    .ok_or(Fault::Refused(RefusalReason::Escape))?;
+                (tree, ROOT, names)
+            }
+            Object::File { .. } | Object::Stdin | Object::Stdout | Object::Stderr => {
+                return Err(errno(Errno::Notdir));
             }
         };
-        let from = chain.last().copied().ok_or(errno(Errno::Badf))?;
+        needs.held_by(descriptor).map_err(errno)?;
+        let mut chain = vec![start];
         let mut found = Found::Existing {
-            node: from,
+            node: start,
             place: None,
         };
         for (at, name) in names.iter().enumerate() {
             let last = at.checked_add(1) == Some(names.len());
             found = self.step(tree, (&found, &mut chain), (name, last))?;
         }
-        let trailing = spelling.trailing(path);
+        let trailing = self
+            .trees
+            .get(tree)
+            .ok_or(errno(Errno::Badf))?
+            .spelling
+            .trailing(path);
         if let Found::Existing { node, .. } = &found
             && trailing
             && !self.is_directory(tree, *node).map_err(errno)?
@@ -1011,6 +996,20 @@ impl Filesystem {
             found,
             trailing,
         })
+    }
+
+    /// The tree a path given to the root directory reaches, and the names it walks from that tree's root: of every tree whose own spelling reads the path as one below its root, the one whose root is deepest, as wasi-libc gives a path to the preopen whose name is its longest prefix.
+    fn rooted<'path>(&self, path: &'path str) -> Option<(usize, Vec<&'path str>)> {
+        let mut deepest: Option<(usize, usize, Vec<&'path str>)> = None;
+        for (index, tree) in self.trees.iter().enumerate() {
+            let Some((depth, names)) = tree.spelling.reach(&tree.guest_path, path) else {
+                continue;
+            };
+            if deepest.as_ref().is_none_or(|(held, _, _)| depth > *held) {
+                deepest = Some((depth, index, names));
+            }
+        }
+        deepest.map(|(_depth, index, names)| (index, names))
     }
 
     /// Where one more `name` of a path leads from `found`, `chain` the directories walked so far.
@@ -1152,7 +1151,7 @@ impl Filesystem {
             let object = Object::Directory {
                 tree,
                 node,
-                preopen: None,
+                preopened: false,
             };
             (object, RIGHTS_DIRECTORY)
         } else {

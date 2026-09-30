@@ -39,3 +39,108 @@ fn a_library_directory_without_a_standard_library_does_not_hold_it() {
     std::fs::write(libdir.join("libstd-0.rlib"), b"").expect("the standard library");
     assert!(installed(sysroot.path()).expect("listed"));
 }
+
+/// What `rustc --print cfg --target wasm32-wasip1` says of the names a target alone decides.
+fn wasip1() -> crate::facts::Facts {
+    crate::facts::Facts::printed(
+        "panic=\"abort\"\ntarget_arch=\"wasm32\"\ntarget_endian=\"little\"\ntarget_env=\"p1\"\n\
+         target_family=\"wasm\"\ntarget_os=\"wasi\"\ntarget_pointer_width=\"32\"\n\
+         target_vendor=\"unknown\"\n",
+    )
+}
+
+/// One configuration file, the environment the build inherits, and the flags it is compiled and documented with before the sealed build's own.
+type Chosen<'a> = (
+    &'a str,
+    &'a [(&'a str, &'a str)],
+    &'a [&'a str],
+    &'a [&'a str],
+);
+
+#[test]
+fn the_sealed_build_keeps_the_flags_cargo_would_choose_and_links_its_own_after_them() {
+    let linked = super::start_linked();
+    let cases: [Chosen<'_>; 6] = [
+        ("", &[], &[], &[]),
+        (
+            "[build]\nrustflags = [\"--cfg\", \"built\"]\nrustdocflags = \"--cfg documented\"\n",
+            &[],
+            &["--cfg", "built"],
+            &["--cfg", "documented"],
+        ),
+        (
+            "[build]\nrustflags = [\"--cfg\", \"built\"]\n\
+             [target.wasm32-wasip1]\nrustflags = [\"--cfg\", \"for-wasi\"]\n\
+             [target.aarch64-apple-darwin]\nrustflags = [\"--cfg\", \"for-a-mac\"]\n",
+            &[],
+            &["--cfg", "for-wasi"],
+            &[],
+        ),
+        (
+            "[target.'cfg(target_family = \"wasm\")']\nrustflags = [\"--cfg\", \"any-wasm\"]\n\
+             [target.'cfg(unix)']\nrustflags = [\"--cfg\", \"unix\"]\n",
+            &[],
+            &["--cfg", "any-wasm"],
+            &[],
+        ),
+        (
+            "[build]\nrustflags = [\"--cfg\", \"built\"]\n",
+            &[("RUSTFLAGS", "--cfg  plain"), ("RUSTDOCFLAGS", "--cfg doc")],
+            &["--cfg", "plain"],
+            &["--cfg", "doc"],
+        ),
+        (
+            "",
+            &[
+                ("CARGO_ENCODED_RUSTFLAGS", "--cfg\u{1f}encoded"),
+                ("RUSTFLAGS", "--cfg ignored"),
+            ],
+            &["--cfg", "encoded"],
+            &[],
+        ),
+    ];
+    for (text, env, compiled, documented) in cases {
+        let mut given = crate::vars::Variables::empty();
+        for (name, value) in env {
+            given.set(*name, *value);
+        }
+        let flags = super::Flags::of(
+            &given,
+            &crate::cargo::config::layer(text),
+            &wasip1(),
+            &linked,
+        )
+        .unwrap_or_else(|why| panic!("{text:?} {env:?}: {}", why.name()));
+        let with_linked = |before: &[&str]| -> Vec<String> {
+            before
+                .iter()
+                .map(|flag| (*flag).to_owned())
+                .chain(linked.iter().cloned())
+                .collect()
+        };
+        assert_eq!(flags.compile, with_linked(compiled), "{text:?} {env:?}");
+        assert_eq!(flags.document, with_linked(documented), "{text:?} {env:?}");
+    }
+}
+
+#[test]
+fn flags_whose_choice_is_not_known_seal_nothing_and_say_why() {
+    let linked = super::start_linked();
+    for text in [
+        "[target.'cfg(debug_assertions)']\nrustflags = [\"--cfg\", \"undecided\"]\n",
+        "[target.'cfg(not a predicate']\nrustflags = [\"-O\"]\n",
+        "[build]\nrustflags = 7\n",
+        "not toml at all [",
+    ] {
+        assert_eq!(
+            super::Flags::of(
+                &crate::vars::Variables::empty(),
+                &crate::cargo::config::layer(text),
+                &wasip1(),
+                &linked
+            ),
+            Err(super::Unsealed::FlagsUnmerged),
+            "{text:?}"
+        );
+    }
+}

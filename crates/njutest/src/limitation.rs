@@ -43,6 +43,9 @@ pub const MIRI_UNAVAILABLE: &str = "miri-unavailable";
 /// The interpreter ended without a test result, so what its status says is about the interpreter and not the suite.
 pub const MIRI_RAN_NO_TEST: &str = "miri-ran-no-test";
 
+/// A test failed under the interpreter, which isolates a test from the environment it is given natively, and the interpreter did not say it found undefined behaviour, so the failure is the interpreter's limit and not the suite's.
+pub const MIRI_FAILED_ISOLATED: &str = "miri-failed-isolated";
+
 /// A sanitizer the run was asked for could not be run, so nothing it would have found is claimed.
 pub const SANITIZER_UNAVAILABLE: &str = "sanitizer-unavailable";
 
@@ -138,6 +141,8 @@ pub enum Limitation {
     MiriUnavailable,
     /// Miri ran no test.
     MiriRanNoTest,
+    /// A test failed under Miri without its saying it found undefined behaviour.
+    MiriFailedIsolated,
     /// A sanitizer is unavailable.
     SanitizerUnavailable,
     /// The standard library was not instrumented.
@@ -202,6 +207,7 @@ impl Limitation {
             Self::MiriTimedOut => MIRI_TIMED_OUT,
             Self::MiriUnavailable => MIRI_UNAVAILABLE,
             Self::MiriRanNoTest => MIRI_RAN_NO_TEST,
+            Self::MiriFailedIsolated => MIRI_FAILED_ISOLATED,
             Self::SanitizerUnavailable => SANITIZER_UNAVAILABLE,
             Self::SanitizerStandardLibraryNotInstrumented => {
                 SANITIZER_STANDARD_LIBRARY_NOT_INSTRUMENTED

@@ -19,24 +19,35 @@ Everything a native run observes is a lead: something a person may look into, ne
 ## A sealed run
 
 The engine builds the instrumented snapshot a second time, with `cargo test --no-run --target wasm32-wasip1 --keep-going`, into its own target directory.
-Each test binary becomes a WebAssembly command module.
+Each test binary becomes a WebAssembly command module, compiled and linked, besides the flags cargo would compile the tree for the target with, with `-C link-arg=--undefined=chdir -C link-arg=--export=chdir -C link-arg=--export=malloc`, so that the host can start it in a directory, and with what answers the standard library's temporary and home directories, as [The platform the standard library does not have](#the-platform-the-standard-library-does-not-have) says.
+Those are what the environment's `CARGO_ENCODED_RUSTFLAGS` or `RUSTFLAGS` give, and otherwise what the configuration gives the target, under its triple or a `cfg(…)` predicate that holds for it, and otherwise `build.rustflags`; rustdoc's flags are chosen the same way.
+Where which of them cargo would use is not known, because a configuration file could not be read or a predicate names what a target alone does not decide, nothing is sealed, `flags-unmerged`.
 Its tests are the ones `--list` names inside the host, given the harness arguments the run was configured with.
 
 Each test of each module runs in its own instance, as `<module> --exact <name> --test-threads=1 --nocapture` and then the harness arguments the run was configured with, less a thread count or a capture of their own, which libtest refuses to be given twice.
 The instance is new, the memory is the module's initial memory, the filesystem is the snapshot with nothing written, and the clock reads zero.
-Its working directory is its package's directory in the snapshot, where cargo runs a test and rustdoc a doctest, so a relative path reads what it reads natively.
+It starts in its package's directory in the snapshot, where cargo runs a test and rustdoc a doctest: the host enters it through the guest's own `chdir` before `_start`, so a relative path reads what it reads natively, and `std::env::current_dir()` names it.
 What a test writes for itself lands in directories the instance holds, each empty when it starts and written only to its overlay: `CARGO_TARGET_TMPDIR` at the path the build baked in, which for the sealed target is the target's own directory inside the target directory, and a home and a temporary directory, which `HOME` and `TMPDIR` name.
 What a target's build script wrote, its `OUT_DIR`, the instance holds as the build left it, at the path the build gave the target, so a test that reads it back at run time, through `std::env::var("OUT_DIR")` or `env!("OUT_DIR")`, reads what it reads natively; what a test writes there only its overlay holds, and the build's own directory is never touched.
 Each of these names reaches something sealed on every machine, and the same thing on each: the paths of `HOME`, `TMPDIR` and the scratch are the instance's own, and those of `CARGO_TARGET_TMPDIR` and `OUT_DIR` are the ones the build gave the target, read or made empty when the bench is assembled.
-The standard library of `wasm32-wasip1` has no temporary directory of its own, so `std::env::temp_dir()` panics there whatever `TMPDIR` says, and its home directory is none.
-Code that keeps its files where `TMPDIR` names, as a test that asks the environment does, works sealed, and what it made is gone with the instance.
-A panic of the standard library's own platform layer, `library/std/src/sys/`, as that one is, is a refusal of the sandbox rather than something the test observed: a test whose control fails after it has no control, for `refused`, and an execution that meets it where its control did not is doubted, `refused`, never a detection, since the same code passes natively, as `fixtures/fixture-temporary` shows.
-A path the build baked in, such as `env!("CARGO_MANIFEST_DIR")`, reaches the snapshot as the build spelled it, a Windows build's `C:\…` included, as [the sealed host](sealed-host.md#the-working-directory) says.
-Not yet: an absolute path no directory the instance holds names is read from the working directory rather than refused.
-wasi-libc resolves every path against its own working directory, `/`, and takes the leading `/` off before it matches a preopen, so such a path reaches the host as the relative path it becomes, the same call a relative one makes, and the host cannot refuse the one without the other; closing it needs the guest's own working directory set to its package's directory, so that `.` need not be preopened.
+`std::env::temp_dir()` and `std::env::home_dir()` answer what `TMPDIR` and `HOME` name, as they do on a POSIX system, so code that keeps its files in either works sealed, and what it made is gone with the instance.
+A panic of the standard library's own platform layer, `library/std/src/sys/`, is a refusal of the sandbox rather than something the test observed: a test whose control fails after it has no control, for `refused`, and an execution that meets it where its control did not is doubted, `refused`, never a detection, since the same code passes natively.
+A path the build baked in, such as `env!("CARGO_MANIFEST_DIR")`, reaches the snapshot as the build spelled it, a Windows build's `C:\…` included, as [the sealed host](sealed-host.md#the-root-and-the-start) says.
+Any other absolute path names no directory the instance holds, and is refused as an escape and recorded, never read from the package's directory, as `fixtures/fixture-absolute-path` shows: the guest's root directory reaches only what the instance holds.
 `--nocapture` keeps a panic's message on the stream the host records, where libtest's capture would hold it in memory the abort discards.
 
 A library's doctests seal too, as [Doctests](#doctests) says.
+
+### The platform the standard library does not have
+
+The standard library of `wasm32-wasip1` has no temporary or home directory of its own: its `std::env::temp_dir` panics in its platform layer whatever `TMPDIR` names, and its `std::env::home_dir` answers no home at all, an answer the compiler copies into each crate that calls it.
+So the sealed build gives it one.
+It compiles an object of its own with the run's toolchain, whose two functions answer from `TMPDIR` and `HOME` as the standard library of a POSIX system does, and links it into every sealed module and doctest, exporting both.
+It compiles every module without optimisation and keeps every function's name, `-C opt-level=0 -C strip=none`, which changes no program's meaning, so that no copy of the two is folded into its caller.
+Before an instance starts, the host rewrites every function the module's name section names `std::env::temp_dir` or `std::env::home_dir`, the standard library's own and each copy, to answer by calling the object's; a module that names one and does not export the object's is refused (`RS1007`).
+The toolchain is probed first: a program that prints the two directories, compiled and linked as a sealed module is, rewritten and run sealed with `TMPDIR` and `HOME` named, must print them.
+Where the object does not build or the probe does not answer, nothing is sealed, `platform-unanswered`, and the trace says why; the object and the probe's answer are kept under the sealed build's directory, under the toolchain's version and everything they are made of.
+`fixtures/fixture-temporary` and `fixtures/fixture-home` show both.
 
 A target's sealed tests are exactly the ones its native baseline ran.
 A test the native run does not run is no test of the suite's, so the sealed build's copy of it is left out, and a kill by it would be no kill of the suite's.
@@ -73,9 +84,9 @@ A refusal returns its error to the guest and is recorded in the transcript, so a
 | `fd_fdstat_get`, `fd_fdstat_set_flags`, `fd_fdstat_set_rights` | On the instance's descriptor table, whose rights every call they govern asks for: a right narrowed away is gone, and opening through a directory does not give it back. |
 | `fd_filestat_get`, `path_filestat_get` | Fixed metadata: every timestamp what the realtime clock reads when the instance starts, the inode derived from the path, the size the overlay's. |
 | `fd_filestat_set_times`, `path_filestat_set_times` | Recorded in the overlay and read back; a time never set reads as the instance's start. |
-| `fd_prestat_get`, `fd_prestat_dir_name` | The snapshot, at the path the build knew it by; the directory the runtime's records land in; a scratch directory of the instance's own, whose empty `home` and `tmp` are what `HOME` and `TMPDIR` name; for a target cargo gives one, an empty directory at the `CARGO_TARGET_TMPDIR` the build baked in; for a target whose package has a build script, what the script wrote, at the `OUT_DIR` the build gave the target; and `.`, the test's working directory in the snapshot. |
+| `fd_prestat_get`, `fd_prestat_dir_name` | The snapshot, at the path the build knew it by; the directory the runtime's records land in; a scratch directory of the instance's own, whose empty `home` and `tmp` are what `HOME` and `TMPDIR` name; for a target cargo gives one, an empty directory at the `CARGO_TARGET_TMPDIR` the build baked in; for a target whose package has a build script, what the script wrote, at the `OUT_DIR` the build gave the target; and `/`, the root, which reaches each of these by its own spelling of an absolute path and refuses every other. |
 | `fd_readdir` | Entries in name order, with cookies that are their positions. |
-| `path_open`, `path_create_directory`, `path_remove_directory`, `path_rename`, `path_unlink_file` | Inside the snapshot, on the overlay: a relative path from the working directory, an absolute one below the snapshot's root as the build spelled it. A path outside it is refused, `ENOTCAPABLE`. A name its directory holds only in another case is refused, `ENOTCAPABLE`, since a file system that compares names in either case would have answered it from that name. |
+| `path_open`, `path_create_directory`, `path_remove_directory`, `path_rename`, `path_unlink_file` | Inside the snapshot, on the overlay: a relative path from the package's directory the test started in, an absolute one below the snapshot's root as the build spelled it. A path outside it is refused, `ENOTCAPABLE`. A name its directory holds only in another case is refused, `ENOTCAPABLE`, since a file system that compares names in either case would have answered it from that name. |
 | `path_readlink` | A link the snapshot holds. |
 | `path_link`, `path_symlink` | Refused, `ENOTSUP`. |
 | `sock_accept`, `sock_recv`, `sock_send`, `sock_shutdown` | Refused, `ENOTSUP`. |
@@ -167,6 +178,8 @@ Each is found, not listed: from the build, from the module's imports, and from t
 | Reason | Found by | To seal it |
 | --- | --- | --- |
 | The target is not installed | `rustc --print target-libdir --target wasm32-wasip1` names no directory | `rustup target add wasm32-wasip1` |
+| The toolchain's standard library does not answer its temporary and home directories from the environment, `platform-unanswered` | the object that answers them does not build with the run's toolchain, or the probe linked with it does not print what `TMPDIR` and `HOME` name | the trace's `sealed-build` note names what the object or the probe said |
+| Which flags cargo compiles the sealed target with is not known, `flags-unmerged` | a cargo configuration file that does not read, or a `target.'cfg(…)'` table whose predicate names what a target alone does not decide | configure the flags of `wasm32-wasip1` under its own triple, or in `build.rustflags` |
 | The crate does not build for the target | the build's own error, per target with `--keep-going` | build its dependencies for `wasm32-wasip1`, or put what cannot build behind `cfg(not(target_family = "wasm"))` |
 | The module imports what the host does not provide | the import section | the named import, which is not part of `wasi_snapshot_preview1` |
 | A control does not pass sealed | the control | the control's own failure, which names the thread, process, socket or file it needed |
@@ -245,3 +258,4 @@ The report's crash record says `sealed: true` exactly where the decision rests o
 - Memory corrupted through `unsafe`, which can write anything, including what the harness prints.
 - Code that runs before `main`.
 - A test that reads the environment that activates a mutant, and behaves differently because of it.
+- A function of the standard library whose platform layer on `wasm32-wasip1` answers another way than a native one without a panic, such as `std::env::current_exe` or `std::thread::available_parallelism`, which return an error of their own: a test that meets the error and goes on takes another path than it does natively, and nothing records it, where the two directories are answered as natively.

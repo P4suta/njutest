@@ -453,14 +453,25 @@ fn read(said: &str, ending: Ending) -> Interpreted {
         && read.results.len() == read.started
         && read.results.iter().all(|ended| *ended == Ended::Passed);
     match ending {
-        Ending::Failed if failed => interpreted.findings.push(Finding {
-            kind: FindingKind::FailingTest,
-            subject: "soundness".to_owned(),
-            detail: "a test fails under the interpreter that passes without it".to_owned(),
-            origin: crate::report::FindingOrigin::Global,
-            path: None,
-            position: None,
-        }),
+        Ending::Failed if failed => {
+            interpreted.limitations.push(Limitation::new(
+                crate::limitation::Limitation::MiriFailedIsolated,
+                "a test failed under the interpreter, which withholds from a test the \
+                 environment variables, files and clocks it is given natively, and the \
+                 interpreter did not say it found undefined behaviour",
+            ));
+            interpreted.findings.push(Finding {
+                kind: FindingKind::NotMeasured,
+                subject: "soundness".to_owned(),
+                detail: "a test failed under the interpreter on what it withholds rather than \
+                         on undefined behaviour, so nothing is claimed about the unsafe the suite \
+                         holds"
+                    .to_owned(),
+                origin: crate::report::FindingOrigin::Global,
+                path: None,
+                position: None,
+            });
+        }
         Ending::Passed if passed => {}
         Ending::Failed | Ending::Passed | Ending::TimedOut | Ending::Unanswered => {
             ran_no_test(&mut interpreted, said);

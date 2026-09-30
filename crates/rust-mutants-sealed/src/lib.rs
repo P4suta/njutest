@@ -17,6 +17,7 @@ mod imports;
 mod interrupt;
 mod invocation;
 mod random;
+mod redirect;
 mod runner;
 mod snapshot;
 mod spelling;
@@ -31,7 +32,11 @@ pub use error::{
 };
 pub use imports::{IMPORT_MODULE, WasiFunction};
 pub use interrupt::Interrupt;
-pub use invocation::{Arguments, ClockPolicy, Environment, Invocation, Limits, Preopen, Preopens};
+pub use invocation::{
+    Arguments, ClockPolicy, Environment, Invocation, Limits, Preopen, Preopens, START_LINK_ARGS,
+    Start,
+};
+pub use redirect::{Redirect, Redirected, names_std_env, redirected};
 pub use runner::{SealedModule, SealedRunner, WASMTIME_VERSION};
 pub use snapshot::{Snapshot, SnapshotBuilder};
 pub use transcript::{
