@@ -59,3 +59,6 @@ pub fn concluded<'a, T: PartialEq>(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(kani)]
+mod kani_laws;

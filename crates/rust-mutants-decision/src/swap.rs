@@ -156,3 +156,6 @@ pub fn regroups(inner: Binding, side: Side, new: Binding) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(kani)]
+mod kani_laws;
