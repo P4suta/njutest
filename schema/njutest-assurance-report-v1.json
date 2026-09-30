@@ -1789,7 +1789,8 @@
                 "position-unknown",
                 "outside-blocks",
                 "coverage-incomplete",
-                "touch-incomplete"
+                "touch-incomplete",
+                "compile-time"
               ]
             },
             {

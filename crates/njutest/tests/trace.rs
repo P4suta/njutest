@@ -655,6 +655,11 @@ fn the_published_v1_schema_accepts_every_closed_specimen_and_refuses_ambiguity()
 
     let documents: Vec<serde_json::Value> = njutest::testkit::every_payload()
         .into_iter()
+        .chain(rust_mutants::session::Fallback::ALL.iter().map(|fallback| {
+            let mut route = a_route();
+            route.fallback = Some(*fallback);
+            Payload::Route { route }
+        }))
         .enumerate()
         .map(|(at, payload)| {
             serde_json::to_value(Event {

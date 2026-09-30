@@ -171,10 +171,11 @@ duplicates and missing counterparts are rejected.
 | `granularity` | `all`, `block`, `test`, `discharged`, or `unreached` |
 | `reaching` | targets that could notice the mutation |
 | `discharged` | targets removed by `branch-never-taken` or `never-infected` |
-| `fallback` | why routing widened: `not-measured`, `position-unknown`, `outside-blocks`, `coverage-incomplete`, or `touch-incomplete` |
+| `fallback` | why routing widened: `not-measured`, `position-unknown`, `outside-blocks`, `coverage-incomplete`, `touch-incomplete`, or `compile-time` |
 | `answered` | targets actually asked, in order, with their outcomes: by this run, or by the run a read-back or resumed row came from |
 
 A row this run decided by a route it asked is held to that route's own answers, and a report that contradicts them is refused.
+The `compile-time` fallback asks every target about a const initializer built with its selector active, since runtime reach cannot narrow an expression evaluated during compilation.
 A `killed` row's answers end with the target it names noticing, and hold no other kill: the mutation phase stops at the first target that notices.
 A `survived` row's answers hold one survival from each target in `reaching` and nothing else, in whatever order the run asked them.
 A row read back from another run, or inherited from a checkpoint without a route, was not asked here, so the rule has nothing to hold it to.

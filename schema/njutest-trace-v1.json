@@ -292,7 +292,7 @@
                 "mutant": { "type": "string", "minLength": 1 },
                 "granularity": { "enum": ["all", "block", "test", "discharged", "unreached"] },
                 "fallback": {
-                  "enum": ["not-measured", "position-unknown", "outside-blocks", "coverage-incomplete", "touch-incomplete", null]
+                  "enum": ["not-measured", "position-unknown", "outside-blocks", "coverage-incomplete", "touch-incomplete", "compile-time", null]
                 },
                 "reaching": { "type": "array", "items": { "type": "string" } },
                 "tests": {
