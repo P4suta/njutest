@@ -416,7 +416,7 @@ pub struct Snapshot {
     state: State,
 }
 
-/// Copies the tree the options lay out into a directory named after its root, inside [`Options::dest_parent`].
+/// Copies the tree the options lay out into a directory named after what the tree holds, inside [`Options::dest_parent`], so the same tree gets the same name wherever it was checked out.
 ///
 /// # Errors
 /// Every failure is a [`SnapshotError`] naming the path it is about.
@@ -450,8 +450,7 @@ pub fn create(options: &Options, now: Timestamp) -> Result<Snapshot, SnapshotErr
     } = walker;
     passed_over.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
 
-    let (dir, stable) = destination(&options.dest_parent, source_root, now)?;
-    let owner = claim_destination(&dir, now)?;
+    let (dir, owner) = provisional(&options.dest_parent, source_root, now)?;
     let placement = options.layout.under(dir.join(TREE_NAME));
     let Some(dest_parent) = dir.parent().map(Path::to_path_buf) else {
         return Err(SnapshotError::new(
@@ -468,7 +467,7 @@ pub fn create(options: &Options, now: Timestamp) -> Result<Snapshot, SnapshotErr
         manifest: Vec::new(),
         workspace_digest: digest_of(&[], &passed_over)?,
         passed_over,
-        stable_dir: stable,
+        stable_dir: false,
         owner: Some(owner),
         state: State::Live,
     };
@@ -479,6 +478,7 @@ pub fn create(options: &Options, now: Timestamp) -> Result<Snapshot, SnapshotErr
         Ok(manifest) => {
             snapshot.workspace_digest = digest_of(&manifest, &snapshot.passed_over)?;
             snapshot.manifest = manifest;
+            settled(&mut snapshot, options, now)?;
             Ok(snapshot)
         }
         Err(cause) => match snapshot.cleanup() {
@@ -486,6 +486,86 @@ pub fn create(options: &Options, now: Timestamp) -> Result<Snapshot, SnapshotErr
             Err(cleanup) => Err(cleanup),
         },
     }
+}
+
+/// Renames a finished snapshot to the name its content pins, when nothing else holds that name: the paths a guest is given — the tree's preopen and the environment the build baked into its modules — are the same for one tree wherever it was checked out, which is what lets one sealed execution of it mean the same thing from any root.
+/// A run that finds the name held, by a live run of the same tree or one kept on purpose, keeps the provisional name: what it holds is no less a copy, only one another run cannot name again.
+fn settled(
+    snapshot: &mut Snapshot,
+    options: &Options,
+    now: Timestamp,
+) -> Result<(), SnapshotError> {
+    let wanted = snapshot
+        .dest_parent
+        .join(content_name(&snapshot.workspace_digest));
+    if wanted != snapshot.dir && path_holds(&wanted, now)? {
+        return Ok(());
+    }
+    let moved = options.layout.under(wanted.join(TREE_NAME));
+    fs::rename(&snapshot.dir, &wanted).map_err(|source| {
+        SnapshotError::new(
+            SnapshotErrorKind::Destination,
+            wanted.display().to_string(),
+            "cannot move the snapshot to the name its content pins",
+        )
+        .with_source(source)
+    })?;
+    snapshot.source_root = moved.source_root().to_path_buf();
+    snapshot.root = moved.root().to_path_buf();
+    snapshot.dir = wanted;
+    snapshot.stable_dir = true;
+    if let Some(owner) = snapshot.owner.as_mut() {
+        owner.moved(&snapshot.dir);
+    }
+    Ok(())
+}
+
+/// Whether `dir` is still there after a sweep of its name: held by a live run or preserved on purpose, both of which a sweep leaves alone.
+fn path_holds(dir: &Path, now: Timestamp) -> Result<bool, SnapshotError> {
+    tempowner::sweep(
+        dir.parent().ok_or_else(|| {
+            SnapshotError::new(
+                SnapshotErrorKind::Destination,
+                dir.display().to_string(),
+                "the snapshot destination names no directory it was created in",
+            )
+        })?,
+        &[&dir
+            .file_name()
+            .ok_or_else(|| {
+                SnapshotError::new(
+                    SnapshotErrorKind::Destination,
+                    dir.display().to_string(),
+                    "the snapshot destination names no directory it was created in",
+                )
+            })?
+            .to_string_lossy()],
+        now,
+    )
+    .map_err(|source| {
+        SnapshotError::new(
+            SnapshotErrorKind::Destination,
+            dir.display().to_string(),
+            "cannot inspect the snapshot destination for abandoned owners",
+        )
+        .with_source(source)
+    })?;
+    match fs::symlink_metadata(dir) {
+        Ok(_held) => Ok(true),
+        Err(gone) if gone.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(SnapshotError::new(
+            SnapshotErrorKind::Destination,
+            dir.display().to_string(),
+            "cannot read the snapshot destination",
+        )
+        .with_source(source)),
+    }
+}
+
+/// The name a snapshot of the tree whose workspace digest is `digest` is pinned by: [`DIR_PREFIX`] followed by the first [`STABLE_NAME_HEX_LENGTH`] lowercase hex characters of the digest.
+fn content_name(digest: &str) -> String {
+    let pinned: String = digest.chars().take(STABLE_NAME_HEX_LENGTH).collect();
+    format!("{DIR_PREFIX}{pinned}")
 }
 
 /// Creates the directories between the stage and what it holds, each exactly once.
@@ -1093,13 +1173,7 @@ fn to_u64(n: usize) -> io::Result<u64> {
     u64::try_from(n).map_err(|_overflow| io::Error::other("file size exceeds u64"))
 }
 
-/// The name of the snapshot directory of `abs_source_root`: [`DIR_PREFIX`] followed by the first [`STABLE_NAME_HEX_LENGTH`] lowercase hex characters of the SHA-256 of the path's bytes.
-#[must_use]
-pub fn stable_name(abs_source_root: &Path) -> String {
-    format!("{DIR_PREFIX}{}", stable_key(abs_source_root))
-}
-
-/// The digest component shared by the stable snapshot and build-cache names.
+/// The digest component of a build-cache name, which a cache keyed to a source root is spelled with.
 #[must_use]
 pub(crate) fn stable_key(abs_source_root: &Path) -> String {
     let digest = Sha256::digest(abs_source_root.as_os_str().as_encoded_bytes());
@@ -1107,12 +1181,12 @@ pub(crate) fn stable_key(abs_source_root: &Path) -> String {
     hex.chars().take(STABLE_NAME_HEX_LENGTH).collect()
 }
 
-/// Creates the directory a snapshot of `abs_src` will own inside `parent`, and reports whether it got the stable name or a fresh one.
-fn destination(
+/// Creates a freshly named directory a snapshot of `abs_src` will own inside `parent` and takes it, until the copy is finished and the directory can move to the name its content pins.
+fn provisional(
     parent: &Path,
     abs_src: &Path,
     now: Timestamp,
-) -> Result<(PathBuf, bool), SnapshotError> {
+) -> Result<(PathBuf, Owner), SnapshotError> {
     if !parent.is_absolute() {
         return Err(SnapshotError::new(
             SnapshotErrorKind::InvalidOptions,
@@ -1120,33 +1194,9 @@ fn destination(
             "destination parent must be an absolute path",
         ));
     }
-    let name = stable_name(abs_src);
-    let dir = parent.join(&name);
-    match fs::create_dir(&dir) {
-        Ok(()) => return Ok((dir, true)),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-        Err(source) => {
-            return Err(SnapshotError::new(
-                SnapshotErrorKind::Destination,
-                dir.display().to_string(),
-                "cannot create the snapshot directory",
-            )
-            .with_source(source));
-        }
-    }
-    let sweep_observation = tempowner::sweep(parent, &[name.as_str()], now).map_err(|source| {
-        SnapshotError::new(
-            SnapshotErrorKind::Destination,
-            parent.display().to_string(),
-            "cannot inspect the snapshot destination for abandoned owners",
-        )
-        .with_source(source)
-    })?;
-    drop(sweep_observation);
-    if fs::create_dir(&dir).is_ok() {
-        return Ok((dir, true));
-    }
-    fallback_destination(parent, abs_src, now).map(|dir| (dir, false))
+    let dir = fallback_destination(parent, abs_src, now)?;
+    let owner = claim_destination(&dir, now)?;
+    Ok((dir, owner))
 }
 
 /// A fresh name under `parent`: [`DIR_PREFIX`] plus sixteen hex characters that no other directory carries, proven by the exclusive `create_dir`.
@@ -1184,7 +1234,7 @@ fn fallback_destination(
     ))
 }
 
-/// Takes ownership of the directory [`destination`] just made, and decides what happens to that directory when it cannot.
+/// Takes ownership of the directory [`provisional`] just made, and decides what happens to that directory when it cannot.
 fn claim_destination(dir: &Path, now: Timestamp) -> Result<Owner, SnapshotError> {
     match tempowner::claim(dir, now) {
         Ok(owner) => Ok(owner),
