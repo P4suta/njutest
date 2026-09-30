@@ -155,6 +155,25 @@ fn a_sealed_crash_is_decided_in_one_round_and_says_it_was_sealed() {
 }
 
 #[test]
+fn a_sealed_next_instance_that_could_not_start_over_the_stop_decides_nothing() {
+    let halted = sealed("t", "crash", "halted", (&["count"], &[]));
+    assert_eq!(
+        decision(&[
+            asks_t(),
+            halted,
+            sealed("t", "next", "unstartable", (&[], &[]))
+        ]),
+        Ok(("undecided".to_owned(), "pkg/test/it::t".to_owned())),
+        "what the stop left is no state an instance of the test starts in, which says nothing \
+         of whether the program could start over it"
+    );
+    assert!(
+        decision(&[asks_t(), sealed("t", "crash", "unstartable", (&[], &[]))]).is_err(),
+        "only a next instance can fail to start over a stop"
+    );
+}
+
+#[test]
 fn a_sealed_sequence_no_run_makes_is_refused() {
     let halted = sealed("t", "crash", "halted", (&["count"], &[]));
     let cases: Vec<(&str, Vec<Step>)> = vec![

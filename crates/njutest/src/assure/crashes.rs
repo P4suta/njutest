@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use rust_mutants::catalog::Mutant;
 use rust_mutants::outcome::Outcome;
-use rust_mutants::sealed::bench::{Bench, Crashing};
+use rust_mutants::sealed::bench::{After, Bench, Crashing};
 use rust_mutants::sealed::record::Came as SealedCame;
 use rust_mutants::session::{
     Asked, Kept, Left, Observing, Request as ExecRequest, SealedKept, Session, Stop,
@@ -614,13 +614,18 @@ impl Stopped<'_> {
         if left.is_empty() {
             return Ok(Some(CrashDecision::Unshared { on }));
         }
-        let Some(next) = self.session.next_sealed(bench, &self.request(""), kept)? else {
-            return Ok(Some(CrashDecision::Undecided {
-                on,
-                why: "the test had no control to judge the next instance against".to_owned(),
-            }));
+        let next = match self.session.next_sealed(bench, &self.request(""), kept)? {
+            Some(After::Came(next)) => SealedCame::of(next),
+            Some(After::Unstartable(why)) => {
+                return Ok(Some(self.unstartable(on, &why)));
+            }
+            None => {
+                return Ok(Some(CrashDecision::Undecided {
+                    on,
+                    why: "the test had no control to judge the next instance against".to_owned(),
+                }));
+            }
         };
-        let next = SealedCame::of(next);
         let failed = if next.detected() {
             vec![self.test.to_owned()]
         } else {
@@ -637,6 +642,24 @@ impl Stopped<'_> {
             failed: &failed,
         });
         Ok(Some(after_sealed(next, (on, left, failed))))
+    }
+
+    /// What a stop whose next instance cannot start over what it left decides, having recorded that it could not: nothing either way, since what the tree then holds says nothing of whether the program could start over it.
+    fn unstartable(&self, on: String, why: &str) -> CrashDecision {
+        self.recorded(Recorded {
+            stage: "next",
+            sealed: true,
+            exit_code: None,
+            outcome: UNSTARTABLE,
+            stop: Stop::none(),
+            issued: None,
+            left: &Left::Named(Vec::new()),
+            failed: &[],
+        });
+        CrashDecision::Undecided {
+            on,
+            why: format!("what the stop left is no state an instance of the test starts in: {why}"),
+        }
     }
 
     /// One execution, as the recording holds it, and what the crash's decision rests on.
@@ -718,6 +741,9 @@ fn ended_with(exit_code: i32) -> String {
 
 /// What a sealed crash instance the host halted where its runtime publishes the notice is recorded as.
 pub const HALTED: &str = "halted";
+
+/// What a sealed next instance that could not start over what the stop left is recorded as.
+pub const UNSTARTABLE: &str = "unstartable";
 
 /// Why a stop that left an entry whose name is not text is undecided: what it left cannot be named to the next run, or to anyone reading the report.
 fn unnamed(entry: &str) -> String {

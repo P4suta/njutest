@@ -891,29 +891,25 @@ impl<'runner> Bench<'runner> {
         }))
     }
 
-    /// What `test` of `target` comes to with nothing active, in a fresh instance started from everything `crashed` left but the runtime's own records, judged against its control, or nothing where there is no control to judge it against.
+    /// What `test` of `target` comes to with nothing active, in a fresh instance started from everything `crashed` left but the runtime's own records, judged against its control, or that what it left is no state such an instance starts in; nothing where there is no control to judge it against.
     ///
     /// # Errors
-    /// An environment that is not text, what `crashed` left that is no change of the instance's trees, or a host that cannot run the invocation.
+    /// An environment that is not text, or a host that cannot run the invocation.
     pub fn after(
         &self,
         (target, test): (&str, &str),
         crashed: &Crashed,
-    ) -> Result<Option<Sealed>, BenchError> {
+    ) -> Result<Option<After>, BenchError> {
         let Some(asked) = self.asked(target, test) else {
             return Ok(None);
         };
         let mut invocation = asked.invocation(self, Active::Next)?;
-        invocation.preopens =
-            invocation
-                .preopens
-                .after(&crashed.left)
-                .map_err(|source| BenchError::Host {
-                    target: target.to_owned(),
-                    source,
-                })?;
+        invocation.preopens = match invocation.preopens.after(&crashed.left) {
+            Ok(preopens) => preopens,
+            Err(refused) => return Ok(Some(After::Unstartable(refused.to_string()))),
+        };
         let transcript = self.invoke(asked.station, asked.module, &invocation)?;
-        Ok(Some(asked.judged(&transcript)?))
+        Ok(Some(After::Came(asked.judged(&transcript)?)))
     }
 
     /// The station, control, module and run of `test` of `target`, where the bench has a control of it to judge an execution against.
@@ -1242,6 +1238,15 @@ pub enum Crashing {
     Halted,
     /// It did not halt, and came to this, judged against the test's control.
     Judged(Sealed),
+}
+
+/// What a next instance over what a crash left came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum After {
+    /// It ran, and came to this, judged against the test's control.
+    Came(Sealed),
+    /// What the crash left is no state an instance of the test can start in, such as one that removed the directory it runs in, and why.
+    Unstartable(String),
 }
 
 /// What an instance a crash was put to came to, and what it left for a next instance to start over.

@@ -2245,7 +2245,7 @@ impl Session {
         }))
     }
 
-    /// Runs the one test of the one target `request` names with nothing active, in a fresh sealed instance on `bench` started from what `kept` left, judged against the test's control; nothing where the bench has no control of it.
+    /// Runs the one test of the one target `request` names with nothing active, in a fresh sealed instance on `bench` started from what `kept` left, judged against the test's control, or says that what it left is no state such an instance starts in; nothing where the bench has no control of it.
     ///
     /// # Errors
     /// [`SessionError::UnknownTarget`], and what the bench could not run.
@@ -2254,7 +2254,7 @@ impl Session {
         bench: &crate::sealed::bench::Bench<'_>,
         request: &Request,
         kept: &SealedKept,
-    ) -> Result<Option<rust_mutants_decision::evidence::Sealed>, EngineError> {
+    ) -> Result<Option<crate::sealed::bench::After>, EngineError> {
         let target = self.named(request)?;
         let Some(test) = request.test.as_deref() else {
             return Ok(None);

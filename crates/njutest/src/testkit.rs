@@ -811,6 +811,22 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 failed: Vec::new(),
             },
         },
+        Payload::CrashExec {
+            crash: crate::trace::CrashExecRecord {
+                crash: "d".repeat(20),
+                target: "demo/test/counter".to_owned(),
+                test: "a_count_goes_up".to_owned(),
+                stage: "next".to_owned(),
+                sealed: true,
+                exit_code: None,
+                outcome: "unstartable".to_owned(),
+                noticed: false,
+                issued: None,
+                left: Vec::new(),
+                unnamed: None,
+                failed: Vec::new(),
+            },
+        },
         Payload::CrashStep {
             step: crate::trace::CrashStepRecord {
                 crash: "d".repeat(20),

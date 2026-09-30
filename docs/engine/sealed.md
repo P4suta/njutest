@@ -247,6 +247,7 @@ The engine says the instance stopped at the call only where the host halted it a
 
 What the stop left is every change of its overlay outside the runtime's records, named as a native stop's are: below the temporary directory relative to it, below the home from `~/`, below the tree from `./`, below `CARGO_TARGET_TMPDIR` from `$CARGO_TARGET_TMPDIR/`, a directory with a trailing `/` and a removal with ` (removed)` after it.
 The next instance is the test with nothing active, in a fresh instance whose trees are those changes applied to the instance's own snapshots, by `Preopens::after`, with a records directory of its own; `Bench::after` runs it and judges it against the test's control, as [Judging one execution](#judging-one-execution) says.
+What the stop left can be no state an instance of the test starts in, as one is that removed the directory the guest starts in: the next instance is not run, and the crash is `undecided`, recorded as `unstartable`, since what the tree then holds says nothing of whether the program could start over it.
 It passing is `restarted`, a detection is `corrupt`, with the test as the one failure, and anything else is `undecided`, since it establishes nothing either way.
 One round decides: the control is the fresh run a native round asks for, and the same crash comes out the same every time, so there is no second stop to confirm.
 
