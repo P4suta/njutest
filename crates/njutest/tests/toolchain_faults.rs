@@ -302,8 +302,11 @@ fn a_surviving_ignore_question_statement_is_told_apart_by_the_call_failing_besid
         "the SARIF drawing carries it as a note a code-scanning reader sees: {sarif}"
     );
     let junit = said(njutest::app::reports::JUNIT_NAME);
+    let target = evidence[0]["target"].as_str().expect("the target");
     assert!(
-        junit.contains("evidence-under-fault") && junit.contains(fault),
+        junit.contains("evidence-under-fault")
+            && junit.contains(fault)
+            && junit.contains(&format!("failed=alone by={target}")),
         "the JUnit drawing carries it as a passing testcase beside the findings: {junit}"
     );
     audited(&fixture);

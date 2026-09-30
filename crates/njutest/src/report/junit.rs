@@ -137,10 +137,13 @@ fn write_besides(out: &mut String, report: &super::Conclusion) -> Result<(), std
     for evidence in &report.beside {
         writeln!(
             out,
-            "    <testcase classname=\"{}\" name=\"{} {}\"/>",
+            "    <testcase classname=\"{}\" name=\"{} {}\">\n      \
+             <system-out>failed={} by={}</system-out>\n    </testcase>",
             escape(super::faults::OBSERVABLE_UNDER_FAULT),
             escape(&evidence.mutant),
-            escape(&evidence.fault)
+            escape(&evidence.fault),
+            evidence.failed.name(),
+            escape(&evidence.target)
         )?;
     }
     writeln!(out, "  </testsuite>")?;

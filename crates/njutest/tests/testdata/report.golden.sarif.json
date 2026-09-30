@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "automationDetails": {
+        "id": "20260905t081500z-abcdef"
+      },
+      "properties": {
+        "accounting": {
+          "faults": {
+            "absorbed": 0,
+            "not_put": 0,
+            "noticed": 1,
+            "sites": 1,
+            "undecided": 0,
+            "unnoticed": 0,
+            "unreached": 0,
+            "waited": 0
+          },
+          "mutants": {
+            "accepted": 0,
+            "cataloged": 1,
+            "equivalent": 0,
+            "executed": 1,
+            "killed": 0,
+            "model_noticed": 0,
+            "model_proved": 0,
+            "observers": {
+              "errored": 0,
+              "model_noticed": 0,
+              "model_proved": 0,
+              "proved": 0,
+              "step_limit_reached": 0,
+              "tests": 0,
+              "types": 0,
+              "unnoticed": 1,
+              "unproven": 0,
+              "unreached": 0,
+              "waited": 0
+            },
+            "rejected": 0,
+            "reused_killed": 0,
+            "reused_survived": 0,
+            "step_limit_reached": 0,
+            "survived": 1,
+            "unreached": 0,
+            "waited": 0
+          },
+          "soundness_by_build": [
+            {
+              "accounting": {
+                "executed": false,
+                "packages_with_unsafe": 0,
+                "unsafe_items": 0
+              },
+              "build": "default"
+            }
+          ],
+          "targets": {
+            "failed": 1,
+            "missing": 0,
+            "passed": 1,
+            "selected": 2,
+            "skipped": 0
+          }
+        },
+        "limitations": [
+          {
+            "detail": "the stream fixture is not a git repository",
+            "name": "git-metadata-unavailable"
+          }
+        ],
+        "verdict": "Insufficient"
+      },
+      "results": [
+        {
+          "level": "warning",
+          "message": {
+            "text": "no test noticed the edit at crates/core/src/lib.rs:12"
+          },
+          "partialFingerprints": {
+            "njutestFinding/v1": "surviving-mutant:cccccccccccccccccccc"
+          },
+          "ruleId": "surviving-mutant"
+        },
+        {
+          "level": "note",
+          "message": {
+            "text": "survivor cccccccccccccccccccc is told apart from an equivalence only with the call at its own site failing (8c841811e491fadad887) on core/lib/adds::rounds, where the alone run failed"
+          },
+          "partialFingerprints": {
+            "njutestFinding/v1": "observable-under-fault:cccccccccccccccccccc:8c841811e491fadad887:core/lib/adds::rounds"
+          },
+          "ruleId": "observable-under-fault"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "informationUri": "https://github.com/P4suta/njutest",
+          "name": "njutest",
+          "rules": [
+            {
+              "id": "observable-under-fault",
+              "shortDescription": {
+                "text": "observable under fault"
+              }
+            },
+            {
+              "id": "surviving-mutant",
+              "shortDescription": {
+                "text": "surviving mutant"
+              }
+            }
+          ],
+          "version": "0.1.0"
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

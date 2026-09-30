@@ -419,4 +419,32 @@ fn every_drawing_states_the_evidence_a_fault_gave_about_a_survivor() {
         junit.contains("tests=\"4\"") && junit.contains("failures=\"2\""),
         "the evidence counts as a test and not as a failure: {junit}"
     );
+    let mut sarif = serde_json::to_string_pretty(&sarif).expect("the SARIF drawing serializes");
+    sarif.push('\n');
+    for (name, text) in [
+        ("report.golden.html", html),
+        ("report.golden.sarif.json", sarif),
+        ("report.golden.junit.xml", junit),
+    ] {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/testdata")
+            .join(name);
+        njutest_devkit::golden::golden(&path, text.as_bytes())
+            .expect("the complete drawing keeps the evidence beside its survivor");
+    }
+}
+
+#[test]
+fn the_junit_evidence_names_which_run_failed_and_the_target_that_told_them_apart() {
+    for failed in njutest::report::faults::Failed::ALL {
+        let report = report_varying(&|source| source.beside[0].failed = failed);
+        let junit = njutest::report::junit::document(&report).expect("the checked report draws");
+        assert!(
+            junit.contains(&format!(
+                "failed={} by=core/lib/adds::rounds",
+                failed.name()
+            )),
+            "the evidence names the failing side and the target without counting a kill: {junit}"
+        );
+    }
 }
