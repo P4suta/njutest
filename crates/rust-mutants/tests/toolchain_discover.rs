@@ -151,6 +151,137 @@ fn run(prepared: &Prepared, options: &DiscoverOptions<'_>, trace: &Recorder) -> 
     discover(&input(prepared), options, trace).expect("discover")
 }
 
+#[test]
+fn const_bodies_stay_const_when_an_unvalidated_source_can_evaluate_them() {
+    for outside in [
+        "/// ```\n/// const VALUE: u32 = fixture_two_bodies::value(1);\n/// ```\npub struct Example;",
+        "#[cfg(any())]\nconst VALUE: u32 = super::value(1);",
+        "#[cfg(any())]\npub struct Array { value: [u8; super::value(1) as usize] }",
+        "pub enum Enum { #[cfg(any())] Value = super::value(1) as isize }",
+        "#[cfg(any())]\npub fn block() { let _value = const { super::value(1) }; }",
+        "#[cfg(any())]\npub fn repeat() { let _values = [0; super::value(1) as usize]; }",
+        "#[cfg(any())]\nconst fn carrier() -> u32 { super::value(1) }",
+        "#[cfg(any())]\nmod unavailable;",
+        "macro_rules! later { () => { const VALUE: u32 = super::value(1); } }\n#[cfg(any())]\nlater!();",
+        "#[cfg_attr(any(), doc = \"```\\nconst VALUE: u32 = fixture_two_bodies::value(1);\\n```\")]\npub struct Example;",
+        "macro_rules! documented { () => { #[doc = \"```\\nconst VALUE: u32 = fixture_two_bodies::value(1);\\n```\"] pub struct Example; } }\ndocumented!();",
+        "use crate::outside as std;",
+    ] {
+        let fixture = njutest_devkit::fixture::Fixture::copy("fixture-two-bodies");
+        std::fs::write(
+            fixture.root().join("src/lib.rs"),
+            "pub mod outside;\npub const fn value(n: u32) -> u32 { n + 2 }\npub fn ordinary(n: u32) -> u32 { n + 3 }\n",
+        )
+        .expect("the bodies");
+        std::fs::write(fixture.root().join("src/outside.rs"), outside)
+            .expect("a use the validation build cannot decide");
+        let prepared = prepare_at(fixture.root().to_owned());
+        let proposed = rust_mutants::syntax::discover_file(
+            "src/lib.rs",
+            &std::fs::read(fixture.root().join("src/lib.rs")).expect("the original bodies"),
+            &options().selection,
+        )
+        .expect("the per-file candidates");
+        let hidden = proposed
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.hint.const_fn.is_some())
+            .count();
+        let discovered = run(&prepared, &options(), &Recorder::disabled());
+        assert!(
+            discovered
+                .candidates
+                .iter()
+                .all(|candidate| candidate.found.hint.const_fn.is_none()),
+            "a guard must not take const from a function unvalidated source can evaluate: {outside}"
+        );
+        assert!(
+            discovered
+                .candidates
+                .iter()
+                .any(|candidate| candidate.found.item == "ordinary"),
+            "ordinary runtime bodies remain mutable"
+        );
+        let skip = discovered
+            .skips
+            .iter()
+            .find(|skip| skip.reason.name() == "unvalidated-const-use")
+            .expect("the refusal is counted under its own stated reason");
+        assert_eq!(
+            usize::try_from(skip.count).expect("the count fits"),
+            hidden,
+            "every hidden candidate is counted, including multiple edits at one position"
+        );
+    }
+}
+
+#[test]
+fn an_unselected_dependent_member_s_unvalidated_use_keeps_its_dependency_const() {
+    let fixture = njutest_devkit::fixture::Fixture::copy("fixture-two-bodies");
+    std::fs::create_dir_all(fixture.root().join("consumer/src")).expect("the consumer");
+    std::fs::write(
+        fixture.root().join("Cargo.toml"),
+        "[package]\nname = \"fixture-two-bodies\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\
+         [workspace]\nmembers = [\"consumer\"]\n",
+    )
+    .expect("the workspace");
+    std::fs::write(
+        fixture.root().join("consumer/Cargo.toml"),
+        "[package]\nname = \"consumer\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\
+         [dependencies]\nfixture-two-bodies = { path = \"..\" }\n",
+    )
+    .expect("the dependent member");
+    std::fs::write(
+        fixture.root().join("Cargo.lock"),
+        "version = 4\n[[package]]\nname = \"consumer\"\nversion = \"0.1.0\"\n\
+         dependencies = [\"fixture-two-bodies\"]\n\
+         [[package]]\nname = \"fixture-two-bodies\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("the closed dependency graph");
+    std::fs::write(
+        fixture.root().join("src/lib.rs"),
+        "pub const fn value(n: u32) -> u32 { n + 2 }\npub fn ordinary(n: u32) -> u32 { n + 3 }\n",
+    )
+    .expect("the dependency's bodies");
+    std::fs::write(
+        fixture.root().join("consumer/src/lib.rs"),
+        "pub use fixture_two_bodies::value as renamed;\n\
+         /// ```\n/// const VALUE: u32 = consumer::renamed(1);\n/// ```\n\
+         pub struct Example;\n",
+    )
+    .expect("a documented use through an alias in another member");
+    let prepared = prepare_at(fixture.root().to_owned());
+    let mut selected = options();
+    selected.packages = vec!["fixture-two-bodies".to_owned()];
+    let discovered = run(&prepared, &selected, &Recorder::disabled());
+    assert!(
+        discovered
+            .candidates
+            .iter()
+            .all(|candidate| candidate.found.hint.const_fn.is_none()),
+        "leaving the consumer out of mutation cannot hide its early use"
+    );
+    assert!(
+        discovered
+            .candidates
+            .iter()
+            .any(|candidate| candidate.found.item == "ordinary"),
+        "ordinary runtime bodies remain mutable"
+    );
+    assert!(
+        discovered.decisions.iter().any(|decision| {
+            decision
+                .skip
+                .is_some_and(|skip| skip.name() == "unvalidated-const-use")
+                && decision
+                    .note
+                    .as_deref()
+                    .is_some_and(|note| note.contains("consumer/src/lib.rs"))
+        }),
+        "the refusal names the responsible source in the unselected member"
+    );
+}
+
 /// `(path, package, candidates, "reason:count reason:count")` per file.
 fn table(discovery: &Discovery) -> Vec<(String, String, usize, String)> {
     discovery

@@ -2069,6 +2069,7 @@
             "skipped-generated-outside-workspace",
             "skipped-forbidden-lints",
             "skipped-evaluated-before-run",
+            "skipped-unvalidated-const-use",
             "skipped-let-condition",
             "skipped-open-range",
             "skipped-unstated-return-type",

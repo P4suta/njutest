@@ -364,6 +364,7 @@ fn skip_reasons_are_named_explained_and_ranked() {
             "generated-outside-workspace",
             "forbidden-lints",
             "evaluated-before-run",
+            "unvalidated-const-use",
             "let-condition",
             "open-range",
             "unstated-return-type",

@@ -16,6 +16,8 @@ A report written before it lacks the field and is refused; merge the parts again
 **The body of a `const fn` is mutated wherever nothing evaluates it before the program runs.** The instrumented tree writes a `const fn` holding a guard without its `const`, and validation gives it back to a function the compiler evaluates, from the `E0015` it refuses the tree with ([ADR 0047](../adr/0047-a-const-fn-is-mutated-where-nothing-evaluates-it-early.md)).
 A crate written the way `clippy::missing_const_for_fn` asks has more mutants than it had, and the first run after upgrading is longer by them.
 The skip reason `const-fn-body` is gone; `evaluated-before-run` counts the candidates of a function the compiler evaluates, one place each, and the limitation a report states for it is `skipped-evaluated-before-run`.
+`unvalidated-const-use` counts const-body candidates discovery conservatively leaves unchanged because a linked doctest, conditional early use or opaque expansion is outside native validation.
+Its limitation is `skipped-unvalidated-const-use`, and its trace decisions name the source files that required keeping `const`.
 Every rejection row gains `reason`, `compiler-refused` or `evaluated-before-run`, and `refused` counts only the first.
 The trace's `validate-round` gains `carried`.
 A documented example that evaluates such a function before its program runs no longer compiles against the instrumented tree; mark the function, and every `const fn` it calls, with `rust-mutants: skip`.

@@ -46,12 +46,20 @@ It is a fact about the program's uses of the function — a `const` item, a `sta
    A report counts it under `skipped`, as `evaluated-before-run`, one place per candidate, and lists it among the rejections with `reason: "evaluated-before-run"` for its identity and the compiler's words; `refused` counts only `reason: "compiler-refused"`.
    A run document whose skips and rejections disagree about it is refused.
 7. **The witness tree asks nothing about a site in a `const fn`.** It is checked before validation says which functions go without their `const`, and a witness written into one would be a call its `const` refuses.
+8. **Source the validation build cannot check keeps its linked `const fn` bodies unchanged.** Discovery reads every member unit's source, including test-only, excluded and entered-only files.
+   A documentation code block or opaque documentation attribute may evaluate any linked function through aliases or a chain of calls, so every const-body candidate in the package and its dependency closure is passed over as `unvalidated-const-use`.
+   The same applies to conditional early evaluation, a conditional const function or unavailable module, opaque macros and attributes that can generate documentation, imports that can replace standard macros, attributed standard-macro arguments, and source outside the snapshot or a fragment the parser cannot read as a file.
+   Native all-target validation compiles `#[cfg(test)]`, so that condition alone does not make a use unvalidated.
+   The ordinary runtime bodies remain mutable, and every skipped candidate's trace decision names the source files that required keeping its `const`.
+   `const_bodies_stay_const_when_an_unvalidated_source_can_evaluate_them` in `crates/rust-mutants/tests/toolchain_discover.rs` holds the source gate, and `a_native_whole_contract_carries_only_what_its_source_and_trace_can_audit` in `crates/njutest/tests/toolchain_verify.rs` holds a real doctest and the carried whole-v1 report to proofaudit.
 
 ## Consequences
 
-- The decision crate's `const fn` bodies are mutated: 99 candidates, of which the compiler accepts 39 and refuses 60 return replacements of types with no `Default`, and none is left out as evaluated before the program runs, where there were 12 candidates and 6 mutants.
-- Two uses of a function are outside the build validation compiles: a documented example, which cargo compiles only by running it, and code behind a `#[cfg(...)]` that build does not enable.
-  Where one evaluates a function the tree wrote without its `const`, that build fails with the same `E0015`, and the run refuses or names it as it would any failing baseline or unsealable build; [limitations](../limitations.md#places-a-run-passed-over) says so and names the marker that keeps a function `const`.
+- Runtime-only const bodies can be mutated where the source gate permits it, as `fixture-const-fn` holds.
+  The decision crate's conditional Kani modules now keep its const bodies unchanged under `unvalidated-const-use`, so the expectation naming `Pass::after` is removed rather than kept as a claim of a candidate this discovery cannot make.
+- A documented example, conditional early use or opaque expansion cannot be proved by the native validation build.
+  Discovery conservatively keeps all linked const bodies unchanged, including functions that the example does not actually call, instead of discovering the missing `const` in a failed doctest baseline or a differently configured build.
+  The report states `skipped-unvalidated-const-use` separately from the compiler-derived `skipped-evaluated-before-run`.
 - A mutant in a `const fn` carries no branch proof, comparison or probe, so every test that reaches it runs it.
   A proof about such a site would need the witness tree to learn the same `E0015`s validation does, in rounds of its own.
   It cannot apply as the witness tree is built: a witness is a call to a plain function, which the `const` of the function around it refuses, and the tree is checked before validation says which functions lose their `const`, so a witness put there is refused by the compiler as surely as it is left out by the pass.

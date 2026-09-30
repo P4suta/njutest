@@ -723,7 +723,7 @@ impl<'ast> Visit<'ast> for Consumers<'_> {
 }
 
 /// Whether a documentation attribute holds a line rustdoc may test as code: one that opens a fence, or one indented as an indented code block is.
-fn documents_code(attribute: &syn::Attribute) -> bool {
+pub(crate) fn documents_code(attribute: &syn::Attribute) -> bool {
     let syn::Meta::NameValue(pair) = &attribute.meta else {
         return true;
     };
@@ -748,7 +748,7 @@ fn documents_code(attribute: &syn::Attribute) -> bool {
 }
 
 /// Whether evaluating `expression` can read a position: it holds a macro invocation or a call.
-fn computes(expression: &syn::Expr) -> bool {
+pub(crate) fn computes(expression: &syn::Expr) -> bool {
     let mut computing = Computing::default();
     computing.visit_expr(expression);
     computing.found
@@ -914,7 +914,7 @@ fn attributes(attrs: &[syn::Attribute]) -> Option<Unsealing> {
 }
 
 /// Why this attribute unseals, or nothing when it is on the list.
-fn attribute(attribute: &syn::Attribute) -> Option<Unsealing> {
+pub(crate) fn attribute(attribute: &syn::Attribute) -> Option<Unsealing> {
     meta_path(attribute.path(), Some(&attribute.meta))
 }
 
@@ -1160,7 +1160,7 @@ impl<'ast> Visit<'ast> for Body {
 }
 
 /// Why invoking the macro at `path` with `tokens` unseals, or nothing when it and every macro inside its arguments are on the list.
-fn invoked(path: &syn::Path, tokens: &TokenStream) -> Option<Unsealing> {
+pub(crate) fn invoked(path: &syn::Path, tokens: &TokenStream) -> Option<Unsealing> {
     let segments: Vec<String> = path
         .segments
         .iter()

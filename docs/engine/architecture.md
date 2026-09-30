@@ -306,6 +306,11 @@ Which of the two it is, is read from the refusal's primary span against the synt
 Each such round learns a call or a function that keeps its `const`, neither of which it unlearns, so the rounds end, however long the chain, without a bisection and without the round limit that bounds ordinary attribution.
 A bisection starts from the tree with nothing live, in which no function goes without its `const`.
 
+Before validation, discovery keeps const bodies unchanged where source outside that build may evaluate them.
+A documentation code block, opaque documentation or expansion, a standard macro that may be replaced or whose arguments carry attributes, conditional early evaluation, an unavailable conditional module, or source outside the snapshot or unreadable as a file bars const-body candidates in its package and dependency closure.
+This conservative `unvalidated-const-use` gate reads test-only, excluded and entered-only source too, follows package edges rather than guessed function names, and records the source paths beside each skipped candidate.
+It leaves ordinary runtime bodies mutable and treats `#[cfg(test)]` alone as validated by the all-target build.
+
 A candidate left out this way is not a refusal: its edit may compile, and a mutation of a function the compiler evaluates may even be noticed by the compiler itself.
 It is a place no guard can live, so a report counts it with the places passed over, under `evaluated-before-run`, and lists it with the rejections for its identity and the compiler's words, with `reason: "evaluated-before-run"` where a refusal says `"compiler-refused"`.
 
@@ -320,7 +325,7 @@ A cargo ended by a signal, one that exited without the record, or a record that 
 `const-context`, `macro-invocation`, `cfg-attribute`, `test-code`,
 `unsupported-site`, `excluded`, `test-only-file`, `no-std-crate`,
 `included-expression`, `generated-outside-workspace`, `forbidden-lints`,
-`evaluated-before-run`, `let-condition`, `open-range`, `unstated-return-type`,
+`evaluated-before-run`, `unvalidated-const-use`, `let-condition`, `open-range`, `unstated-return-type`,
 `loop-value`, `annotated`, `configured`.
 Each is counted and named;
 `rust-mutants why-skipped` lists them, except `evaluated-before-run`, which validation decides and `why-skipped` does not run.
