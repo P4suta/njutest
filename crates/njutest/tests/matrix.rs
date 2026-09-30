@@ -13,15 +13,7 @@ use njutest::report::faults::{FaultDecision, FaultRecord};
 use njutest::report::matrix::{Column, Dimension, Evidence, pooled, rows};
 
 fn fault(decision: FaultDecision) -> FaultRecord {
-    FaultRecord {
-        catalog_index: njutest::report::CatalogIndex::new(0),
-        id: "c".repeat(64),
-        display_id: "c".repeat(20),
-        path: "src/lib.rs".to_owned(),
-        item: "load".to_owned(),
-        position: None,
-        decision,
-    }
+    njutest::testkit::reports::fault(0, decision)
 }
 
 fn column(evidence: &Evidence<'_>, dimension: Dimension) -> Column {

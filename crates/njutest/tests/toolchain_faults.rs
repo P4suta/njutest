@@ -185,6 +185,36 @@ fn a_run_asked_for_faults_says_which_failed_calls_the_suite_noticed() {
         }),
         "{part}"
     );
+    for fault in part["faults"].as_array().expect("the fault records") {
+        let path = fault["path"].as_str().expect("a path");
+        assert_eq!(
+            (
+                fault["rule"].as_str(),
+                fault["rule_version"].as_u64(),
+                fault["span"]["start"].is_u64(),
+                fault["span"]["end"].is_u64(),
+                fault["original"]
+                    .as_str()
+                    .is_some_and(|text| !text.is_empty()),
+                fault["replacement"]
+                    .as_str()
+                    .is_some_and(|text| !text.is_empty())
+            ),
+            (Some("inject-error"), Some(1), true, true, true, true),
+            "a fault record carries every field its identity is minted from, as a mutation's \
+             does: {fault}"
+        );
+        let said = part["sources"]
+            .as_array()
+            .expect("the run's source digests")
+            .iter()
+            .find(|entry| entry["path"].as_str() == Some(path));
+        assert_eq!(
+            fault["source_digest"],
+            said.expect("its file is among the run's sources")["digest"],
+            "and the digest of the whole file it is in, as the run read it: {fault}"
+        );
+    }
 }
 
 #[test]

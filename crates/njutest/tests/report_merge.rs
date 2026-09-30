@@ -220,15 +220,7 @@ fn fault(
     index: u32,
     decision: njutest::report::faults::FaultDecision,
 ) -> njutest::report::faults::FaultRecord {
-    njutest::report::faults::FaultRecord {
-        catalog_index: njutest::report::CatalogIndex::new(index),
-        id: format!("{index:0>64}"),
-        display_id: format!("{index:0>20}"),
-        path: "src/lib.rs".to_owned(),
-        item: "load".to_owned(),
-        position: None,
-        decision,
-    }
+    njutest::testkit::reports::fault(index, decision)
 }
 
 /// States `faults` in a part, with the counts and findings a run derives from them.

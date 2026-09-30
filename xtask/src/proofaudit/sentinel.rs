@@ -805,12 +805,56 @@ fn fault_recorded(decision: &Value, outcome: &str) -> Vec<Value> {
 }
 
 /// One fault site, decided `decision`.
-fn fault_site(decision: &Value) -> Value {
+///
+/// # Panics
+/// Only where its fixed fields stop fitting the length prefix they are minted with, which is a change to the engine's identity framing.
+#[must_use]
+#[expect(
+    clippy::expect_used,
+    reason = "a sentinel's fixed fields always fit, and a test reads a failure to as a setup failure"
+)]
+pub fn fault_site(decision: &Value) -> Value {
+    let original = "read(path)";
+    let replacement = "::core::result::Result::Err(rust_mutants::injected())";
+    let span = (16_u32, 26_u32);
+    let source_digest = {
+        use sha2::Digest as _;
+        hex::encode(sha2::Sha256::digest(b"pub fn load() {}"))
+    };
+    let id = {
+        use sha2::Digest as _;
+        let mut hasher = sha2::Sha256::new();
+        for field in [
+            crate::engineaudit::ID_DOMAIN,
+            "src/lib.rs",
+            "inject-error",
+            "1",
+            "16",
+            "26",
+            source_digest.as_str(),
+            &hex::encode(sha2::Sha256::digest(original.as_bytes())),
+            &hex::encode(sha2::Sha256::digest(replacement.as_bytes())),
+        ] {
+            hasher.update(
+                u32::try_from(field.len())
+                    .expect("a short field")
+                    .to_be_bytes(),
+            );
+            hasher.update(field.as_bytes());
+        }
+        hex::encode(hasher.finalize())
+    };
     json!({
         "catalog_index": 0,
-        "id": "c".repeat(64),
+        "id": id,
         "display_id": FAULTED,
         "path": "src/lib.rs",
+        "rule": "inject-error",
+        "rule_version": 1,
+        "span": { "start": span.0, "end": span.1 },
+        "source_digest": source_digest,
+        "original": original,
+        "replacement": replacement,
         "item": "load",
         "position": { "line": 13, "column": 16, "character_column": 16 },
         "decision": decision

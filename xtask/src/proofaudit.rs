@@ -1013,6 +1013,7 @@ fn projected(document: &serde_json::Value) -> Result<Projected, UnprojectableErr
         "limitations",
         "drift",
         "repaired",
+        "sources",
         "faults",
         "beside",
         "knobs",
@@ -3587,6 +3588,7 @@ fn faults(
         );
     }
     fault_counts(recording, &reported, &mut notes);
+    minted_faults(recording, &mut notes);
     fault_findings(recording, &reported, &mut notes);
     besides(recording, &reported, faulted, &mut notes);
     let Some(faulted) = faulted else {
@@ -4407,6 +4409,178 @@ fn unattributed(
                 several.len()
             ),
         ),
+    }
+}
+
+/// The identity a fault site's own fields mint: the engine's framing of path, rule, version, span, source digest and the two texts, re-implemented here so the record is held to what it says rather than to the engine.
+fn mint(
+    (path, rule, rule_version, start, end, source_digest, original, replacement): (
+        String,
+        String,
+        u32,
+        String,
+        String,
+        String,
+        String,
+        String,
+    ),
+) -> Result<String, IdentityWidth> {
+    let mut hasher = sha2::Sha256::new();
+    let version = rule_version.to_string();
+    for field in [
+        crate::engineaudit::ID_DOMAIN,
+        &path,
+        &rule,
+        &version,
+        &start,
+        &end,
+        &source_digest,
+        &hex::encode(sha2::Sha256::digest(original.as_bytes())),
+        &hex::encode(sha2::Sha256::digest(replacement.as_bytes())),
+    ] {
+        let length = u32::try_from(field.len()).map_err(|_overflow| IdentityWidth)?;
+        hasher.update(length.to_be_bytes());
+        hasher.update(field.as_bytes());
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// An identity field longer than the length prefix it is minted with can say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("an identity field exceeds the u32 length prefix")]
+struct IdentityWidth;
+
+impl crate::error::Coded for IdentityWidth {
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::IdentityField
+    }
+}
+
+/// The fixed width of a short identity, as the engine truncates it.
+const DISPLAY_ID_LENGTH: usize = 20;
+
+/// What each fault site's record must mint: its identity, from the fields the record carries, and its source digest, against the digest the report holds of the file it is in (ADR 0032 decision 1).
+fn minted_faults(recording: &Recording<'_>, notes: &mut Notes<'_>) {
+    let sources = recording.document.get("sources");
+    for row in recording.part.faults {
+        minted_fault(row, sources, notes);
+    }
+}
+
+/// One fault site's record held to the identity its own fields mint and the digest the report holds of its file.
+fn minted_fault(
+    row: &serde_json::Value,
+    sources: Option<&serde_json::Value>,
+    notes: &mut Notes<'_>,
+) {
+    let fault = field(row, "display_id").unwrap_or_default();
+    let text_of = |key: &str| field(row, key);
+    let number = |key: &str| match row.get(key).and_then(serde_json::Value::as_u64) {
+        Some(value) => match u32::try_from(value) {
+            Ok(small) => Some(small),
+            Err(_too_large) => None,
+        },
+        None => None,
+    };
+    let span = row.get("span");
+    let fields = (
+        text_of("path"),
+        text_of("rule"),
+        number("rule_version"),
+        span.and_then(|span| field(span, "start")),
+        span.and_then(|span| field(span, "end")),
+        text_of("source_digest"),
+        text_of("original"),
+        text_of("replacement"),
+    );
+    let (
+        Some(path),
+        Some(rule),
+        Some(rule_version),
+        Some(start),
+        Some(end),
+        Some(source_digest),
+        Some(original),
+        Some(replacement),
+    ) = fields
+    else {
+        notes.violated(
+            &fault,
+            "the record does not carry every field its identity is minted from, so none of \
+             it can be believed"
+                .to_owned(),
+        );
+        return;
+    };
+    let id = text_of("id").unwrap_or_default();
+    match mint((
+        path.clone(),
+        rule,
+        rule_version,
+        start,
+        end,
+        source_digest.clone(),
+        original,
+        replacement,
+    )) {
+        Ok(minted) if minted == id => {}
+        Ok(minted) => {
+            notes.violated(
+                &fault,
+                format!(
+                    "the record's fields mint the identity {minted}, and it says {id}: its \
+                     span, its source digest, its rule or one of its texts is not the one \
+                     the site was cataloged with"
+                ),
+            );
+        }
+        Err(why) => {
+            notes.violated(&fault, why.coded());
+        }
+    }
+    if !id.starts_with(&fault) || fault.len() != DISPLAY_ID_LENGTH {
+        notes.violated(
+            &fault,
+            "the short identity is not the head of the full one the record carries".to_owned(),
+        );
+    }
+    sourced_fault((&fault, &path, &source_digest), sources, notes);
+}
+
+/// One fault site's `source_digest`, held to the digest the report holds of the file it is in.
+fn sourced_fault(
+    (fault, path, source_digest): (&str, &str, &str),
+    sources: Option<&serde_json::Value>,
+    notes: &mut Notes<'_>,
+) {
+    let held = sources
+        .and_then(serde_json::Value::as_array)
+        .and_then(|sources| {
+            sources
+                .iter()
+                .find(|entry| field(entry, "path").as_deref() == Some(path))
+                .and_then(|entry| field(entry, "digest"))
+        });
+    match held {
+        Some(said) if said == source_digest => {}
+        Some(said) => {
+            notes.violated(
+                fault,
+                format!(
+                    "the record says the digest of {path} is {source_digest}, and the report \
+                     read that file at the digest {said}"
+                ),
+            );
+        }
+        None => {
+            notes.violated(
+                fault,
+                format!(
+                    "the report holds no source digest for {path}, so the record's own cannot \
+                     be held to it"
+                ),
+            );
+        }
     }
 }
 

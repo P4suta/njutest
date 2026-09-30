@@ -753,19 +753,17 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
         },
         Payload::Fault {
             fault: crate::report::faults::FaultRecord {
-                catalog_index: crate::report::CatalogIndex::new(0),
-                id: "a".repeat(64),
-                display_id: "a".repeat(20),
-                path: "src/lib.rs".to_owned(),
-                item: "load".to_owned(),
                 position: Some(crate::report::Position {
                     line: 13,
                     column: 16,
                     character_column: 16,
                 }),
-                decision: crate::report::faults::FaultDecision::Noticed {
-                    by: "demo/test/calls".to_owned(),
-                },
+                ..reports::fault(
+                    0,
+                    crate::report::faults::FaultDecision::Noticed {
+                        by: "demo/test/calls".to_owned(),
+                    },
+                )
             },
         },
         Payload::Beside {
@@ -1297,6 +1295,53 @@ pub mod reports {
             #[from]
             source: crate::report::CompletionError,
         },
+    }
+
+    /// The fault at catalog `index`, failing `read(path)` in `load` of `src/lib.rs`, decided `decision`, with the identity its own fields mint.
+    ///
+    /// # Panics
+    /// Only where these canonical fields stop minting an identity, which is a change to the engine's identity rules.
+    #[must_use]
+    #[expect(
+        clippy::expect_used,
+        reason = "a fixed canonical identity always mints, and a test reads a failure to as a setup failure"
+    )]
+    pub fn fault(
+        index: u32,
+        decision: crate::report::faults::FaultDecision,
+    ) -> crate::report::faults::FaultRecord {
+        let original = "read(path)";
+        let replacement = rust_mutants::instrument::INJECTED;
+        let start = index.saturating_mul(16);
+        let span = rust_mutants::span::Span::new(start, start.saturating_add(10))
+            .expect("an increasing span");
+        let source_digest = rust_mutants::id::digest(b"pub fn load() {}");
+        let id = rust_mutants::id::Identity {
+            path: "src/lib.rs".to_owned(),
+            rule_name: "inject-error".to_owned(),
+            rule_version: 1,
+            span,
+            source_digest: source_digest.clone(),
+            original_digest: rust_mutants::id::digest(original.as_bytes()),
+            replacement_digest: rust_mutants::id::digest(replacement.as_bytes()),
+        }
+        .id()
+        .expect("a canonical identity");
+        crate::report::faults::FaultRecord {
+            catalog_index: CatalogIndex::new(index),
+            id: id.as_str().to_owned(),
+            display_id: id.display().as_str().to_owned(),
+            path: "src/lib.rs".to_owned(),
+            rule: "inject-error".to_owned(),
+            rule_version: 1,
+            span,
+            source_digest,
+            original: original.to_owned(),
+            replacement: replacement.to_owned(),
+            item: "load".to_owned(),
+            position: None,
+            decision,
+        }
     }
 
     /// One mutation at `line` of `item` in `path`, where the rule named `rule` made `was` into `now`, decided as `outcome`, with no route, and established by this run.

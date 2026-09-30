@@ -79,12 +79,11 @@ pub fn put(
         },
         Reporting { notes, watch },
     )?;
-    let root = request.root.display().to_string();
-    let mut records: Vec<FaultRecord> = judged
-        .judged
-        .iter()
-        .map(|judged| recorded(judged, &root))
-        .collect();
+    let mut records = records_of(
+        &session,
+        &judged.judged,
+        &request.root.display().to_string(),
+    )?;
     absorbed(
         &session,
         (&judged.judged, &mut records),
@@ -485,13 +484,73 @@ fn prepared(
     )?)
 }
 
-/// What one judged fault site comes to, with the tree's own location taken out of anything the compiler said.
-fn recorded(judged: &Judged, root: &str) -> FaultRecord {
-    FaultRecord {
+/// What every judged fault site of `session` comes to, as [`recorded`] records each.
+///
+/// # Errors
+/// [`crate::assure::run::RunInvariantError::FaultSiteUncataloged`] for a judged fault the session's catalog does not hold, and [`crate::assure::run::RunInvariantError::FaultTextNotText`] where its site's text is not UTF-8.
+fn records_of(
+    session: &rust_mutants::session::Session,
+    judged: &[Judged],
+    root: &str,
+) -> Result<Vec<FaultRecord>, RunnerError> {
+    let mut records: Vec<FaultRecord> = Vec::with_capacity(judged.len());
+    for one in judged {
+        let site = session
+            .catalog()
+            .mutants()
+            .iter()
+            .find(|mutant| mutant.index == one.catalog_index)
+            .ok_or_else(|| {
+                RunnerError::from(
+                    crate::assure::run::RunInvariantError::FaultSiteUncataloged {
+                        fault: one.display_id.clone(),
+                    },
+                )
+            })?;
+        records.push(recorded(one, site, root)?);
+    }
+    Ok(records)
+}
+
+/// What one judged fault site comes to, with everything its identity is minted from, which is `site`'s candidate, and the tree's own location taken out of anything the compiler said.
+///
+/// # Errors
+/// [`crate::assure::run::RunInvariantError::FaultTextNotText`] where the site's text is not UTF-8.
+fn recorded(
+    judged: &Judged,
+    site: &rust_mutants::catalog::Mutant,
+    root: &str,
+) -> Result<FaultRecord, RunnerError> {
+    let candidate = &site.candidate;
+    let original = std::str::from_utf8(&candidate.original)
+        .map_err(
+            |source| crate::assure::run::RunInvariantError::FaultTextNotText {
+                fault: judged.display_id.clone(),
+                which: "original",
+                source,
+            },
+        )?
+        .to_owned();
+    let replacement = std::str::from_utf8(&candidate.replacement)
+        .map_err(
+            |source| crate::assure::run::RunInvariantError::FaultTextNotText {
+                fault: judged.display_id.clone(),
+                which: "replacement",
+                source,
+            },
+        )?
+        .to_owned();
+    Ok(FaultRecord {
         catalog_index: CatalogIndex::new(judged.catalog_index),
         id: judged.id.clone(),
         display_id: judged.display_id.clone(),
         path: judged.path.clone(),
+        rule: candidate.rule.name.to_owned(),
+        rule_version: candidate.rule.version,
+        span: candidate.span,
+        source_digest: candidate.source_digest.clone(),
+        original,
+        replacement,
         item: judged.item.clone(),
         position: Some(judged.position),
         decision: match decided(&judged.disposition) {
@@ -505,7 +564,7 @@ fn recorded(judged: &Judged, root: &str) -> FaultRecord {
             | FaultDecision::Waited { .. }
             | FaultDecision::Undecided { .. }) => other,
         },
-    }
+    })
 }
 
 /// The decision a disposition of the shared judging comes to for a fault.

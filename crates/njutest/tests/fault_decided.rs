@@ -78,15 +78,7 @@ fn every_disposition_comes_to_one_fault_decision_and_the_impossible_ones_fail_cl
 
 #[test]
 fn a_fault_the_run_could_not_decide_is_a_finding_so_the_run_is_not_assured() {
-    let record = |decision| FaultRecord {
-        catalog_index: njutest::report::CatalogIndex::new(0),
-        id: "c".repeat(64),
-        display_id: "c".repeat(20),
-        path: "src/lib.rs".to_owned(),
-        item: "load".to_owned(),
-        position: None,
-        decision,
-    };
+    let record = |decision| njutest::testkit::reports::fault(0, decision);
     let records: Vec<FaultRecord> = FaultDecision::every().into_iter().map(record).collect();
     let kinds: Vec<FindingKind> = found(&records).iter().map(|finding| finding.kind).collect();
     assert_eq!(

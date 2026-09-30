@@ -208,7 +208,8 @@ The count is the part's own, because only the run that ran them again knows it; 
 
 Every part carries `faults`, one record per site a fault was asked at, in catalog order, and empty unless the run was asked for faults ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
 A fault site is a `?` in a measured file; its catalog is its own, holding the rule `inject-error` and the error-propagation mutations a fault is put beside, so `catalog_index` counts in that catalog and a `K/N` shard owns the faults whose index modulo `N` is `K - 1`, exactly as it owns mutations.
-A record carries the fault's `id` and `display_id`, its `path`, `item` and `position`, and one closed `decision`:
+A record carries the fault's `id` and `display_id`, and every field that identity is minted from, as a mutation's is: its `path`, `rule` (`inject-error`) and `rule_version`, the `span` of bytes the call covers, the `source_digest` of the whole file, the call as the file spells it (`original`) and what it becomes under the fault (`replacement`); `proofaudit` mints each identity again from them and refuses a record whose fields do not mint it.
+It also carries its `item` and `position`, and one closed `decision`:
 
 | `decision` | what it says | carries |
 | --- | --- | --- |

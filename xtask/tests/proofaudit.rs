@@ -3594,6 +3594,43 @@ fn a_built_binary_with_no_baseline_record_is_said_to_be_unaccounted_for() {
 }
 
 #[test]
+fn a_fault_record_whose_fields_do_not_mint_its_identity_is_refused() {
+    let site = sentinel::fault_site(&serde_json::json!({ "decision": "unreached" }));
+    let mut moved = site.clone();
+    merge(
+        &mut moved,
+        serde_json::json!({ "span": { "start": 32, "end": 42 } }),
+    );
+    let mut redigested = site;
+    merge(
+        &mut redigested,
+        serde_json::json!({ "source_digest": "a".repeat(64) }),
+    );
+    for (name, row) in [("moved", moved), ("redigested", redigested)] {
+        let mut document = base();
+        merge(
+            &mut document,
+            serde_json::json!({
+                "faults": [row],
+                "accounting": { "faults": { "sites": 1, "unreached": 1 } }
+            }),
+        );
+        let audit = audited(&document);
+        assert!(
+            audit.violated(Layer::Faults),
+            "a fault record whose own fields do not mint the identity it carries ({name}) is              not the fault it says it is: {audit}"
+        );
+        assert!(
+            audit
+                .remarks
+                .iter()
+                .any(|remark| remark.layer == Layer::Faults && remark.detail.contains("mint")),
+            "the violation names the minting, so a reader learns which half to distrust: {audit}"
+        );
+    }
+}
+
+#[test]
 fn a_fault_baseline_that_was_not_measured_leaves_the_faults_a_hole_whatever_records_follow() {
     let finding = |kind: &str, subject: &str| {
         serde_json::json!({
@@ -3608,15 +3645,7 @@ fn a_fault_baseline_that_was_not_measured_leaves_the_faults_a_hole_whatever_reco
         &mut document,
         serde_json::json!({
             "contract": "whole-v1",
-            "faults": [{
-                "catalog_index": 0,
-                "id": "c".repeat(64),
-                "display_id": "c".repeat(20),
-                "path": "src/lib.rs",
-                "item": "load",
-                "position": { "line": 13, "column": 16, "character_column": 16 },
-                "decision": { "decision": "unreached" }
-            }],
+            "faults": [sentinel::fault_site(&serde_json::json!({ "decision": "unreached" }))],
             "accounting": { "faults": { "sites": 1, "unreached": 1 } },
             "findings": [
                 {},
