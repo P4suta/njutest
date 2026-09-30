@@ -102,7 +102,7 @@ pub struct Linked {
     pub packages: Vec<String>,
     /// The digest of each package's own sources, for a package whose sources this run read.
     pub sources: BTreeMap<String, String>,
-    /// The digest of the resolved dependencies, which is what says a registry package's bytes are the bytes.
+    /// The digest of the resolved locks and allowed outside trees, which binds dependency bytes beyond the workspace.
     pub dependencies: String,
     /// Whether any package in the closure reads a directory rather than a file, in which case the key is over the whole tree.
     pub reads_directories: bool,

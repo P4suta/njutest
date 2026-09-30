@@ -121,7 +121,7 @@ pub struct Inputs {
     pub tree: String,
     /// The digest of the fuzz corpora, kept apart from the tree because a corpus grows without the code changing.
     pub corpus: String,
-    /// The digest of the resolved dependencies, from the lock file's checksums.
+    /// The digest of the resolved locks and every explicitly allowed outside tree.
     pub dependencies: String,
     /// The toolchain, as it names itself.
     pub toolchain: String,

@@ -75,7 +75,7 @@ impl MeasureError {
 #[must_use]
 pub fn opening(measuring: &Measuring<'_>) -> OpenOptions {
     OpenOptions {
-        allow_outside: Vec::new(),
+        allow_outside: measuring.config.project.outside(measuring.root),
         cargo: None,
         search_path: measuring
             .environment

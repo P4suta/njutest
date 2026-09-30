@@ -47,9 +47,10 @@ fn the_defaults_are_the_numbers_the_contract_states() {
 #[test]
 fn the_defaults_ask_for_nothing_a_run_has_to_be_told() {
     let config = Config::default();
-    let empty: [(&str, bool); 9] = [
+    let empty: [(&str, bool); 10] = [
         ("packages", config.project.packages.is_empty()),
         ("exclude", config.project.exclude.is_empty()),
+        ("allow_outside", config.project.allow_outside.is_empty()),
         ("features", config.execution.features.is_empty()),
         (
             "test_binary_args",

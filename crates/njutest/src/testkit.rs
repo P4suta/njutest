@@ -1135,6 +1135,7 @@ pub fn documented_specimen() -> crate::config::Config {
             packages: vec!["demo".to_owned()],
             include: vec!["src/**/*.rs".to_owned()],
             exclude: vec!["src/generated/**".to_owned()],
+            allow_outside: Vec::new(),
         },
         execution: Execution {
             features: vec!["slow".to_owned()],

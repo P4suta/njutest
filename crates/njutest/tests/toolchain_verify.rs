@@ -54,6 +54,74 @@ fn verify(fixture: &Fixture, extra: &[&str]) -> Output {
     asked(&of(&fixture.root, &[]), &args)
 }
 
+#[cfg(unix)]
+#[test]
+fn an_explicit_outside_dependency_is_verified_and_its_bytes_bind_every_cached_answer() {
+    let fixture = fixture("fixture-outside-dep");
+    let sibling = fixture
+        .root
+        .parent()
+        .expect("the shared ancestor")
+        .join("fixture-outside-dep-lib");
+    copy_tree(
+        &njutest_devkit::paths::fixtures_dir().join("fixture-outside-dep-lib"),
+        &sibling,
+    );
+    let config = fixture.root.join(".njutest.toml");
+    std::fs::write(&config, "version = 1\ncontract = \"standard-v1\"\n")
+        .expect("no outside source is allowed by default");
+    let denied = verify(&fixture, &["--trace"]);
+    assert_eq!(denied.status.code(), Some(3));
+    assert!(
+        njutest_devkit::process::strict_utf8(&denied.stderr).contains("RM1017"),
+        "{}",
+        njutest_devkit::process::strict_utf8(&denied.stderr)
+    );
+    std::fs::write(
+        &config,
+        "version = 1\ncontract = \"standard-v1\"\n[project]\nallow_outside = [\"../fixture-outside-dep-lib\"]\n",
+    )
+    .expect("the explicitly allowed dependency");
+    let first = verify(&fixture, &["--trace"]);
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "an explicitly allowed sibling is part of the verified program: {}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    let established = document(&fixture);
+    audited(&fixture, &text(&established["run_id"]));
+    let repeated = verify(&fixture, &["--trace"]);
+    assert_eq!(repeated.status.code(), Some(0));
+    let reused = document(&fixture);
+    assert_eq!(reused["provenance"]["cached"], true, "{reused}");
+    audited(&fixture, &text(&reused["run_id"]));
+    let source = sibling.join("src/lib.rs");
+    let original = std::fs::read_to_string(&source).expect("the dependency's source");
+    let modified = std::fs::metadata(&source)
+        .expect("the dependency's metadata")
+        .modified()
+        .expect("the dependency's file time");
+    std::fs::write(&source, original.replace("n * 3", "n * 4"))
+        .expect("a dependency that breaks the baseline");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&source)
+        .expect("the dependency is writable")
+        .set_times(std::fs::FileTimes::new().set_modified(modified))
+        .expect("the original file time");
+    let changed = verify(&fixture, &["--trace"]);
+    assert_eq!(changed.status.code(), Some(1));
+    let changed = document(&fixture);
+    assert_ne!(
+        changed["provenance"]["identity"], established["provenance"]["identity"],
+        "the whole-report cache binds the dependency's actual bytes"
+    );
+    assert_eq!(changed["provenance"]["cached"], false, "{changed}");
+    assert_eq!(parsed(&fixture).verdict(), Verdict::Defect);
+    audited(&fixture, &text(&changed["run_id"]));
+}
+
 /// One command, driven in this process against an environment a test composed.
 fn asked(environment: &Environment, args: &[&str]) -> Output {
     let (mut out, mut err) = (Vec::new(), Vec::new());

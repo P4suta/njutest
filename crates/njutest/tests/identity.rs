@@ -49,6 +49,66 @@ fn known() -> Evidence {
 }
 
 #[test]
+fn an_allowed_outside_tree_is_an_input_even_when_its_file_time_stays_the_same() {
+    let directory = tempfile::tempdir().expect("a tree and its sibling");
+    let root = directory.path().join("workspace");
+    let outside = directory.path().join("outside");
+    std::fs::create_dir_all(&root).expect("the workspace");
+    std::fs::create_dir_all(&outside).expect("the outside tree");
+    let source = outside.join("lib.rs");
+    std::fs::write(&source, "pub fn value() -> u32 { 1 }\n").expect("the dependency");
+    let modified = std::fs::metadata(&source)
+        .expect("the dependency's metadata")
+        .modified()
+        .expect("the dependency's file time");
+    let config = Config::parse(
+        "version = 1\n[project]\nallow_outside = [\"../outside\"]\n",
+        &root.join(".njutest.toml"),
+    )
+    .expect("an explicitly allowed source tree");
+    let machine = njutest::assure::identity::Machine {
+        toolchain: "rustc",
+        platform: "platform",
+        engine: "engine",
+    };
+    let vars = rust_mutants::vars::Variables::default();
+    let read = || {
+        njutest::assure::identity::inputs(
+            &njutest::assure::identity::Asked {
+                root: &root,
+                config: &config,
+                machine: &machine,
+                vars: &vars,
+                elsewhere: &[],
+            },
+            njutest::evidence::digest::Mode::Full,
+            &[],
+            None,
+        )
+        .expect("the complete inputs")
+    };
+    let before = read();
+    std::fs::write(&source, "pub fn value() -> u32 { 2 }\n").expect("the changed dependency");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&source)
+        .expect("the dependency is writable")
+        .set_times(std::fs::FileTimes::new().set_modified(modified))
+        .expect("the original file time");
+    let after = read();
+    assert_eq!(before.tree, after.tree, "the workspace itself did not move");
+    assert_ne!(
+        before.dependencies, after.dependencies,
+        "dependency bytes bind target caches as well as the whole report"
+    );
+    assert_ne!(
+        njutest::evidence::digest::identity(&before),
+        njutest::evidence::digest::identity(&after),
+        "an outside edit cannot read back an answer about the previous dependency"
+    );
+}
+
+#[test]
 fn a_report_says_what_it_is_about_before_it_says_anything_it_found() {
     let mut request = asked("/tmp/somewhere/demo");
     request.evidence = known();

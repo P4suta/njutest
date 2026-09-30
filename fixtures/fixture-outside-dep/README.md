@@ -19,8 +19,11 @@ sibling beside the tree under the same name, so the same relative path
 resolves in the copy, and the run measures a tree that is the one on disk plus
 a directory somebody named.
 
-This is the one fixture whose dependency climbs out of itself, which is why
-`cargo xtask fixtures` allows a sibling fixture by name and nothing else.
+`njutest verify` allows the same dependency through `[project] allow_outside` in the fixture's `.njutest.toml`.
+The directory is resolved from the workspace root, copied in its relative position and hashed into both whole-report and target cache identities, so a change outside the workspace cannot reuse its old answer even if its file time is unchanged.
+
+This fixture and `nested/fixture-climbs-dep` require the sibling fixtures their manifests name.
+`cargo xtask fixtures` allows those paths by fixture name and refuses every other escape.
 
 ## Fates
 

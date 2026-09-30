@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::num::{NonZeroU32, NonZeroU64};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -287,9 +287,27 @@ pub struct Project {
     pub include: Vec<String>,
     /// Workspace-relative globs whose files are left out of the mutations, which the report carries as an explicit limitation.
     pub exclude: Vec<String>,
+    /// Directories copied beside the workspace for explicitly allowed outside dependencies.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub allow_outside: Vec<PathBuf>,
 }
 
 impl Project {
+    /// The allowed outside directories, resolved from the workspace root and canonicalized where present.
+    #[must_use]
+    pub fn outside(&self, root: &Path) -> Vec<PathBuf> {
+        self.allow_outside
+            .iter()
+            .map(|path| {
+                let path = root.join(path);
+                match rust_mutants::canonical::canonical(&path) {
+                    Ok(present) => present,
+                    Err(_the_engine_will_refuse_a_missing_directory) => path,
+                }
+            })
+            .collect()
+    }
+
     /// The inclusions, compiled.
     #[must_use]
     pub fn included(&self) -> Vec<rust_mutants::glob::Pattern> {
@@ -1204,6 +1222,7 @@ contract = \"whole-v1\"           # \"whole-v1\" | \"standard-v1\" | \"deep-v1\"
 # packages = []                  # cargo package names; empty = every member
 # include = []                   # workspace-relative globs a file must match to be mutated
 # exclude = []                   # workspace-relative globs; the files are not mutated
+# allow_outside = []             # directories copied beside the workspace for path dependencies
 
 [execution]
 # features = []

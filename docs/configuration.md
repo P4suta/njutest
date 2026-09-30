@@ -23,6 +23,7 @@ contract = "whole-v1"  # "whole-v1" | "standard-v1" | "deep-v1" | "verified-v1"
 packages = []                   # cargo package names; empty = every workspace member
 include = []                    # workspace-relative globs a file must match to be mutated
 exclude = ["**/generated/**"]   # workspace-relative globs; the files are not mutated
+allow_outside = []              # directories copied beside the workspace for path dependencies
 
 [execution]
 features = []                   # cargo features
@@ -106,6 +107,11 @@ expires = "2026-12-31T00:00:00Z"
 owner = "quality-team"
 ticket = "QA-123"
 ```
+
+`project.allow_outside` names directories a path dependency reads outside the workspace.
+Relative paths resolve from the workspace root, and the engine copies the allowed directories in their original relative positions.
+The dependency digest binds every declared directory's source bytes, corpus and lock file to both the whole-report identity and target cache keys, independently of file times.
+These directories remain dependencies of the selected workspace rather than additional mutation scope.
 
 `[mutation] seal`, true by default, builds the instrumented tree a second time for `wasm32-wasip1` and decides each mutation from its sealed executions ([ADR 0046](adr/0046-a-verdict-is-what-a-sealed-run-observed.md)); `rustup target add wasm32-wasip1` installs what it needs.
 `false`, which `--no-seal` writes for one run of `verify` or `watch`, builds nothing for the sealed target, so every answer is a native lead and the run concludes `INSUFFICIENT` ([the assurance contract](assurance-contract.md#what-a-verdict-rests-on)).
