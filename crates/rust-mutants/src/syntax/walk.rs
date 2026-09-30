@@ -1233,7 +1233,7 @@ impl<'a> Walker<'a> {
                 return None;
             }
         };
-        let (was, now) = (binding(&binary.op)?, binding(&new)?);
+        let (was, now) = (binding(binary.op)?, binding(new)?);
         let token = (op, replacement.to_owned());
         if was == now {
             return Some(token);

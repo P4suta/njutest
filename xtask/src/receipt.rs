@@ -111,9 +111,13 @@ pub fn held(root: &Path, name: &str, decision: &str) -> Result<Receipt, GateErro
     })?;
     let now = digest(&module);
     if now != receipt.source_sha256 {
+        let named = match Path::new(name).file_stem().and_then(OsStr::to_str) {
+            Some(stem) if stem != decision => format!(" --name {stem}"),
+            Some(_) | None => String::new(),
+        };
         return Err(GateError(format!(
             "receipt {name}: {} changed since its run measured it ({} then, {now} now); run \
-             `cargo xtask receipt {decision} {} --package {}` again",
+             `cargo xtask receipt {decision} {} --package {}{named}` again",
             receipt.module, receipt.source_sha256, receipt.module, receipt.package
         )));
     }
@@ -140,15 +144,44 @@ pub fn held(root: &Path, name: &str, decision: &str) -> Result<Receipt, GateErro
     Ok(receipt)
 }
 
-/// Runs the engine built from `root` over `package`, sealed, and writes the receipt of `module`'s mutants for `decision`.
+/// The file a receipt for `decision` is kept in under [`DIRECTORY`]: the decision's own name, or `name` where the decision rests on several modules, each with a receipt of its own.
 ///
 /// # Errors
-/// An engine that cannot run or reports nothing readable, and a receipt that cannot be written.
+/// A name that is not the decision's, or the decision's followed by a hyphen and lowercase words, so that every receipt says which decision it holds.
+pub fn file_name(decision: &str, name: Option<&str>) -> Result<String, GateError> {
+    let Some(name) = name else {
+        return Ok(format!("{decision}.json"));
+    };
+    let part = name
+        .strip_prefix(decision)
+        .and_then(|rest| rest.strip_prefix('-'));
+    let spelled = part.is_some_and(|part| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    });
+    if name == decision || spelled {
+        Ok(format!("{name}.json"))
+    } else {
+        Err(GateError(format!(
+            "receipt: {name:?} does not say which decision it holds; name it {decision:?} or \
+             \"{decision}-\" and lowercase words"
+        )))
+    }
+}
+
+/// Runs the engine built from `root` over `package`, sealed, and writes the receipt of `module`'s mutants for `decision`, under `name` where it is one of several.
+///
+/// # Errors
+/// A name that does not say which decision it holds, an engine that cannot run or reports nothing readable, and a receipt that cannot be written.
 pub fn write(
     root: &Path,
     cargo: &OsStr,
     (decision, package, module): (&str, &str, &str),
+    name: Option<&str>,
 ) -> Result<String, GateError> {
+    let file = file_name(decision, name)?;
     let document = reported(root, cargo, package)?;
     let mutants = rows_of(&document, package, module)?;
     let bytes = std::fs::read(root.join(module)).map_err(|error| {
@@ -171,7 +204,7 @@ pub fn write(
             directory.display()
         ))
     })?;
-    let path = directory.join(format!("{decision}.json"));
+    let path = directory.join(file);
     let mut written = serde_json::to_string_pretty(&receipt)
         .map_err(|error| GateError(format!("receipt: cannot be written as JSON: {error}")))?;
     written.push('\n');

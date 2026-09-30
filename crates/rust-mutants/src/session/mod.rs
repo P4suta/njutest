@@ -25,6 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
+pub use rust_mutants_adapt::claim::{Named, Resolution};
 pub use rust_mutants_decision::claim::Edit;
 use rust_mutants_decision::claim::Located;
 use rust_mutants_decision::decline::Concluded;
@@ -3272,52 +3273,6 @@ pub fn preview(
     Ok(discovery)
 }
 
-/// What one claim of a configuration names in a tree read without building it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Resolution {
-    /// It names as many mutations as it says, by display identity.
-    Names {
-        /// The display identities, in catalog order.
-        mutants: Vec<String>,
-    },
-    /// It names as many mutations as it says, and the line it holds is not where the first of them now is.
-    Moved {
-        /// The display identities, in catalog order.
-        mutants: Vec<String>,
-        /// The line the claim holds.
-        from: u32,
-        /// The line the first of them is on now.
-        to: u32,
-    },
-    /// What it names sits only in a file no unit of this build reads, so it is judged where one does (ADR 0042).
-    Uncompiled,
-    /// It names nothing, or not as many as it says, so a run finds it unmatched.
-    Unmatched {
-        /// Why, in the words a run gives it.
-        why: String,
-    },
-}
-
-impl Resolution {
-    /// Whether the claim says something that is not so: it names nothing, not as many as it says, or a line its mutation left.
-    #[must_use]
-    pub const fn rotted(&self) -> bool {
-        match self {
-            Self::Unmatched { .. } | Self::Moved { .. } => true,
-            Self::Names { .. } | Self::Uncompiled => false,
-        }
-    }
-
-    /// Whether what it names sits only in a file another build reads.
-    #[must_use]
-    pub const fn uncompiled(&self) -> bool {
-        match self {
-            Self::Uncompiled => true,
-            Self::Names { .. } | Self::Moved { .. } | Self::Unmatched { .. } => false,
-        }
-    }
-}
-
 /// What each of `expectations` names in the tree `discovery` read, found by the locator a run finds it by.
 ///
 /// # Errors
@@ -3363,7 +3318,10 @@ pub fn resolve_claims(
                 locator.line,
                 found.first().map(|first| first.found.position.line),
             );
-            (found.iter().map(label).collect::<Vec<_>>(), moved)
+            Named {
+                mutants: found.iter().map(label).collect(),
+                moved,
+            }
         })
     };
     Ok(expectations
@@ -3375,27 +3333,26 @@ pub fn resolve_claims(
                     None => discovery
                         .catalog
                         .resolve_prefix(id)
-                        .map(|mutant| (vec![mutant.display_id.to_string()], None))
+                        .map(|mutant| Named {
+                            mutants: vec![mutant.display_id.to_string()],
+                            moved: None,
+                        })
                         .map_err(|error| error.to_string()),
                 },
                 (None, Some(locator)) => located(locator).map_err(|error| error.to_string()),
                 (None, None) => Err("the claim names no mutant".to_owned()),
             };
             match named {
-                Ok((mutants, None)) => Resolution::Names { mutants },
-                Ok((mutants, Some((from, to)))) => Resolution::Moved { mutants, from, to },
-                Err(_)
-                    if expectation.locator.as_ref().is_some_and(|locator| {
+                Ok(named) => Resolution::named(named),
+                Err(why) => Resolution::unnamed(why, || {
+                    expectation.locator.as_ref().is_some_and(|locator| {
                         unread_in(
                             (workspace.snapshot_root(), &discovery.files),
                             &selection,
                             locator,
                         ) == Unread::Named
-                    }) =>
-                {
-                    Resolution::Uncompiled
-                }
-                Err(why) => Resolution::Unmatched { why },
+                    })
+                }),
             }
         })
         .collect())

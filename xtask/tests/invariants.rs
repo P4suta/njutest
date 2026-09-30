@@ -74,6 +74,56 @@ fn a_row_holds_each_layer_by_names_or_leaves_it_open() {
 }
 
 #[test]
+fn a_decision_resting_on_two_modules_is_held_at_mutation_only_while_both_receipts_hold() {
+    let decided = "xtask/receipts/swap.json";
+    let adapted = "xtask/receipts/swap-adapt.json";
+    let text = page("swap", "`every_swap_keeps_its_tree`").replacen(
+        "| none | none | nothing |",
+        &format!("| `{decided}`, `{adapted}` | none | nothing |"),
+        1,
+    );
+    let (Ok(read), Ok(mut ledger)) = (rows(&text), gaps(&owned("swap"))) else {
+        panic!("both read");
+    };
+    ledger.retain(|gap| gap.layer != Layer::Mutation);
+    let with = |adapt: xtask::invariants::Receipted| {
+        let mut tree = names(&["every_swap_keeps_its_tree"]);
+        tree.receipts.insert(
+            ("swap".to_owned(), decided.to_owned()),
+            xtask::invariants::Receipted::Holds,
+        );
+        tree.receipts
+            .insert(("swap".to_owned(), adapted.to_owned()), adapt);
+        tree
+    };
+    assert_eq!(
+        check(&read, &ledger, &with(xtask::invariants::Receipted::Holds)),
+        Ok((1, 2)),
+        "a cell may name every receipt its decision rests on"
+    );
+    let refused = check(
+        &read,
+        &ledger,
+        &with(xtask::invariants::Receipted::Refused {
+            why: "the module changed".to_owned(),
+        }),
+    );
+    assert!(
+        refused.as_ref().is_err_and(|refused| {
+            refused.iter().any(|error| {
+                matches!(
+                    error,
+                    InvariantError::Unreceipted { name, why, .. }
+                        if name == adapted && why == "the module changed"
+                )
+            })
+        }),
+        "one receipt that no longer holds leaves the decision unheld at mutation, by its name: \
+         {refused:?}"
+    );
+}
+
+#[test]
 fn a_registry_that_holds_together_counts_its_decisions_and_held_cells() {
     let read = rows(&page("swap", "`every_swap_keeps_its_tree`"));
     let ledger = gaps(&owned("swap"));

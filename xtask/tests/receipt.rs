@@ -11,11 +11,12 @@
 use std::path::Path;
 
 use sha2::{Digest as _, Sha256};
-use xtask::receipt::{Execution, Mutant, Receipt, SCHEMA, held};
+use xtask::receipt::{Execution, Mutant, Receipt, SCHEMA, file_name, held};
 
 const MODULE: &str = "crates/app/src/decide.rs";
 const SOURCE: &str = "pub fn decide(one: u8) -> bool { one > 1 }\n";
 const NAME: &str = "xtask/receipts/decide.json";
+const NAMED: &str = "xtask/receipts/decide-adapt.json";
 
 fn killed(display_id: &str) -> Mutant {
     Mutant {
@@ -123,5 +124,58 @@ fn a_receipt_that_does_not_hold_says_why_for_each_way_it_can_fail() {
             Err(refused) => refused.0.contains("the registry names it for"),
         },
         "a receipt holds only the decision it was written for"
+    );
+}
+
+#[test]
+fn a_receipt_is_kept_under_a_name_that_says_which_decision_it_holds() {
+    assert!(matches!(
+        file_name("decide", None).as_deref(),
+        Ok("decide.json")
+    ));
+    assert!(matches!(
+        file_name("decide", Some("decide")).as_deref(),
+        Ok("decide.json")
+    ));
+    assert!(
+        matches!(
+            file_name("decide", Some("decide-adapt")).as_deref(),
+            Ok("decide-adapt.json")
+        ),
+        "a decision resting on several modules keeps a receipt for each"
+    );
+    for name in [
+        "other",
+        "decide-",
+        "decide-Adapt",
+        "decided",
+        "decide-a.b",
+        "adapt-decide",
+    ] {
+        assert!(
+            file_name("decide", Some(name)).is_err(),
+            "{name:?} does not say it holds `decide`"
+        );
+    }
+}
+
+#[test]
+fn a_stale_receipt_under_its_own_name_says_how_to_write_it_again() {
+    let root = laid(&receipt(vec![killed("aaaa")]), SOURCE);
+    std::fs::rename(root.path().join(NAME), root.path().join(NAMED)).expect("renamed");
+    std::fs::write(root.path().join(MODULE), "pub fn decide() {}\n").expect("the module changes");
+    let said = match held(root.path(), NAMED, "decide") {
+        Ok(_) => String::new(),
+        Err(refused) => refused.0,
+    };
+    assert!(
+        said.contains("--package app --name decide-adapt"),
+        "the command to run again names the receipt: {said:?}"
+    );
+    let root = laid(&receipt(vec![killed("aaaa")]), SOURCE);
+    std::fs::write(root.path().join(MODULE), "pub fn decide() {}\n").expect("the module changes");
+    assert!(
+        refusal(root.path()).contains("--package app` again"),
+        "a receipt under the decision's own name needs no name to run again"
     );
 }

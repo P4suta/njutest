@@ -12,7 +12,6 @@ mod shape;
 mod walk;
 
 use std::collections::BTreeMap;
-use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -35,39 +34,7 @@ pub(crate) fn type_name(ty: &syn::Type) -> String {
     shape::type_name(ty)
 }
 
-/// One of the four guard shapes the instrumenter composes a dormant mutant from; see the module documentation.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, njutest_macros::AllVariants,
-)]
-pub enum Form {
-    /// The boolean selector, for a syntactically boolean position.
-    C,
-    /// The expression selector, for any value position.
-    E,
-    /// The statement guard.
-    S,
-    /// The guard written onto a match arm that had none, which is the one shape that adds syntax rather than replacing it.
-    M,
-}
-
-impl Form {
-    /// The letter.
-    #[must_use]
-    pub const fn letter(self) -> &'static str {
-        match self {
-            Self::C => "C",
-            Self::E => "E",
-            Self::S => "S",
-            Self::M => "M",
-        }
-    }
-}
-
-impl fmt::Display for Form {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.letter())
-    }
-}
+pub use rust_mutants_adapt::guard::Form;
 
 /// The rewrite site the instrumenter has to use for one candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]

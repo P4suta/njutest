@@ -320,7 +320,7 @@ fn check_rows(
 }
 
 fn observed_resolution_states(repository: &Path) -> Vec<String> {
-    let source = std::fs::read_to_string(repository.join("crates/rust-mutants/src/session/mod.rs"))
+    let source = std::fs::read_to_string(repository.join("crates/rust-mutants-adapt/src/claim.rs"))
         .expect("resolution source reads");
     let syntax = njutest_devkit::lexed::file(&source).expect("resolution source parses");
     let resolution = syntax.items.iter().find_map(|item| match item {

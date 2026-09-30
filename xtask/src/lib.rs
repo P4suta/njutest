@@ -120,6 +120,9 @@ enum ExecutionGate {
         /// The package that holds it.
         #[arg(long)]
         package: String,
+        /// The receipt's file name under xtask/receipts, without `.json`, where the decision rests on several modules: the decision's name, a hyphen, and lowercase words.
+        #[arg(long)]
+        name: Option<String>,
     },
     /// Prove every production law with Kani, or read back the proof of exactly these inputs, and audit it either way.
     KaniLaws {
@@ -299,7 +302,13 @@ fn run_execution(
             decision,
             module,
             package,
-        } => receipt::write(root, process.cargo, (&decision, &package, &module)),
+            name,
+        } => receipt::write(
+            root,
+            process.cargo,
+            (&decision, &package, &module),
+            name.as_deref(),
+        ),
         ExecutionGate::KaniLaws { cache } => kanilaws::laws(root, process.cargo, &cache),
         ExecutionGate::WasiTestsuite { cache } => {
             let cache = cache.map_or_else(

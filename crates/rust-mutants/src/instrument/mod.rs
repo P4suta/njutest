@@ -3,7 +3,6 @@
 
 //! Rewriting a file so that every compilable mutant of it lives in the file at once, dormant behind a guard.
 
-mod guards;
 mod observable;
 mod runtime;
 mod steps;
@@ -20,6 +19,8 @@ pub fn module_named_for(text: &str, stem: &str) -> Result<String, ModuleNameErro
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+
+use rust_mutants_adapt::guard as guards;
 
 use crate::catalog::Catalog;
 use crate::error::{self, ErrorCode};
@@ -1494,7 +1495,10 @@ impl File<'_> {
                 index: placement.index,
                 text: written.text,
                 comparable: self.comparable.contains(&placement.index),
-                probe: self.probed.get(&placement.index).copied(),
+                probe: self
+                    .probed
+                    .get(&placement.index)
+                    .map(|question| question.runtime()),
             });
         }
         let form = match node.alternatives.first() {
@@ -1513,16 +1517,7 @@ impl File<'_> {
             },
             &alternatives,
             &original,
-        )
-        .map_err(|error| {
-            self.error(
-                InstrumentErrorKind::SpliceFailed,
-                format!(
-                    "the guard at {} cannot represent its offsets: {error}",
-                    node.span
-                ),
-            )
-        })?;
+        );
         if count_lines(composed.text.as_bytes()) != count_lines(site.as_bytes()) {
             return Err(self.error(
                 InstrumentErrorKind::LinesMoved,

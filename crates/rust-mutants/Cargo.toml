@@ -25,6 +25,7 @@ testkit = []
 
 [dependencies]
 njutest-macros = { workspace = true }
+rust-mutants-adapt = { workspace = true }
 rust-mutants-decision = { workspace = true }
 rust-mutants-sealed = { workspace = true }
 criterion = { workspace = true, optional = true }
