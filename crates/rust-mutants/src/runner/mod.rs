@@ -1567,11 +1567,12 @@ struct Stops<'a> {
     answered: Option<&'a AtomicBool>,
 }
 
-/// What the wait loop last saw of each progress file, and when it last saw any of them change.
+/// What the wait loop last saw of each progress file, when it last sampled them, and when it last saw any of them change.
 struct Watching<'a> {
     progress: &'a Progress,
     seen: [Option<Vec<u8>>; 2],
     started: Instant,
+    sampled: Duration,
     stillness: Stillness,
 }
 
@@ -1581,6 +1582,7 @@ impl<'a> Watching<'a> {
             progress,
             seen: [None, None],
             started,
+            sampled: Duration::ZERO,
             stillness: Stillness::new(progress.quiet),
         }
     }
@@ -1591,7 +1593,8 @@ impl<'a> Watching<'a> {
     }
 
     /// Looks at the files and returns the moment they count as stalled; a failed read is not a change, since a child that is not writing never causes one.
-    fn look(&mut self, now: Instant) -> Option<Instant> {
+    /// Samples the signals at `now`, which a declared wait advanced only after the change it samples happened.
+    fn look(&mut self, now: Instant, advanced: bool) -> Option<Instant> {
         let mut changed = false;
         for (path, seen) in self.progress.signals().into_iter().zip(&mut self.seen) {
             match read_between_writes(path) {
@@ -1603,7 +1606,10 @@ impl<'a> Watching<'a> {
                 Err(_a_failed_read_is_not_a_change) => {}
             }
         }
-        self.stillness = self.stillness.looked(self.since(now), changed);
+        let since = self.since(now);
+        let moved = if advanced { self.sampled } else { since };
+        self.stillness = self.stillness.looked(moved, changed);
+        self.sampled = since;
         self.stillness
             .stalls_at()
             .and_then(|stalls| self.started.checked_add(stalls))
@@ -1757,18 +1763,8 @@ fn await_exit(
         let remaining = stops.deadline.map(|deadline| until(deadline, now));
         let quiet = watching
             .as_mut()
-            .and_then(|watching| watching.look(now))
+            .and_then(|watching| watching.look(now, tick.is_some()))
             .map(|stalled| until(stalled, now));
-        if let Err(source) = stops
-            .cancel
-            .clock
-            .acknowledged(child.handle().id(), tick.as_deref())
-        {
-            return match terminate(supervisor, child) {
-                Ok(()) => Exit::WaitFailed(source),
-                Err(error) => Exit::SupervisionFailed(error),
-            };
-        }
         let poll = match (remaining, quiet) {
             (Some(remaining), Some(quiet)) => remaining.min(quiet),
             (Some(sooner), None) | (None, Some(sooner)) => sooner,
@@ -1800,6 +1796,16 @@ fn await_exit(
         {
             return match terminate(supervisor, child) {
                 Ok(()) => Exit::Stalled,
+                Err(error) => Exit::SupervisionFailed(error),
+            };
+        }
+        if let Err(source) = stops
+            .cancel
+            .clock
+            .acknowledged(child.handle().id(), tick.as_deref())
+        {
+            return match terminate(supervisor, child) {
+                Ok(()) => Exit::WaitFailed(source),
                 Err(error) => Exit::SupervisionFailed(error),
             };
         }
@@ -2088,6 +2094,191 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_overdue_declared_wait_is_decided_before_the_ack_releases_it() {
+        let events = tempfile::tempdir().expect("clock events");
+        let monitor = tempfile::tempdir().expect("monitor events");
+        let script = format!(
+            "while [ \"$(cat {}/$$.ack 2>/dev/null)\" != 60000 ]; do :; done; \
+             printf stopped > {}; while :; do :; done",
+            events.path().display(),
+            monitor.path().join("stop").display()
+        );
+        let cancel = Cancel::new().with_clock(super::Clock::events(events.path().to_path_buf()));
+        let mut supervisor = super::sys::Supervisor::new().expect("a supervisor");
+        let mut command = std::process::Command::new("sh");
+        command.args(["-c", &script]);
+        supervisor.configure(&mut command);
+        let mut child =
+            super::SupervisedChild::launch(&mut command, super::Reaping::Normal).expect("starts");
+        supervisor
+            .adopt(child.handle())
+            .expect("the group is adopted");
+        std::fs::write(events.path().join(child.handle().id().to_string()), "60000")
+            .expect("the fixture's declared elapsed minute");
+        let started = std::time::Instant::now();
+        let exit = super::await_exit(
+            &supervisor,
+            &child,
+            super::Stops {
+                started,
+                deadline: Some(started + Duration::from_millis(200)),
+                cancel: &cancel,
+                monitor: Some(&monitor.path().join("stop")),
+                progress: None,
+                answered: None,
+            },
+            |quiet| quiet.is_zero(),
+        );
+        let acknowledged =
+            std::fs::read(events.path().join(format!("{}.ack", child.handle().id()))).is_ok();
+        let released_child = std::fs::read(monitor.path().join("stop")).is_ok();
+        assert!(
+            super::reap_or_abort(&child, super::REAPING_GRACE),
+            "the ended child is reaped within the grace"
+        );
+        let status = child.reap_observed();
+        assert!(
+            super::release_supervisor(&mut supervisor).is_ok(),
+            "the supervisor is released: {status:?}"
+        );
+        child.finish();
+        assert!(
+            matches!(exit, super::Exit::TimedOut),
+            "the overdue declaration must end the run at the bound: {status:?}"
+        );
+        assert!(
+            !acknowledged,
+            "an overdue declaration was acknowledged before the bound decided it, so the blocked child could have become a clean exit"
+        );
+        assert!(
+            !released_child,
+            "the blocked child was released by the acknowledgement and published a monitor stop"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_declared_wait_within_the_bound_is_acknowledged_and_the_child_finishes() {
+        let events = tempfile::tempdir().expect("clock events");
+        let script = format!(
+            "printf 100 > {}/$$; while [ \"$(cat {}/$$.ack 2>/dev/null)\" != 100 ]; do :; done",
+            events.path().display(),
+            events.path().display()
+        );
+        let cancel = Cancel::new().with_clock(super::Clock::events(events.path().to_path_buf()));
+        let mut supervisor = super::sys::Supervisor::new().expect("a supervisor");
+        let mut command = std::process::Command::new("sh");
+        command.args(["-c", &script]);
+        supervisor.configure(&mut command);
+        let mut child =
+            super::SupervisedChild::launch(&mut command, super::Reaping::Normal).expect("starts");
+        supervisor
+            .adopt(child.handle())
+            .expect("the group is adopted");
+        let started = std::time::Instant::now();
+        let exit = super::await_exit(
+            &supervisor,
+            &child,
+            super::Stops {
+                started,
+                deadline: Some(started + Duration::from_secs(5)),
+                cancel: &cancel,
+                monitor: None,
+                progress: None,
+                answered: None,
+            },
+            |quiet| quiet.is_zero(),
+        );
+        assert!(
+            super::reap_or_abort(&child, super::REAPING_GRACE),
+            "the finished child is reaped within the grace"
+        );
+        let status = child.reap_observed();
+        assert!(
+            super::release_supervisor(&mut supervisor).is_ok(),
+            "the supervisor is released: {status:?}"
+        );
+        child.finish();
+        assert!(
+            matches!(exit, super::Exit::Exited),
+            "an in-bound declaration is acknowledged and the child finishes: {status:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pre_tick_progress_sampled_at_an_advanced_instant_keeps_its_elapsed_quiet_time() {
+        let events = tempfile::tempdir().expect("clock events");
+        let signals = tempfile::tempdir().expect("progress signals");
+        let monitor = tempfile::tempdir().expect("monitor events");
+        let script = format!(
+            "while [ \"$(cat {}/$$.ack 2>/dev/null)\" != 60000 ]; do :; done; \
+             printf stopped > {}; while :; do :; done",
+            events.path().display(),
+            monitor.path().join("stop").display()
+        );
+        let cancel = Cancel::new().with_clock(super::Clock::events(events.path().to_path_buf()));
+        let mut supervisor = super::sys::Supervisor::new().expect("a supervisor");
+        let mut command = std::process::Command::new("sh");
+        command.args(["-c", &script]);
+        supervisor.configure(&mut command);
+        let mut child =
+            super::SupervisedChild::launch(&mut command, super::Reaping::Normal).expect("starts");
+        supervisor
+            .adopt(child.handle())
+            .expect("the group is adopted");
+        std::fs::write(signals.path().join("step"), b"1").expect("a step before the wait");
+        std::fs::write(signals.path().join("beat"), b"1").expect("a beat before the wait");
+        std::fs::write(events.path().join(child.handle().id().to_string()), "60000")
+            .expect("the fixture's declared elapsed minute");
+        let progress = Progress {
+            path: signals.path().join("step"),
+            beat: signals.path().join("beat"),
+            quiet: Duration::from_millis(300),
+        };
+        let started = std::time::Instant::now();
+        let exit = super::await_exit(
+            &supervisor,
+            &child,
+            super::Stops {
+                started,
+                deadline: None,
+                cancel: &cancel,
+                monitor: Some(&monitor.path().join("stop")),
+                progress: Some(&progress),
+                answered: None,
+            },
+            |quiet| quiet.is_zero(),
+        );
+        let acknowledged =
+            std::fs::read(events.path().join(format!("{}.ack", child.handle().id()))).is_ok();
+        let released_child = std::fs::read(monitor.path().join("stop")).is_ok();
+        assert!(
+            super::reap_or_abort(&child, super::REAPING_GRACE),
+            "the ended child is reaped within the grace"
+        );
+        let status = child.reap_observed();
+        assert!(
+            super::release_supervisor(&mut supervisor).is_ok(),
+            "the supervisor is released: {status:?}"
+        );
+        child.finish();
+        assert!(
+            matches!(exit, super::Exit::Stalled),
+            "quiet time that elapsed under the declared wait must stall: {status:?}"
+        );
+        assert!(
+            !acknowledged,
+            "the stall was decided without releasing the blocked child"
+        );
+        assert!(
+            !released_child,
+            "the blocked child was released and published a monitor stop instead of stalling"
+        );
     }
 
     #[cfg(unix)]
