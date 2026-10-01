@@ -22,6 +22,7 @@ use rust_mutants::catalog::Catalog;
 use rust_mutants::instrument::{Instrumenting, Placement, instrument_file, plan_file};
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
+use rust_mutants::runner::Watched;
 use rust_mutants::syntax::Selection;
 use rust_mutants::trace::Recorder;
 use rust_mutants::validate::{
@@ -154,7 +155,7 @@ fn prepare_fixture_with(name: &str, arrange: impl FnOnce(&std::path::Path)) -> C
             ..LocateOptions::default()
         },
         &root,
-        &cancel,
+        &Watched::new(&cancel, &Recorder::disabled()),
     )
     .expect("locate");
     let driver = Driver {

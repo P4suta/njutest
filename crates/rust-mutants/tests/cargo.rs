@@ -23,7 +23,8 @@ use rust_mutants::cargo::{
     Diagnostic, Finished, LocateOptions, Message, Metadata, Toolchain, compile_arguments,
     dep_info_path, env_deps, parse_dep_info, parse_messages, parse_version, resolve_executable,
 };
-use rust_mutants::runner::Cancel;
+use rust_mutants::runner::{Cancel, Watched};
+use rust_mutants::trace::Recorder;
 
 fn compile_options() -> CompileOptions {
     CompileOptions::new(BuildDir::new(PathBuf::from("/tmp/out"), Vec::new()))
@@ -97,7 +98,11 @@ fn a_cargo_that_cannot_run_is_a_typed_error() {
         cargo: Some(broken),
         ..LocateOptions::default()
     };
-    let error = Toolchain::locate(&options, temp.path(), &Cancel::new());
+    let error = Toolchain::locate(
+        &options,
+        temp.path(),
+        &Watched::new(&Cancel::new(), &Recorder::disabled()),
+    );
     assert_eq!(result_state(&error), Refused, "broken cargo: {error:?}");
     let Err(error) = error else { return };
     assert!(
@@ -468,7 +473,7 @@ fn fake_located(installed: &Installed) -> (tempfile::TempDir, Toolchain) {
             env: Some(installed.env().into_iter().collect()),
         },
         dir.path(),
-        &Cancel::new(),
+        &Watched::new(&Cancel::new(), &Recorder::disabled()),
     )
     .unwrap_or_else(|error| panic!("the fake answers as a toolchain: {error}"));
     (dir, toolchain)
@@ -478,7 +483,7 @@ fn fake_located(installed: &Installed) -> (tempfile::TempDir, Toolchain) {
 fn compiled_by(installed: &Installed) -> Result<rust_mutants::cargo::Compiled, CargoError> {
     let (dir, toolchain) = fake_located(installed);
     let cancel = Cancel::new();
-    let trace = rust_mutants::trace::Recorder::disabled();
+    let trace = Recorder::disabled();
     rust_mutants::cargo::compile(
         &rust_mutants::cargo::Driver {
             toolchain: &toolchain,
@@ -1100,7 +1105,8 @@ fn a_toolchain_chosen_where_the_run_was_asked_is_the_one_every_later_command_run
         search_path: Some(path.clone()),
         env: Some(rust_mutants::vars::Variables::of([("PATH".into(), path)])),
     };
-    let toolchain = Toolchain::locate(&options, &asked, &Cancel::new())
+    let (cancel, unwatching) = (Cancel::new(), Recorder::disabled());
+    let toolchain = Toolchain::locate(&options, &asked, &Watched::new(&cancel, &unwatching))
         .unwrap_or_else(|error| panic!("the shims answer where the run was asked: {error}"));
     assert_eq!(
         toolchain.selecting().path(),
@@ -1176,8 +1182,12 @@ fn a_cargo_named_by_its_path_is_the_one_every_command_runs() {
         search_path: Some(path.clone()),
         env: Some(rust_mutants::vars::Variables::of([("PATH".into(), path)])),
     };
-    let toolchain = Toolchain::locate(&options, &root, &Cancel::new())
-        .unwrap_or_else(|error| panic!("the named cargo answers: {error}"));
+    let toolchain = Toolchain::locate(
+        &options,
+        &root,
+        &Watched::new(&Cancel::new(), &Recorder::disabled()),
+    )
+    .unwrap_or_else(|error| panic!("the named cargo answers: {error}"));
     assert_eq!(
         toolchain.cargo(),
         named.as_path(),

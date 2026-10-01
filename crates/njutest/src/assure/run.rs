@@ -1295,7 +1295,10 @@ fn locate(
             env: Some(environment.vars.clone()),
         },
         &request.root,
-        watch.cancel,
+        &rust_mutants::runner::Watched::new(
+            watch.cancel,
+            &rust_mutants::trace::Recorder::disabled(),
+        ),
     )
     .map_err(rust_mutants::EngineError::from)?;
     let metadata = Metadata::load(

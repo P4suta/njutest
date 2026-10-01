@@ -15,7 +15,7 @@ use rust_mutants::cargo::{
     BuildConfig, BuildDir, CompileKind, CompileOptions, Driver, LocateOptions, Metadata,
     MetadataOptions, Toolchain, compile,
 };
-use rust_mutants::runner::Cancel;
+use rust_mutants::runner::{Cancel, Watched};
 use rust_mutants::sealed::record::Came;
 use rust_mutants::sealed::rerun::{Now, Recorded, Reproduction, Reran, Unmade};
 use rust_mutants::sealed::{SealedBuild, Sealing, TARGET, Unsealed, installed};
@@ -31,7 +31,12 @@ fn toolchain(dir: &Path) -> Toolchain {
         ),
         ..LocateOptions::default()
     };
-    Toolchain::locate(&options, dir, &Cancel::new()).expect("locate")
+    Toolchain::locate(
+        &options,
+        dir,
+        &Watched::new(&Cancel::new(), &Recorder::disabled()),
+    )
+    .expect("locate")
 }
 
 fn build(

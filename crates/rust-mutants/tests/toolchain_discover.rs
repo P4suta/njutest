@@ -20,7 +20,7 @@ use rust_mutants::cargo::{
 use rust_mutants::discover::{DiscoverError, DiscoverOptions, Discovery, Input, discover};
 use rust_mutants::glob::Pattern;
 use rust_mutants::rule::{Registry, Tier};
-use rust_mutants::runner::Cancel;
+use rust_mutants::runner::{Cancel, Watched};
 use rust_mutants::syntax::{Selection, SkipReason};
 use rust_mutants::trace::{DiscoverFileRecord, ExecRecord, MemorySink, Payload, Recorder, Sink};
 
@@ -87,7 +87,12 @@ fn prepare_at(dir: PathBuf) -> Prepared {
         ..LocateOptions::default()
     };
     let cancel = Cancel::new();
-    let toolchain = Toolchain::locate(&options, &dir, &cancel).expect("locate");
+    let toolchain = Toolchain::locate(
+        &options,
+        &dir,
+        &Watched::new(&cancel, &Recorder::disabled()),
+    )
+    .expect("locate");
     let trace = Recorder::disabled();
     let driver = Driver {
         toolchain: &toolchain,
@@ -786,7 +791,12 @@ fn the_check_records_an_exec_event_and_keeps_the_messages() {
         ..LocateOptions::default()
     };
     let cancel = Cancel::new();
-    let toolchain = Toolchain::locate(&options, &dir, &cancel).expect("locate");
+    let toolchain = Toolchain::locate(
+        &options,
+        &dir,
+        &Watched::new(&cancel, &Recorder::disabled()),
+    )
+    .expect("locate");
     let recorder = Recorder::wall(
         Sink::Memory(MemorySink::unbounded()),
         rust_mutants::testkit::trace::standalone_context(),

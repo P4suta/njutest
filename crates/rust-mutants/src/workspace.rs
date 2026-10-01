@@ -999,7 +999,8 @@ impl Workspace {
         let now = jiff::Timestamp::now();
         let swept = swept(parent.path(), now);
 
-        let toolchain = Self::located(&root, &options, cancel)?;
+        let locating = crate::runner::Watched::new(cancel, &options.trace);
+        let toolchain = Self::located(&root, &options, &locating)?;
         let build_dir = Self::reachable(&root, &toolchain, &options, cancel)?;
 
         let mut rules = Self::rules_for(&root, build_dir, parent.path(), &options)?;
@@ -1069,7 +1070,7 @@ impl Workspace {
     fn located(
         root: &Path,
         options: &OpenOptions,
-        cancel: &Cancel,
+        watch: &crate::runner::Watched<'_>,
     ) -> Result<Toolchain, crate::cargo::CargoError> {
         Toolchain::locate(
             &LocateOptions {
@@ -1078,7 +1079,7 @@ impl Workspace {
                 env: Some(options.env.clone()),
             },
             root,
-            cancel,
+            watch,
         )
     }
 
@@ -1264,7 +1265,7 @@ impl Workspace {
                 env: Some(options.env.clone()),
             },
             &root,
-            cancel,
+            &crate::runner::Watched::new(cancel, &options.trace),
         )?;
         let build_dir = Self::reachable(&root, &toolchain, options, cancel)?;
         let rules = Self::rules_for(&root, build_dir, &options.temp_directory, options)?;

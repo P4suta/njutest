@@ -56,7 +56,7 @@ fn toolchain(dir: &Path, cancel: &Cancel) -> Toolchain {
             ..LocateOptions::default()
         },
         dir,
-        cancel,
+        &rust_mutants::runner::Watched::new(cancel, &Recorder::disabled()),
     )
     .expect("locate")
 }

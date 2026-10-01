@@ -150,7 +150,11 @@ fn gathered<'a>(
 
 /// What the toolchain says about itself, for a reader who has a different one.
 pub(super) fn toolchain_text(root: &Path, environment: &Environment, cancel: &Cancel) -> String {
-    let located = rust_mutants::cargo::Toolchain::locate(&locating(environment), root, cancel);
+    let located = rust_mutants::cargo::Toolchain::locate(
+        &locating(environment),
+        root,
+        &rust_mutants::runner::Watched::new(cancel, &rust_mutants::trace::Recorder::disabled()),
+    );
     match located {
         Ok(found) => format!(
             "cargo: {}\nrustc: {}\nhost: {}\nrust-mutants: {}\n",

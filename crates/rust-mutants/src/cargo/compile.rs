@@ -418,7 +418,18 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
         return Ok(compiled);
     }
     let result = run(&spec, driver.cancel);
-    trace.note("fixture-build-process", identity.detail());
+    if result.leader.is_some() {
+        trace.note("fixture-build-process", identity.detail());
+    } else {
+        let cause = match result.termination.error() {
+            Some(failure) => failure.to_string(),
+            None => "cancelled before start".to_owned(),
+        };
+        trace.note(
+            "fixture-build-failed",
+            &format!("{} {cause}", identity.detail()),
+        );
+    }
     let compiled = completed(driver, options, (&spec, &result, &trace))?;
     if let (Some(request), Some(env)) = (request, &spec.env)
         && let Err(source) =
@@ -519,7 +530,9 @@ fn completed(
             "fixture build duration exceeds its diagnostic width",
         )
     })?;
-    trace.note("fixture-cargo-build", &millis.to_string());
+    if result.leader.is_some() {
+        trace.note("fixture-cargo-build", &millis.to_string());
+    }
     trace.exec_result(ExecRecord::of(spec, result));
     if driver.cancel.is_cancelled() {
         return Err(CargoError::new(

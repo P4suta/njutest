@@ -1132,7 +1132,7 @@ fn evidence_of(
             env: Some(environment.vars.clone()),
         },
         root,
-        cancel,
+        &rust_mutants::runner::Watched::new(cancel, &rust_mutants::trace::Recorder::disabled()),
     )?;
     let mode = mode_of(arguments, config, changed);
     let machine = identity::Machine {

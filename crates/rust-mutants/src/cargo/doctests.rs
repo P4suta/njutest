@@ -117,6 +117,20 @@ pub fn capture_doctests(
     spec.timeout = options.timeout;
     let result = run(&spec, driver.cancel);
     driver.trace.exec_result(ExecRecord::of(&spec, &result));
+    let capture_identity = "unbound: the doctests' capture build";
+    if result.leader.is_some() {
+        driver.trace.note("fixture-build-request", capture_identity);
+        driver.trace.note("build-cache-miss", capture_identity);
+        driver.trace.note("fixture-build-process", capture_identity);
+        match u64::try_from(result.duration.as_millis()) {
+            Ok(millis) => driver
+                .trace
+                .note("fixture-cargo-build", &millis.to_string()),
+            Err(_outside_wire) => driver
+                .trace
+                .note("fixture-cargo-build", "duration outside the wire"),
+        }
+    }
     let cancelled = matches!(&result.termination, Termination::Cancelled { .. });
     if driver.cancel.is_cancelled() || cancelled {
         return Err(CargoError::new(

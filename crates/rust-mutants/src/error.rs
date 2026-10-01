@@ -188,6 +188,10 @@ mod table {
         CoverageNothingWritten,
         /// An executable a successful build named could not be read back for equivalence comparison.
         EquivalenceArtifactUnreadable,
+        /// A cost counter reached the width of its field.
+        CostAccountingOverflowed,
+        /// A diagnostic note did not carry what the cost fold needed.
+        CostAccountingInvalid,
         /// A sealed module the sealed build named could not be read.
         SealedModuleUnreadable,
         /// The sealed host could not run an invocation it was given.
@@ -844,6 +848,22 @@ mod table {
                     summary: "an executable a successful build named could not be read back",
                     remedy: Some(
                         "run again after checking nothing removes or rewrites target files while the build is being measured",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::CostAccountingOverflowed => ErrorCode {
+                    code: "RM7002",
+                    summary: "a cost counter reached the width of its field",
+                    remedy: Some(
+                        "this is a defect in this tool, which refused the record rather than wrap it; report the run that produced it",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::CostAccountingInvalid => ErrorCode {
+                    code: "RM7003",
+                    summary: "a diagnostic note did not carry what the cost accounting needed",
+                    remedy: Some(
+                        "this is a defect in this tool, which refused the record rather than guess; report the run that produced the note",
                     ),
                     sealed: Sealed,
                 },

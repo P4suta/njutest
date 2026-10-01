@@ -7,7 +7,8 @@ use std::io;
 use std::path::Path;
 
 /// Cargo command classes the engine knows of that never run under a run's watch, so no record can count them.
-pub const UNOBSERVED_CARGO: [&str; 1] = ["cargo -vV toolchain banners"];
+pub const UNOBSERVED_CARGO: [&str; 1] =
+    ["toolchain banners located outside a costed run (standalone commands and test support)"];
 
 /// Publishes explicitly measured test work, or does nothing when cost recording was not requested.
 ///
@@ -76,7 +77,7 @@ pub fn build(
     let mut unbound = serde_json::Map::new();
     unbound.insert(
         identity,
-        serde_json::json!({"requests": 1, "misses": 0, "processes": 1}),
+        serde_json::json!({"requests": 1, "misses": 0, "processes": 1, "failed_launches": 0, "launch_causes": {}}),
     );
     let unbound = serde_json::Value::Object(unbound);
     published(
@@ -86,7 +87,8 @@ pub fn build(
             "build_requests": 1, "build_hits": 0, "build_misses": 0,
             "build_keys": {},
             "unbound": unbound,
-            "direct_commands": 0, "cargo_test_processes": 0, "cargo_other_processes": 0,
+            "launch_failures": 0, "observed_cargo_starts": 0,
+            "cargo_probes": 0, "cargo_probe_ms": 0, "cargo_metadata": 0, "cargo_metadata_ms": 0, "rustc_probes": 0, "rustc_probe_ms": 0,
             "unobserved_cargo": UNOBSERVED_CARGO,
             "platform": [], "platform_requests": 0, "error": null,
         }),

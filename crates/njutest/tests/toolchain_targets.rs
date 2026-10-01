@@ -263,7 +263,7 @@ fn built_units(fixture: &str) -> (Vec<Unit>, tempfile::TempDir) {
             ..LocateOptions::default()
         },
         &dir,
-        &cancel,
+        &rust_mutants::runner::Watched::new(&cancel, &rust_mutants::trace::Recorder::disabled()),
     )
     .expect("locate");
     let metadata = Metadata::load(

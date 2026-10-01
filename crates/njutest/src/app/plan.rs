@@ -193,7 +193,7 @@ pub(crate) fn locate(
             env: Some(environment.vars.clone()),
         },
         root,
-        cancel,
+        &rust_mutants::runner::Watched::new(cancel, &rust_mutants::trace::Recorder::disabled()),
     )?;
     let metadata = rust_mutants::cargo::Metadata::load(
         &rust_mutants::cargo::Driver {

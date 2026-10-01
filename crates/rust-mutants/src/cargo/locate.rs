@@ -45,10 +45,10 @@ impl Toolchain {
     /// # Errors
     /// [`CargoErrorKind::ToolchainNotFound`] when an executable is missing,
     /// [`CargoErrorKind::CommandFailed`] when a banner could not be read, and [`CargoErrorKind::VersionUnreadable`] when it could not be parsed.
-    pub fn locate(
+    pub fn locate<W: crate::runner::Watch>(
         options: &LocateOptions,
         dir: &Path,
-        cancel: &Cancel,
+        watch: &W,
     ) -> Result<Self, CargoError> {
         let name = match &options.cargo {
             Some(cargo) => cargo.clone(),
@@ -59,38 +59,23 @@ impl Toolchain {
             Some(rustc) => rustc,
             None => resolve_executable(Path::new("rustc"), options.search_path.as_deref())?,
         };
-        let banner = |program: &Path| -> Result<VersionInfo, CargoError> {
-            let mut spec = Spec::new(
-                [program.as_os_str(), OsStr::new("-vV")],
-                Bound::After(PROBE),
-            );
-            spec.dir = Some(dir.to_path_buf());
-            spec.env.clone_from(&options.env);
-            spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
-            let result = run(&spec, cancel);
-            if !result.succeeded() {
-                return Err(command_failed(&spec, &result));
-            }
-            let banner = std::str::from_utf8(&result.stdout).map_err(|source| {
-                CargoError::new(
-                    CargoErrorKind::VersionUnreadable,
-                    format!("{} printed a non-UTF-8 version banner", program.display()),
-                )
-                .with_source(source)
-            })?;
-            parse_version(banner)
+        let cargo_banner = |program: &Path| -> Result<VersionInfo, CargoError> {
+            probed((program, "cargo-probe"), dir, options.env.as_ref(), watch)
         };
-        let cargo_version = banner(&cargo)?;
-        let rustc_version = banner(&rustc)?;
-        let sysroot = sysroot_of(&rustc, dir, options.env.as_ref(), cancel)?;
+        let rustc_banner = |program: &Path| -> Result<VersionInfo, CargoError> {
+            probed((program, "rustc-probe"), dir, options.env.as_ref(), watch)
+        };
+        let cargo_version = cargo_banner(&cargo)?;
+        let rustc_version = rustc_banner(&rustc)?;
+        let sysroot = sysroot_of(&rustc, dir, options.env.as_ref(), watch)?;
         let chosen_by_path = name.components().count() == 1 && !name.is_absolute();
         let toolchain = if chosen_by_path {
             sysroot.as_deref()
         } else {
             None
         };
-        let pinned_cargo = pinned((&cargo, "cargo"), toolchain, &cargo_version, banner)?;
-        let pinned_rustc = pinned((&rustc, "rustc"), toolchain, &rustc_version, banner)?;
+        let pinned_cargo = pinned((&cargo, "cargo"), toolchain, &cargo_version, cargo_banner)?;
+        let pinned_rustc = pinned((&rustc, "rustc"), toolchain, &rustc_version, rustc_banner)?;
         let env = match options.env.clone() {
             Some(env) if pinned_rustc != rustc => {
                 Some(with_toolchain(env, &pinned_rustc, sysroot.as_deref())?)
@@ -364,6 +349,52 @@ fn diagnostic_os(value: &OsStr) -> String {
 ///
 /// A shim that chooses a toolchain by the directory it runs in, as mise and direnv do, is asked once, in the directory the run was asked in; every later command runs in a snapshot, which such a shim may refuse or answer differently.
 /// Only a cargo found by its bare name is pinned: one named by its path is somebody's choice, a wrapper perhaps, and is run as named.
+/// Runs one toolchain probe under the run's watch, so its actual start and duration are counted by its named role.
+fn probed_run<W: crate::runner::Watch>(
+    spec: &Spec,
+    watch: &W,
+    role: &str,
+) -> crate::runner::RunResult {
+    let result = run(spec, watch.cancel());
+    watch.exec(spec, &result);
+    if result.leader.is_some() {
+        match u64::try_from(result.duration.as_millis()) {
+            Ok(millis) => watch.note(role, &millis.to_string()),
+            Err(_outside_wire) => watch.note(role, "duration outside the wire"),
+        }
+    }
+    result
+}
+
+/// Reads one program's version banner through the run's watch.
+fn probed<W: crate::runner::Watch>(
+    (program, role): (&Path, &str),
+    dir: &Path,
+    env: Option<&crate::vars::Variables>,
+    watch: &W,
+) -> Result<VersionInfo, CargoError> {
+    let argument = "-vV";
+    let mut spec = Spec::new(
+        [program.as_os_str(), OsStr::new(argument)],
+        Bound::After(PROBE),
+    );
+    spec.dir = Some(dir.to_path_buf());
+    spec.env = env.cloned();
+    spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
+    let result = probed_run(&spec, watch, role);
+    if !result.succeeded() {
+        return Err(command_failed(&spec, &result));
+    }
+    let banner = std::str::from_utf8(&result.stdout).map_err(|source| {
+        CargoError::new(
+            CargoErrorKind::VersionUnreadable,
+            format!("{} printed a non-UTF-8 version banner", program.display()),
+        )
+        .with_source(source)
+    })?;
+    parse_version(banner)
+}
+
 fn pinned(
     (located, name): (&Path, &str),
     sysroot: Option<&Path>,
@@ -606,11 +637,11 @@ fn executable_variants(dir: &Path, name: &Path) -> Vec<PathBuf> {
 }
 
 /// What `rustc --print sysroot` says, when it will say anything: a path this run may use and never one it needs.
-fn sysroot_of(
+fn sysroot_of<W: crate::runner::Watch>(
     rustc: &Path,
     dir: &Path,
     env: Option<&crate::vars::Variables>,
-    cancel: &Cancel,
+    watch: &W,
 ) -> Result<Option<PathBuf>, CargoError> {
     let mut spec = Spec::new(
         [
@@ -623,7 +654,7 @@ fn sysroot_of(
     spec.dir = Some(dir.to_path_buf());
     spec.env = env.cloned();
     spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
-    let result = run(&spec, cancel);
+    let result = probed_run(&spec, watch, "rustc-probe");
     if !result.succeeded() {
         return Ok(None);
     }

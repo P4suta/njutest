@@ -55,7 +55,7 @@ fn native_fixture_builds_are_counted_outside_the_engine() {
             ..LocateOptions::default()
         },
         &root,
-        &cancel,
+        &rust_mutants::runner::Watched::new(&cancel, &rust_mutants::trace::Recorder::disabled()),
     )
     .expect("the labelled toolchain");
     build(
@@ -86,7 +86,7 @@ fn native_fixture_builds_are_counted_outside_the_engine() {
         &std::fs::read(&records[0]).expect("the complete diagnostic"),
     )
     .expect("the measured build");
-    assert_eq!(record["schema"], "njutest-test-cost-v2");
+    assert_eq!(record["schema"], "njutest-test-cost-v3");
     assert_eq!(record["work"]["builds"], 1);
     assert!(record["work"]["units"].as_u64().expect("fresh artifacts") > 0);
     assert_eq!(record["work"]["error"], serde_json::Value::Null);
@@ -119,7 +119,7 @@ fn build_fixture(fixture: &str, flavour: Flavour, packages: &[&str]) -> Built0 {
             env: Some(env()),
         },
         &root,
-        &cancel,
+        &rust_mutants::runner::Watched::new(&cancel, &rust_mutants::trace::Recorder::disabled()),
     )
     .expect("a toolchain");
     let metadata = Metadata::load(
@@ -317,7 +317,7 @@ fn the_build_says_what_it_did_into_the_trace_without_saying_what_the_variables_h
             env: Some(env()),
         },
         &root,
-        &cancel,
+        &rust_mutants::runner::Watched::new(&cancel, &rust_mutants::trace::Recorder::disabled()),
     )
     .expect("a toolchain");
     build(

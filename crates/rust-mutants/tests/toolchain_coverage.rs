@@ -59,7 +59,7 @@ fn measure(fixture: &str, test: &str) -> Measured {
             ..LocateOptions::default()
         },
         &root,
-        &cancel,
+        &Watched::new(&cancel, &Recorder::disabled()),
     )
     .expect("locate");
     let driver = Driver {

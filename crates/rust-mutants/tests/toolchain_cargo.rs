@@ -18,7 +18,7 @@ use rust_mutants::cargo::{
     CargoErrorKind, Diagnostic, Driver, LocateOptions, Message, Metadata, MetadataOptions,
     Toolchain, compile_time_inputs, emitted_of, parse_messages, resolve_executable, units_of,
 };
-use rust_mutants::runner::{Cancel, RunResult, Spec, run};
+use rust_mutants::runner::{Cancel, RunResult, Spec, Watched, run};
 use rust_mutants::trace::Recorder;
 
 fn fixture(name: &str) -> PathBuf {
@@ -35,7 +35,12 @@ fn toolchain(dir: &Path) -> Toolchain {
         env: Some(env),
         ..LocateOptions::default()
     };
-    Toolchain::locate(&options, dir, &Cancel::new()).expect("locate")
+    Toolchain::locate(
+        &options,
+        dir,
+        &Watched::new(&Cancel::new(), &Recorder::disabled()),
+    )
+    .expect("locate")
 }
 fn scratch_target(name: &str) -> tempfile::TempDir {
     tempfile::Builder::new()
@@ -118,7 +123,7 @@ fn variables_added_to_an_environment_the_toolchain_was_never_given_are_refused()
             ..LocateOptions::default()
         },
         dir.path(),
-        &Cancel::new(),
+        &Watched::new(&Cancel::new(), &Recorder::disabled()),
     )
     .expect("locate without an explicit environment");
     let cancel = Cancel::new();

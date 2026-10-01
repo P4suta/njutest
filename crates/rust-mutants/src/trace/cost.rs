@@ -24,15 +24,17 @@ pub(super) struct Costs {
     work: Mutex<Work>,
 }
 
-/// What one bound build key accumulated: every request, every process it started, and why.
+/// What one bound build key accumulated: every request, every process it started, every launch that failed, and why.
 #[derive(Debug, Default, Serialize)]
 struct KeyWork {
     requests: u64,
     hits: u64,
     misses: u64,
     processes: u64,
+    failed_launches: u64,
     reasons: BTreeMap<String, u64>,
     refused_writes: BTreeMap<String, u64>,
+    launch_causes: BTreeMap<String, u64>,
 }
 
 /// What one unbound identity accumulated, with the reason it never had a key.
@@ -41,6 +43,8 @@ struct UnboundWork {
     requests: u64,
     misses: u64,
     processes: u64,
+    failed_launches: u64,
+    launch_causes: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -51,9 +55,14 @@ struct Work {
     build_misses: u64,
     build_keys: BTreeMap<String, KeyWork>,
     unbound: BTreeMap<String, UnboundWork>,
-    direct_commands: u64,
-    cargo_test_processes: u64,
-    cargo_other_processes: u64,
+    launch_failures: u64,
+    observed_cargo_starts: u64,
+    cargo_probes: u64,
+    cargo_probe_ms: u64,
+    cargo_metadata: u64,
+    cargo_metadata_ms: u64,
+    rustc_probes: u64,
+    rustc_probe_ms: u64,
     unobserved_cargo: Vec<&'static str>,
     build_ms: u64,
     units: u64,
@@ -62,8 +71,9 @@ struct Work {
     error: Option<String>,
 }
 
-/// Cargo command classes the engine knows of that never run under a run's watch, so no record can count them.
-const UNOBSERVED_CARGO: [&str; 1] = ["cargo -vV toolchain banners"];
+/// Cargo command classes no costed run observes, named so a zero elsewhere cannot claim complete coverage.
+const UNOBSERVED_CARGO: [&str; 1] =
+    ["toolchain banners located outside a costed run (standalone commands and test support)"];
 
 #[derive(Serialize)]
 struct Record<'a> {
@@ -132,7 +142,7 @@ impl Costs {
             return;
         };
         if let Err(detail) = apply(&mut work, payload) {
-            work.error = Some(detail.to_string());
+            work.error = Some(format!("{} {detail}", detail.code().code));
         }
     }
 }
@@ -155,6 +165,17 @@ enum AccountingError {
     },
 }
 
+impl AccountingError {
+    /// The stable code of this accounting failure.
+    #[must_use]
+    pub(crate) const fn code(&self) -> crate::error::ErrorCode {
+        match self {
+            Self::Overflowed { .. } => crate::error::RmCode::CostAccountingOverflowed.error_code(),
+            Self::Invalid { .. } => crate::error::RmCode::CostAccountingInvalid.error_code(),
+        }
+    }
+}
+
 /// A complete input key is 64 hexadecimal characters; anything else is an unbound reason.
 fn bound(detail: &str) -> bool {
     detail.len() == 64 && detail.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -170,52 +191,29 @@ fn apply(work: &mut Work, payload: &Payload) -> Result<(), AccountingError> {
     Ok(())
 }
 
-/// Classifies one Cargo command the engine observed under this run's watch.
+/// Observes one Cargo command the engine watched: a filename says it needs a role note, not what its work was.
 fn observed_cargo(work: &mut Work, exec: &super::ExecRecord) -> Result<(), AccountingError> {
     let cargo = exec
         .argv
         .first()
         .and_then(|program| Path::new(program).file_name())
         .is_some_and(|program| program == "cargo" || program == "cargo.exe");
-    if !cargo {
-        return Ok(());
-    }
-    let plain = !exec
-        .argv
-        .iter()
-        .any(|arg| arg == "--message-format=json" || arg.starts_with("--message-format="));
-    let first = exec.argv.get(1).map(String::as_str);
-    let compile = matches!(first, Some("check" | "build" | "rustc"))
-        || (first == Some("test") && exec.argv.iter().any(|arg| arg == "--no-run"));
-    let test = first == Some("test") && !exec.argv.iter().any(|arg| arg == "--no-run");
-    match (compile, test, plain) {
-        (true, _, true) => {
-            add(&mut work.builds, "fixture build accounting")?;
-            add(&mut work.direct_commands, "direct command accounting")?;
-            sum(
-                &mut work.build_ms,
-                exec.duration_ms,
-                "fixture build accounting",
-            )?;
-        }
-        (_, true, true) => {
-            add(&mut work.builds, "test process accounting")?;
-            add(&mut work.cargo_test_processes, "test process accounting")?;
-            sum(
-                &mut work.build_ms,
-                exec.duration_ms,
-                "test process accounting",
-            )?;
-        }
-        (_, _, false) => {}
-        (_, _, _) => {
-            add(
-                &mut work.cargo_other_processes,
-                "cargo inventory accounting",
-            )?;
-        }
+    if cargo && started(&exec.stopped) {
+        add(
+            &mut work.observed_cargo_starts,
+            "observed cargo start accounting",
+        )?;
     }
     Ok(())
+}
+
+/// Whether the supervised run actually started a child.
+const fn started(stopped: &crate::execute::Stopped) -> bool {
+    !matches!(
+        stopped,
+        crate::execute::Stopped::NotStarted { .. }
+            | crate::execute::Stopped::Cancelled { started: false }
+    )
 }
 
 /// Folds one diagnostic note into the multiplicity it observes.
@@ -233,9 +231,29 @@ fn noted(work: &mut Work, note: &crate::trace::NoteRecord) -> Result<(), Account
         }
         "fixture-build-request"
         | "fixture-build-process"
+        | "fixture-build-failed"
         | "build-cache-hit"
         | "build-cache-miss"
         | "build-cache-unavailable" => identified(work, note)?,
+        "cargo-probe" => {
+            let millis = probe_millis(&note.detail, "cargo")?;
+            add(&mut work.cargo_probes, "cargo probe accounting")?;
+            sum(&mut work.cargo_probe_ms, millis, "cargo probe accounting")?;
+        }
+        "cargo-metadata" => {
+            let millis = probe_millis(&note.detail, "cargo metadata")?;
+            add(&mut work.cargo_metadata, "cargo metadata accounting")?;
+            sum(
+                &mut work.cargo_metadata_ms,
+                millis,
+                "cargo metadata accounting",
+            )?;
+        }
+        "rustc-probe" => {
+            let millis = probe_millis(&note.detail, "rustc")?;
+            add(&mut work.rustc_probes, "rustc probe accounting")?;
+            sum(&mut work.rustc_probe_ms, millis, "rustc probe accounting")?;
+        }
         "cargo-built-units" => {
             let measured =
                 note.detail
@@ -278,15 +296,7 @@ fn identified(work: &mut Work, note: &crate::trace::NoteRecord) -> Result<(), Ac
                 held.requests = raised(held.requests, "unbound request accounting")?;
             }
         }
-        "fixture-build-process" => {
-            if bound(&note.detail) {
-                let held = work.build_keys.entry(note.detail.clone()).or_default();
-                held.processes = raised(held.processes, "bound process accounting")?;
-            } else {
-                let held = work.unbound.entry(note.detail.clone()).or_default();
-                held.processes = raised(held.processes, "unbound process accounting")?;
-            }
-        }
+        "fixture-build-process" | "fixture-build-failed" => launched(work, note)?,
         "build-cache-hit" => {
             if !bound(&note.detail) {
                 return Err(AccountingError::Invalid {
@@ -341,6 +351,49 @@ fn add(count: &mut u64, what: &'static str) -> Result<(), AccountingError> {
     Ok(())
 }
 
+/// Folds one launch outcome: an actual process or a failed launch, each under its identity and cause.
+fn launched(work: &mut Work, note: &crate::trace::NoteRecord) -> Result<(), AccountingError> {
+    if note.kind == "fixture-build-process" {
+        if bound(&note.detail) {
+            let held = work.build_keys.entry(note.detail.clone()).or_default();
+            held.processes = raised(held.processes, "bound process accounting")?;
+        } else {
+            let held = work.unbound.entry(note.detail.clone()).or_default();
+            held.processes = raised(held.processes, "unbound process accounting")?;
+        }
+        return Ok(());
+    }
+    let split = note.detail.split_once(' ');
+    let (identity, cause) = match split {
+        Some((identity, cause)) => (identity, cause.to_owned()),
+        None => {
+            return Err(AccountingError::Invalid {
+                problem: "a failed launch names neither an identity nor a cause".to_owned(),
+            });
+        }
+    };
+    if bound(identity) {
+        let held = work.build_keys.entry(identity.to_owned()).or_default();
+        held.failed_launches = raised(held.failed_launches, "bound failure accounting")?;
+        let counted = held.launch_causes.entry(cause).or_default();
+        *counted = raised(*counted, "launch cause accounting")?;
+    } else {
+        let held = work.unbound.entry(identity.to_owned()).or_default();
+        held.failed_launches = raised(held.failed_launches, "unbound failure accounting")?;
+        let counted = held.launch_causes.entry(cause).or_default();
+        *counted = raised(*counted, "unbound launch cause accounting")?;
+    }
+    add(&mut work.launch_failures, "launch failure accounting")
+}
+
+fn probe_millis(detail: &str, program: &str) -> Result<u64, AccountingError> {
+    detail
+        .parse::<u64>()
+        .map_err(|source| AccountingError::Invalid {
+            problem: format!("a {program} probe duration is invalid: {source}"),
+        })
+}
+
 fn raised(count: u64, what: &'static str) -> Result<u64, AccountingError> {
     count
         .checked_add(1)
@@ -360,7 +413,7 @@ impl Drop for Costs {
             return;
         };
         let record = Record {
-            schema: "njutest-test-cost-v2",
+            schema: "njutest-test-cost-v3",
             binary: &self.binary,
             test: &self.test,
             root: &self.root,
@@ -378,7 +431,7 @@ impl Drop for Costs {
 
 #[cfg(test)]
 mod tests {
-    use super::{Payload, UNOBSERVED_CARGO, Work, apply};
+    use super::{AccountingError, Payload, UNOBSERVED_CARGO, Work, apply};
 
     fn note(kind: &str, detail: &str) -> Payload {
         Payload::Note {
@@ -387,6 +440,76 @@ mod tests {
                 detail: detail.to_owned(),
             },
         }
+    }
+
+    fn exec(program: &str, argument: &str, stopped: crate::execute::Stopped) -> Payload {
+        Payload::Exec {
+            exec: crate::trace::ExecRecord {
+                argv: vec![program.to_owned(), argument.to_owned()],
+                dir: None,
+                env_names: Vec::new(),
+                timeout_ms: None,
+                quiet_ms: None,
+                stopped,
+                duration_ms: 7,
+                output_bytes: 0,
+                output_sha256: None,
+                output_truncated: false,
+                output_path: None,
+                error: None,
+                output: Vec::new(),
+            },
+        }
+    }
+
+    fn started() -> crate::execute::Stopped {
+        crate::execute::Stopped::Exited {
+            exit: crate::runner::ProcessExit::Code(0),
+        }
+    }
+
+    #[test]
+    fn a_cargo_command_that_never_started_is_not_a_process() {
+        let mut work = Work::default();
+        apply(
+            &mut work,
+            &exec(
+                "cargo",
+                "build",
+                crate::execute::Stopped::NotStarted {
+                    cause: crate::execute::StartFailure::Missing,
+                },
+            ),
+        )
+        .unwrap();
+        apply(
+            &mut work,
+            &exec(
+                "cargo",
+                "build",
+                crate::execute::Stopped::Cancelled { started: false },
+            ),
+        )
+        .unwrap();
+        assert_eq!(work.builds, 0, "no child started, so no process is counted");
+    }
+
+    #[test]
+    fn a_cargo_command_the_notes_do_not_own_is_not_build_work() {
+        let mut work = Work::default();
+        apply(&mut work, &exec("/opt/decoy/cargo", "build", started())).unwrap();
+        assert_eq!(work.builds, 0, "a filename does not make a command a build");
+    }
+
+    #[test]
+    fn a_build_command_is_counted_once_whatever_reports_it() {
+        let mut work = Work::default();
+        apply(&mut work, &exec("cargo", "build", started())).unwrap();
+        apply(&mut work, &note("fixture-cargo-build", "5")).unwrap();
+        assert_eq!(
+            work.builds, 1,
+            "an event and its note are one command, counted once"
+        );
     }
 
     #[test]
@@ -484,6 +607,26 @@ mod tests {
                 .get("the record could not be written")
                 .copied(),
             Some(1),
+        );
+    }
+
+    #[test]
+    fn every_accounting_failure_carries_its_stable_code() {
+        assert_eq!(
+            AccountingError::Overflowed {
+                what: "fixture build accounting"
+            }
+            .code()
+            .code,
+            "RM7002"
+        );
+        assert_eq!(
+            AccountingError::Invalid {
+                problem: "a note lacked its cause".to_owned()
+            }
+            .code()
+            .code,
+            "RM7003"
         );
     }
 

@@ -60,7 +60,8 @@ impl Drop for MeasuredRunner {
             std::path::Path::new("sealed-guests"),
             &serde_json::json!({"builds": 0, "build_ms": 0, "units": 0, "platform": [], "platform_requests": 0, "error": null,
                 "build_requests": 0, "build_hits": 0, "build_misses": 0, "build_keys": {}, "unbound": {},
-                "direct_commands": 0, "cargo_test_processes": 0, "cargo_other_processes": 0,
+                "launch_failures": 0, "observed_cargo_starts": 0,
+                "cargo_probes": 0, "cargo_probe_ms": 0, "cargo_metadata": 0, "cargo_metadata_ms": 0, "rustc_probes": 0, "rustc_probe_ms": 0,
                 "unobserved_cargo": njutest_devkit::cost::UNOBSERVED_CARGO}),
             &serde_json::to_value(self.0.spent()).expect("the runner's measured work"),
         )

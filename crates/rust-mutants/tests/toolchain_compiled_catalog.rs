@@ -16,6 +16,7 @@ use rust_mutants::cargo::{
 };
 use rust_mutants::instrument::COMPILED_CATALOG_ENV;
 use rust_mutants::runner::Cancel;
+use rust_mutants::runner::Watched;
 use rust_mutants::session::PrepareOptions;
 use rust_mutants::trace::Recorder;
 use rust_mutants::workspace::{OpenOptions, Workspace};
@@ -167,7 +168,7 @@ fn cargo_rebuilds_an_unchanged_binary_when_the_embedded_catalog_changes() {
             ..LocateOptions::default()
         },
         &project.root,
-        &cancel,
+        &Watched::new(&cancel, &Recorder::disabled()),
     )
     .expect("a toolchain");
     let driver = Driver {

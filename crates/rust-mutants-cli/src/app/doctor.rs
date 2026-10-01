@@ -42,7 +42,11 @@ pub(super) fn doctor_document(
     let root = environment.rooted(asked.root);
     let mut checks: Vec<doctor_report::Check> = Vec::new();
 
-    let toolchain = rust_mutants::cargo::Toolchain::locate(&locating(environment), &root, cancel);
+    let toolchain = rust_mutants::cargo::Toolchain::locate(
+        &locating(environment),
+        &root,
+        &rust_mutants::runner::Watched::new(cancel, &rust_mutants::trace::Recorder::disabled()),
+    );
     match &toolchain {
         Ok(found) => {
             checks.push(noted("cargo", Well, &found.cargo_version().summary));

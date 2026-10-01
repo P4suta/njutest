@@ -198,7 +198,10 @@ fn located(root: &Path, installed: &Installed) -> Toolchain {
             ),
         },
         root,
-        &Cancel::new(),
+        &rust_mutants::runner::Watched::new(
+            &Cancel::new(),
+            &rust_mutants::trace::Recorder::disabled(),
+        ),
     )
     .expect("the scripted toolchain")
 }

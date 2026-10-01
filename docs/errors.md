@@ -107,6 +107,8 @@ The first digit names an area; `RS` and `XT` say what theirs are at the head of 
 | `RM6003` | `llvm-profdata` or `llvm-cov` failed. | `rustup component add llvm-tools-preview`, and check the versions match the toolchain in use |
 | `RM6004` | A test process wrote no coverage profile at all: the build was not instrumented, or the process did not exit normally. | the test process wrote no profile: check nothing in the suite sets LLVM_PROFILE_FILE for itself |
 | `RM7001` | An executable a successful build named could not be read back for equivalence comparison. | run again after checking nothing removes or rewrites target files while the build is being measured |
+| `RM7002` | A cost counter reached the width of its field. | this is a defect in this tool, which refused the record rather than wrap it; report the run that produced it |
+| `RM7003` | A diagnostic note did not carry what the cost accounting needed. | this is a defect in this tool, which refused the record rather than guess; report the run that produced the note |
 | `RM8001` | A sealed module the sealed build named could not be read. | run again after checking nothing removes or rewrites the sealed build's target directory while it is read |
 | `RM8002` | The sealed host could not run an invocation it was given. | the message carries the host's own code (RS...), which docs/errors.md says what to do about |
 | `RM8003` | A target's environment holds a name or a value that is not text. | a sealed instance reads its environment as text: move the package where its path is UTF-8, or leave the target out of sealing |

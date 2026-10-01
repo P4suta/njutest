@@ -398,6 +398,14 @@ impl Metadata {
         spec.structured_stdout = Some(METADATA_OUTPUT_LIMIT);
         let result = run(&spec, driver.cancel);
         driver.trace.exec_result(ExecRecord::of(&spec, &result));
+        if result.leader.is_some() {
+            match u64::try_from(result.duration.as_millis()) {
+                Ok(millis) => driver.trace.note("cargo-metadata", &millis.to_string()),
+                Err(_outside_wire) => driver
+                    .trace
+                    .note("cargo-metadata", "duration outside the wire"),
+            }
+        }
         if !result.succeeded() {
             return Err(command_failed(&spec, &result));
         }

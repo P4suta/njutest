@@ -22,11 +22,25 @@ WORK_NUMBERS = (
     "build_requests",
     "build_hits",
     "build_misses",
-    "direct_commands",
-    "cargo_test_processes",
-    "cargo_other_processes",
+    "launch_failures",
+    "observed_cargo_starts",
+    "cargo_probes",
+    "cargo_probe_ms",
+    "cargo_metadata",
+    "cargo_metadata_ms",
+    "rustc_probes",
+    "rustc_probe_ms",
 )
-INVENTORY_NUMBERS = ("direct_commands", "cargo_test_processes", "cargo_other_processes")
+INVENTORY_NUMBERS = (
+    "launch_failures",
+    "observed_cargo_starts",
+    "cargo_probes",
+    "cargo_probe_ms",
+    "cargo_metadata",
+    "cargo_metadata_ms",
+    "rustc_probes",
+    "rustc_probe_ms",
+)
 TOTAL_NUMBERS = WORK_NUMBERS + (
     "records",
     "preparations",
@@ -81,28 +95,32 @@ def audit(label, row):
         if name in row:
             within(f"{label}:{name}", row[name])
     for key, held in row.get("build_keys", {}).items():
-        for name in ("requests", "hits", "misses", "processes"):
+        for name in ("requests", "hits", "misses", "processes", "failed_launches"):
             within(f"{label}:key:{key[:8]}:{name}", held[name])
+        for reason, count in held["launch_causes"].items():
+            within(f"{label}:key:{key[:8]}:launch_cause:{reason}", count)
         for reason, count in held["reasons"].items():
             within(f"{label}:key:{key[:8]}:reason:{reason}", count)
         for reason, count in held["refused_writes"].items():
             within(f"{label}:key:{key[:8]}:refused:{reason}", count)
     for identity, held in row.get("unbound", {}).items():
-        for name in ("requests", "misses", "processes"):
+        for name in ("requests", "misses", "processes", "failed_launches"):
             within(f"{label}:unbound:{identity}:{name}", held[name])
+        for reason, count in held["launch_causes"].items():
+            within(f"{label}:unbound:{identity}:launch_cause:{reason}", count)
 
 
 def key_work(value, label):
     """Read one bound key's multiplicity: every request, process, hit, miss and concrete reason."""
     if not isinstance(value, dict):
         raise ValueError(f"{label}: a bound key's work is not a record")
-    for name in ("requests", "hits", "misses", "processes"):
+    for name in ("requests", "hits", "misses", "processes", "failed_launches"):
         if name not in value:
             raise ValueError(f"{label}: bound key count {name} is absent")
         number(value[name], f"{label}:{name}")
-    for name in ("reasons", "refused_writes"):
-        if name not in value:
-            raise ValueError(f"{label}: bound key {name} are absent")
+    if "launch_causes" not in value:
+        raise ValueError(f"{label}: bound key launch_causes are absent")
+    for name in ("reasons", "refused_writes", "launch_causes"):
         if not isinstance(value[name], dict):
             raise ValueError(
                 f"{label}: bound key {name} are not a mapping of concrete causes"
@@ -124,10 +142,25 @@ def key_work(value, label):
         != value["requests"]
     ):
         raise ValueError(f"{label}: requests do not close into hits and misses")
-    if value["misses"] != value["processes"]:
-        raise ValueError(f"{label}: misses and processes do not close")
+    if (
+        summed(
+            f"{label}:processes+failures",
+            (value["processes"], value["failed_launches"]),
+        )
+        != value["misses"]
+    ):
+        raise ValueError(
+            f"{label}: misses do not close into started processes and failed launches"
+        )
     if summed(f"{label}:reasons", value["reasons"].values()) != value["misses"]:
         raise ValueError(f"{label}: misses without their concrete reasons do not close")
+    if (
+        summed(f"{label}:launch_causes", value["launch_causes"].values())
+        != value["failed_launches"]
+    ):
+        raise ValueError(
+            f"{label}: failed launches without their concrete causes do not close"
+        )
     if (
         summed(f"{label}:refused", value["refused_writes"].values())
         > value["processes"]
@@ -136,10 +169,12 @@ def key_work(value, label):
             f"{label}: refused writes do not close against the completed processes that could have written one"
         )
     return {
-        name: value[name] for name in ("requests", "hits", "misses", "processes")
+        name: value[name]
+        for name in ("requests", "hits", "misses", "processes", "failed_launches")
     } | {
         "reasons": dict(value["reasons"]),
         "refused_writes": dict(value["refused_writes"]),
+        "launch_causes": dict(value["launch_causes"]),
     }
 
 
@@ -147,32 +182,62 @@ def unbound_work(value, identity, label):
     """Read one unbound identity's multiplicity, closed by whether the cache was ever asked."""
     if not isinstance(value, dict):
         raise ValueError(f"{label}: an unbound identity's work is not a record")
-    for name in ("requests", "misses", "processes"):
+    for name in ("requests", "misses", "processes", "failed_launches", "launch_causes"):
         if name not in value:
             raise ValueError(f"{label}: unbound count {name} is absent")
+    for name in ("requests", "misses", "processes", "failed_launches"):
         number(value[name], f"{label}:{name}")
-    if value["requests"] != value["processes"]:
-        raise ValueError(f"{label}: unbound requests and processes do not close")
+    if not isinstance(value["launch_causes"], dict):
+        raise ValueError(
+            f"{label}: unbound launch_causes are not a mapping of concrete causes"
+        )
+    for reason, count in value["launch_causes"].items():
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError(
+                f"{label}:launch_causes: a cause without its concrete reason"
+            )
+        number(count, f"{label}:launch_causes:{reason}")
+    started = summed(
+        f"{label}:processes+failures", (value["processes"], value["failed_launches"])
+    )
+    if value["requests"] != started:
+        raise ValueError(
+            f"{label}: unbound requests do not close into started processes and failed launches"
+        )
     expected_misses = value["requests"] if identity.startswith("unbound") else 0
     if value["misses"] != expected_misses:
         raise ValueError(f"{label}: unbound misses do not close")
-    return {name: value[name] for name in ("requests", "misses", "processes")}
+    if (
+        summed(f"{label}:launch_causes", value["launch_causes"].values())
+        != value["failed_launches"]
+    ):
+        raise ValueError(
+            f"{label}: failed launches without their concrete causes do not close"
+        )
+    return {
+        name: value[name]
+        for name in ("requests", "misses", "processes", "failed_launches")
+    } | {"launch_causes": dict(value["launch_causes"])}
 
 
 def merge_key(into, held):
     """Sum one key's multiplicity across every record of a test, never dropping a repeat."""
-    for name in ("requests", "hits", "misses", "processes"):
+    for name in ("requests", "hits", "misses", "processes", "failed_launches"):
         into[name] += held[name]
     for reason, count in held["reasons"].items():
         into["reasons"][reason] = into["reasons"].get(reason, 0) + count
     for reason, count in held["refused_writes"].items():
         into["refused_writes"][reason] = into["refused_writes"].get(reason, 0) + count
+    for reason, count in held["launch_causes"].items():
+        into["launch_causes"][reason] = into["launch_causes"].get(reason, 0) + count
 
 
 def merge_unbound(into, held):
     """Sum one unbound identity's multiplicity."""
-    for name in ("requests", "misses", "processes"):
+    for name in ("requests", "misses", "processes", "failed_launches"):
         into[name] += held[name]
+    for reason, count in held["launch_causes"].items():
+        into["launch_causes"][reason] = into["launch_causes"].get(reason, 0) + count
 
 
 def empty_key():
@@ -181,23 +246,25 @@ def empty_key():
         "hits": 0,
         "misses": 0,
         "processes": 0,
+        "failed_launches": 0,
         "reasons": {},
         "refused_writes": {},
+        "launch_causes": {},
     }
 
 
 def empty_unbound():
-    return {"requests": 0, "misses": 0, "processes": 0}
+    return {
+        "requests": 0,
+        "misses": 0,
+        "processes": 0,
+        "failed_launches": 0,
+        "launch_causes": {},
+    }
 
 
 def suite_redundancy(inventory):
-    """A normal cold build repeated for one bound input is redundant work across the whole suite.
-
-    A v2 record holds aggregate maps only: no chronological or causal link between a
-    refused write and a later miss is recorded, so a refusal count is not evidence
-    that a repetition was necessary, and strict reading refuses the repetition.
-    Repairs keep their own class and stay visible beside it.
-    """
+    """A repeated normal cold build is redundant suite-wide; a v2/v3 record proves no causal refusal excuse."""
     errors = []
     for key, held in sorted(inventory.items()):
         cold = summed(
@@ -294,6 +361,7 @@ def measured(directory, junit, require_pass=True):
             )
     if len(tests) != int(suite.attrib["tests"]):
         raise ValueError("the JUnit test inventory does not close")
+    coverage_gaps = []
     paths = sorted(pathlib.Path(directory).glob("cost-*.json"))
     if not paths:
         raise ValueError(
@@ -302,11 +370,11 @@ def measured(directory, junit, require_pass=True):
     unobserved = set()
     for path in paths:
         record = json.loads(path.read_text(), object_pairs_hook=unique)
-        if record["schema"] == "njutest-test-cost-v1":
+        if record["schema"] in ("njutest-test-cost-v1", "njutest-test-cost-v2"):
             raise ValueError(
-                f"{path}: a v1 record never measured per-key multiplicity; re-measure under the v2 accounting"
+                f"{path}: a {record['schema']} record never measured launch provenance or cargo roles; re-measure under the v3 accounting"
             )
-        if record["schema"] != "njutest-test-cost-v2":
+        if record["schema"] != "njutest-test-cost-v3":
             raise ValueError(f"{path}: unknown cost schema")
         key = (record["binary"], record["test"])
         if key not in tests:
@@ -362,31 +430,60 @@ def measured(directory, junit, require_pass=True):
                 unbound_work(held, identity, f"{path}:{identity}"),
             )
         audit(f"{path}:{record['binary']}::{record['test']}", row)
-        attributed = (
-            sum(held["processes"] for held in row["build_keys"].values())
-            + sum(held["processes"] for held in row["unbound"].values())
-            + row["direct_commands"]
-            + row["cargo_test_processes"]
+        attributed = summed(
+            f"{path}:processes",
+            [
+                *(held["processes"] for held in row["build_keys"].values()),
+                *(held["processes"] for held in row["unbound"].values()),
+            ],
         )
         if attributed != row["builds"]:
             raise ValueError(
                 f"{path}: the process inventory does not close: {row['builds']} builds against {attributed} attributed"
             )
-        requested = sum(held["requests"] for held in row["build_keys"].values()) + sum(
-            held["requests"] for held in row["unbound"].values()
+        requested = summed(
+            f"{path}:requests",
+            [
+                *(held["requests"] for held in row["build_keys"].values()),
+                *(held["requests"] for held in row["unbound"].values()),
+            ],
         )
         if requested != row["build_requests"]:
             raise ValueError(f"{path}: the request inventory does not close")
-        if (
-            sum(held["hits"] for held in row["build_keys"].values())
-            != row["build_hits"]
-        ):
+        hits = summed(
+            f"{path}:hits", (held["hits"] for held in row["build_keys"].values())
+        )
+        if hits != row["build_hits"]:
             raise ValueError(f"{path}: the hit inventory does not close")
-        missed = sum(held["misses"] for held in row["build_keys"].values()) + sum(
-            held["misses"] for held in row["unbound"].values()
+        missed = summed(
+            f"{path}:misses",
+            [
+                *(held["misses"] for held in row["build_keys"].values()),
+                *(held["misses"] for held in row["unbound"].values()),
+            ],
         )
         if missed != row["build_misses"]:
             raise ValueError(f"{path}: the miss inventory does not close")
+        failed = summed(
+            f"{path}:launch_failures",
+            [
+                *(held["failed_launches"] for held in row["build_keys"].values()),
+                *(held["failed_launches"] for held in row["unbound"].values()),
+            ],
+        )
+        if failed != row["launch_failures"]:
+            raise ValueError(f"{path}: the launch failure inventory does not close")
+        roles = summed(
+            f"{path}:roles", [attributed, row["cargo_probes"], row["cargo_metadata"]]
+        )
+        if row["observed_cargo_starts"] > roles:
+            gap = (
+                f"{record['binary']}::{record['test']}: the cargo coverage does not close: "
+                f"{row['observed_cargo_starts']} observed starts against {roles} role-attributed"
+            )
+            if require_pass:
+                raise ValueError(f"{path}: {gap}")
+            coverage_gaps.append(gap)
         modules = work["platform"]
         if record["sealed"] is not None:
             row["module_requests"] += number(
@@ -462,15 +559,32 @@ def measured(directory, junit, require_pass=True):
     for name in TOTAL_NUMBERS:
         within(f"suite:{name}", totals[name])
     audit("suite", {"build_keys": inventory, "unbound": suite_unbound, **totals})
-    attributed = (
-        sum(held["processes"] for held in inventory.values())
-        + sum(held["processes"] for held in suite_unbound.values())
-        + totals["direct_commands"]
-        + totals["cargo_test_processes"]
+    attributed = summed(
+        "suite:processes",
+        [
+            *(held["processes"] for held in inventory.values()),
+            *(held["processes"] for held in suite_unbound.values()),
+        ],
     )
     if attributed != totals["builds"]:
         raise ValueError(
             f"the suite process inventory does not close: {totals['builds']} builds against {attributed} attributed"
+        )
+    failures = summed(
+        "suite:launch_failures",
+        [
+            *(held["failed_launches"] for held in inventory.values()),
+            *(held["failed_launches"] for held in suite_unbound.values()),
+        ],
+    )
+    if failures != totals["launch_failures"]:
+        raise ValueError("the suite launch failure inventory does not close")
+    suite_roles = summed(
+        "suite:roles", [attributed, totals["cargo_probes"], totals["cargo_metadata"]]
+    )
+    if totals["observed_cargo_starts"] > suite_roles and not coverage_gaps:
+        coverage_gaps.append(
+            f"the suite cargo coverage does not close: {totals['observed_cargo_starts']} observed starts against {suite_roles} role-attributed"
         )
     violations = suite_redundancy(inventory)
     if require_pass and violations:
@@ -487,6 +601,7 @@ def measured(directory, junit, require_pass=True):
         "unbound": suite_unbound,
         "totals": totals,
         "redundancy": violations,
+        "coverage_gaps": coverage_gaps,
         "unobserved_cargo": sorted(unobserved),
         "gaps": list(GAPS),
         "toolchain_concurrency": concurrency(tests.values()),
@@ -633,6 +748,8 @@ def main():
         )
     for violation in report["redundancy"]:
         print(f"redundant work, not certified: {violation}")
+    for gap in report["coverage_gaps"]:
+        print(f"unattributed cargo work, not certified: {gap}")
     if args.measure_only:
         return
     if args.record:

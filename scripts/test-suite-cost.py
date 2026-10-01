@@ -15,7 +15,7 @@ COST = runpy.run_path(str(pathlib.Path(__file__).with_name("suite-cost.py")))
 
 KEY = "ab" * 32
 OTHER_KEY = "cd" * 32
-UNOBSERVED = ["cargo -vV toolchain banners"]
+UNOBSERVED = ["toolchain banners located outside a costed run (standalone commands and test support)"]
 
 
 def work(**overrides):
@@ -29,9 +29,14 @@ def work(**overrides):
         "build_misses": 0,
         "build_keys": {},
         "unbound": {},
-        "direct_commands": 0,
-        "cargo_test_processes": 0,
-        "cargo_other_processes": 0,
+        "launch_failures": 0,
+        "observed_cargo_starts": 0,
+        "cargo_probes": 0,
+        "cargo_probe_ms": 0,
+        "cargo_metadata": 0,
+        "cargo_metadata_ms": 0,
+        "rustc_probes": 0,
+        "rustc_probe_ms": 0,
         "unobserved_cargo": list(UNOBSERVED),
         "platform": [],
         "platform_requests": 0,
@@ -48,8 +53,10 @@ def key_work(**overrides):
         "hits": 0,
         "misses": 0,
         "processes": 0,
+        "failed_launches": 0,
         "reasons": {},
         "refused_writes": {},
+        "launch_causes": {},
     }
     base.update(overrides)
     return base
@@ -61,7 +68,7 @@ def write_record(
     (root / f"cost-{name}.json").write_text(
         json.dumps(
             {
-                "schema": "njutest-test-cost-v2",
+                "schema": "njutest-test-cost-v3",
                 "binary": binary,
                 "test": test,
                 "root": str(root),
@@ -88,8 +95,10 @@ def write_junit(root, tests=(("engine::toolchain_fixture", "fixture"),)):
     )
 
 
-def cold(count=1, refused=None):
+def cold(count=1, refused=None, **extra):
     """One complete bound key cold-built `count` times, with optional refused record writes."""
+    overrides = {"observed_cargo_starts": count}
+    overrides.update(extra)
     return work(
         builds=count,
         build_requests=count,
@@ -103,6 +112,7 @@ def cold(count=1, refused=None):
                 refused_writes=refused or {},
             )
         },
+        **overrides,
     )
 
 
@@ -269,7 +279,7 @@ class SuiteCost(unittest.TestCase):
             (root / "cost-foreign.json").write_text(
                 json.dumps(
                     {
-                        "schema": "njutest-test-cost-v2",
+                        "schema": "njutest-test-cost-v3",
                         "binary": "engine::toolchain_other",
                         "test": "fixture",
                     }
@@ -329,7 +339,7 @@ class SuiteCost(unittest.TestCase):
                     }
                 )
             )
-            with self.assertRaisesRegex(ValueError, "multiplicity"):
+            with self.assertRaisesRegex(ValueError, "v3 accounting"):
                 COST["measured"](root, root / "suite.xml")
 
     def test_split_records_that_cold_build_one_bound_input_twice_are_redundant(self):
@@ -337,23 +347,7 @@ class SuiteCost(unittest.TestCase):
             root = pathlib.Path(directory)
             write_junit(root)
             for name in ("cold-a", "cold-b"):
-                write_record(
-                    root,
-                    name,
-                    work(
-                        builds=1,
-                        build_requests=1,
-                        build_misses=1,
-                        build_keys={
-                            KEY: key_work(
-                                requests=1,
-                                misses=1,
-                                processes=1,
-                                reasons={"cold: the compilation record is absent": 1},
-                            )
-                        },
-                    ),
-                )
+                write_record(root, name, cold())
             with self.assertRaisesRegex(ValueError, "redundant"):
                 COST["measured"](root, root / "suite.xml")
 
@@ -413,6 +407,7 @@ class SuiteCost(unittest.TestCase):
                     builds=2,
                     build_requests=2,
                     build_misses=2,
+                    observed_cargo_starts=2,
                     build_keys={
                         KEY: key_work(
                             requests=2,
@@ -464,11 +459,14 @@ class SuiteCost(unittest.TestCase):
                     builds=1,
                     build_requests=1,
                     build_misses=1,
+                    observed_cargo_starts=1,
                     unbound={
                         "unbound: inherited environment": {
                             "requests": 1,
                             "misses": 1,
                             "processes": 1,
+                            "failed_launches": 0,
+                            "launch_causes": {},
                         }
                     },
                 ),
@@ -489,7 +487,6 @@ class SuiteCost(unittest.TestCase):
                 root,
                 "open-unbound",
                 work(
-                    builds=1,
                     build_requests=1,
                     build_misses=1,
                     unbound={
@@ -497,6 +494,8 @@ class SuiteCost(unittest.TestCase):
                             "requests": 1,
                             "misses": 1,
                             "processes": 0,
+                            "failed_launches": 1,
+                            "launch_causes": {"no such executable": 1},
                         }
                     },
                 ),
@@ -511,7 +510,7 @@ class SuiteCost(unittest.TestCase):
             write_record(
                 root,
                 "claimed-complete",
-                work(cargo_other_processes=0, unobserved_cargo=[]),
+                work(unobserved_cargo=[]),
             )
             with self.assertRaisesRegex(ValueError, "unobserved"):
                 COST["measured"](root, root / "suite.xml")
@@ -526,11 +525,14 @@ class SuiteCost(unittest.TestCase):
                 work(
                     builds=2,
                     build_requests=2,
+                    observed_cargo_starts=2,
                     unbound={
                         "direct: native edit oracle build": {
                             "requests": 2,
                             "misses": 0,
                             "processes": 2,
+                            "failed_launches": 0,
+                            "launch_causes": {},
                         }
                     },
                 ),
@@ -843,6 +845,117 @@ class SuiteCost(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "concrete"):
                 COST["measured"](root, root / "suite.xml")
+
+
+    def test_cargo_metadata_is_counted_by_its_role_not_its_command_line(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(root)
+            write_record(
+                root,
+                "metadata",
+                cold(observed_cargo_starts=2, cargo_metadata=1, cargo_metadata_ms=12),
+            )
+            report = COST["measured"](root, root / "suite.xml")
+            self.assertEqual(report["totals"]["cargo_metadata"], 1)
+            self.assertEqual(report["totals"]["cargo_metadata_ms"], 12)
+            self.assertEqual(report["totals"]["builds"], 1)
+
+    def test_a_v2_record_cannot_pose_as_measured_v3_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(root)
+            write_record(root, "old", cold())
+            path = root / "cost-old.json"
+            record = json.loads(path.read_text())
+            record["schema"] = "njutest-test-cost-v2"
+            del record["work"]["observed_cargo_starts"]
+            del record["work"]["launch_failures"]
+            path.write_text(json.dumps(record))
+            with self.assertRaisesRegex(ValueError, "v3 accounting"):
+                COST["measured"](root, root / "suite.xml")
+
+    def test_a_miss_without_a_process_or_a_failed_launch_does_not_close(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(root)
+            write_record(
+                root,
+                "dangling",
+                work(
+                    builds=1,
+                    build_requests=1,
+                    build_misses=1,
+                    observed_cargo_starts=1,
+                    build_keys={
+                        KEY: key_work(
+                            requests=1,
+                            misses=1,
+                            processes=1,
+                            reasons={"cold: the compilation record is absent": 1},
+                        )
+                    },
+                ),
+            )
+            path = root / "cost-dangling.json"
+            record = json.loads(path.read_text())
+            record["work"]["build_keys"][KEY]["processes"] = 0
+            path.write_text(json.dumps(record))
+            with self.assertRaisesRegex(ValueError, "do not close"):
+                COST["measured"](root, root / "suite.xml")
+
+    def test_a_failed_launch_is_kept_beside_its_key_not_as_a_process(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(root)
+            write_record(
+                root,
+                "failed",
+                work(
+                    build_requests=1,
+                    build_misses=1,
+                    launch_failures=1,
+                    build_keys={
+                        KEY: key_work(
+                            requests=1,
+                            misses=1,
+                            processes=0,
+                            failed_launches=1,
+                            reasons={"cold: the compilation record is absent": 1},
+                            launch_causes={"no such executable": 1},
+                        )
+                    },
+                ),
+            )
+            report = COST["measured"](root, root / "suite.xml")
+            held = report["build_keys"][KEY]
+            self.assertEqual((held["processes"], held["failed_launches"]), (0, 1))
+            self.assertEqual(report["totals"]["launch_failures"], 1)
+            self.assertEqual(report["totals"]["builds"], 0)
+
+    def test_a_cargo_start_no_role_note_explains_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(root)
+            write_record(root, "uncovered", cold(observed_cargo_starts=2))
+            with self.assertRaisesRegex(ValueError, "coverage does not close"):
+                COST["measured"](root, root / "suite.xml")
+
+    def test_a_toolchain_probe_is_counted_as_a_probe_not_a_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(root)
+            write_record(
+                root,
+                "probes",
+                cold(observed_cargo_starts=2, cargo_probes=1, cargo_probe_ms=40, rustc_probes=2, rustc_probe_ms=25),
+            )
+            report = COST["measured"](root, root / "suite.xml")
+            self.assertEqual(report["totals"]["cargo_probes"], 1)
+            self.assertEqual(report["totals"]["cargo_probe_ms"], 40)
+            self.assertEqual(report["totals"]["rustc_probes"], 2)
+            self.assertEqual(report["totals"]["rustc_probe_ms"], 25)
+            self.assertEqual(report["totals"]["builds"], 1)
 
 
 if __name__ == "__main__":
