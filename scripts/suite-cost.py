@@ -70,6 +70,11 @@ def within(label, value):
     return value
 
 
+def summed(label, values):
+    """Every derived count sum — outputs and predicates alike — stays inside the width a record could measure."""
+    return within(label, sum(values))
+
+
 def audit(label, row):
     """Check every aggregate count of one holder: its fields, its keys and its reasons."""
     for name in TOTAL_NUMBERS:
@@ -103,23 +108,33 @@ def key_work(value, label):
                 f"{label}: bound key {name} are not a mapping of concrete causes"
             )
         for reason, count in value[name].items():
-            if not isinstance(reason, str) or not reason:
+            if not isinstance(reason, str) or not reason.strip():
                 raise ValueError(f"{label}:{name}: a cause without its concrete reason")
             number(count, f"{label}:{name}:{reason}")
     for reason in value["reasons"]:
         if not any(
-            reason.startswith(f"{kind}: ") and len(reason) > len(kind) + 2
+            reason.startswith(f"{kind}: ") and reason[len(kind) + 2 :].strip()
             for kind in MISS_CLASSES
         ):
             raise ValueError(
-                f"{label}: a miss reason without its stable class: {reason!r}"
+                f"{label}: a miss reason without its stable class and a concrete cause: {reason!r}"
             )
-    if value["hits"] + value["misses"] != value["requests"]:
+    if (
+        summed(f"{label}:hits+misses", (value["hits"], value["misses"]))
+        != value["requests"]
+    ):
         raise ValueError(f"{label}: requests do not close into hits and misses")
     if value["misses"] != value["processes"]:
         raise ValueError(f"{label}: misses and processes do not close")
-    if sum(value["reasons"].values()) != value["misses"]:
+    if summed(f"{label}:reasons", value["reasons"].values()) != value["misses"]:
         raise ValueError(f"{label}: misses without their concrete reasons do not close")
+    if (
+        summed(f"{label}:refused", value["refused_writes"].values())
+        > value["processes"]
+    ):
+        raise ValueError(
+            f"{label}: refused writes do not close against the completed processes that could have written one"
+        )
     return {
         name: value[name] for name in ("requests", "hits", "misses", "processes")
     } | {
@@ -178,23 +193,38 @@ def empty_unbound():
 def suite_redundancy(inventory):
     """A normal cold build repeated for one bound input is redundant work across the whole suite.
 
-    One refused record write explains exactly one later cold build: the write failed,
-    so the next request found nothing. Anything beyond that bound is repetition no
-    concrete cause explains, and repairs keep their own class beside it.
+    A v2 record holds aggregate maps only: no chronological or causal link between a
+    refused write and a later miss is recorded, so a refusal count is not evidence
+    that a repetition was necessary, and strict reading refuses the repetition.
+    Repairs keep their own class and stay visible beside it.
     """
     errors = []
     for key, held in sorted(inventory.items()):
-        cold = sum(
-            count
-            for reason, count in held["reasons"].items()
-            if reason.startswith("cold:")
+        cold = summed(
+            f"redundancy:{key[:8]}:cold",
+            (
+                count
+                for reason, count in held["reasons"].items()
+                if reason.startswith("cold:")
+            ),
         )
-        refused = sum(held["refused_writes"].values())
-        if cold > 1 + refused:
-            errors.append(
-                f"redundant cold builds of one bound input: {key} built cold {cold} times "
-                f"across the suite while {refused} refused record writes explained at most {1 + refused}"
-            )
+        if cold < 2:
+            continue
+        refused = summed(
+            f"redundancy:{key[:8]}:refused", held["refused_writes"].values()
+        )
+        causes = "; ".join(
+            f"{reason} x{count}"
+            for reason, count in sorted(held["refused_writes"].items())
+        )
+        explanation = (
+            f", beside {refused} refused record writes ({causes}) whose causal proof the record cannot supply"
+            if refused
+            else ""
+        )
+        errors.append(
+            f"redundant cold builds of one bound input: {key} built cold {cold} times across the suite{explanation}"
+        )
     return errors
 
 
@@ -372,7 +402,10 @@ def measured(directory, junit, require_pass=True):
             if compilation is not None:
                 hits = number(compilation["hits"], f"{path}:hits")
                 misses = number(compilation["misses"], f"{path}:misses")
-                if hits + misses != sealed["compiles"]:
+                if (
+                    summed(f"{path}:module-hits+misses", (hits, misses))
+                    != sealed["compiles"]
+                ):
                     raise ValueError(f"{path}: cache accounting does not close")
                 row["hits"] += hits
                 row["misses"] += misses
@@ -402,6 +435,8 @@ def measured(directory, junit, require_pass=True):
             "instances",
             "hits",
             "misses",
+            "compile_ns",
+            "execution_ns",
         ):
             binaries[row["binary"]][name] += row[name]
             totals[name] += row[name]
@@ -580,6 +615,10 @@ def main():
     )
     parser.add_argument("--measure-only", action="store_true")
     args = parser.parse_args()
+    if args.record and args.measure_only:
+        raise ValueError(
+            "--record and --measure-only cannot be combined: recording is a strict act"
+        )
     report = measured(args.directory, args.junit, require_pass=not args.measure_only)
     output = args.directory / "suite-cost.json"
     output.write_text(json.dumps(report, indent=2) + "\n")
@@ -597,6 +636,19 @@ def main():
     if args.measure_only:
         return
     if args.record:
+        missing = []
+        if report["unobserved_cargo"]:
+            missing.append(
+                f"unobserved cargo classes: {', '.join(report['unobserved_cargo'])}"
+            )
+        if report["gaps"]:
+            missing.append(f"uninstrumented meters: {', '.join(report['gaps'])}")
+        if missing:
+            raise ValueError(
+                "a baseline cannot certify missing observations: "
+                + "; ".join(missing)
+                + "; record once the producer measures them"
+            )
         ledger = (
             json.loads(args.baseline.read_text())
             if args.baseline.exists()

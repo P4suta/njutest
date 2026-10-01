@@ -7,6 +7,7 @@
 import json
 import pathlib
 import runpy
+import sys
 import tempfile
 import unittest
 
@@ -103,6 +104,16 @@ def cold(count=1, refused=None):
             )
         },
     )
+
+
+def run_main(arguments):
+    """Run the reader's command line with these arguments, restoring the interpreter's own."""
+    saved = sys.argv
+    sys.argv = ["suite-cost.py", *arguments]
+    try:
+        COST["main"]()
+    finally:
+        sys.argv = saved
 
 
 def budgeted(binaries):
@@ -426,35 +437,21 @@ class SuiteCost(unittest.TestCase):
             )
             self.assertEqual(row["builds"], 2)
 
-    def test_a_refused_write_names_why_a_cold_build_repeated(self):
+    def test_refused_writes_do_not_prove_a_later_cold_build_was_needed(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             write_junit(root)
             write_record(
                 root,
                 "refused",
-                work(
-                    builds=2,
-                    build_requests=2,
-                    build_misses=2,
-                    build_keys={
-                        KEY: key_work(
-                            requests=2,
-                            misses=2,
-                            processes=2,
-                            reasons={"cold: the compilation record is absent": 2},
-                            refused_writes={"the record could not be written": 1},
-                        )
-                    },
-                ),
+                cold(2, {"the record could not be written": 1}),
             )
-            report = COST["measured"](root, root / "suite.xml")
-            self.assertEqual(
-                report["tests"][0]["build_keys"][KEY]["refused_writes"][
-                    "the record could not be written"
-                ],
-                1,
-            )
+            with self.assertRaisesRegex(ValueError, "redundant"):
+                COST["measured"](root, root / "suite.xml")
+            report = COST["measured"](root, root / "suite.xml", require_pass=False)
+            self.assertEqual(len(report["redundancy"]), 1)
+            self.assertIn("the record could not be written", report["redundancy"][0])
+            self.assertIn("causal", report["redundancy"][0])
 
     def test_an_unbound_command_publishes_its_reason_and_closes(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -712,6 +709,140 @@ class SuiteCost(unittest.TestCase):
         self.assertTrue(
             any("unobserved" in error for error in COST["growth"](claimed, before))
         )
+
+
+    def test_record_refuses_to_certify_while_observations_are_missing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(root)
+            write_record(root, "a", cold())
+            existing = root / "ledger.json"
+            kept = b'{"schema":"njutest-suite-cost-budget-v3","platforms":{}}\n'
+            existing.write_bytes(kept)
+            with self.assertRaisesRegex(ValueError, "missing observation"):
+                run_main(
+                    [str(root), str(root / "suite.xml"), "--record", "--baseline", str(existing)]
+                )
+            self.assertEqual(existing.read_bytes(), kept)
+            fresh = root / "absent.json"
+            with self.assertRaisesRegex(ValueError, "missing observation"):
+                run_main(
+                    [str(root), str(root / "suite.xml"), "--record", "--baseline", str(fresh)]
+                )
+            self.assertFalse(fresh.exists())
+
+    def test_record_and_measure_only_together_are_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(root)
+            write_record(root, "a", cold())
+            with self.assertRaisesRegex(ValueError, "cannot be combined"):
+                run_main([str(root), str(root / "suite.xml"), "--record", "--measure-only"])
+
+    def test_duration_totals_roll_up_per_binary_and_suite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(
+                root,
+                (
+                    ("engine::toolchain_fixture", "first"),
+                    ("engine::toolchain_fixture", "second"),
+                ),
+            )
+            for name, (compile_ns, execution_ns) in (
+                ("first", (100, 50)),
+                ("second", (200, 20)),
+            ):
+                write_record(
+                    root,
+                    name,
+                    work(
+                        platform_requests=1,
+                        platform=[
+                            {
+                                "compiles": 1,
+                                "instances": 1,
+                                "compilation": {
+                                    "hits": 0,
+                                    "misses": 1,
+                                    "duration_ns": compile_ns,
+                                },
+                                "execution_ns": execution_ns,
+                            }
+                        ],
+                    ),
+                    test=name,
+                )
+            report = COST["measured"](root, root / "suite.xml")
+            rows = {row["test"]: row for row in report["tests"]}
+            self.assertEqual(rows["first"]["compile_ns"], 100)
+            self.assertEqual(rows["second"]["execution_ns"], 20)
+            self.assertEqual(
+                report["binaries"]["engine::toolchain_fixture"]["compile_ns"], 300
+            )
+            self.assertEqual(
+                report["binaries"]["engine::toolchain_fixture"]["execution_ns"], 70
+            )
+            self.assertEqual(report["totals"]["compile_ns"], 300)
+            self.assertEqual(report["totals"]["execution_ns"], 70)
+
+    def test_a_refusal_sum_beyond_u64_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(root)
+            write_record(
+                root,
+                "overflow",
+                cold(),
+            )
+            path = root / "cost-overflow.json"
+            record = json.loads(path.read_text())
+            record["work"]["build_keys"][KEY]["refused_writes"] = {
+                "first": 2**63,
+                "second": 2**63,
+            }
+            path.write_text(json.dumps(record))
+            with self.assertRaisesRegex(ValueError, "u64"):
+                COST["measured"](root, root / "suite.xml")
+
+    def test_more_refused_writes_than_processes_do_not_close(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(root)
+            write_record(root, "refusals", cold(refused={"one": 1, "another": 1}))
+            with self.assertRaisesRegex(ValueError, "close"):
+                COST["measured"](root, root / "suite.xml")
+
+    def test_a_whitespace_only_cause_is_absent_not_concrete(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(root)
+            write_record(
+                root,
+                "blank",
+                work(
+                    builds=1,
+                    build_requests=1,
+                    build_misses=1,
+                    build_keys={
+                        KEY: key_work(
+                            requests=1,
+                            misses=1,
+                            processes=1,
+                            reasons={"cold: \t ": 1},
+                        )
+                    },
+                ),
+            )
+            with self.assertRaisesRegex(ValueError, "concrete"):
+                COST["measured"](root, root / "suite.xml")
+            write_record(
+                root,
+                "blank",
+                cold(refused={"   ": 1}),
+            )
+            with self.assertRaisesRegex(ValueError, "concrete"):
+                COST["measured"](root, root / "suite.xml")
 
 
 if __name__ == "__main__":
