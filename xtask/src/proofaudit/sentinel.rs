@@ -1771,16 +1771,16 @@ fn carried_item() -> Value {
     json!({ "package": "pkg", "path": "src/lib.rs", "ordinal": 0 })
 }
 
-/// Where the body of [`carried_item`] starts now.
+/// Where the body of `carried_item` starts now.
 pub const BODY_START: (u64, u64) = (6, 23);
 
 /// The column of the carried kill's edit, the `!` two bytes into the body `{ !ready }` that starts at [`BODY_START`].
 const EDIT_COLUMN: u64 = 25;
 
-/// The file the carried kill is in, as the tree the run measured holds it: the body of [`carried_item`] at bytes 80 to 90, at [`BODY_START`].
+/// The file the carried kill is in, as the tree the run measured holds it: the body of `carried_item` at bytes 80 to 90, at [`BODY_START`].
 const CARRIED_SOURCE: &str = "//\n//\n//\n//\n// xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nfn negated(ready:bool){ !ready }\n";
 
-/// The skeletons a specimen's build keeps beside its recording: [`carried_item`] with the body `digest` starting at `now`, in [`CARRIED_SOURCE`].
+/// The skeletons a specimen's build keeps beside its recording: `carried_item` with the body `digest` starting at `now`, in [`CARRIED_SOURCE`].
 fn carried_skeletons(digest: &str, now: &Value) -> Value {
     json!({
         "document_type": "rust-mutants/skeletons", "schema_version": 4,
@@ -1795,7 +1795,7 @@ fn carried_skeletons(digest: &str, now: &Value) -> Value {
     })
 }
 
-/// The catalog a specimen's build keeps beside its recording: the carried kill's edit, which takes the `!` out of the body of [`carried_item`].
+/// The catalog a specimen's build keeps beside its recording: the carried kill's edit, which takes the `!` out of the body of `carried_item`.
 fn carried_catalog() -> Value {
     json!({
         "document_type": "rust-mutants/catalog", "schema_version": 1,
@@ -1812,7 +1812,7 @@ fn carried_catalog() -> Value {
     })
 }
 
-/// The specimen with its kill carried from [`EARLIER`] by an execution of [`TARGET`] that entered [`carried_item`] where `entered` says its body started, and the carry evidence the engine keeps beside its recording; every premise of ADR 0041 holds where `entered` is [`BODY_START`].
+/// The specimen with its kill carried from [`EARLIER`] by an execution of [`TARGET`] that entered `carried_item` where `entered` says its body started, and the carry evidence the engine keeps beside its recording; every premise of ADR 0041 holds where `entered` is [`BODY_START`].
 #[must_use]
 pub fn carried(name: &'static str, clean: Perturbation, entered: &Value) -> Perturbation {
     let digest = crate::engineaudit::carry::digest_of(b"{ !ready }");

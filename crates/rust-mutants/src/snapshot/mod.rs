@@ -37,7 +37,7 @@ pub const DIR_PREFIX: &str = "rust-mutants-snap-";
 /// The subdirectory of a snapshot directory that holds the copy.
 pub const TREE_NAME: &str = "tree";
 
-/// How much of the source root's digest [`stable_name`] spells out.
+/// How much of the source root's digest `stable_name` spells out.
 pub const STABLE_NAME_HEX_LENGTH: usize = 16;
 
 /// How many times [`Snapshot::cleanup`] tries the removal before giving up.
@@ -1345,7 +1345,7 @@ impl Snapshot {
         &self.workspace_digest
     }
 
-    /// Whether the directory carries the [`stable_name`] of the source root rather than a fresh fallback name.
+    /// Whether the directory carries the `stable_name` of the source root rather than a fresh fallback name.
     #[must_use]
     pub const fn stable_dir(&self) -> bool {
         self.stable_dir
