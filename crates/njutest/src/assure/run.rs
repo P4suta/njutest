@@ -4,7 +4,7 @@
 //! One verification, from a request to a report.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
 use rust_mutants::id::RunId;
@@ -161,6 +161,8 @@ pub struct Request {
     /// Which part of the catalog this run judges.
     /// `None` judges every one of them.
     pub shard: Option<rust_mutants::run::Shard>,
+    /// Where this run was asked to record its trace, which is never a build input.
+    pub trace: Option<String>,
 }
 
 /// What one run produced.
@@ -1570,7 +1572,7 @@ fn prove_equivalence(
                 env: mutating.environment.vars.clone(),
                 temp_directory: mutating.environment.temp_directory.clone(),
                 report_directory: Some(request.config.reports.directory.as_str().to_owned()),
-                exclude: Vec::new(),
+                exclude: runner_outputs(request.trace.as_deref(), &request.root),
                 keep_temp: false,
                 offline: request.cargo.offline,
                 locked: request.cargo.locked,
@@ -1642,12 +1644,40 @@ pub fn opening(
         env: environment.vars.clone(),
         temp_directory: environment.temp_directory.clone(),
         report_directory: Some(request.config.reports.directory.as_str().to_owned()),
-        exclude: Vec::new(),
+        exclude: runner_outputs(request.trace.as_deref(), &request.root),
         keep_temp: request.keep_temp,
         offline: request.cargo.offline,
         locked: request.cargo.locked,
         trace: request.engine_trace.clone(),
     }
+}
+
+/// Runner-owned outputs that are never build inputs: the `.njutest` store, and the trace directory this run writes when it sits inside the tree, whose absence from the digest is what lets a repeated run's snapshot match the one before it.
+#[must_use]
+pub fn runner_outputs(trace: Option<&str>, root: &Path) -> Vec<rust_mutants::glob::Pattern> {
+    let mut patterns = Vec::new();
+    match rust_mutants::glob::Pattern::compile(".njutest") {
+        Ok(store) => patterns.push(store),
+        Err(_the_store_literal_never_fails_to_compile) => {}
+    }
+    let Some(asked) = trace.filter(|asked| !asked.is_empty()) else {
+        return patterns;
+    };
+    let absolute = match std::path::absolute(PathBuf::from(asked)) {
+        Ok(absolute) => absolute,
+        Err(_a_working_directory_it_cannot_name) => return patterns,
+    };
+    let within = match absolute.strip_prefix(root) {
+        Ok(within) => within,
+        Err(_a_trace_directory_outside_the_tree_is_never_a_build_input) => return patterns,
+    };
+    if let Some(text) = within.as_os_str().to_str() {
+        match rust_mutants::glob::Pattern::compile(text) {
+            Ok(pattern) => patterns.push(pattern),
+            Err(_a_trace_directory_a_glob_cannot_name_stays_a_build_input) => {}
+        }
+    }
+    patterns
 }
 
 /// Every switch this run prepares the tree with, which is also what decides how the engine routes a mutant.
@@ -2022,7 +2052,7 @@ pub fn unknown_package(request: &Request, members: &[String]) -> Option<String> 
 }
 
 /// The name a person calls the workspace.
-fn root_name(root: &std::path::Path) -> Result<String, crate::evidence::tree::ScanError> {
+fn root_name(root: &Path) -> Result<String, crate::evidence::tree::ScanError> {
     let Some(name) = root.file_name() else {
         return Ok(UNAVAILABLE.to_owned());
     };

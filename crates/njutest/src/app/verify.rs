@@ -945,6 +945,7 @@ fn asking(establishing: &Establishing<'_>, shard: Option<rust_mutants::run::Shar
         checkpoints: (!arguments.no_cache).then(|| store.root().join(CHECKPOINTS)),
         evidence_store: (!arguments.no_cache).then(|| store.root().to_path_buf()),
         shard,
+        trace: arguments.trace.clone(),
     }
 }
 

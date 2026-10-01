@@ -37,6 +37,7 @@ fn asked(root: &str) -> Request {
         checkpoints: None,
         evidence_store: None,
         shard: None,
+        trace: None,
     }
 }
 

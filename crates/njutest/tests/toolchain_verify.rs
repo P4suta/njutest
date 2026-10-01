@@ -33,7 +33,7 @@ use rust_mutants::runner::Cancel;
 /// A throwaway copy of a fixture, so the run writes its reports somewhere nothing else is reading.
 struct Fixture {
     root: PathBuf,
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
 }
 
 fn fixture(name: &str) -> Fixture {
@@ -45,13 +45,75 @@ fn fixture(name: &str) -> Fixture {
     let root = dir.path().join(name);
     copy_tree(&source, &root);
     njutest_devkit::fixture::pin_contract(&root, "standard-v1");
-    Fixture { root, _dir: dir }
+    Fixture { root, dir }
 }
 
 fn verify(fixture: &Fixture, extra: &[&str]) -> Output {
     let mut args = vec!["verify", "--offline", "--locked"];
     args.extend_from_slice(extra);
     asked(&of(&fixture.root, &[]), &args)
+}
+
+#[cfg(unix)]
+#[test]
+fn repeated_runs_over_one_pool_reuse_verified_builds_except_the_sealed_build() {
+    let fixture = fixture("fixture-simple");
+    let mut environment = of(&fixture.root, &[]);
+    let pool = fixture.dir.path().join("a-pool-no-other-test-shares");
+    environment.vars.set("NJUTEST_FIXTURE_BUILD_CACHE", &pool);
+    environment.vars.set("RUSTC_WRAPPER", "");
+    for repetition in 0..2 {
+        let output = asked(
+            &environment,
+            &["verify", "--locked", "--offline", "--no-cache", "--trace"],
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "repetition {repetition} keeps its verdict: {output:?}"
+        );
+    }
+    let report = document(&fixture);
+    let path = fixture
+        .root
+        .join(".njutest/trace")
+        .join(text(&report["run_id"]))
+        .join("builds/0000000000/engine")
+        .join(rust_mutants::trace::FILE_NAME);
+    let events = rust_mutants::trace::read_events(std::io::BufReader::new(
+        std::fs::File::open(&path).expect("the repeated run's build trace"),
+    ))
+    .expect("the engine's trace");
+    let notes: Vec<_> = events
+        .iter()
+        .filter_map(|event| {
+            if let rust_mutants::trace::Payload::Note { note } = &event.payload {
+                Some(note)
+            } else {
+                None
+            }
+        })
+        .collect();
+    let hits = notes
+        .iter()
+        .filter(|note| note.kind == "build-cache-hit")
+        .count();
+    let bound = notes
+        .iter()
+        .filter(|note| note.kind == "build-cache-bound")
+        .count();
+    assert!(
+        hits >= 3 && hits == bound,
+        "the second run reuses every content-bound compilation over the pool this test owns: {notes:?}"
+    );
+    let started = notes
+        .iter()
+        .filter(|note| note.kind == "fixture-cargo-build")
+        .count();
+    assert_eq!(
+        started, 1,
+        "only the sealed build, whose link arguments name an object outside the bound inputs, starts Cargo: {notes:?}"
+    );
 }
 
 #[cfg(unix)]
@@ -1141,7 +1203,7 @@ fn a_workspace_with_no_tests_at_all_observed_nothing_and_says_so() {
         .lib("/// Nothing tests this.\npub const fn one() -> i32 {\n    1\n}\n");
     let fixture = Fixture {
         root: repo.root().to_path_buf(),
-        _dir: tempfile::Builder::new()
+        dir: tempfile::Builder::new()
             .prefix("njutest-unused-")
             .tempdir()
             .expect("a temporary directory"),

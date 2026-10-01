@@ -101,6 +101,7 @@ pub fn asking(
         checkpoints: None,
         evidence_store: None,
         shard: None,
+        trace: None,
     }
 }
 

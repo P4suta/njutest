@@ -73,6 +73,7 @@ fn request(config: Config, packages: &[&str]) -> Request {
         checkpoints: None,
         evidence_store: None,
         shard: None,
+        trace: None,
     }
 }
 

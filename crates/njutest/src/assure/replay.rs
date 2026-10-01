@@ -99,7 +99,7 @@ pub fn replay(
             env: replaying.environment.vars.clone(),
             temp_directory: replaying.environment.temp_directory.clone(),
             report_directory: Some(replaying.reports.as_str().to_owned()),
-            exclude: Vec::new(),
+            exclude: super::run::runner_outputs(None, replaying.root),
             keep_temp: false,
             offline: replaying.cargo.offline,
             locked: replaying.cargo.locked,

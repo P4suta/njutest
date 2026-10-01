@@ -105,7 +105,7 @@ pub fn check(
             env: checking.environment.vars.clone(),
             temp_directory: checking.environment.temp_directory.clone(),
             report_directory: Some(checking.reports.as_str().to_owned()),
-            exclude: Vec::new(),
+            exclude: super::run::runner_outputs(None, checking.root),
             keep_temp: false,
             offline: checking.cargo.offline,
             locked: checking.cargo.locked,
