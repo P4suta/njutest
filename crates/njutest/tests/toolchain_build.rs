@@ -86,9 +86,18 @@ fn native_fixture_builds_are_counted_outside_the_engine() {
         &std::fs::read(&records[0]).expect("the complete diagnostic"),
     )
     .expect("the measured build");
+    assert_eq!(record["schema"], "njutest-test-cost-v2");
     assert_eq!(record["work"]["builds"], 1);
     assert!(record["work"]["units"].as_u64().expect("fresh artifacts") > 0);
     assert_eq!(record["work"]["error"], serde_json::Value::Null);
+    let unbound = record["work"]["unbound"].as_object().expect("unbound work");
+    assert_eq!(unbound.len(), 1, "the direct build names its own identity");
+    let identity = unbound.keys().next().expect("the identity");
+    assert!(
+        identity.starts_with("direct: "),
+        "an unbound direct build publishes an explicit reason, not a fabricated key: {identity}"
+    );
+    assert_eq!(unbound[identity]["processes"], 1);
     njutest_devkit::cost::record(&root, &record["work"], &record["sealed"])
         .expect("the observed native build belongs to the complete suite's cost");
 }

@@ -105,7 +105,14 @@ impl Workspace {
                 target: &host,
                 out,
             },
-            |duration, stdout| njutest_devkit::cost::build(self.root(), duration, stdout),
+            |duration, stdout| {
+                njutest_devkit::cost::build(
+                    self.root(),
+                    "the bundle's release build",
+                    duration,
+                    stdout,
+                )
+            },
         )
     }
 }

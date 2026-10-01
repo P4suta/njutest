@@ -6,6 +6,9 @@
 use std::io;
 use std::path::Path;
 
+/// Cargo command classes the engine knows of that never run under a run's watch, so no record can count them.
+pub const UNOBSERVED_CARGO: [&str; 1] = ["cargo -vV toolchain banners"];
+
 /// Publishes explicitly measured test work, or does nothing when cost recording was not requested.
 ///
 /// # Errors
@@ -31,7 +34,7 @@ fn published(
         .ok_or_else(|| io::Error::other("the test cost root is not UTF-8"))?;
     std::fs::create_dir_all(&directory)?;
     let record = serde_json::json!({
-        "schema": "njutest-test-cost-v1", "binary": binary, "test": test, "root": root,
+        "schema": "njutest-test-cost-v2", "binary": binary, "test": test, "root": root,
         "work": work, "sealed": sealed,
     });
     let mut staged = tempfile::Builder::new()
@@ -45,11 +48,16 @@ fn published(
     Ok(())
 }
 
-/// Records one direct Cargo build, counting only the compiler artifacts Cargo reported fresh.
+/// Records one direct Cargo build, named by `context`, counting only the compiler artifacts Cargo reported fresh.
 ///
 /// # Errors
 /// A measured duration, artifact count or diagnostic cannot be represented or written.
-pub fn build(root: &Path, duration: std::time::Duration, stdout: &[u8]) -> io::Result<()> {
+pub fn build(
+    root: &Path,
+    context: &str,
+    duration: std::time::Duration,
+    stdout: &[u8],
+) -> io::Result<()> {
     if std::env::var_os("NJUTEST_TEST_COST_DIR").is_none() {
         return Ok(());
     }
@@ -64,12 +72,22 @@ pub fn build(root: &Path, duration: std::time::Duration, stdout: &[u8]) -> io::R
         }
     }
     let millis = u64::try_from(duration.as_millis()).map_err(io::Error::other)?;
+    let identity = format!("direct: {context}");
+    let mut unbound = serde_json::Map::new();
+    unbound.insert(
+        identity,
+        serde_json::json!({"requests": 1, "misses": 0, "processes": 1}),
+    );
+    let unbound = serde_json::Value::Object(unbound);
     published(
         root,
         &serde_json::json!({
             "builds": 1, "build_ms": millis, "units": units,
             "build_requests": 1, "build_hits": 0, "build_misses": 0,
-            "build_keys": [], "uncacheable": 1,
+            "build_keys": {},
+            "unbound": unbound,
+            "direct_commands": 0, "cargo_test_processes": 0, "cargo_other_processes": 0,
+            "unobserved_cargo": UNOBSERVED_CARGO,
             "platform": [], "platform_requests": 0, "error": null,
         }),
         &serde_json::Value::Null,
@@ -77,11 +95,14 @@ pub fn build(root: &Path, duration: std::time::Duration, stdout: &[u8]) -> io::R
     )
 }
 
-/// Runs a direct fixture build with Cargo JSON messages and records its actual work.
+/// Runs a direct fixture build, named by `context`, with Cargo JSON messages and records its actual work.
 ///
 /// # Errors
 /// Cargo cannot be started or its complete diagnostic cannot be written.
-pub fn cargo(mut command: std::process::Command) -> io::Result<std::process::Output> {
+pub fn cargo(
+    mut command: std::process::Command,
+    context: &str,
+) -> io::Result<std::process::Output> {
     if !command.get_args().any(|arg| {
         arg == "--message-format"
             || arg
@@ -95,6 +116,6 @@ pub fn cargo(mut command: std::process::Command) -> io::Result<std::process::Out
     let root = command
         .get_current_dir()
         .ok_or_else(|| io::Error::other("a measured fixture build needs its directory"))?;
-    build(root, began.elapsed(), &output.stdout)?;
+    build(root, context, began.elapsed(), &output.stdout)?;
     Ok(output)
 }

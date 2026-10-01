@@ -18,14 +18,19 @@ The CI jobs continue running the same complete suite.
 Cranelift `None` was rejected as the default: the recursive Rust guest spends 121,950 fuel rather than the established `Speed` tier's 121,923, which changes its full transcript.
 
 The gate refuses growth in toolchain test inventories, actual fixture Cargo processes, build requests, module compilations and requested modules, and refuses missing cost records or toolchain binaries.
-Each binary's cold Cargo ceiling is its distinct bound input keys plus uncacheable requests, or its observed process count when verification repairs require more work.
+Cost records keep per-key multiplicity under `njutest-test-cost-v2`: every bound input key counts its own requests, actual processes, hits, misses with a concrete `cold:` or `repair:` reason, and refused record writes; unbound commands publish an `unbound: ` reason and builds outside the compiler facade a `direct: ` one, never a fabricated key.
+The reader sums multiplicity across every record of a test and across the suite, and refuses inventories that do not close — requests into hits and misses, misses into processes and their reasons, processes into the build count, and requests into the request count.
+Two cold builds of one bound input inside one test are a redundancy error even when a ceiling could cover them, unless that key's record shows a refused write naming the concrete cause; a corruption repair stays visible by its own reason and is not redundancy.
+A v1 record never measured multiplicity and is refused rather than read with invented counters, and the committed pre-v2 ledger must be re-recorded before the gate can pass again.
+Each binary's Cargo ceiling is its measured process count; there is no per-binary guessed cold reserve, and the direct guest binary's builds are counted as the unbound processes they are, with its per-build records scaling its build count.
 The module compilation ceiling is the recorded request inventory; build and module requests are also gated so warm hits cannot hide new work.
 Requested modules include platform requests even when an already built object supplies the probe's answer, so a warm cache cannot hide new module work.
 Actual module preparations and cache hits/misses remain separately reported.
 Preparing more modules than the recorded requests also fails the gate.
-The direct guest binary reserves up to three concurrent cold builds of the same content-cached libtest guest at three nextest threads; those optional build records do not make warm runs look incomplete, and extra builds still fail the gate.
-`python3 scripts/test-suite-cost.py` checks growth and incomplete/foreign record rejection.
-Direct native builds, hand-written validation, the edit oracle and bundle builds publish the same diagnostic shape, and the gate refuses silent zero budgets for the direct-build binaries.
+`python3 scripts/test-suite-cost.py` checks growth, incomplete/foreign record rejection, unclosed inventories, redundant cold builds and refused historical schemas.
+Direct native builds, hand-written validation, the edit oracle and bundle builds publish the same diagnostic shape with their own `direct: ` identity, and the gate refuses silent zero budgets for the direct-build binaries.
+Observed Cargo commands are separated into build processes, native test executions and other commands; `unobserved_cargo` names the classes no record can see — the `cargo -vV` toolchain banners — so the inventory states its own missing coverage instead of implying a false zero.
+The module key of a shared slot, host wait time, standalone product runs without a nextest context, and per-process resource use are not instrumented by this accounting; a standalone run records no cost record at all, which is an absence, not a measured zero.
 
 ## Measurements on 2026-10-01
 

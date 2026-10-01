@@ -50,8 +50,11 @@ fn run_build(spec: &Spec) -> RunResult {
     rust_mutants::cargo::record_build(
         spec.env.as_ref(),
         spec.dir.as_deref().expect("build root"),
-        result.duration,
-        &messages,
+        rust_mutants::cargo::DirectBuild {
+            context: "a direct build the test made itself",
+            duration: result.duration,
+            messages: &messages,
+        },
     )
     .expect("direct build diagnostics");
     result

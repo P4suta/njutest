@@ -407,7 +407,7 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
             "the compilation was cancelled",
         ));
     }
-    let (request, reused) = cached(driver, options, (&spec, &trace));
+    let (identity, request, reused) = cached(driver, options, (&spec, &trace));
     if let Some(compiled) = reused {
         if driver.cancel.is_cancelled() {
             return Err(CargoError::new(
@@ -418,55 +418,88 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
         return Ok(compiled);
     }
     let result = run(&spec, driver.cancel);
+    trace.note("fixture-build-process", identity.detail());
     let compiled = completed(driver, options, (&spec, &result, &trace))?;
     if let (Some(request), Some(env)) = (request, &spec.env)
         && let Err(source) =
             request.write(&compiled, &result.stdout, (env, options.target_dir.path()))
     {
-        trace.note("build-cache-unavailable", &source.to_string());
+        trace.note(
+            "build-cache-unavailable",
+            &format!("{} {source}", request.key),
+        );
         trace.note("fixture-build-uncacheable", &source.to_string());
     }
     Ok(compiled)
+}
+
+/// What one compilation asked the cache for: its complete input key, or the concrete reason it has none.
+#[derive(Debug, Clone)]
+enum Identity {
+    /// The complete content-addressed input key this compilation is bound to.
+    Key(String),
+    /// Why no complete key exists, spelled `unbound: ` before the cause.
+    Unbound(String),
+}
+
+impl Identity {
+    fn detail(&self) -> &str {
+        match self {
+            Self::Key(key) => key,
+            Self::Unbound(reason) => reason,
+        }
+    }
 }
 
 fn cached(
     driver: &Driver<'_>,
     options: &CompileOptions,
     (spec, trace): (&crate::runner::Spec, &crate::trace::Recorder),
-) -> (Option<super::build_cache::Request>, Option<Compiled>) {
+) -> (
+    Identity,
+    Option<super::build_cache::Request>,
+    Option<Compiled>,
+) {
     match &spec.env {
         Some(env) => match super::build_cache::Request::of(driver, options, env) {
             Ok(request) => {
-                trace.note("fixture-build-request", &request.key);
+                let identity = Identity::Key(request.key.clone());
+                trace.note("fixture-build-request", identity.detail());
                 trace.note("build-cache-bound", &request.key);
                 match request.read(driver, options, env) {
                     Ok(compiled) => {
                         trace.note("build-cache-hit", &request.key);
                         trace.note("cargo-built-units", "0");
-                        return (Some(request), Some(compiled));
+                        return (identity, Some(request), Some(compiled));
                     }
                     Err(source) => {
-                        trace.note("build-cache-miss", &format!("{} {source}", request.key));
+                        let class = if source.kind() == std::io::ErrorKind::NotFound {
+                            "cold"
+                        } else {
+                            "repair"
+                        };
+                        trace.note(
+                            "build-cache-miss",
+                            &format!("{} {class}: {source}", request.key),
+                        );
                     }
                 }
-                (Some(request), None)
+                (identity, Some(request), None)
             }
             Err(source) => {
-                let key = crate::id::HexDigest::of(
-                    format!("{:?}/{:?}", spec.argv, env.canonical()).as_bytes(),
-                );
-                trace.note("fixture-build-request", key.as_str());
-                trace.note("fixture-build-uncacheable", key.as_str());
-                trace.note("build-cache-miss", &format!("{key} {source}"));
-                (None, None)
+                let identity = Identity::Unbound(format!("unbound: {source}"));
+                trace.note("fixture-build-request", identity.detail());
+                trace.note("fixture-build-uncacheable", &source.to_string());
+                trace.note("build-cache-miss", identity.detail());
+                (identity, None, None)
             }
         },
         None => {
-            let key = crate::id::HexDigest::of(format!("{:?}", spec.argv).as_bytes());
-            trace.note("fixture-build-request", key.as_str());
-            trace.note("fixture-build-uncacheable", key.as_str());
-            trace.note("build-cache-miss", &format!("{key} inherited environment"));
-            (None, None)
+            let identity = Identity::Unbound("unbound: inherited environment".to_owned());
+            trace.note("fixture-build-request", identity.detail());
+            trace.note("fixture-build-uncacheable", identity.detail());
+            trace.note("build-cache-miss", identity.detail());
+            (identity, None, None)
         }
     }
 }

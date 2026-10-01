@@ -100,8 +100,11 @@ and `rust-mutants why-skipped` tallies the skip reasons of a tree.
 
 ## Suite cost diagnostics
 
-A run with explicit `NJUTEST_TEST_COST_DIR`, `NEXTEST_BINARY_ID` and `NEXTEST_TEST_NAME` inputs writes a complete `njutest-test-cost-v1` record when its recorder closes, including fixture Cargo calls, fresh units, platform-probe work and sealed bench work.
-Incomplete records, invalid counts and records from another JUnit inventory cannot establish a cost baseline.
+A run with explicit `NJUTEST_TEST_COST_DIR`, `NEXTEST_BINARY_ID` and `NEXTEST_TEST_NAME` inputs writes a complete `njutest-test-cost-v2` record when its recorder closes, including fixture Cargo calls, fresh units, platform-probe work and sealed bench work.
+The record keeps every bound build key's multiplicity — requests, actual processes, hits, misses, each miss's concrete `cold:` or `repair:` reason, and refused record writes — beside the unbound identities (`unbound: ` for a command the input model cannot bind, `direct: ` for a build outside the compiler facade), each with its own requests, misses and processes.
+Observed Cargo commands are separated into build processes, native test executions and other commands, and `unobserved_cargo` names the command classes that never run under a run's watch — today the `cargo -vV` toolchain banners — so a zero elsewhere cannot claim a complete inventory.
+Incomplete records, invalid counts, unclosed inventories and records from another JUnit inventory cannot establish a cost baseline; a v1 record never measured multiplicity and is refused rather than read with invented zeros.
+The `fixture-build-process` note names the complete input key, or the unbound reason, of one actual Cargo process, so attribution survives any interleaving.
 The `fixture-cargo-build` note counts a typed Cargo compilation even when the execution's path cannot be represented as text.
 The `cargo-built-units` note counts compiler artifacts whose Cargo message says `fresh: false`.
 The `sealed-platform-work` note carries the standalone probe runner's measured work, and `sealed-platform-request` counts requests even when a prior successful probe supplies the object.

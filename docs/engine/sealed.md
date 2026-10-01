@@ -139,7 +139,7 @@ Only diagnostic and scratch variables are excluded, and dep-info that reads one 
 Build scripts, procedural macros, unbound compiler inputs, custom compiler or linker programs, and unsupported configuration or flags fall back to Cargo.
 A hit verifies the recorded artifact and dep-info digests, modes, complete Cargo message stream and compiler input/environment inventory before returning without a Cargo process.
 A missing, malformed or damaged record or artifact falls back to Cargo; damaged owned outputs are removed so Cargo must rebuild them.
-`build-cache-hit` and `build-cache-miss` notes carry the input key, and cost records separate requests, actual processes and hits.
+`build-cache-hit` notes carry the input key; `build-cache-miss` notes carry the key with a `cold:` or `repair:` class before the concrete cause, and `fixture-build-process` names the key, or an `unbound: `/`direct: ` reason, of one actual process, so cost records keep every key's multiplicity of requests, processes, hits and misses.
 The source slot and its owner remain held through the reuse and execution.
 
 The unpartitioned local suite records this work through `mise run test:cost`, which refuses count growth against the committed ledger.

@@ -59,7 +59,9 @@ impl Drop for MeasuredRunner {
         njutest_devkit::cost::record(
             std::path::Path::new("sealed-guests"),
             &serde_json::json!({"builds": 0, "build_ms": 0, "units": 0, "platform": [], "platform_requests": 0, "error": null,
-                "build_requests": 0, "build_hits": 0, "build_misses": 0, "build_keys": [], "uncacheable": 0}),
+                "build_requests": 0, "build_hits": 0, "build_misses": 0, "build_keys": {}, "unbound": {},
+                "direct_commands": 0, "cargo_test_processes": 0, "cargo_other_processes": 0,
+                "unobserved_cargo": njutest_devkit::cost::UNOBSERVED_CARGO}),
             &serde_json::to_value(self.0.spent()).expect("the runner's measured work"),
         )
         .expect("the guest's complete cost record");

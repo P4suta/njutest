@@ -692,7 +692,7 @@ fn compiles_by_hand(name: &str, candidate: &rust_mutants::catalog::Candidate) ->
         .current_dir(fixture.root())
         .env("RUSTFLAGS", "-D warnings")
         .env("CARGO_TARGET_DIR", fixture.temp().join("by-hand"));
-    njutest_devkit::cost::cargo(command)
+    njutest_devkit::cost::cargo(command, "a hand-written validation build")
         .expect("cargo runs")
         .status
         .success()
