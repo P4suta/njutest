@@ -8,17 +8,22 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 **Status: implemented**.
 The complete nextest suite runs once, without partitioning, through `mise run test:cost`.
 The task records successful and failed test output in JUnit and joins every engine cost record to that inventory.
-Measurements are written under `target/suite-cost/run-*`, with per-test and per-binary durations, Cargo build calls and fresh units, module preparations and cache hits/misses, and preparation versus execution time.
+Measurements are written under `target/suite-cost/run-*`, with per-test and per-binary durations, actual Cargo processes, build requests and verified hits, fresh units, module preparations and cache hits/misses, and preparation versus execution time.
+The command uses three nextest threads, three outer Cargo build jobs, one nested job per toolchain test, an empty compiler wrapper and a fresh fixture pool.
+`machine.json` and `load.jsonl` record the command, host, CPU count, load and sampled running toolchain processes.
+JUnit start instants and durations also reconstruct exact toolchain overlap, and each test is joined to its nearest load sample.
 `mise run test:cost -- --record` updates this platform's reviewed `.config/suite-costs.json` count ledger after a passing complete suite.
 A new platform needs its own measured ledger before the gate can pass there.
 The CI jobs continue running the same complete suite.
 Cranelift `None` was rejected as the default: the recursive Rust guest spends 121,950 fuel rather than the established `Speed` tier's 121,923, which changes its full transcript.
 
-The gate refuses growth in toolchain test inventories, fixture Cargo calls and requested modules, and refuses missing cost records or toolchain binaries.
+The gate refuses growth in toolchain test inventories, actual fixture Cargo processes, build requests, module compilations and requested modules, and refuses missing cost records or toolchain binaries.
+Each binary's cold Cargo ceiling is its distinct bound input keys plus uncacheable requests, or its observed process count when verification repairs require more work.
+The module compilation ceiling is the recorded request inventory; build and module requests are also gated so warm hits cannot hide new work.
 Requested modules include platform requests even when an already built object supplies the probe's answer, so a warm cache cannot hide new module work.
 Actual module preparations and cache hits/misses remain separately reported.
 Preparing more modules than the recorded requests also fails the gate.
-The direct guest binary reserves up to two concurrent cold builds of the same content-cached libtest guest at two nextest threads; those optional build records do not make warm runs look incomplete, and extra builds still fail the gate.
+The direct guest binary reserves up to three concurrent cold builds of the same content-cached libtest guest at three nextest threads; those optional build records do not make warm runs look incomplete, and extra builds still fail the gate.
 `python3 scripts/test-suite-cost.py` checks growth and incomplete/foreign record rejection.
 Direct native builds, hand-written validation, the edit oracle and bundle builds publish the same diagnostic shape, and the gate refuses silent zero budgets for the direct-build binaries.
 

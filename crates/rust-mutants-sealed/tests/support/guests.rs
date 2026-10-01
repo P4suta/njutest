@@ -38,7 +38,8 @@ fn succeeded(mut command: std::process::Command, what: &str) -> std::process::Ou
     if build {
         let millis = u64::try_from(started.elapsed().as_millis()).expect("a measured build duration");
         njutest_devkit::cost::record(std::path::Path::new("sealed-guests"),
-            &serde_json::json!({"builds": 1, "build_ms": millis, "units": 0, "platform": [], "platform_requests": 0, "error": null}),
+            &serde_json::json!({"builds": 1, "build_ms": millis, "units": 0, "platform": [], "platform_requests": 0, "error": null,
+                "build_requests": 1, "build_hits": 0, "build_misses": 0, "build_keys": [], "uncacheable": 1}),
             &serde_json::Value::Null).expect("the direct fixture build's cost record");
     }
     assert!(

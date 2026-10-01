@@ -205,6 +205,26 @@ fn the_ci_profile_stores_every_success_and_failure_in_junit() {
         );
     }
 }
+
+#[test]
+fn the_cost_measurement_uses_ci_concurrency_and_records_machine_load() {
+    let script = read("scripts/run-suite-cost.py");
+    assert!(script.contains("environment[\"CARGO_BUILD_JOBS\"] = \"3\""));
+    assert!(
+        script.contains("\"--test-threads\", \"3\"")
+            && script.contains("\"--status-level\", \"pass\"")
+    );
+    for field in [
+        "load.jsonl",
+        "machine.json",
+        "toolchain_running",
+        "maximum_observed_toolchain_concurrency",
+        "os.getloadavg()",
+    ] {
+        assert!(script.contains(field), "measurements require {field}");
+    }
+}
+
 fn native_sleep(source: &str) -> bool {
     use syn::visit::Visit as _;
     struct Sleeps {

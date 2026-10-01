@@ -3,6 +3,7 @@
 
 //! Cost counters fed by the same events as a recording, kept independently of verdicts.
 
+use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::{self, Write as _};
 use std::path::Path;
@@ -26,6 +27,11 @@ pub(super) struct Costs {
 #[derive(Debug, Default, Serialize)]
 struct Work {
     builds: u64,
+    build_requests: u64,
+    build_hits: u64,
+    build_misses: u64,
+    build_keys: BTreeSet<String>,
+    uncacheable: u64,
     build_ms: u64,
     units: u64,
     platform: Vec<rust_mutants_sealed::Spent>,
@@ -106,6 +112,8 @@ impl Costs {
                 matches!(command.as_str(), "check" | "build" | "test" | "rustc")
             });
             if cargo && builds && !exec.argv.iter().any(|arg| arg == "--message-format=json") {
+                counted(&mut work, "fixture-build-request");
+                counted(&mut work, "fixture-build-uncacheable");
                 let counts = work
                     .builds
                     .checked_add(1)
@@ -138,6 +146,10 @@ impl Costs {
             }
         }
         if let Payload::Note { note } = payload {
+            counted(&mut work, &note.kind);
+            if note.kind == "build-cache-bound" {
+                work.build_keys.insert(note.detail.clone());
+            }
             if note.kind == "sealed-platform-request" {
                 match work.platform_requests.checked_add(1) {
                     Some(requests) => work.platform_requests = requests,
@@ -167,6 +179,20 @@ impl Costs {
                 }
             }
         }
+    }
+}
+
+fn counted(work: &mut Work, kind: &str) {
+    let count = match kind {
+        "fixture-build-request" => &mut work.build_requests,
+        "fixture-build-uncacheable" => &mut work.uncacheable,
+        "build-cache-hit" => &mut work.build_hits,
+        "build-cache-miss" => &mut work.build_misses,
+        _ => return,
+    };
+    match count.checked_add(1) {
+        Some(next) => *count = next,
+        None => work.error = Some(format!("{kind} accounting overflowed")),
     }
 }
 

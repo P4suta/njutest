@@ -68,6 +68,8 @@ pub fn build(root: &Path, duration: std::time::Duration, stdout: &[u8]) -> io::R
         root,
         &serde_json::json!({
             "builds": 1, "build_ms": millis, "units": units,
+            "build_requests": 1, "build_hits": 0, "build_misses": 0,
+            "build_keys": [], "uncacheable": 1,
             "platform": [], "platform_requests": 0, "error": null,
         }),
         &serde_json::Value::Null,

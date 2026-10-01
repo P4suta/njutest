@@ -376,16 +376,39 @@ pub fn text_in_json(text: &str) -> String {
 pub const TOOLCHAIN_TESTS_AT_ONCE: usize = 4;
 
 /// The jobs a cargo started by a test may use: this machine's share for one of [`TOOLCHAIN_TESTS_AT_ONCE`] tests, never fewer than one.
+///
+/// # Panics
+/// `CARGO_BUILD_JOBS` is present but is not a positive textual count.
 #[must_use]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "invalid nested Cargo setup must fail the test before measuring any fixture"
+)]
 pub fn nested_build_jobs() -> usize {
     let cores = match std::thread::available_parallelism() {
         Ok(cores) => cores.get(),
         Err(_unknown) => 1,
     };
-    cores
-        .checked_div(TOOLCHAIN_TESTS_AT_ONCE)
-        .unwrap_or(1)
-        .max(1)
+    let ceiling = match std::env::var(JOBS) {
+        Ok(value) => Some(
+            value
+                .parse::<std::num::NonZeroUsize>()
+                .expect("CARGO_BUILD_JOBS names a positive test build budget")
+                .get(),
+        ),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => panic!("CARGO_BUILD_JOBS must be textual"),
+    };
+    nested_job_share(cores, ceiling)
+}
+
+fn nested_job_share(cores: usize, ceiling: Option<usize>) -> usize {
+    let budget = match ceiling {
+        Some(ceiling) => cores.min(ceiling),
+        None => cores,
+    };
+    (budget / TOOLCHAIN_TESTS_AT_ONCE).max(1)
 }
 
 /// The parent's environment for a new in-process run, with the variables that run must compose for itself taken out.
@@ -732,6 +755,13 @@ mod target_tests {
         SEALED_TARGET, holds_a_standard_library, missing_target, pinned_toolchain,
         toolchain_setting,
     };
+
+    #[test]
+    fn nested_cargos_share_the_callers_build_budget() {
+        assert_eq!(super::nested_job_share(24, Some(3)), 1);
+        assert_eq!(super::nested_job_share(24, Some(8)), 2);
+        assert_eq!(super::nested_job_share(8, None), 2);
+    }
 
     #[test]
     fn a_standard_library_is_held_only_where_one_was_compiled() -> io::Result<()> {

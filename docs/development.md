@@ -443,6 +443,9 @@ A test is run by its path within the suite, `cargo test -p xtask --test suite do
 ### The platform this machine is not
 
 The pipeline runs the suite on Linux, macOS, and Windows, and most of what the other two answer differently needs their machine to find out.
+The complete test and coverage steps use three nextest threads and report every passed test with its duration.
+Their step deadlines leave time before the existing job deadlines to upload JUnit and engine cost records with `if: always()`.
+`mise run test:cost` uses the same three-thread, three-build-job shape and records machine load and observed toolchain concurrency beside the suite measurements.
 Code behind `#[cfg(windows)]` does not: this machine's compiler never reads it, so a workspace that builds here can fail to build there on a lint nobody could have seen.
 `mise run lint:windows` asks for the reading without the machine: it is clippy for the Windows target with every warning an error, since a type check passes a lint that CI's Windows job fails on.
 It needs the target's standard library once:
