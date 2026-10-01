@@ -34,8 +34,35 @@ const PLENTY: u64 = 20_000_000_000;
 const STARTED: u64 = 1_750_000_000_000_000_000;
 
 /// A runner for one test.
-fn runner() -> SealedRunner {
-    SealedRunner::new(WATCHDOG).expect("the sealed runner starts")
+fn runner() -> MeasuredRunner {
+    MeasuredRunner(
+        SealedRunner::cached(
+            WATCHDOG,
+            &njutest_devkit::paths::workspace_root().join("target/wasmtime-modules-v1"),
+        )
+        .expect("the sealed runner starts"),
+    )
+}
+
+/// One runner whose direct guest work is included in the suite's cost ledger.
+struct MeasuredRunner(SealedRunner);
+
+impl MeasuredRunner {
+    /// Prepares a module while retaining the runner's owned cost observer.
+    fn prepare(&self, bytes: &[u8]) -> Result<SealedModule<'_>, rust_mutants_sealed::SealedError> {
+        self.0.prepare(bytes)
+    }
+}
+
+impl Drop for MeasuredRunner {
+    fn drop(&mut self) {
+        njutest_devkit::cost::record(
+            std::path::Path::new("sealed-guests"),
+            &serde_json::json!({"builds": 0, "build_ms": 0, "units": 0, "platform": [], "platform_requests": 0, "error": null}),
+            &serde_json::to_value(self.0.spent()).expect("the runner's measured work"),
+        )
+        .expect("the guest's complete cost record");
+    }
 }
 
 /// The snapshot the filesystem tests read and change.
@@ -736,6 +763,34 @@ fn deep_recursion_overflows_the_stack() {
         "{}",
         stderr(&transcript)
     );
+}
+
+/// A changed stack layout cannot silently change the fuel or transcript of a recursive guest.
+#[test]
+fn compiler_tiers_preserve_the_recursive_guests_full_observation_or_keep_the_optimized_tier() {
+    let bytes = program_bytes();
+    let observation = |tier| {
+        let runner = MeasuredRunner(
+            SealedRunner::with_compiler(WATCHDOG, tier, None).expect("the compiler tier"),
+        );
+        let module = runner.prepare(&bytes).expect("the same guest bytes");
+        let transcript = run(&module, &invocation(&["recurse"]));
+        let mut value = serde_json::to_value(&transcript).expect("the full observation");
+        let fields = value.as_object_mut().expect("a transcript is an object");
+        assert!(fields.remove("invocation").is_some());
+        assert!(fields.remove("digest").is_some());
+        println!("{tier:?}: {value}");
+        value
+    };
+    let optimized = observation(rust_mutants_sealed::CompilerTier::Optimized);
+    let unoptimized = observation(rust_mutants_sealed::CompilerTier::Unoptimized);
+    if optimized != unoptimized {
+        assert_eq!(
+            rust_mutants_sealed::CompilerTier::faithful(),
+            rust_mutants_sealed::CompilerTier::Optimized,
+            "the cheaper tier changes the recursive guest's observation"
+        );
+    }
 }
 
 /// An invocation of the libtest harness with `arguments` after its name, and nothing preopened.

@@ -3,6 +3,8 @@
 
 //! The public entry point: a read-only source tree, copied.
 
+mod pool;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -251,6 +253,7 @@ pub struct Workspace {
     pub(crate) offline: bool,
     pub(crate) locked: bool,
     pub(crate) trace: Recorder,
+    build_owner: Option<std::sync::Arc<crate::sealed::BuildClaim>>,
 }
 
 /// Why the workspace layer could not do what it was asked.
@@ -978,9 +981,15 @@ impl Workspace {
     /// The snapshot's refusals, and whatever stopped the toolchain from being located or `cargo metadata` from being read.
     pub fn open(
         root: &Path,
-        options: OpenOptions,
+        mut options: OpenOptions,
         cancel: &Cancel,
     ) -> Result<Self, crate::EngineError> {
+        options.trace = options.trace.costed(&options.env, root).map_err(|source| {
+            SessionError::WriteFailed {
+                path: "test cost diagnostic".to_owned(),
+                source,
+            }
+        })?;
         let phase = options.trace.phase("open");
         let root = match crate::canonical::canonical(root) {
             Ok(root) => root,
@@ -990,19 +999,22 @@ impl Workspace {
         let now = jiff::Timestamp::now();
         let swept = swept(parent.path(), now);
 
-        let toolchain = Toolchain::locate(
-            &LocateOptions {
-                cargo: options.cargo.clone(),
-                search_path: options.search_path.clone(),
-                env: Some(options.env.clone()),
-            },
-            &root,
-            cancel,
-        )?;
+        let toolchain = Self::located(&root, &options, cancel)?;
         let build_dir = Self::reachable(&root, &toolchain, &options, cancel)?;
 
-        let rules = Self::rules_for(&root, build_dir, parent.path(), &options)?;
+        let mut rules = Self::rules_for(&root, build_dir, parent.path(), &options)?;
         let snapshot = Self::copy(&root, &rules, &options, now)?;
+        let (snapshot, build_owner) = Self::shared(
+            snapshot,
+            &mut rules,
+            &options,
+            &Driver {
+                toolchain: &toolchain,
+                dir: &root,
+                cancel,
+                trace: &options.trace,
+            },
+        )?;
         let (watched, base_env) = Self::watching(&snapshot, &options.env)?;
         let (scratch_dir, scratch_owner) = claim_scratch(parent.path(), now)?;
         let base_env = tested(
@@ -1011,19 +1023,9 @@ impl Workspace {
             (&snapshot, &scratch_dir, &options.trace),
             cancel,
         )?;
-        options.trace.open(OpenRecord {
-            root: root.display().to_string(),
-            snapshot_dir: snapshot.dir().display().to_string(),
-            stable_dir: snapshot.stable_dir(),
-            sweep: Some(SweepRecord {
-                parent: parent.path().display().to_string(),
-                removed: trace_count("removed temporary directories", swept.removed.len())?,
-                removed_bytes: swept.removed_bytes,
-                live: trace_count("live temporary directories", swept.live)?,
-                kept: trace_count("kept temporary directories", swept.kept)?,
-                failures: trace_count("temporary cleanup failures", swept.failures.len())?,
-            }),
-        });
+        options
+            .trace
+            .open(Self::opening(&root, &snapshot, (parent.path(), &swept))?);
         let metadata = Metadata::load(
             &Driver {
                 toolchain: &toolchain,
@@ -1036,7 +1038,10 @@ impl Workspace {
                 offline: options.offline,
             },
         )?;
-        let target_dir = target_of(parent.path(), &root);
+        let target_dir = match &build_owner {
+            Some(owner) => Self::shared_target(owner.dir(), &snapshot, &metadata, &options.env)?,
+            None => target_of(parent.path(), &root),
+        };
         let target_owner = claim_target(&target_dir, now, &root);
         let scratch_owner = Some(scratch_owner);
         phase.end();
@@ -1056,6 +1061,91 @@ impl Workspace {
             offline: options.offline,
             locked: options.locked,
             trace: options.trace,
+            build_owner,
+        })
+    }
+
+    /// Locates the compiler with exactly the caller's explicit input environment.
+    fn located(
+        root: &Path,
+        options: &OpenOptions,
+        cancel: &Cancel,
+    ) -> Result<Toolchain, crate::cargo::CargoError> {
+        Toolchain::locate(
+            &LocateOptions {
+                cargo: options.cargo.clone(),
+                search_path: options.search_path.clone(),
+                env: Some(options.env.clone()),
+            },
+            root,
+            cancel,
+        )
+    }
+
+    /// The shared target identity, including every input of an opaque compilation graph.
+    fn shared_target(
+        slot: &Path,
+        snapshot: &Snapshot,
+        metadata: &Metadata,
+        vars: &crate::vars::Variables,
+    ) -> Result<PathBuf, SessionError> {
+        pool::target(slot, snapshot, metadata, vars).map_err(|source| SessionError::WriteFailed {
+            path: "shared fixture build inputs".to_owned(),
+            source,
+        })
+    }
+
+    /// Claims shared compiled content while recreating every run's source and execution state.
+    fn shared(
+        mut snapshot: Snapshot,
+        rules: &mut SnapshotOptions,
+        options: &OpenOptions,
+        driver: &Driver<'_>,
+    ) -> Result<(Snapshot, Option<std::sync::Arc<crate::sealed::BuildClaim>>), crate::EngineError>
+    {
+        let now = jiff::Timestamp::now();
+        if options.env.holds("NJUTEST_FIXTURE_BUILD_CACHE") {
+            let content =
+                pool::content(&snapshot, rules).map_err(|source| SessionError::WriteFailed {
+                    path: "shared fixture content identity".to_owned(),
+                    source,
+                })?;
+            let build_owner = pool::claim(&options.env, (&content, driver.toolchain), now)
+                .map_err(|source| SessionError::WriteFailed {
+                    path: "shared fixture build directory".to_owned(),
+                    source,
+                })?;
+            let build_owner = build_owner
+                .map(|owner| std::sync::Arc::new(crate::sealed::BuildClaim::new(owner, None)));
+            if let Some(owner) = &build_owner {
+                rules.dest_parent = owner.dir().to_path_buf();
+                let shared = Self::copy(driver.dir, rules, options, now)?;
+                snapshot.cleanup()?;
+                snapshot = shared;
+            }
+            return Ok((snapshot, build_owner));
+        }
+        Ok((snapshot, None))
+    }
+
+    /// The opening event, with the original temporary area's complete sweep counts.
+    fn opening(
+        root: &Path,
+        snapshot: &Snapshot,
+        (parent, swept): (&Path, &SweepResult),
+    ) -> Result<OpenRecord, SessionError> {
+        Ok(OpenRecord {
+            root: root.display().to_string(),
+            snapshot_dir: snapshot.dir().display().to_string(),
+            stable_dir: snapshot.stable_dir(),
+            sweep: Some(SweepRecord {
+                parent: parent.display().to_string(),
+                removed: trace_count("removed temporary directories", swept.removed.len())?,
+                removed_bytes: swept.removed_bytes,
+                live: trace_count("live temporary directories", swept.live)?,
+                kept: trace_count("kept temporary directories", swept.kept)?,
+                failures: trace_count("temporary cleanup failures", swept.failures.len())?,
+            }),
         })
     }
 
@@ -1341,8 +1431,12 @@ impl Workspace {
         let path = self
             .target_dir
             .with_file_name(format!("{TARGET_DIR_PREFIX}sealed-{key}"));
-        let owner = claim_target(&path, jiff::Timestamp::now(), self.root())
-            .map(|owner| std::sync::Arc::new(crate::sealed::BuildClaim::new(owner)));
+        let owner = claim_target(&path, jiff::Timestamp::now(), self.root()).map(|owner| {
+            std::sync::Arc::new(crate::sealed::BuildClaim::new(
+                owner,
+                self.build_owner.clone(),
+            ))
+        });
         (self.build_dir().at(path).nested("sealed"), owner)
     }
 
@@ -1492,7 +1586,10 @@ impl Workspace {
                 source,
             ),
         }
-        match (failure, self.snapshot.cleanup()) {
+        let cleaned = self.snapshot.cleanup();
+        let pool = self.build_owner.take();
+        drop(pool);
+        match (failure, cleaned) {
             (_, Err(source)) => Err(source.into()),
             (Some(failure), Ok(())) => Err(failure.into()),
             (None, Ok(())) => Ok(Vec::new()),

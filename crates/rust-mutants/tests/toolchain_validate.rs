@@ -146,6 +146,11 @@ fn prepare_fixture_with(name: &str, arrange: impl FnOnce(&std::path::Path)) -> C
     let toolchain = Toolchain::locate(
         &LocateOptions {
             cargo: Some(njutest_devkit::paths::cargo_binary()),
+            env: Some(
+                njutest_devkit::paths::environment_for_a_run()
+                    .into_iter()
+                    .collect(),
+            ),
             ..LocateOptions::default()
         },
         &root,
@@ -681,13 +686,15 @@ fn compiles_by_hand(name: &str, candidate: &rust_mutants::catalog::Candidate) ->
     let end = usize::try_from(candidate.span.end).expect("a small offset");
     source.splice(start..end, candidate.replacement.iter().copied());
     std::fs::write(&path, source).expect("the edit by hand");
-    std::process::Command::new(njutest_devkit::paths::cargo_binary())
+    let mut command = std::process::Command::new(njutest_devkit::paths::cargo_binary());
+    command
         .args(["check", "--all-targets", "--offline", "--locked", "--quiet"])
         .current_dir(fixture.root())
         .env("RUSTFLAGS", "-D warnings")
-        .env("CARGO_TARGET_DIR", fixture.temp().join("by-hand"))
-        .status()
+        .env("CARGO_TARGET_DIR", fixture.temp().join("by-hand"));
+    njutest_devkit::cost::cargo(command)
         .expect("cargo runs")
+        .status
         .success()
 }
 

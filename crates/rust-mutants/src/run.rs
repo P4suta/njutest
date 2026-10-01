@@ -1745,7 +1745,10 @@ pub fn sealed_runner(
     if session.sealed().modules.is_empty() && session.sealed().doctests.is_empty() {
         return Ok(None);
     }
-    match rust_mutants_sealed::SealedRunner::new(crate::sealed::bench::WATCHDOG) {
+    match rust_mutants_sealed::SealedRunner::cached(
+        crate::sealed::bench::WATCHDOG,
+        &session.module_cache(),
+    ) {
         Ok(runner) => Ok(Some(runner)),
         Err(source) => Err(crate::sealed::bench::BenchError::Runner { source }.into()),
     }

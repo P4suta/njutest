@@ -96,6 +96,44 @@ The engine starts instances from one compiled module, which stays in memory; a r
 A wall-clock watchdog stands behind every instance in case the host itself stops, and what it stops is the run, with an error, never a test with a verdict.
 An interrupted run stops the instance it is in at the next epoch or host call, and every mutant it had not decided is `not_run` for `interrupted`, as a native run's are.
 
+## Reusing compilation work
+
+The host uses Wasmtime 48.0.3's built-in content-addressed compiled-module cache across processes and runs.
+Wasmtime keys compiled code by the complete module bytes, compiler and target settings, engine tunables and features, and its own version.
+The engine uses the safe `Module::new` interface; repository code neither deserializes native code nor uses `unsafe`.
+The cache lives in `wasmtime-modules-v1` beside the session's build cache, or under the explicitly supplied `NJUTEST_FIXTURE_BUILD_CACHE` root.
+A cache hit still validates and links the module, and every invocation starts a fresh store and instance.
+`--no-cache` still establishes each observation again; compilation reuse does not answer an invocation or reuse a verdict.
+
+`run-end.sealed.compiles` counts module preparations, including cache hits.
+Its optional `compilation` records `hits`, `misses` and total `duration_ns` for validation, compilation or loading, and linking.
+Its optional `execution_ns` records the host time of fresh invocations that completed with a transcript.
+These measurements belong to diagnostics, never to transcript digests or evidence.
+Historical records without these fields do not acquire invented timing values.
+A cold platform probe records its own `sealed-platform-work` note, and every request records `sealed-platform-request`, even when the already built platform object answers it.
+
+The compiler defaults to Cranelift's `Speed` optimization level.
+The fixture differential oracle runs the same module bytes through `Speed` and `None`, comparing controls, verdicts, fuel and every transcript observation.
+Only the configuration-dependent invocation and transcript identity fields are removed from that comparison.
+The default may change only when that oracle and the recursive guest oracle find no changed observation.
+The recursive guest spends 121,923 fuel under `Speed` and 121,950 under `None` before the same stack-overflow trap, so `Speed` remains the faithful tier.
+The dev and inherited test profiles optimize Wasmtime, Cranelift and regalloc2 at level 3 because compiling sealed modules dominated their execution in the local measurements.
+
+Tests can share native and sealed fixture builds by supplying an absolute `NJUTEST_FIXTURE_BUILD_CACHE` directory.
+The engine keys exclusive source slots by the complete copied content digest, cargo and rustc versions and paths, and build inputs apart from diagnostic labels and temporary/cache directory names.
+It loads the final snapshot's complete Cargo graph once.
+Graphs with build scripts or procedural macros use a separate target directory for every full environment because those programs may consume undeclared inputs.
+Graphs without either share the slot's target directory; Cargo still tracks compile-time `env!` inputs in dep-info.
+Each claim gets a fresh source copy and separate execution scratch, and existing per-member content settling invalidates units whenever instrumentation or a catalog changes their source bytes.
+The claim lasts through the prepared session and every shared set of its sealed modules.
+A busy four-slot pool falls back to a private build directory.
+Verdicts, runtime records, transcripts and mutable execution state are never restored from a build slot.
+The native apparatus guard still watches executable identities and sibling runtime files, including shared libraries.
+Static `.rlib` archives, `.rmeta` metadata and `.d` dep-info are compile-only outputs that Cargo may regenerate or collect while running documentation tests; their removal does not change a running harness.
+
+The unpartitioned local suite records this work through `mise run test:cost`, which refuses count growth against the committed ledger.
+See [suite cost](suite-cost.md) for the measurements and commands.
+
 ## Judging one execution
 
 The host observes how the instance ended; the harness says what it thought happened.

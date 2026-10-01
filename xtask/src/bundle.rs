@@ -761,6 +761,17 @@ impl fmt::Display for Written {
 /// # Errors
 /// What the manifests, cargo, a binary or the filesystem refused; nothing is written under the archive's name until it reads back as planned.
 pub fn bundle(request: &Request<'_>) -> Result<Written, BundleError> {
+    bundle_observed(request, |_duration, _stdout| Ok(()))
+}
+
+/// Builds the same archive while reporting each Cargo build's actual duration and message stream.
+///
+/// # Errors
+/// The build, archive or caller's diagnostic observer refuses the operation.
+pub fn bundle_observed(
+    request: &Request<'_>,
+    mut observe: impl FnMut(std::time::Duration, &[u8]) -> std::io::Result<()>,
+) -> Result<Written, BundleError> {
     let packages = packages(request.root, request.cargo, request.environment)?;
     let plan = plan(&packages, request.target)?;
     let mut executables = BTreeMap::new();
@@ -774,7 +785,7 @@ pub fn bundle(request: &Request<'_>) -> Result<Written, BundleError> {
             .iter()
             .map(|program| program.binary.as_str())
             .collect();
-        let mut built = build(request, package, &binaries)?;
+        let mut built = build(request, package, &binaries, &mut observe)?;
         for program in programs {
             let executable =
                 built
@@ -860,6 +871,7 @@ fn build(
     request: &Request<'_>,
     package: &Package,
     binaries: &[&str],
+    observe: &mut impl FnMut(std::time::Duration, &[u8]) -> std::io::Result<()>,
 ) -> Result<BTreeMap<String, PathBuf>, BundleError> {
     let mut building = command(request.cargo, request.root, request.environment);
     building
@@ -872,8 +884,13 @@ fn build(
     for binary in binaries {
         building.args(["--bin", binary]);
     }
+    let began = std::time::Instant::now();
     let output = building.output().map_err(|source| BundleError::Start {
         program: shown(request.cargo),
+        source,
+    })?;
+    observe(began.elapsed(), &output.stdout).map_err(|source| BundleError::Start {
+        program: "build cost diagnostic".to_owned(),
         source,
     })?;
     if !output.status.success() {

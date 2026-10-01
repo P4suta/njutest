@@ -24,6 +24,11 @@ use rust_mutants::trace::{MemorySink, Payload, Recorder, Sink};
 fn toolchain(dir: &Path) -> Toolchain {
     let options = LocateOptions {
         cargo: Some(njutest_devkit::paths::cargo_binary()),
+        env: Some(
+            njutest_devkit::paths::environment_for_a_run()
+                .into_iter()
+                .collect(),
+        ),
         ..LocateOptions::default()
     };
     Toolchain::locate(&options, dir, &Cancel::new()).expect("locate")
@@ -92,6 +97,39 @@ fn built(root: &Path) -> (Vec<rust_mutants::execute::TestTarget>, SealedBuild) {
     )
     .expect("the sealed build is read");
     (native_targets, sealed)
+}
+
+#[test]
+fn opaque_graphs_separate_full_environment_inputs_while_pure_copies_share_targets() {
+    let cache = tempfile::tempdir().expect("the shared source slots");
+    for (name, opaque) in [("fixture-simple", false), ("fixture-build-script", true)] {
+        let mut targets = Vec::new();
+        let mut snapshots = Vec::new();
+        for label in ["one", "two"] {
+            let fixture = njutest_devkit::fixture::Fixture::copy(name);
+            let mut options = rust_mutants::workspace::OpenOptions {
+                cargo: Some(njutest_devkit::paths::cargo_binary()),
+                env: njutest_devkit::paths::environment_for_a_toolchain_run(&[])
+                    .into_iter()
+                    .collect(),
+                temp_directory: cache.path().to_path_buf(),
+                offline: true,
+                ..rust_mutants::workspace::OpenOptions::default()
+            };
+            options.env.set("NJUTEST_FIXTURE_BUILD_CACHE", cache.path());
+            let temporary = cache.path().join(label);
+            std::fs::create_dir_all(&temporary).expect("the caller's temporary directory");
+            options.env.set("TMPDIR", &temporary);
+            let workspace =
+                rust_mutants::workspace::Workspace::open(fixture.root(), options, &Cancel::new())
+                    .expect("the complete copied graph opens");
+            targets.push(workspace.target_dir().to_path_buf());
+            snapshots.push(workspace.snapshot_root().to_path_buf());
+            workspace.close().expect("the source slot is released");
+        }
+        assert_eq!(snapshots.first(), snapshots.last());
+        assert_eq!(targets.first() != targets.last(), opaque, "{name}");
+    }
 }
 
 fn sysroot() -> PathBuf {
@@ -448,7 +486,11 @@ fn a_sealed_build_refused_before_its_modules_exist_releases_its_cache() {
             .all(|why| *why == Unsealed::FlagsUnmerged),
         "the target's flags could not be merged"
     );
-    let cache = std::fs::read_dir(fixture.temp())
+    let parent = session
+        .target_dir()
+        .parent()
+        .expect("the build cache parent");
+    let cache = std::fs::read_dir(parent)
         .expect("the build caches")
         .map(|entry| entry.expect("a build cache").path())
         .find(|path| {
@@ -468,26 +510,32 @@ fn a_sealed_build_refused_before_its_modules_exist_releases_its_cache() {
 #[test]
 fn the_sealed_build_cache_is_released_only_when_its_last_modules_are_dropped() {
     let fixture = njutest_devkit::fixture::Fixture::copy("fixture-simple");
-    let session = rust_mutants::workspace::Workspace::open(
-        fixture.root(),
-        rust_mutants::testkit::opening::opening(
-            &njutest_devkit::paths::cargo_binary(),
-            fixture.temp(),
-        ),
-        &Cancel::new(),
-    )
-    .expect("open")
-    .prepare(
-        &rust_mutants::session::PrepareOptions::new(rust_mutants::rule::Tier::All),
-        &Cancel::new(),
-    )
-    .expect("prepare");
+    let mut opening = rust_mutants::testkit::opening::opening(
+        &njutest_devkit::paths::cargo_binary(),
+        fixture.temp(),
+    );
+    opening.env.set(
+        "NJUTEST_FIXTURE_BUILD_CACHE",
+        fixture.temp().join("shared-builds"),
+    );
+    let session = rust_mutants::workspace::Workspace::open(fixture.root(), opening, &Cancel::new())
+        .expect("open")
+        .prepare(
+            &rust_mutants::session::PrepareOptions::new(rust_mutants::rule::Tier::All),
+            &Cancel::new(),
+        )
+        .expect("prepare");
     let modules = session.sealed().clone();
     assert!(
         !modules.modules.is_empty(),
         "the session holds sealed modules"
     );
-    let cache = std::fs::read_dir(fixture.temp())
+    let pool = session
+        .target_dir()
+        .parent()
+        .expect("the content slot")
+        .to_path_buf();
+    let cache = std::fs::read_dir(&pool)
         .expect("the build caches")
         .map(|entry| entry.expect("a build cache").path())
         .find(|path| {
@@ -503,7 +551,19 @@ fn the_sealed_build_cache_is_released_only_when_its_last_modules_are_dropped() {
             .released,
         "a copy of the modules still holds the build cache"
     );
+    assert!(
+        !rust_mutants::tempowner::read_marker(&pool)
+            .expect("the pool owner")
+            .released,
+        "a copy of the modules still holds the shared content slot"
+    );
     drop(modules);
+    assert!(
+        rust_mutants::tempowner::read_marker(&pool)
+            .expect("the pool owner")
+            .released,
+        "the last modules release the shared content slot"
+    );
     assert!(
         rust_mutants::tempowner::read_marker(&cache)
             .expect("the owner marker")

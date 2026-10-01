@@ -30,9 +30,17 @@ fn pinned(program: &str, scratch: &std::path::Path) -> std::process::Command {
 
 /// What `command` printed, failing the test with everything it said where it did not succeed.
 fn succeeded(mut command: std::process::Command, what: &str) -> std::process::Output {
+    let build = command.get_program() == "cargo" && command.get_args().next() == Some(std::ffi::OsStr::new("test"));
+    let started = Instant::now();
     let output = command
         .output()
         .unwrap_or_else(|error| panic!("{what} could not be started: {error}"));
+    if build {
+        let millis = u64::try_from(started.elapsed().as_millis()).expect("a measured build duration");
+        njutest_devkit::cost::record(std::path::Path::new("sealed-guests"),
+            &serde_json::json!({"builds": 1, "build_ms": millis, "units": 0, "platform": [], "platform_requests": 0, "error": null}),
+            &serde_json::Value::Null).expect("the direct fixture build's cost record");
+    }
     assert!(
         output.status.success(),
         "{what} failed with {}:\n{}\n{}",

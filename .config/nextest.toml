@@ -55,3 +55,10 @@ threads-required = "num-test-threads"
 [[profile.default.overrides]]
 filter = 'binary(/^toolchain_/)'
 test-group = "toolchain"
+
+[profile.cost]
+
+[profile.cost.junit]
+path = "junit.xml"
+store-success-output = true
+store-failure-output = true

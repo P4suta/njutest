@@ -172,6 +172,7 @@ cargo_metadata = "0.23"
 similar = { version = "3.2", default-features = false, features = ["text"] }
 # The sealed host: exact pins, because the compiled code, the fuel each operator costs, and the traps it raises are part of every transcript digest.
 wasmtime = { version = "=48.0.3", default-features = false, features = [
+  "cache",
   "cranelift",
   "runtime",
   "std",
@@ -205,6 +206,21 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 1
+
+[profile.dev.package.wasmtime]
+opt-level = 3
+
+[profile.dev.package.wasmtime-internal-cranelift]
+opt-level = 3
+
+[profile.dev.package.cranelift-codegen]
+opt-level = 3
+
+[profile.dev.package.cranelift-frontend]
+opt-level = 3
+
+[profile.dev.package.regalloc2]
+opt-level = 3
 
 # cargo-mutants (the external tool that mutates *this* repository) builds with
 # this profile: see .cargo/mutants.toml.

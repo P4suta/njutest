@@ -92,21 +92,15 @@ pub fn flags(object: &str) -> Vec<String> {
 /// # Errors
 /// A `rustc` that could not be started, or a run that was cancelled.
 pub fn ready(driver: &Driver<'_>, root: &Path) -> Result<Readied, CargoError> {
-    let identity = crate::id::digest(
-        [
-            driver.toolchain.rustc_version().summary.as_str(),
-            SOURCE,
-            PROBE_SOURCE,
-            &super::start_linked().join(" "),
-        ]
-        .join("\0")
-        .as_bytes(),
-    );
-    let short = match identity.get(..16) {
-        Some(short) => short,
-        None => identity.as_str(),
+    let trace = match driver.toolchain.env() {
+        Some(vars) => driver
+            .trace
+            .costed(vars, driver.dir)
+            .map_err(|source| CargoError::new(CargoErrorKind::CommandFailed, source.to_string()))?,
+        None => driver.trace.clone(),
     };
-    let directory = root.join(short);
+    trace.note("sealed-platform-request", "1");
+    let directory = directory(root, driver.toolchain);
     let object = directory.join("platform.o");
     let Some(text) = object.to_str().map(str::to_owned) else {
         return Ok(Readied::Unanswered(format!(
@@ -162,11 +156,34 @@ pub fn ready(driver: &Driver<'_>, root: &Path) -> Result<Readied, CargoError> {
         )));
     }
     let bytes = std::fs::read(&module).map_err(|error| failed(&module, error))?;
-    if let Some(said) = unanswered(&bytes) {
+    if let Some(said) = unanswered(
+        &bytes,
+        &trace,
+        Some(&super::module_cache(root, driver.toolchain.env())),
+    ) {
         return Ok(Readied::Unanswered(said));
     }
     std::fs::write(&answered, PROBE_ANSWER).map_err(|error| failed(&answered, error))?;
     Ok(Readied::Object(text))
+}
+
+/// The platform object's directory, pinned to its compiler and source inputs.
+fn directory(root: &Path, toolchain: &crate::cargo::Toolchain) -> std::path::PathBuf {
+    let identity = crate::id::digest(
+        [
+            toolchain.rustc_version().summary.as_str(),
+            SOURCE,
+            PROBE_SOURCE,
+            &super::start_linked().join(" "),
+        ]
+        .join("\0")
+        .as_bytes(),
+    );
+    let short = match identity.get(..16) {
+        Some(short) => short,
+        None => identity.as_str(),
+    };
+    root.join(short)
 }
 
 /// What `rustc` said where it did not compile `source` into `output` for the sealed target with `arguments`, or nothing where it did.
@@ -209,7 +226,11 @@ fn compiled(
 }
 
 /// Why the probe module `bytes` does not answer the two directories from the environment, or nothing where it does.
-fn unanswered(bytes: &[u8]) -> Option<String> {
+fn unanswered(
+    bytes: &[u8],
+    trace: &crate::trace::Recorder,
+    cache: Option<&Path>,
+) -> Option<String> {
     let rewritten = match redirected(bytes, &REDIRECTS) {
         Ok(rewritten) if rewritten.counts.iter().all(|count| *count > 0) => rewritten.bytes,
         Ok(rewritten) => {
@@ -221,7 +242,11 @@ fn unanswered(bytes: &[u8]) -> Option<String> {
         }
         Err(error) => return Some(format!("the probe could not be rewritten: {error}")),
     };
-    let runner = match SealedRunner::new(super::bench::WATCHDOG) {
+    let runner = match SealedRunner::with_compiler(
+        super::bench::WATCHDOG,
+        rust_mutants_sealed::CompilerTier::faithful(),
+        cache,
+    ) {
         Ok(runner) => runner,
         Err(error) => return Some(format!("the host could not start: {error}")),
     };
@@ -233,7 +258,14 @@ fn unanswered(bytes: &[u8]) -> Option<String> {
         Ok(invocation) => invocation,
         Err(error) => return Some(format!("the probe's invocation: {error}")),
     };
-    match module.invoke(&invocation, &Interrupt::of(Vec::new())) {
+    let answer = module.invoke(&invocation, &Interrupt::of(Vec::new()));
+    if let Some(spent) = runner.spent() {
+        match serde_json::to_string(&spent) {
+            Ok(detail) => trace.note("sealed-platform-work", &detail),
+            Err(source) => trace.note("sealed-platform-work-invalid", &source.to_string()),
+        }
+    }
+    match answer {
         Ok(transcript)
             if transcript.stop() == SealedStop::Returned
                 && transcript.stdout().bytes() == PROBE_ANSWER.as_bytes() =>

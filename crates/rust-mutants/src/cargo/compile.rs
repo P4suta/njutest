@@ -392,8 +392,24 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
     }
     spec.structured_stdout = Some(MESSAGE_OUTPUT_LIMIT);
     spec.timeout = options.timeout;
+    let trace = match driver.toolchain.env() {
+        Some(vars) => driver.trace.costed(vars, driver.dir).map_err(|source| {
+            CargoError::new(
+                CargoErrorKind::CommandFailed,
+                format!("test cost diagnostic: {source}"),
+            )
+        })?,
+        None => driver.trace.clone(),
+    };
     let result = run(&spec, driver.cancel);
-    driver.trace.exec_result(ExecRecord::of(&spec, &result));
+    let millis = u64::try_from(result.duration.as_millis()).map_err(|_overflow| {
+        CargoError::new(
+            CargoErrorKind::CommandFailed,
+            "fixture build duration exceeds its diagnostic width",
+        )
+    })?;
+    trace.note("fixture-cargo-build", &millis.to_string());
+    trace.exec_result(ExecRecord::of(&spec, &result));
     if driver.cancel.is_cancelled() {
         return Err(CargoError::new(
             CargoErrorKind::Cancelled,
@@ -416,6 +432,8 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
         ));
     }
     let messages = parse_messages(&result.stdout)?;
+    let units = fresh_units(&messages)?;
+    trace.note("cargo-built-units", &units.to_string());
     let completion = match Completion::of(&messages, exited) {
         Ok(completion) => completion,
         Err(CompletionError::Unfinished { .. }) => return Err(command_failed(&spec, &result)),
@@ -435,4 +453,25 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
         messages,
         units,
     })
+}
+
+/// Counts only compiler artifacts Cargo actually rebuilt.
+pub(super) fn fresh_units(messages: &[Message]) -> Result<u64, CargoError> {
+    messages
+        .iter()
+        .try_fold(0_u64, |count, message| match message {
+            Message::CompilerArtifact(artifact) if !artifact.fresh => {
+                count.checked_add(1).ok_or_else(|| {
+                    CargoError::new(
+                        CargoErrorKind::MessageUnparsable,
+                        "compiled unit accounting overflowed",
+                    )
+                })
+            }
+            Message::CompilerArtifact(_)
+            | Message::CompilerMessage(_)
+            | Message::BuildScriptExecuted(_)
+            | Message::BuildFinished(_)
+            | Message::Other { .. } => Ok(count),
+        })
 }

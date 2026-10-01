@@ -2533,7 +2533,7 @@
                     "compiles": {
                       "type": "integer",
                       "minimum": 0,
-                      "description": "Modules compiled for the sealed target."
+                      "description": "Modules prepared for the sealed target, including compiled-module cache hits."
                     },
                     "instances": {
                       "type": "integer",
@@ -2544,6 +2544,22 @@
                       "type": "integer",
                       "minimum": 0,
                       "description": "Invocations a remembered transcript answered instead."
+                    },
+                    "compilation": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["hits", "misses", "duration_ns"],
+                      "properties": {
+                        "hits": { "type": "integer", "minimum": 0 },
+                        "misses": { "type": "integer", "minimum": 0 },
+                        "duration_ns": { "type": "integer", "minimum": 0 }
+                      },
+                      "description": "Measured compiled-module cache hits, misses and module preparation time; absent in older recordings."
+                    },
+                    "execution_ns": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Measured host time spent executing sealed invocations; absent when no invocation executed or in older recordings."
                     }
                   }
                 }

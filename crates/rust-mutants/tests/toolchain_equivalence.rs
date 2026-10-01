@@ -61,6 +61,7 @@ fn equivalence_builds_leave_an_ambient_cargo_target_directory_untouched() {
     let marker = ambient.join("untouched");
     std::fs::write(&marker, b"outside the prover").expect("the marker");
     let mut env = toolchain_env();
+    env.remove("NJUTEST_FIXTURE_BUILD_CACHE");
     env.set("CARGO_TARGET_DIR", ambient.as_os_str());
     env.set("RUSTC_WRAPPER", "");
     let cancel = Cancel::new();

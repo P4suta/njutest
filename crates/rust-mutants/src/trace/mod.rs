@@ -3,6 +3,7 @@
 
 //! The engine trace: what a run did while it did it, as diagnostic exhaust.
 
+mod cost;
 mod event;
 mod reader;
 mod sink;
@@ -199,6 +200,7 @@ impl Clock {
 #[derive(Clone)]
 pub struct Recorder {
     inner: Option<Arc<Inner>>,
+    costs: Option<Arc<cost::Costs>>,
 }
 
 impl Default for Recorder {
@@ -212,6 +214,7 @@ impl std::fmt::Debug for Recorder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Recorder")
             .field("enabled", &self.inner.is_some())
+            .field("costs", &self.costs.is_some())
             .finish()
     }
 }
@@ -256,7 +259,34 @@ impl Recorder {
     /// The trace that records nothing.
     #[must_use]
     pub const fn disabled() -> Self {
-        Self { inner: None }
+        Self {
+            inner: None,
+            costs: None,
+        }
+    }
+
+    /// Attaches explicitly requested test cost counters without changing the trace authority.
+    pub(crate) fn costed(
+        &self,
+        vars: &crate::vars::Variables,
+        root: &std::path::Path,
+    ) -> std::io::Result<Self> {
+        self.costed_as(vars, root, "cost-")
+    }
+
+    /// Attaches a separately classified build diagnostic without changing trace authority.
+    pub(crate) fn costed_as(
+        &self,
+        vars: &crate::vars::Variables,
+        root: &std::path::Path,
+        prefix: &str,
+    ) -> std::io::Result<Self> {
+        if self.costs.is_some() {
+            return Ok(self.clone());
+        }
+        let mut recorder = self.clone();
+        recorder.costs = cost::Costs::new(vars, root, self.sealed_counts(), prefix)?.map(Arc::new);
+        Ok(recorder)
     }
 
     /// Starts a recording into `sink`, reading the moment from `clock`, and emits its `run-start` event.
@@ -270,7 +300,10 @@ impl Recorder {
             state: Mutex::new(State::default()),
             sealed: rust_mutants_sealed::Counted::default(),
         });
-        let recorder = Self { inner: Some(inner) };
+        let recorder = Self {
+            inner: Some(inner),
+            costs: None,
+        };
         recorder.emit_at(
             started,
             Payload::RunStart {
@@ -486,6 +519,9 @@ impl Recorder {
     /// What the host spent on sealed executions, counted into this recording as its benches run; a handle of its own for a recording that records nothing.
     #[must_use]
     pub fn sealed_counts(&self) -> rust_mutants_sealed::Counted {
+        if let Some(costs) = &self.costs {
+            return costs.sealed();
+        }
         match &self.inner {
             Some(inner) => inner.sealed.clone(),
             None => rust_mutants_sealed::Counted::default(),
@@ -522,7 +558,7 @@ impl Recorder {
             }
             let events_dropped = state.observed_drops(inner.sink.dropped());
             let events_emitted = state.emitted(events_dropped);
-            let sealed = inner.sealed.spent();
+            let sealed = self.sealed_counts().spent();
             inner.deliver(
                 &mut state,
                 moment,
@@ -568,12 +604,18 @@ impl Recorder {
     }
 
     fn emit(&self, payload: Payload) {
+        if let Some(costs) = &self.costs {
+            costs.observe(&payload);
+        }
         if let Some(moment) = self.now() {
             self.emit_at(moment, payload);
         }
     }
 
     fn fail_accounting(&self) {
+        if let Some(costs) = &self.costs {
+            costs.invalid("trace cost accounting failed".to_owned());
+        }
         let Some(inner) = &self.inner else {
             return;
         };

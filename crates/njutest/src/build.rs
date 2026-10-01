@@ -187,6 +187,8 @@ pub fn build(
     };
     let messages =
         parse_messages(&built.stdout).map_err(|source| BuildError::Unreadable { source })?;
+    rust_mutants::cargo::record_build(toolchain.env(), &options.root, built.duration, &messages)
+        .map_err(|source| BuildError::Unreadable { source })?;
     let completion = match Completion::of(&messages, exited) {
         Ok(completion) => completion,
         Err(unread) => {

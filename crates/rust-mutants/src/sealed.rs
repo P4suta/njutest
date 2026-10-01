@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use crate::cargo::{CargoError, Compiled, Package, Unit};
 use crate::execute::TestTarget;
 
+pub use rust_mutants_sealed::{CompilerTier, SealedRunner};
+
 /// The target a sealed build compiles for.
 pub const TARGET: &str = "wasm32-wasip1";
 
@@ -301,12 +303,21 @@ pub struct SealedBuild {
 #[derive(Debug)]
 pub(crate) struct BuildClaim {
     owner: crate::tempowner::Owner,
+    pool: Option<std::sync::Arc<Self>>,
 }
 
 impl BuildClaim {
     /// A claim that writes its release whenever the build or its last modules let it go.
-    pub(crate) const fn new(owner: crate::tempowner::Owner) -> Self {
-        Self { owner }
+    pub(crate) const fn new(
+        owner: crate::tempowner::Owner,
+        pool: Option<std::sync::Arc<Self>>,
+    ) -> Self {
+        Self { owner, pool }
+    }
+
+    /// The claimed cache directory, held until every shared claim is dropped.
+    pub(crate) fn dir(&self) -> &Path {
+        self.owner.dir()
     }
 }
 
@@ -316,6 +327,8 @@ impl Drop for BuildClaim {
             Ok(()) => {}
             Err(_unreleased) => {}
         }
+        let pool = self.pool.take();
+        drop(pool);
     }
 }
 
@@ -472,6 +485,15 @@ fn sources_of(target: &TestTarget, units: &[Unit], packages: &[Package]) -> BTre
         })
         .flat_map(|unit| unit.sources.iter().cloned())
         .collect()
+}
+
+/// The shared compiled-module cache, independent of invocation and verdict stores.
+pub(crate) fn module_cache(parent: &Path, vars: Option<&crate::vars::Variables>) -> PathBuf {
+    let root = vars.and_then(|vars| vars.var("NJUTEST_FIXTURE_BUILD_CACHE"));
+    match root {
+        Some(root) => Path::new(root).join("wasmtime-modules-v1"),
+        None => parent.join("wasmtime-modules-v1"),
+    }
 }
 
 pub mod bench;

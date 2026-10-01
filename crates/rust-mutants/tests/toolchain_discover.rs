@@ -79,6 +79,11 @@ fn prepare(name: &str) -> Prepared {
 fn prepare_at(dir: PathBuf) -> Prepared {
     let options = LocateOptions {
         cargo: Some(njutest_devkit::paths::cargo_binary()),
+        env: Some(
+            njutest_devkit::paths::environment_for_a_run()
+                .into_iter()
+                .collect(),
+        ),
         ..LocateOptions::default()
     };
     let cancel = Cancel::new();
@@ -773,6 +778,11 @@ fn the_check_records_an_exec_event_and_keeps_the_messages() {
     let dir = njutest_devkit::paths::fixtures_dir().join("fixture-simple");
     let options = LocateOptions {
         cargo: Some(njutest_devkit::paths::cargo_binary()),
+        env: Some(
+            njutest_devkit::paths::environment_for_a_run()
+                .into_iter()
+                .collect(),
+        ),
         ..LocateOptions::default()
     };
     let cancel = Cancel::new();

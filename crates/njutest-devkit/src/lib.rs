@@ -7,6 +7,7 @@
 
 pub mod cargo_double;
 pub mod census;
+pub mod cost;
 pub mod docs;
 pub mod fake_cargo;
 pub mod fixture;

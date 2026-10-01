@@ -48,6 +48,11 @@ fn toolchain(dir: &Path, cancel: &Cancel) -> Toolchain {
     Toolchain::locate(
         &LocateOptions {
             cargo: Some(njutest_devkit::paths::cargo_binary()),
+            env: Some(
+                njutest_devkit::paths::environment_for_a_run()
+                    .into_iter()
+                    .collect(),
+            ),
             ..LocateOptions::default()
         },
         dir,

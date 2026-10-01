@@ -393,7 +393,8 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
     for made in [&temp, &cache] {
         std::fs::create_dir_all(made).expect("mkdir");
     }
-    let at = environment_at(&root, &temp, &cache);
+    let mut at = environment_at(&root, &temp, &cache);
+    at.vars.remove("NJUTEST_FIXTURE_BUILD_CACHE");
     let named = njutest_devkit::paths::utf8(&root).to_owned();
 
     let run = asked(

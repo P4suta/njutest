@@ -28,6 +28,11 @@ fn fixture(name: &str) -> PathBuf {
 fn toolchain(dir: &Path) -> Toolchain {
     let options = LocateOptions {
         cargo: Some(njutest_devkit::paths::cargo_binary()),
+        env: Some(
+            njutest_devkit::paths::environment_for_a_run()
+                .into_iter()
+                .collect(),
+        ),
         ..LocateOptions::default()
     };
     Toolchain::locate(&options, dir, &Cancel::new()).expect("locate")
@@ -91,7 +96,15 @@ fn an_explicit_cargo_path_must_exist_and_a_bare_name_is_searched_on_the_given_pa
 #[test]
 fn variables_added_to_an_environment_the_toolchain_was_never_given_are_refused() {
     let dir = scratch_target("unenvironed");
-    let tc = toolchain(dir.path());
+    let tc = Toolchain::locate(
+        &LocateOptions {
+            cargo: Some(njutest_devkit::paths::cargo_binary()),
+            ..LocateOptions::default()
+        },
+        dir.path(),
+        &Cancel::new(),
+    )
+    .expect("locate without an explicit environment");
     let cancel = Cancel::new();
     let trace = Recorder::disabled();
     let mut options = rust_mutants::cargo::CompileOptions::new(rust_mutants::cargo::BuildDir::new(

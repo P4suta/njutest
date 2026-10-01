@@ -118,6 +118,10 @@ name = "toolchain_engine_runs"
 path = "tests/toolchain_engine_runs.rs"
 
 [[test]]
+name = "toolchain_compiler_tiers"
+path = "tests/toolchain_compiler_tiers.rs"
+
+[[test]]
 name = "toolchain_sealed_memory"
 path = "tests/toolchain_sealed_memory.rs"
 

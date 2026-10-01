@@ -42,10 +42,15 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
 }
 
 fn environment(fixture: &Fixture) -> Environment {
+    let mut vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .collect();
+    vars.set(
+        "NJUTEST_FIXTURE_BUILD_CACHE",
+        fixture.temp().join("shared-builds"),
+    );
     Environment {
-        vars: njutest_devkit::paths::environment_for_a_run()
-            .into_iter()
-            .collect(),
+        vars,
         temp_directory: fixture.temp().to_path_buf(),
         program: std::env::current_exe().expect(
             "this test's own executable stands in for the engine a remembered outcome is keyed on",

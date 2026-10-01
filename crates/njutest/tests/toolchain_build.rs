@@ -33,6 +33,66 @@ fn env() -> rust_mutants::vars::Variables {
         .collect::<rust_mutants::vars::Variables>()
 }
 
+#[test]
+fn native_fixture_builds_are_counted_outside_the_engine() {
+    let directory = tempfile::tempdir().expect("the build and its diagnostics");
+    let diagnostics = directory.path().join("diagnostics");
+    std::fs::create_dir_all(&diagnostics).expect("the diagnostic directory");
+    let root = njutest_devkit::paths::fixtures_dir().join("fixture-simple");
+    let mut vars = env();
+    vars.set("NJUTEST_TEST_COST_DIR", &diagnostics);
+    vars.set("NEXTEST_BINARY_ID", "njutest::toolchain_build");
+    vars.set(
+        "NEXTEST_TEST_NAME",
+        "native_fixture_builds_are_counted_outside_the_engine",
+    );
+    let cancel = Cancel::new();
+    let trace = Recorder::disabled();
+    let toolchain = Toolchain::locate(
+        &LocateOptions {
+            cargo: Some(njutest_devkit::paths::cargo_binary()),
+            env: Some(vars.clone()),
+            ..LocateOptions::default()
+        },
+        &root,
+        &cancel,
+    )
+    .expect("the labelled toolchain");
+    build(
+        &toolchain,
+        &[],
+        &BuildOptions {
+            root: root.clone(),
+            selection: Selection::default(),
+            flavour: Flavour::Native,
+            target_dir: directory.path().join("target"),
+            scratch_build_dir: directory.path().join("scratch"),
+            env: vars,
+            cargo: Cargo {
+                offline: true,
+                locked: true,
+            },
+            timeout: None,
+        },
+        Watch::new(&cancel, &trace),
+    )
+    .expect("the native fixture builds");
+    let records: Vec<_> = std::fs::read_dir(&diagnostics)
+        .expect("the build diagnostics")
+        .map(|entry| entry.expect("one diagnostic").path())
+        .collect();
+    assert_eq!(records.len(), 1, "one native Cargo build must be measured");
+    let record: serde_json::Value = njutest_devkit::strictjson::decode_slice(
+        &std::fs::read(&records[0]).expect("the complete diagnostic"),
+    )
+    .expect("the measured build");
+    assert_eq!(record["work"]["builds"], 1);
+    assert!(record["work"]["units"].as_u64().expect("fresh artifacts") > 0);
+    assert_eq!(record["work"]["error"], serde_json::Value::Null);
+    njutest_devkit::cost::record(&root, &record["work"], &record["sealed"])
+        .expect("the observed native build belongs to the complete suite's cost");
+}
+
 fn build_fixture(fixture: &str, flavour: Flavour, packages: &[&str]) -> Built0 {
     let root = njutest_devkit::paths::fixtures_dir().join(fixture);
     let target = tempfile::Builder::new()

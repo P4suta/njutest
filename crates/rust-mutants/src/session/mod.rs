@@ -1393,6 +1393,11 @@ impl Session {
         &self.workspace.target_dir
     }
 
+    /// The shared module cache beside this session's build caches.
+    pub(crate) fn module_cache(&self) -> PathBuf {
+        crate::sealed::module_cache(&self.workspace.target_dir, Some(&self.workspace.base_env))
+    }
+
     /// The root of the copy everything runs in.
     #[must_use]
     pub fn snapshot_root(&self) -> &std::path::Path {

@@ -7,6 +7,7 @@ mod build_identity;
 mod built;
 mod compile;
 pub mod config;
+mod cost;
 mod depinfo;
 mod doctests;
 mod locate;
@@ -29,6 +30,7 @@ pub use compile::{
     BuildConfig, Compilation, CompileKind, CompileOptions, Compiled, Completion, CompletionError,
     Exited, compile, compile_arguments,
 };
+pub use cost::record_build;
 pub use depinfo::{
     Emitted, Unit, compile_time_inputs, dep_info_path, emitted_of, env_deps, every_unit_of,
     parse_dep_info, units_of,

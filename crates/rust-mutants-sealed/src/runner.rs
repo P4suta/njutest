@@ -4,14 +4,15 @@
 //! The runner: one deterministic engine, a module validated and compiled once, and a fresh store and instance for every invocation.
 
 use std::hash::{Hash as _, Hasher};
-use std::sync::Arc;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use wasmtime::{
-    Config, Engine, FuncType, InstancePre, Linker, Module, OptLevel, Store, Trap, UpdateDeadline,
-    WasmFeatures,
+    Cache, CacheConfig, Config, Engine, FuncType, InstancePre, Linker, Module, OptLevel, Store,
+    Trap, UpdateDeadline, WasmFeatures,
 };
 
 use crate::digest::{Encoder, SealedDigest};
@@ -25,6 +26,31 @@ use crate::validate;
 
 /// The wasmtime every digest of this crate is taken under, which `Cargo.toml` pins exactly.
 pub const WASMTIME_VERSION: &str = "48.0.3";
+
+/// The compiler strategy, whose configuration is part of every module and transcript identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum CompilerTier {
+    /// The established optimizing compiler.
+    Optimized,
+    /// The same compiler without optimization, subject to the fixture differential oracle.
+    Unoptimized,
+}
+
+impl CompilerTier {
+    /// The established tier, retained while the cheaper tier changes any complete observation.
+    #[must_use]
+    pub const fn faithful() -> Self {
+        Self::Optimized
+    }
+
+    /// The Cranelift level corresponding to this tier.
+    const fn level(self) -> OptLevel {
+        match self {
+            Self::Optimized => OptLevel::Speed,
+            Self::Unoptimized => OptLevel::None,
+        }
+    }
+}
 
 /// The native stack a guest may use, in bytes.
 const MAX_WASM_STACK: usize = 512 * 1024;
@@ -106,6 +132,9 @@ pub struct SealedRunner {
     watchdog: Duration,
     /// The thread advancing the epoch the watchdog is checked at.
     ticker: EpochTicker,
+    counted: crate::Counted,
+    cache: Option<Cache>,
+    preparation: Mutex<()>,
 }
 
 impl SealedRunner {
@@ -114,12 +143,41 @@ impl SealedRunner {
     /// # Errors
     /// [`SealedError::Engine`] where wasmtime refuses the configuration, [`SealedError::Link`] where the host cannot be linked, [`SealedError::WatchdogUnavailable`] where its thread cannot start.
     pub fn new(watchdog: Duration) -> Result<Self, SealedError> {
+        Self::with_compiler(watchdog, CompilerTier::faithful(), None)
+    }
+
+    /// The default compiler with Wasmtime's content-addressed cache shared across processes.
+    ///
+    /// # Errors
+    /// The cache, engine, linker or watchdog cannot be configured.
+    pub fn cached(watchdog: Duration, directory: &Path) -> Result<Self, SealedError> {
+        Self::with_compiler(watchdog, CompilerTier::faithful(), Some(directory))
+    }
+
+    /// An explicit compiler tier and optional Wasmtime cache, with the same deterministic host.
+    ///
+    /// # Errors
+    /// The cache, engine, linker or watchdog cannot be configured.
+    pub fn with_compiler(
+        watchdog: Duration,
+        tier: CompilerTier,
+        directory: Option<&Path>,
+    ) -> Result<Self, SealedError> {
+        let cache = directory
+            .map(|directory| {
+                let mut configuration = CacheConfig::new();
+                configuration.with_directory(directory.to_path_buf());
+                Cache::new(configuration)
+            })
+            .transpose()
+            .map_err(|source| SealedError::Engine { source })?;
         let mut config = Config::new();
         config
+            .cache(cache.clone())
             .consume_fuel(true)
             .epoch_interruption(true)
             .cranelift_nan_canonicalization(true)
-            .cranelift_opt_level(OptLevel::Speed)
+            .cranelift_opt_level(tier.level())
             .relaxed_simd_deterministic(true)
             .max_wasm_stack(MAX_WASM_STACK)
             .memory_init_cow(false)
@@ -135,7 +193,30 @@ impl SealedRunner {
             configuration,
             watchdog,
             ticker,
+            counted: crate::Counted::default(),
+            cache,
+            preparation: Mutex::new(()),
         })
+    }
+
+    /// Prepares a module and records the compilation work on the run's counters.
+    ///
+    /// # Errors
+    /// The validation, compilation and linking failures of [`Self::prepare`], or a count overflow.
+    pub fn prepare_counted<'runner>(
+        &'runner self,
+        bytes: &[u8],
+        counted: &crate::Counted,
+    ) -> Result<SealedModule<'runner>, SealedError> {
+        let module = self.prepare(bytes)?;
+        counted.prepared(module.preparation, module.cached)?;
+        Ok(module)
+    }
+
+    /// The work performed by this runner, without transcript-cache answers.
+    #[must_use]
+    pub fn spent(&self) -> Option<crate::Spent> {
+        self.counted.spent()
     }
 
     /// The digest of everything about the engine and the host a transcript depends on.
@@ -149,6 +230,14 @@ impl SealedRunner {
     /// # Errors
     /// A module that is not a core WASI command with one plain memory importing only the table, or one wasmtime refuses to compile or link.
     pub fn prepare(&self, bytes: &[u8]) -> Result<SealedModule<'_>, SealedError> {
+        let preparing = self
+            .preparation
+            .lock()
+            .map_err(|_poisoned| SealedError::Engine {
+                source: wasmtime::Error::msg("the module preparation lock was poisoned"),
+            })?;
+        let started = Instant::now();
+        let hits = self.cache.as_ref().map(Cache::cache_hits);
         validate::shape(bytes)?;
         let module =
             Module::new(&self.engine, bytes).map_err(|source| SealedError::Compile { source })?;
@@ -157,7 +246,18 @@ impl SealedRunner {
             .linker
             .instantiate_pre(&module)
             .map_err(|source| SealedError::Link { source })?;
+        let preparation = started.elapsed();
+        self.counted.assembled();
+        let cached = self
+            .cache
+            .as_ref()
+            .zip(hits)
+            .is_some_and(|(cache, before)| cache.cache_hits() > before);
+        self.counted.prepared(preparation, cached)?;
+        drop(preparing);
         Ok(SealedModule {
+            preparation,
+            cached,
             runner: self,
             pre,
             digest: SealedDigest::of(bytes),
@@ -224,6 +324,8 @@ impl Hasher for Fingerprint<'_> {
 
 /// A module validated and compiled once by a runner, every invocation of it a fresh store and instance.
 pub struct SealedModule<'runner> {
+    preparation: Duration,
+    cached: bool,
     /// The runner that compiled it.
     runner: &'runner SealedRunner,
     /// The module with the host linked, ready to instantiate.
@@ -283,6 +385,7 @@ impl SealedModule<'_> {
         if interrupt.raised() {
             return Err(SealedError::Interrupted);
         }
+        let began = Instant::now();
         let digest = invocation.digest(&self.digest, &self.runner.configuration);
         let watchdog = self.runner.watchdog;
         let deadline = Instant::now().checked_add(watchdog);
@@ -306,6 +409,7 @@ impl SealedModule<'_> {
             }
             Ok(UpdateDeadline::Continue(1))
         });
+        self.runner.counted.instantiated()?;
         counted.instantiated()?;
         let stop = match self.pre.instantiate(&mut store) {
             Ok(instance) => {
@@ -338,6 +442,9 @@ impl SealedModule<'_> {
                 invariant: Invariant::Width,
             })?;
         let ended = store.into_data().end().map_err(broken)?;
+        let duration = began.elapsed();
+        self.runner.counted.executed(duration)?;
+        counted.executed(duration)?;
         Ok(Transcript::seal(Parts {
             invocation: digest,
             stop,

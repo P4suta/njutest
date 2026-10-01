@@ -766,13 +766,32 @@ fn the_inner_loop_starts_no_toolchain_and_the_whole_suite_still_runs_everything(
     let slow = task("\"test:slow\"");
     assert!(slow.contains("binary(/^toolchain_/)"), "{slow}");
     let whole = task("test");
-    for half in ["test:fast", "test:slow", "test:doc"] {
+    for half in ["test:cost", "test:doc"] {
         assert!(
             whole.contains(half),
             "`mise run test` leaves out {half}, so something is only ever run in the pipeline: \
              {whole}"
         );
     }
+}
+
+#[test]
+fn the_local_whole_suite_records_and_gates_every_toolchain_binarys_work() {
+    let whole = task("test");
+    assert!(whole.contains("mise run test:cost"));
+    let cost = task("\"test:cost\"");
+    assert!(cost.contains("scripts/run-suite-cost.py"));
+    let script = repository("scripts/run-suite-cost.py");
+    for argument in [
+        "--workspace",
+        "--all-targets",
+        "--all-features",
+        "--no-fail-fast",
+    ] {
+        assert!(script.contains(argument), "{argument}: {script}");
+    }
+    assert!(!script.contains("\"-E\"") && !script.contains("--partition"));
+    assert!(script.contains("NJUTEST_TEST_COST_DIR") && script.contains("suite-cost.py"));
 }
 
 #[test]
@@ -1047,7 +1066,13 @@ fn the_gate_catalogue_names_the_compiler_backed_methods_the_policy_holds() {
 
 #[test]
 fn every_task_that_runs_the_suite_builds_the_scripted_toolchain_first() {
-    for name in ["\"test:fast\"", "\"test:slow\"", "\"test:ci\"", "coverage"] {
+    for name in [
+        "\"test:fast\"",
+        "\"test:slow\"",
+        "\"test:ci\"",
+        "\"test:cost\"",
+        "coverage",
+    ] {
         let body = task(name);
         let depends = body
             .lines()
@@ -1218,6 +1243,19 @@ fn every_gate_the_pipeline_runs_is_one_this_machine_can_run() {
             continue;
         };
         let command = command.trim();
+        let command = if let Some(inner) = command
+            .strip_prefix('\'')
+            .and_then(|text| text.strip_suffix('\''))
+        {
+            inner
+        } else if let Some(inner) = command
+            .strip_prefix('"')
+            .and_then(|text| text.strip_suffix('"'))
+        {
+            inner
+        } else {
+            command
+        };
         if command.is_empty() || command.starts_with(['>', '|']) {
             continue;
         }

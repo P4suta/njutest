@@ -414,6 +414,18 @@ pub fn environment_for_a_run() -> Vec<(std::ffi::OsString, std::ffi::OsString)> 
             !(reserved || (outer_coverage && cargo_llvm_cov_owns(name)))
         })
         .collect();
+    if !kept
+        .iter()
+        .any(|(name, _value)| same_name(name, std::ffi::OsStr::new("NJUTEST_FIXTURE_BUILD_CACHE")))
+    {
+        kept.push((
+            std::ffi::OsString::from("NJUTEST_FIXTURE_BUILD_CACHE"),
+            workspace_root()
+                .join("target")
+                .join("fixture-build-cache")
+                .into_os_string(),
+        ));
+    }
     kept.push(jobs());
     kept
 }
@@ -468,7 +480,16 @@ pub const ALSO_ON_THIS_PLATFORM: [&str; 0] = [];
 pub fn environment_for_a_toolchain_run(
     also: &[&str],
 ) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
-    let wanted: [&str; 4] = ["PATH", "HOME", "RUSTUP_HOME", "CARGO_HOME"];
+    let wanted: [&str; 8] = [
+        "PATH",
+        "HOME",
+        "RUSTUP_HOME",
+        "CARGO_HOME",
+        "NJUTEST_FIXTURE_BUILD_CACHE",
+        "NJUTEST_TEST_COST_DIR",
+        "NEXTEST_BINARY_ID",
+        "NEXTEST_TEST_NAME",
+    ];
     let mut kept: Vec<(std::ffi::OsString, std::ffi::OsString)> = environment_for_a_run()
         .into_iter()
         .filter(|(name, _value)| {

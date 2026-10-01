@@ -164,8 +164,8 @@ impl SealedCode {
             },
             Self::EngineUnavailable => ErrorCode {
                 code: "RS2001",
-                summary: "wasmtime could not be configured with the deterministic settings on this host",
-                remedy: "this host cannot run sealed guests; the message says which setting wasmtime refused",
+                summary: "wasmtime, its compiled-module cache, or the module preparation lock could not be configured or used",
+                remedy: "the message names the refused setting, cache path or poisoned lock; check cache access and restart a runner whose preparation lock was poisoned",
             },
             Self::ModuleUncompiled => ErrorCode {
                 code: "RS2002",

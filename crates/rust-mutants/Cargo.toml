@@ -37,6 +37,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 syn = { workspace = true, features = ["printing"] }
+tempfile = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
 
@@ -51,7 +52,6 @@ jsonschema = { workspace = true }
 rust-mutants = { workspace = true, features = ["testkit"] }
 njutest-devkit = { workspace = true }
 proptest = { workspace = true }
-tempfile = { workspace = true }
 
 [[bench]]
 name = "foundation"

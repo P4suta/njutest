@@ -15,7 +15,7 @@ use std::process::Command;
 
 use njutest_devkit::paths::{Project, cargo_binary, environment_for_a_toolchain_run};
 use sha2::{Digest as _, Sha256};
-use xtask::bundle::{Request, Written, bundle};
+use xtask::bundle::{Request, Written, bundle_observed};
 use xtask::error::{Coded as _, XtCode};
 
 const VERSION: &str = "0.3.1";
@@ -97,13 +97,16 @@ impl Workspace {
 
     fn bundle(&self, out: &Path) -> Result<Written, xtask::bundle::BundleError> {
         let host = host();
-        bundle(&Request {
-            root: self.root(),
-            cargo: cargo_binary().as_os_str(),
-            environment: &self.environment,
-            target: &host,
-            out,
-        })
+        bundle_observed(
+            &Request {
+                root: self.root(),
+                cargo: cargo_binary().as_os_str(),
+                environment: &self.environment,
+                target: &host,
+                out,
+            },
+            |duration, stdout| njutest_devkit::cost::build(self.root(), duration, stdout),
+        )
     }
 }
 

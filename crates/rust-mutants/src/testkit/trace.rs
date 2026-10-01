@@ -420,6 +420,8 @@ pub fn every_payload() -> Vec<Payload> {
                     compiles: 1,
                     instances: 2,
                     answered: 3,
+                    compilation: None,
+                    execution_ns: None,
                 }),
             },
         },

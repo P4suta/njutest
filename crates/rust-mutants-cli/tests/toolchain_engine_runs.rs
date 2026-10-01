@@ -92,6 +92,12 @@ fn recorded(fixture: &Fixture, asking: &[&str]) -> PathBuf {
 
 /// Every path in `value`, each ending in the kind of what is there, with every element of an array at one path.
 fn shape(value: &serde_json::Value, at: &str, into: &mut BTreeSet<String>) {
+    if at == format!("{RECORDING}#exec/payload/exec/timeout_ms")
+        && (value.is_null() || value.is_number())
+    {
+        into.insert(format!("{at}:optional-number"));
+        return;
+    }
     match value {
         serde_json::Value::Object(fields) => {
             into.insert(format!("{at}:object"));
@@ -142,6 +148,20 @@ fn shapes(directory: &Path) -> BTreeSet<String> {
         shape(&event, &format!("{RECORDING}#{kind}"), &mut found);
     }
     found
+}
+
+#[test]
+fn an_optional_deadlines_value_can_change_but_its_presence_and_type_cannot() {
+    let at = format!("{RECORDING}#exec/payload/exec");
+    let observed = |value| {
+        let mut found = BTreeSet::new();
+        shape(&value, &at, &mut found);
+        found
+    };
+    let cold = observed(serde_json::json!({"timeout_ms": 30_000}));
+    assert_eq!(cold, observed(serde_json::json!({"timeout_ms": null})));
+    assert_ne!(cold, observed(serde_json::json!({})));
+    assert_ne!(cold, observed(serde_json::json!({"timeout_ms": "unknown"})));
 }
 
 /// Replaces the committed run `name` with the one in `fresh`, its documents and its recording, and none of the output it kept; a document the engine no longer writes goes.

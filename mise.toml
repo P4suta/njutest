@@ -200,9 +200,15 @@ run = "cargo test --locked --workspace --all-features --doc"
 depends = ["build:examples"]
 run = "cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2"
 
+[tasks."test:cost"]
+description = "Run the complete suite and gate fixture compile/build counts"
+depends = ["build:examples"]
+run = "python3 scripts/run-suite-cost.py"
+run_windows = "python scripts/run-suite-cost.py"
+
 [tasks.test]
 description = "Run the complete suite: every target through nextest, then the doctests"
-run = ["mise run test:fast", "mise run test:slow", "mise run test:doc"]
+run = ["mise run test:cost", "mise run test:doc"]
 
 [tasks."kani:verified"]
 description = "Run the generated-harness and strict-result protocol suite with the pinned Kani 0.68 installation"

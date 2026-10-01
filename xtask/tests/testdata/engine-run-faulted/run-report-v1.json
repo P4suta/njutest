@@ -3,10 +3,10 @@
   "schema_version": 5,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260930t200016259z",
-    "started_at": "2026-09-30T20:00:16.259957Z",
-    "finished_at": "2026-09-30T20:00:22.464818Z",
-    "duration_ms": 2070,
+    "id": "20261001t091807176z",
+    "started_at": "2026-10-01T09:18:07.176198Z",
+    "finished_at": "2026-10-01T09:18:10.972503Z",
+    "duration_ms": 200,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -18,7 +18,7 @@
   "workspace": {
     "root_name": "fixture-faulted",
     "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-    "workspace_digest": "64cb79bba375114af824a20abe985a356ebf3dcca0b00c0b5bbfa2535d620875",
+    "workspace_digest": "8782e308c92ceb47be7a365391d887ad4ea2138aa27be41ae08ef1ae2950f3e5",
     "catalog_digest": "b9eb2637fbb668ab1274db73374a862f1ebd5a7e91fa3b967dafeb1f714d43d3",
     "platform": {
       "os": "darwin",
@@ -151,7 +151,7 @@
       "step_notice": null,
       "target": "fixture-faulted/test/calls",
       "exit_code": -1,
-      "duration_ms": 37,
+      "duration_ms": 16,
       "tests_run": 1,
       "killed_by": [
         "the_manifest_loads"
@@ -213,7 +213,7 @@
       "step_notice": null,
       "target": "fixture-faulted/test/calls",
       "exit_code": -1,
-      "duration_ms": 22,
+      "duration_ms": 13,
       "tests_run": 1,
       "killed_by": [
         "seven_is_a_number"
@@ -274,7 +274,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 48,
+      "duration_ms": 32,
       "tests_run": 2,
       "killed_by": [],
       "signal": null,
@@ -339,7 +339,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 7,
+      "duration_ms": 28,
       "tests_run": 0,
       "killed_by": [],
       "signal": null,
@@ -386,7 +386,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 12,
+      "duration_ms": 10,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -445,7 +445,7 @@
       "step_notice": null,
       "target": "fixture-faulted/test/declines",
       "exit_code": 0,
-      "duration_ms": 29,
+      "duration_ms": 30,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,

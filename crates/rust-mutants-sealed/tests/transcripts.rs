@@ -130,8 +130,39 @@ fn the_counters_say_what_the_host_spent_only_where_a_bench_assembled() {
         Some(rust_mutants_sealed::Spent {
             compiles: 2,
             instances: 1,
-            answered: 3
+            answered: 3,
+            compilation: None,
+            execution_ns: None,
         }),
         "the counts are what the host spent, shared by every bench of one run"
     );
+}
+
+/// Compiled code is reusable only for the same module bytes and compiler configuration.
+#[test]
+fn the_compiled_module_cache_distinguishes_bytes_and_compiler_configuration() {
+    use rust_mutants_sealed::{CompilerTier, SealedRunner};
+    let directory = tempfile::tempdir().expect("a shared compiled cache");
+    let bytes = command(&[], "", "(call $emit (i32.const 3) (i32.const 0))");
+    let changed = command(&[], "", "(call $emit (i32.const 4) (i32.const 0))");
+    for (tier, module, hit) in [
+        (CompilerTier::Optimized, &bytes, false),
+        (CompilerTier::Optimized, &bytes, true),
+        (CompilerTier::Optimized, &changed, false),
+        (CompilerTier::Unoptimized, &bytes, false),
+        (CompilerTier::Unoptimized, &bytes, true),
+    ] {
+        let runner = SealedRunner::with_compiler(
+            std::time::Duration::from_secs(120),
+            tier,
+            Some(directory.path()),
+        )
+        .expect("a configured cache");
+        runner.prepare(module).expect("a valid module");
+        let spent = runner.spent().expect("the prepared module is counted");
+        let compilation = spent.compilation.expect("cache work is measured");
+        assert_eq!(spent.compiles, 1);
+        assert_eq!(compilation.hits, u64::from(hit));
+        assert_eq!(compilation.misses, u64::from(!hit));
+    }
 }

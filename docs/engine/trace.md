@@ -82,7 +82,7 @@ Tests serialize non-empty specimens and compare both directions, so adding, remo
 | `sealed-control` | `target`, `test`, `standing`, `reached` | one test of one sealed module run with nothing active, alone in a fresh instance: its control, `controlled` or why no mutant's execution can be judged against it (an ending, `unbuilt` or `not-held`), and every guard it reached by catalog index; one per test of every station, written when the bench is assembled, which is what a sealed `unreached` rests on and what the engine audit holds one to |
 | `sealed-exec` | `mutant`, `index`, `target`, `test`, `came_to`, `transcript` | one test of one sealed module run with one mutant active, alone in a fresh instance, and what it came to: `passed`, a detection (`panicked`, `failed`, `trapped`, `fuel-exceeded`, `memory-exceeded`, `declined`), a doubt (`exited-early`, `stack-overflow`, `refused`, `unaccounted`, `unmatched`), or `set-aside`, a test that declined as its control did ([ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md)); the transcript digest names everything the invocation was a function of and everything it did, which is what one execution of one tree is named by wherever it is remembered, and is optional only in recordings made before it was named; under a `rerun` phase, one a stored report recorded, run again ([sealed execution](sealed.md#reproducing-a-sealed-verdict)) |
 | `note` | `kind`, `detail` | a free-form note: progress, a decision, or a limitation; `unreproduced` names the first execution that parted from a sealed verdict the outcome store kept, when the mutant was put again: its place, target and test, what it was kept as and what it came to, or the verdict they establish where the one kept is another; `change-set` says a change set's lines were read against its revision itself, where no commit it and `HEAD` share was named; `verbatim` names an include of a Rust source of the tree, the source it reads, and the copy of that source as it was copied that it reads instead |
-| `run-end` | `outcome`, `error`, `events_emitted`, `events_dropped`, `sealed` | the outcome, any failure, and the recording's kept and lost event counts; where the run assembled a bench, what the host spent on sealed executions: the modules it compiled, the instances it started, and the invocations a remembered transcript answered instead, which is the hit rate of the [transcript cache](sealed.md#remembering-what-one-execution-established) over the run |
+| `run-end` | `outcome`, `error`, `events_emitted`, `events_dropped`, `sealed` | the outcome, any failure, and the recording's kept and lost event counts; where the run assembled a bench, what the host spent on sealed executions: the modules it prepared, their compiled-code cache hits and misses and preparation time, the instances it started and execution time, and the invocations a remembered transcript answered instead, which is the hit rate of the [transcript cache](sealed.md#remembering-what-one-execution-established) over the run |
 
 ## Reading one back
 
@@ -97,3 +97,13 @@ which is what to read when a run got slower or a proof layer stopped removing wo
 
 `rust-mutants explain <id>` renders what the catalog knows about one mutant,
 and `rust-mutants why-skipped` tallies the skip reasons of a tree.
+
+## Suite cost diagnostics
+
+A run with explicit `NJUTEST_TEST_COST_DIR`, `NEXTEST_BINARY_ID` and `NEXTEST_TEST_NAME` inputs writes a complete `njutest-test-cost-v1` record when its recorder closes, including fixture Cargo calls, fresh units, platform-probe work and sealed bench work.
+Incomplete records, invalid counts and records from another JUnit inventory cannot establish a cost baseline.
+The `fixture-cargo-build` note counts a typed Cargo compilation even when the execution's path cannot be represented as text.
+The `cargo-built-units` note counts compiler artifacts whose Cargo message says `fresh: false`.
+The `sealed-platform-work` note carries the standalone probe runner's measured work, and `sealed-platform-request` counts requests even when a prior successful probe supplies the object.
+These notes carry diagnostic measurements only.
+`run-end.sealed.compilation` and `execution_ns` are optional so older recordings remain readable without inventing observations.

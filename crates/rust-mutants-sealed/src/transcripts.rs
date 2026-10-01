@@ -7,6 +7,7 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -119,6 +120,12 @@ struct Countings {
     assembled: AtomicBool,
     /// Modules compiled for the sealed target.
     compiles: AtomicU64,
+    compilation_measured: AtomicBool,
+    hits: AtomicU64,
+    misses: AtomicU64,
+    compile_ns: AtomicU64,
+    execution_measured: AtomicBool,
+    execution_ns: AtomicU64,
     /// Instances started on the host.
     instances: AtomicU64,
     /// Invocations a record answered.
@@ -137,6 +144,34 @@ impl Counted {
     /// [`crate::SealedError::HostInvariant`] if the count exceeds its recorded width.
     pub fn compiled(&self) -> Result<(), crate::SealedError> {
         counted(&self.inner.compiles)
+    }
+
+    /// Records a module preparation, including whether compiled code was reused and its elapsed time.
+    ///
+    /// # Errors
+    /// [`crate::SealedError::HostInvariant`] if a count or elapsed time exceeds its recorded width.
+    pub fn prepared(&self, duration: Duration, cached: bool) -> Result<(), crate::SealedError> {
+        self.compiled()?;
+        if cached {
+            counted(&self.inner.hits)?;
+        } else {
+            counted(&self.inner.misses)?;
+        }
+        elapsed(&self.inner.compile_ns, duration)?;
+        self.inner
+            .compilation_measured
+            .store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Records elapsed host time for an invocation that actually executed.
+    ///
+    /// # Errors
+    /// [`crate::SealedError::HostInvariant`] if elapsed time exceeds its recorded width.
+    pub fn executed(&self, duration: Duration) -> Result<(), crate::SealedError> {
+        elapsed(&self.inner.execution_ns, duration)?;
+        self.inner.execution_measured.store(true, Ordering::Relaxed);
+        Ok(())
     }
 
     /// Says the host started one instance.
@@ -165,8 +200,39 @@ impl Counted {
             compiles: self.inner.compiles.load(Ordering::Relaxed),
             instances: self.inner.instances.load(Ordering::Relaxed),
             answered: self.inner.answered.load(Ordering::Relaxed),
+            compilation: self
+                .inner
+                .compilation_measured
+                .load(Ordering::Relaxed)
+                .then(|| Compilation {
+                    hits: self.inner.hits.load(Ordering::Relaxed),
+                    misses: self.inner.misses.load(Ordering::Relaxed),
+                    duration_ns: self.inner.compile_ns.load(Ordering::Relaxed),
+                }),
+            execution_ns: self
+                .inner
+                .execution_measured
+                .load(Ordering::Relaxed)
+                .then(|| self.inner.execution_ns.load(Ordering::Relaxed)),
         })
     }
+}
+
+/// Adds an elapsed duration without truncating or clamping it.
+fn elapsed(counter: &AtomicU64, duration: Duration) -> Result<(), crate::SealedError> {
+    let nanos = u64::try_from(duration.as_nanos()).map_err(|_overflow| {
+        crate::SealedError::HostInvariant {
+            invariant: crate::error::Invariant::Width,
+        }
+    })?;
+    counter
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+            value.checked_add(nanos)
+        })
+        .map(|_previous| ())
+        .map_err(|_overflow| crate::SealedError::HostInvariant {
+            invariant: crate::error::Invariant::Width,
+        })
 }
 
 /// Adds one without letting an exhausted count impersonate a fresh one.
@@ -191,4 +257,22 @@ pub struct Spent {
     pub instances: u64,
     /// Invocations a record answered instead.
     pub answered: u64,
+    /// Compiled-module cache accounting and preparation time, absent in older recordings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compilation: Option<Compilation>,
+    /// Elapsed host time of fresh invocations, absent where execution was not timed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_ns: Option<u64>,
+}
+
+/// The compiled-module cache's hits and misses, and the elapsed time spent preparing modules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Compilation {
+    /// Modules loaded from wasmtime's cache.
+    pub hits: u64,
+    /// Modules compiled because no cached code answered.
+    pub misses: u64,
+    /// Nanoseconds spent validating, loading or compiling, and linking modules.
+    pub duration_ns: u64,
 }

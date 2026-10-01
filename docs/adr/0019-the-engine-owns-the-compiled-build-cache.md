@@ -75,3 +75,16 @@ The fixture reproduction is two runs of `fixture-witness-downstream` sharing a t
 - A file no member's directory holds keeps the time it was written, which only a person changes, and cargo reads that time as it always has.
 - The pristine check moved into `pristine`, so a path under the target directory that a unit's dep-info names now begins `$target/pristine/`, and outcome keys that name one change once.
 - Documentation examples run through `cargo test --doc` against the tree the last settled build compiled; nothing writes the tree between that build and them.
+
+## Amendment, 2026-10-01: identical fixture copies share compiled content
+
+An explicit `NJUTEST_FIXTURE_BUILD_CACHE` root allows copied fixtures to claim an engine-owned build slot addressed by the complete snapshot digest, toolchain identity and build environment.
+The source snapshot is recreated for each claim, and every member still passes through the existing content-settling protocol before Cargo may judge its units fresh.
+The final copied graph is loaded once, and build scripts and procedural macros require the full environment in the target directory identity; ordinary graphs rely on Cargo's dep-info for compile-time environment dependencies while diagnostic and scratch names do not fragment the pool.
+The engine's owner lock holds the slot through execution, cleanup and the lifetime of every shared set of sealed modules.
+Every invocation keeps its own scratch, runtime records and verdict state.
+No target directory is copied.
+
+Wasmtime's built-in cache separately shares compiled host modules by bytes, engine configuration and Wasmtime version.
+It is an engine-owned compilation layer, independent of the outcome and transcript stores.
+Count diagnostics distinguish module-cache hits from transcript-cache answers.

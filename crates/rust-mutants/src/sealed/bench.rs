@@ -531,8 +531,9 @@ fn prepared<'runner>(
     };
     let answering =
         rust_mutants_sealed::redirected(&bytes, &super::platform::REDIRECTS).map_err(host)?;
-    let module = runner.prepare(&answering.bytes).map_err(host)?;
-    counted.compiled().map_err(host)?;
+    let module = runner
+        .prepare_counted(&answering.bytes, counted)
+        .map_err(host)?;
     Ok(module)
 }
 
