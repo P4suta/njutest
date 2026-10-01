@@ -33,7 +33,7 @@ use rust_mutants::runner::Cancel;
 /// A throwaway copy of a fixture, so the run writes its reports somewhere nothing else is reading.
 struct Fixture {
     root: PathBuf,
-    dir: tempfile::TempDir,
+    _dir: tempfile::TempDir,
 }
 
 fn fixture(name: &str) -> Fixture {
@@ -45,7 +45,7 @@ fn fixture(name: &str) -> Fixture {
     let root = dir.path().join(name);
     copy_tree(&source, &root);
     njutest_devkit::fixture::pin_contract(&root, "standard-v1");
-    Fixture { root, dir }
+    Fixture { root, _dir: dir }
 }
 
 fn verify(fixture: &Fixture, extra: &[&str]) -> Output {
@@ -59,8 +59,13 @@ fn verify(fixture: &Fixture, extra: &[&str]) -> Output {
 fn repeated_runs_over_one_pool_reuse_verified_builds_except_the_sealed_build() {
     let fixture = fixture("fixture-simple");
     let mut environment = of(&fixture.root, &[]);
-    let pool = fixture.dir.path().join("a-pool-no-other-test-shares");
-    environment.vars.set("NJUTEST_FIXTURE_BUILD_CACHE", &pool);
+    let pool = tempfile::Builder::new()
+        .prefix("njutest-verify-pool-")
+        .tempdir()
+        .expect("a pool directory no other test shares");
+    environment
+        .vars
+        .set("NJUTEST_FIXTURE_BUILD_CACHE", pool.path());
     environment.vars.set("RUSTC_WRAPPER", "");
     for repetition in 0..2 {
         let output = asked(
@@ -1203,7 +1208,7 @@ fn a_workspace_with_no_tests_at_all_observed_nothing_and_says_so() {
         .lib("/// Nothing tests this.\npub const fn one() -> i32 {\n    1\n}\n");
     let fixture = Fixture {
         root: repo.root().to_path_buf(),
-        dir: tempfile::Builder::new()
+        _dir: tempfile::Builder::new()
             .prefix("njutest-unused-")
             .tempdir()
             .expect("a temporary directory"),
