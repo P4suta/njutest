@@ -55,15 +55,23 @@ fn asked(fixture: &Fixture, args: &[&str]) -> Output {
 }
 
 fn environment(root: &Path) -> Environment {
+    let events = root
+        .parent()
+        .expect("the fixture parent")
+        .join("clock-events");
+    std::fs::create_dir_all(&events).expect("clock events");
+    let mut vars: rust_mutants::vars::Variables =
+        njutest_devkit::paths::environment_for_a_toolchain_run(&[])
+            .into_iter()
+            .collect();
+    vars.set("NJUTEST_TEST_CLOCK", events.as_os_str());
     Environment {
         cache_directory: root.join(".cache"),
         working_directory: root.to_path_buf(),
         temp_directory: njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
         program: PathBuf::from("this test never runs it"),
-        vars: njutest_devkit::paths::environment_for_a_toolchain_run(&[])
-            .into_iter()
-            .collect(),
-        cancel: Cancel::new(),
+        vars,
+        cancel: Cancel::new().with_clock(rust_mutants::runner::Clock::events(events)),
         terminal: njutest::presentation::Terminal::default(),
     }
 }

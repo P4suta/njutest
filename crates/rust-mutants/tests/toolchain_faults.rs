@@ -63,24 +63,25 @@ fn a_fault_is_carried_beside_the_deletion_of_the_question_it_answers() {
 #[test]
 fn a_failed_call_is_noticed_where_a_test_checks_it_and_refused_where_nothing_can_be_made() {
     let fixture = Fixture::copy("fixture-faulted");
-    let session = Workspace::open(
-        fixture.root(),
-        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
-        &Cancel::new(),
-    )
-    .expect("open")
-    .prepare(
-        &PrepareOptions {
-            operators: vec!["inject-error".to_owned()],
-            mutant_timeout: rust_mutants::session::Timeout::Fixed(std::time::Duration::from_secs(
-                2,
-            )),
-            touch: true,
-            ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
-        },
-        &Cancel::new(),
-    )
-    .expect("prepare");
+    let events = fixture.temp().join("clock-events");
+    std::fs::create_dir_all(&events).expect("clock events");
+    let mut options = opening(&njutest_devkit::paths::cargo_binary(), fixture.temp());
+    options.env.set("NJUTEST_TEST_CLOCK", events.as_os_str());
+    let cancel = Cancel::new().with_clock(rust_mutants::runner::Clock::events(events));
+    let session = Workspace::open(fixture.root(), options, &cancel)
+        .expect("open")
+        .prepare(
+            &PrepareOptions {
+                operators: vec!["inject-error".to_owned()],
+                mutant_timeout: rust_mutants::session::Timeout::Fixed(
+                    std::time::Duration::from_secs(2),
+                ),
+                touch: true,
+                ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
+            },
+            &cancel,
+        )
+        .expect("prepare");
     let rejected: Vec<&str> = session
         .rejections()
         .iter()
@@ -103,7 +104,7 @@ fn a_failed_call_is_noticed_where_a_test_checks_it_and_refused_where_nothing_can
             "not-put".to_owned()
         } else {
             let result = session
-                .exec(&Request::new(mutant.id.to_string()), &Cancel::new())
+                .exec(&Request::new(mutant.id.to_string()), &cancel)
                 .expect("the fault runs");
             match result.outcome() {
                 Outcome::Killed => "noticed".to_owned(),

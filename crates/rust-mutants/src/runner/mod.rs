@@ -3,6 +3,7 @@
 
 //! Starts one child process, supervises the platform's declared process set, and returns what happened.
 
+mod clock;
 mod group;
 pub mod output;
 
@@ -25,6 +26,7 @@ use output::{OutputError, TailBuffer};
 use rust_mutants_decision::answered::{Answer, Observed, Wait};
 use rust_mutants_decision::stall::Stillness;
 
+pub use clock::Clock;
 pub use group::GroupChild;
 #[cfg(unix)]
 pub use group::Leader;
@@ -66,6 +68,7 @@ pub const IO_DRAIN_GRACE: Duration = Duration::from_secs(2);
 pub struct Cancel {
     own: Arc<AtomicBool>,
     above: Vec<Arc<AtomicBool>>,
+    clock: Clock,
 }
 
 impl Cancel {
@@ -79,6 +82,7 @@ impl Cancel {
         Self {
             own: Arc::new(AtomicBool::new(false)),
             above: Vec::new(),
+            clock: Clock::wall(),
         }
     }
 
@@ -90,7 +94,15 @@ impl Cancel {
         Self {
             own: Arc::new(AtomicBool::new(false)),
             above,
+            clock: self.clock.clone(),
         }
+    }
+
+    /// Carries an explicit supervision clock through every child cancellation scope.
+    #[must_use]
+    pub fn with_clock(mut self, clock: Clock) -> Self {
+        self.clock = clock;
+        self
     }
 
     /// Requests cancellation.
@@ -751,6 +763,7 @@ fn run_with_stall_candidate(
         &running.supervisor,
         &running.child,
         Stops {
+            started,
             deadline,
             cancel,
             monitor: spec.stop_file.as_deref(),
@@ -759,7 +772,7 @@ fn run_with_stall_candidate(
         },
         stall_candidate,
     );
-    let completed = complete(
+    let mut completed = complete(
         started,
         running,
         (
@@ -767,6 +780,8 @@ fn run_with_stall_candidate(
             spec.stop_at_first_failure.then_some(answered.as_ref()),
         ),
     );
+    completed.duration = cancel.clock.now(started, leader).duration_since(started);
+    cancel.clock.finished(leader);
     if let Some(leaders) = &spec.leaders {
         leaders.finished(leader);
     }
@@ -1544,6 +1559,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 #[derive(Clone, Copy)]
 struct Stops<'a> {
+    started: Instant,
     deadline: Option<Instant>,
     cancel: &'a Cancel,
     monitor: Option<&'a Path>,
@@ -1723,6 +1739,7 @@ fn await_exit(
     let mut watching = stops
         .progress
         .map(|progress| Watching::of(progress, Instant::now()));
+    let mut previous = stops.started;
     loop {
         match child.exit_observed() {
             Ok(true) => return Exit::Exited,
@@ -1734,12 +1751,24 @@ fn await_exit(
                 };
             }
         }
-        let now = Instant::now();
+        let (now, tick) = stops.cancel.clock.read(stops.started, child.handle().id());
+        let now = now.max(previous);
+        previous = now;
         let remaining = stops.deadline.map(|deadline| until(deadline, now));
         let quiet = watching
             .as_mut()
             .and_then(|watching| watching.look(now))
             .map(|stalled| until(stalled, now));
+        if let Err(source) = stops
+            .cancel
+            .clock
+            .acknowledged(child.handle().id(), tick.as_deref())
+        {
+            return match terminate(supervisor, child) {
+                Ok(()) => Exit::WaitFailed(source),
+                Err(error) => Exit::SupervisionFailed(error),
+            };
+        }
         let poll = match (remaining, quiet) {
             (Some(remaining), Some(quiet)) => remaining.min(quiet),
             (Some(sooner), None) | (None, Some(sooner)) => sooner,
@@ -1755,33 +1784,10 @@ fn await_exit(
         if let Some(answered) = answered(supervisor, child, stops.answered) {
             return answered;
         }
-        if let Some(path) = stops.monitor {
-            match inspect_monitor(path) {
-                MonitorState::Absent => {}
-                MonitorState::PresentRegular => {
-                    return match terminate(supervisor, child) {
-                        Ok(()) => Exit::StoppedByMonitor,
-                        Err(error) => Exit::SupervisionFailed(error),
-                    };
-                }
-                MonitorState::InvalidType => {
-                    return match terminate(supervisor, child) {
-                        Ok(()) => Exit::MonitorFailed(MonitorError::InvalidType {
-                            path: path.to_path_buf(),
-                        }),
-                        Err(error) => Exit::SupervisionFailed(error),
-                    };
-                }
-                MonitorState::InspectFailed(source) => {
-                    return match terminate(supervisor, child) {
-                        Ok(()) => Exit::MonitorFailed(MonitorError::Inspect {
-                            path: path.to_path_buf(),
-                            source,
-                        }),
-                        Err(error) => Exit::SupervisionFailed(error),
-                    };
-                }
-            }
+        if let Some(path) = stops.monitor
+            && let Some(exit) = monitored(supervisor, child, path)
+        {
+            return exit;
         }
         if remaining.is_some_and(|remaining| remaining.is_zero()) {
             return match terminate(supervisor, child) {
@@ -1797,8 +1803,30 @@ fn await_exit(
                 Err(error) => Exit::SupervisionFailed(error),
             };
         }
-        thread::sleep(poll);
+        if tick.is_some() {
+            thread::yield_now();
+        } else {
+            thread::sleep(poll);
+        }
     }
+}
+
+fn monitored(supervisor: &sys::Supervisor, child: &SupervisedChild, path: &Path) -> Option<Exit> {
+    let exit = match inspect_monitor(path) {
+        MonitorState::Absent => return None,
+        MonitorState::PresentRegular => Exit::StoppedByMonitor,
+        MonitorState::InvalidType => Exit::MonitorFailed(MonitorError::InvalidType {
+            path: path.to_path_buf(),
+        }),
+        MonitorState::InspectFailed(source) => Exit::MonitorFailed(MonitorError::Inspect {
+            path: path.to_path_buf(),
+            source,
+        }),
+    };
+    Some(match terminate(supervisor, child) {
+        Ok(()) => exit,
+        Err(error) => Exit::SupervisionFailed(error),
+    })
 }
 
 /// How long from `now` until `moment`, and nothing once it has passed.

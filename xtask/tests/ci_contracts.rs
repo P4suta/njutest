@@ -205,3 +205,62 @@ fn the_ci_profile_stores_every_success_and_failure_in_junit() {
         );
     }
 }
+fn native_sleep(source: &str) -> bool {
+    use syn::visit::Visit as _;
+    struct Sleeps {
+        found: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Sleeps {
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if let syn::Expr::Path(path) = call.func.as_ref()
+                && path
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|segment| segment.ident == "sleep")
+            {
+                self.found = true;
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+    }
+    let syntax = xtask::lexed::file(source).expect("the supervision fixture parses");
+    let mut sleeps = Sleeps { found: false };
+    for item in syntax.items {
+        if let syn::Item::Fn(function) = item {
+            let virtual_wasi = function.attrs.iter().any(|attribute| {
+                attribute.path().is_ident("cfg") && matches!(attribute.parse_args::<syn::Meta>(),
+                    Ok(syn::Meta::NameValue(meta)) if meta.path.is_ident("target_os") && matches!(&meta.value,
+                        syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(value), .. }) if value.value() == "wasi"))
+            });
+            if !virtual_wasi {
+                sleeps.visit_item_fn(&function);
+            }
+        }
+    }
+    sleeps.found
+}
+
+#[test]
+fn supervision_fixtures_advance_events_instead_of_waiting_on_wall_time() {
+    assert!(native_sleep(
+        "fn wait() { std::thread::sleep(std::time::Duration::from_secs(60)); }"
+    ));
+    assert!(!native_sleep(
+        "#[cfg(target_os = \"wasi\")] fn wait() { std::thread::sleep(std::time::Duration::from_secs(60)); }"
+    ));
+    for fixture in [
+        "fixture-faulted/tests/calls.rs",
+        "fixture-hang/tests/pace.rs",
+    ] {
+        let source = read(&format!("fixtures/{fixture}"));
+        assert!(
+            !native_sleep(&source),
+            "{fixture} must use the injected supervision clock"
+        );
+        assert!(
+            source.contains("NJUTEST_TEST_CLOCK"),
+            "{fixture} explicitly receives its clock"
+        );
+    }
+}

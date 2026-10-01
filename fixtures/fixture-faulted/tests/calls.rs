@@ -30,6 +30,22 @@ fn ours_and_maybe_answer() {
 fn a_failed_read_is_waited_out() {
     match fixture_faulted::linger(Path::new("Cargo.toml")) {
         Ok(text) => assert!(text.contains("fixture-faulted"), "the manifest reads"),
-        Err(_failed) => std::thread::sleep(std::time::Duration::from_secs(60)),
+        Err(_failed) => wait(),
     }
+}
+
+#[cfg(not(target_os = "wasi"))]
+fn wait() {
+    let directory = std::env::var_os("NJUTEST_TEST_CLOCK").expect("an injected supervision clock");
+    let event = Path::new(&directory).join(std::process::id().to_string());
+    std::fs::write(&event, "60000").expect("one elapsed minute");
+    let acknowledged = event.with_extension("ack");
+    while !std::fs::read(&acknowledged).is_ok_and(|value| value == b"60000") {
+        std::thread::yield_now();
+    }
+}
+
+#[cfg(target_os = "wasi")]
+fn wait() {
+    std::thread::sleep(std::time::Duration::from_secs(60));
 }

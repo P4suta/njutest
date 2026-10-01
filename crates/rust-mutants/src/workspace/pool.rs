@@ -142,6 +142,7 @@ fn diagnostic(spelling: Spelling, name: &OsStr) -> bool {
         || [
             "NJUTEST_TEST_COST_DIR",
             "NJUTEST_FIXTURE_BUILD_CACHE",
+            "NJUTEST_TEST_CLOCK",
             "TMPDIR",
             "TMP",
             "TEMP",

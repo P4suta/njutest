@@ -19,7 +19,7 @@ use rust_mutants::runner::Cancel;
 
 struct Fixture {
     root: PathBuf,
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
 }
 
 fn fixture(name: &str, config: &str) -> Fixture {
@@ -31,7 +31,7 @@ fn fixture(name: &str, config: &str) -> Fixture {
     let root = dir.path().join(name);
     copy_tree(&source, &root);
     std::fs::write(root.join(".njutest.toml"), config).expect("the configuration");
-    Fixture { root, _dir: dir }
+    Fixture { root, dir }
 }
 
 fn verify(fixture: &Fixture) -> Output {
@@ -39,6 +39,13 @@ fn verify(fixture: &Fixture) -> Output {
 }
 
 fn verify_with(fixture: &Fixture, extra: &[&str]) -> Output {
+    let events = fixture.dir.path().join("clock-events");
+    std::fs::create_dir_all(&events).expect("clock events");
+    let mut vars: rust_mutants::vars::Variables =
+        njutest_devkit::paths::environment_for_a_toolchain_run(&[])
+            .into_iter()
+            .collect();
+    vars.set("NJUTEST_TEST_CLOCK", events.as_os_str());
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = njutest::run_from(
         [
@@ -58,10 +65,8 @@ fn verify_with(fixture: &Fixture, extra: &[&str]) -> Output {
             temp_directory: njutest_devkit::paths::temp_beside(&fixture.root)
                 .expect("a temporary directory"),
             program: PathBuf::from("this test never runs it"),
-            vars: njutest_devkit::paths::environment_for_a_toolchain_run(&[])
-                .into_iter()
-                .collect::<rust_mutants::vars::Variables>(),
-            cancel: Cancel::new(),
+            vars,
+            cancel: Cancel::new().with_clock(rust_mutants::runner::Clock::events(events)),
             terminal: njutest::presentation::Terminal::default(),
         },
         &mut out,

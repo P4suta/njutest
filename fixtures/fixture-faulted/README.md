@@ -14,8 +14,10 @@ A fault replaces the call a `?` asks about with its failure, and only a run that
 - `ours` propagates an error type only this crate can make, and `maybe` propagates an `Option`.
   Neither can be failed without guessing, so the compiler refuses both faults, and they are not put.
 - `spare` reads a file no test asks for: its fault is unreached.
-- `linger` sleeps for sixty seconds when its read fails: its native fault waits out the two-second measurement bound.
-  The sealed host advances virtual time through the sleep, so the engine's sealed fault survives.
+- `linger` advances sixty seconds when its read fails: its native fault waits out the two-second measurement bound.
+  Native toolchain tests publish the elapsed event to their explicitly injected supervision clock and wait for acknowledgement before returning.
+  Whole-contract tests keep the original sixty-second successful completion without waiting on the wall clock.
+  The sealed host advances virtual time through the WASI sleep, so the engine's sealed fault survives.
 - `refused` is reached only by a target whose one test declines in the same words with and without a fault: nobody measures it, and the native fault is undecided.
   Its sealed fault is unproven because every reaching test is set aside for declining.
 

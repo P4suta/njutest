@@ -11,6 +11,7 @@
               test caused to be written is one it may index"
 )]
 
+use std::ffi::OsString;
 use std::path::Path;
 use std::process::Output;
 
@@ -29,6 +30,53 @@ fn run(fixture: &Fixture, env: &[(&str, String)]) -> Output {
     command.args(["--root", njutest_devkit::paths::utf8(fixture.root())]);
     command.args(["--tier", "all", "--offline", "--locked", "--no-seal"]);
     command.output().expect("rust-mutants runs")
+}
+
+fn run_clocked(fixture: &Fixture, env: &[(&str, String)]) -> Output {
+    let events = fixture.temp().join("clock-events");
+    std::fs::create_dir_all(&events).expect("clock events");
+    let mut vars: rust_mutants::vars::Variables =
+        njutest_devkit::paths::environment_for_a_toolchain_run(&[])
+            .into_iter()
+            .collect();
+    vars.set("NJUTEST_TEST_CLOCK", events.as_os_str());
+    for (name, value) in env {
+        vars.set(*name, value);
+    }
+    let environment = rust_mutants_cli::Environment {
+        vars,
+        temp_directory: fixture.temp().to_path_buf(),
+        program: Path::new(env!("CARGO_BIN_EXE_rust-mutants")).to_path_buf(),
+        cache_directory: fixture.cache().to_path_buf(),
+        working_directory: fixture.root().to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+        ci: rust_mutants_cli::CiHost::None,
+        cargo: None,
+    };
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        [
+            "rust-mutants",
+            "run",
+            "--tier",
+            "all",
+            "--offline",
+            "--locked",
+            "--no-seal",
+        ]
+        .into_iter()
+        .map(OsString::from),
+        &environment,
+        &rust_mutants::runner::Cancel::new()
+            .with_clock(rust_mutants::runner::Clock::events(events)),
+        rust_mutants_cli::Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    njutest_devkit::process::answered(code, out, err)
 }
 
 /// What to add to a failure when the row says the clock answered instead of the count, and nothing when it does not.
@@ -114,7 +162,7 @@ fn a_timeout_that_does_not_reproduce_is_inconclusive() {
     let fixture = Fixture::copy("fixture-hang");
     let markers = fixture.temp().join("markers");
     std::fs::create_dir_all(&markers).expect("the marker directory");
-    let output = run(
+    let output = run_clocked(
         &fixture,
         &[
             (
@@ -162,7 +210,7 @@ fn a_test_slower_than_the_bound_is_waited_for_while_it_keeps_moving() {
         "version = 1\n\n[mutation]\ntimeout = \"5s\"\nsteps = 1000000\n",
     )
     .expect("the five-second bound, under an allowance one reservation of which outlasts the test");
-    let output = run(&fixture, &[("FIXTURE_HANG_STRIDE_MS", "50".to_owned())]);
+    let output = run_clocked(&fixture, &[("FIXTURE_HANG_STRIDE_MS", "50".to_owned())]);
     assert!(
         output.status.code() == Some(2),
         "{}",
@@ -178,6 +226,12 @@ fn a_test_slower_than_the_bound_is_waited_for_while_it_keeps_moving() {
          allowance holds: {moving}"
     );
     assert_eq!(moving["retried"].as_bool(), Some(false), "{moving}");
+    assert!(
+        moving["duration_ms"]
+            .as_u64()
+            .is_some_and(|elapsed| elapsed >= 10_000),
+        "the virtual execution outlasted its unchanged five-second bound: {moving}"
+    );
 }
 
 #[test]
