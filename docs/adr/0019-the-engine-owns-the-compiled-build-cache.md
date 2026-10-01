@@ -88,3 +88,12 @@ No target directory is copied.
 Wasmtime's built-in cache separately shares compiled host modules by bytes, engine configuration and Wasmtime version.
 It is an engine-owned compilation layer, independent of the outcome and transcript stores.
 Count diagnostics distinguish module-cache hits from transcript-cache answers.
+
+## Amendment, 2026-10-02: a verified build hit starts no Cargo
+
+The engine's compiler facade records eligible locked builds by their complete source, graph, configuration, toolchain, selection, flag and environment content identity.
+The record lives under the engine-owned target directory and includes digests for every returned artifact and dep-info file.
+Reuse reconstructs the compilation only after verifying that inventory and its Cargo messages; doubt returns to Cargo.
+Opaque build scripts and procedural macros cannot establish this record because they may read undeclared inputs.
+This layer applies to users' repeated runs as well as leased fixture slots, and its hit/miss notes always identify the key.
+The suite count gate budgets unique bound build keys plus uncacheable requests per binary, rather than allowing a warm cache to hide new build requests.

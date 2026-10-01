@@ -34,16 +34,17 @@ use windows_sys::Win32::Security::{
 };
 use windows_sys::Win32::Storage::FileSystem::{
     DELETE, FILE_ADD_FILE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
-    FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_FLAG_DELETE,
-    FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
-    FILE_DISPOSITION_INFO_EX, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_128, FILE_ID_INFO,
-    FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
-    FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_TRAVERSE,
-    FILE_WRITE_DATA, FileAttributeTagInfo, FileDispositionInfoEx, FileFullDirectoryInfo,
-    FileFullDirectoryRestartInfo, FileIdInfo, FileStandardInfo, FlushFileBuffers,
-    GetFileInformationByHandleEx, GetVolumeInformationByHandleW, READ_CONTROL, SYNCHRONIZE,
-    SetFileInformationByHandle, WRITE_DAC,
+    FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO, FILE_BASIC_INFO,
+    FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
+    FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX, FILE_FLAG_BACKUP_SEMANTICS,
+    FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+    FILE_ID_128, FILE_ID_INFO, FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY,
+    FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    FILE_STANDARD_INFO, FILE_TRAVERSE, FILE_WRITE_DATA, FileAttributeTagInfo, FileBasicInfo,
+    FileDispositionInfoEx, FileFullDirectoryInfo, FileFullDirectoryRestartInfo, FileIdInfo,
+    FileStandardInfo, FlushFileBuffers, GetFileInformationByHandleEx,
+    GetVolumeInformationByHandleW, READ_CONTROL, SYNCHRONIZE, SetFileInformationByHandle,
+    WRITE_DAC,
 };
 use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 use windows_sys::Win32::System::SystemServices::{
@@ -210,6 +211,18 @@ pub(super) fn file_status(file: &File) -> io::Result<Status> {
         kind: kind_of(file)?,
         len,
     })
+}
+
+pub(super) fn change_time(file: &File) -> io::Result<i64> {
+    let mut basic = FILE_BASIC_INFO {
+        CreationTime: 0,
+        LastAccessTime: 0,
+        LastWriteTime: 0,
+        ChangeTime: 0,
+        FileAttributes: 0,
+    };
+    by_handle(file, FileBasicInfo, &mut basic)?;
+    Ok(basic.ChangeTime)
 }
 
 pub(super) fn status_at(dir: &File, name: Name<'_>) -> io::Result<Option<Status>> {

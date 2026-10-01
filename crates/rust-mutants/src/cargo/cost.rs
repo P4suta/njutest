@@ -31,6 +31,8 @@ pub fn record_build(
         .map_err(|source| CargoError::new(CargoErrorKind::CommandFailed, source.to_string()))?;
     let millis = u64::try_from(duration.as_millis())
         .map_err(|source| CargoError::new(CargoErrorKind::CommandFailed, source.to_string()))?;
+    trace.note("fixture-build-request", "direct");
+    trace.note("fixture-build-uncacheable", "direct");
     trace.note("fixture-cargo-build", &millis.to_string());
     trace.note(
         "cargo-built-units",

@@ -112,6 +112,15 @@ pub struct Identity {
     pub object: u128,
 }
 
+/// The held Windows object's identity and metadata change time, distinct from its writable mtime.
+///
+/// # Errors
+/// The filesystem cannot provide the object's identity or change time.
+#[cfg(windows)]
+pub(crate) fn change_stamp(file: &File) -> io::Result<(Identity, i64)> {
+    Ok((sys::file_status(file)?.identity, sys::change_time(file)?))
+}
+
 /// What a directory entry is, read without following it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Status {

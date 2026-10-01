@@ -1418,6 +1418,7 @@ impl Workspace {
             .collect();
         crate::cargo::BuildDir::new(self.target_dir.clone(), members)
             .rooted(self.snapshot.root().to_path_buf())
+            .with_graph(&self.metadata)
     }
 
     /// A sealed build cache named by the tree's content, with ownership held until its modules are dropped.

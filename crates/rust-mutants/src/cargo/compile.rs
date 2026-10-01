@@ -206,7 +206,7 @@ pub fn compile_arguments(options: &CompileOptions) -> Vec<OsString> {
 /// What a compilation produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Compiled {
-    completion: Completion,
+    pub(super) completion: Completion,
     /// Every message, in order, for attribution.
     pub messages: Vec<Message>,
     /// The units that produced an artifact, with their sources.
@@ -401,7 +401,85 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
         })?,
         None => driver.trace.clone(),
     };
+    if driver.cancel.is_cancelled() {
+        return Err(CargoError::new(
+            CargoErrorKind::Cancelled,
+            "the compilation was cancelled",
+        ));
+    }
+    let (request, reused) = cached(driver, options, (&spec, &trace));
+    if let Some(compiled) = reused {
+        if driver.cancel.is_cancelled() {
+            return Err(CargoError::new(
+                CargoErrorKind::Cancelled,
+                "the compilation was cancelled",
+            ));
+        }
+        return Ok(compiled);
+    }
     let result = run(&spec, driver.cancel);
+    let compiled = completed(driver, options, (&spec, &result, &trace))?;
+    if let (Some(request), Some(env)) = (request, &spec.env)
+        && let Err(source) =
+            request.write(&compiled, &result.stdout, (env, options.target_dir.path()))
+    {
+        trace.note("build-cache-unavailable", &source.to_string());
+        trace.note("fixture-build-uncacheable", &source.to_string());
+    }
+    Ok(compiled)
+}
+
+fn cached(
+    driver: &Driver<'_>,
+    options: &CompileOptions,
+    (spec, trace): (&crate::runner::Spec, &crate::trace::Recorder),
+) -> (Option<super::build_cache::Request>, Option<Compiled>) {
+    match &spec.env {
+        Some(env) => match super::build_cache::Request::of(driver, options, env) {
+            Ok(request) => {
+                trace.note("fixture-build-request", &request.key);
+                trace.note("build-cache-bound", &request.key);
+                match request.read(driver, options, env) {
+                    Ok(compiled) => {
+                        trace.note("build-cache-hit", &request.key);
+                        trace.note("cargo-built-units", "0");
+                        return (Some(request), Some(compiled));
+                    }
+                    Err(source) => {
+                        trace.note("build-cache-miss", &format!("{} {source}", request.key));
+                    }
+                }
+                (Some(request), None)
+            }
+            Err(source) => {
+                let key = crate::id::HexDigest::of(
+                    format!("{:?}/{:?}", spec.argv, env.canonical()).as_bytes(),
+                );
+                trace.note("fixture-build-request", key.as_str());
+                trace.note("fixture-build-uncacheable", key.as_str());
+                trace.note("build-cache-miss", &format!("{key} {source}"));
+                (None, None)
+            }
+        },
+        None => {
+            let key = crate::id::HexDigest::of(format!("{:?}", spec.argv).as_bytes());
+            trace.note("fixture-build-request", key.as_str());
+            trace.note("fixture-build-uncacheable", key.as_str());
+            trace.note("build-cache-miss", &format!("{key} inherited environment"));
+            (None, None)
+        }
+    }
+}
+
+fn completed(
+    driver: &Driver<'_>,
+    options: &CompileOptions,
+    (spec, result, trace): (
+        &crate::runner::Spec,
+        &crate::runner::RunResult,
+        &crate::trace::Recorder,
+    ),
+) -> Result<Compiled, CargoError> {
     let millis = u64::try_from(result.duration.as_millis()).map_err(|_overflow| {
         CargoError::new(
             CargoErrorKind::CommandFailed,
@@ -409,7 +487,7 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
         )
     })?;
     trace.note("fixture-cargo-build", &millis.to_string());
-    trace.exec_result(ExecRecord::of(&spec, &result));
+    trace.exec_result(ExecRecord::of(spec, result));
     if driver.cancel.is_cancelled() {
         return Err(CargoError::new(
             CargoErrorKind::Cancelled,
@@ -423,7 +501,7 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
         ));
     }
     let Some(exited) = Exited::of(&result.termination) else {
-        return Err(command_failed(&spec, &result));
+        return Err(command_failed(spec, result));
     };
     if result.stdout_truncated {
         return Err(CargoError::new(
@@ -436,7 +514,7 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
     trace.note("cargo-built-units", &units.to_string());
     let completion = match Completion::of(&messages, exited) {
         Ok(completion) => completion,
-        Err(CompletionError::Unfinished { .. }) => return Err(command_failed(&spec, &result)),
+        Err(CompletionError::Unfinished { .. }) => return Err(command_failed(spec, result)),
         Err(
             unread @ (CompletionError::Ambiguous { .. } | CompletionError::Contradicted { .. }),
         ) => {

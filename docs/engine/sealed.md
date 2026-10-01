@@ -123,13 +123,24 @@ Tests can share native and sealed fixture builds by supplying an absolute `NJUTE
 The engine keys exclusive source slots by the complete copied content digest, cargo and rustc versions and paths, and build inputs apart from diagnostic labels and temporary/cache directory names.
 It loads the final snapshot's complete Cargo graph once.
 Graphs with build scripts or procedural macros use a separate target directory for every full environment because those programs may consume undeclared inputs.
-Graphs without either share the slot's target directory; Cargo still tracks compile-time `env!` inputs in dep-info.
+Graphs without either share the slot's target directory; compiler dep-info binds compile-time `env!` inputs.
 Each claim gets a fresh source copy and separate execution scratch, and existing per-member content settling invalidates units whenever instrumentation or a catalog changes their source bytes.
 The claim lasts through the prepared session and every shared set of its sealed modules.
 A busy four-slot pool falls back to a private build directory.
 Verdicts, runtime records, transcripts and mutable execution state are never restored from a build slot.
 The native apparatus guard still watches executable identities and sibling runtime files, including shared libraries.
 Static `.rlib` archives, `.rmeta` metadata and `.d` dep-info are compile-only outputs that Cargo may regenerate or collect while running documentation tests; their removal does not change a running harness.
+
+The engine also keeps verified content-addressed Cargo compilations in each owned target directory, including ordinary users' persistent directories.
+An eligible locked build hashes the snapshot, package graph, manifests, lockfile, Cargo configuration, compiler and standard-library content, target, profile, features, flags and the frozen build environment.
+Toolchain digests are memoized only while object and change stamps agree: inode and ctime on Unix, file identity and ChangeTime on Windows.
+Unavailable stamps fall back to Cargo, and a zero Windows change time requires hashing again.
+Only diagnostic and scratch variables are excluded, and dep-info that reads one makes the compilation ineligible.
+Build scripts, procedural macros, unbound compiler inputs, custom compiler or linker programs, and unsupported configuration or flags fall back to Cargo.
+A hit verifies the recorded artifact and dep-info digests, modes, complete Cargo message stream and compiler input/environment inventory before returning without a Cargo process.
+A missing, malformed or damaged record or artifact falls back to Cargo; damaged owned outputs are removed so Cargo must rebuild them.
+`build-cache-hit` and `build-cache-miss` notes carry the input key, and cost records separate requests, actual processes and hits.
+The source slot and its owner remain held through the reuse and execution.
 
 The unpartitioned local suite records this work through `mise run test:cost`, which refuses count growth against the committed ledger.
 See [suite cost](suite-cost.md) for the measurements and commands.

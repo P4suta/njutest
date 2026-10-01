@@ -36,6 +36,7 @@ pub struct Toolchain {
     cargo_version: VersionInfo,
     rustc_version: VersionInfo,
     env: Option<crate::vars::Variables>,
+    identities: super::build_cache::toolchain::Identities,
 }
 
 impl Toolchain {
@@ -104,6 +105,7 @@ impl Toolchain {
             cargo_version,
             rustc_version,
             env,
+            identities: super::build_cache::toolchain::Identities::empty(),
         })
     }
 
@@ -189,6 +191,10 @@ impl Toolchain {
     #[must_use]
     pub const fn env(&self) -> Option<&crate::vars::Variables> {
         self.env.as_ref()
+    }
+
+    pub(super) const fn identities(&self) -> &super::build_cache::toolchain::Identities {
+        &self.identities
     }
 
     /// The environment the tests are given, with this toolchain's own directory first on its search path where a bare `cargo` from `dir` would answer with another toolchain or not at all, and what it said that made it so.

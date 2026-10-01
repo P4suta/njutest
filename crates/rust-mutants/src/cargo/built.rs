@@ -54,6 +54,7 @@ pub struct BuildDir {
     path: PathBuf,
     members: Vec<Member>,
     root: Option<PathBuf>,
+    graph: Option<Vec<PathBuf>>,
 }
 
 /// The record a target directory keeps: every member's files as the last build that could write its fingerprints found them.
@@ -81,6 +82,7 @@ impl BuildDir {
             path,
             members,
             root: None,
+            graph: None,
         }
     }
 
@@ -106,6 +108,7 @@ impl BuildDir {
             path: self.path.join(name),
             members: self.members.clone(),
             root: self.root.clone(),
+            graph: self.graph.clone(),
         }
     }
 
@@ -202,7 +205,42 @@ impl BuildDir {
             path,
             members: self.members.clone(),
             root: self.root.clone(),
+            graph: self.graph.clone(),
         }
+    }
+
+    /// Binds reuse to the complete Cargo graph, refusing arbitrary build scripts and procedural macros.
+    #[must_use]
+    pub fn with_graph(mut self, metadata: &super::Metadata) -> Self {
+        self.graph = if metadata
+            .packages
+            .iter()
+            .flat_map(|package| &package.targets)
+            .any(|target| {
+                target
+                    .kind
+                    .iter()
+                    .any(|kind| kind == "custom-build" || kind == "proc-macro")
+            }) {
+            None
+        } else {
+            Some(
+                metadata
+                    .packages
+                    .iter()
+                    .map(|package| package.manifest_dir().to_path_buf())
+                    .collect(),
+            )
+        };
+        self
+    }
+
+    pub(super) fn cache_roots(&self) -> Option<&[PathBuf]> {
+        self.graph.as_deref()
+    }
+
+    pub(super) fn root(&self) -> Option<&Path> {
+        self.root.as_deref()
     }
 
     /// Makes cargo compile again every unit of a member whose files differ from what this directory last built it from, and dates every member's files back to when their bytes last moved, never forward.
