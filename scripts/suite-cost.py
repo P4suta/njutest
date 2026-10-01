@@ -27,6 +27,19 @@ WORK_NUMBERS = (
     "cargo_other_processes",
 )
 INVENTORY_NUMBERS = ("direct_commands", "cargo_test_processes", "cargo_other_processes")
+TOTAL_NUMBERS = WORK_NUMBERS + (
+    "records",
+    "preparations",
+    "instances",
+    "hits",
+    "misses",
+    "compile_ns",
+    "execution_ns",
+    "module_requests",
+)
+MISS_CLASSES = ("cold", "repair")
+
+GAPS = ["module keys", "host waits", "resource meters"]
 
 
 def unique(pairs):
@@ -48,6 +61,32 @@ def number(value, label):
     return value
 
 
+def within(label, value):
+    """One count boundary for every aggregate: no summed total leaves the u64 width a record could measure."""
+    if type(value) is not int or value < 0 or value > 2**64 - 1:
+        raise ValueError(
+            f"{label}: the aggregate count {value!r} is outside the u64 width a record could measure"
+        )
+    return value
+
+
+def audit(label, row):
+    """Check every aggregate count of one holder: its fields, its keys and its reasons."""
+    for name in TOTAL_NUMBERS:
+        if name in row:
+            within(f"{label}:{name}", row[name])
+    for key, held in row.get("build_keys", {}).items():
+        for name in ("requests", "hits", "misses", "processes"):
+            within(f"{label}:key:{key[:8]}:{name}", held[name])
+        for reason, count in held["reasons"].items():
+            within(f"{label}:key:{key[:8]}:reason:{reason}", count)
+        for reason, count in held["refused_writes"].items():
+            within(f"{label}:key:{key[:8]}:refused:{reason}", count)
+    for identity, held in row.get("unbound", {}).items():
+        for name in ("requests", "misses", "processes"):
+            within(f"{label}:unbound:{identity}:{name}", held[name])
+
+
 def key_work(value, label):
     """Read one bound key's multiplicity: every request, process, hit, miss and concrete reason."""
     if not isinstance(value, dict):
@@ -67,6 +106,14 @@ def key_work(value, label):
             if not isinstance(reason, str) or not reason:
                 raise ValueError(f"{label}:{name}: a cause without its concrete reason")
             number(count, f"{label}:{name}:{reason}")
+    for reason in value["reasons"]:
+        if not any(
+            reason.startswith(f"{kind}: ") and len(reason) > len(kind) + 2
+            for kind in MISS_CLASSES
+        ):
+            raise ValueError(
+                f"{label}: a miss reason without its stable class: {reason!r}"
+            )
     if value["hits"] + value["misses"] != value["requests"]:
         raise ValueError(f"{label}: requests do not close into hits and misses")
     if value["misses"] != value["processes"]:
@@ -108,22 +155,47 @@ def merge_key(into, held):
 
 
 def merge_unbound(into, held):
+    """Sum one unbound identity's multiplicity."""
     for name in ("requests", "misses", "processes"):
         into[name] += held[name]
 
 
-def refuse_redundancy(row, label):
-    """A bound input whose cold builds repeat had a record that should have answered."""
-    for key, held in row["build_keys"].items():
+def empty_key():
+    return {
+        "requests": 0,
+        "hits": 0,
+        "misses": 0,
+        "processes": 0,
+        "reasons": {},
+        "refused_writes": {},
+    }
+
+
+def empty_unbound():
+    return {"requests": 0, "misses": 0, "processes": 0}
+
+
+def suite_redundancy(inventory):
+    """A normal cold build repeated for one bound input is redundant work across the whole suite.
+
+    One refused record write explains exactly one later cold build: the write failed,
+    so the next request found nothing. Anything beyond that bound is repetition no
+    concrete cause explains, and repairs keep their own class beside it.
+    """
+    errors = []
+    for key, held in sorted(inventory.items()):
         cold = sum(
             count
             for reason, count in held["reasons"].items()
             if reason.startswith("cold:")
         )
-        if cold >= 2 and not held["refused_writes"]:
-            raise ValueError(
-                f"{label}: redundant cold builds of one bound input: {key} built cold {cold} times"
+        refused = sum(held["refused_writes"].values())
+        if cold > 1 + refused:
+            errors.append(
+                f"redundant cold builds of one bound input: {key} built cold {cold} times "
+                f"across the suite while {refused} refused record writes explained at most {1 + refused}"
             )
+    return errors
 
 
 def measured(directory, junit, require_pass=True):
@@ -197,6 +269,7 @@ def measured(directory, junit, require_pass=True):
         raise ValueError(
             "no cost records: run with NJUTEST_TEST_COST_DIR and nextest labels"
         )
+    unobserved = set()
     for path in paths:
         record = json.loads(path.read_text(), object_pairs_hook=unique)
         if record["schema"] == "njutest-test-cost-v1":
@@ -222,15 +295,16 @@ def measured(directory, junit, require_pass=True):
         row["module_requests"] += number(
             work["platform_requests"], f"{path}:platform_requests"
         )
-        unobserved = work.get("unobserved_cargo")
+        declared = work.get("unobserved_cargo")
         if (
-            not isinstance(unobserved, list)
-            or not unobserved
-            or any(not isinstance(name, str) or not name for name in unobserved)
+            not isinstance(declared, list)
+            or not declared
+            or any(not isinstance(name, str) or not name for name in declared)
         ):
             raise ValueError(
                 f"{path}: the cargo inventory does not name its unobserved command classes"
             )
+        unobserved.update(declared)
         if not isinstance(work["build_keys"], dict):
             raise ValueError(f"{path}: content-addressed build keys are absent")
         for key_identity, held in work["build_keys"].items():
@@ -240,20 +314,9 @@ def measured(directory, junit, require_pass=True):
                 or not all(char in "0123456789abcdef" for char in key_identity)
             ):
                 raise ValueError(f"{path}: invalid content-addressed build key")
-            parsed = key_work(held, f"{path}:{key_identity[:8]}")
             merge_key(
-                row["build_keys"].setdefault(
-                    key_identity,
-                    {
-                        "requests": 0,
-                        "hits": 0,
-                        "misses": 0,
-                        "processes": 0,
-                        "reasons": {},
-                        "refused_writes": {},
-                    },
-                ),
-                parsed,
+                row["build_keys"].setdefault(key_identity, empty_key()),
+                key_work(held, f"{path}:{key_identity[:8]}"),
             )
         if not isinstance(work["unbound"], dict):
             raise ValueError(f"{path}: unbound build identities are absent")
@@ -265,11 +328,10 @@ def measured(directory, junit, require_pass=True):
                     f"{path}: an unbound identity without its explicit reason: {identity!r}"
                 )
             merge_unbound(
-                row["unbound"].setdefault(
-                    identity, {"requests": 0, "misses": 0, "processes": 0}
-                ),
+                row["unbound"].setdefault(identity, empty_unbound()),
                 unbound_work(held, identity, f"{path}:{identity}"),
             )
+        audit(f"{path}:{record['binary']}::{record['test']}", row)
         attributed = (
             sum(held["processes"] for held in row["build_keys"].values())
             + sum(held["processes"] for held in row["unbound"].values())
@@ -323,38 +385,61 @@ def measured(directory, junit, require_pass=True):
                 )
             elif sealed["instances"]:
                 raise ValueError(f"{path}: executed instance timing is absent")
+        audit(f"{path}:{record['binary']}::{record['test']}", row)
+    inventory = {}
+    suite_unbound = {}
+    totals = {name: 0 for name in TOTAL_NUMBERS}
+    totals["tests"] = len(tests)
     for row in tests.values():
         if require_pass and row["preparations"] > row["module_requests"]:
             raise ValueError(
                 f"{row['binary']}::{row['test']}: module preparations exceed recorded requests"
             )
-        if require_pass:
-            refuse_redundancy(row, f"{row['binary']}::{row['test']}")
         binaries[row["binary"]]["records"] += row["records"]
-        for name in WORK_NUMBERS + ("module_requests",):
+        for name in WORK_NUMBERS + (
+            "module_requests",
+            "preparations",
+            "instances",
+            "hits",
+            "misses",
+        ):
             binaries[row["binary"]][name] += row[name]
+            totals[name] += row[name]
+        totals["records"] += row["records"]
         for key_identity, held in row["build_keys"].items():
             merge_key(
                 binaries[row["binary"]]["build_keys"].setdefault(
-                    key_identity,
-                    {
-                        "requests": 0,
-                        "hits": 0,
-                        "misses": 0,
-                        "processes": 0,
-                        "reasons": {},
-                        "refused_writes": {},
-                    },
+                    key_identity, empty_key()
                 ),
                 held,
             )
+            merge_key(inventory.setdefault(key_identity, empty_key()), held)
         for identity, held in row["unbound"].items():
             merge_unbound(
                 binaries[row["binary"]]["unbound"].setdefault(
-                    identity, {"requests": 0, "misses": 0, "processes": 0}
+                    identity, empty_unbound()
                 ),
                 held,
             )
+            merge_unbound(suite_unbound.setdefault(identity, empty_unbound()), held)
+    for binary, row in binaries.items():
+        audit(f"binary:{binary}", row)
+    for name in TOTAL_NUMBERS:
+        within(f"suite:{name}", totals[name])
+    audit("suite", {"build_keys": inventory, "unbound": suite_unbound, **totals})
+    attributed = (
+        sum(held["processes"] for held in inventory.values())
+        + sum(held["processes"] for held in suite_unbound.values())
+        + totals["direct_commands"]
+        + totals["cargo_test_processes"]
+    )
+    if attributed != totals["builds"]:
+        raise ValueError(
+            f"the suite process inventory does not close: {totals['builds']} builds against {attributed} attributed"
+        )
+    violations = suite_redundancy(inventory)
+    if require_pass and violations:
+        raise ValueError("suite work is redundant:\n" + "\n".join(violations))
     return {
         "schema": "njutest-suite-cost-v2",
         "platform": platform.system(),
@@ -363,6 +448,12 @@ def measured(directory, junit, require_pass=True):
         "errors": int(suite.attrib["errors"]),
         "tests": list(tests.values()),
         "binaries": dict(binaries),
+        "build_keys": inventory,
+        "unbound": suite_unbound,
+        "totals": totals,
+        "redundancy": violations,
+        "unobserved_cargo": sorted(unobserved),
+        "gaps": list(GAPS),
         "toolchain_concurrency": concurrency(tests.values()),
     }
 
@@ -403,7 +494,7 @@ def concurrency(rows):
 
 def budget(report):
     """Count actual build processes and module preparations so a warm cache cannot hide new work."""
-    result = {
+    binaries = {
         binary: {
             name: row[name]
             for name in (
@@ -418,44 +509,57 @@ def budget(report):
         for binary, row in sorted(report["binaries"].items())
         if "::toolchain_" in binary
     }
-    for binary in result:
+    for binary in binaries:
         row = report["binaries"][binary]
-        result[binary]["builds"] = row["builds"]
-        result[binary]["misses"] = row["module_requests"]
+        binaries[binary]["builds"] = row["builds"]
+        binaries[binary]["misses"] = row["module_requests"]
     direct = {
         "njutest::toolchain_build",
         "njutest::toolchain_edits",
         "rust-mutants::toolchain_cargo",
         "xtask::toolchain_bundle",
     }
-    for binary in direct & result.keys():
-        if not result[binary]["builds"] or not result[binary]["records"]:
+    for binary in direct & binaries.keys():
+        if not binaries[binary]["builds"] or not binaries[binary]["records"]:
             raise ValueError(f"{binary}: direct Cargo builds were not measured")
     guests = "rust-mutants-sealed::toolchain_guests"
-    if guests in result:
-        row = report["binaries"][guests]
-        result[guests]["records"] -= row["builds"]
-    return result
+    if guests in binaries:
+        binaries[guests]["records"] -= report["binaries"][guests]["builds"]
+    return {
+        "binaries": binaries,
+        "unobserved_cargo": list(report["unobserved_cargo"]),
+        "gaps": list(report["gaps"]),
+    }
 
 
 def growth(actual, expected):
-    """Refuse newly unmeasured work, omitted binaries and every increase in compile/build counts."""
+    """Refuse newly unmeasured work, omitted binaries, every count increase and any silently changed observation gap."""
     errors = []
-    if actual.keys() != expected.keys():
+    if actual["binaries"].keys() != expected["binaries"].keys():
         errors.append(
-            f"toolchain binaries changed: added={sorted(actual.keys() - expected.keys())}, missing={sorted(expected.keys() - actual.keys())}"
+            f"toolchain binaries changed: added={sorted(actual['binaries'].keys() - expected['binaries'].keys())}, missing={sorted(expected['binaries'].keys() - actual['binaries'].keys())}"
         )
-    for binary in actual.keys() & expected.keys():
+    for binary in actual["binaries"].keys() & expected["binaries"].keys():
         for name in ("tests", "builds", "build_requests", "module_requests", "misses"):
-            limit = number(expected[binary][name], f"baseline:{binary}:{name}")
-            if actual[binary][name] > limit:
+            limit = number(
+                expected["binaries"][binary][name], f"baseline:{binary}:{name}"
+            )
+            if actual["binaries"][binary][name] > limit:
                 errors.append(
-                    f"{binary}: {name} grew from {limit} to {actual[binary][name]}"
+                    f"{binary}: {name} grew from {limit} to {actual['binaries'][binary][name]}"
                 )
-        if actual[binary]["records"] < expected[binary]["records"]:
+        if (
+            actual["binaries"][binary]["records"]
+            < expected["binaries"][binary]["records"]
+        ):
             errors.append(f"{binary}: cost records disappeared")
-        if actual[binary]["tests"] != expected[binary]["tests"]:
+        if actual["binaries"][binary]["tests"] != expected["binaries"][binary]["tests"]:
             errors.append(f"{binary}: the complete test inventory changed")
+    for name in ("gaps", "unobserved_cargo"):
+        if actual.get(name) != expected.get(name):
+            errors.append(
+                f"the observation {name} changed: recorded={expected.get(name)}, measured={actual.get(name)}; re-record the ledger after the reviewed change"
+            )
     return errors
 
 
@@ -488,6 +592,8 @@ def main():
         print(
             f"{binary}: {row['seconds']:.3f}s summed, {row['preparations']} modules ({row['hits']} hits/{row['misses']} misses), {row['builds']} Cargo processes/{row['build_requests']} requests ({row['build_hits']} hits), {row['units']} fresh units, compile {row['compile_ns'] / 1e9:.3f}s / execute {row['execution_ns'] / 1e9:.3f}s"
         )
+    for violation in report["redundancy"]:
+        print(f"redundant work, not certified: {violation}")
     if args.measure_only:
         return
     if args.record:

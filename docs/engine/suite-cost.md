@@ -19,18 +19,25 @@ Cranelift `None` was rejected as the default: the recursive Rust guest spends 12
 
 The gate refuses growth in toolchain test inventories, actual fixture Cargo processes, build requests, module compilations and requested modules, and refuses missing cost records or toolchain binaries.
 Cost records keep per-key multiplicity under `njutest-test-cost-v2`: every bound input key counts its own requests, actual processes, hits, misses with a concrete `cold:` or `repair:` reason, and refused record writes; unbound commands publish an `unbound: ` reason and builds outside the compiler facade a `direct: ` one, never a fabricated key.
-The reader sums multiplicity across every record of a test and across the suite, and refuses inventories that do not close — requests into hits and misses, misses into processes and their reasons, processes into the build count, and requests into the request count.
-Two cold builds of one bound input inside one test are a redundancy error even when a ceiling could cover them, unless that key's record shows a refused write naming the concrete cause; a corruption repair stays visible by its own reason and is not redundancy.
+The reader sums multiplicity across every record, test and binary of the measured suite, and refuses inventories that do not close — requests into hits and misses, misses into processes and their classed reasons, processes into the build count, and requests into the request count.
+One shared count boundary holds every aggregate — per record, per test, per binary, per key, per reason and the suite totals — inside the u64 width a record could measure, so no summed total accepts what no counter could hold.
+The report carries the global key inventory, the unbound identities, the suite totals and the redundancy violations themselves, so a review reads the multiplicity without reconstructing it from binary rows.
+A normal cold build repeated for one bound input is a redundancy error across the whole measured suite, whatever binary or test repeated it.
+One refused record write explains exactly one later cold build — the write failed, so the next request found nothing — and no nonempty refusal mapping excuses repetition beyond that bound; a corruption repair keeps its own class and reason beside it, visible and not redundant.
+A miss reason without its stable `cold:` or `repair:` class and a nonempty cause is refused, so no miss can leave the redundancy accounting unclassified.
+Strict reading and `--record` refuse redundant work independently of the budget, and `--measure-only` reports the violations it observed instead of certifying them, keeping a truthful account of unfinished optimization.
 A v1 record never measured multiplicity and is refused rather than read with invented counters, and the committed pre-v2 ledger must be re-recorded before the gate can pass again.
-Each binary's Cargo ceiling is its measured process count; there is no per-binary guessed cold reserve, and the direct guest binary's builds are counted as the unbound processes they are, with its per-build records scaling its build count.
+Each binary's Cargo ceiling is its measured process count; there is no per-binary guessed cold reserve, and the direct guest binary's builds are counted as the unbound processes they are.
 The module compilation ceiling is the recorded request inventory; build and module requests are also gated so warm hits cannot hide new work.
 Requested modules include platform requests even when an already built object supplies the probe's answer, so a warm cache cannot hide new module work.
 Actual module preparations and cache hits/misses remain separately reported.
 Preparing more modules than the recorded requests also fails the gate.
-`python3 scripts/test-suite-cost.py` checks growth, incomplete/foreign record rejection, unclosed inventories, redundant cold builds and refused historical schemas.
+`python3 scripts/test-suite-cost.py` checks growth, incomplete/foreign record rejection, unclosed inventories, suite-wide redundancy, the refused-write bound, unclassed miss reasons, aggregate widths and refused historical schemas.
 Direct native builds, hand-written validation, the edit oracle and bundle builds publish the same diagnostic shape with their own `direct: ` identity, and the gate refuses silent zero budgets for the direct-build binaries.
 Observed Cargo commands are separated into build processes, native test executions and other commands; `unobserved_cargo` names the classes no record can see — the `cargo -vV` toolchain banners — so the inventory states its own missing coverage instead of implying a false zero.
-The module key of a shared slot, host wait time, standalone product runs without a nextest context, and per-process resource use are not instrumented by this accounting; a standalone run records no cost record at all, which is an absence, not a measured zero.
+A recorded ledger certifies exactly the observation gaps it was measured with: its `unobserved_cargo` classes and the still absent module-key, host-wait and resource meters, and the gate refuses a ledger whose gaps changed until it is re-recorded after the reviewed change.
+The direct guest binary's per-build records still scale with its build count, so its ledger record floor subtracts them; that is incomplete bookkeeping kept explicit, not a structural normalization that proves omitted-record coverage.
+The producer side remains open as the next bounded task: honest record origin and context, counting actual process starts rather than attempted launches, complete Cargo probe coverage, counting `fresh: true` beside `fresh: false` artifacts, and standalone product measurements, which today record no cost record at all — an absence, not a measured zero; none of that is claimed here.
 
 ## Measurements on 2026-10-01
 

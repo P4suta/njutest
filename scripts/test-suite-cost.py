@@ -85,9 +85,33 @@ def write_junit(root, tests=(("engine::toolchain_fixture", "fixture"),)):
         '<testsuites tests="%d" failures="0" errors="0" time="1">%s</testsuites>'
         % (len(tests), body)
     )
-    root.joinpath("suite.xml").write_text(
-        f'<testsuites tests="{len(tests)}" failures="0" errors="0" time="1">{body}</testsuites>'
+
+
+def cold(count=1, refused=None):
+    """One complete bound key cold-built `count` times, with optional refused record writes."""
+    return work(
+        builds=count,
+        build_requests=count,
+        build_misses=count,
+        build_keys={
+            KEY: key_work(
+                requests=count,
+                misses=count,
+                processes=count,
+                reasons={"cold: the compilation record is absent": count},
+                refused_writes=refused or {},
+            )
+        },
     )
+
+
+def budgeted(binaries):
+    """A complete budget document: binary rows beside the observation gaps they were recorded with."""
+    return {
+        "binaries": {name: dict(row) for name, row in binaries.items()},
+        "unobserved_cargo": list(UNOBSERVED),
+        "gaps": list(COST["GAPS"]),
+    }
 
 
 class SuiteCost(unittest.TestCase):
@@ -106,19 +130,21 @@ class SuiteCost(unittest.TestCase):
         self.assertAlmostEqual(measured["mean_when_active"], 4 / 3)
 
     def test_cache_hits_cannot_hide_extra_build_requests_or_module_compilations(self):
-        before = {
-            "engine::toolchain_fixture": {
-                "tests": 1,
-                "records": 1,
-                "builds": 0,
-                "build_requests": 3,
-                "module_requests": 2,
-                "misses": 0,
+        before = budgeted(
+            {
+                "engine::toolchain_fixture": {
+                    "tests": 1,
+                    "records": 1,
+                    "builds": 0,
+                    "build_requests": 3,
+                    "module_requests": 2,
+                    "misses": 0,
+                }
             }
-        }
+        )
         for changed in ("build_requests", "misses"):
             after = json.loads(json.dumps(before))
-            after["engine::toolchain_fixture"][changed] += 1
+            after["binaries"]["engine::toolchain_fixture"][changed] += 1
             self.assertTrue(
                 any(changed in error for error in COST["growth"](after, before))
             )
@@ -130,64 +156,66 @@ class SuiteCost(unittest.TestCase):
             "rust-mutants::toolchain_cargo",
             "xtask::toolchain_bundle",
         ):
-            report = {
-                "binaries": {
+            report = budgeted(
+                {
                     binary: {
                         "tests": 1,
                         "records": 0,
                         "builds": 0,
                         "build_requests": 0,
-                        "cold_builds": 0,
                         "module_requests": 0,
                         "misses": 0,
                     }
                 }
-            }
+            )
             with self.assertRaises(ValueError):
                 COST["budget"](report)
 
     def test_a_warm_cache_does_not_hide_new_module_requests_or_build_calls(self):
-        before = {
-            "engine::toolchain_fixture": {
-                "tests": 1,
-                "records": 1,
-                "builds": 3,
-                "build_requests": 3,
-                "cold_builds": 3,
-                "module_requests": 2,
-                "misses": 2,
+        before = budgeted(
+            {
+                "engine::toolchain_fixture": {
+                    "tests": 1,
+                    "records": 1,
+                    "builds": 3,
+                    "build_requests": 3,
+                    "module_requests": 2,
+                    "misses": 2,
+                }
             }
-        }
+        )
         for changed in ("builds", "module_requests"):
             after = json.loads(json.dumps(before))
-            after["engine::toolchain_fixture"][changed] += 1
+            after["binaries"]["engine::toolchain_fixture"][changed] += 1
             errors = COST["growth"](after, before)
             self.assertTrue(any(changed in error for error in errors))
 
     def test_a_missing_binary_or_cost_record_is_refused(self):
-        before = {
-            "engine::toolchain_fixture": {
-                "tests": 1,
-                "records": 1,
-                "builds": 3,
-                "build_requests": 3,
-                "cold_builds": 3,
-                "module_requests": 2,
-                "misses": 2,
+        before = budgeted(
+            {
+                "engine::toolchain_fixture": {
+                    "tests": 1,
+                    "records": 1,
+                    "builds": 3,
+                    "build_requests": 3,
+                    "module_requests": 2,
+                    "misses": 2,
+                }
             }
-        }
-        self.assertTrue(COST["growth"]({}, before))
-        after = {
-            "engine::toolchain_fixture": {
-                "tests": 1,
-                "records": 0,
-                "builds": 0,
-                "build_requests": 0,
-                "cold_builds": 0,
-                "module_requests": 0,
-                "misses": 0,
+        )
+        self.assertTrue(COST["growth"](budgeted({}), before))
+        after = budgeted(
+            {
+                "engine::toolchain_fixture": {
+                    "tests": 1,
+                    "records": 0,
+                    "builds": 0,
+                    "build_requests": 0,
+                    "module_requests": 0,
+                    "misses": 0,
+                }
             }
-        }
+        )
         self.assertTrue(COST["growth"](after, before))
 
     def test_guest_build_multiplicity_is_preserved_without_a_reserved_cold_ceiling(
@@ -196,21 +224,20 @@ class SuiteCost(unittest.TestCase):
         binary = "rust-mutants-sealed::toolchain_guests"
 
         def report(builds):
-            return {
-                "binaries": {
+            return budgeted(
+                {
                     binary: {
                         "tests": 1,
                         "records": 1 + builds,
                         "builds": builds,
                         "build_requests": builds,
-                        "cold_builds": builds,
                         "module_requests": 2,
                         "misses": 0,
                     }
                 }
-            }
+            )
 
-        self.assertEqual(COST["budget"](report(1))[binary]["builds"], 1)
+        self.assertEqual(COST["budget"](report(1))["binaries"][binary]["builds"], 1)
         before = COST["budget"](report(3))
         for builds in (0, 1, 2, 3):
             self.assertFalse(COST["growth"](COST["budget"](report(builds)), before))
@@ -518,6 +545,173 @@ class SuiteCost(unittest.TestCase):
                 ],
                 2,
             )
+
+    def test_a_key_cold_built_once_in_each_of_two_tests_is_suite_redundancy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(
+                root,
+                (
+                    ("engine::toolchain_fixture", "first"),
+                    ("engine::toolchain_fixture", "second"),
+                ),
+            )
+            write_record(root, "a", cold(), test="first")
+            write_record(root, "b", cold(), test="second")
+            with self.assertRaisesRegex(ValueError, "redundant"):
+                COST["measured"](root, root / "suite.xml")
+
+    def test_a_key_cold_built_once_in_each_of_two_binaries_is_suite_redundancy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(
+                root,
+                (
+                    ("engine::toolchain_first", "fixture"),
+                    ("engine::toolchain_second", "fixture"),
+                ),
+            )
+            write_record(root, "a", cold(), binary="engine::toolchain_first")
+            write_record(root, "b", cold(), binary="engine::toolchain_second")
+            with self.assertRaisesRegex(ValueError, "redundant"):
+                COST["measured"](root, root / "suite.xml")
+
+    def test_one_refused_write_cannot_excuse_a_third_cold_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(root)
+            write_record(
+                root,
+                "excused",
+                cold(3, {"the record could not be written": 1}),
+            )
+            with self.assertRaisesRegex(ValueError, "redundant"):
+                COST["measured"](root, root / "suite.xml")
+
+    def test_a_valid_cold_build_then_hits_across_tests_parses(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(
+                root,
+                (
+                    ("engine::toolchain_fixture", "first"),
+                    ("engine::toolchain_fixture", "second"),
+                ),
+            )
+            write_record(root, "a", cold(), test="first")
+            write_record(
+                root,
+                "b",
+                work(
+                    build_requests=1,
+                    build_hits=1,
+                    build_keys={KEY: key_work(requests=1, hits=1)},
+                ),
+                test="second",
+            )
+            report = COST["measured"](root, root / "suite.xml")
+            rows = {row["test"]: row for row in report["tests"]}
+            self.assertEqual(rows["first"]["build_keys"][KEY]["misses"], 1)
+            self.assertEqual(rows["second"]["build_keys"][KEY]["hits"], 1)
+            self.assertEqual(rows["second"]["build_keys"][KEY]["processes"], 0)
+
+    def test_a_miss_without_its_stable_class_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(root)
+            write_record(
+                root,
+                "unclassified",
+                work(
+                    builds=1,
+                    build_requests=1,
+                    build_misses=1,
+                    build_keys={
+                        KEY: key_work(
+                            requests=1,
+                            misses=1,
+                            processes=1,
+                            reasons={"the record was simply absent": 1},
+                        )
+                    },
+                ),
+            )
+            with self.assertRaisesRegex(ValueError, "class"):
+                COST["measured"](root, root / "suite.xml")
+
+    def test_a_suite_total_beyond_the_u64_width_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(
+                root,
+                (
+                    ("engine::toolchain_fixture", "first"),
+                    ("engine::toolchain_fixture", "second"),
+                ),
+            )
+            half = 2**63
+            for name in ("first", "second"):
+                write_record(
+                    root,
+                    name,
+                    work(
+                        build_requests=half,
+                        build_hits=half,
+                        build_keys={KEY: key_work(requests=half, hits=half)},
+                    ),
+                    test=name,
+                )
+            with self.assertRaisesRegex(ValueError, "u64"):
+                COST["measured"](root, root / "suite.xml")
+
+    def test_measure_only_reports_suite_redundancy_without_certifying_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(
+                root,
+                (
+                    ("engine::toolchain_fixture", "first"),
+                    ("engine::toolchain_fixture", "second"),
+                ),
+            )
+            write_record(root, "a", cold(), test="first")
+            write_record(root, "b", cold(), test="second")
+            report = COST["measured"](root, root / "suite.xml", require_pass=False)
+            self.assertEqual(len(report["redundancy"]), 1)
+            self.assertIn(KEY[:8], report["redundancy"][0])
+            self.assertEqual(
+                report["build_keys"][KEY]["reasons"][
+                    "cold: the compilation record is absent"
+                ],
+                2,
+            )
+
+    def test_the_ledger_certifies_its_observation_gaps(self):
+        report = budgeted(
+            {
+                "engine::toolchain_fixture": {
+                    "tests": 1,
+                    "records": 1,
+                    "builds": 1,
+                    "build_requests": 1,
+                    "module_requests": 0,
+                    "misses": 0,
+                }
+            }
+        )
+        before = COST["budget"](report)
+        self.assertEqual(before["gaps"], list(COST["GAPS"]))
+        self.assertEqual(before["unobserved_cargo"], list(UNOBSERVED))
+        shrunk = json.loads(json.dumps(before))
+        shrunk["gaps"] = before["gaps"][:1]
+        self.assertTrue(
+            any("gaps" in error for error in COST["growth"](shrunk, before))
+        )
+        claimed = json.loads(json.dumps(before))
+        claimed["unobserved_cargo"] = []
+        self.assertTrue(
+            any("unobserved" in error for error in COST["growth"](claimed, before))
+        )
 
 
 if __name__ == "__main__":
