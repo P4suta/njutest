@@ -101,8 +101,8 @@ fn only_the_ending_its_harness_passes_by_passes() {
     for observed in every_observation() {
         if judged(observed) == Sealed::Passed {
             let passing = match observed.harness {
-                Harness::Libtest(account) => {
-                    observed.ending == Ending::Returned && account == Account::Passed
+                Harness::Libtest(harness_report) => {
+                    observed.ending == Ending::Returned && harness_report == Account::Passed
                 }
                 Harness::Doctest => observed.ending == Ending::Returned,
                 Harness::ShouldPanic => matches!(

@@ -16,7 +16,7 @@ pub enum Asked<'a> {
 
 /// A run whose harness finished and accounted for every test it announced.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Account {
+pub struct HarnessReport {
     /// The harness's own closing line.
     pub summary: Summary,
     /// The tests its closing list named as failed.
@@ -214,7 +214,11 @@ const fn exits_as_said(exit: Option<i32>, ok: bool) -> Result<(), Unaccounted> {
 ///
 /// # Errors
 /// Every way the report fails to account for the run, the first found in the order the report is read.
-pub fn account(output: &[u8], asked: Asked<'_>, exit: Option<i32>) -> Result<Account, Unaccounted> {
+pub fn harness_report(
+    output: &[u8],
+    asked: Asked<'_>,
+    exit: Option<i32>,
+) -> Result<HarnessReport, Unaccounted> {
     let lines = text_lines(output);
     let truncated = lines
         .first()
@@ -255,7 +259,7 @@ pub fn account(output: &[u8], asked: Asked<'_>, exit: Option<i32>) -> Result<Acc
         });
     }
     exits_as_said(exit, summary.ok)?;
-    Ok(Account {
+    Ok(HarnessReport {
         summary,
         failed,
         announced,
@@ -278,7 +282,7 @@ fn added(sum: Summary, one: &Summary) -> Option<Summary> {
 ///
 /// # Errors
 /// Every way one of its reports fails to account for itself, the first found, and a run that printed no report at all.
-pub fn accounts(output: &[u8], exit: Option<i32>) -> Result<Account, Unaccounted> {
+pub fn harness_reports(output: &[u8], exit: Option<i32>) -> Result<HarnessReport, Unaccounted> {
     let lines = text_lines(output);
     let truncated = lines
         .first()
@@ -322,7 +326,7 @@ pub fn accounts(output: &[u8], exit: Option<i32>) -> Result<Account, Unaccounted
         return Err(Unaccounted::Unannounced);
     }
     exits_as_said(exit, summary.ok)?;
-    Ok(Account {
+    Ok(HarnessReport {
         summary,
         failed,
         announced,

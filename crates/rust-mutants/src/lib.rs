@@ -47,6 +47,7 @@ pub mod run;
 pub mod runner;
 pub mod sealed;
 pub mod select;
+pub mod sensitive;
 pub mod sentinel;
 pub mod session;
 pub mod skeleton;

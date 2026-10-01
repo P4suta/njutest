@@ -1539,7 +1539,7 @@ impl Completion {
     /// How `result`'s harness accounted for a run of every test the target holds.
     #[must_use]
     pub fn of(result: &MutantResult) -> Self {
-        match result.account(crate::libtest::Asked::Whole) {
+        match result.harness_report(crate::libtest::Asked::Whole) {
             None => Self::Unspoken,
             Some(Ok(_)) => Self::Accounted,
             Some(Err(unaccounted)) => Self::Unaccounted(unaccounted),

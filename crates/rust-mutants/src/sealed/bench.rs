@@ -19,7 +19,7 @@ use rust_mutants_sealed::{
 use super::doctest::{Expects, NO_SUCH_INDEX, RUN_ONE, listed};
 use super::{SealedBuild, Unsealed};
 use crate::execute::TestTarget;
-use crate::libtest::{Asked, Configured, Own, account};
+use crate::libtest::{Asked, Configured, Own, harness_report};
 
 /// Where the runtime's records land inside an instance: a directory nothing but the runtime writes.
 pub const RECORDS: &str = "/rust-mutants-sealed";
@@ -1451,7 +1451,7 @@ fn accounted(transcript: &Transcript, test: &str) -> Account {
         | SealedStop::Halted => None,
     };
     let asked = [test.to_owned()];
-    match account(transcript.stdout().bytes(), Asked::Exact(&asked), exit) {
+    match harness_report(transcript.stdout().bytes(), Asked::Exact(&asked), exit) {
         Ok(accounted) if accounted.summary.passed == 1 && accounted.summary.failed == 0 => {
             Account::Passed
         }
@@ -1492,8 +1492,8 @@ fn sandbox(transcript: &Transcript) -> BTreeSet<&'static str> {
 fn judgement_keeps_the_pass_rule(observed: Observed, came_to: Sealed) -> bool {
     let passing = !observed.beyond_control
         && match observed.harness {
-            Harness::Libtest(account) => {
-                observed.ending == Ending::Returned && account == Account::Passed
+            Harness::Libtest(harness_report) => {
+                observed.ending == Ending::Returned && harness_report == Account::Passed
             }
             Harness::Doctest => observed.ending == Ending::Returned,
             Harness::ShouldPanic => matches!(

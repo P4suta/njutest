@@ -21,7 +21,7 @@ fn symbolic_ending() -> Ending {
     }
 }
 
-fn symbolic_account() -> Account {
+fn symbolic_test_result() -> Account {
     let index = kani::any::<u8>();
     kani::assume(index < 3);
     match index {
@@ -35,7 +35,7 @@ fn symbolic_harness() -> Harness {
     let index = kani::any::<u8>();
     kani::assume(index < 3);
     match index {
-        0 => Harness::Libtest(symbolic_account()),
+        0 => Harness::Libtest(symbolic_test_result()),
         1 => Harness::Doctest,
         _ => Harness::ShouldPanic,
     }
@@ -55,8 +55,8 @@ fn a_pass_is_only_the_ending_its_harness_passes_by() {
     let observed = symbolic_observed();
     let passed = judged(observed) == Sealed::Passed;
     let passing = match observed.harness {
-        Harness::Libtest(account) => {
-            observed.ending == Ending::Returned && account == Account::Passed
+        Harness::Libtest(harness_report) => {
+            observed.ending == Ending::Returned && harness_report == Account::Passed
         }
         Harness::Doctest => observed.ending == Ending::Returned,
         Harness::ShouldPanic => matches!(

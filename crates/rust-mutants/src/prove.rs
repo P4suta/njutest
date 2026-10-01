@@ -261,7 +261,7 @@ fn checked_until_compiled(
             crate::cargo::Completion::Refused => {}
         }
         let round = refusal(&written.files, &checked.messages);
-        if !round.accounts_for_a_failure() {
+        if !round.explains_a_failure() {
             trace.note(
                 "witness",
                 &format!(
@@ -662,7 +662,7 @@ impl Refusal {
 
     /// Whether a check that failed is one this rule accounted for, which is what makes what it did not refuse a thing the compiler took.
     #[must_use]
-    pub fn accounts_for_a_failure(&self) -> bool {
+    pub fn explains_a_failure(&self) -> bool {
         self.unaccounted.is_empty()
             && !(self.claims.is_empty() && self.markers.is_empty() && self.probes.is_empty())
     }

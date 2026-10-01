@@ -143,7 +143,7 @@ fn an_error_in_a_condition_refuses_its_claims_and_one_in_a_marker_refuses_only_t
     assert!(refused.markers.is_empty());
     assert!(refused.unaccounted.is_empty(), "{refused:?}");
     assert!(
-        refused.accounts_for_a_failure(),
+        refused.explains_a_failure(),
         "the compiler named a rewrite, and what it did not name it took"
     );
 
@@ -153,7 +153,7 @@ fn an_error_in_a_condition_refuses_its_claims_and_one_in_a_marker_refuses_only_t
         "a body a call cannot go into is not a claim that was wrong: {refused:?}"
     );
     assert_eq!(refused.markers.iter().copied().collect::<Vec<u32>>(), [1]);
-    assert!(refused.accounts_for_a_failure());
+    assert!(refused.explains_a_failure());
 }
 
 #[test]
@@ -171,14 +171,14 @@ fn a_failure_no_rewrite_accounts_for_is_one_that_vouches_for_nothing() {
          the tree refusing to compile for a reason this pass cannot name: {elsewhere:?}"
     );
     assert!(
-        !elsewhere.accounts_for_a_failure(),
+        !elsewhere.explains_a_failure(),
         "so nothing it did not refuse is anything the compiler took"
     );
 
     let another_file =
         rust_mutants::prove::refusal(&files, &[diagnostic_at("src/other.rs", 12, 13, 1)]);
     assert_eq!(another_file.unaccounted.len(), 1, "{another_file:?}");
-    assert!(!another_file.accounts_for_a_failure());
+    assert!(!another_file.explains_a_failure());
 
     let nothing = rust_mutants::prove::refusal(&files, &[]);
     assert!(
@@ -186,7 +186,7 @@ fn a_failure_no_rewrite_accounts_for_is_one_that_vouches_for_nothing() {
         "a check that said nothing said nothing: {nothing:?}"
     );
     assert!(
-        !nothing.accounts_for_a_failure(),
+        !nothing.explains_a_failure(),
         "and a check the compiler failed while saying nothing accounts for no claim at all"
     );
 }

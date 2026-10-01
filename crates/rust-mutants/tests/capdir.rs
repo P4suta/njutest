@@ -16,6 +16,42 @@ fn name(text: &str) -> Name<'_> {
     Name::new(text).expect("a component")
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_owned_records_cover_acl_multi_batch_listing_and_long_renames() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = Dir::open(temp.path()).expect("directory");
+    let dir = root
+        .create_private_dir_exclusive(name("owned"))
+        .expect("private directory");
+    assert_eq!(
+        dir.privacy().expect("ACL and process SIDs"),
+        Privacy::OwnerOnly
+    );
+    let mut expected = Vec::new();
+    for index in 0..200 {
+        let entry = format!("entry-{index:04}-{}", "x".repeat(150));
+        let file = dir.create_file(name(&entry)).expect("new file");
+        drop(file);
+        expected.push(entry);
+    }
+    let mut listed = dir.entries().expect("more than one OS batch");
+    listed.sort();
+    assert_eq!(listed, expected);
+    let before = expected.first().expect("first entry");
+    let after = format!("renamed-{}", "界".repeat(100));
+    dir.rename_noreplace(name(before), &dir, name(&after))
+        .expect("bounded UTF-16 rename record");
+    assert!(dir.status_at(name(before)).expect("old name").is_none());
+    assert!(dir.status_at(name(&after)).expect("new name").is_some());
+    assert_eq!(
+        dir.privacy().expect("ACL still private"),
+        Privacy::OwnerOnly
+    );
+    dir.remove_contents().expect("remove every batch");
+    assert!(dir.entries().expect("empty directory").is_empty());
+}
+
 /// Makes `at` a link to the directory `target`: a symbolic link on Unix, and on Windows a junction, which any user may make.
 fn link(target: &Path, at: &Path) {
     #[cfg(unix)]

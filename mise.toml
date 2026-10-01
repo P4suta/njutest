@@ -94,6 +94,25 @@ run = "cargo doc --locked --workspace --no-deps --document-private-items"
 description = "Run the repository gates: seam ratchet, dependency direction, fixture conventions, release consistency"
 run = "cargo xtask all"
 
+[tasks."security:local"]
+description = "Refuse unbounded OS record pointers and unprotected sensitive names across every platform's source, after finding the planted regressions"
+run = "cargo xtask lints"
+
+[tasks."security:codeql"]
+description = "Run the unfiltered Rust security-extended CodeQL suite offline with a preinstalled official CLI bundle"
+shell = "bash -c"
+env = { CARGO_NET_OFFLINE = "true" }
+run = "bash scripts/codeql.sh check"
+
+[tasks."setup:codeql"]
+description = "Download and verify the pinned official CodeQL CLI, extractors and query packs once, before offline checks"
+run = "bash scripts/codeql.sh setup"
+
+[tasks."security:miri"]
+description = "Interpret the platform-independent OS record regressions with the installed nightly Miri"
+env = { RUSTC_WRAPPER = "" }
+run = "cargo +nightly miri test --locked -p rust-mutants --lib capdir::records::tests::"
+
 [tasks.lint]
 description = "Run formatting, clippy, rustdoc, the repository gates, the fuzz targets under the same Clippy policy, spelling, TOML, and workflow linters"
 depends = ["fmt:check", "clippy", "doc", "gates", "fuzz:clippy", "committed:range"]
@@ -346,6 +365,8 @@ run = """
 set -uo pipefail
 step() { "$@" || { status=$?; echo "check: '$*' failed with exit ${status}" >&2; exit "${status}"; }; }
 step mise run fmt:check
+step mise run security:local
+step mise run security:codeql
 step mise run lint
 step mise run test:fast
 step mise run test:doc

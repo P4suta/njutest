@@ -13,6 +13,8 @@ use super::cfg_conditions::{CfgScope, CfgTruth, CfgWorld, cfg_constant, item_att
 
 mod ffi;
 mod git_doors;
+mod raw_buffers;
+mod sensitive_names;
 mod signals;
 
 const OWNED_TRAIT_OBJECT_REMEDY: &str = "use an enum for a closed set of implementations, or a \
@@ -319,6 +321,8 @@ declare_kinds! {
     WrappingCounter => "wrapping-counter",
     UncheckedCast => "unchecked-cast",
     UnsafeOutsideFfi => "unsafe-outside-ffi",
+    RawBufferPointer => "raw-buffer-pointer",
+    SensitiveName => "sensitive-name",
     UnownedSpawn => "unowned-spawn",
     RawGroupSignal => "raw-group-signal",
     UnboundedChannel => "unbounded-channel",
@@ -380,6 +384,8 @@ impl Kind {
             Self::WrappingCounter => WRAPPING_COUNTER_REMEDY,
             Self::UncheckedCast => UNCHECKED_CAST_REMEDY,
             Self::UnsafeOutsideFfi => UNSAFE_OUTSIDE_FFI_REMEDY,
+            Self::RawBufferPointer => raw_buffers::REMEDY,
+            Self::SensitiveName => sensitive_names::REMEDY,
             Self::RawGit => RAW_GIT_REMEDY,
             Self::UnownedSpawn => UNOWNED_SPAWN_REMEDY,
             Self::RawGroupSignal => RAW_GROUP_SIGNAL_REMEDY,
@@ -670,6 +676,8 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
         owned_spawn_boundaries: owned_spawn_boundaries(&parsed),
     };
     scan.visit_file(&parsed);
+    scan.found.extend(raw_buffers::found(&parsed, file));
+    scan.found.extend(sensitive_names::found(&parsed, file));
     scan.found.extend(comments(file, source));
     scan.found.extend(handles(file, source));
     scan.found.extend(painted(file, source));

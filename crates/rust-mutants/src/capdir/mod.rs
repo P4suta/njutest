@@ -3,6 +3,8 @@
 
 //! A directory held open and every operation on it named relative to it, so what a caller opens is the object it vouched for and never one a name was pointed at afterwards (ADR 0037).
 
+#[cfg(any(windows, test))]
+mod records;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]

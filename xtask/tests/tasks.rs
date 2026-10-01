@@ -32,6 +32,52 @@ fn task(name: &str) -> String {
     rest.get(..end).unwrap_or_default().to_owned()
 }
 
+#[test]
+fn codeql_runs_before_a_push_and_ci_refuses_findings() {
+    let text = repository("mise.toml");
+    let configuration: toml::Value = toml::from_str(&text).expect("mise configuration");
+    let check = mise_runs(&configuration, "check").join("\n");
+    assert!(check.contains("mise run security:local"));
+    assert!(check.contains("mise run security:codeql"));
+    assert_eq!(
+        configuration
+            .get("tasks")
+            .and_then(|tasks| tasks.get("security:codeql"))
+            .and_then(|task| task.get("env"))
+            .and_then(|environment| environment.get("CARGO_NET_OFFLINE"))
+            .and_then(toml::Value::as_str),
+        Some("true"),
+        "the analysis cannot download dependencies during a check"
+    );
+    let workflow = repository(".github/workflows/codeql.yml");
+    assert!(workflow.contains("SARIF_DIRECTORY:"));
+    assert!(workflow.contains("raise SystemExit(1 if findings else 0)"));
+    let configuration = repository(".github/codeql/codeql-config.yml");
+    assert!(!configuration.contains("paths-ignore"));
+    assert!(!configuration.contains("query-filters"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_codeql_check_cannot_pass_when_the_bundle_is_absent() {
+    let cache = tempfile::tempdir().expect("empty CodeQL cache");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/codeql.sh");
+    let output = std::process::Command::new("bash")
+        .arg(script)
+        .arg("check")
+        .env("NJUTEST_CODEQL_CACHE", cache.path())
+        .output()
+        .expect("start the local check");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("diagnostic text")
+            .contains("mise run setup:codeql"),
+        "a missing installation must refuse analysis with its remedy"
+    );
+    assert_eq!(std::fs::read_dir(cache.path()).expect("cache").count(), 0);
+}
+
 fn advisories_ignore_is_empty(deny: &str) -> bool {
     let Ok(configuration) = toml::from_str::<toml::Value>(deny) else {
         return false;

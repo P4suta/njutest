@@ -303,6 +303,37 @@ A merge's layers are re-decided only where every shard was given and none fell s
 A summary line closes the report, and the exit code is 1 with violations, 3 with none and something left `unaudited`, 0 only when every layer was decided, and 2 when the run directory could not be read at all, so a step that reads only the code cannot take an audit that looked at part of a run for one that looked at all of it.
 Before it reads the run, `proofaudit` re-decides a clean synthetic run (`xtask::proofaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each of its twenty-one layers, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
 
+### Security before a push
+
+`mise run security:local`, also called by `mise run check`, runs the workspace's syntax gates before any push.
+`raw-buffer-pointer` refuses raw record reads, writes, pointer arithmetic and dereferences in unsafe scopes, renamed raw readers, macro-token forms, wrapping pointer arithmetic and explicit or inferred casts of buffer pointers to record types outside `capdir::records`.
+Pointer conversion to the foreign call's opaque argument type remains an FFI boundary, not a record reader.
+`capdir::records::Buffer` owns initialized, aligned storage, and its borrowed `Record` bounds every field and child record before it can be read.
+The Windows capability directory uses it for self-relative security descriptors, ACLs, SIDs, process-token information, directory batches and rename payloads.
+`sensitive-name` refuses unprotected credential-shaped bindings, constants, statics, enum constructors, fields, parameters and value-returning functions, including `account` and `accounts`, whose meaning CodeQL reads as account information.
+Tests of counts and harness reports use those domain names; actual credentials use `rust_mutants::sensitive::Sensitive<T>`, whose `Debug` and `Display` always redact.
+Unit-returning test names describe behavior and introduce no credential value.
+Both rules find their planted shapes before reading the workspace, including source behind another platform's `cfg`.
+See [ADR 0049](adr/0049-os-records-and-sensitive-values-carry-their-boundaries.md) for the causes, representations and sweep.
+
+`mise run security:codeql`, also required by `mise run check`, runs the unfiltered Rust `security-extended` query suite with the pinned official CodeQL 2.27.1 bundle and writes `target/codeql/results.sarif`.
+It fails on any finding and on a missing CLI, extractor or query pack; it downloads nothing as part of the check.
+`mise run setup:codeql` downloads and verifies the [official complete bundle](https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/scan-from-the-command-line/set-up-codeql-cli) once into the user's cache, before going offline.
+The versioned cache contains the CLI, Rust extractor and query packs; the check refuses a missing bundle or a different version and never installs or downloads a query.
+macOS ARM64 runs the official macOS x86-64 bundle through an already available Rosetta installation, as this campaign's Mac does; setup and execution fail explicitly where that interpreter is unavailable.
+Linux and Windows use their platform's bundle, and `NJUTEST_CODEQL_CACHE` can name the cache's root.
+The structural gate also runs independently of the CLI and reads source behind every platform's `cfg`.
+It does not claim to reproduce CodeQL's general interprocedural taint analysis.
+CI requires the `CodeQL required` job: Rust and Actions extraction and analysis must both finish successfully using the same pinned CLI bundle, with `security-events: write` to upload their results.
+Both matrix entries then require a SARIF report and fail on any finding, just as the local Rust task does.
+The query configuration excludes no source paths and suppresses no query or alert.
+
+The `soundness` CI job installs nightly Miri and interprets `cargo +nightly miri test --locked -p rust-mutants --lib capdir::records::tests::` before its deep-contract fixture.
+The same command is available locally as `mise run security:miri`, which requires an installed nightly toolchain with Miri and rust-src.
+The same seven synthetic-buffer tests run natively on every host, and the Windows capability-directory suite exercises the FFI with real ACLs, process SIDs, multiple directory batches and long UTF-16 renames.
+From this checkout, `domyjob run win --env CARGO_BUILD_JOBS=6 -- mise x -- cargo nextest run --locked --all-features -p rust-mutants --lib --test suite -E 'test(capdir::) | test(libtest::) | test(sensitive::)'` sends uncommitted source for that check.
+`mise run lint:windows` checks the Windows source through Clippy with warnings denied.
+
 ### A gate finds what was planted for it before it is believed
 
 A gate that cannot see a shape reports that the shape is absent, and that report is green.

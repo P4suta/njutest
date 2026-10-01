@@ -1,0 +1,34 @@
+=== ace-header source crates/rust-mutants/src/capdir/windows.rs
+fn read(raw: *const u8) { unsafe { raw.read_unaligned() }; }
+=== arithmetic source crates/rust-mutants/src/capdir/windows.rs
+fn read(raw: *const u8) { unsafe { raw.add(4).read() }; }
+=== borrowed-slice source crates/rust-mutants/src/capdir/windows.rs
+fn read(raw: *const u8) { unsafe { std::slice::from_raw_parts(raw, 4) }; }
+=== dereference source crates/rust-mutants/src/capdir/windows.rs
+fn read(raw: *const u8) { unsafe { *raw }; }
+=== record-cast source crates/rust-mutants/src/capdir/windows.rs
+fn read(buffer: Vec<u8>) { buffer.as_ptr().cast::<Record>(); }
+=== renamed-reader source crates/app/src/lib.rs
+use std::ptr::read_unaligned as load;
+=== macro-arithmetic source crates/rust-mutants/src/capdir/windows.rs
+macro_rules! load { ($raw:expr) => { unsafe { $raw.offset(1).read() } } }
+=== renamed-aligned-reader source crates/rust-mutants/src/runner/windows.rs
+use std::ptr::read as load;
+=== qualified-reader source crates/rust-mutants/src/capdir/windows.rs
+fn read(raw: *const u8) { unsafe { std::ptr::read(raw) }; }
+=== unsafe-method source crates/rust-mutants/src/capdir/windows.rs
+struct Reader; impl Reader { unsafe fn load(raw: *const u8) { raw.read(); } }
+=== macro-record-cast source crates/rust-mutants/src/capdir/windows.rs
+macro_rules! load { ($buffer:expr) => { $buffer.as_ptr().cast::<Record>() } }
+=== macro-dereference source crates/rust-mutants/src/capdir/windows.rs
+macro_rules! load { ($raw:expr) => { unsafe { *$raw } } }
+=== wrapping-pointer source crates/rust-mutants/src/capdir/windows.rs
+fn input(raw: *const u8) { raw.wrapping_add(4); }
+=== wrapping-byte-pointer source crates/rust-mutants/src/capdir/windows.rs
+fn input(raw: *const u8) { raw.wrapping_byte_offset(4); }
+=== inferred-record-cast source crates/rust-mutants/src/capdir/windows.rs
+fn input(buffer: Vec<u8>) { let raw: *const Record = buffer.as_ptr().cast(); }
+=== pointer-distance source crates/rust-mutants/src/capdir/windows.rs
+fn input(raw: *const u8) { unsafe { raw.offset_from(raw) }; }
+=== macro-wrapping-pointer source crates/rust-mutants/src/capdir/windows.rs
+macro_rules! input { ($raw:expr) => { $raw.wrapping_add(4) } }

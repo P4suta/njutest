@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use super::{Asked, Configured, FAILURE_STATUS, Own, Unaccounted, account, accounts, listing};
+use super::{
+    Asked, Configured, FAILURE_STATUS, Own, Unaccounted, harness_report, harness_reports, listing,
+};
 
 const PASSED: &str = "\nrunning 2 tests\ntest a ... ok\ntest b ... ok\n\n\
     test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n";
@@ -17,7 +19,7 @@ fn names(names: &[&str]) -> Vec<String> {
 
 #[test]
 fn an_ordinary_run_is_accounted_for_with_the_counts_its_harness_announced() {
-    let said = account(PASSED.as_bytes(), Asked::Whole, Some(0));
+    let said = harness_report(PASSED.as_bytes(), Asked::Whole, Some(0));
     let Ok(said) = said else {
         panic!("an ordinary passing run is accounted for: {said:?}");
     };
@@ -28,7 +30,7 @@ fn an_ordinary_run_is_accounted_for_with_the_counts_its_harness_announced() {
 
 #[test]
 fn a_failing_run_names_the_tests_its_closing_list_names() {
-    let said = account(FAILED.as_bytes(), Asked::Whole, Some(FAILURE_STATUS));
+    let said = harness_report(FAILED.as_bytes(), Asked::Whole, Some(FAILURE_STATUS));
     let Ok(said) = said else {
         panic!("a failing run is accounted for: {said:?}");
     };
@@ -39,7 +41,7 @@ fn a_failing_run_names_the_tests_its_closing_list_names() {
 fn a_run_whose_process_ended_before_its_summary_is_unfinished() {
     let exited_early = "\nrunning 2 tests\ntest a ... ok\n";
     assert_eq!(
-        account(exited_early.as_bytes(), Asked::Whole, Some(0)),
+        harness_report(exited_early.as_bytes(), Asked::Whole, Some(0)),
         Err(Unaccounted::Unfinished)
     );
 }
@@ -49,7 +51,7 @@ fn a_nested_report_left_last_does_not_close_the_run_that_announced_more() {
     let nested = "\nrunning 2 tests\ntest a ... ok\n\nrunning 1 test\ntest inner ... ok\n\n\
         test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
     assert_eq!(
-        account(nested.as_bytes(), Asked::Whole, None),
+        harness_report(nested.as_bytes(), Asked::Whole, None),
         Err(Unaccounted::CountsDisagree {
             announced: 2,
             accounted: 1
@@ -63,7 +65,7 @@ fn a_nested_report_in_the_middle_is_passed_over_for_the_harnesses_own() {
         test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\
         test a ... ok\ntest b ... ok\n\n\
         test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
-    let said = account(nested.as_bytes(), Asked::Whole, Some(0));
+    let said = harness_report(nested.as_bytes(), Asked::Whole, Some(0));
     let Ok(said) = said else {
         panic!("the harness's own report closes the run: {said:?}");
     };
@@ -73,11 +75,11 @@ fn a_nested_report_in_the_middle_is_passed_over_for_the_harnesses_own() {
 #[test]
 fn an_exit_status_the_summary_does_not_explain_is_refused() {
     assert_eq!(
-        account(PASSED.as_bytes(), Asked::Whole, Some(1)),
+        harness_report(PASSED.as_bytes(), Asked::Whole, Some(1)),
         Err(Unaccounted::ExitContradicts { code: 1 })
     );
     assert_eq!(
-        account(FAILED.as_bytes(), Asked::Whole, Some(0)),
+        harness_report(FAILED.as_bytes(), Asked::Whole, Some(0)),
         Err(Unaccounted::ExitContradicts { code: 0 })
     );
 }
@@ -87,7 +89,7 @@ fn a_failure_the_run_did_not_ask_for_is_refused() {
     let foreign = "\nrunning 1 test\ntest a ... FAILED\n\nfailures:\n    z\n\n\
         test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s\n";
     assert_eq!(
-        account(
+        harness_report(
             foreign.as_bytes(),
             Asked::Exact(&names(&["a"])),
             Some(FAILURE_STATUS)
@@ -102,7 +104,7 @@ fn a_failure_the_run_did_not_ask_for_is_refused() {
 #[test]
 fn a_selection_the_harness_announced_differently_is_refused() {
     assert_eq!(
-        account(
+        harness_report(
             PASSED.as_bytes(),
             Asked::Exact(&names(&["a", "b", "c"])),
             Some(0)
@@ -121,7 +123,7 @@ fn lines_that_are_not_text_are_lost_and_nothing_else() {
     output.extend_from_slice(
         b"test b ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
     );
-    let said = account(&output, Asked::Whole, Some(0));
+    let said = harness_report(&output, Asked::Whole, Some(0));
     let Ok(said) = said else {
         panic!("a line that is not text is lost, not fatal: {said:?}");
     };
@@ -135,7 +137,7 @@ fn a_run_whose_output_kept_only_its_tail_is_judged_by_its_summary() {
          test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
         crate::runner::OUTPUT_TRUNCATED_PREFIX
     );
-    let said = account(truncated.as_bytes(), Asked::Whole, Some(0));
+    let said = harness_report(truncated.as_bytes(), Asked::Whole, Some(0));
     assert!(
         matches!(&said, Ok(accounted) if accounted.announced.is_none()),
         "{said:?}"
@@ -146,7 +148,7 @@ fn a_run_whose_output_kept_only_its_tail_is_judged_by_its_summary() {
 fn a_summary_without_an_announcement_in_whole_output_is_unannounced() {
     let unannounced = "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
     assert_eq!(
-        account(unannounced.as_bytes(), Asked::Whole, Some(0)),
+        harness_report(unannounced.as_bytes(), Asked::Whole, Some(0)),
         Err(Unaccounted::Unannounced)
     );
 }
@@ -155,7 +157,7 @@ fn a_summary_without_an_announcement_in_whole_output_is_unannounced() {
 fn a_run_that_ran_nothing_is_accounted_for_as_nothing() {
     let nothing = "\nrunning 0 tests\n\n\
         test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s\n";
-    let said = account(nothing.as_bytes(), Asked::Whole, Some(0));
+    let said = harness_report(nothing.as_bytes(), Asked::Whole, Some(0));
     assert!(
         matches!(&said, Ok(accounted) if accounted.summary.ran_nothing()),
         "{said:?}"
@@ -167,7 +169,7 @@ fn an_ok_summary_with_a_failure_contradicts_itself() {
     let contradiction = "\nrunning 1 test\n\nfailures:\n    a\n\n\
         test result: ok. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
     assert_eq!(
-        account(contradiction.as_bytes(), Asked::Whole, Some(0)),
+        harness_report(contradiction.as_bytes(), Asked::Whole, Some(0)),
         Err(Unaccounted::VerdictContradicts)
     );
 }
@@ -176,7 +178,7 @@ fn an_ok_summary_with_a_failure_contradicts_itself() {
 fn a_should_panic_test_libtest_ignores_on_wasm_is_accounted_for_as_ignored() {
     let ignored = "\nrunning 1 test\ntest t - should panic ... ignored\n\n\
         test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 4 filtered out; finished in 0.00s\n";
-    let said = account(ignored.as_bytes(), Asked::Exact(&names(&["t"])), Some(0));
+    let said = harness_report(ignored.as_bytes(), Asked::Exact(&names(&["t"])), Some(0));
     assert!(
         matches!(&said, Ok(accounted) if accounted.summary.ignored == 1 && accounted.summary.passed == 0),
         "{said:?}"
@@ -249,7 +251,7 @@ const MERGED_THEN_ALONE: &str = "\nrunning 5 tests\ntest src/lib.rs - add (line 
 
 #[test]
 fn rustdocs_reports_one_after_another_are_accounted_for_together() {
-    let said = accounts(MERGED_THEN_ALONE.as_bytes(), Some(0));
+    let said = harness_reports(MERGED_THEN_ALONE.as_bytes(), Some(0));
     let Ok(said) = said else {
         panic!("a merged binary's report and rustdoc's own are one run: {said:?}");
     };
@@ -263,7 +265,7 @@ fn rustdocs_reports_one_after_another_are_accounted_for_together() {
         (5, 1, 0)
     );
     assert_eq!(
-        account(MERGED_THEN_ALONE.as_bytes(), Asked::Whole, Some(0)),
+        harness_report(MERGED_THEN_ALONE.as_bytes(), Asked::Whole, Some(0)),
         Err(Unaccounted::CountsDisagree {
             announced: 5,
             accounted: 1
@@ -283,14 +285,14 @@ fn a_failure_in_any_of_rustdocs_reports_fails_the_run_and_is_named() {
             "test result: ok. 4 passed; 0 failed; 1 ignored",
             "failures:\n    src/lib.rs - add (line 3)\n\ntest result: FAILED. 3 passed; 1 failed; 1 ignored",
         );
-    let said = accounts(failing.as_bytes(), Some(FAILURE_STATUS));
+    let said = harness_reports(failing.as_bytes(), Some(FAILURE_STATUS));
     let Ok(said) = said else {
         panic!("a failure one report names is the run's: {said:?}");
     };
     assert!(!said.summary.ok);
     assert_eq!(said.failed, names(&["src/lib.rs - add (line 3)"]));
     assert_eq!(
-        accounts(failing.as_bytes(), Some(0)),
+        harness_reports(failing.as_bytes(), Some(0)),
         Err(Unaccounted::ExitContradicts { code: 0 }),
         "rustdoc exits with the failure status where any report failed"
     );
@@ -303,15 +305,15 @@ fn a_report_rustdoc_left_open_or_never_opened_is_refused() {
         "",
     );
     assert_eq!(
-        accounts(open.as_bytes(), Some(0)),
+        harness_reports(open.as_bytes(), Some(0)),
         Err(Unaccounted::Unfinished)
     );
     let unopened = MERGED_THEN_ALONE.replace("running 1 test\n", "");
     assert_eq!(
-        accounts(unopened.as_bytes(), Some(0)),
+        harness_reports(unopened.as_bytes(), Some(0)),
         Err(Unaccounted::Unannounced)
     );
-    assert_eq!(accounts(b"", Some(0)), Err(Unaccounted::Unannounced));
+    assert_eq!(harness_reports(b"", Some(0)), Err(Unaccounted::Unannounced));
 }
 
 #[test]

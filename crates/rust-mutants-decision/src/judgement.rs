@@ -69,7 +69,11 @@ pub struct Observed {
 ///
 /// A failure that followed a refusal its control did not meet is how the run measured, never a verdict (ADR 0023), and a bound no control of the test's own set says nothing when it is run past; otherwise the ending decides, read as the harness that ran the test decides a pass, and libtest's account is asked only where the ending alone cannot say.
 #[must_use]
-pub const fn judged(observed: Observed) -> Sealed {
+#[expect(
+    clippy::missing_const_for_fn,
+    reason = "the mutation receipt measures this runtime decision; linked doctests must retain const bodies outside native validation"
+)]
+pub fn judged(observed: Observed) -> Sealed {
     if observed.beyond_control {
         return Sealed::Doubted(Doubt::Refused);
     }
@@ -82,20 +86,20 @@ pub const fn judged(observed: Observed) -> Sealed {
         return Sealed::Doubted(Doubt::Unmatched);
     }
     match observed.harness {
-        Harness::Libtest(account) => accounted(observed.ending, account),
+        Harness::Libtest(harness_report) => accounted(observed.ending, harness_report),
         Harness::Doctest => returned(observed.ending),
         Harness::ShouldPanic => panicking(observed.ending),
     }
 }
 
-/// What a test libtest gave `account` of came to, having ended as `ending`.
-const fn accounted(ending: Ending, account: Account) -> Sealed {
+/// What a test libtest gave `harness_report` of came to, having ended as `ending`.
+const fn accounted(ending: Ending, harness_report: Account) -> Sealed {
     match ending {
-        Ending::Returned => match account {
+        Ending::Returned => match harness_report {
             Account::Passed => Sealed::Passed,
             Account::Failed | Account::Other => Sealed::Doubted(Doubt::Unaccounted),
         },
-        Ending::ExitedFailure => match account {
+        Ending::ExitedFailure => match harness_report {
             Account::Failed => Sealed::Detected(Detection::Failed),
             Account::Passed | Account::Other => Sealed::Doubted(Doubt::Unaccounted),
         },

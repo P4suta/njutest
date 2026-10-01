@@ -309,7 +309,10 @@ fn run_targets(
 /// A profile is written however a process exits, so a run that ended before its harness closed its report leaves the coverage of part of the target, which reads as reach nothing else had.
 fn measured_whole(ran: &execute::MutantResult) -> bool {
     matches!(ran.stopped, execute::Stopped::Exited { .. })
-        && !matches!(ran.account(crate::libtest::Asked::Whole), Some(Err(_)))
+        && !matches!(
+            ran.harness_report(crate::libtest::Asked::Whole),
+            Some(Err(_))
+        )
 }
 
 /// Every executable the build produced, test harnesses and plain binaries alike.

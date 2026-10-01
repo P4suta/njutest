@@ -470,7 +470,7 @@ fn refusals(refused: &BTreeSet<Refusal>) -> String {
 }
 
 /// What `observed` is, as a person reads it beside an expectation it departs from.
-fn account(observed: &Observed) -> String {
+fn observed_summary(observed: &Observed) -> String {
     let criteria = observed.missed.as_ref().map_or_else(
         || "it passed".to_owned(),
         |missed| format!("it failed, as {missed}"),
@@ -504,7 +504,7 @@ fn departure(expectation: &Expectation, observed: &Observed) -> Option<String> {
         (Expected::Refused { ends, .. }, Some(_)) => *ends == observed.ends,
     };
     (!result_agrees || expectation.refused != observed.refused)
-        .then(|| format!("{}; {}", promised(expectation), account(observed)))
+        .then(|| format!("{}; {}", promised(expectation), observed_summary(observed)))
 }
 
 /// Every name one of `named` and `held` has and the other does not, as what is wrong with it.
@@ -590,7 +590,7 @@ fn every_preview1_test_ends_as_the_expectations_say() {
             Some(expectation) => departures.extend(
                 departure(expectation, &observed).map(|departure| format!("{name}: {departure}")),
             ),
-            None => departures.push(format!("{name}: {}", account(&observed))),
+            None => departures.push(format!("{name}: {}", observed_summary(&observed))),
         }
     }
     assert!(

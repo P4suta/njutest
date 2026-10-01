@@ -55,11 +55,34 @@ jobs:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
           config-file: ./.github/codeql/codeql-config.yml
+          tools: https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.1/codeql-bundle-linux64.tar.zst
 
       - name: Scan
+        id: scan
         uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           category: "/language:${{ matrix.language }}"
+
+      - name: Refuse security findings
+        env:
+          SARIF_DIRECTORY: ${{ steps.scan.outputs.sarif-output }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          reports = list(Path(os.environ["SARIF_DIRECTORY"]).glob("*.sarif"))
+          if not reports:
+              raise SystemExit("CodeQL produced no SARIF report")
+          findings = sum(
+              len(run["results"])
+              for report in reports
+              for run in json.loads(report.read_text())["runs"]
+          )
+          print(f"CodeQL: {findings} findings across {len(reports)} reports")
+          raise SystemExit(1 if findings else 0)
+          PY
 
   required:
     name: CodeQL required

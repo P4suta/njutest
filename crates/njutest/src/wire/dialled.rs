@@ -59,11 +59,15 @@ pub fn redirected(value: &str, interposer: &str) -> Option<String> {
     if host.is_empty() || !host.contains(':') {
         return None;
     }
-    let credential = authority
-        .strip_suffix(host)
-        .filter(|before| !before.is_empty())
-        .unwrap_or_default();
-    Some(format!("{scheme}://{credential}{interposer}{tail}"))
+    let credential: rust_mutants::sensitive::Sensitive<&str> =
+        rust_mutants::sensitive::Sensitive::new(
+            authority
+                .strip_suffix(host)
+                .filter(|before| !before.is_empty())
+                .unwrap_or_default(),
+        );
+    let userinfo = credential.expose();
+    Some(format!("{scheme}://{userinfo}{interposer}{tail}"))
 }
 
 /// A seam an interposer is watching: what the tests are told, and the interposer itself.

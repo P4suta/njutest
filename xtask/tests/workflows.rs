@@ -1186,11 +1186,11 @@ fn invocations(line: &str) -> Vec<(String, Option<String>, String)> {
         }) else {
             continue;
         };
-        let installed = at >= 2
+        let named_argument = at >= 2
             && words
                 .get(at.saturating_sub(2))
-                .is_some_and(|before| *before == "install");
-        if installed {
+                .is_some_and(|before| ["install", "-p", "--package"].contains(before));
+        if named_argument {
             continue;
         }
         let command = words
@@ -1221,6 +1221,25 @@ fn invocations(line: &str) -> Vec<(String, Option<String>, String)> {
         }
     }
     found
+}
+
+#[test]
+fn a_cargo_package_argument_is_not_a_program_invocation() {
+    for source in [
+        "cargo +nightly miri test --locked -p rust-mutants --lib capdir::records::tests::",
+        "cargo nextest run --package njutest --test suite",
+    ] {
+        assert!(invocations(source).is_empty(), "{source}");
+    }
+    assert_eq!(
+        invocations("cargo test -p rust-mutants --lib && rust-mutants run --unknown"),
+        [(
+            "rust-mutants".to_owned(),
+            Some("run".to_owned()),
+            "--unknown".to_owned()
+        )],
+        "the program after the Cargo command is still checked"
+    );
 }
 
 #[test]

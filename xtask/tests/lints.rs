@@ -30,6 +30,112 @@ fn ordinary_code_is_not_a_finding() {
 }
 
 #[test]
+fn os_records_cannot_be_read_through_unbounded_pointers() {
+    for source in [
+        "fn read(raw: *const u8) { unsafe { raw.read_unaligned() }; }",
+        "fn read(raw: *const u8) { unsafe { raw.add(4).read() }; }",
+        "fn read(raw: *const u8) { unsafe { std::slice::from_raw_parts(raw, 4) }; }",
+        "fn read(raw: *const u8) { unsafe { *raw }; }",
+        "fn read(buffer: Vec<u8>) { buffer.as_ptr().cast::<Record>(); }",
+        "use std::ptr::read_unaligned as load;",
+        "macro_rules! load { ($raw:expr) => { unsafe { $raw.offset(1).read() } } }",
+        "use std::ptr::read as load;",
+        "fn read(raw: *const u8) { unsafe { std::ptr::read(raw) }; }",
+        "struct Reader; impl Reader { unsafe fn load(raw: *const u8) { raw.read(); } }",
+        "macro_rules! load { ($buffer:expr) => { $buffer.as_ptr().cast::<Record>() } }",
+        "macro_rules! load { ($raw:expr) => { unsafe { *$raw } } }",
+    ] {
+        let found = scan_source("crates/rust-mutants/src/capdir/windows.rs", source)
+            .expect("the source parses");
+        assert!(
+            found
+                .iter()
+                .any(|finding| finding.kind.label() == "raw-buffer-pointer"),
+            "an OS record must carry its owner's bounds: {source}: {found:?}"
+        );
+    }
+}
+
+#[test]
+fn pointer_operations_cannot_escape_through_safe_arithmetic_or_inference() {
+    for source in [
+        "fn input(raw: *const u8) { raw.wrapping_add(4); }",
+        "fn input(raw: *const u8) { raw.wrapping_byte_offset(4); }",
+        "fn input(buffer: Vec<u8>) { let raw: *const Record = buffer.as_ptr().cast(); }",
+        "fn input(raw: *const u8) { unsafe { raw.offset_from(raw) }; }",
+        "macro_rules! input { ($raw:expr) => { $raw.wrapping_add(4) } }",
+    ] {
+        let found = scan_source("crates/rust-mutants/src/capdir/windows.rs", source)
+            .expect("the source parses");
+        assert!(
+            found
+                .iter()
+                .any(|finding| finding.kind == Kind::RawBufferPointer),
+            "a raw pointer cannot acquire unproved bounds: {source}: {found:?}"
+        );
+    }
+    let source = "fn input(buffer: Vec<u8>) { unsafe { ForeignCall(buffer.as_ptr().cast()) }; }";
+    assert!(
+        scan_source("crates/rust-mutants/src/capdir/windows.rs", source)
+            .expect("the source parses")
+            .iter()
+            .all(|finding| finding.kind != Kind::RawBufferPointer),
+        "the opaque argument conversion itself reads no record"
+    );
+}
+
+#[test]
+fn sensitive_sources_include_constants_and_enum_constructors() {
+    for source in [
+        "const PASSWORD: &str = \"synthetic\";",
+        "static API_KEY: &str = \"synthetic\";",
+        "enum Input { Password(String) }",
+        "macro_rules! input { () => { const PASSWORD: &str = \"synthetic\"; } }",
+    ] {
+        assert!(
+            kinds(source).contains(&Kind::SensitiveName),
+            "every sensitive source needs a protected representation: {source}"
+        );
+    }
+    assert!(
+        !kinds("const PASSWORD: rust_mutants::sensitive::Sensitive<&str> = rust_mutants::sensitive::Sensitive::new(\"synthetic\");")
+            .contains(&Kind::SensitiveName)
+    );
+}
+
+#[test]
+fn sensitive_names_require_a_redacting_type_or_an_honest_domain_name() {
+    for source in [
+        "fn account() -> u32 { 2 }",
+        "fn accounts() -> u32 { 2 }",
+        "fn read() { let password = String::new(); println!(\"{password}\"); }",
+        "struct Settings { api_key: String }",
+        "macro_rules! read { () => { let secret = String::new(); } }",
+        "fn read(values: Vec<String>) { for password in values { println!(\"{password}\"); } }",
+        "fn read(value: Option<String>) { if let Some(api_key) = value { println!(\"{api_key}\"); } }",
+    ] {
+        assert!(
+            kinds(source)
+                .iter()
+                .any(|kind| kind.label() == "sensitive-name"),
+            "a sensitive-looking value must state its protected representation: {source}"
+        );
+    }
+    for source in [
+        "fn harness_report() -> u32 { 2 }",
+        "struct Settings { password: rust_mutants::sensitive::Sensitive<String> }",
+        "fn read(secret: rust_mutants::sensitive::Sensitive<String>) {}",
+        "fn read() { let secret: rust_mutants::sensitive::Sensitive<String> = rust_mutants::sensitive::Sensitive::new(String::new()); println!(\"{secret}\"); }",
+    ] {
+        assert_eq!(
+            kinds(source),
+            [],
+            "the representation states the protection: {source}"
+        );
+    }
+}
+
+#[test]
 fn lossy_text_conversions_cannot_turn_distinct_bytes_or_paths_into_one_string() {
     for source in [
         "//! A file.\nfn read(bytes: &[u8]) { drop(String::from_utf8_lossy(bytes)); }\n",
@@ -921,8 +1027,15 @@ fn an_expectation_cannot_waive_future_dead_or_unsafe_code_for_a_module() {
         in_a_named_module(
             "//! A file.\nfn ffi() { #[expect(unsafe_code, reason = \"one FFI call\")] unsafe { std::ptr::read_volatile(&0); } }\n"
         ),
+        [Kind::RawBufferPointer],
+        "an unsafe expectation cannot waive the bounded-reader rule"
+    );
+    assert_eq!(
+        in_a_named_module(
+            "//! A file.\nfn ffi() { #[expect(unsafe_code, reason = \"one FFI call\")] unsafe { ForeignCall(); } }\n"
+        ),
         [],
-        "the exact unsafe expression remains a compiler-checked exception"
+        "the exact foreign call remains a compiler-checked exception"
     );
 }
 

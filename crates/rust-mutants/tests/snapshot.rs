@@ -474,8 +474,8 @@ fn a_file_that_cannot_be_read_fails_the_copy_and_removes_the_partial_snapshot() 
         return;
     }
     let fx = fixture();
-    let secret = write(&fx.source, "src/secret.rs", b"//\n");
-    fs::set_permissions(&secret, fs::Permissions::from_mode(0o000)).expect("chmod");
+    let unreadable_file = write(&fx.source, "src/secret.rs", b"//\n");
+    fs::set_permissions(&unreadable_file, fs::Permissions::from_mode(0o000)).expect("chmod");
     let error = create(&options(&fx), now()).expect_err("an unreadable file is refused");
     assert_eq!(error.kind(), SnapshotErrorKind::Copy);
     assert_eq!(error.path(), "src/secret.rs");

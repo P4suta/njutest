@@ -3,7 +3,6 @@
 
 //! The capability directory on handle-relative NT opens, on a volume that deletes and renames the POSIX way (ADR 0037 decisions 3 to 7).
 
-use std::ffi::c_void;
 use std::fs::File;
 use std::io;
 use std::os::windows::fs::OpenOptionsExt as _;
@@ -15,25 +14,22 @@ use std::time::Duration;
 use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
 use windows_sys::Wdk::Storage::FileSystem::{
     FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT,
-    FILE_RENAME_IGNORE_READONLY_ATTRIBUTE, FILE_RENAME_INFORMATION, FILE_RENAME_INFORMATION_0,
-    FILE_RENAME_POSIX_SEMANTICS, FILE_RENAME_REPLACE_IF_EXISTS, FILE_SYNCHRONOUS_IO_NONALERT,
-    FileRenameInformationEx, NTCREATEFILE_CREATE_DISPOSITION, NTCREATEFILE_CREATE_OPTIONS,
-    NtCreateFile, NtSetInformationFile,
+    FILE_RENAME_IGNORE_READONLY_ATTRIBUTE, FILE_RENAME_INFORMATION, FILE_RENAME_POSIX_SEMANTICS,
+    FILE_RENAME_REPLACE_IF_EXISTS, FILE_SYNCHRONOUS_IO_NONALERT, FileRenameInformationEx,
+    NTCREATEFILE_CREATE_DISPOSITION, NTCREATEFILE_CREATE_OPTIONS, NtCreateFile,
+    NtSetInformationFile,
 };
 use windows_sys::Win32::Foundation::{
-    ERROR_NO_MORE_FILES, ERROR_SHARING_VIOLATION, HANDLE, LocalFree, NTSTATUS,
-    OBJ_CASE_INSENSITIVE, RtlNtStatusToDosError, UNICODE_STRING,
+    ERROR_NO_MORE_FILES, ERROR_SHARING_VIOLATION, HANDLE, NTSTATUS, OBJ_CASE_INSENSITIVE,
+    RtlNtStatusToDosError, UNICODE_STRING,
 };
-use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
 use windows_sys::Win32::Security::{
-    ACCESS_ALLOWED_ACE, ACE_FLAGS, ACE_HEADER, ACL, ACL_REVISION, ACL_SIZE_INFORMATION,
-    AclSizeInformation, AddAccessAllowedAceEx, CONTAINER_INHERIT_ACE, CreateWellKnownSid,
-    DACL_SECURITY_INFORMATION, GetAce, GetAclInformation, GetLengthSid,
-    GetSecurityDescriptorControl, GetTokenInformation, InitializeAcl, InitializeSecurityDescriptor,
-    IsValidSid, OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
-    SE_DACL_PROTECTED, SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE, SetKernelObjectSecurity,
-    SetSecurityDescriptorControl, SetSecurityDescriptorDacl, TOKEN_INFORMATION_CLASS, TOKEN_OWNER,
-    TOKEN_QUERY, TOKEN_USER, TokenOwner, TokenUser, WELL_KNOWN_SID_TYPE,
+    ACCESS_ALLOWED_ACE, ACE_FLAGS, ACL, ACL_REVISION, AddAccessAllowedAceEx, CONTAINER_INHERIT_ACE,
+    CreateWellKnownSid, DACL_SECURITY_INFORMATION, GetKernelObjectSecurity, GetTokenInformation,
+    InitializeAcl, InitializeSecurityDescriptor, OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION,
+    PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED, SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE,
+    SetKernelObjectSecurity, SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
+    TOKEN_INFORMATION_CLASS, TOKEN_QUERY, TokenOwner, TokenUser, WELL_KNOWN_SID_TYPE,
     WinBuiltinAdministratorsSid, WinLocalSystemSid,
 };
 use windows_sys::Win32::Storage::FileSystem::{
@@ -41,21 +37,21 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_FLAG_DELETE,
     FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
     FILE_DISPOSITION_INFO_EX, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_FLAGS_AND_ATTRIBUTES, FILE_FULL_DIR_INFO, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
-    FILE_ID_128, FILE_ID_INFO, FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY,
-    FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    FILE_STANDARD_INFO, FILE_TRAVERSE, FILE_WRITE_DATA, FileAttributeTagInfo,
-    FileDispositionInfoEx, FileFullDirectoryInfo, FileFullDirectoryRestartInfo, FileIdInfo,
-    FileStandardInfo, FlushFileBuffers, GetFileInformationByHandleEx,
-    GetVolumeInformationByHandleW, READ_CONTROL, SYNCHRONIZE, SetFileInformationByHandle,
-    WRITE_DAC,
+    FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_128, FILE_ID_INFO,
+    FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+    FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_TRAVERSE,
+    FILE_WRITE_DATA, FileAttributeTagInfo, FileDispositionInfoEx, FileFullDirectoryInfo,
+    FileFullDirectoryRestartInfo, FileIdInfo, FileStandardInfo, FlushFileBuffers,
+    GetFileInformationByHandleEx, GetVolumeInformationByHandleW, READ_CONTROL, SYNCHRONIZE,
+    SetFileInformationByHandle, WRITE_DAC,
 };
 use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 use windows_sys::Win32::System::SystemServices::{
-    ACCESS_ALLOWED_ACE_TYPE, FILE_SUPPORTS_POSIX_UNLINK_RENAME, SECURITY_DESCRIPTOR_REVISION,
+    FILE_SUPPORTS_POSIX_UNLINK_RENAME, SECURITY_DESCRIPTOR_REVISION,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
+use super::records::{self, Ace, Buffer, Record};
 use super::{Identity, Kind, Name, Privacy, REMOVAL_DEPTH, Status};
 
 /// What a held directory may do: list itself, be passed through, and show its attributes and its security.
@@ -350,10 +346,12 @@ fn create(parent: &File, name: &[u16], how: &Create<'_>) -> io::Result<File> {
             "a name is too long to be one component",
         )
     })?;
+    let spelling: Vec<u8> = name.iter().flat_map(|unit| unit.to_le_bytes()).collect();
+    let name_buffer = Buffer::from_bytes(&spelling);
     let object_name = UNICODE_STRING {
         Length: length,
         MaximumLength: length,
-        Buffer: name.as_ptr().cast_mut(),
+        Buffer: name_buffer.pointer().cast(),
     };
     let object = OBJECT_ATTRIBUTES {
         Length: size_as_u32::<OBJECT_ATTRIBUTES>()?,
@@ -533,36 +531,23 @@ fn rename_held(held: &File, to_dir: &File, target: &[u16], flags: u32) -> io::Re
     let length = size_of::<FILE_RENAME_INFORMATION>()
         .checked_add(name_bytes)
         .ok_or_else(|| io::Error::other("a rename cannot be described"))?;
-    let mut buffer = vec![0_u64; length.div_ceil(size_of::<u64>())];
-    let header = FILE_RENAME_INFORMATION {
-        Anonymous: FILE_RENAME_INFORMATION_0 { Flags: flags },
-        RootDirectory: to_dir.as_raw_handle(),
-        FileNameLength: u32::try_from(name_bytes)
-            .map_err(|_outside| io::Error::other("a name is too long to rename to"))?,
-        FileName: [0],
-    };
-    #[expect(
-        unsafe_code,
-        reason = "the buffer is eight-byte aligned and at least as long as the header"
-    )]
-    unsafe {
-        buffer
-            .as_mut_ptr()
-            .cast::<FILE_RENAME_INFORMATION>()
-            .write(header);
-    }
-    let spelled: Vec<u8> = target.iter().flat_map(|unit| unit.to_ne_bytes()).collect();
-    #[expect(
-        unsafe_code,
-        reason = "the name ends within the buffer, which was sized as the header and the name together"
-    )]
-    unsafe {
-        buffer
-            .as_mut_ptr()
-            .cast::<u8>()
-            .add(name_at)
-            .copy_from_nonoverlapping(spelled.as_ptr(), spelled.len());
-    }
+    let mut bytes = vec![0; length];
+    records::put(&mut bytes, 0, &flags.to_le_bytes())?;
+    records::put(
+        &mut bytes,
+        std::mem::offset_of!(FILE_RENAME_INFORMATION, RootDirectory),
+        &to_dir.as_raw_handle().addr().to_ne_bytes(),
+    )?;
+    records::put(
+        &mut bytes,
+        std::mem::offset_of!(FILE_RENAME_INFORMATION, FileNameLength),
+        &u32::try_from(name_bytes)
+            .map_err(|_outside| io::Error::other("a name is too long to rename to"))?
+            .to_le_bytes(),
+    )?;
+    let spelled: Vec<u8> = target.iter().flat_map(|unit| unit.to_le_bytes()).collect();
+    records::put(&mut bytes, name_at, &spelled)?;
+    let buffer = Buffer::from_bytes(&bytes);
     let described = u32::try_from(length)
         .map_err(|_outside| io::Error::other("a rename cannot be described"))?;
     let mut status_block = IO_STATUS_BLOCK::default();
@@ -571,7 +556,7 @@ fn rename_held(held: &File, to_dir: &File, target: &[u16], flags: u32) -> io::Re
         NtSetInformationFile(
             held.as_raw_handle(),
             &raw mut status_block,
-            buffer.as_ptr().cast(),
+            buffer.pointer(),
             described,
             FileRenameInformationEx,
         )
@@ -637,11 +622,10 @@ fn sharing_violation(error: &io::Error) -> bool {
 
 /// The names `dir` holds as the system spells them, without `.` and `..`, read through a handle of their own so no other listing moves this one.
 fn listed(dir: &File) -> io::Result<Vec<Vec<u16>>> {
-    const BATCH_WORDS: usize = 8192;
+    const BATCH_BYTES: usize = 65536;
     let scan = reopen(dir, FILE_LIST_DIRECTORY, FILE_DIRECTORY_FILE)?;
-    let mut buffer = vec![0_u64; BATCH_WORDS];
-    let capacity = u32::try_from(size_of_val(buffer.as_slice()))
-        .map_err(|_outside| io::Error::other("a listing buffer is too long"))?;
+    let mut buffer = Buffer::sized(BATCH_BYTES);
+    let capacity = buffer.capacity()?;
     let mut class = FileFullDirectoryRestartInfo;
     let mut names = Vec::new();
     loop {
@@ -650,12 +634,7 @@ fn listed(dir: &File) -> io::Result<Vec<Vec<u16>>> {
             reason = "GetFileInformationByHandleEx has no safe binding"
         )]
         let read = unsafe {
-            GetFileInformationByHandleEx(
-                scan.as_raw_handle(),
-                class,
-                buffer.as_mut_ptr().cast(),
-                capacity,
-            )
+            GetFileInformationByHandleEx(scan.as_raw_handle(), class, buffer.output(), capacity)
         };
         if read == 0 {
             let error = io::Error::last_os_error();
@@ -665,56 +644,12 @@ fn listed(dir: &File) -> io::Result<Vec<Vec<u16>>> {
             };
         }
         class = FileFullDirectoryInfo;
-        let bytes: Vec<u8> = buffer.iter().flat_map(|word| word.to_ne_bytes()).collect();
+        let bytes = buffer.bytes(BATCH_BYTES)?;
         names.extend(
-            batch(&bytes)?
+            records::directory_names(&bytes)?
                 .into_iter()
                 .filter(|name| !matches!(name.as_slice(), [46] | [46, 46])),
         );
-    }
-}
-
-/// The names one batch of `FILE_FULL_DIR_INFO` records holds, read as bytes so no record is taken for more than it says it is.
-fn batch(bytes: &[u8]) -> io::Result<Vec<Vec<u16>>> {
-    let length_at = std::mem::offset_of!(FILE_FULL_DIR_INFO, FileNameLength);
-    let name_at = std::mem::offset_of!(FILE_FULL_DIR_INFO, FileName);
-    let broken = || {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "a directory listing record runs past what the system returned",
-        )
-    };
-    let mut names = Vec::new();
-    let mut at = 0_usize;
-    loop {
-        let next = word_at(bytes, at).ok_or_else(broken)?;
-        let length =
-            word_at(bytes, at.checked_add(length_at).ok_or_else(broken)?).ok_or_else(broken)?;
-        let start = at.checked_add(name_at).ok_or_else(broken)?;
-        let end = usize::try_from(length)
-            .map_err(|_outside| broken())?
-            .checked_add(start)
-            .ok_or_else(broken)?;
-        let (units, uneven) = bytes.get(start..end).ok_or_else(broken)?.as_chunks::<2>();
-        if !uneven.is_empty() {
-            return Err(broken());
-        }
-        names.push(units.iter().map(|pair| u16::from_ne_bytes(*pair)).collect());
-        if next == 0 {
-            return Ok(names);
-        }
-        at = at
-            .checked_add(usize::try_from(next).map_err(|_outside| broken())?)
-            .ok_or_else(broken)?;
-    }
-}
-
-fn word_at(bytes: &[u8], at: usize) -> Option<u32> {
-    let end = at.checked_add(4)?;
-    let four = <[u8; 4]>::try_from(bytes.get(at..end)?);
-    match four {
-        Ok(four) => Some(u32::from_ne_bytes(four)),
-        Err(_short) => None,
     }
 }
 
@@ -756,59 +691,44 @@ fn remove_entry(dir: &File, name: &[u16], depth: usize) -> io::Result<()> {
 
 /// A security identifier copied out of whatever held it, in words, which is how the system lays one out.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Sid(Vec<u32>);
+struct Sid {
+    held: Buffer,
+    length: usize,
+}
 
 impl Sid {
-    /// Copies the identifier `raw` points at.
-    fn copy(raw: PSID) -> io::Result<Self> {
-        #[expect(unsafe_code, reason = "IsValidSid has no safe binding")]
-        let valid = unsafe { IsValidSid(raw) };
-        succeeded(valid)
-            .map_err(|_invalid| io::Error::new(io::ErrorKind::InvalidData, "a SID is not valid"))?;
-        #[expect(unsafe_code, reason = "GetLengthSid has no safe binding")]
-        let length = unsafe { GetLengthSid(raw) };
-        let bytes = usize::try_from(length)
-            .map_err(|_outside| io::Error::other("a SID is too long to hold"))?;
-        #[expect(
-            unsafe_code,
-            reason = "a valid SID is exactly as long as GetLengthSid says, and nothing writes it while it is copied"
-        )]
-        let held = unsafe { std::slice::from_raw_parts(raw.cast::<u8>().cast_const(), bytes) };
-        let (words, rest) = held.as_chunks::<4>();
-        if !rest.is_empty() {
-            return Err(io::Error::other("a SID is not whole words"));
-        }
-        Ok(Self(
-            words.iter().map(|word| u32::from_ne_bytes(*word)).collect(),
-        ))
+    fn copy(record: Record<'_>) -> io::Result<Self> {
+        let bytes: Vec<u8> = record
+            .sid_words()?
+            .iter()
+            .flat_map(|word| word.to_le_bytes())
+            .collect();
+        Ok(Self {
+            length: bytes.len(),
+            held: Buffer::from_bytes(&bytes),
+        })
     }
 
     /// The identifier the system gives the principal `kind` names.
     fn well_known(kind: WELL_KNOWN_SID_TYPE) -> io::Result<Self> {
         let mut size = SECURITY_MAX_SID_SIZE;
-        let words = usize::try_from(SECURITY_MAX_SID_SIZE)
-            .map_err(|_outside| io::Error::other("a SID is too long to hold"))?
-            .div_ceil(4);
-        let mut held = vec![0_u32; words];
+        let mut held = Buffer::sized(
+            usize::try_from(size)
+                .map_err(|_outside| io::Error::other("a SID is too long to hold"))?,
+        );
         #[expect(unsafe_code, reason = "CreateWellKnownSid has no safe binding")]
-        let made = unsafe {
-            CreateWellKnownSid(
-                kind,
-                ptr::null_mut(),
-                held.as_mut_ptr().cast(),
-                &raw mut size,
-            )
-        };
+        let made =
+            unsafe { CreateWellKnownSid(kind, ptr::null_mut(), held.output(), &raw mut size) };
         succeeded(made)?;
-        let used = usize::try_from(size)
-            .map_err(|_outside| io::Error::other("a SID is too long to hold"))?
-            .div_ceil(4);
-        held.truncate(used);
-        Ok(Self(held))
+        let bytes = held.bytes(
+            usize::try_from(size)
+                .map_err(|_outside| io::Error::other("a SID is too long to hold"))?,
+        )?;
+        Self::copy(Record::new(&bytes))
     }
 
     const fn as_psid(&self) -> PSID {
-        self.0.as_ptr().cast_mut().cast()
+        self.held.pointer()
     }
 }
 
@@ -829,31 +749,14 @@ impl Me {
             reason = "OpenProcessToken succeeded, so the handle is open and owned by nothing else"
         )]
         let token = unsafe { OwnedHandle::from_raw_handle(token) };
-        let user = token_sid(&token, TokenUser, |buffer| {
-            #[expect(
-                unsafe_code,
-                reason = "GetTokenInformation filled the pointer-aligned buffer with a TOKEN_USER"
-            )]
-            let user = unsafe { buffer.cast::<TOKEN_USER>().read() };
-            user.User.Sid
-        })?;
-        let owner = token_sid(&token, TokenOwner, |buffer| {
-            #[expect(
-                unsafe_code,
-                reason = "GetTokenInformation filled the pointer-aligned buffer with a TOKEN_OWNER"
-            )]
-            let owner = unsafe { buffer.cast::<TOKEN_OWNER>().read() };
-            owner.Owner
-        })?;
+        let user = token_sid(&token, TokenUser)?;
+        let owner = token_sid(&token, TokenOwner)?;
         Ok(Self { user, owner })
     }
 }
 
-/// The identifier the token's `class` names, read by `sid` out of the buffer the system filled.
-fn token_sid<F>(token: &OwnedHandle, class: TOKEN_INFORMATION_CLASS, sid: F) -> io::Result<Sid>
-where
-    F: FnOnce(*const usize) -> PSID,
-{
+/// The identifier the token's `class` names, copied only from the bytes the system wrote into its owned buffer.
+fn token_sid(token: &OwnedHandle, class: TOKEN_INFORMATION_CLASS) -> io::Result<Sid> {
     let mut needed: u32 = 0;
     #[expect(unsafe_code, reason = "GetTokenInformation has no safe binding")]
     let sized = unsafe {
@@ -870,25 +773,27 @@ where
             "the process token did not say how much it holds",
         ));
     }
-    let words = usize::try_from(needed)
-        .map_err(|_outside| io::Error::other("the process token holds too much"))?
-        .div_ceil(size_of::<usize>());
-    let mut buffer = vec![0_usize; words];
-    let capacity = size_of_val(buffer.as_slice())
-        .try_into()
-        .map_err(|_outside| io::Error::other("the process token holds too much"))?;
+    let mut buffer = Buffer::sized(
+        usize::try_from(needed)
+            .map_err(|_outside| io::Error::other("the process token holds too much"))?,
+    );
+    let capacity = buffer.capacity()?;
     #[expect(unsafe_code, reason = "GetTokenInformation has no safe binding")]
     let read = unsafe {
         GetTokenInformation(
             token.as_raw_handle(),
             class,
-            buffer.as_mut_ptr().cast(),
+            buffer.output(),
             capacity,
             &raw mut needed,
         )
     };
     succeeded(read)?;
-    Sid::copy(sid(buffer.as_ptr()))
+    let bytes = buffer.bytes(
+        usize::try_from(needed)
+            .map_err(|_outside| io::Error::other("the process token holds too much"))?,
+    )?;
+    Sid::copy(Record::new(&bytes).token_sid(buffer.pointer().addr())?)
 }
 
 /// The principals a private directory admits: this process's user, the system, and the administrators (decision 5).
@@ -917,117 +822,65 @@ struct Security {
 
 impl Security {
     fn of(dir: &File) -> io::Result<Self> {
-        let mut owner: PSID = ptr::null_mut();
-        let mut dacl: *mut ACL = ptr::null_mut();
-        let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
-        #[expect(unsafe_code, reason = "GetSecurityInfo has no safe binding")]
-        let asked = unsafe {
-            GetSecurityInfo(
+        let requested = OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+        let mut needed = 0;
+        #[expect(unsafe_code, reason = "GetKernelObjectSecurity has no safe binding")]
+        let sized = unsafe {
+            GetKernelObjectSecurity(
                 dir.as_raw_handle(),
-                SE_FILE_OBJECT,
-                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-                &raw mut owner,
+                requested,
                 ptr::null_mut(),
-                &raw mut dacl,
-                ptr::null_mut(),
-                &raw mut descriptor,
+                0,
+                &raw mut needed,
             )
         };
-        if asked != 0 {
-            return Err(match i32::try_from(asked) {
-                Ok(raw) => io::Error::from_raw_os_error(raw),
-                Err(_outside) => io::Error::other("the security of a directory could not be read"),
-            });
+        if sized != 0 || needed == 0 {
+            return Err(io::Error::other(
+                "the security descriptor did not say how much it holds",
+            ));
         }
-        let held = Described(descriptor);
-        let mut control: u16 = 0;
-        let mut revision: u32 = 0;
-        #[expect(
-            unsafe_code,
-            reason = "GetSecurityDescriptorControl has no safe binding"
-        )]
-        let controlled =
-            unsafe { GetSecurityDescriptorControl(held.0, &raw mut control, &raw mut revision) };
-        succeeded(controlled)?;
-        let security = Self {
-            owner: Sid::copy(owner)?,
-            protected: control & SE_DACL_PROTECTED != 0,
-            grants: if dacl.is_null() {
-                None
-            } else {
-                Some(grants(dacl)?)
-            },
+        let mut buffer = Buffer::sized(
+            usize::try_from(needed)
+                .map_err(|_outside| io::Error::other("the security descriptor holds too much"))?,
+        );
+        let capacity = buffer.capacity()?;
+        #[expect(unsafe_code, reason = "GetKernelObjectSecurity has no safe binding")]
+        let read = unsafe {
+            GetKernelObjectSecurity(
+                dir.as_raw_handle(),
+                requested,
+                buffer.output(),
+                capacity,
+                &raw mut needed,
+            )
         };
-        drop(held);
-        Ok(security)
+        succeeded(read)?;
+        let bytes = buffer
+            .bytes(usize::try_from(needed).map_err(|_outside| {
+                io::Error::other("the security descriptor holds too much")
+            })?)?;
+        let parsed = records::security(&bytes)?;
+        let grants = parsed
+            .grants
+            .map(|grants| {
+                grants
+                    .into_iter()
+                    .map(|grant| match grant {
+                        Ace::Allows { sid, mask } => Ok(Grant::Allows {
+                            sid: Sid::copy(sid)?,
+                            mask,
+                        }),
+                        Ace::Other => Ok(Grant::Other),
+                    })
+                    .collect::<io::Result<Vec<Grant>>>()
+            })
+            .transpose()?;
+        Ok(Self {
+            owner: Sid::copy(parsed.owner)?,
+            protected: parsed.protected,
+            grants,
+        })
     }
-}
-
-/// A security descriptor the system allocated, freed when it is dropped.
-struct Described(PSECURITY_DESCRIPTOR);
-
-impl Drop for Described {
-    fn drop(&mut self) {
-        #[expect(
-            unsafe_code,
-            reason = "GetSecurityInfo allocated the descriptor for this owner to free once"
-        )]
-        let freed = unsafe { LocalFree(self.0) };
-        if !freed.is_null() {
-            std::process::abort();
-        }
-    }
-}
-
-fn grants(dacl: *const ACL) -> io::Result<Vec<Grant>> {
-    let mut size = ACL_SIZE_INFORMATION {
-        AceCount: 0,
-        AclBytesInUse: 0,
-        AclBytesFree: 0,
-    };
-    let length = size_as_u32::<ACL_SIZE_INFORMATION>()?;
-    #[expect(unsafe_code, reason = "GetAclInformation has no safe binding")]
-    let asked = unsafe {
-        GetAclInformation(
-            dacl,
-            ptr::from_mut(&mut size).cast(),
-            length,
-            AclSizeInformation,
-        )
-    };
-    succeeded(asked)?;
-    let sid_at = std::mem::offset_of!(ACCESS_ALLOWED_ACE, SidStart);
-    let mut found = Vec::new();
-    for index in 0..size.AceCount {
-        let mut ace: *mut c_void = ptr::null_mut();
-        #[expect(unsafe_code, reason = "GetAce has no safe binding")]
-        let got = unsafe { GetAce(dacl, index, &raw mut ace) };
-        succeeded(got)?;
-        #[expect(
-            unsafe_code,
-            reason = "every access control entry begins with its header"
-        )]
-        let header = unsafe { ace.cast::<ACE_HEADER>().read_unaligned() };
-        if u32::from(header.AceType) != ACCESS_ALLOWED_ACE_TYPE {
-            found.push(Grant::Other);
-            continue;
-        }
-        #[expect(
-            unsafe_code,
-            reason = "an entry whose header says it allows access is laid out as ACCESS_ALLOWED_ACE"
-        )]
-        let allowed = unsafe { ace.cast::<ACCESS_ALLOWED_ACE>().read_unaligned() };
-        #[expect(
-            unsafe_code,
-            reason = "the SID an allowing entry grants begins at its SidStart field"
-        )]
-        let raw = unsafe { ace.cast::<u8>().add(sid_at) };
-        found.push(Grant::Allows {
-            sid: Sid::copy(raw.cast())?,
-            mask: allowed.Mask,
-        });
-    }
-    Ok(found)
 }
 
 /// Who may reach into a directory with `security`, asked by `me`: owner-only is a protected list, which nothing is inherited into later, whose every entry allows one of `trusted` and which gives this user everything.
@@ -1062,7 +915,7 @@ enum Inherited {
 
 /// A security descriptor whose protected access control list admits this user, the system and the administrators alone (decision 5).
 struct Private {
-    acl: Vec<u32>,
+    acl: Buffer,
     descriptor: SECURITY_DESCRIPTOR,
 }
 
@@ -1081,21 +934,19 @@ impl Private {
         for sid in &trusted {
             length = length
                 .checked_add(entry)
-                .and_then(|with| with.checked_add(size_of_val(sid.0.as_slice())))
+                .and_then(|with| with.checked_add(sid.length))
                 .ok_or_else(|| io::Error::other("an access control list cannot be sized"))?;
         }
-        let mut acl = vec![0_u32; length.div_ceil(4)];
-        let capacity = size_of_val(acl.as_slice())
-            .try_into()
-            .map_err(|_outside| io::Error::other("an access control list is too long"))?;
+        let mut acl = Buffer::sized(length);
+        let capacity = acl.capacity()?;
         #[expect(unsafe_code, reason = "InitializeAcl has no safe binding")]
-        let initialized = unsafe { InitializeAcl(acl.as_mut_ptr().cast(), capacity, ACL_REVISION) };
+        let initialized = unsafe { InitializeAcl(acl.output().cast(), capacity, ACL_REVISION) };
         succeeded(initialized)?;
         for sid in &trusted {
             #[expect(unsafe_code, reason = "AddAccessAllowedAceEx has no safe binding")]
             let added = unsafe {
                 AddAccessAllowedAceEx(
-                    acl.as_mut_ptr().cast(),
+                    acl.output().cast(),
                     ACL_REVISION,
                     flags,
                     FILE_ALL_ACCESS,
@@ -1129,7 +980,7 @@ impl Private {
             reason = "SetSecurityDescriptorDacl has no safe binding, and the list lives as long as the descriptor"
         )]
         let listed =
-            unsafe { SetSecurityDescriptorDacl(descriptor, 1, private.acl.as_ptr().cast(), 0) };
+            unsafe { SetSecurityDescriptorDacl(descriptor, 1, private.acl.pointer().cast(), 0) };
         succeeded(listed)?;
         #[expect(
             unsafe_code,
@@ -1180,11 +1031,25 @@ fn succeeded_nt(status: NTSTATUS) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::records::Record;
+    use super::volume_verdict;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FULL_DIR_INFO;
+
+    #[test]
+    fn bounded_directory_records_follow_the_windows_abi() {
+        assert_eq!(std::mem::offset_of!(FILE_FULL_DIR_INFO, FileNameLength), 60);
+        assert_eq!(std::mem::offset_of!(FILE_FULL_DIR_INFO, FileName), 68);
+        assert_eq!(std::mem::offset_of!(super::ACCESS_ALLOWED_ACE, Mask), 4);
+        assert_eq!(std::mem::offset_of!(super::ACCESS_ALLOWED_ACE, SidStart), 8);
+    }
     use super::{Grant, Kind, Me, Privacy, Security, Sid, Volume, kind_of_attributes, privacy_of};
-    use super::{volume_verdict, word_at};
 
     fn sid(last: u32) -> Sid {
-        Sid(vec![0x0000_0501, 0x0500_0000, 21, last])
+        let bytes: Vec<u8> = [0x0000_0201_u32, 0x0500_0000, 21, last]
+            .iter()
+            .flat_map(|word| word.to_le_bytes())
+            .collect();
+        Sid::copy(Record::new(&bytes)).expect("synthetic SID")
     }
 
     fn security(owner: u32, protected: bool, grants: Option<Vec<Grant>>) -> Security {
@@ -1303,8 +1168,20 @@ mod tests {
 
     #[test]
     fn a_short_listing_record_is_no_word() {
-        assert_eq!(word_at(&[1, 0, 0, 0], 0), Some(1));
-        assert_eq!(word_at(&[1, 0, 0], 0), None);
-        assert_eq!(word_at(&[1, 0, 0, 0], usize::MAX), None);
+        assert_eq!(Record::new(&[1, 0, 0, 0]).word(0).expect("whole word"), 1);
+        assert_eq!(
+            Record::new(&[1, 0, 0])
+                .word(0)
+                .expect_err("short word")
+                .kind(),
+            std::io::ErrorKind::InvalidData
+        );
+        assert_eq!(
+            Record::new(&[1, 0, 0, 0])
+                .word(usize::MAX)
+                .expect_err("overflow")
+                .kind(),
+            std::io::ErrorKind::InvalidData
+        );
     }
 }

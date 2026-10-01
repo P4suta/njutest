@@ -329,6 +329,8 @@ jobs:
         run: |
           cargo fetch --locked
           cargo fetch --locked --manifest-path fuzz/Cargo.toml
+      - name: Interpret the platform-independent OS record regressions
+        run: 'cargo +nightly miri test --locked -p rust-mutants --lib capdir::records::tests::'
       - name: Build the njutest this commit would ship
         run: mise run build:release
       # Every other job runs on a machine with no Miri, where the whole of deep-v1 is the refusal NJ7001.

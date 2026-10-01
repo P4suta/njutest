@@ -2580,17 +2580,17 @@ impl MutantResult {
 
     /// What the harness's own report establishes about this run of `asked`, where the target answers in a report at all.
     #[must_use]
-    pub fn account(
+    pub fn harness_report(
         &self,
         asked: crate::libtest::Asked<'_>,
-    ) -> Option<Result<crate::libtest::Account, crate::libtest::Unaccounted>> {
+    ) -> Option<Result<crate::libtest::HarnessReport, crate::libtest::Unaccounted>> {
         match self.protocol {
-            Protocol::Libtest => Some(crate::libtest::account(
+            Protocol::Libtest => Some(crate::libtest::harness_report(
                 &self.output,
                 asked,
                 self.signal.is_none().then_some(self.exit_code),
             )),
-            Protocol::Rustdoc => Some(crate::libtest::accounts(
+            Protocol::Rustdoc => Some(crate::libtest::harness_reports(
                 &self.output,
                 self.signal.is_none().then_some(self.exit_code),
             )),
