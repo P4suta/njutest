@@ -107,7 +107,7 @@ pub fn interpret(
 ) -> Result<Interpreted, RunnerError> {
     let mut argv: Vec<OsString> = vec![
         interpreting.cargo.path().as_os_str().to_owned(),
-        OsString::from("+nightly"),
+        selected(&interpreting.env),
         OsString::from("miri"),
         OsString::from("test"),
     ];
@@ -192,7 +192,7 @@ fn missing(
     let mut spec = Spec::new(
         [
             interpreting.cargo.path().as_os_str().to_owned(),
-            OsString::from("+nightly"),
+            selected(&interpreting.env),
             OsString::from("miri"),
             OsString::from("--version"),
         ],
@@ -224,6 +224,15 @@ fn environment(interpreting: &Interpreting<'_>) -> rust_mutants::vars::Variables
         env.set("MIRIFLAGS", interpreting.flags.join(" "));
     }
     env
+}
+
+fn selected(env: &rust_mutants::vars::Variables) -> OsString {
+    let mut selected = OsString::from("+");
+    match env.var("NJUTEST_NIGHTLY") {
+        Some(nightly) => selected.push(nightly),
+        None => selected.push("nightly"),
+    }
+    selected
 }
 
 /// How one Miri run ended, apart from what it said.

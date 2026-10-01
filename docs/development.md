@@ -328,8 +328,11 @@ CI requires the `CodeQL required` job: Rust and Actions extraction and analysis 
 Both matrix entries then require a SARIF report and fail on any finding, just as the local Rust task does.
 The query configuration excludes no source paths and suppresses no query or alert.
 
-The `soundness` CI job installs nightly Miri and interprets `cargo +nightly miri test --locked -p rust-mutants --lib capdir::records::tests::` before its deep-contract fixture.
-The same command is available locally as `mise run security:miri`, which requires an installed nightly toolchain with Miri and rust-src.
+`rust-toolchain.toml` is the single source for the stable compiler and the dated `[njutest].nightly` used by Miri and fuzzing.
+The setup action reads the nightly with `scripts/toolchain.py`; mise reads both pins directly and exports `NJUTEST_NIGHTLY`.
+Workflow tests refuse floating selectors and independently pinned installations.
+The `soundness` CI job installs that nightly with Miri and rust-src, then interprets `cargo +"$NJUTEST_NIGHTLY" miri test --locked -p rust-mutants --lib capdir::records::tests::` before its deep-contract fixture.
+The same command is available locally as `mise run security:miri`.
 The same seven synthetic-buffer tests run natively on every host, and the Windows capability-directory suite exercises the FFI with real ACLs, process SIDs, multiple directory batches and long UTF-16 renames.
 From this checkout, `domyjob run win --env CARGO_BUILD_JOBS=6 -- mise x -- cargo nextest run --locked --all-features -p rust-mutants --lib --test suite -E 'test(capdir::) | test(libtest::) | test(sensitive::)'` sends uncommitted source for that check.
 `mise run lint:windows` checks the Windows source through Clippy with warnings denied.

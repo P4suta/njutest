@@ -330,12 +330,14 @@ fn a_run_that_named_packages_asks_the_interpreter_for_those_and_not_the_workspac
     let trace = recording();
     let cargo = cargo();
     let packages = ["core".to_owned(), "app".to_owned()];
+    let mut env = saying(PASSED, 0);
+    env.set("NJUTEST_NIGHTLY", "nightly-2026-07-02");
 
     let done = interpret(
         &Interpreting {
             root: dir.path(),
             cargo: rust_mutants::cargo::Selecting::named(&cargo),
-            env: saying(PASSED, 0),
+            env,
             packages: &packages,
             flags: &[],
             timeout: Some(Duration::from_secs(30)),
@@ -361,7 +363,7 @@ fn a_run_that_named_packages_asks_the_interpreter_for_those_and_not_the_workspac
         argv,
         vec![
             cargo.display().to_string(),
-            "+nightly".to_owned(),
+            "+nightly-2026-07-02".to_owned(),
             "miri".to_owned(),
             "test".to_owned(),
             "--package".to_owned(),

@@ -9,3 +9,6 @@ components = ["rustfmt", "clippy", "llvm-tools"]
 # wasm32-wasip1: what a sealed host runs a suite as; the instrumented tree and the host's own test guests are built for it.
 targets = ["wasm32-wasip1"]
 profile = "minimal"
+
+[njutest]
+nightly = "nightly-2026-07-02"

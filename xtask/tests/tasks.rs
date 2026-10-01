@@ -503,7 +503,7 @@ fn package_install_deny_and_typos_are_exact_local_ci_pairs() {
 fn the_windows_cfg_is_linted_with_the_pinned_target() {
     let setup = task("\"setup:windows-target\"");
     assert!(
-        setup.contains("rustup target add --toolchain 1.98.0 x86_64-pc-windows-msvc"),
+        setup.contains("rustup target add --toolchain $RUSTUP_TOOLCHAIN x86_64-pc-windows-msvc"),
         "the cross-target standard library is not tied to the pinned compiler: {setup}"
     );
     let windows = task("\"lint:windows\"");
@@ -720,7 +720,7 @@ fn every_ci_platform_runs_the_same_complete_suite() {
     );
     let local = task("\"test:ci\"");
     assert!(
-        local.contains("cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2"),
+        local.contains("cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level pass --test-threads 3 --profile ci"),
         "the CI task covers every target: {local}"
     );
     assert!(
@@ -904,7 +904,9 @@ fn local_and_weekly_fuzz_runs_copy_the_committed_seeds_into_the_real_corpus() {
     assert!(
         smoke.contains("bash ../scripts/seed-fuzz-corpus.sh \"$target\"")
             && smoke.find("seed-fuzz-corpus").unwrap_or(usize::MAX)
-                < smoke.find("cargo +nightly fuzz run").unwrap_or(usize::MAX),
+                < smoke
+                    .find("cargo +\"$NJUTEST_NIGHTLY\" fuzz run")
+                    .unwrap_or(usize::MAX),
         "the local smoke run does not seed each target before invoking cargo-fuzz: {smoke}"
     );
 
@@ -1228,7 +1230,7 @@ fn every_task_a_page_or_a_workflow_names_is_one_mise_declares() {
 const PLUMBING: [&str; 5] = [
     "cargo fetch --locked",
     "rustup toolchain install",
-    "cargo +nightly miri setup",
+    "cargo +\"${NJUTEST_NIGHTLY}\" miri setup",
     "cargo llvm-cov report",
     "cargo xtask sbom",
 ];

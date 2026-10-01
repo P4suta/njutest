@@ -21,9 +21,10 @@
 # `mise run` re-applies this table inside the task, so a job that cleared the variable in its own environment would have it put back; deferring here is what makes the clear survive.
 # An empty value is a value: cargo treats an empty `RUSTC_WRAPPER` as no wrapper at all, which is how CI asks for the compiler it already caches through `Swatinem/rust-cache` rather than one more program to install.
 RUSTC_WRAPPER = "{{ env.RUSTC_WRAPPER | default(value='sccache') }}"
+NJUTEST_NIGHTLY = "{{ read_file(path=config_root ~ '/rust-toolchain.toml') | split(pat='nightly = \"') | last | split(pat='\"') | first }}"
 
 [tools]
-rust = "1.98.0"
+rust = "{{ read_file(path=config_root ~ '/rust-toolchain.toml') | split(pat='channel = \"') | last | split(pat='\"') | first }}"
 actionlint = "1.7.12"
 taplo = "0.10.0"
 typos = "1.50.1"
@@ -111,7 +112,8 @@ run = "bash scripts/codeql.sh setup"
 [tasks."security:miri"]
 description = "Interpret the platform-independent OS record regressions with the installed nightly Miri"
 env = { RUSTC_WRAPPER = "" }
-run = "cargo +nightly miri test --locked -p rust-mutants --lib capdir::records::tests::"
+run = 'cargo +"${NJUTEST_NIGHTLY}" miri test --locked -p rust-mutants --lib capdir::records::tests::'
+shell = "bash -c"
 
 [tasks.lint]
 description = "Run formatting, clippy, rustdoc, the repository gates, the fuzz targets under the same Clippy policy, spelling, TOML, and workflow linters"
@@ -136,7 +138,8 @@ committed "${base_ref}..${head_ref}"
 # It is clippy and not a type check: batch 10 type-checked clean for Windows and failed CI's Windows job on `missing_const_for_fn`, a function the Unix branch of a cfg split had made const on Windows alone.
 [tasks."setup:windows-target"]
 description = "Install the pinned Windows standard library used by the cross-target lint"
-run = "rustup target add --toolchain 1.98.0 x86_64-pc-windows-msvc"
+run = "rustup target add --toolchain $RUSTUP_TOOLCHAIN x86_64-pc-windows-msvc"
+run_windows = "rustup target add --toolchain %RUSTUP_TOOLCHAIN% x86_64-pc-windows-msvc"
 
 [tasks."lint:windows"]
 description = "Lint every non-benchmark target with every non-benchmark feature for Windows, where CI reads the cfgs this machine does not compile; real Windows CI covers feature-complete benchmarks"
@@ -150,7 +153,7 @@ run = "cargo clippy --locked --workspace --all-targets --features njutest/testki
 # It holds no Linux-only code, and CI's Linux job lints it natively.
 [tasks."setup:linux-target"]
 description = "Install the pinned Linux standard library used by the cross-target lint"
-run = "rustup target add --toolchain 1.98.0 x86_64-unknown-linux-gnu"
+run = "rustup target add --toolchain $RUSTUP_TOOLCHAIN x86_64-unknown-linux-gnu"
 
 [tasks."lint:linux"]
 description = "Lint every non-benchmark target for Linux, where CI reads the cfgs this machine does not compile"
@@ -198,7 +201,7 @@ run = "cargo test --locked --workspace --all-features --doc"
 
 [tasks."test:ci"]
 depends = ["build:examples"]
-run = "cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2"
+run = "cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level pass --test-threads 3 --profile ci"
 
 [tasks."test:cost"]
 description = "Run the complete suite and gate fixture compile/build counts"
@@ -321,7 +324,7 @@ run = "cargo xtask fuzz-clippy"
 [tasks."fuzz:build"]
 description = "Build every cargo-fuzz target (nightly, sanitizer) without running one"
 dir = "fuzz"
-run = "cargo +nightly fuzz build"
+run = "cargo +$NJUTEST_NIGHTLY fuzz build"
 
 [tasks."fuzz:smoke"]
 description = "Seed and run every cargo-fuzz target briefly, the same entry path as weekly CI"
@@ -329,10 +332,10 @@ dir = "fuzz"
 shell = "bash -c"
 run = """
 set -euo pipefail
-for target in $(cargo +nightly fuzz list); do
+for target in $(cargo +"$NJUTEST_NIGHTLY" fuzz list); do
   echo "== $target"
   bash ../scripts/seed-fuzz-corpus.sh "$target"
-  cargo +nightly fuzz run "$target" -- -runs=2000 -max_len=1024
+  cargo +"$NJUTEST_NIGHTLY" fuzz run "$target" -- -runs=2000 -max_len=1024
 done
 """
 

@@ -26,6 +26,7 @@ env:
   RUSTFLAGS: "-D warnings"
   # The suites drive a real cargo against the fixture projects; nothing may reach a registry from inside a test.
   CARGO_NET_OFFLINE: "true"
+  CARGO_BUILD_JOBS: "3"
 
 defaults:
   run:
@@ -71,8 +72,21 @@ jobs:
           cargo fetch --locked
           cargo fetch --locked --manifest-path fuzz/Cargo.toml
       - name: Test every target
+        timeout-minutes: 60
+        env:
+          NJUTEST_TEST_COST_DIR: ${{ github.workspace }}/target/suite-cost/ci
+          NJUTEST_FIXTURE_BUILD_CACHE: ${{ runner.temp }}/fixture-builds
         shell: bash
         run: mise run test:ci
+      - name: Upload test progress and build costs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: test-evidence-${{ matrix.os }}
+          path: |
+            target/nextest/ci/junit.xml
+            target/suite-cost/ci
+          if-no-files-found: warn
       - name: Doctests
         shell: bash
         run: cargo test --locked --workspace --all-features --doc
@@ -214,6 +228,10 @@ jobs:
       # `nextest` builds the test targets and nothing else, and part of this suite drives a scripted `cargo` that lives in an example.
       # Building it takes the same environment the instrumented run uses, which is what `show-env` is for.
       - name: Collect coverage (run the suite once)
+        timeout-minutes: 35
+        env:
+          NJUTEST_TEST_COST_DIR: ${{ github.workspace }}/target/suite-cost/ci
+          NJUTEST_FIXTURE_BUILD_CACHE: ${{ runner.temp }}/fixture-builds
         run: |
           set -euo pipefail
           # The instrumented build lands in the ordinary `target/`, which the
@@ -238,7 +256,16 @@ jobs:
           # profiles sitting in `target` all along. The steps are told where.
           echo "CARGO_LLVM_COV_TARGET_DIR=$CARGO_LLVM_COV_TARGET_DIR" >> "$GITHUB_ENV"
           cargo build --locked --examples --workspace --all-features --profile test
-          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --test-threads 2
+          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --test-threads 3 --status-level pass --profile ci
+      - name: Upload test progress and build costs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: coverage-test-evidence
+          path: |
+            target/nextest/ci/junit.xml
+            target/suite-cost/ci
+          if-no-files-found: warn
       - name: Report (lcov + HTML + summary)
         run: |
           cargo llvm-cov report --lcov --output-path lcov.info
@@ -317,12 +344,12 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
       - name: Install the interpreter the deep-v1 contract promises
-        run: rustup toolchain install nightly --component miri,rust-src --profile minimal
+        run: rustup toolchain install "${NJUTEST_NIGHTLY}" --component miri,rust-src --profile minimal
       # The run is offline, and Miri builds its own sysroot the first time it is asked; build it now, while the network is allowed, or the verify below interprets nothing.
       - name: Build the interpreter's sysroot
         env:
           CARGO_NET_OFFLINE: "false"
-        run: cargo +nightly miri setup
+        run: cargo +"${NJUTEST_NIGHTLY}" miri setup
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
@@ -330,7 +357,7 @@ jobs:
           cargo fetch --locked
           cargo fetch --locked --manifest-path fuzz/Cargo.toml
       - name: Interpret the platform-independent OS record regressions
-        run: 'cargo +nightly miri test --locked -p rust-mutants --lib capdir::records::tests::'
+        run: 'cargo +"${NJUTEST_NIGHTLY}" miri test --locked -p rust-mutants --lib capdir::records::tests::'
       - name: Build the njutest this commit would ship
         run: mise run build:release
       # Every other job runs on a machine with no Miri, where the whole of deep-v1 is the refusal NJ7001.

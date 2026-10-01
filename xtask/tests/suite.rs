@@ -11,6 +11,8 @@ mod adrs;
 mod bundle;
 #[path = "carry.rs"]
 mod carry;
+#[path = "ci_contracts.rs"]
+mod ci_contracts;
 #[path = "concurrency.rs"]
 mod concurrency;
 #[path = "crashes.rs"]

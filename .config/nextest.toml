@@ -62,3 +62,11 @@ test-group = "toolchain"
 path = "junit.xml"
 store-success-output = true
 store-failure-output = true
+
+[profile.ci]
+status-level = "pass"
+
+[profile.ci.junit]
+path = "junit.xml"
+store-success-output = true
+store-failure-output = true
