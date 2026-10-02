@@ -5,8 +5,8 @@
 
 use std::process::{Command, ExitStatus};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::Ordering;
-use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use thiserror::Error;
@@ -80,6 +80,18 @@ impl crate::error::Coded for WorkError {
     }
 }
 
+impl WorkError {
+    fn kind(&self) -> std::io::ErrorKind {
+        match self {
+            Self::Start { source, .. } | Self::Watch { source } | Self::Signals { source } => {
+                source.kind()
+            }
+            #[cfg(unix)]
+            Self::Outlived => std::io::ErrorKind::PermissionDenied,
+        }
+    }
+}
+
 /// The signals that publish a stop observation before this process ends its work.
 #[derive(Debug)]
 pub struct Stops {
@@ -93,9 +105,27 @@ struct StopState {
     observers: Mutex<Vec<std::sync::Weak<crate::observation::Signal>>>,
     heard: Mutex<Option<Instant>>,
     waits: Mutex<Vec<crate::observation::WaitNote>>,
+    failure: Mutex<Option<Arc<std::io::Error>>>,
 }
 
 impl StopState {
+    fn publish_failure(&self, source: &Arc<std::io::Error>) {
+        let mut observers = match self.observers.lock() {
+            Ok(observers) => observers,
+            Err(poisoned) => {
+                drop(poisoned);
+                std::process::abort();
+            }
+        };
+        observers.retain(|observer| match observer.upgrade() {
+            Some(observer) => {
+                observer.failed(std::io::Error::new(source.kind(), Arc::clone(source)));
+                true
+            }
+            None => false,
+        });
+    }
+
     fn publish(&self, event: crate::observation::Event) {
         let mut observers = match self.observers.lock() {
             Ok(observers) => observers,
@@ -183,7 +213,33 @@ impl Stops {
         if self.raised().is_some() {
             signal.publish(crate::observation::Event::Cancelled);
         }
+        match self.state.failure.lock() {
+            Ok(failure) => {
+                if let Some(source) = failure.as_ref() {
+                    signal.failed(std::io::Error::new(source.kind(), Arc::clone(source)));
+                }
+            }
+            Err(source) => {
+                eprintln!("work subscription failure ownership was poisoned: {source}");
+                std::process::abort();
+            }
+        }
         StopSubscription { _signal: signal }
+    }
+
+    fn failed(&self) -> Result<(), WorkError> {
+        match self.state.failure.lock() {
+            Ok(failure) => match failure.as_ref() {
+                Some(source) => Err(WorkError::Watch {
+                    source: std::io::Error::new(source.kind(), Arc::clone(source)),
+                }),
+                None => Ok(()),
+            },
+            Err(source) => {
+                eprintln!("work failure ownership was poisoned: {source}");
+                std::process::abort();
+            }
+        }
     }
 
     fn heard(&self) -> Option<Instant> {
@@ -215,6 +271,18 @@ pub struct WorkEvents {
 }
 
 impl WorkEvents {
+    /// Retains the producer's first actual refusal before waking every active observer.
+    pub fn failed(&self, source: std::io::Error) {
+        let retained = match self.state.failure.lock() {
+            Ok(mut failure) => Arc::clone(failure.get_or_insert_with(|| Arc::new(source))),
+            Err(source) => {
+                eprintln!("work producer failure publication was poisoned: {source}");
+                std::process::abort();
+            }
+        };
+        self.state.publish_failure(&retained);
+    }
+
     /// Publishes actual output before waking the work observer.
     pub fn heard(&self) {
         match self.state.heard.lock() {
@@ -325,16 +393,40 @@ where
             Arc::clone(&completion),
             observation.signal(),
         );
-        let watched = started(group.leader()?)
+        let cleanup = GroupCleanup { group: &mut group };
+        let watched = started(cleanup.group.leader()?)
             .map_err(|source| WorkError::Watch { source })
             .and_then(|()| decided(&completion, &observation, bound, stops));
-        let stopped = group.stop(&completion, stops);
+        let stopped = cleanup.group.stop(&completion, stops);
         let joined = waiter.join();
-        let reaped = group.reap();
+        let reaped = cleanup.group.reap();
         drop(subscription);
+        let mut failures = Vec::new();
+        if let Err(source) = &watched {
+            failures.push((source.kind(), format!("observation: {source}")));
+        }
+        if let Err(source) = &stopped {
+            failures.push((source.kind(), format!("settlement: {source}")));
+        }
+        if let Err(source) = &joined {
+            failures.push((source.kind(), format!("observer join: {source}")));
+        }
+        if let Err(source) = &reaped {
+            failures.push((source.kind(), format!("reap: {source}")));
+        }
+        if let Some((kind, _first)) = failures.first() {
+            return Err(WorkError::Watch {
+                source: std::io::Error::new(
+                    *kind,
+                    failures
+                        .iter()
+                        .map(|(_kind, cause)| cause.as_str())
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                ),
+            });
+        }
         let ended = watched?;
-        stopped?;
-        joined?;
         let status = reaped?;
         Ok(match ended {
             Some(ended) => ended,
@@ -352,12 +444,14 @@ fn decided(
     let began = Instant::now();
     let mut last_heard = began;
     loop {
+        stops.failed()?;
         if let Some(arrived) = stops.heard() {
             last_heard = arrived;
         }
         if let Some(bound) = bound.as_deref_mut() {
             (bound.heard)().map_err(|source| WorkError::Watch { source })?;
         }
+        stops.failed()?;
         if completion.done()? {
             return Ok(None);
         }
@@ -404,6 +498,7 @@ fn decided(
             )
             .map_err(|source| WorkError::Watch { source })?;
         stops.record(waited.note);
+        stops.failed()?;
         match waited.event.map_err(|source| WorkError::Watch { source })? {
             crate::observation::Event::Changed
             | crate::observation::Event::Completed
@@ -416,13 +511,11 @@ fn decided(
 #[derive(Debug, Default)]
 struct Completion {
     ended: Mutex<Option<std::io::Result<()>>>,
-    told: Condvar,
 }
 
 impl Completion {
     fn publish(&self, result: std::io::Result<()>) {
         *self.locked() = Some(result);
-        self.told.notify_all();
     }
 
     fn locked(&self) -> std::sync::MutexGuard<'_, Option<std::io::Result<()>>> {
@@ -444,24 +537,6 @@ impl Completion {
             }),
         }
     }
-
-    fn by(&self, deadline: Instant) -> Result<(), WorkError> {
-        let mut ended = self.locked();
-        while ended.is_none() {
-            let Some(left) = deadline.checked_duration_since(Instant::now()) else {
-                return Ok(());
-            };
-            ended = match self.told.wait_timeout(ended, left) {
-                Ok((ended, _timeout)) => ended,
-                Err(poisoned) => {
-                    drop(poisoned);
-                    std::process::abort();
-                }
-            };
-        }
-        drop(ended);
-        self.done().map(|_done| ())
-    }
 }
 
 #[derive(Debug)]
@@ -472,7 +547,7 @@ struct ProcessWaiter<'scope> {
 impl<'scope> ProcessWaiter<'scope> {
     fn launch(
         scope: &'scope std::thread::Scope<'scope, '_>,
-        child: Arc<shared_child::SharedChild>,
+        child: Arc<njutest_process::ChildEvent>,
         completion: Arc<Completion>,
         signal: crate::observation::Signal,
     ) -> Self {
@@ -498,6 +573,31 @@ impl<'scope> ProcessWaiter<'scope> {
     }
 }
 
+impl Drop for ProcessWaiter<'_> {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take()
+            && handle.join().is_err()
+        {
+            eprintln!("the owned work completion observer panicked while joining");
+            std::process::abort();
+        }
+    }
+}
+
+struct GroupCleanup<'a> {
+    group: &'a mut Group,
+}
+
+impl Drop for GroupCleanup<'_> {
+    fn drop(&mut self) {
+        if let Some(child) = self.group.child.as_mut()
+            && let Err(source) = child.stop()
+        {
+            eprintln!("the work producer settled with a retained cleanup refusal: {source}");
+        }
+    }
+}
+
 struct ProcessCompletion {
     completion: Arc<Completion>,
     signal: crate::observation::Signal,
@@ -520,90 +620,58 @@ impl Drop for ProcessCompletion {
     }
 }
 
-#[cfg(unix)]
-fn observe_completion(child: &shared_child::SharedChild) -> std::io::Result<()> {
-    use rustix::process::{WaitId, WaitIdOptions, waitid};
-    let raw = i32::try_from(child.id()).map_err(std::io::Error::other)?;
-    let pid = rustix::process::Pid::from_raw(raw)
-        .ok_or_else(|| std::io::Error::other("the process leader has no positive pid"))?;
-    loop {
-        match waitid(
-            WaitId::Pid(pid),
-            WaitIdOptions::EXITED | WaitIdOptions::NOWAIT,
-        ) {
-            Ok(Some(_ended)) => return Ok(()),
-            Ok(None) => {
-                return Err(std::io::Error::other(
-                    "a blocking process observation returned no completion",
-                ));
-            }
-            Err(rustix::io::Errno::INTR) => {}
-            Err(source) => return Err(source.into()),
-        }
+fn observe_completion(child: &njutest_process::ChildEvent) -> std::io::Result<()> {
+    if child.wait(None)? {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(
+            "a blocking process event returned no completion",
+        ))
     }
-}
-
-#[cfg(not(unix))]
-fn observe_completion(child: &shared_child::SharedChild) -> std::io::Result<()> {
-    child.wait().map(|_status| ())
 }
 
 /// A producer group whose leader remains retained through signalling, joining and final reaping.
 #[derive(Debug)]
 struct Group {
-    child: Option<Arc<shared_child::SharedChild>>,
+    child: Option<njutest_process::GroupChild>,
 }
 
 impl Group {
     fn launch(command: &mut Command) -> Result<Self, WorkError> {
-        grouped(command);
         let program = command.get_program().display().to_string();
-        shared_child::SharedChild::spawn(command)
-            .map(|child| Self {
-                child: Some(Arc::new(child)),
-            })
+        njutest_process::GroupChild::start(command)
+            .map(|child| Self { child: Some(child) })
             .map_err(|source| WorkError::Start { program, source })
     }
 
-    fn child(&self) -> Result<Arc<shared_child::SharedChild>, WorkError> {
+    fn child(&self) -> Result<Arc<njutest_process::ChildEvent>, WorkError> {
         self.child
             .as_ref()
-            .map(Arc::clone)
+            .map(njutest_process::GroupChild::completion)
             .ok_or_else(|| WorkError::Watch {
-                source: std::io::Error::other("the process leader has already been reaped"),
+                source: std::io::Error::other("the process leader was already reaped"),
             })
     }
 
     fn leader(&self) -> Result<u32, WorkError> {
-        Ok(self.child()?.id())
+        self.child
+            .as_ref()
+            .and_then(njutest_process::GroupChild::id)
+            .ok_or_else(|| WorkError::Watch {
+                source: std::io::Error::other("the owned process has no live identity"),
+            })
     }
 
-    fn stop(&self, completion: &Completion, stops: &Stops) -> Result<(), WorkError> {
-        let child = self.child()?;
+    fn stop(&mut self, _completion: &Completion, stops: &Stops) -> Result<(), WorkError> {
         let began = Instant::now();
-        let asked = match completion.done() {
-            Ok(true) => Ok(()),
-            Ok(false) | Err(_) => signal(&child, Sent::Ask),
-        };
-        let deadline = Instant::now()
-            .checked_add(GRACE)
-            .ok_or_else(|| WorkError::Watch {
-                source: std::io::Error::other("the stop grace deadline is not representable"),
-            })?;
-        let observed = completion.by(deadline);
-        let killed = signal(&child, Sent::Kill);
-        if let Err(unstopped) = killed {
-            let said = std::io::Write::write_all(
-                &mut std::io::stderr(),
-                format!("xtask: the producer group could not be settled: {unstopped}\n").as_bytes(),
-            );
-            match said {
-                Ok(()) | Err(_) => std::process::abort(),
-            }
-        }
+        let leader = self.leader()?;
+        let child = self.child.as_mut().ok_or_else(|| WorkError::Watch {
+            source: std::io::Error::other("the process owner was consumed before settlement"),
+        })?;
+        let settled = child.stop_with_grace(GRACE);
         stops.record(crate::observation::WaitNote {
-            owner: format!("process-group:{}", child.id()),
-            cause: "group-termination-or-stop-grace".to_owned(),
+            owner: format!("process-group:{leader}"),
+            cause: "owned-group-exit-and-leader-reap".to_owned(),
             elapsed_ns: u64::try_from(began.elapsed().as_nanos()).map_err(|source| {
                 WorkError::Watch {
                     source: std::io::Error::other(source),
@@ -616,12 +684,16 @@ impl Group {
                     .get(),
             },
         });
-        asked.and(observed)
+        settled.map_err(|source| WorkError::Watch { source })
     }
 
     fn reap(&mut self) -> Result<ExitStatus, WorkError> {
-        let child = self.child()?;
-        let status = child.wait().map_err(|source| WorkError::Watch { source })?;
+        let child = self.child.as_mut().ok_or_else(|| WorkError::Watch {
+            source: std::io::Error::other("the process owner was consumed before reap"),
+        })?;
+        let status = child
+            .wait_status()
+            .map_err(|source| WorkError::Watch { source })?;
         self.child = None;
         Ok(status)
     }
@@ -629,21 +701,10 @@ impl Group {
 
 impl Drop for Group {
     fn drop(&mut self) {
-        if let Some(child) = self.child.take()
-            && let Err(unstopped) = signal(&child, Sent::Kill).and_then(|()| {
-                child
-                    .wait()
-                    .map(|_status| ())
-                    .map_err(|source| WorkError::Watch { source })
-            })
+        if let Some(mut child) = self.child.take()
+            && child.stop().is_err()
         {
-            let said = std::io::Write::write_all(
-                &mut std::io::stderr(),
-                format!("xtask: the producer group could not be settled: {unstopped}\n").as_bytes(),
-            );
-            match said {
-                Ok(()) | Err(_) => std::process::abort(),
-            }
+            std::process::abort();
         }
     }
 }
@@ -655,36 +716,6 @@ pub(crate) enum Sent {
     Ask,
     /// `SIGKILL`, after the grace a hung member ignores.
     Kill,
-}
-
-#[cfg(unix)]
-fn grouped(command: &mut Command) {
-    use std::os::unix::process::CommandExt as _;
-
-    command.process_group(0);
-}
-
-#[cfg(not(unix))]
-const fn grouped(_command: &mut Command) {}
-
-#[cfg(unix)]
-fn leader_pid(child: &shared_child::SharedChild) -> Option<rustix::process::Pid> {
-    match i32::try_from(child.id()) {
-        Ok(raw) => rustix::process::Pid::from_raw(raw),
-        Err(_beyond_a_pid) => None,
-    }
-}
-
-/// Signals the leader's whole group; a group the kernel will not let this process signal whole gets its leader signalled by name, and a group already gone is success.
-#[cfg(unix)]
-fn signal(child: &shared_child::SharedChild, sent: Sent) -> Result<(), WorkError> {
-    let Some(leader) = leader_pid(child) else {
-        return match sent {
-            Sent::Ask => Ok(()),
-            Sent::Kill => child.kill().map_err(|source| WorkError::Watch { source }),
-        };
-    };
-    signal_group(leader, sent)
 }
 
 /// Signals the group `leader` leads, as [`decide_stop`] decides: a group the kernel will not let this process signal whole gets its leader signalled by name, and is stopped only if a look at it finds nobody else.
@@ -796,11 +827,3 @@ pub fn listed() -> Option<Vec<Listed>> {
 
 #[cfg(unix)]
 pub use rust_mutants_decision::group::{Delivered, Others, StopDecision, Stopped, decide_stop};
-
-#[cfg(not(unix))]
-fn signal(child: &shared_child::SharedChild, sent: Sent) -> Result<(), WorkError> {
-    match sent {
-        Sent::Ask => Ok(()),
-        Sent::Kill => child.kill().map_err(|source| WorkError::Watch { source }),
-    }
-}
