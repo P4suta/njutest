@@ -138,6 +138,38 @@ def budgeted(binaries):
 
 
 class SuiteCost(unittest.TestCase):
+    def test_added_observed_work_is_held_by_the_same_growth_gate(self):
+        before = budgeted({})
+        before["observations"] = {
+            "suite:engine::toolchain_fixture::fixture": {
+                "executions": {"cargo-test": 1},
+                "probes": {"rustc-cfg": 1},
+                "modules": {KEY: 1},
+                "waits": {"producer-completion": 1},
+            },
+            "product:rust-mutants": {
+                "executions": {"cargo-doc-test": 1},
+                "probes": {}, "modules": {}, "waits": {},
+            },
+        }
+        for origin, kind, key in [
+            ("suite:engine::toolchain_fixture::fixture", "executions", "cargo-test"),
+            ("suite:engine::toolchain_fixture::fixture", "probes", "rustc-cfg"),
+            ("suite:engine::toolchain_fixture::fixture", "modules", KEY),
+            ("suite:engine::toolchain_fixture::fixture", "waits", "producer-completion"),
+            ("product:rust-mutants", "executions", "cargo-doc-test"),
+        ]:
+            with self.subTest(origin=origin, kind=kind):
+                added = json.loads(json.dumps(before))
+                added["observations"][origin][kind][key] += 1
+                self.assertTrue(
+                    COST["growth"](added, before),
+                    f"added {kind} in {origin} passed the mandatory work gate",
+                )
+        unchanged = json.loads(json.dumps(before))
+        unchanged["duration_ns"] = 999999999
+        self.assertEqual(COST["growth"](unchanged, before), [])
+
     def test_concurrency_closes_started_and_finished_tests(self):
         rows = [
             {

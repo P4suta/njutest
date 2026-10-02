@@ -351,7 +351,7 @@ def publish_ledger(baseline, ledger):
 
 def protected_inputs(directory, junit):
     """Every measured byte a publication may not touch: the records, the machine note and the JUnit."""
-    inputs = list(sorted(directory.glob("cost-*.json")))
+    inputs = list(sorted([*directory.glob("cost-*.json"), *directory.glob("host-work-*.json")]))
     machine = directory / "machine.json"
     if machine.exists():
         inputs.append(machine)
@@ -426,6 +426,7 @@ def measured(directory, junit, require_pass=True):
     if len(tests) != int(suite.attrib["tests"]):
         raise ValueError("the JUnit test inventory does not close")
     coverage_gaps = []
+    observations = observed_work(pathlib.Path(directory), tests.keys())
     paths = sorted(pathlib.Path(directory).glob("cost-*.json"))
     if not paths:
         raise ValueError(
@@ -440,6 +441,8 @@ def measured(directory, junit, require_pass=True):
             )
         if record["schema"] != "njutest-test-cost-v3":
             raise ValueError(f"{path}: unknown cost schema")
+        if "origin" in record and record["origin"]["kind"] == "product":
+            continue
         key = (record["binary"], record["test"])
         if key not in tests:
             raise ValueError(f"{path}: record does not belong to this suite: {key}")
@@ -654,7 +657,8 @@ def measured(directory, junit, require_pass=True):
     if require_pass and violations:
         raise ValueError("suite work is redundant:\n" + "\n".join(violations))
     return {
-        "schema": "njutest-suite-cost-v2",
+        "schema": "njutest-suite-cost-v3",
+        "observations": observations,
         "platform": platform.system(),
         "wall_seconds": float(suite.attrib["time"]),
         "failures": int(suite.attrib["failures"]),
@@ -670,6 +674,102 @@ def measured(directory, junit, require_pass=True):
         "gaps": list(GAPS),
         "toolchain_concurrency": concurrency(tests.values()),
     }
+
+
+
+def observed_work(directory, suite_keys=None):
+    """Retain actual origins, invocation/module keys, waits and executing hosts for the one work gate."""
+    origins = {}
+    receipts = []
+    gaps = set()
+    for path in sorted([*directory.glob("cost-*.json"), *directory.glob("host-work-*.json")]):
+        record = json.loads(path.read_text(), object_pairs_hook=unique)
+        if "origin" not in record or "machine" not in record:
+            gaps.add(f"{path.name}: actual origin or executing machine is absent")
+            continue
+        origin = record["origin"]
+        if origin["kind"] == "suite":
+            pair = (origin["binary"], origin["test"])
+            if suite_keys is not None and pair not in suite_keys:
+                raise ValueError(f"{path}: actual suite origin is outside its JUnit inventory: {pair}")
+            name = f"suite:{pair[0]}::{pair[1]}"
+        elif origin["kind"] == "product":
+            if not origin["program"] or not isinstance(origin["command"], list) or not origin["command"]:
+                raise ValueError(f"{path}: actual product command is absent")
+            name = f"product:{origin['program']}"
+        else:
+            raise ValueError(f"{path}: unknown actual work origin")
+        machine = record["machine"]
+        if not machine["os"] or number(machine["cpus"], f"{path}:cpus") == 0:
+            raise ValueError(f"{path}: executing-machine observations are incomplete")
+        held = origins.setdefault(name, {kind: {} for kind in ("executions", "probes", "modules", "waits")})
+        receipts.append({"path": str(path), "origin": origin, "machine": machine, "record": record})
+        if record["schema"] == "njutest-host-work-v1":
+            invocation = record["invocation"]
+            role = invocation["role"]
+            counted(held["executions"], role, 1)
+            if record["launch"]["kind"] == "unobserved":
+                gaps.add(f"{path.name}: {record['launch']['reason']}")
+            waits = record["waits"]
+        elif record["schema"] == "njutest-test-cost-v3":
+            work = record["work"]
+            for kind in ("executions", "probes"):
+                if kind not in work:
+                    gaps.add(f"{path.name}: keyed {kind} are absent")
+                    continue
+                for identity, actual in work[kind].items():
+                    if not identity or actual["requests"] != actual["processes"] + actual["failed_launches"]:
+                        raise ValueError(f"{path}: actual {kind} requests do not close: {identity}")
+                    counted(held[kind], actual["role"], number(actual["requests"], f"{path}:{kind}:{identity}"))
+            if "host_waits" not in work:
+                gaps.add(f"{path.name}: host waits are absent")
+                waits = []
+            else:
+                waits = work["host_waits"]
+            modules = list(work["platform"])
+            if record["sealed"] is not None:
+                modules.append(record["sealed"])
+            for observation in modules:
+                if "modules" not in observation:
+                    gaps.add(f"{path.name}: physical module keys are absent")
+                    continue
+                for identity, actual in observation["modules"].items():
+                    if not actual["module"] or not actual["configuration"]:
+                        raise ValueError(f"{path}: physical module/configuration identity is absent")
+                    counted(held["modules"], identity, number(actual["requests"], f"{path}:module:{identity}"))
+            gaps.update(work["unobserved_cargo"])
+        else:
+            raise ValueError(f"{path}: unsupported actual-work schema {record['schema']}")
+        for wait in waits:
+            if not wait["owner"] or not wait["cause"] or not wait["machine"]["os"] or not wait["machine"]["cpus"]:
+                raise ValueError(f"{path}: actual host-wait identity is incomplete")
+            number(wait["elapsed_ns"], f"{path}:wait duration")
+            counted(held["waits"], wait["cause"], 1)
+    return {"counts": origins, "receipts": receipts, "gaps": sorted(gaps)}
+
+
+def counted(mapping, key, amount):
+    """Count an actual observed operation without assigning an absent field a count."""
+    previous = mapping[key] if key in mapping else 0
+    mapping[key] = summed(f"observed:{key}", (previous, amount))
+
+
+def observed_growth(actual, expected):
+    """Use the same count-growth decision for suite/product executions, probes, physical modules and waits."""
+    errors = []
+    for origin in actual:
+        if origin not in expected:
+            errors.append(f"actual work origin added: {origin}")
+            continue
+        for kind in ("executions", "probes", "modules", "waits"):
+            for identity, count in actual[origin][kind].items():
+                if identity not in expected[origin][kind]:
+                    errors.append(f"{origin}: {kind} work added: {identity}")
+                    continue
+                limit = number(expected[origin][kind][identity], f"baseline:{origin}:{kind}:{identity}")
+                if number(count, f"actual:{origin}:{kind}:{identity}") > limit:
+                    errors.append(f"{origin}: {kind}:{identity} grew from {limit} to {count}")
+    return errors
 
 
 def concurrency(rows):
@@ -739,16 +839,24 @@ def budget(report):
     guests = "rust-mutants-sealed::toolchain_guests"
     if guests in binaries:
         binaries[guests]["records"] -= report["binaries"][guests]["builds"]
-    return {
+    result = {
         "binaries": binaries,
         "unobserved_cargo": list(report["unobserved_cargo"]),
         "gaps": list(report["gaps"]),
     }
+    if "observations" in report:
+        result["observations"] = report["observations"]["counts"]
+    return result
 
 
 def growth(actual, expected):
     """Refuse newly unmeasured work, omitted binaries, every count increase and any silently changed observation gap."""
     errors = []
+    if "observations" in actual or "observations" in expected:
+        if "observations" not in actual or "observations" not in expected:
+            errors.append("complete actual work observations are absent; re-measure the complete passed inputs")
+        else:
+            errors.extend(observed_growth(actual["observations"], expected["observations"]))
     if actual["binaries"].keys() != expected["binaries"].keys():
         errors.append(
             f"toolchain binaries changed: added={sorted(actual['binaries'].keys() - expected['binaries'].keys())}, missing={sorted(expected['binaries'].keys() - actual['binaries'].keys())}"
