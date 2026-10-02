@@ -110,6 +110,7 @@ pub struct Manager {
     live: Vec<Live>,
     sequence: u32,
     place: Where,
+    trace: crate::trace::Recorder,
 }
 
 /// How long a release spends stopping providers before it kills what is left.
@@ -139,7 +140,15 @@ impl Manager {
             live: Vec::new(),
             sequence: 0,
             place,
+            trace: crate::trace::Recorder::disabled(),
         }
+    }
+
+    /// Retains each provider's measured wait in the caller's actual run recorder.
+    #[must_use]
+    pub fn with_trace(mut self, trace: &crate::trace::Recorder) -> Self {
+        self.trace = trace.clone();
+        self
     }
 
     fn next_sequence(&mut self) -> Result<u32, ProviderError> {
@@ -198,7 +207,8 @@ impl Manager {
             &resource.command,
             &self.place.dir,
             &visible(&self.place.env, &resource.environment),
-        )?;
+        )?
+        .with_trace(&self.trace);
         let answered = process.ask(&Request::start(capability, sequence), resource.timeout);
         let answered = match answered {
             Ok(answered) => answered,

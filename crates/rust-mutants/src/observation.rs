@@ -104,7 +104,7 @@ pub struct Waited {
 #[derive(Debug, Clone)]
 pub struct Signal {
     sent: SyncSender<io::Result<Event>>,
-    reader: Thread,
+    reader: Arc<Mutex<Thread>>,
     lost: Arc<Mutex<Option<io::Error>>>,
 }
 
@@ -144,7 +144,13 @@ impl Signal {
             Err(TrySendError::Disconnected(_reader_has_ended)) => {}
         }
         drop(lost);
-        self.reader.unpark();
+        match self.reader.lock() {
+            Ok(reader) => reader.unpark(),
+            Err(poisoned) => {
+                drop(poisoned);
+                std::process::abort();
+            }
+        }
     }
 
     fn failure(&self) -> io::Result<Option<io::Error>> {
@@ -164,6 +170,7 @@ impl Signal {
 pub struct Observation {
     received: Receiver<io::Result<Event>>,
     signal: Signal,
+    reader: thread::ThreadId,
     watcher: Option<notify::RecommendedWatcher>,
 }
 
@@ -186,9 +193,10 @@ impl Observation {
             received,
             signal: Signal {
                 sent,
-                reader: thread::current(),
+                reader: Arc::new(Mutex::new(thread::current())),
                 lost: Arc::new(Mutex::new(None)),
             },
+            reader: thread::current().id(),
             watcher: None,
         }
     }
@@ -244,6 +252,49 @@ impl Observation {
         self.signal.clone()
     }
 
+    /// Refuses every queued-result decision after a retained producer or backlog failure.
+    ///
+    /// # Errors
+    /// The subscription lost evidence or a producer retained a failure.
+    pub fn ensure_complete(&self) -> io::Result<()> {
+        match self.signal.failure()? {
+            Some(source) => Err(source),
+            None => Ok(()),
+        }
+    }
+
+    /// Consumes one retained wake after reading the actual data, preserving every sticky refusal.
+    ///
+    /// # Errors
+    /// The subscription lost evidence or a producer retained a failure.
+    pub fn pending(&self) -> io::Result<Option<Event>> {
+        self.ensure_complete()?;
+        let event = match self.received.try_recv() {
+            Ok(event) => Some(event?),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => {
+                return Err(io::Error::other("the observation producers disconnected"));
+            }
+        };
+        self.ensure_complete()?;
+        Ok(event)
+    }
+
+    /// Transfers this exclusive reader while retaining every already registered producer and queued event.
+    ///
+    /// # Errors
+    /// The reader ownership mutex is poisoned.
+    pub fn bind_current_thread(&mut self) -> io::Result<()> {
+        let mut reader =
+            self.signal.reader.lock().map_err(|_poisoned| {
+                io::Error::other("the observation reader mutex is poisoned")
+            })?;
+        *reader = thread::current();
+        self.reader = reader.id();
+        drop(reader);
+        Ok(())
+    }
+
     /// Waits on an explicit publication or the one semantic `deadline`, never a sampling interval.
     ///
     /// # Errors
@@ -269,8 +320,7 @@ impl Observation {
             cause,
             deadline,
         } = waiting;
-        if thread::current().id() != self.signal.reader.id() || owner.is_empty() || cause.is_empty()
-        {
+        if thread::current().id() != self.reader || owner.is_empty() || cause.is_empty() {
             return Err(io::Error::other(
                 "a host wait must name its producer and event on the subscribed thread",
             ));

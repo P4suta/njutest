@@ -1725,6 +1725,53 @@ fn a_stalled_observation_reader_retains_a_bounded_overflow_refusal() {
 }
 
 #[test]
+fn a_transferred_reader_keeps_its_original_subscription_and_queued_completion() {
+    use rust_mutants::observation::{Event, Observation};
+    let mut observation = Observation::subscribe();
+    observation.signal().publish(Event::Completed);
+    std::thread::scope(|scope| {
+        let reader = njutest_devkit::thread::ScopedThread::launch(scope, move || {
+            assert!(observation.wait("producer", "completion", None).is_err());
+            observation
+                .bind_current_thread()
+                .expect("the exclusive receiver transfers to its actual owner");
+            let waited = observation
+                .wait("producer", "completion", None)
+                .expect("the retained subscription measures its actual new host reader");
+            assert_eq!(
+                waited.event.expect("the queued original event"),
+                Event::Completed
+            );
+            assert!(waited.note.machine.cpus > 0);
+        });
+        reader.join().expect("the actual transferred reader joins");
+    });
+}
+
+#[test]
+fn reading_actual_answers_consumes_wakes_without_hiding_a_producer_refusal() {
+    use rust_mutants::observation::{Event, Observation};
+    let observed = Observation::subscribe();
+    for _answer in 0..128 {
+        observed.signal().publish(Event::Changed);
+        assert_eq!(
+            observed.pending().expect("the actual wake"),
+            Some(Event::Changed)
+        );
+    }
+    assert_eq!(observed.pending().expect("no unconsumed wake"), None);
+    observed.signal().failed(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "the answer producer lost its terminal record",
+    ));
+    observed.signal().publish(Event::Completed);
+    let refusal = observed
+        .pending()
+        .expect_err("an answer cannot erase its producer refusal");
+    assert_eq!(refusal.kind(), io::ErrorKind::PermissionDenied);
+}
+
+#[test]
 fn completion_after_observation_overflow_does_not_hide_the_lost_evidence() {
     let observation = rust_mutants::observation::Observation::subscribe();
     let producer = observation.signal();

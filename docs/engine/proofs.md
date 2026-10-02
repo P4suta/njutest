@@ -213,6 +213,11 @@ The reader rechecks that refusal immediately before returning its decision, incl
 Each actual wait names its producer and cause and measures its monotonic duration and executing host.
 Semantic deadlines use an injected clock; host measurement stays independent of that clock.
 Completion, cancellation, resource change and deadline remain distinct decisions.
+Preparation and provider readers register their subscriptions before starting the producer.
+An exclusive reader may transfer threads while retaining the original registered producer and every queued wake.
+Reading the actual answer consumes its wake, and the reader checks retained refusals again before a successful result.
+Protocol EOF is published after the answer channel closes, while the actual process and reader threads are still joined by their owner.
+Presentation wait notes remain in the durable trace and never wake the same presentation channel again.
 
 | Family | Live layer | Actual recording holding the other layers |
 | --- | --- | --- |

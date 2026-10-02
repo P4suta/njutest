@@ -33,7 +33,22 @@ pub fn recorder(
     wanted: &Recording<'_>,
     progress: Option<std::sync::mpsc::SyncSender<Event>>,
 ) -> Result<Recorder, CliError> {
-    let watching = progress.map(ChannelSink::new);
+    recorder_observed(wanted, progress, None)
+}
+
+/// Builds the requested durable authority and the display's explicitly registered observation.
+///
+/// # Errors
+/// The recording cannot retain its requested authority.
+pub fn recorder_observed(
+    wanted: &Recording<'_>,
+    progress: Option<std::sync::mpsc::SyncSender<Event>>,
+    observed: Option<&rust_mutants::observation::Observation>,
+) -> Result<Recorder, CliError> {
+    let watching = progress.map(|sender| match observed {
+        Some(observed) => ChannelSink::observed(sender, observed.signal()),
+        None => ChannelSink::waking(sender, std::thread::current()),
+    });
     let context = TraceContext::Standalone {
         run_id: wanted.id.clone(),
         build_selection: wanted

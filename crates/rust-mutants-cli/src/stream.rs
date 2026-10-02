@@ -88,10 +88,7 @@ pub(crate) fn ended(
     )
 }
 
-/// How long the writer waits for the next line before looking again at whether there will be one.
-const LOOKING: Duration = Duration::from_millis(200);
-
-/// Writes each phase as it ends, for as long as `working` says there is work.
+/// Writes each phase until its producer completes, using the event and completion wakes subscribed to this thread.
 ///
 /// # Errors
 /// Returns the first output failure; no later event is claimed to have been written.
@@ -103,18 +100,84 @@ pub fn watch<F>(
 where
     F: Fn() -> bool,
 {
+    watch_waiting(events, stream, working, &|| {
+        use rust_mutants::observation::Clock as _;
+        rust_mutants::observation::WallClock
+            .park(None)
+            .map_err(|source| crate::error::CliError::PreparationStartFailed { source })
+    })
+}
+
+/// Watches the actual preparation producer through a subscription registered before it started.
+///
+/// # Errors
+/// The producer observation, output or measured host wait could not be retained.
+pub fn watch_observed<F>(
+    events: &Receiver<Event>,
+    stream: &mut dyn Write,
+    working: &F,
+    (observed, recorder): (
+        &rust_mutants::observation::Observation,
+        &rust_mutants::trace::Recorder,
+    ),
+) -> Result<(), crate::error::CliError>
+where
+    F: Fn() -> bool,
+{
+    watch_waiting(events, stream, working, &|| {
+        observed
+            .ensure_complete()
+            .map_err(|source| crate::error::CliError::PreparationStartFailed { source })?;
+        let waited = observed
+            .wait(
+                "workspace-preparation",
+                "phase, cancellation or complete preparation",
+                None,
+            )
+            .map_err(|source| crate::error::CliError::PreparationStartFailed { source })?;
+        let detail = serde_json::to_string(&waited.note).map_err(|source| {
+            crate::error::CliError::PreparationStartFailed {
+                source: std::io::Error::other(source),
+            }
+        })?;
+        recorder.note("host-wait", &detail);
+        match waited
+            .event
+            .map_err(|source| crate::error::CliError::PreparationStartFailed { source })?
+        {
+            rust_mutants::observation::Event::Changed
+            | rust_mutants::observation::Event::Completed
+            | rust_mutants::observation::Event::Cancelled
+            | rust_mutants::observation::Event::Deadline => Ok(()),
+        }
+    })?;
+    observed
+        .ensure_complete()
+        .map_err(|source| crate::error::CliError::PreparationStartFailed { source })
+}
+
+fn watch_waiting<F>(
+    events: &Receiver<Event>,
+    stream: &mut dyn Write,
+    working: &F,
+    wait: &impl Fn() -> Result<(), crate::error::CliError>,
+) -> Result<(), crate::error::CliError>
+where
+    F: Fn() -> bool,
+{
     loop {
-        match events.recv_timeout(LOOKING) {
+        match events.try_recv() {
             Ok(event) => {
                 if let Some(line) = phase_of(&event)? {
                     say(stream, &line)?;
                 }
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => return Ok(()),
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
                 if !working() {
                     return Ok(());
                 }
+                wait()?;
             }
         }
     }

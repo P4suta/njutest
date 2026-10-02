@@ -227,6 +227,34 @@ impl Observation {
         self.signal.clone()
     }
 
+    /// Refuses every queued-result decision after a retained producer or backlog failure.
+    ///
+    /// # Errors
+    /// The subscription lost evidence or a producer retained a failure.
+    pub fn ensure_complete(&self) -> io::Result<()> {
+        match self.signal.failure()? {
+            Some(source) => Err(source),
+            None => Ok(()),
+        }
+    }
+
+    /// Consumes one retained wake after reading the actual data, preserving every sticky refusal.
+    ///
+    /// # Errors
+    /// The subscription lost evidence or a producer retained a failure.
+    pub fn pending(&self) -> io::Result<Option<Event>> {
+        self.ensure_complete()?;
+        let event = match self.received.try_recv() {
+            Ok(event) => Some(event?),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => {
+                return Err(io::Error::other("the observation producers disconnected"));
+            }
+        };
+        self.ensure_complete()?;
+        Ok(event)
+    }
+
     /// Waits on an explicit publication or the one semantic `deadline`, never a sampling interval.
     ///
     /// # Errors

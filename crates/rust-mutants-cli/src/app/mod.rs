@@ -282,8 +282,9 @@ fn workspace_command(
     let settings = Settings::resolve(scope, environment)?;
     let started = Timestamp::now();
     let id = named(command, started)?;
+    let observed = rust_mutants::observation::Observation::subscribe();
     let (sender, phases) = std::sync::mpsc::sync_channel(PROGRESS_EVENT_CAPACITY);
-    let recorder = trace::recorder(
+    let recorder = trace::recorder_observed(
         &trace::Recording {
             scope,
             settings: &settings,
@@ -291,6 +292,7 @@ fn workspace_command(
             command,
         },
         watching(command).then_some(sender),
+        Some(&observed),
     )?;
     let outcome = measured(
         command,
@@ -302,6 +304,7 @@ fn workspace_command(
             started,
             recorder: &recorder,
             phases: &phases,
+            observed: &observed,
         },
         stdout,
         cancel,
@@ -367,29 +370,54 @@ impl Displayed {
 }
 
 /// The sole owner of the scoped preparation worker.
-struct PreparationThread<'scope>(
-    std::thread::ScopedJoinHandle<'scope, Result<Session, EngineError>>,
-);
+struct PreparationThread<'scope> {
+    handle: std::thread::ScopedJoinHandle<'scope, Result<Session, EngineError>>,
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Publishes completion even when preparation unwinds, before waking its subscribed reader.
+struct PreparationCompletion {
+    signal: rust_mutants::observation::Signal,
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for PreparationCompletion {
+    fn drop(&mut self) {
+        self.done.store(true, std::sync::atomic::Ordering::Release);
+        self.signal
+            .publish(rust_mutants::observation::Event::Completed);
+    }
+}
 
 impl<'scope> PreparationThread<'scope> {
     fn launch(
         scope: &'scope std::thread::Scope<'scope, '_>,
+        signal: rust_mutants::observation::Signal,
         work: impl FnOnce() -> Result<Session, EngineError> + Send + 'scope,
     ) -> Result<Self, CliError> {
-        std::thread::Builder::new()
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let completion = PreparationCompletion {
+            signal,
+            done: std::sync::Arc::clone(&done),
+        };
+        let handle = std::thread::Builder::new()
             .name("rust-mutants-prepare".to_owned())
-            .spawn_scoped(scope, work)
-            .map(Self)
-            .map_err(|source| CliError::PreparationStartFailed { source })
+            .spawn_scoped(scope, move || {
+                let prepared = work();
+                drop(completion);
+                prepared
+            })
+            .map_err(|source| CliError::PreparationStartFailed { source })?;
+        Ok(Self { handle, done })
     }
 
     fn is_finished(&self) -> bool {
-        self.0.is_finished()
+        self.done.load(std::sync::atomic::Ordering::Acquire)
     }
 
     fn join(self) -> Result<Session, CliError> {
         let prepared = self
-            .0
+            .handle
             .join()
             .map_err(|_panic| CliError::PreparationPanicked)?;
         prepared.map_err(CliError::from)
@@ -400,7 +428,11 @@ impl<'scope> PreparationThread<'scope> {
 fn preparing(
     workspace: Workspace,
     options: &session::PrepareOptions,
-    displayed: Displayed,
+    (displayed, observed, recorder): (
+        Displayed,
+        &rust_mutants::observation::Observation,
+        &rust_mutants::trace::Recorder,
+    ),
     watching: (
         &std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
         &mut dyn Write,
@@ -412,15 +444,31 @@ fn preparing(
         return Ok(workspace.prepare(options, cancel)?);
     }
     std::thread::scope(|scope| {
-        let working = PreparationThread::launch(scope, move || workspace.prepare(options, cancel))?;
+        let stopping = observed
+            .cancellation(cancel)
+            .map_err(|source| CliError::PreparationStartFailed { source })?;
+        let working = PreparationThread::launch(scope, observed.signal(), move || {
+            workspace.prepare(options, cancel)
+        })?;
         let alive = || !working.is_finished();
         let watched = match displayed {
-            Displayed::Lines => crate::ui::watch(phases, stdout, &alive),
-            Displayed::Stream => crate::stream::watch(phases, stdout, &alive),
+            Displayed::Lines => {
+                crate::ui::watch_observed(phases, stdout, &alive, (observed, recorder))
+            }
+            Displayed::Stream => {
+                crate::stream::watch_observed(phases, stdout, &alive, (observed, recorder))
+            }
             Displayed::Nothing => Ok(()),
         };
+        if watched.is_err() {
+            cancel.cancel();
+        }
         let prepared = working.join();
+        drop(stopping);
         watched?;
+        observed
+            .ensure_complete()
+            .map_err(|source| CliError::PreparationStartFailed { source })?;
         prepared
     })
 }
@@ -480,6 +528,7 @@ struct Running<'a> {
     recorder: &'a rust_mutants::trace::Recorder,
     /// What the recorder has said about the phases it has finished, for a display to write.
     phases: &'a std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
+    observed: &'a rust_mutants::observation::Observation,
 }
 
 fn preparation_options(
@@ -519,6 +568,7 @@ fn measured(
         started,
         recorder,
         phases,
+        observed,
     } = *running;
     let changed = match base_of(scope) {
         None => None,
@@ -594,7 +644,7 @@ fn measured(
             let session = match preparing(
                 workspace,
                 &options,
-                Displayed::of(command),
+                (Displayed::of(command), observed, recorder),
                 (phases, stdout, cancel),
             ) {
                 Ok(session) => session,

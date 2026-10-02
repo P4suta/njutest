@@ -728,14 +728,17 @@ fn propose(
             continue;
         };
         let seen = crate::resource::visible(&environment.vars, &generation.environment);
-        let said = crate::provider::once(&crate::provider::Once {
-            command: &generation.command,
-            dir: &request.root,
-            env: &seen,
-            question: &asked,
-            timeout: request.config.execution.timeout,
-            limit: crate::repair::OUTPUT_LIMIT,
-        });
+        let said = crate::provider::once_observed(
+            &crate::provider::Once {
+                command: &generation.command,
+                dir: &request.root,
+                env: &seen,
+                question: &asked,
+                timeout: request.config.execution.timeout,
+                limit: crate::repair::OUTPUT_LIMIT,
+            },
+            watch.trace,
+        );
         let said = match said {
             Ok(said) => said,
             Err(refusal) => {
@@ -879,7 +882,8 @@ fn holding(
     let mut resources = crate::resource::Manager::new(crate::resource::Where {
         dir: request.root.clone(),
         env: environment.vars.clone(),
-    });
+    })
+    .with_trace(watch.trace);
     if !request.config.resources.is_empty() {
         notes.phase("resources")?;
         watch.trace.stage("resources");

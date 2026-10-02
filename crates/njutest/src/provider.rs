@@ -7,9 +7,11 @@ use std::collections::BTreeMap;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::path::Path;
 use std::process::{ChildStdin, Command, Stdio};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
+use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 use std::thread::JoinHandle;
 use std::time::Duration;
+
+use rust_mutants::observation::{Clock, Event, Observation, Signal, Waiting, WallClock};
 
 use rust_mutants::runner::GroupChild;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -308,36 +310,34 @@ struct JoinedThread {
 #[derive(Debug)]
 struct OneShot {
     child: GroupChild,
-    answer: Option<Receiver<ReadAnswer>>,
+    answer: Option<Answers>,
     reader: Option<JoinedThread>,
 }
 
 impl OneShot {
-    fn receive(&self, timeout: Duration) -> Result<String, ProviderError> {
-        let answer = self.answer.as_ref().ok_or_else(|| {
+    fn receive(
+        &mut self,
+        timeout: Duration,
+        trace: &crate::trace::Recorder,
+    ) -> Result<String, ProviderError> {
+        let answer = self.answer.as_mut().ok_or_else(|| {
             ProviderError::new(
                 ProviderErrorKind::Protocol,
                 "the provider output reader is no longer available",
             )
         })?;
-        match answer.recv_timeout(timeout) {
-            Ok(Ok(all)) => Ok(all),
-            Ok(Err(source)) => Err(ProviderError::new(
-                ProviderErrorKind::Protocol,
-                source.to_string(),
-            )),
-            Err(RecvTimeoutError::Timeout) => Err(ProviderError::new(
-                ProviderErrorKind::Timeout,
-                format!(
+        answer.receive(
+            AnswerWait {
+                timeout,
+                trace,
+                quiet: format!(
                     "the provider did not end in {}",
                     rust_mutants::duration::render(timeout)
                 ),
-            )),
-            Err(RecvTimeoutError::Disconnected) => Err(ProviderError::new(
-                ProviderErrorKind::Protocol,
-                "the provider output reader ended without an answer",
-            )),
-        }
+                ended: "the provider output reader ended without an answer".to_owned(),
+            },
+            &WallClock,
+        )
     }
 
     fn finish(mut self, timeout: Duration, terminate: bool) -> Result<(), ProviderError> {
@@ -413,16 +413,119 @@ enum ProviderReadError {
 
 type ReadAnswer = Result<String, ProviderReadError>;
 
-fn send_answer(sender: &SyncSender<ReadAnswer>, answer: ReadAnswer) -> bool {
-    match sender.send(answer) {
-        Ok(()) => true,
-        Err(_closed) => false,
+/// The retained reader and its observation, registered before the provider started.
+#[derive(Debug)]
+struct Answers {
+    received: Receiver<ReadAnswer>,
+    observed: Observation,
+}
+
+/// One semantic response window and its exact protocol diagnostics.
+struct AnswerWait<'a> {
+    timeout: Duration,
+    trace: &'a crate::trace::Recorder,
+    quiet: String,
+    ended: String,
+}
+
+impl Answers {
+    fn receive(
+        &mut self,
+        waiting: AnswerWait<'_>,
+        clock: &impl Clock,
+    ) -> Result<String, ProviderError> {
+        let refused = |source: std::io::Error| {
+            ProviderError::new(ProviderErrorKind::Protocol, source.to_string())
+        };
+        self.observed.bind_current_thread().map_err(refused)?;
+        let deadline = clock.now().checked_add(waiting.timeout).ok_or_else(|| {
+            ProviderError::new(
+                ProviderErrorKind::Protocol,
+                "the provider response deadline cannot be represented",
+            )
+        })?;
+        loop {
+            self.observed.ensure_complete().map_err(refused)?;
+            match self.received.try_recv() {
+                Ok(Ok(answer)) => {
+                    let _publication = self.observed.pending().map_err(refused)?;
+                    return Ok(answer);
+                }
+                Ok(Err(source)) => {
+                    return Err(ProviderError::new(
+                        ProviderErrorKind::Protocol,
+                        source.to_string(),
+                    ));
+                }
+                Err(TryRecvError::Disconnected) => {
+                    return Err(ProviderError::new(
+                        ProviderErrorKind::Protocol,
+                        waiting.ended,
+                    ));
+                }
+                Err(TryRecvError::Empty) => {}
+            }
+            let waited = self
+                .observed
+                .wait_with(
+                    Waiting {
+                        owner: "provider-output-reader",
+                        cause: "complete protocol answer, reader EOF or response deadline",
+                        deadline: Some(deadline),
+                    },
+                    clock,
+                )
+                .map_err(refused)?;
+            waiting.trace.note(
+                "host-wait",
+                &serde_json::to_string(&waited.note)
+                    .map_err(|source| refused(std::io::Error::other(source)))?,
+            );
+            match waited.event.map_err(refused)? {
+                Event::Changed | Event::Completed | Event::Cancelled => {}
+                Event::Deadline => {
+                    return Err(ProviderError::new(
+                        ProviderErrorKind::Timeout,
+                        waiting.quiet,
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// Publishes answers before wakes and closes the answer channel before its terminal reader event.
+struct AnswerPublisher {
+    sent: Option<SyncSender<ReadAnswer>>,
+    signal: Signal,
+}
+
+impl AnswerPublisher {
+    fn send(&self, answer: ReadAnswer) -> bool {
+        let Some(sender) = &self.sent else {
+            std::process::abort()
+        };
+        match sender.send(answer) {
+            Ok(()) => {
+                self.signal.publish(Event::Changed);
+                true
+            }
+            Err(_closed) => false,
+        }
+    }
+}
+
+impl Drop for AnswerPublisher {
+    fn drop(&mut self) {
+        drop(self.sent.take());
+        self.signal.publish(Event::Completed);
     }
 }
 
 fn spawn_line_reader(
     stdout: std::process::ChildStdout,
-) -> Result<(Receiver<ReadAnswer>, JoinedThread), ProviderError> {
+    observed: Observation,
+) -> Result<(Answers, JoinedThread), ProviderError> {
     let limit = u64::try_from(LINE_LIMIT)
         .map_err(|source| {
             ProviderError::new(
@@ -438,6 +541,10 @@ fn spawn_line_reader(
             )
         })?;
     let (sender, lines) = sync_channel(ANSWER_CAPACITY);
+    let sender = AnswerPublisher {
+        sent: Some(sender),
+        signal: observed.signal(),
+    };
     let reader = JoinedThread::launch("njutest-provider-lines", move || {
         let mut input = BufReader::new(stdout);
         loop {
@@ -446,10 +553,7 @@ fn spawn_line_reader(
             match read {
                 Ok(0) => return,
                 Ok(_read) if bytes.len() > LINE_LIMIT => {
-                    let sent = send_answer(
-                        &sender,
-                        Err(ProviderReadError::TooLong { limit: LINE_LIMIT }),
-                    );
+                    let sent = sender.send(Err(ProviderReadError::TooLong { limit: LINE_LIMIT }));
                     if !sent {
                         return;
                     }
@@ -458,12 +562,12 @@ fn spawn_line_reader(
                 Ok(_read) => {
                     let answer = String::from_utf8(bytes).map_err(ProviderReadError::from);
                     let terminal = answer.is_err();
-                    if !send_answer(&sender, answer) || terminal {
+                    if !sender.send(answer) || terminal {
                         return;
                     }
                 }
                 Err(source) => {
-                    let sent = send_answer(&sender, Err(ProviderReadError::Io(source)));
+                    let sent = sender.send(Err(ProviderReadError::Io(source)));
                     if !sent {
                         return;
                     }
@@ -478,13 +582,20 @@ fn spawn_line_reader(
             format!("cannot start the provider output reader: {source}"),
         )
     })?;
-    Ok((lines, reader))
+    Ok((
+        Answers {
+            received: lines,
+            observed,
+        },
+        reader,
+    ))
 }
 
 fn spawn_all_reader(
     stdout: std::process::ChildStdout,
     limit: usize,
-) -> Result<(Receiver<ReadAnswer>, JoinedThread), ProviderError> {
+    observed: Observation,
+) -> Result<(Answers, JoinedThread), ProviderError> {
     let capacity = u64::try_from(limit)
         .map_err(|source| {
             ProviderError::new(
@@ -500,6 +611,10 @@ fn spawn_all_reader(
             )
         })?;
     let (sender, answer) = sync_channel(ANSWER_CAPACITY);
+    let sender = AnswerPublisher {
+        sent: Some(sender),
+        signal: observed.signal(),
+    };
     let reader = JoinedThread::launch("njutest-provider-output", move || {
         let mut bytes = Vec::new();
         let read = BufReader::new(stdout)
@@ -510,10 +625,7 @@ fn spawn_all_reader(
             Ok(_read) => String::from_utf8(bytes).map_err(ProviderReadError::from),
             Err(source) => Err(ProviderReadError::Io(source)),
         };
-        match sender.send(answer) {
-            Ok(()) => {}
-            Err(closed) => drop(closed),
-        }
+        let _sent = sender.send(answer);
     })
     .map_err(|source| {
         ProviderError::new(
@@ -521,7 +633,13 @@ fn spawn_all_reader(
             format!("cannot start the provider output reader: {source}"),
         )
     })?;
-    Ok((answer, reader))
+    Ok((
+        Answers {
+            received: answer,
+            observed,
+        },
+        reader,
+    ))
 }
 
 /// One running provider process, and the line reader that keeps a slow answer from blocking the run.
@@ -529,7 +647,8 @@ fn spawn_all_reader(
 pub struct Process {
     child: GroupChild,
     stdin: Option<ChildStdin>,
-    lines: Option<Receiver<ReadAnswer>>,
+    lines: Option<Answers>,
+    trace: crate::trace::Recorder,
     reader: Option<JoinedThread>,
 }
 
@@ -558,6 +677,7 @@ impl Process {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
+        let observed = Observation::subscribe();
         let mut child = GroupChild::start(&mut spawning).map_err(|source| {
             ProviderError::new(
                 ProviderErrorKind::Unstartable,
@@ -568,13 +688,21 @@ impl Process {
         let stdout = child.stdout().ok_or_else(|| {
             ProviderError::new(ProviderErrorKind::Unstartable, "the provider has no stdout")
         })?;
-        let (lines, reader) = spawn_line_reader(stdout)?;
+        let (lines, reader) = spawn_line_reader(stdout, observed)?;
         Ok(Self {
             child,
             stdin,
             lines: Some(lines),
+            trace: crate::trace::Recorder::disabled(),
             reader: Some(reader),
         })
+    }
+
+    /// Retains the caller's actual host waits in its authoritative run recorder.
+    #[must_use]
+    pub fn with_trace(mut self, trace: &crate::trace::Recorder) -> Self {
+        self.trace = trace.clone();
+        self
     }
 
     /// Asks one question and reads one answer.
@@ -604,40 +732,28 @@ impl Process {
                     format!("cannot reach the provider: {source}"),
                 )
             })?;
-        let lines = self.lines.as_ref().ok_or_else(|| {
+        let lines = self.lines.as_mut().ok_or_else(|| {
             ProviderError::new(
                 ProviderErrorKind::Protocol,
                 "the provider output reader is no longer available",
             )
         })?;
-        let said = match lines.recv_timeout(timeout) {
-            Ok(Ok(said)) => said,
-            Ok(Err(source)) => {
-                return Err(ProviderError::new(
-                    ProviderErrorKind::Protocol,
-                    source.to_string(),
-                ));
-            }
-            Err(RecvTimeoutError::Timeout) => {
-                return Err(ProviderError::new(
-                    ProviderErrorKind::Timeout,
-                    format!(
-                        "the provider said nothing about {} in {}",
-                        request.capability(),
-                        rust_mutants::duration::render(timeout)
-                    ),
-                ));
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                return Err(ProviderError::new(
-                    ProviderErrorKind::Protocol,
-                    format!(
-                        "the provider ended without answering about {}",
-                        request.capability()
-                    ),
-                ));
-            }
-        };
+        let said = lines.receive(
+            AnswerWait {
+                timeout,
+                trace: &self.trace,
+                quiet: format!(
+                    "the provider said nothing about {} in {}",
+                    request.capability(),
+                    rust_mutants::duration::render(timeout)
+                ),
+                ended: format!(
+                    "the provider ended without answering about {}",
+                    request.capability()
+                ),
+            },
+            &WallClock,
+        )?;
         read(&said, request)
     }
 
@@ -774,6 +890,17 @@ pub struct Once<'a> {
 /// [`ProviderErrorKind::Unstartable`] when the command cannot be run,
 /// [`ProviderErrorKind::Timeout`] when it does not end in time, and [`ProviderErrorKind::Protocol`] when it writes more than `limit`.
 pub fn once(asking: &Once<'_>) -> Result<String, ProviderError> {
+    once_observed(asking, &crate::trace::Recorder::disabled())
+}
+
+/// Runs the actual one-shot provider and retains its measured semantic response wait.
+///
+/// # Errors
+/// The provider or its complete owned output observation fails.
+pub fn once_observed(
+    asking: &Once<'_>,
+    trace: &crate::trace::Recorder,
+) -> Result<String, ProviderError> {
     let Once {
         command,
         dir,
@@ -797,6 +924,7 @@ pub fn once(asking: &Once<'_>) -> Result<String, ProviderError> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
+    let observed = Observation::subscribe();
     let mut child = GroupChild::start(&mut spawning).map_err(|source| {
         ProviderError::new(
             ProviderErrorKind::Unstartable,
@@ -824,13 +952,13 @@ pub fn once(asking: &Once<'_>) -> Result<String, ProviderError> {
     let stdout = child.stdout().ok_or_else(|| {
         ProviderError::new(ProviderErrorKind::Unstartable, "the provider has no stdout")
     })?;
-    let (said, reader) = spawn_all_reader(stdout, limit)?;
-    let running = OneShot {
+    let (said, reader) = spawn_all_reader(stdout, limit, observed)?;
+    let mut running = OneShot {
         child,
         answer: Some(said),
         reader: Some(reader),
     };
-    let answer = running.receive(timeout);
+    let answer = running.receive(timeout, trace);
     let timed_out = match &answer {
         Ok(_answer) => false,
         Err(error) => error.is_timeout(),

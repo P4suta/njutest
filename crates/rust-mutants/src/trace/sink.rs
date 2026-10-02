@@ -66,7 +66,9 @@ enum ObserverSink {
 /// A sink that hands each event to whoever is listening on the other end.
 #[derive(Debug)]
 pub struct ChannelSink {
-    sender: SyncSender<Event>,
+    sender: Mutex<Option<SyncSender<Event>>>,
+    reader: Option<std::thread::Thread>,
+    observed: Option<crate::observation::Signal>,
     dropped: AtomicU64,
     corrupt: AtomicBool,
     closed: AtomicBool,
@@ -77,18 +79,76 @@ impl ChannelSink {
     #[must_use]
     pub const fn new(sender: SyncSender<Event>) -> Self {
         Self {
-            sender,
+            sender: Mutex::new(Some(sender)),
+            reader: None,
+            observed: None,
             dropped: AtomicU64::new(0),
             corrupt: AtomicBool::new(false),
             closed: AtomicBool::new(false),
         }
     }
 
+    /// Sends events to `sender` and wakes the explicitly subscribed `reader` after publication.
+    #[must_use]
+    pub fn waking(sender: SyncSender<Event>, reader: std::thread::Thread) -> Self {
+        let mut sink = Self::new(sender);
+        sink.reader = Some(reader);
+        sink
+    }
+
+    /// Publishes arrival and terminal observations to the subscription retained by the actual display.
+    #[must_use]
+    pub fn observed(sender: SyncSender<Event>, signal: crate::observation::Signal) -> Self {
+        let mut sink = Self::new(sender);
+        sink.observed = Some(signal);
+        sink
+    }
+
+    fn close(&self) -> io::Result<()> {
+        let mut sender = match self.sender.lock() {
+            Ok(sender) => sender,
+            Err(_poisoned) => {
+                self.corrupt.store(true, Ordering::SeqCst);
+                return Err(io::Error::other("the trace observer mutex is poisoned"));
+            }
+        };
+        sender.take();
+        drop(sender);
+        self.closed.store(true, Ordering::SeqCst);
+        if let Some(signal) = &self.observed {
+            signal.publish(crate::observation::Event::Completed);
+        }
+        if let Some(reader) = &self.reader {
+            reader.unpark();
+        }
+        Ok(())
+    }
+
     fn emit(&self, event: &Event) -> io::Result<()> {
+        if self.observed.is_some()
+            && matches!(&event.payload, Payload::Note { note } if note.kind == "host-wait")
+        {
+            return Ok(());
+        }
         if self.closed.load(Ordering::Relaxed) {
             return Err(io::Error::other("the channel sink is closed"));
         }
-        match self.sender.try_send(event.clone()) {
+        let held = self.sender.lock().map_err(|_poisoned| {
+            self.corrupt.store(true, Ordering::SeqCst);
+            io::Error::other("the trace observer mutex is poisoned")
+        })?;
+        let Some(sender) = held.as_ref() else {
+            return Err(io::Error::other("the channel sink is closed"));
+        };
+        let sent = sender.try_send(event.clone());
+        drop(held);
+        if let Some(signal) = &self.observed {
+            signal.publish(crate::observation::Event::Changed);
+        }
+        if let Some(reader) = &self.reader {
+            reader.unpark();
+        }
+        match sent {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_event)) => {
                 if let Err(error) = count_drop(&self.dropped) {
@@ -123,6 +183,15 @@ impl ChannelSink {
             ObserverState::Complete {
                 dropped: self.dropped.load(Ordering::SeqCst),
             }
+        }
+    }
+}
+
+impl Drop for ChannelSink {
+    fn drop(&mut self) {
+        match self.close() {
+            Ok(()) => {}
+            Err(_loss_recorded_in_observer_state) => {}
         }
     }
 }
@@ -201,10 +270,7 @@ impl Sink {
                 sink.close();
                 Ok(())
             }
-            Self::Channel(sink) => {
-                sink.closed.store(true, Ordering::Relaxed);
-                Ok(())
-            }
+            Self::Channel(sink) => sink.close(),
             Self::Required(sink) => sink.close(),
         }
     }
@@ -239,7 +305,10 @@ impl RequiredSink {
         let durable = self.authority.close();
         for observer in &self.observers {
             match observer {
-                ObserverSink::Channel(sink) => sink.closed.store(true, Ordering::Relaxed),
+                ObserverSink::Channel(sink) => match sink.close() {
+                    Ok(()) => {}
+                    Err(_loss_recorded_in_observer_state) => {}
+                },
             }
         }
         durable
