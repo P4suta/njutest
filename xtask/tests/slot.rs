@@ -573,6 +573,10 @@ fn a_test_that_ends_while_its_run_waits_leaves_no_worker_behind() {
         .expect("the work said who it is")
         .trim()
         .to_owned();
+    let completion =
+        njutest_process::ForeignProcess::retain(work.parse().expect("the actual worker's PID"))
+            .expect("retain the worker generation before ending its holder")
+            .expect("the worker is alive before the holder ends");
     let pid = holder.id().expect("a live holder").to_string();
     let killed = Command::new("kill")
         .args(["-KILL", &pid])
@@ -581,15 +585,16 @@ fn a_test_that_ends_while_its_run_waits_leaves_no_worker_behind() {
     assert!(killed.success(), "the holder could not be killed");
     holder.wait().expect("the killed holder is reaped");
     drop(machine);
-    let gone = until(&machine, Duration::from_secs(10), || {
-        !Command::new("kill")
-            .args(["-0", &work])
-            .status()
-            .expect("kill -0")
-            .success()
-    });
+    let completed = completion
+        .wait(Some(Duration::from_secs(10)))
+        .expect("the retained worker completion or the original deadline");
+    let gone = !Command::new("kill")
+        .args(["-0", &work])
+        .status()
+        .expect("the original no-worker check")
+        .success();
     assert!(
-        gone,
+        completed && gone,
         "a test that ended as a panicking one does, its run killed and its directories removed, \
          left the work its run started waiting for a release nobody will write; under measurement \
          that worker kept the machine's lane for every session"

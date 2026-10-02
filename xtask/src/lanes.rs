@@ -116,12 +116,12 @@ pub enum LaneError {
         /// The output failure.
         source: std::io::Error,
     },
-    /// The work a dead holder left running in the lane would not end when this run stopped it.
+    /// A legacy receipt still names a listed group with no retained settlement capability.
     #[cfg(unix)]
     #[error(
-        "the {lane} lane's last holder is gone and a process of the group its work ran in (led by \
-         pid {pid}) outlived both the request to stop and the kill; nothing else will take the \
-         lane while it runs"
+        "the {lane} lane's legacy group (led by pid {pid}) still has a listed member, but its \
+         receipt retains no complete group and descriptor ownership; settlement is unprovable \
+         and the lane is not taken over it"
     )]
     Unended {
         /// The lane.
@@ -658,13 +658,22 @@ impl Place<'_> {
         if groups.is_empty() {
             return Ok(());
         }
-        self.outwait_holder(request, progress, (pid, born), &observed)?;
+        self.outwait_holder(request, progress, (&observed, (pid, born)))?;
         drop(stopping);
         match groups.first() {
-            Some(group) => Err(LaneError::Unseen {
-                lane: request.lane.name(),
-                pid: group.pid,
-            }),
+            Some(group) => {
+                let lane = request.lane.name();
+                let pid = group.pid;
+                match group_liveness(
+                    group,
+                    &start_of(pid),
+                    crate::work::listed().as_deref(),
+                    session_of,
+                ) {
+                    Liveness::Alive => Err(LaneError::Unended { lane, pid }),
+                    Liveness::Gone | Liveness::Unseen => Err(LaneError::Unseen { lane, pid }),
+                }
+            }
             None => Ok(()),
         }
     }
@@ -690,8 +699,7 @@ impl Place<'_> {
         &self,
         request: &Request<'_>,
         progress: &mut dyn Write,
-        (pid, born): (u32, &str),
-        observed: &Observation,
+        (observed, (pid, born)): (&Observation, (u32, &str)),
     ) -> Result<(), LaneError> {
         let lane = request.lane.name();
         let mut reported: Option<Instant> = None;
