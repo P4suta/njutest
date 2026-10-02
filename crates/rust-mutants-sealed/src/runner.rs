@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 use std::fs::TryLockError;
 use std::hash::{Hash as _, Hasher};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -107,6 +107,8 @@ pub(crate) struct Advances {
     advanced: AtomicU64,
     /// How many of the alarm's wakes were its typed raw-flag backstop rather than an observed event.
     backstops: AtomicU64,
+    /// A counter overflow permanently refuses answers from this alarm's engine.
+    overflowed: AtomicBool,
 }
 
 impl Advances {
@@ -114,7 +116,8 @@ impl Advances {
     fn arm(advances: &Arc<Self>, deadline: Option<Instant>, interrupt: &Interrupt) -> Armed {
         interrupt.watch(advances);
         let raw = interrupt.raw();
-        if let Ok(mut state) = advances.state.lock() {
+        {
+            let mut state = advances.lock();
             if let Some(deadline) = deadline {
                 state.due.push(deadline);
             }
@@ -132,26 +135,106 @@ impl Advances {
 
     /// Wakes the alarm: a watching flag was raised, so the engine's stores look at their interrupts.
     pub(crate) fn ping(&self) {
-        if let Ok(mut state) = self.state.lock() {
-            state.pinged = true;
-        }
+        self.lock().pinged = true;
         self.changed.notify_all();
     }
 
     /// Stops the alarm thread and waits for it.
     fn halt(&self) {
-        if let Ok(mut state) = self.state.lock() {
-            state.stopped = true;
-        }
+        self.lock().stopped = true;
         self.changed.notify_all();
+    }
+
+    /// Acquires the alarm state or terminates after an irrecoverable ownership failure.
+    fn lock(&self) -> MutexGuard<'_, AlarmState> {
+        match self.state.lock() {
+            Ok(state) => state,
+            Err(_poisoned) => {
+                eprintln!(
+                    "the sealed alarm state was poisoned; its registrations cannot be recovered"
+                );
+                std::process::abort();
+            }
+        }
+    }
+
+    /// Advances once after checked diagnostic accounting, waking guests even on a sticky width failure.
+    fn advance(&self, engine: &Engine, backstop: bool) -> bool {
+        let advanced = self
+            .advanced
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+                count.checked_add(1)
+            });
+        let counted = match advanced {
+            Ok(_previous) => true,
+            Err(_exhausted) => false,
+        };
+        let counted = if backstop {
+            match self
+                .backstops
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+                    count.checked_add(1)
+                }) {
+                Ok(_previous) => counted,
+                Err(_exhausted) => false,
+            }
+        } else {
+            counted
+        };
+        if !counted {
+            self.overflowed.store(true, Ordering::Release);
+        }
+        engine.increment_epoch();
+        counted
     }
 
     /// How many times the alarm advanced the epoch, and how many of its wakes were the typed raw-flag backstop.
     fn counts(&self) -> (u64, u64) {
+        if self.overflowed.load(Ordering::Acquire) {
+            eprintln!(
+                "the sealed alarm counter overflowed; no complete diagnostic count is available"
+            );
+            std::process::abort();
+        }
         (
             self.advanced.load(Ordering::Relaxed),
             self.backstops.load(Ordering::Relaxed),
         )
+    }
+
+    /// Refuses a guest answer after any alarm accounting width failure.
+    fn checked(&self) -> Result<(), SealedError> {
+        if self.overflowed.load(Ordering::Acquire) {
+            Err(broken(Invariant::Width))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Installs this alarm's sticky failure, interrupt and watchdog checks before guest entry.
+    fn watch_store(
+        advances: &Arc<Self>,
+        store: &mut Store<Host>,
+        stopping: Interrupt,
+        deadline: Option<Instant>,
+    ) {
+        store.set_epoch_deadline(1);
+        let advances = Arc::clone(advances);
+        store.epoch_deadline_callback(move |mut context| {
+            if advances.checked().is_err() {
+                context.data_mut().stop = Some(HostStop::Broken(Invariant::Width));
+                return Err(wasmtime::Error::msg("the sealed alarm counter overflowed"));
+            }
+            if stopping.raised() {
+                context.data_mut().stop = Some(HostStop::Interrupted);
+                return Err(wasmtime::Error::msg("the guest was interrupted"));
+            }
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                context.data_mut().stop = Some(HostStop::WatchdogExpired);
+                return Err(wasmtime::Error::msg("the wall-clock watchdog expired"));
+            }
+            Ok(UpdateDeadline::Continue(1))
+        });
     }
 }
 
@@ -165,14 +248,21 @@ pub(crate) struct Armed {
 
 impl Drop for Armed {
     fn drop(&mut self) {
-        if let Ok(mut state) = self.advances.state.lock() {
+        {
+            let mut state = self.advances.lock();
             if let Some(deadline) = self.deadline
                 && let Some(at) = state.due.iter().position(|due| *due == deadline)
             {
                 state.due.swap_remove(at);
             }
             if self.raw {
-                state.raw.pop();
+                match state.raw.pop() {
+                    Some(RawInterrupt) => {}
+                    None => {
+                        eprintln!("a sealed raw interrupt registration was lost before settlement");
+                        std::process::abort();
+                    }
+                }
             }
         }
         self.advances.changed.notify_all();
@@ -181,18 +271,27 @@ impl Drop for Armed {
 
 /// Runs one engine's alarm until it is halted: waiting for the next registered deadline, a raise's ping or the stop, advancing the epoch when one arrives.
 fn alarm(engine: &Engine, advances: &Advances) {
-    let Ok(mut state) = advances.state.lock() else {
-        return;
-    };
+    let mut state = advances.lock();
     loop {
         if state.stopped {
+            drop(state);
             return;
         }
         let now = Instant::now();
         let due = state.due.iter().min().copied();
-        let backstop = (!state.raw.is_empty())
-            .then(|| now.checked_add(RAW_BACKSTOP))
-            .flatten();
+        let backstop = if state.raw.is_empty() {
+            None
+        } else {
+            match now.checked_add(RAW_BACKSTOP) {
+                Some(bound) => Some(bound),
+                None => {
+                    drop(state);
+                    advances.overflowed.store(true, Ordering::Release);
+                    engine.increment_epoch();
+                    return;
+                }
+            }
+        };
         let bound = match (due, backstop) {
             (Some(due), Some(backstop)) => Some(due.min(backstop)),
             (Some(earliest), None) | (None, Some(earliest)) => Some(earliest),
@@ -205,17 +304,28 @@ fn alarm(engine: &Engine, advances: &Advances) {
                     state = next;
                     waited.timed_out()
                 }
-                Err(_poisoned) => return,
+                Err(_poisoned) => {
+                    eprintln!(
+                        "the sealed alarm wait was poisoned; owned registrations are unsettled"
+                    );
+                    std::process::abort();
+                }
             },
             None => match advances.changed.wait(state) {
                 Ok(next) => {
                     state = next;
                     false
                 }
-                Err(_poisoned) => return,
+                Err(_poisoned) => {
+                    eprintln!(
+                        "the sealed alarm wait was poisoned; owned registrations are unsettled"
+                    );
+                    std::process::abort();
+                }
             },
         };
         if state.stopped {
+            drop(state);
             return;
         }
         let now = Instant::now();
@@ -224,12 +334,13 @@ fn alarm(engine: &Engine, advances: &Advances) {
         state.pinged = false;
         if fell || pinged {
             state.due.retain(|due| *due > now);
-            engine.increment_epoch();
-            advances.advanced.fetch_add(1, Ordering::Relaxed);
-        } else if timed_out && !state.raw.is_empty() {
-            engine.increment_epoch();
-            advances.advanced.fetch_add(1, Ordering::Relaxed);
-            advances.backstops.fetch_add(1, Ordering::Relaxed);
+            if !advances.advance(engine, false) {
+                drop(state);
+                return;
+            }
+        } else if timed_out && !state.raw.is_empty() && !advances.advance(engine, true) {
+            drop(state);
+            return;
         }
     }
 }
@@ -249,28 +360,41 @@ struct Ticking {
 #[derive(Debug)]
 struct AlarmThread {
     handle: Option<JoinHandle<()>>,
+    advances: Arc<Advances>,
 }
 
 impl AlarmThread {
     /// Starts the alarm of `engine` on `advances`.
     fn start(engine: Engine, advances: Arc<Advances>) -> std::io::Result<Self> {
+        let running = Arc::clone(&advances);
         let handle = std::thread::Builder::new()
             .name("rust-mutants-sealed-alarm".to_owned())
-            .spawn(move || alarm(&engine, &advances))?;
+            .spawn(move || alarm(&engine, &running))?;
         Ok(Self {
             handle: Some(handle),
+            advances,
         })
     }
 
     /// Stops the thread and waits for it.
-    fn stop(&mut self, advances: &Advances) {
-        advances.halt();
+    fn stop(&mut self) {
+        self.advances.halt();
         if let Some(handle) = self.handle.take() {
             match handle.join() {
                 Ok(()) => {}
-                Err(panic) => drop(panic),
+                Err(panic) => {
+                    drop(panic);
+                    eprintln!("the owned sealed alarm panicked before settlement");
+                    std::process::abort();
+                }
             }
         }
+    }
+}
+
+impl Drop for AlarmThread {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 
@@ -279,14 +403,17 @@ impl Drop for Ticking {
         {
             let live = self.owner.ticking.lock();
             if let Some(mut alarm) = self.alarm.take() {
-                alarm.stop(&self.advances);
+                alarm.stop();
             }
             match live {
                 Ok(mut live) => {
                     *live = None;
                     drop(live);
                 }
-                Err(poisoned) => drop(poisoned),
+                Err(_poisoned) => {
+                    eprintln!("the sealed ticker owner was poisoned before release");
+                    std::process::abort();
+                }
             }
         }
         self.owner.ticker_changed.notify_all();
@@ -1022,14 +1149,19 @@ impl SealedModule<'_> {
         interrupt: &Interrupt,
         counted: &crate::transcripts::Counted,
     ) -> Result<Transcript, SealedError> {
+        self.runner.ticking.advances.checked()?;
         if interrupt.raised() {
             return Err(SealedError::Interrupted);
         }
         let began = Instant::now();
         let digest = invocation.digest(&self.digest, &self.runner.owner.configuration);
         let watchdog = self.runner.watchdog;
-        let deadline = Instant::now().checked_add(watchdog);
-        let _armed = Advances::arm(&self.runner.ticking.advances, deadline, interrupt);
+        let deadline = Some(
+            began
+                .checked_add(watchdog)
+                .ok_or_else(|| broken(Invariant::Width))?,
+        );
+        let armed = Advances::arm(&self.runner.ticking.advances, deadline, interrupt);
         let halt = invocation.halting()?;
         let host = Host::new((invocation, halt), (deadline, interrupt.clone())).map_err(broken)?;
         let mut store = Store::new(&self.runner.owner.engine, host);
@@ -1037,19 +1169,13 @@ impl SealedModule<'_> {
         store
             .set_fuel(invocation.fuel)
             .map_err(|source| runtime(RuntimeStep::Fuel, source))?;
-        store.set_epoch_deadline(1);
-        let stopping = interrupt.clone();
-        store.epoch_deadline_callback(move |mut context| {
-            if stopping.raised() {
-                context.data_mut().stop = Some(HostStop::Interrupted);
-                return Err(wasmtime::Error::msg("the guest was interrupted"));
-            }
-            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                context.data_mut().stop = Some(HostStop::WatchdogExpired);
-                return Err(wasmtime::Error::msg("the wall-clock watchdog expired"));
-            }
-            Ok(UpdateDeadline::Continue(1))
-        });
+        Advances::watch_store(
+            &self.runner.ticking.advances,
+            &mut store,
+            interrupt.clone(),
+            deadline,
+        );
+        self.runner.ticking.advances.checked()?;
         self.runner.counted.instantiated()?;
         counted.instantiated()?;
         let stop = match self.pre.instantiate(&mut store) {
@@ -1083,6 +1209,8 @@ impl SealedModule<'_> {
                 invariant: Invariant::Width,
             })?;
         let ended = store.into_data().end().map_err(broken)?;
+        drop(armed);
+        self.runner.ticking.advances.checked()?;
         let duration = began.elapsed();
         self.runner.counted.executed(duration)?;
         counted.executed(duration)?;
@@ -1234,6 +1362,7 @@ const fn broken(invariant: Invariant) -> SealedError {
 mod tests {
     use std::num::NonZeroU64;
     use std::sync::TryLockError;
+    use std::sync::atomic::Ordering;
     use std::sync::mpsc;
 
     use std::sync::{Arc, Weak};
@@ -1243,6 +1372,7 @@ mod tests {
         CompilerTier, Identity, ModuleOwner, Owner, PREPARATION_LEASES, PreparationHooks,
         PreparationStage, RAW_BACKSTOP, SealedRunner, Slot,
     };
+    use crate::error::Invariant;
     use crate::{Interrupt, Invocation, Reuse, SealedDigest, SealedStop};
     use njutest_devkit::temporary::CacheDirectory;
 
@@ -1807,11 +1937,50 @@ mod tests {
             stopped < Duration::from_secs(30),
             "the interrupt is delivered while the guest runs, not at the watchdog"
         );
-        let (advanced, _backstops) = runner.alarm_advances();
+        let (advanced, backstops) = runner.alarm_advances();
+        assert_eq!(backstops, 0, "an owned raise requires no raw-flag backstop");
         assert!(
             advanced > 0,
             "the alarm advanced the epoch for the raise itself"
         );
+    }
+
+    #[test]
+    fn an_exhausted_alarm_counter_is_sticky_and_cannot_answer_a_guest() {
+        for backstop in [false, true] {
+            let modules = ModuleOwner::default();
+            let runner = SealedRunner::new(&modules, Duration::from_millis(100))
+                .expect("the actual watchdog runner");
+            let bytes = wat::parse_str(
+                r#"(module (memory (export "memory") 1)
+                    (func (export "_start") (loop $again (br $again))))"#,
+            )
+            .expect("the actual spinning guest");
+            let module = runner.prepare(&bytes).expect("the spinning module");
+            let mut asked = invocation();
+            asked.fuel = u64::MAX;
+            let counter = if backstop {
+                &runner.ticking.advances.backstops
+            } else {
+                &runner.ticking.advances.advanced
+            };
+            counter.store(u64::MAX, Ordering::Relaxed);
+            let interrupt =
+                Interrupt::of(vec![Arc::new(std::sync::atomic::AtomicBool::new(false))]);
+            for _invocation in 0..2 {
+                let answer = module.invoke(&asked, &interrupt);
+                assert!(
+                    matches!(
+                        answer,
+                        Err(crate::SealedError::HostInvariant {
+                            invariant: Invariant::Width
+                        })
+                    ),
+                    "an exhausted physical alarm counter is a sticky host failure: {answer:?}"
+                );
+                assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
+            }
+        }
     }
 
     /// A watchdog deadline is the alarm's own wake: the engine's epoch advances when the deadline falls, with no periodic work before it.

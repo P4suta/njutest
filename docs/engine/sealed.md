@@ -95,6 +95,11 @@ A refusal returns its error to the guest and is recorded in the transcript, so a
 The engine starts instances from one compiled module, which stays in memory; a run compiles each module once.
 A wall-clock watchdog stands behind every instance in case the host itself stops, and what it stops is the run, with an error, never a test with a verdict.
 An interrupted run stops the instance it is in at the next epoch or host call, and every mutant it had not decided is `not_run` for `interrupted`, as a native run's are.
+Each shared engine owns an alarm that is stopped and joined before its last runner releases it.
+Owned cancellation publishes one monotonic event per subscription into a channel of capacity one.
+Raw signal flags retain the counted ten-millisecond OS backstop only while an invocation is armed.
+Alarm counters refuse overflow without wrapping and permanently refuse guest answers after a width failure.
+Poisoned alarm or interrupt ownership and a panicked alarm terminate with a diagnostic rather than release unsettled state.
 
 ## Reusing compilation work
 

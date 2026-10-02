@@ -667,4 +667,5 @@ The helper verifies the parent's owner marker and retains no child cleanup destr
 The parent removes its cache root once after producer completion and fails if removal is refused.
 Tidy still refuses every entry left in the child temporary root, including marked entries.
 The `unowned-cache-directory` lint rejects temporary paths passed to cache consumers.
+It follows imported cache type names and local constructor aliases while preserving ordinary native command closures.
 Synchronous test scratch remains test-owned and closes once without a quiet-period retry.

@@ -1702,6 +1702,59 @@ fn the_cache_class_has_executable_planted_shapes() {
 }
 
 #[test]
+fn the_cache_gate_keeps_the_actual_native_configured_closure() {
+    let source = repository("crates/rust-mutants/tests/touch_runtime.rs");
+    assert!(source.contains("let configured = |command: &mut Command|"));
+    let findings = xtask::lints::scan_source("crates/rust-mutants/tests/touch_runtime.rs", &source)
+        .expect("the unchanged actual native control parses");
+    let cache: Vec<_> = findings
+        .iter()
+        .filter(|finding| finding.kind == xtask::lints::Kind::UnownedCacheDirectory)
+        .collect();
+    assert!(
+        cache.is_empty(),
+        "a native configured closure is no cache API: {cache:?}"
+    );
+}
+
+#[test]
+fn the_cache_gate_binds_imported_types_and_constructor_values() {
+    for source in [
+        "use rust_mutants_sealed::SealedRunner as Host; fn cache() { let directory = tempfile::tempdir().unwrap(); Host::cached(&modules, deadline, directory.path()); }",
+        "use rust_mutants_sealed::CompilationCache as Cache; fn cache() { let directory = tempfile::tempdir().unwrap(); Cache::retained(directory.path().to_path_buf()); }",
+        "fn cache() { let build = SealedRunner::configured; let directory = tempfile::tempdir().unwrap(); build(&modules, deadline, Settings { directory: directory.path() }); }",
+        "fn cache() { let build = CompilationCache::retained; let aliased = build; let directory = tempfile::tempdir().unwrap(); aliased(directory.path().to_path_buf()); }",
+    ] {
+        let findings = xtask::lints::scan_source("crates/planted/tests/cache.rs", source)
+            .expect("the constructor binding shape parses");
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.kind == xtask::lints::Kind::UnownedCacheDirectory),
+            "actual cache constructor bindings retain the refusal: {findings:?}"
+        );
+    }
+}
+
+#[test]
+fn ordinary_configured_calls_and_shadowed_constructor_values_are_no_cache() {
+    for source in [
+        "fn native() { let directory = tempfile::tempdir().unwrap(); let configured = |command: &mut Command| { command.env(\"STATE\", directory.path()); }; let mut child = Command::new(directory.path().join(\"native\")); configured(&mut child); }",
+        "fn native() { let directory = tempfile::tempdir().unwrap(); NativeFactory::configured(directory.path()); }",
+        "fn native() { let build = SealedRunner::configured; { let build = |path: &Path| path; let directory = tempfile::tempdir().unwrap(); build(directory.path()); } }",
+    ] {
+        let findings = xtask::lints::scan_source("crates/planted/tests/native.rs", source)
+            .expect("the native control parses");
+        assert!(
+            !findings
+                .iter()
+                .any(|finding| finding.kind == xtask::lints::Kind::UnownedCacheDirectory),
+            "ordinary calls and value shadowing are preserved: {findings:?}"
+        );
+    }
+}
+
+#[test]
 fn tidy_refuses_a_leftover_nobody_marked() {
     let said = tidy_over("mkdir \"$TMPDIR/.tmpUnowned\"; exit 0");
     assert!(

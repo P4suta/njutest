@@ -33,16 +33,26 @@ impl Raised {
     /// Idempotent: raising again wakes again, and the flag stays raised.
     pub fn raise(&self) {
         self.flag.store(true, Ordering::SeqCst);
-        if let Ok(mut raised) = self.woken.lock() {
-            *raised = true;
-            drop(raised);
-            self.changed.notify_all();
-        }
-        if let Ok(alarms) = self.alarms.lock() {
-            for alarm in alarms.iter() {
-                if let Some(alarm) = alarm.upgrade() {
-                    alarm.ping();
-                }
+        let mut raised = match self.woken.lock() {
+            Ok(raised) => raised,
+            Err(_poisoned) => {
+                eprintln!("the owned interrupt state was poisoned before publication");
+                std::process::abort();
+            }
+        };
+        *raised = true;
+        drop(raised);
+        self.changed.notify_all();
+        let alarms = match self.alarms.lock() {
+            Ok(alarms) => alarms,
+            Err(_poisoned) => {
+                eprintln!("the owned interrupt alarms were poisoned before publication");
+                std::process::abort();
+            }
+        };
+        for alarm in alarms.iter() {
+            if let Some(alarm) = alarm.upgrade() {
+                alarm.ping();
             }
         }
     }
@@ -64,23 +74,33 @@ impl Raised {
     #[must_use]
     pub fn wait_raised(&self, bound: Duration) -> bool {
         let deadline = Instant::now().checked_add(bound);
-        let Ok(mut raised) = self.woken.lock() else {
-            return self.raised();
+        let mut raised = match self.woken.lock() {
+            Ok(raised) => raised,
+            Err(_poisoned) => {
+                eprintln!("the owned interrupt wait state was poisoned");
+                std::process::abort();
+            }
         };
         loop {
             if *raised {
+                drop(raised);
                 return true;
             }
             let Some(deadline) = deadline else {
+                drop(raised);
                 return self.raised();
             };
             let left = deadline.saturating_duration_since(Instant::now());
             let (next, waited) = match self.changed.wait_timeout(raised, left) {
                 Ok(waited) => waited,
-                Err(_poisoned) => return self.raised(),
+                Err(_poisoned) => {
+                    eprintln!("the owned interrupt wait was poisoned");
+                    std::process::abort();
+                }
             };
             raised = next;
             if waited.timed_out() {
+                drop(raised);
                 return self.raised();
             }
         }
@@ -88,11 +108,20 @@ impl Raised {
 
     /// Adds `alarm` to the alarms a raise pings, once per alarm.
     pub(crate) fn watch(&self, alarm: &Arc<Advances>) {
-        if let Ok(mut alarms) = self.alarms.lock() {
-            let watched = Arc::downgrade(alarm);
-            if !alarms.iter().any(|alarm| Weak::ptr_eq(alarm, &watched)) {
-                alarms.push(watched);
+        let mut alarms = match self.alarms.lock() {
+            Ok(alarms) => alarms,
+            Err(_poisoned) => {
+                eprintln!("the owned interrupt alarms were poisoned before registration");
+                std::process::abort();
             }
+        };
+        let watched = Arc::downgrade(alarm);
+        if !alarms.iter().any(|alarm| Weak::ptr_eq(alarm, &watched)) {
+            alarms.push(watched);
+        }
+        drop(alarms);
+        if self.raised() {
+            alarm.ping();
         }
     }
 }

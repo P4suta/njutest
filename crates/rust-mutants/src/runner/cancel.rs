@@ -4,7 +4,7 @@
 //! Cancellation flags with owned subscriptions and sealed interrupts.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvError, RecvTimeoutError, Sender};
+use std::sync::mpsc::{self, Receiver, RecvError, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
@@ -27,29 +27,46 @@ struct Flag {
 }
 
 #[derive(Debug)]
-struct Observer(Sender<()>);
+struct Observer {
+    sent: SyncSender<()>,
+    published: AtomicBool,
+}
+
+impl Observer {
+    fn publish(&self) -> bool {
+        if self.published.swap(true, Ordering::AcqRel) {
+            return true;
+        }
+        match self.sent.try_send(()) {
+            Ok(()) | Err(TrySendError::Full(())) => true,
+            Err(TrySendError::Disconnected(())) => false,
+        }
+    }
+}
 
 impl Flag {
     fn raise(&self) {
         self.raised.raise();
         let Ok(mut observers) = self.observers.lock() else {
+            eprintln!("the cancellation subscription owner was poisoned before publication");
             std::process::abort()
         };
-        observers.retain(|observer| {
-            observer
-                .upgrade()
-                .is_some_and(|observer| observer.0.send(()).is_ok())
+        observers.retain(|observer| match observer.upgrade() {
+            Some(observer) => observer.publish(),
+            None => false,
         });
     }
 
     fn watch(&self, observer: &Arc<Observer>) {
         let Ok(mut observers) = self.observers.lock() else {
+            eprintln!("the cancellation subscription owner was poisoned before registration");
             std::process::abort()
         };
         observers.retain(|observer| observer.strong_count() != 0);
         observers.push(Arc::downgrade(observer));
-        if self.raised.raised() {
-            let _closed = observer.0.send(());
+        if self.raised.raised() && !observer.publish() {
+            let closed = Arc::downgrade(observer);
+            observers.retain(|observer| !Weak::ptr_eq(observer, &closed));
         }
     }
 
@@ -118,7 +135,7 @@ impl Cancel {
         self
     }
 
-    /// Requests cancellation and publishes its event to every active subscription.
+    /// Requests cancellation and publishes its one monotonic event to every active subscription.
     pub fn cancel(&self) {
         self.own.raise();
     }
@@ -147,8 +164,11 @@ impl Cancel {
     /// Subscribes before starting work so cancellation cannot be missed.
     #[must_use]
     pub fn subscribe(&self) -> Cancelled {
-        let (sent, received) = mpsc::channel();
-        let observer = Arc::new(Observer(sent));
+        let (sent, received) = mpsc::sync_channel(1);
+        let observer = Arc::new(Observer {
+            sent,
+            published: AtomicBool::new(false),
+        });
         for flag in std::iter::once(&self.own).chain(&self.above) {
             flag.watch(&observer);
         }
@@ -191,6 +211,78 @@ mod tests {
         let cancel = Cancel::new();
         cancel.cancel();
         assert_eq!(cancel.subscribe().wait_timeout(Duration::ZERO), Ok(()));
+    }
+
+    #[test]
+    fn a_subscription_observes_one_monotonic_cancellation_event() {
+        let cancel = Cancel::new();
+        let subscription = cancel.subscribe();
+        cancel.cancel();
+        cancel.cancel();
+        assert_eq!(subscription.wait_timeout(Duration::ZERO), Ok(()));
+        cancel.cancel();
+        assert_eq!(
+            subscription.wait_timeout(Duration::ZERO),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        );
+    }
+
+    #[test]
+    fn one_subscription_unifies_parent_and_child_cancellation() {
+        let parent = Cancel::new();
+        let child = parent.child();
+        let subscription = child.subscribe();
+        child.cancel();
+        parent.cancel();
+        assert_eq!(subscription.wait_timeout(Duration::ZERO), Ok(()));
+        assert_eq!(
+            subscription.wait_timeout(Duration::ZERO),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        );
+    }
+
+    #[test]
+    fn a_closed_subscription_is_pruned_without_losing_a_late_event() {
+        let cancel = Cancel::new();
+        let subscription = cancel.subscribe();
+        drop(subscription);
+        cancel.cancel();
+        assert!(
+            cancel
+                .own
+                .observers
+                .lock()
+                .expect("the subscription registry")
+                .is_empty()
+        );
+        assert_eq!(cancel.subscribe().wait_timeout(Duration::ZERO), Ok(()));
+    }
+
+    #[test]
+    fn a_full_event_slot_preserves_the_existing_cancellation() {
+        let (sent, received) = std::sync::mpsc::sync_channel(1);
+        sent.try_send(()).expect("the already queued cancellation");
+        let observer = super::Observer {
+            sent,
+            published: std::sync::atomic::AtomicBool::new(false),
+        };
+        assert!(observer.publish());
+        assert_eq!(received.try_recv(), Ok(()));
+        assert!(observer.publish());
+        assert_eq!(
+            received.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        );
+        let (sent, received) = std::sync::mpsc::sync_channel(1);
+        drop(received);
+        let observer = super::Observer {
+            sent,
+            published: std::sync::atomic::AtomicBool::new(false),
+        };
+        assert!(
+            !observer.publish(),
+            "a disconnected receiver is explicitly retired"
+        );
     }
 
     #[test]
