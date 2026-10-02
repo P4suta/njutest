@@ -1,0 +1,632 @@
+{
+  "document_type": "rust-mutants/run-report",
+  "schema_version": 5,
+  "tool_version": "0.1.0",
+  "run": {
+    "id": "20261002t125728556z",
+    "started_at": "2026-10-02T12:57:28.556134Z",
+    "finished_at": "2026-10-02T12:57:32.2073Z",
+    "duration_ms": 464,
+    "interrupted": false,
+    "exit_code": 1,
+    "shard": null,
+    "jobs": {
+      "asked": "auto",
+      "used": 4
+    }
+  },
+  "workspace": {
+    "root_name": "fixture-unicode",
+    "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "workspace_digest": "e6aadab10ee1573e81c153848e64852bc0c4d4707f435305c81361ed7eb75751",
+    "catalog_digest": "4bbadbfa63b3c621e87dfbbfaac15359c7fff49ba37b67b893a2649f0d078cf0",
+    "platform": {
+      "os": "darwin",
+      "arch": "aarch64",
+      "target": "aarch64-apple-darwin"
+    }
+  },
+  "selection": {
+    "tier": "balanced",
+    "operators": [],
+    "include": [],
+    "exclude": [],
+    "packages": [],
+    "build": [],
+    "mutant_steps": 50000000
+  },
+  "accounting": {
+    "cataloged": 9,
+    "refused": 0,
+    "skipped": 0,
+    "executed": 6,
+    "killed": 4,
+    "survived": 2,
+    "unproven": 0,
+    "step_limit_reached": 0,
+    "waited": 0,
+    "inconclusive": 0,
+    "errored": 0,
+    "not_run": 3,
+    "unreached": 3,
+    "declined": 0,
+    "expected": 0,
+    "unproven_killed": 0,
+    "unproven_survived": 0,
+    "unproven_unreached": 0,
+    "unproven_discharged": 0
+  },
+  "score": {
+    "detected": 4,
+    "decided": 6,
+    "value": 0.6666666666666666
+  },
+  "targets": [
+    {
+      "id": "fixture-unicode/lib/fixture_unicode",
+      "kind": "lib",
+      "harness": true,
+      "tests": 1,
+      "limitations": [],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
+    },
+    {
+      "id": "fixture-unicode/doc/fixture_unicode",
+      "kind": "doc",
+      "harness": true,
+      "tests": 0,
+      "limitations": [
+        "doctests-routed-by-file",
+        "doctests-none"
+      ],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
+    }
+  ],
+  "established_tests": 0,
+  "mutants": [
+    {
+      "index": 0,
+      "id": "cd0fe30657c3066384f8871f4ab02db4acb687a416a6b9ef58d4421f33055e42",
+      "display_id": "cd0fe30657c3066384f8",
+      "path": "src/lib.rs",
+      "package": "fixture-unicode",
+      "family": "return-replacement",
+      "rule": "return-default",
+      "item": "大きい方",
+      "rule_version": 1,
+      "line": 7,
+      "column": 61,
+      "start_byte": 408,
+      "end_byte": 437,
+      "source_digest": "273de0e5158d38a5d461dee0fe970e7eb64a3067bf09947af01c74362ad3f62a",
+      "original": "if γ > β { γ } else { β }",
+      "replacement": "Default::default()",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-unicode/lib/fixture_unicode",
+      "exit_code": -1,
+      "duration_ms": 43,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::大きい方を選ぶ"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "block",
+        "fallback": null,
+        "reaching": [
+          "fixture-unicode/lib/fixture_unicode"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {}
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-unicode/lib/fixture_unicode",
+            "test": "tests::大きい方を選ぶ",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 1,
+      "id": "e3b6704b5ad1a397b70e82a9b1bd7eb2a518ef7c29ade1a20c9b9845e7799ce1",
+      "display_id": "e3b6704b5ad1a397b70e",
+      "path": "src/lib.rs",
+      "package": "fixture-unicode",
+      "family": "condition-negation",
+      "rule": "negate-condition",
+      "item": "大きい方",
+      "rule_version": 1,
+      "line": 7,
+      "column": 64,
+      "start_byte": 411,
+      "end_byte": 418,
+      "source_digest": "273de0e5158d38a5d461dee0fe970e7eb64a3067bf09947af01c74362ad3f62a",
+      "original": "γ > β",
+      "replacement": "!(γ > β)",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-unicode/lib/fixture_unicode",
+      "exit_code": -1,
+      "duration_ms": 19,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::大きい方を選ぶ"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "block",
+        "fallback": null,
+        "reaching": [
+          "fixture-unicode/lib/fixture_unicode"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {}
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-unicode/lib/fixture_unicode",
+            "test": "tests::大きい方を選ぶ",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 2,
+      "id": "b9ee60c80aeb0d583a9a7dd7d212d7f0d74301b5106b021bb85e6927cde15aad",
+      "display_id": "b9ee60c80aeb0d583a9a",
+      "path": "src/lib.rs",
+      "package": "fixture-unicode",
+      "family": "condition-removal",
+      "rule": "condition-to-true",
+      "item": "大きい方",
+      "rule_version": 1,
+      "line": 7,
+      "column": 64,
+      "start_byte": 411,
+      "end_byte": 418,
+      "source_digest": "273de0e5158d38a5d461dee0fe970e7eb64a3067bf09947af01c74362ad3f62a",
+      "original": "γ > β",
+      "replacement": "true",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-unicode/lib/fixture_unicode",
+      "exit_code": -1,
+      "duration_ms": 16,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::大きい方を選ぶ"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "block",
+        "fallback": null,
+        "reaching": [
+          "fixture-unicode/lib/fixture_unicode"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {}
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-unicode/lib/fixture_unicode",
+            "test": "tests::大きい方を選ぶ",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 3,
+      "id": "8397c7a24300958e56326c38deb7c84de928f936f3f3faa06a9d4fe3f7629a20",
+      "display_id": "8397c7a24300958e5632",
+      "path": "src/lib.rs",
+      "package": "fixture-unicode",
+      "family": "condition-removal",
+      "rule": "condition-to-false",
+      "item": "大きい方",
+      "rule_version": 1,
+      "line": 7,
+      "column": 64,
+      "start_byte": 411,
+      "end_byte": 418,
+      "source_digest": "273de0e5158d38a5d461dee0fe970e7eb64a3067bf09947af01c74362ad3f62a",
+      "original": "γ > β",
+      "replacement": "false",
+      "outcome": "survived",
+      "step_notice": null,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 27,
+      "tests_run": 1,
+      "killed_by": [],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "block",
+        "fallback": null,
+        "reaching": [
+          "fixture-unicode/lib/fixture_unicode"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {}
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-unicode/lib/fixture_unicode",
+            "test": "tests::大きい方を選ぶ",
+            "came_to": "passed"
+          }
+        ]
+      }
+    },
+    {
+      "index": 4,
+      "id": "d7e3b82f4dbc216eb916218ca08d9a5457e7b1399b512aeb20ccdbc345f7c072",
+      "display_id": "d7e3b82f4dbc216eb916",
+      "path": "src/lib.rs",
+      "package": "fixture-unicode",
+      "family": "comparison",
+      "rule": "gt-to-ge",
+      "item": "大きい方",
+      "rule_version": 1,
+      "line": 7,
+      "column": 67,
+      "start_byte": 414,
+      "end_byte": 415,
+      "source_digest": "273de0e5158d38a5d461dee0fe970e7eb64a3067bf09947af01c74362ad3f62a",
+      "original": ">",
+      "replacement": ">=",
+      "outcome": "survived",
+      "step_notice": null,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 19,
+      "tests_run": 1,
+      "killed_by": [],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "discharged",
+        "fallback": null,
+        "reaching": [],
+        "discharged": [
+          {
+            "target": "fixture-unicode/lib/fixture_unicode",
+            "proof": "never-infected"
+          }
+        ],
+        "executed": [],
+        "tests": {}
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-unicode/lib/fixture_unicode",
+            "test": "tests::大きい方を選ぶ",
+            "came_to": "passed"
+          }
+        ]
+      }
+    },
+    {
+      "index": 5,
+      "id": "072bf7bcf30d93f1125093b20717de8d50733f010cabe850a174b8130f6ddc41",
+      "display_id": "072bf7bcf30d93f11250",
+      "path": "src/lib.rs",
+      "package": "fixture-unicode",
+      "family": "return-replacement",
+      "rule": "return-default",
+      "item": "大きい方",
+      "rule_version": 1,
+      "line": 7,
+      "column": 74,
+      "start_byte": 421,
+      "end_byte": 423,
+      "source_digest": "273de0e5158d38a5d461dee0fe970e7eb64a3067bf09947af01c74362ad3f62a",
+      "original": "γ",
+      "replacement": "Default::default()",
+      "outcome": "not_run",
+      "step_notice": null,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 10,
+      "tests_run": 0,
+      "killed_by": [],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": "unreached",
+      "declined": [],
+      "route": {
+        "granularity": "unreached",
+        "fallback": null,
+        "reaching": [],
+        "discharged": [],
+        "executed": [],
+        "tests": {}
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": true,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
+    },
+    {
+      "index": 6,
+      "id": "b8365b4dc7ef3c68c890a3635e0196692d7801bb7ae95e6d6f4a00b1bfa02e4d",
+      "display_id": "b8365b4dc7ef3c68c890",
+      "path": "src/lib.rs",
+      "package": "fixture-unicode",
+      "family": "return-replacement",
+      "rule": "return-default",
+      "item": "大きい方",
+      "rule_version": 1,
+      "line": 7,
+      "column": 86,
+      "start_byte": 433,
+      "end_byte": 435,
+      "source_digest": "273de0e5158d38a5d461dee0fe970e7eb64a3067bf09947af01c74362ad3f62a",
+      "original": "β",
+      "replacement": "Default::default()",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-unicode/lib/fixture_unicode",
+      "exit_code": -1,
+      "duration_ms": 19,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::大きい方を選ぶ"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "block",
+        "fallback": null,
+        "reaching": [
+          "fixture-unicode/lib/fixture_unicode"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {}
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-unicode/lib/fixture_unicode",
+            "test": "tests::大きい方を選ぶ",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 7,
+      "id": "a1e14ecf9c4786a86b9a9c12d2f7a1d3b76db303a1b41e56d3d312559d96e119",
+      "display_id": "a1e14ecf9c4786a86b9a",
+      "path": "src/lib.rs",
+      "package": "fixture-unicode",
+      "family": "return-replacement",
+      "rule": "return-default",
+      "item": "使われない",
+      "rule_version": 1,
+      "line": 11,
+      "column": 5,
+      "start_byte": 555,
+      "end_byte": 561,
+      "source_digest": "273de0e5158d38a5d461dee0fe970e7eb64a3067bf09947af01c74362ad3f62a",
+      "original": "δ * 2",
+      "replacement": "Default::default()",
+      "outcome": "not_run",
+      "step_notice": null,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 10,
+      "tests_run": 0,
+      "killed_by": [],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": "unreached",
+      "declined": [],
+      "route": {
+        "granularity": "unreached",
+        "fallback": null,
+        "reaching": [],
+        "discharged": [],
+        "executed": [],
+        "tests": {}
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": true,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
+    },
+    {
+      "index": 8,
+      "id": "e3376fd69875370e7c064d342816bbe84153a94f9f5c5fa5eaffb399ed0d3b96",
+      "display_id": "e3376fd69875370e7c06",
+      "path": "src/lib.rs",
+      "package": "fixture-unicode",
+      "family": "arithmetic",
+      "rule": "mul-to-div",
+      "item": "使われない",
+      "rule_version": 1,
+      "line": 11,
+      "column": 8,
+      "start_byte": 558,
+      "end_byte": 559,
+      "source_digest": "273de0e5158d38a5d461dee0fe970e7eb64a3067bf09947af01c74362ad3f62a",
+      "original": "*",
+      "replacement": "/",
+      "outcome": "not_run",
+      "step_notice": null,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 6,
+      "tests_run": 0,
+      "killed_by": [],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": "unreached",
+      "declined": [],
+      "route": {
+        "granularity": "unreached",
+        "fallback": null,
+        "reaching": [],
+        "discharged": [],
+        "executed": [],
+        "tests": {}
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": true,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
+    }
+  ],
+  "rejections": [],
+  "skips": [],
+  "expectations": [],
+  "findings": [
+    {
+      "kind": "surviving-mutant",
+      "mutant": "8397c7a24300958e56326c38deb7c84de928f936f3f3faa06a9d4fe3f7629a20",
+      "detail": "no test noticed 8397c7a24300958e5632; 1 test ran and passed"
+    },
+    {
+      "kind": "surviving-mutant",
+      "mutant": "d7e3b82f4dbc216eb916218ca08d9a5457e7b1399b512aeb20ccdbc345f7c072",
+      "detail": "no test noticed d7e3b82f4dbc216eb916; 1 test ran and passed"
+    },
+    {
+      "kind": "unreached-mutant",
+      "mutant": "072bf7bcf30d93f1125093b20717de8d50733f010cabe850a174b8130f6ddc41",
+      "detail": "no sealed test reaches 072bf7bcf30d93f11250: the mutation lives in code the tests never execute"
+    },
+    {
+      "kind": "unreached-mutant",
+      "mutant": "a1e14ecf9c4786a86b9a9c12d2f7a1d3b76db303a1b41e56d3d312559d96e119",
+      "detail": "no sealed test reaches a1e14ecf9c4786a86b9a: the mutation lives in code the tests never execute"
+    },
+    {
+      "kind": "unreached-mutant",
+      "mutant": "e3376fd69875370e7c064d342816bbe84153a94f9f5c5fa5eaffb399ed0d3b96",
+      "detail": "no sealed test reaches e3376fd69875370e7c06: the mutation lives in code the tests never execute"
+    }
+  ],
+  "facts": [
+    "panic=\"unwind\"",
+    "target_abi=\"\"",
+    "target_arch=\"aarch64\"",
+    "target_endian=\"little\"",
+    "target_env=\"\"",
+    "target_family=\"unix\"",
+    "target_has_atomic=\"128\"",
+    "target_has_atomic=\"16\"",
+    "target_has_atomic=\"32\"",
+    "target_has_atomic=\"64\"",
+    "target_has_atomic=\"8\"",
+    "target_has_atomic=\"ptr\"",
+    "target_has_atomic_primitive_alignment=\"128\"",
+    "target_has_atomic_primitive_alignment=\"16\"",
+    "target_has_atomic_primitive_alignment=\"32\"",
+    "target_has_atomic_primitive_alignment=\"64\"",
+    "target_has_atomic_primitive_alignment=\"8\"",
+    "target_has_atomic_primitive_alignment=\"ptr\"",
+    "target_os=\"macos\"",
+    "target_pointer_width=\"64\"",
+    "target_vendor=\"apple\"",
+    "unix"
+  ]
+}

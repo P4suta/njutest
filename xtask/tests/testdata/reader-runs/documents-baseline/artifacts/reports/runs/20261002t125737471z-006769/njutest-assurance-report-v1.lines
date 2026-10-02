@@ -1,0 +1,47 @@
+RUN	run=20261002t125737471z-006769	kind=full	contract=whole-v1
+BUILD	name=default
+TOOLCHAIN	rustc=rustc 1.98.0 (88d9e12ae 2026-08-18)	cargo=cargo 1.98.0 (797e8a9bc 2026-08-05)	target=aarch64-apple-darwin	os=macos	arch=aarch64
+REPOSITORY	root=fixture-baseline	packages=1	commit=unavailable	branch=unavailable	dirty=false
+SCOPE	requested=(nothing named)	resolved=(nothing named)	included=(nothing named)	excluded=(nothing named)	from=(defaults)
+TIMING	started=2026-10-02T12:57:37.47166Z	finished=2026-10-02T12:57:51.000925Z	compute_total_ms=13529
+TARGET	passed	253ms	b6dad397581881b324a23ca5f6dc1cced6da84c283dd74554e2d384e694f68be	fixture-baseline/lib/fixture_baseline
+TARGET	passed	232ms	2b96c18d984f535b99f61c06fb9ab6af508860719591faec1141c1a95c117fe3	fixture-baseline/test/doubling
+MUTANT	tests	00c6fea6140456f15a4f	src/lib.rs:8:5	return-default	build=default killed_by=fixture-baseline/lib/fixture_baseline
+MUTANT	tests	aec569b677a2d793ec60	src/lib.rs:8:8	negate-condition	build=default killed_by=fixture-baseline/lib/fixture_baseline
+MUTANT	tests	2f0c4aff9635ecc97852	src/lib.rs:8:8	condition-to-true	build=default killed_by=fixture-baseline/lib/fixture_baseline
+MUTANT	tests	2b790ae1807763839712	src/lib.rs:8:8	condition-to-false	build=default killed_by=fixture-baseline/lib/fixture_baseline
+MUTANT	unnoticed	7590b327de928142a7d4	src/lib.rs:8:10	gt-to-ge
+MUTANT	tests	916ac16c73c7c959f7e0	src/lib.rs:9:9	return-default	build=default killed_by=fixture-baseline/lib/fixture_baseline
+MUTANT	tests	13d60fff74f48ec22ca0	src/lib.rs:10:15	negate-condition	build=default killed_by=fixture-baseline/lib/fixture_baseline
+MUTANT	unnoticed	411d46d889aef733e693	src/lib.rs:10:15	condition-to-true
+MUTANT	tests	9f9db85e50c14a6e3fcc	src/lib.rs:10:15	condition-to-false	build=default killed_by=fixture-baseline/lib/fixture_baseline
+MUTANT	unnoticed	57a197f6d1d0e560e888	src/lib.rs:10:17	lt-to-le
+MUTANT	tests	0e40ade9c35f30532907	src/lib.rs:11:9	return-default	build=default killed_by=fixture-baseline/lib/fixture_baseline
+MUTANT	unreached	b6d893a120ece7625630	src/lib.rs:13:9	return-default
+MUTANT	tests	7c995250658c8c7eed50	src/lib.rs:19:5	return-default	build=default killed_by=fixture-baseline/test/doubling
+MUTANT	tests	43043104a9c81f823b18	src/lib.rs:19:7	mul-to-div	build=default killed_by=fixture-baseline/test/doubling
+FINDING	dimension-not-measured	schedule	3 thing(s) the schedule dimension put were not decided, so it is not established along it: fixture-baseline/doc/fixture_baseline: its baseline did not pass, so no schedule of it could be held; fixture-baseline/lib/fixture_baseline: every delayed schedule passed, which is a sample of its schedules and never all of them; fixture-baseline/test/doubling: every delayed schedule passed, which is a sample of its schedules and never all of them
+FINDING	surviving-mutant	7590b327de928142a7d4	no test noticed gt-to-ge at src/lib.rs:8; 1 sealed execution of 1 target ran it and none noticed	8:10
+FINDING	surviving-mutant	411d46d889aef733e693	no test noticed condition-to-true at src/lib.rs:10; 1 sealed execution of 1 target ran it and none noticed	10:15
+FINDING	surviving-mutant	57a197f6d1d0e560e888	no test noticed lt-to-le at src/lib.rs:10; 1 sealed execution of 1 target ran it and none noticed	10:17
+FINDING	surviving-mutant	b6d893a120ece7625630	no sealed test reaches return-default at src/lib.rs: the mutation lives in code the tests never execute	13:9
+LIMITATION	git-metadata-unavailable	git could not be asked, so the run cannot name the commit it verified
+LIMITATION	touch-not-recorded	the target's guards recorded nothing this run can route by, so every test of it reaches every mutation in it and none of them is narrowed (fixture-baseline/doc/fixture_baseline)
+LIMITATION	skipped-test-code	1 place was not mutated: test-code
+LIMITATION	schedule-not-explored	1 test binary is not proven to run one thread and no schedule of it was explored, so what it does when its threads interleave otherwise is not known (fixture-baseline/doc/fixture_baseline)
+LIMITATION	schedule-sampled	2 test binaries are passed every schedule a delayed guard made, which is a sample of the schedules and not all of them, so a race none of those delays exposed is not ruled out (fixture-baseline/lib/fixture_baseline, fixture-baseline/test/doubling)
+LIMITATION	fault-no-site	no measured file has a `?`, so there was no call a fault could fail
+LIMITATION	crash-no-site	no measured file calls anything that writes, so there was nothing to stop after
+NEXT	njutest explain src/lib.rs:sign:gt-to-ge@8	says which tests reached it	njutest accept src/lib.rs:sign:gt-to-ge@8 --reason "..."	records why it is not a gap
+TARGETS	selected=2	passed=2	failed=0	skipped=0	missing=0
+MUTANTS	cataloged=14	rejected=0	executed=13	unreached=1
+OUTCOMES	killed=10	survived=3	step_limit_reached=0	waited=0	equivalent=0
+WITHIN_OUTCOMES	accepted_of_survived=0	reused_of_killed=0	reused_of_survived=0
+DIMENSION	mutation	measured	catalogued=14	answered=14	holes=0	speaks_not_about=skipped-test-code
+DIMENSION	repeatable	measured	catalogued=14	answered=14	holes=0
+DIMENSION	fault	nothing-to-ask	no measured file has a `?`
+DIMENSION	schedule	measured	catalogued=3	answered=0	holes=3	open=fixture-baseline/doc/fixture_baseline: its baseline did not pass, so no schedule of it could be held; fixture-baseline/lib/fixture_baseline: every delayed schedule passed, which is a sample of its schedules and never all of them; fixture-baseline/test/doubling: every delayed schedule passed, which is a sample of its schedules and never all of them
+DIMENSION	wire	nothing-to-ask	no seam was configured or asked a question
+DIMENSION	durable	nothing-to-ask	no measured file calls anything that writes
+SOUNDNESS	build=default	unsafe_items=0	packages_with_unsafe=0	was_executed=true
+VERDICT	INSUFFICIENT

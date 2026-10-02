@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "automationDetails": {
+        "id": "20261002t125737471z-006769"
+      },
+      "properties": {
+        "accounting": {
+          "faults": {
+            "absorbed": 0,
+            "not_put": 0,
+            "noticed": 0,
+            "sites": 0,
+            "undecided": 0,
+            "unnoticed": 0,
+            "unreached": 0,
+            "waited": 0
+          },
+          "mutants": {
+            "accepted": 0,
+            "cataloged": 14,
+            "equivalent": 0,
+            "executed": 13,
+            "killed": 10,
+            "model_noticed": 0,
+            "model_proved": 0,
+            "observers": {
+              "errored": 0,
+              "model_noticed": 0,
+              "model_proved": 0,
+              "proved": 0,
+              "step_limit_reached": 0,
+              "tests": 10,
+              "types": 0,
+              "unnoticed": 3,
+              "unproven": 0,
+              "unreached": 1,
+              "waited": 0
+            },
+            "rejected": 0,
+            "reused_killed": 0,
+            "reused_survived": 0,
+            "step_limit_reached": 0,
+            "survived": 3,
+            "unreached": 1,
+            "waited": 0
+          },
+          "soundness_by_build": [
+            {
+              "accounting": {
+                "executed": true,
+                "packages_with_unsafe": 0,
+                "unsafe_items": 0
+              },
+              "build": "default"
+            }
+          ],
+          "targets": {
+            "failed": 0,
+            "missing": 0,
+            "passed": 2,
+            "selected": 2,
+            "skipped": 0
+          }
+        },
+        "limitations": [
+          {
+            "detail": "git could not be asked, so the run cannot name the commit it verified",
+            "name": "git-metadata-unavailable"
+          },
+          {
+            "detail": "the target's guards recorded nothing this run can route by, so every test of it reaches every mutation in it and none of them is narrowed (fixture-baseline/doc/fixture_baseline)",
+            "name": "touch-not-recorded"
+          },
+          {
+            "detail": "1 place was not mutated: test-code",
+            "name": "skipped-test-code"
+          },
+          {
+            "detail": "1 test binary is not proven to run one thread and no schedule of it was explored, so what it does when its threads interleave otherwise is not known (fixture-baseline/doc/fixture_baseline)",
+            "name": "schedule-not-explored"
+          },
+          {
+            "detail": "2 test binaries are passed every schedule a delayed guard made, which is a sample of the schedules and not all of them, so a race none of those delays exposed is not ruled out (fixture-baseline/lib/fixture_baseline, fixture-baseline/test/doubling)",
+            "name": "schedule-sampled"
+          },
+          {
+            "detail": "no measured file has a `?`, so there was no call a fault could fail",
+            "name": "fault-no-site"
+          },
+          {
+            "detail": "no measured file calls anything that writes, so there was nothing to stop after",
+            "name": "crash-no-site"
+          }
+        ],
+        "verdict": "Insufficient"
+      },
+      "results": [
+        {
+          "level": "warning",
+          "message": {
+            "text": "3 thing(s) the schedule dimension put were not decided, so it is not established along it: fixture-baseline/doc/fixture_baseline: its baseline did not pass, so no schedule of it could be held; fixture-baseline/lib/fixture_baseline: every delayed schedule passed, which is a sample of its schedules and never all of them; fixture-baseline/test/doubling: every delayed schedule passed, which is a sample of its schedules and never all of them"
+          },
+          "partialFingerprints": {
+            "njutestFinding/v1": "dimension-not-measured:schedule"
+          },
+          "ruleId": "dimension-not-measured"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startColumn": 10,
+                  "startLine": 8
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "no test noticed gt-to-ge at src/lib.rs:8; 1 sealed execution of 1 target ran it and none noticed"
+          },
+          "partialFingerprints": {
+            "njutestFinding/v1": "surviving-mutant:src/lib.rs"
+          },
+          "ruleId": "surviving-mutant"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startColumn": 15,
+                  "startLine": 10
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "no test noticed condition-to-true at src/lib.rs:10; 1 sealed execution of 1 target ran it and none noticed"
+          },
+          "partialFingerprints": {
+            "njutestFinding/v1": "surviving-mutant:src/lib.rs"
+          },
+          "ruleId": "surviving-mutant"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startColumn": 17,
+                  "startLine": 10
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "no test noticed lt-to-le at src/lib.rs:10; 1 sealed execution of 1 target ran it and none noticed"
+          },
+          "partialFingerprints": {
+            "njutestFinding/v1": "surviving-mutant:src/lib.rs"
+          },
+          "ruleId": "surviving-mutant"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startColumn": 9,
+                  "startLine": 13
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "no sealed test reaches return-default at src/lib.rs: the mutation lives in code the tests never execute"
+          },
+          "partialFingerprints": {
+            "njutestFinding/v1": "surviving-mutant:src/lib.rs"
+          },
+          "ruleId": "surviving-mutant"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "informationUri": "https://github.com/P4suta/njutest",
+          "name": "njutest",
+          "rules": [
+            {
+              "id": "dimension-not-measured",
+              "shortDescription": {
+                "text": "dimension not measured"
+              }
+            },
+            {
+              "id": "surviving-mutant",
+              "shortDescription": {
+                "text": "surviving mutant"
+              }
+            }
+          ],
+          "version": "0.1.0"
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

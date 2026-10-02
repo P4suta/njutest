@@ -1,0 +1,2118 @@
+{
+  "document_type": "rust-mutants/run-report",
+  "schema_version": 5,
+  "tool_version": "0.1.0",
+  "run": {
+    "id": "20261002t125722975z",
+    "started_at": "2026-10-02T12:57:22.975616Z",
+    "finished_at": "2026-10-02T12:57:27.94446Z",
+    "duration_ms": 1275,
+    "interrupted": false,
+    "exit_code": 1,
+    "shard": null,
+    "jobs": {
+      "asked": "1",
+      "used": 1
+    }
+  },
+  "workspace": {
+    "root_name": "fixture-coverage",
+    "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "workspace_digest": "56107dcb5385f755aa0690ee17e37dcc5594373209b61c18c27e492a4a3c985c",
+    "catalog_digest": "add28306a2038f8a4435f650d02f98010af9a935f269efe7ddc780e4d7575148",
+    "platform": {
+      "os": "darwin",
+      "arch": "aarch64",
+      "target": "aarch64-apple-darwin"
+    }
+  },
+  "selection": {
+    "tier": "balanced",
+    "operators": [],
+    "include": [],
+    "exclude": [],
+    "packages": [],
+    "build": [],
+    "mutant_steps": 50000000
+  },
+  "accounting": {
+    "cataloged": 32,
+    "refused": 0,
+    "skipped": 4,
+    "executed": 32,
+    "killed": 28,
+    "survived": 4,
+    "unproven": 0,
+    "step_limit_reached": 0,
+    "waited": 0,
+    "inconclusive": 0,
+    "errored": 0,
+    "not_run": 0,
+    "unreached": 0,
+    "declined": 0,
+    "expected": 0,
+    "unproven_killed": 0,
+    "unproven_survived": 0,
+    "unproven_unreached": 0,
+    "unproven_discharged": 0
+  },
+  "score": {
+    "detected": 28,
+    "decided": 32,
+    "value": 0.875
+  },
+  "targets": [
+    {
+      "id": "fixture-coverage/lib/fixture_coverage",
+      "kind": "lib",
+      "harness": true,
+      "tests": 5,
+      "limitations": [],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
+    },
+    {
+      "id": "fixture-coverage/test/upper",
+      "kind": "test",
+      "harness": true,
+      "tests": 1,
+      "limitations": [],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
+    },
+    {
+      "id": "fixture-coverage/doc/fixture_coverage",
+      "kind": "doc",
+      "harness": true,
+      "tests": 0,
+      "limitations": [
+        "doctests-routed-by-file",
+        "doctests-none"
+      ],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
+    }
+  ],
+  "established_tests": 0,
+  "mutants": [
+    {
+      "index": 0,
+      "id": "5cac17c9a5e04edb02b28115bda653301b23e9493e5f86582a44038c13240a05",
+      "display_id": "5cac17c9a5e04edb02b2",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "condition-negation",
+      "rule": "negate-condition",
+      "item": "clamp",
+      "rule_version": 1,
+      "line": 8,
+      "column": 8,
+      "start_byte": 327,
+      "end_byte": 341,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "value <= limit",
+      "replacement": "!(value <= limit)",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 6,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::clamp_returns_the_smaller"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage",
+          "fixture-coverage/test/upper"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::clamp_returns_the_smaller"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::clamp_returns_the_smaller",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 1,
+      "id": "d0dcd9ebde6875a049d83d52c1a76cacab6a3e577228c25c556926fca835b0f5",
+      "display_id": "d0dcd9ebde6875a049d8",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "condition-removal",
+      "rule": "condition-to-true",
+      "item": "clamp",
+      "rule_version": 1,
+      "line": 8,
+      "column": 8,
+      "start_byte": 327,
+      "end_byte": 341,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "value <= limit",
+      "replacement": "true",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 7,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::clamp_returns_the_smaller"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage",
+          "fixture-coverage/test/upper"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::clamp_returns_the_smaller"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::clamp_returns_the_smaller",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 2,
+      "id": "25d385365c0335f457e515bc4575833d69c6d13e4eed81daef4b5cca10ebb770",
+      "display_id": "25d385365c0335f457e5",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "condition-removal",
+      "rule": "condition-to-false",
+      "item": "clamp",
+      "rule_version": 1,
+      "line": 8,
+      "column": 8,
+      "start_byte": 327,
+      "end_byte": 341,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "value <= limit",
+      "replacement": "false",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 7,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::clamp_returns_the_smaller"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage",
+          "fixture-coverage/test/upper"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::clamp_returns_the_smaller"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::clamp_returns_the_smaller",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 3,
+      "id": "d8a9939330496216a17d27bab570a74d23823587e4ab6d7ef2fc6763645d45fe",
+      "display_id": "d8a9939330496216a17d",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "comparison",
+      "rule": "le-to-lt",
+      "item": "clamp",
+      "rule_version": 1,
+      "line": 8,
+      "column": 14,
+      "start_byte": 333,
+      "end_byte": 335,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "<=",
+      "replacement": "<",
+      "outcome": "survived",
+      "step_notice": null,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 10,
+      "tests_run": 2,
+      "killed_by": [],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "discharged",
+        "fallback": null,
+        "reaching": [],
+        "discharged": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "proof": "never-infected"
+          },
+          {
+            "target": "fixture-coverage/test/upper",
+            "proof": "branch-never-taken"
+          }
+        ],
+        "executed": [],
+        "tests": {}
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::clamp_returns_the_smaller",
+            "came_to": "passed"
+          },
+          {
+            "target": "fixture-coverage/test/upper",
+            "test": "a_value_above_the_limit_is_the_limit",
+            "came_to": "passed"
+          }
+        ]
+      }
+    },
+    {
+      "index": 4,
+      "id": "e50b2e8595cf900f3ac19a2e5d9018226d12a4384c9e578190420fbd5cef169d",
+      "display_id": "e50b2e8595cf900f3ac1",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "return-replacement",
+      "rule": "return-default",
+      "item": "clamp",
+      "rule_version": 1,
+      "line": 9,
+      "column": 16,
+      "start_byte": 359,
+      "end_byte": 364,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "value",
+      "replacement": "Default::default()",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 6,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::clamp_returns_the_smaller"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::clamp_returns_the_smaller"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::clamp_returns_the_smaller",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 5,
+      "id": "60434963b2d455f5908b177dd4c38912b8399370d69b2c6e45fb40a0ae2a3b57",
+      "display_id": "60434963b2d455f5908b",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "return-replacement",
+      "rule": "return-default",
+      "item": "clamp",
+      "rule_version": 1,
+      "line": 11,
+      "column": 5,
+      "start_byte": 376,
+      "end_byte": 381,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "limit",
+      "replacement": "Default::default()",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 7,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::clamp_returns_the_smaller"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage",
+          "fixture-coverage/test/upper"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::clamp_returns_the_smaller"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::clamp_returns_the_smaller",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 6,
+      "id": "56a6462eff402c51fa3ce7964956f51847d8bc7c587bdc3f6657d4550698384e",
+      "display_id": "56a6462eff402c51fa3c",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "condition-negation",
+      "rule": "negate-condition",
+      "item": "earlier",
+      "rule_version": 1,
+      "line": 16,
+      "column": 8,
+      "start_byte": 590,
+      "end_byte": 596,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "a <= b",
+      "replacement": "!(a <= b)",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 6,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_version_is_earlier_than_a_later_one"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_version_is_earlier_than_a_later_one"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_version_is_earlier_than_a_later_one",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 7,
+      "id": "0e6e97cebe29b49293931c5b46cda21d62e7c510b59770dd6e77bb70c7d59fee",
+      "display_id": "0e6e97cebe29b4929393",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "condition-removal",
+      "rule": "condition-to-true",
+      "item": "earlier",
+      "rule_version": 1,
+      "line": 16,
+      "column": 8,
+      "start_byte": 590,
+      "end_byte": 596,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "a <= b",
+      "replacement": "true",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 7,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_version_is_earlier_than_a_later_one"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_version_is_earlier_than_a_later_one"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_version_is_earlier_than_a_later_one",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 8,
+      "id": "e6b4ec78eb35f6cef80ddbeeaf8276be7cb2745169331e25c1dc42c49a1b53bc",
+      "display_id": "e6b4ec78eb35f6cef80d",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "condition-removal",
+      "rule": "condition-to-false",
+      "item": "earlier",
+      "rule_version": 1,
+      "line": 16,
+      "column": 8,
+      "start_byte": 590,
+      "end_byte": 596,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "a <= b",
+      "replacement": "false",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 7,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_version_is_earlier_than_a_later_one"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_version_is_earlier_than_a_later_one"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_version_is_earlier_than_a_later_one",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 9,
+      "id": "27e9c3f2d6bb568e5ef3e92a982827a60c58c8d1775fb26e8ed863c00ff7681e",
+      "display_id": "27e9c3f2d6bb568e5ef3",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "comparison",
+      "rule": "le-to-lt",
+      "item": "earlier",
+      "rule_version": 1,
+      "line": 16,
+      "column": 10,
+      "start_byte": 592,
+      "end_byte": 594,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "<=",
+      "replacement": "<",
+      "outcome": "survived",
+      "step_notice": null,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 7,
+      "tests_run": 1,
+      "killed_by": [],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_version_is_earlier_than_a_later_one"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_version_is_earlier_than_a_later_one",
+            "came_to": "passed"
+          }
+        ]
+      }
+    },
+    {
+      "index": 10,
+      "id": "b1675dab81a17593d6aafacf53b7ae594b12afaa27e6d29be03e2df0e0d64afe",
+      "display_id": "b1675dab81a17593d6aa",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "boolean-literal",
+      "rule": "true-to-false",
+      "item": "earlier",
+      "rule_version": 1,
+      "line": 17,
+      "column": 16,
+      "start_byte": 614,
+      "end_byte": 618,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "true",
+      "replacement": "false",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 8,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_version_is_earlier_than_a_later_one"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_version_is_earlier_than_a_later_one"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_version_is_earlier_than_a_later_one",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 11,
+      "id": "97fdd99d1189fccc52b3a3f8a9503ce798f4087174cd2f848c739f1cadd55f77",
+      "display_id": "97fdd99d1189fccc52b3",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "boolean-literal",
+      "rule": "false-to-true",
+      "item": "earlier",
+      "rule_version": 1,
+      "line": 19,
+      "column": 5,
+      "start_byte": 630,
+      "end_byte": 635,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "false",
+      "replacement": "true",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 7,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_version_is_earlier_than_a_later_one"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_version_is_earlier_than_a_later_one"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_version_is_earlier_than_a_later_one",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 12,
+      "id": "df6a811dc8b92df4f0ac98a8507d7fa14561495396cc870d43af33e568171d3a",
+      "display_id": "df6a811dc8b92df4f0ac",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "condition-negation",
+      "rule": "negate-condition",
+      "item": "short",
+      "rule_version": 1,
+      "line": 28,
+      "column": 8,
+      "start_byte": 897,
+      "end_byte": 913,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "items.len() <= 2",
+      "replacement": "!(items.len() <= 2)",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 7,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_short_list_is_short"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_short_list_is_short"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_short_list_is_short",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 13,
+      "id": "4c97f70e00306f9dc691f6b1b1879a7b63ac9cad8b6b830e37dc2daf96b681f0",
+      "display_id": "4c97f70e00306f9dc691",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "condition-removal",
+      "rule": "condition-to-true",
+      "item": "short",
+      "rule_version": 1,
+      "line": 28,
+      "column": 8,
+      "start_byte": 897,
+      "end_byte": 913,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "items.len() <= 2",
+      "replacement": "true",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 9,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_short_list_is_short"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_short_list_is_short"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_short_list_is_short",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 14,
+      "id": "5b9d10d555aee2f9a76baf8595a3c32aac091c9ff5fb4b3ca12a3afda0fa3d4e",
+      "display_id": "5b9d10d555aee2f9a76b",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "condition-removal",
+      "rule": "condition-to-false",
+      "item": "short",
+      "rule_version": 1,
+      "line": 28,
+      "column": 8,
+      "start_byte": 897,
+      "end_byte": 913,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "items.len() <= 2",
+      "replacement": "false",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 9,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_short_list_is_short"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_short_list_is_short"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_short_list_is_short",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 15,
+      "id": "0a79c5a3228a6a3320ffb578b361c7ffba4f58a94d71d75e93e7ef5e0438dd9f",
+      "display_id": "0a79c5a3228a6a3320ff",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "comparison",
+      "rule": "le-to-lt",
+      "item": "short",
+      "rule_version": 1,
+      "line": 28,
+      "column": 20,
+      "start_byte": 909,
+      "end_byte": 911,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "<=",
+      "replacement": "<",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 9,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_short_list_is_short"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_short_list_is_short"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_short_list_is_short",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 16,
+      "id": "23af36e78e61d3830771cbafcfb2a02a6491cf5338ac56d986c5713cc2254988",
+      "display_id": "23af36e78e61d3830771",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "boolean-literal",
+      "rule": "true-to-false",
+      "item": "short",
+      "rule_version": 1,
+      "line": 29,
+      "column": 16,
+      "start_byte": 931,
+      "end_byte": 935,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "true",
+      "replacement": "false",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 9,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_short_list_is_short"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_short_list_is_short"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_short_list_is_short",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 17,
+      "id": "9c4254184c154b37dfecaf7fb4f7aa119af69ca15a39ef46b973221ac6475c3d",
+      "display_id": "9c4254184c154b37dfec",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "boolean-literal",
+      "rule": "false-to-true",
+      "item": "short",
+      "rule_version": 1,
+      "line": 31,
+      "column": 5,
+      "start_byte": 947,
+      "end_byte": 952,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "false",
+      "replacement": "true",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 11,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_short_list_is_short"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_short_list_is_short"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_short_list_is_short",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 18,
+      "id": "e7bffab1d339dfb05f85824d61f30dd6b93ef6117a6dd729d6afbe052d5b20be",
+      "display_id": "e7bffab1d339dfb05f85",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "condition-negation",
+      "rule": "negate-condition",
+      "item": "named",
+      "rule_version": 1,
+      "line": 36,
+      "column": 8,
+      "start_byte": 1119,
+      "end_byte": 1130,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "name <= \"m\"",
+      "replacement": "!(name <= \"m\")",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 8,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_name_before_m_is_named"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_name_before_m_is_named"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_name_before_m_is_named",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 19,
+      "id": "ca464b85fc6dfe166b85f8001ff16761382280458755fba91f891122f8cf8140",
+      "display_id": "ca464b85fc6dfe166b85",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "condition-removal",
+      "rule": "condition-to-true",
+      "item": "named",
+      "rule_version": 1,
+      "line": 36,
+      "column": 8,
+      "start_byte": 1119,
+      "end_byte": 1130,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "name <= \"m\"",
+      "replacement": "true",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 9,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_name_before_m_is_named"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_name_before_m_is_named"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_name_before_m_is_named",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 20,
+      "id": "5d7484dd772d02112405e2da5d3aa894360fa76a8e90d9632275f97c846811df",
+      "display_id": "5d7484dd772d02112405",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "condition-removal",
+      "rule": "condition-to-false",
+      "item": "named",
+      "rule_version": 1,
+      "line": 36,
+      "column": 8,
+      "start_byte": 1119,
+      "end_byte": 1130,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "name <= \"m\"",
+      "replacement": "false",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 7,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_name_before_m_is_named"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_name_before_m_is_named"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_name_before_m_is_named",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 21,
+      "id": "7cfdea86ac571b743bd04a4bc0cf3d49466e64fd5910421f03389d50d6d1b260",
+      "display_id": "7cfdea86ac571b743bd0",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "comparison",
+      "rule": "le-to-lt",
+      "item": "named",
+      "rule_version": 1,
+      "line": 36,
+      "column": 13,
+      "start_byte": 1124,
+      "end_byte": 1126,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "<=",
+      "replacement": "<",
+      "outcome": "survived",
+      "step_notice": null,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 9,
+      "tests_run": 1,
+      "killed_by": [],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "discharged",
+        "fallback": null,
+        "reaching": [],
+        "discharged": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "proof": "never-infected"
+          }
+        ],
+        "executed": [],
+        "tests": {}
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_name_before_m_is_named",
+            "came_to": "passed"
+          }
+        ]
+      }
+    },
+    {
+      "index": 22,
+      "id": "a327c1687a74b22a55d399e34fabb6502cdcb419586371616d76d927f4b060c6",
+      "display_id": "a327c1687a74b22a55d3",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "boolean-literal",
+      "rule": "true-to-false",
+      "item": "named",
+      "rule_version": 1,
+      "line": 37,
+      "column": 16,
+      "start_byte": 1148,
+      "end_byte": 1152,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "true",
+      "replacement": "false",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 8,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_name_before_m_is_named"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_name_before_m_is_named"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_name_before_m_is_named",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 23,
+      "id": "e5d16d6b8f3079358855f2b028890328dd769aeb18cdda897cbae9fccd44b9c2",
+      "display_id": "e5d16d6b8f3079358855",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "boolean-literal",
+      "rule": "false-to-true",
+      "item": "named",
+      "rule_version": 1,
+      "line": 39,
+      "column": 5,
+      "start_byte": 1164,
+      "end_byte": 1169,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "false",
+      "replacement": "true",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 12,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_name_before_m_is_named"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_name_before_m_is_named"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_name_before_m_is_named",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 24,
+      "id": "a2bc7cba4054f5efcd09cb701df089dc427d976ebd55333232ea5f1b00f9f6c4",
+      "display_id": "a2bc7cba4054f5efcd09",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "condition-negation",
+      "rule": "negate-condition",
+      "item": "labelled",
+      "rule_version": 1,
+      "line": 44,
+      "column": 8,
+      "start_byte": 1425,
+      "end_byte": 1455,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "label == \"target\" && rank <= 3",
+      "replacement": "!(label == \"target\" && rank <= 3)",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 9,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_labelled_target_of_low_rank_is_labelled"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_labelled_target_of_low_rank_is_labelled"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_labelled_target_of_low_rank_is_labelled",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 25,
+      "id": "5c3b97141c117c6fb8fa1d9bc69ea620f0ccb5711119f47470fe22306b8be83d",
+      "display_id": "5c3b97141c117c6fb8fa",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "condition-removal",
+      "rule": "condition-to-true",
+      "item": "labelled",
+      "rule_version": 1,
+      "line": 44,
+      "column": 8,
+      "start_byte": 1425,
+      "end_byte": 1455,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "label == \"target\" && rank <= 3",
+      "replacement": "true",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 9,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_labelled_target_of_low_rank_is_labelled"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_labelled_target_of_low_rank_is_labelled"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_labelled_target_of_low_rank_is_labelled",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 26,
+      "id": "9c38c425704efc6df16891faeaa836379281ee8636b21f643696f4133f3c73d5",
+      "display_id": "9c38c425704efc6df168",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "condition-removal",
+      "rule": "condition-to-false",
+      "item": "labelled",
+      "rule_version": 1,
+      "line": 44,
+      "column": 8,
+      "start_byte": 1425,
+      "end_byte": 1455,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "label == \"target\" && rank <= 3",
+      "replacement": "false",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 8,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_labelled_target_of_low_rank_is_labelled"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_labelled_target_of_low_rank_is_labelled"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_labelled_target_of_low_rank_is_labelled",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 27,
+      "id": "d26c55f2db5eca1ecdbe7043be9e81097829f32d48c32b7181e294a10df55f85",
+      "display_id": "d26c55f2db5eca1ecdbe",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "comparison",
+      "rule": "eq-to-neq",
+      "item": "labelled",
+      "rule_version": 1,
+      "line": 44,
+      "column": 14,
+      "start_byte": 1431,
+      "end_byte": 1433,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "==",
+      "replacement": "!=",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 9,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_labelled_target_of_low_rank_is_labelled"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_labelled_target_of_low_rank_is_labelled"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_labelled_target_of_low_rank_is_labelled",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 28,
+      "id": "7972f10b600490ef32f32644f8acbff274f674ac72447adf471fa3c0c213ac95",
+      "display_id": "7972f10b600490ef32f3",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "boolean-connective",
+      "rule": "and-to-or",
+      "item": "labelled",
+      "rule_version": 1,
+      "line": 44,
+      "column": 26,
+      "start_byte": 1443,
+      "end_byte": 1445,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "&&",
+      "replacement": "||",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 10,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_labelled_target_of_low_rank_is_labelled"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_labelled_target_of_low_rank_is_labelled"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_labelled_target_of_low_rank_is_labelled",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 29,
+      "id": "0a8ab9771954a24f9d25c1a5e4a83ee27f3994e896fac072c546be017f2173c2",
+      "display_id": "0a8ab9771954a24f9d25",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "comparison",
+      "rule": "le-to-lt",
+      "item": "labelled",
+      "rule_version": 1,
+      "line": 44,
+      "column": 34,
+      "start_byte": 1451,
+      "end_byte": 1453,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "<=",
+      "replacement": "<",
+      "outcome": "survived",
+      "step_notice": null,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 7,
+      "tests_run": 1,
+      "killed_by": [],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "discharged",
+        "fallback": null,
+        "reaching": [],
+        "discharged": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "proof": "never-infected"
+          }
+        ],
+        "executed": [],
+        "tests": {}
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_labelled_target_of_low_rank_is_labelled",
+            "came_to": "passed"
+          }
+        ]
+      }
+    },
+    {
+      "index": 30,
+      "id": "19cb1252f74aee5c39d0b007bc21143098629c04ce3d3b36aa03b6cbbfd91739",
+      "display_id": "19cb1252f74aee5c39d0",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "boolean-literal",
+      "rule": "true-to-false",
+      "item": "labelled",
+      "rule_version": 1,
+      "line": 45,
+      "column": 16,
+      "start_byte": 1473,
+      "end_byte": 1477,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "true",
+      "replacement": "false",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 11,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_labelled_target_of_low_rank_is_labelled"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_labelled_target_of_low_rank_is_labelled"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_labelled_target_of_low_rank_is_labelled",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 31,
+      "id": "287db8451f8a0e8ad123fb42703f8374d40644a60591756a0409a826eba4f7c1",
+      "display_id": "287db8451f8a0e8ad123",
+      "path": "src/lib.rs",
+      "package": "fixture-coverage",
+      "family": "boolean-literal",
+      "rule": "false-to-true",
+      "item": "labelled",
+      "rule_version": 1,
+      "line": 47,
+      "column": 5,
+      "start_byte": 1489,
+      "end_byte": 1494,
+      "source_digest": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+      "original": "false",
+      "replacement": "true",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-coverage/lib/fixture_coverage",
+      "exit_code": -1,
+      "duration_ms": 8,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::a_labelled_target_of_low_rank_is_labelled"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-coverage/lib/fixture_coverage"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-coverage/lib/fixture_coverage": [
+            "tests::a_labelled_target_of_low_rank_is_labelled"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-coverage/lib/fixture_coverage",
+            "test": "tests::a_labelled_target_of_low_rank_is_labelled",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    }
+  ],
+  "rejections": [],
+  "skips": [
+    {
+      "reason": "test-code",
+      "path": "src/lib.rs",
+      "count": 4,
+      "explanation": "the code is a test: a #[test] function or anything behind #[cfg(test)], which measures itself"
+    }
+  ],
+  "expectations": [],
+  "findings": [
+    {
+      "kind": "surviving-mutant",
+      "mutant": "d8a9939330496216a17d27bab570a74d23823587e4ab6d7ef2fc6763645d45fe",
+      "detail": "no test noticed d8a9939330496216a17d; 2 tests ran and passed"
+    },
+    {
+      "kind": "surviving-mutant",
+      "mutant": "27e9c3f2d6bb568e5ef3e92a982827a60c58c8d1775fb26e8ed863c00ff7681e",
+      "detail": "no test noticed 27e9c3f2d6bb568e5ef3; 1 test ran and passed"
+    },
+    {
+      "kind": "surviving-mutant",
+      "mutant": "7cfdea86ac571b743bd04a4bc0cf3d49466e64fd5910421f03389d50d6d1b260",
+      "detail": "no test noticed 7cfdea86ac571b743bd0; 1 test ran and passed"
+    },
+    {
+      "kind": "surviving-mutant",
+      "mutant": "0a8ab9771954a24f9d25c1a5e4a83ee27f3994e896fac072c546be017f2173c2",
+      "detail": "no test noticed 0a8ab9771954a24f9d25; 1 test ran and passed"
+    }
+  ],
+  "facts": [
+    "panic=\"unwind\"",
+    "target_abi=\"\"",
+    "target_arch=\"aarch64\"",
+    "target_endian=\"little\"",
+    "target_env=\"\"",
+    "target_family=\"unix\"",
+    "target_has_atomic=\"128\"",
+    "target_has_atomic=\"16\"",
+    "target_has_atomic=\"32\"",
+    "target_has_atomic=\"64\"",
+    "target_has_atomic=\"8\"",
+    "target_has_atomic=\"ptr\"",
+    "target_has_atomic_primitive_alignment=\"128\"",
+    "target_has_atomic_primitive_alignment=\"16\"",
+    "target_has_atomic_primitive_alignment=\"32\"",
+    "target_has_atomic_primitive_alignment=\"64\"",
+    "target_has_atomic_primitive_alignment=\"8\"",
+    "target_has_atomic_primitive_alignment=\"ptr\"",
+    "target_os=\"macos\"",
+    "target_pointer_width=\"64\"",
+    "target_vendor=\"apple\"",
+    "unix"
+  ]
+}
