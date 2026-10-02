@@ -24,6 +24,7 @@ benchmarks = ["dep:criterion"]
 testkit = []
 
 [dependencies]
+notify = { workspace = true }
 njutest-macros = { workspace = true }
 rust-mutants-adapt = { workspace = true }
 rust-mutants-decision = { workspace = true }
