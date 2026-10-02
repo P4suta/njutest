@@ -15,7 +15,9 @@ use njutest_devkit::result::{ResultState, result_state};
 use xtask::engineaudit::sentinel::{
     self, KILLED, SOURCE, SURVIVED, TARGET, base, recording, routed_by_test, short, touched, with,
 };
-use xtask::engineaudit::{Audit, AuditError, EXIT_UNREADABLE, Evidence, Layer, Source, Standing};
+use xtask::engineaudit::{
+    Audit, AuditError, Coverage, EXIT_UNREADABLE, Evidence, Layer, Source, Standing,
+};
 use xtask::gates;
 
 fn run_directory(document: &serde_json::Value) -> tempfile::TempDir {
@@ -686,12 +688,123 @@ fn a_run_without_a_recording_leaves_the_trace_layers_unaudited() {
     assert_eq!(remarks.len(), 1, "{audit}");
     assert_eq!(remarks[0].standing, Standing::Unaudited);
     assert!(
-        audit.of(Layer::Merge)[0].standing == Standing::Unaudited,
-        "{audit}"
-    );
-    assert!(
         audit.of(Layer::Ledger)[0].standing == Standing::Unaudited,
         "{audit}"
+    );
+}
+
+#[test]
+fn a_whole_run_s_own_catalog_owes_no_merge() {
+    let audit = audited(&base());
+
+    assert_eq!(
+        audit.coverage[&Layer::Merge],
+        Coverage::Absent(
+            "this report is one run's own whole catalog, and a merge is audited against its \
+             parts"
+        ),
+        "a run that measured the whole catalog itself, as its own shard field says, is one \
+         run's report, and calling that unaudited would be inventing missing evidence: {audit}"
+    );
+}
+
+#[test]
+fn a_part_of_a_catalog_without_its_siblings_leaves_the_merge_unaudited() {
+    let audit = audited(&with(serde_json::json!({ "run": { "shard": "1/2" } })));
+
+    assert!(
+        audit
+            .of(Layer::Merge)
+            .iter()
+            .any(|remark| remark.standing == Standing::Unaudited),
+        "a run that measured one part is owed the other parts of its catalog, and their absence \
+         is missing evidence, not a decision: {audit}"
+    );
+}
+
+/// The specimen with no acceptance claimed, which is the run an engine of a configuration without `[[mutation.expect]]` writes.
+fn claiming_none() -> serde_json::Value {
+    with(serde_json::json!({
+        "accounting": { "expected": 0 },
+        "mutants": [{}, { "expected": false }],
+        "expectations": [],
+        "findings": [{}, { "kind": "surviving-mutant", "mutant": SURVIVED, "detail": "d" }]
+    }))
+}
+
+#[test]
+fn a_run_that_claims_no_acceptance_owes_no_ledger() {
+    let audit = audited(&claiming_none());
+
+    assert_eq!(
+        audit.coverage[&Layer::Ledger],
+        Coverage::Absent("the run claims no acceptance, so no ledger is owed an answer"),
+        "the report itself carries its claim list complete and empty, so no acceptance exists \
+         for a ledger to answer or go stale over, and a survivor without one stands as the \
+         finding the findings layer already re-decided: {audit}"
+    );
+}
+
+/// The specimen's own accounting with every mutant column at zero, no row, no refusal and no finding, which is the report a run of a catalog that holds nothing writes.
+fn catalogued_none() -> serde_json::Value {
+    with(serde_json::json!({
+        "mutants": [],
+        "rejections": [],
+        "findings": [],
+        "expectations": [],
+        "score": null,
+        "accounting": {
+            "cataloged": 0, "refused": 0, "skipped": 0, "executed": 0, "killed": 0,
+            "survived": 0, "unproven": 0, "step_limit_reached": 0, "waited": 0,
+            "inconclusive": 0, "errored": 0, "not_run": 0, "unreached": 0, "declined": 0,
+            "expected": 0, "unproven_killed": 0, "unproven_survived": 0,
+            "unproven_unreached": 0, "unproven_discharged": 0
+        }
+    }))
+}
+
+#[test]
+fn a_catalog_that_carries_no_mutant_owes_no_proof() {
+    let audit = audited(&catalogued_none());
+
+    assert_eq!(
+        audit.coverage[&Layer::Proofs],
+        Coverage::Absent(
+            "no discharge is claimed and no route rests on the coverage measurement, so no \
+             proof is owed"
+        ),
+        "a catalog that holds no mutant narrows nothing by any measurement and claims no \
+         discharge, and an unaudited line about either would be missing evidence invented: \
+         {audit}"
+    );
+}
+
+#[test]
+fn a_run_whose_guards_measured_owes_no_coverage_measurement() {
+    let audit = with_record(&base(), &touched());
+
+    assert_eq!(
+        audit.coverage[&Layer::Proofs],
+        Coverage::Absent(
+            "no discharge is claimed and no route rests on the coverage measurement, so no \
+             proof is owed"
+        ),
+        "a run whose guards measured routes by what they recorded rests on the guards' record, \
+         which the touch layer re-decides, so the coverage measurement narrowed nothing: \
+         {audit}"
+    );
+}
+
+#[test]
+fn a_run_whose_guards_recorded_nothing_is_owed_its_coverage_measurement() {
+    let audit = audited(&base());
+
+    assert!(
+        audit.of(Layer::Proofs).iter().any(|remark| {
+            remark.standing == Standing::Unaudited && remark.subject == "measurement"
+        }),
+        "a run that routed by the coverage measurement and kept none is missing evidence, not \
+         proven absent: {audit}"
     );
 }
 

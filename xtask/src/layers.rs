@@ -25,3 +25,12 @@ impl fmt::Display for Coverage {
         }
     }
 }
+
+/// What a layer's closed scope derives about one subject it could be owed, which is the only way a reader may decide that a subject is not there: a scope the recording itself establishes in the complete, or evidence that is missing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Closed {
+    /// The recording's own complete scope derives that the subject cannot be there: a catalogue that catalogued none, an accounting that claims none, a configuration that asked for none.
+    NothingOwed(&'static str),
+    /// The subject is owed and the recording does not carry it, which is neither a pass nor a failure.
+    Missing,
+}

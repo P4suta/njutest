@@ -9,17 +9,31 @@ use std::fmt;
 use serde::Deserialize;
 
 use super::{Audit, Decided, Layer, MET, Notes, Report, SURVIVING_MUTANT, UNREACHED_MUTANT};
+use crate::layers::Closed;
+
+/// The ledger layer's subject, closed from the report's own claim list: a run that claims no acceptance — whose `expectations` the report itself carries complete and empty — has no acceptance a ledger could answer or go stale over, so no ledger is owed one; a run that claims any is owed the ledger its claims answer to.
+const fn accepted_scope(report: &Report) -> Closed {
+    if report.expectations.is_empty() {
+        return Closed::NothingOwed("the run claims no acceptance, so no ledger is owed an answer");
+    }
+    Closed::Missing
+}
 
 pub(super) fn ledger(report: &Report, ledger: Option<&Ledger>, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Ledger);
     let Some(ledger) = ledger else {
-        notes.unaudited(
-            "ledger",
-            "no ledger was given, so whether every survivor is one somebody accepted cannot be \
-             re-decided"
-                .to_owned(),
-        );
-        return notes.looked();
+        match accepted_scope(report) {
+            Closed::NothingOwed(why) => return notes.absent(why),
+            Closed::Missing => {
+                notes.unaudited(
+                    "ledger",
+                    "no ledger was given, so whether every survivor is one somebody accepted \
+                     cannot be re-decided"
+                        .to_owned(),
+                );
+                return notes.looked();
+            }
+        }
     };
     for finding in &report.findings {
         if finding.kind == SURVIVING_MUTANT || finding.kind == UNREACHED_MUTANT {

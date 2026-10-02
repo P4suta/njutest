@@ -103,7 +103,7 @@ impl Document {
             _duration_ms: _,
             interrupted,
             exit_code,
-            _shard: _,
+            shard,
             _jobs: _,
         } = run;
         let Workspace {
@@ -124,6 +124,7 @@ impl Document {
         let skip_counts = skips.into_iter().map(Skip::count).collect();
         Report {
             run_id,
+            shard,
             targets,
             tool_version,
             workspace_digest,
@@ -162,7 +163,7 @@ struct Run {
     exit_code: u8,
     #[serde(rename = "shard")]
     #[serde(deserialize_with = "required_option")]
-    _shard: Option<String>,
+    shard: Option<String>,
     #[serde(rename = "jobs")]
     _jobs: Jobs,
 }

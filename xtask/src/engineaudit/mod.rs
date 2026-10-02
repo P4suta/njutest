@@ -1113,6 +1113,8 @@ impl fmt::Display for FindingKind {
 #[derive(Debug)]
 struct Report {
     run_id: String,
+    /// The part of the catalog this run measured, when it measured one; nothing for a run that measured the whole catalog itself.
+    shard: Option<String>,
     targets: Vec<String>,
     tool_version: String,
     workspace_digest: String,

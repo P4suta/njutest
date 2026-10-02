@@ -14,6 +14,7 @@ pub mod soundness;
 use ran::{Executions, Kept, Ran};
 
 use crate::error::Coded as _;
+use crate::layers::Closed;
 pub use crate::layers::Coverage;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -5219,6 +5220,27 @@ fn contradicted(reported: &str, recorded: &[&str]) -> Option<String> {
     }
 }
 
+/// The proofs layer's routing subject, closed from the report's own complete catalogue: a report that carries no mutant row, names no execution of one and no discharge has no mutation any route could decide, so absence is the report's own statement and not missing evidence; anything else — a catalogue with rows, a recording that executed or discharged — is owed the routing that decided it.
+fn routed_scope(
+    recording: &Recording<'_>,
+    rerouted: Option<Rerouted<'_>>,
+    executions: &Executions<'_>,
+) -> Closed {
+    let no_discharge = rerouted.is_none_or(|Rerouted { routing, .. }| {
+        routing
+            .routes
+            .iter()
+            .all(|route| route.discharged.is_empty())
+    });
+    if recording.mutants.is_empty() && executions.each().next().is_none() && no_discharge {
+        return Closed::NothingOwed(
+            "the report's own complete catalogue carries no mutant, so no routing decision is \
+             owed",
+        );
+    }
+    Closed::Missing
+}
+
 fn proofs(
     recording: &Recording<'_>,
     rerouted: Option<Rerouted<'_>>,
@@ -5226,14 +5248,20 @@ fn proofs(
     audit: &mut Audit,
 ) -> Decided {
     let mut notes = Notes::on(audit, Layer::Proofs);
+    let routed = routed_scope(recording, rerouted, executions);
     let Some(Rerouted { routing, repairs }) = rerouted else {
-        notes.unaudited(
-            "route",
-            "the run kept no recording of how it routed, so which target each proof removed \
-             cannot be re-derived"
-                .to_owned(),
-        );
-        return notes.looked();
+        match routed {
+            Closed::NothingOwed(why) => return notes.absent(why),
+            Closed::Missing => {
+                notes.unaudited(
+                    "route",
+                    "the run kept no recording of how it routed, so which target each proof \
+                     removed cannot be re-derived"
+                        .to_owned(),
+                );
+                return notes.looked();
+            }
+        }
     };
     let removed: BTreeMap<String, BTreeMap<String, String>> = routing
         .routes
@@ -5269,14 +5297,19 @@ fn proofs(
         }
     }
     if removed.is_empty() && executed.natively.is_empty() {
-        notes.unaudited(
-            "route",
-            "the recording holds no routing decision and no native mutation execution, so \
-             there is nothing to hold a layer to; a sealed execution is put where its own \
-             control reached, which no route decides"
-                .to_owned(),
-        );
-        return notes.looked();
+        match routed {
+            Closed::NothingOwed(why) => return notes.absent(why),
+            Closed::Missing => {
+                notes.unaudited(
+                    "route",
+                    "the recording holds no routing decision and no native mutation execution, \
+                     so there is nothing to hold a layer to; a sealed execution is put where \
+                     its own control reached, which no route decides"
+                        .to_owned(),
+                );
+                return notes.looked();
+            }
+        }
     }
     let known: BTreeSet<&str> = recording
         .targets

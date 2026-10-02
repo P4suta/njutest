@@ -411,6 +411,59 @@ fn a_recording_of_no_routes_leaves_the_proofs_unaudited() {
     );
 }
 
+/// The specimen's own accounting with every mutant column at zero, no mutant row and no finding, which is the report a run of a catalog that holds nothing writes.
+fn catalogued_none() -> serde_json::Value {
+    with(serde_json::json!({
+        "mutants": [],
+        "findings": [],
+        "accounting": { "mutants": {
+            "cataloged": 0, "rejected": 0, "executed": 0, "killed": 0, "survived": 0,
+            "step_limit_reached": 0, "waited": 0, "unreached": 0, "equivalent": 0,
+            "accepted": 0, "reused_killed": 0, "reused_survived": 0,
+            "model_noticed": 0, "model_proved": 0
+        }}
+    }))
+}
+
+#[test]
+fn a_catalog_that_carries_no_mutant_proves_no_route_is_owed() {
+    let audit = audited(&catalogued_none());
+
+    assert!(
+        audit
+            .remarks
+            .iter()
+            .all(|remark| remark.layer != Layer::Proofs || remark.standing != Standing::Unaudited),
+        "a report whose own complete accounting carries no mutant has no mutation any route \
+         could decide, and an unaudited line about routing would be missing evidence invented: \
+         {audit}"
+    );
+    assert_eq!(
+        audit.coverage.get(&Layer::Proofs).copied(),
+        Some(Coverage::Absent(
+            "the report's own complete catalogue carries no mutant, so no routing decision is \
+             owed"
+        )),
+        "the proofs layer says why there is nothing to re-decide, as its own scope derives it: \
+         {audit}"
+    );
+}
+
+#[test]
+fn a_route_in_a_recording_of_a_catalog_of_none_is_not_proven_absence() {
+    let audit = audited_with(&catalogued_none(), &routes());
+
+    assert_ne!(
+        audit.coverage.get(&Layer::Proofs).copied(),
+        Some(Coverage::Absent(
+            "the report's own complete catalogue carries no mutant, so no routing decision is \
+             owed"
+        )),
+        "a recording that routes mutants the report does not carry is a subject, and no scope \
+         may call it nothing owed: {audit}"
+    );
+}
+
 #[test]
 fn an_acceptance_of_a_mutation_nothing_reached_is_not_a_violation() {
     let document = with(serde_json::json!({

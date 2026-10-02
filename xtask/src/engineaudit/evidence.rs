@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
+use crate::layers::Closed;
+
 use super::wire::{
     Guarded, GuardedItem, GuardedNarrowing, GuardedSeen, GuardedTarget, Measurement,
 };
@@ -162,13 +164,18 @@ pub(super) fn merge(report: &Report, evidence: &CheckedEvidence<'_>, audit: &mut
         return notes.looked();
     }
     if evidence.shards.is_empty() {
-        notes.unaudited(
-            "shards",
-            "no other part of this catalog was given, so whether the parts come to the whole \
-             cannot be re-derived"
-                .to_owned(),
-        );
-        return notes.looked();
+        match merged_scope(report) {
+            Closed::NothingOwed(why) => return notes.absent(why),
+            Closed::Missing => {
+                notes.unaudited(
+                    "shards",
+                    "no other part of this catalog was given, so whether the parts come to the \
+                     whole cannot be re-derived"
+                        .to_owned(),
+                );
+                return notes.looked();
+            }
+        }
     }
     let mut indices: BTreeSet<u64> = report.mutants.iter().map(|row| row.index).collect();
     let mut total = report.mutants.len();
@@ -212,17 +219,7 @@ pub(super) fn merge(report: &Report, evidence: &CheckedEvidence<'_>, audit: &mut
             return notes.looked();
         };
         total = next_total;
-        for row in &part.mutants {
-            if !indices.insert(row.index) {
-                notes.violated(
-                    name,
-                    format!(
-                        "index {} is in two parts; a mutant belongs to one part",
-                        row.index
-                    ),
-                );
-            }
-        }
+        count_each_row_once(name, part, &mut indices, &mut notes);
     }
     if indices.len() != total {
         notes.violated(
@@ -235,6 +232,37 @@ pub(super) fn merge(report: &Report, evidence: &CheckedEvidence<'_>, audit: &mut
         );
     }
     notes.looked()
+}
+
+/// Every row of `part`, each held to belonging to one part only.
+fn count_each_row_once(
+    name: &str,
+    part: &Report,
+    indices: &mut BTreeSet<u64>,
+    notes: &mut Notes<'_>,
+) {
+    for row in &part.mutants {
+        if !indices.insert(row.index) {
+            notes.violated(
+                name,
+                format!(
+                    "index {} is in two parts; a mutant belongs to one part",
+                    row.index
+                ),
+            );
+        }
+    }
+}
+
+/// The merge layer's subject, closed from the run's own scope: a run that measured the whole catalog itself, as its own `shard` field says, is one run's report and a merge is somebody else's question, while a run that measured one part is owed the other parts of its catalog.
+const fn merged_scope(report: &Report) -> Closed {
+    if report.shard.is_none() {
+        return Closed::NothingOwed(
+            "this report is one run's own whole catalog, and a merge is audited against its \
+             parts",
+        );
+    }
+    Closed::Missing
 }
 
 /// Every row of the merged `report`, against the row of the same index in the part its `part_run_id` names among `parts`: the same outcome, resting on the same executions, since a merge runs nothing and carries what its parts decided.
@@ -288,8 +316,17 @@ fn decided_in_parts(report: &Report, parts: &[(&str, Report)], notes: &mut Notes
     }
 }
 
-/// Re-derives every discharge the run claimed from the evidence it kept.
-fn measured_every_target(report: &Report, reached: Option<&Measurement>, notes: &mut Notes<'_>) {
+/// Re-derives every discharge the run claimed from the evidence it kept, and says what the coverage measurement is owed.
+fn measured_every_target(
+    report: &Report,
+    reached: Option<&Measurement>,
+    touched: Option<&Guarded>,
+    notes: &mut Notes<'_>,
+) -> Closed {
+    let scope = measured_scope(report, touched);
+    if let Closed::NothingOwed(why) = scope {
+        return Closed::NothingOwed(why);
+    }
     let Some(reached) = reached else {
         notes.unaudited(
             "measurement",
@@ -297,7 +334,7 @@ fn measured_every_target(report: &Report, reached: Option<&Measurement>, notes: 
              re-derived"
                 .to_owned(),
         );
-        return;
+        return Closed::Missing;
     };
     let named: BTreeSet<&str> = reached.targets.keys().map(String::as_str).collect();
     if named.is_empty() {
@@ -305,7 +342,7 @@ fn measured_every_target(report: &Report, reached: Option<&Measurement>, notes: 
             "measurement",
             "the measurement names no target, so the run narrowed by nothing".to_owned(),
         );
-        return;
+        return Closed::Missing;
     }
     let excused = excused(&reached.limitations);
     for target in &report.targets {
@@ -323,6 +360,24 @@ fn measured_every_target(report: &Report, reached: Option<&Measurement>, notes: 
             );
         }
     }
+    Closed::Missing
+}
+
+/// The proofs layer's coverage-measurement subject, closed from the run's own routing contract: a run whose guards measured routes by what they recorded, and so says the coverage measurement narrowed nothing, owes no measurement, and a catalog with no row narrows nothing whoever measured; anything else is owed the measurement its routes rested on.
+fn measured_scope(report: &Report, touched: Option<&Guarded>) -> Closed {
+    if report.mutants.is_empty() {
+        return Closed::NothingOwed(
+            "the catalog holds no mutant, so no route narrowed by anything a measurement would \
+             say",
+        );
+    }
+    if touched.is_some_and(|record| !record.targets.is_empty()) {
+        return Closed::NothingOwed(
+            "every route rests on what the guards recorded, which the touch layer re-decides, \
+             so the coverage measurement narrowed nothing",
+        );
+    }
+    Closed::Missing
 }
 
 /// Every route the guards decided, re-decided from what the guards recorded.
@@ -777,13 +832,24 @@ pub(super) fn proofs(
     if let Some(recorded) = &evidence.recorded {
         selected(report, &recorded.events, &mut notes);
     }
-    measured_every_target(report, evidence.reached.as_ref(), &mut notes);
+    let measured = measured_every_target(
+        report,
+        evidence.reached.as_ref(),
+        evidence.touched.as_ref(),
+        &mut notes,
+    );
     let claims = claimed(report);
+    let discharge = discharge_scope(report, counted, &claims);
+    match (measured, discharge) {
+        (Closed::NothingOwed(_), Closed::NothingOwed(_)) => {
+            return notes.absent(
+                "no discharge is claimed and no route rests on the coverage measurement, so no \
+                 proof is owed",
+            );
+        }
+        (Closed::Missing, _) | (_, Closed::Missing) => {}
+    }
     if claims.is_empty() {
-        notes.unaudited(
-            "discharge",
-            "the run discharged nothing, so there is no proof to re-derive".to_owned(),
-        );
         return notes.looked();
     }
     let recorded = evidence.touched.as_ref().map(Recorded::of);
@@ -793,6 +859,24 @@ pub(super) fn proofs(
         never_ran(&claims, &recorded.routing, &mut notes);
     }
     notes.looked()
+}
+
+/// The discharge subject, closed from the report's own accounting: a run whose accounting claims no discharge and whose routes name none has no proof to re-derive; a column that claims any, or a route that names one, is owed the evidence its proofs rest on.
+fn discharge_scope(report: &Report, counted: u64, claims: &[Discharged]) -> Closed {
+    if claims.is_empty()
+        && counted == 0
+        && report.mutants.iter().all(|row| {
+            row.route
+                .as_ref()
+                .is_none_or(|route| route.discharged.is_empty())
+        })
+    {
+        return Closed::NothingOwed(
+            "the report's own accounting claims no discharge and no route names one, so no \
+             proof is owed",
+        );
+    }
+    Closed::Missing
 }
 
 /// Every mutant that never ran says why, in the recording as well as in the report.

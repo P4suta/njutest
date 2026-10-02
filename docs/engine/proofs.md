@@ -171,6 +171,16 @@ The record's `narrowing` is what makes an absence in it evidence:
 a mutant it does not name as compared is one `infected` says nothing about,
 however often a test ran it.
 
+An audit also states, for every layer it has, how far it got, and a layer whose subject the recording's own complete scope proves cannot be there says so rather than calling the evidence missing.
+The scope is derived, never defaulted from an absent value:
+a catalog whose own accounting carries no mutant owes no routing decision,
+a run that measured the whole catalog itself — its own `shard` field says — owes no merge against parts,
+a run whose guards measured routes by what they recorded owes no coverage measurement,
+a run that claims no acceptance owes no ledger an answer,
+and a run that claims no discharge and none of whose routes names one owes no proof.
+Nothing else may be read as absence:
+a part without its siblings, a claim without a ledger, a route without its recording, are missing evidence and are said as unaudited, which is neither a pass nor a failure.
+
 ## After the run
 
 `--equivalence` asks the compiler whether each survivor's mutation is one it renders at all: the tree the user wrote is built once, the mutation is spliced in, and the two builds' executables are compared byte for byte.
