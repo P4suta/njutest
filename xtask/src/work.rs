@@ -155,7 +155,7 @@ impl Stops {
         }
     }
 
-    fn record(&self, note: crate::observation::WaitNote) {
+    pub(crate) fn record(&self, note: crate::observation::WaitNote) {
         match self.state.waits.lock() {
             Ok(mut waits) => waits.push(note),
             Err(poisoned) => {
@@ -165,7 +165,10 @@ impl Stops {
         }
     }
 
-    fn subscribe(&self, observation: &crate::observation::Observation) -> StopSubscription {
+    pub(crate) fn subscribe(
+        &self,
+        observation: &crate::observation::Observation,
+    ) -> StopSubscription {
         let signal = Arc::new(observation.signal());
         match self.state.observers.lock() {
             Ok(mut observers) => {
@@ -201,7 +204,7 @@ impl Drop for Stops {
 }
 
 #[derive(Debug)]
-struct StopSubscription {
+pub(crate) struct StopSubscription {
     _signal: Arc<crate::observation::Signal>,
 }
 
@@ -313,7 +316,7 @@ where
 {
     std::thread::scope(|scope| {
         let observation = crate::observation::Observation::subscribe();
-        let _subscription = stops.subscribe(&observation);
+        let subscription = stops.subscribe(&observation);
         let mut group = Group::launch(command)?;
         let completion = Arc::new(Completion::default());
         let waiter = ProcessWaiter::launch(
@@ -328,6 +331,7 @@ where
         let stopped = group.stop(&completion, stops);
         let joined = waiter.join();
         let reaped = group.reap();
+        drop(subscription);
         let ended = watched?;
         stopped?;
         joined?;
