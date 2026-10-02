@@ -1680,6 +1680,28 @@ fn the_cache_gate_keeps_parent_owned_and_durable_cache_controls() {
 }
 
 #[test]
+fn the_cache_class_has_executable_planted_shapes() {
+    let kind = xtask::lints::Kind::UnownedCacheDirectory;
+    let shapes = xtask::sentinel::shapes(kind.planted()).expect("the real class sentinel parses");
+    assert!(!shapes.is_empty(), "the class must plant a gate input");
+    for shape in shapes {
+        match shape {
+            xtask::sentinel::Shape::Source { name, path, text } => {
+                let findings = xtask::lints::scan_source(&path, &text)
+                    .expect("the real planted source parses");
+                assert!(
+                    findings.iter().any(|finding| finding.kind == kind),
+                    "the executable class shape {name} must be refused: {findings:?}"
+                );
+            }
+            xtask::sentinel::Shape::Tree { name, .. } => {
+                panic!("the cache source gate cannot silently omit tree shape {name}")
+            }
+        }
+    }
+}
+
+#[test]
 fn tidy_refuses_a_leftover_nobody_marked() {
     let said = tidy_over("mkdir \"$TMPDIR/.tmpUnowned\"; exit 0");
     assert!(

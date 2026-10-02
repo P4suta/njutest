@@ -1,5 +1,16 @@
+=== raw-temporary-path source crates/app/src/lib.rs
 fn cached_module() {
     let scratch = tempfile::tempdir().expect("temporary scratch");
     let path = scratch.path().to_path_buf();
     SealedRunner::cached(&modules, deadline, &path).expect("compiled module");
+}
+=== retained-temporary-path source crates/app/src/lib.rs
+fn cache() {
+    let directory = tempfile::tempdir().unwrap();
+    CompilationCache::retained(directory.path().to_path_buf())
+}
+=== borrowed-temporary-compiler source crates/app/src/lib.rs
+fn cache() {
+    let directory = Temporary::make("cache-").unwrap();
+    SealedRunner::with_compiler(&modules, deadline, tier, Some(directory.path()))
 }

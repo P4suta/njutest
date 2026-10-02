@@ -644,6 +644,16 @@ fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> 
     {
         held.left_work_running();
     }
+    tidy_outcome(ran, scratch, cache, stderr)
+}
+
+/// Finishes tidy after the work owner reports its actual outcome, retaining unknown completion.
+fn tidy_outcome(
+    ran: Result<work::Ended, work::WorkError>,
+    scratch: tempfile::TempDir,
+    cache: tempfile::TempDir,
+    stderr: &mut dyn Write,
+) -> ExitCode {
     let code = match ran {
         Ok(work::Ended::Exited(status)) => exit_status(status),
         Ok(work::Ended::Interrupted { signal }) => signalled_code(signal),
