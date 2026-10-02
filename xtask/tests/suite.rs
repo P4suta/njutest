@@ -54,6 +54,8 @@ mod libtest_options;
 mod lints;
 #[path = "milestones.rs"]
 mod milestones;
+#[path = "observation.rs"]
+mod observation;
 #[path = "pre_push.rs"]
 mod pre_push;
 #[path = "proofaudit.rs"]

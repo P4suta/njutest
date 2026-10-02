@@ -1691,3 +1691,119 @@ fn the_schema_lists_exactly_the_outcomes_a_run_can_end_with() {
         .collect();
     assert_eq!(listed, known);
 }
+
+#[test]
+fn closing_a_channel_sink_publishes_completion_to_its_reader() {
+    let (sender, events) = std::sync::mpsc::sync_channel(2);
+    let sink = Sink::Channel(rust_mutants::trace::ChannelSink::new(sender));
+    sink.close().expect("the producer closes its stream");
+    assert!(
+        matches!(
+            events.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected)
+        ),
+        "a closed producer must wake its blocked reader through channel completion"
+    );
+}
+
+#[test]
+fn a_stalled_observation_reader_retains_a_bounded_overflow_refusal() {
+    let observation = rust_mutants::observation::Observation::subscribe();
+    let producer = observation.signal();
+    for _publication in 0..4096 {
+        producer.publish(rust_mutants::observation::Event::Changed);
+    }
+    let waited = observation
+        .wait("source-tree", "filesystem-change", None)
+        .expect("the executing host can measure the wait");
+    let refused = waited
+        .event
+        .expect_err("a stalled reader cannot certify an unlimited observation backlog");
+    assert!(refused.to_string().contains("full"), "{refused}");
+    assert_eq!(waited.note.owner, "source-tree");
+    assert!(waited.note.machine.cpus > 0);
+}
+
+#[test]
+fn completion_after_observation_overflow_does_not_hide_the_lost_evidence() {
+    let observation = rust_mutants::observation::Observation::subscribe();
+    let producer = observation.signal();
+    for _publication in 0..4096 {
+        producer.publish(rust_mutants::observation::Event::Changed);
+    }
+    producer.publish(rust_mutants::observation::Event::Completed);
+    for _read in 0..2 {
+        let waited = observation
+            .wait("producer", "completion", None)
+            .expect("the executing host can measure the wait");
+        assert!(waited.event.is_err(), "completion cannot erase overflow");
+    }
+}
+
+#[derive(Debug)]
+struct SemanticClock(std::cell::Cell<std::time::Instant>);
+
+impl rust_mutants::observation::Clock for SemanticClock {
+    fn now(&self) -> std::time::Instant {
+        self.0.get()
+    }
+
+    fn park(&self, remaining: Option<std::time::Duration>) -> io::Result<()> {
+        let remaining = remaining.ok_or_else(|| io::Error::other("no injected deadline"))?;
+        let next = self
+            .0
+            .get()
+            .checked_add(remaining)
+            .ok_or_else(|| io::Error::other("the injected deadline overflowed"))?;
+        self.0.set(next);
+        Ok(())
+    }
+}
+
+#[test]
+fn an_injected_observation_deadline_expires_at_equality_without_a_host_sleep() {
+    use rust_mutants::observation::{Clock as _, Event, Observation, Waiting};
+    let clock = SemanticClock(std::cell::Cell::new(std::time::Instant::now()));
+    let deadline = clock
+        .now()
+        .checked_add(std::time::Duration::from_nanos(10))
+        .expect("the semantic deadline fits");
+    let observation = Observation::subscribe();
+    let waited = observation
+        .wait_with(
+            Waiting {
+                owner: "semantic-window",
+                cause: "deadline",
+                deadline: Some(deadline),
+            },
+            &clock,
+        )
+        .expect("the actual host can measure the injected decision");
+    assert_eq!(waited.event.expect("a complete decision"), Event::Deadline);
+    assert_eq!(clock.now(), deadline);
+    assert!(waited.note.machine.cpus > 0);
+}
+
+#[test]
+fn a_retained_publication_precedes_an_injected_deadline() {
+    use rust_mutants::observation::{Clock as _, Event, Observation, Waiting};
+    let clock = SemanticClock(std::cell::Cell::new(std::time::Instant::now()));
+    let observation = Observation::subscribe();
+    observation.signal().publish(Event::Completed);
+    let now = clock.now();
+    let waited = observation
+        .wait_with(
+            Waiting {
+                owner: "completed-producer",
+                cause: "completion",
+                deadline: Some(now),
+            },
+            &clock,
+        )
+        .expect("the actual host can measure the injected decision");
+    assert_eq!(
+        waited.event.expect("the producer's event"),
+        Event::Completed
+    );
+    assert_eq!(clock.now(), now);
+}

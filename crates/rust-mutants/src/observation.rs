@@ -5,12 +5,56 @@
 
 use std::io;
 use std::path::Path;
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, Thread};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use notify::Watcher as _;
 use serde::Serialize;
+
+/// The bounded backlog, whose overflow remains a sticky refusal for the entire subscription.
+const BACKLOG: usize = 64;
+
+/// The semantic deadline clock, independent of the executing host's wait measurement.
+pub trait Clock {
+    /// The current monotonic point used to decide the semantic deadline.
+    fn now(&self) -> Instant;
+    /// Blocks on a producer wake or this one remaining semantic duration.
+    ///
+    /// # Errors
+    /// The clock could not perform its declared wait.
+    fn park(&self, remaining: Option<Duration>) -> io::Result<()>;
+}
+
+/// The executing host clock, blocking only on an explicit publication or semantic deadline.
+#[derive(Debug, Clone, Copy)]
+pub struct WallClock;
+
+impl Clock for WallClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+
+    fn park(&self, remaining: Option<Duration>) -> io::Result<()> {
+        match remaining {
+            Some(remaining) => thread::park_timeout(remaining),
+            None => thread::park(),
+        }
+        Ok(())
+    }
+}
+
+/// One named producer observation and its optional semantic deadline.
+#[derive(Debug, Clone, Copy)]
+pub struct Waiting<'a> {
+    /// The actual producer or resource.
+    pub owner: &'a str,
+    /// The event or semantic deadline being awaited.
+    pub cause: &'a str,
+    /// The semantic endpoint, never a retry interval.
+    pub deadline: Option<Instant>,
+}
 
 /// An observation published by its producer, or the observer's semantic deadline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,8 +103,9 @@ pub struct Waited {
 /// A producer's publication endpoint, waking the subscribed reader after enqueueing.
 #[derive(Debug, Clone)]
 pub struct Signal {
-    sent: Sender<io::Result<Event>>,
+    sent: SyncSender<io::Result<Event>>,
     reader: Thread,
+    lost: Arc<Mutex<Option<String>>>,
 }
 
 impl Signal {
@@ -75,10 +120,38 @@ impl Signal {
     }
 
     fn deliver(&self, event: io::Result<Event>) {
-        match self.sent.send(event) {
+        match self.sent.try_send(event) {
             Ok(()) => self.reader.unpark(),
-            Err(_reader_has_ended) => {}
+            Err(TrySendError::Full(event)) => {
+                let mut lost = match self.lost.lock() {
+                    Ok(lost) => lost,
+                    Err(poisoned) => {
+                        drop(poisoned);
+                        std::process::abort();
+                    }
+                };
+                if lost.is_none() {
+                    *lost = Some(format!(
+                        "the bounded observation backlog is full: {event:?}"
+                    ));
+                }
+                drop(lost);
+                self.reader.unpark();
+            }
+            Err(TrySendError::Disconnected(_reader_has_ended)) => {}
         }
+    }
+
+    fn failure(&self) -> io::Result<Option<io::Error>> {
+        let lost = self
+            .lost
+            .lock()
+            .map_err(|_poisoned| io::Error::other("the observation failure mutex is poisoned"))?;
+        let failure = lost
+            .as_ref()
+            .map(|message| io::Error::other(message.clone()));
+        drop(lost);
+        Ok(failure)
     }
 }
 
@@ -103,12 +176,13 @@ impl Observation {
     /// Subscribes the current thread before the returned producer endpoint is used.
     #[must_use]
     pub fn subscribe() -> Self {
-        let (sent, received) = mpsc::channel();
+        let (sent, received) = mpsc::sync_channel(BACKLOG);
         Self {
             received,
             signal: Signal {
                 sent,
                 reader: thread::current(),
+                lost: Arc::new(Mutex::new(None)),
             },
             watcher: None,
         }
@@ -119,18 +193,35 @@ impl Observation {
     /// # Errors
     /// The operating system could not subscribe to every requested directory.
     pub fn filesystem(root: &Path, recursive: bool) -> io::Result<Self> {
+        Self::filesystem_except(root, recursive, &[])
+    }
+
+    /// Subscribes before reading the resource, excluding only the explicitly named generated subtrees.
+    ///
+    /// # Errors
+    /// A requested root or excluded spelling cannot be subscribed exactly.
+    pub fn filesystem_except(root: &Path, recursive: bool, excluded: &[&str]) -> io::Result<Self> {
         let mut observed = Self::subscribe();
         let signal = observed.signal();
+        let root = std::fs::canonicalize(root)?;
+        let generated: Vec<_> = excluded.iter().map(|name| root.join(name)).collect();
         let mut watcher =
             notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
                 Ok(event) if event.kind.is_access() => {}
+                Ok(event)
+                    if !event.paths.is_empty()
+                        && event.paths.iter().all(|path| {
+                            generated
+                                .iter()
+                                .any(|generated| path.starts_with(generated))
+                        }) => {}
                 Ok(_changed) => signal.publish(Event::Changed),
                 Err(source) => signal.failed(io::Error::other(source)),
             })
             .map_err(io::Error::other)?;
         watcher
             .watch(
-                root,
+                &root,
                 if recursive {
                     notify::RecursiveMode::Recursive
                 } else {
@@ -153,6 +244,26 @@ impl Observation {
     /// # Errors
     /// A producer failed, the wait moved to an unsubscribed thread, or its measurement cannot be represented.
     pub fn wait(&self, owner: &str, cause: &str, deadline: Option<Instant>) -> io::Result<Waited> {
+        self.wait_with(
+            Waiting {
+                owner,
+                cause,
+                deadline,
+            },
+            &WallClock,
+        )
+    }
+
+    /// Waits with an injected semantic clock while measuring the executing host independently.
+    ///
+    /// # Errors
+    /// A producer failed, the caller moved threads, or its measurement cannot be represented.
+    pub fn wait_with(&self, waiting: Waiting<'_>, clock: &impl Clock) -> io::Result<Waited> {
+        let Waiting {
+            owner,
+            cause,
+            deadline,
+        } = waiting;
         if thread::current().id() != self.signal.reader.id() || owner.is_empty() || cause.is_empty()
         {
             return Err(io::Error::other(
@@ -165,6 +276,10 @@ impl Observation {
         };
         let started = Instant::now();
         let event = loop {
+            match self.signal.failure() {
+                Ok(Some(failure)) | Err(failure) => break Err(failure),
+                Ok(None) => {}
+            }
             match self.received.try_recv() {
                 Ok(event) => break event,
                 Err(TryRecvError::Disconnected) => {
@@ -173,11 +288,19 @@ impl Observation {
                 Err(TryRecvError::Empty) => {}
             }
             match deadline {
-                Some(deadline) => match deadline.checked_duration_since(Instant::now()) {
-                    Some(left) if !left.is_zero() => thread::park_timeout(left),
+                Some(deadline) => match deadline.checked_duration_since(clock.now()) {
+                    Some(left) if !left.is_zero() => {
+                        if let Err(source) = clock.park(Some(left)) {
+                            break Err(source);
+                        }
+                    }
                     Some(_) | None => break Ok(Event::Deadline),
                 },
-                None => thread::park(),
+                None => {
+                    if let Err(source) = clock.park(None) {
+                        break Err(source);
+                    }
+                }
             }
         };
         let elapsed_ns = u64::try_from(started.elapsed().as_nanos()).map_err(io::Error::other)?;

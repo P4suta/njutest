@@ -204,6 +204,12 @@ Reader tests bind the complete source, requested configuration, actual producer 
 The artifact and provenance inventories remain complete, and the actual producer metadata must reconcile its source revision, patch and stdout and stderr digests.
 Each family keeps the layer whose behavior it claims live.
 
+Host observations subscribe before their producer starts or their resource is first read.
+The engine and task runner retain a bounded backlog whose overflow remains a failure even after producer completion.
+Each actual wait names its producer and cause and measures its monotonic duration and executing host.
+Semantic deadlines use an injected clock; host measurement stays independent of that clock.
+Completion, cancellation, resource change and deadline remain distinct decisions.
+
 | Family | Live layer | Actual recording holding the other layers |
 | --- | --- | --- |
 | CLI reports | CLI projection, diagnostics and serialization | `reports-simple`, `reports-coverage` |
