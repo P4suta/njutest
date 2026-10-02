@@ -209,6 +209,7 @@ Each family keeps the layer whose behavior it claims live.
 | CLI reports | CLI projection, diagnostics and serialization | `reports-simple`, `reports-coverage` |
 | CLI projections | CLI document projection | `projections-unicode` |
 | CLI explanation | Explanation reader; printed-command reproduction remains a real run | `explain-simple` |
+| Run-report schema, accounting and identity readers | Published schema, complete accounting, ID re-minting and live CLI report/merge refusals | `run-report-default`, `run-report-alltiers` |
 | Assurance documents | Document and bundle readers; cache, rerun, shard and acceptance controls remain real runs | `documents-baseline` |
 
 `--equivalence` asks the compiler whether each survivor's mutation is one it renders at all: the tree the user wrote is built once, the mutation is spliced in, and the two builds' executables are compared byte for byte.

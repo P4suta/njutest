@@ -54,6 +54,20 @@ fn rootless(fixture: &Fixture, args: &[&str]) -> Output {
     njutest_devkit::process::answered(code, out, err)
 }
 
+/// Holds a genuine complete run for a reader claim while keeping its original execution assertions.
+fn original(name: &str, args: &[&str]) -> (Fixture, Output) {
+    let recording = njutest_devkit::report::Original::open(name, args)
+        .expect("the complete genuine source, configuration and execution binding");
+    (
+        recording
+            .fixture()
+            .expect("the current complete reader input"),
+        recording
+            .output()
+            .expect("the actual original producer answer"),
+    )
+}
+
 fn stdout(output: &Output) -> String {
     njutest_devkit::process::strict_utf8(&output.stdout).into_owned()
 }
@@ -164,8 +178,10 @@ fn a_target_whose_baseline_did_not_run_counts_no_tests_rather_than_one() {
 
 #[test]
 fn the_report_names_every_mutant_scores_what_it_decided_and_reports_every_gap() {
-    let fixture = Fixture::copy("fixture-simple");
-    let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    let (fixture, output) = original(
+        "run-report-alltiers",
+        &["run", "--offline", "--locked", "--tier", "all"],
+    );
     assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
     let document = stored(&fixture);
     let accounting = &document["accounting"];
@@ -220,8 +236,7 @@ fn against_schema(named: &str, document: &serde_json::Value) -> Vec<String> {
 
 #[test]
 fn the_report_validates_against_the_schema_that_is_published_with_it() {
-    let fixture = Fixture::copy("fixture-simple");
-    let output = against(&fixture, &["run", "--offline", "--locked"]);
+    let (fixture, output) = original("run-report-default", &["run", "--offline", "--locked"]);
     assert!(
         output.status.code() == Some(0) || output.status.code() == Some(1),
         "{}",
@@ -233,8 +248,7 @@ fn the_report_validates_against_the_schema_that_is_published_with_it() {
 
 #[test]
 fn the_stored_report_is_read_back_by_the_report_command() {
-    let fixture = Fixture::copy("fixture-simple");
-    let run = against(&fixture, &["run", "--offline", "--locked"]);
+    let (fixture, run) = original("run-report-default", &["run", "--offline", "--locked"]);
     assert_eq!(run.status.code(), Some(1));
 
     let read_back = against(&fixture, &["report"]);
@@ -918,8 +932,10 @@ fn a_tree_that_changed_is_a_different_question_and_is_answered_again() {
 
 #[test]
 fn every_mutant_row_carries_what_re_minting_its_id_needs() {
-    let fixture = Fixture::copy("fixture-simple");
-    let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    let (fixture, output) = original(
+        "run-report-alltiers",
+        &["run", "--offline", "--locked", "--tier", "all"],
+    );
     assert!(
         output
             .status
@@ -1065,8 +1081,7 @@ fn an_unreached_finding_is_a_finding_the_schema_knows() {
 
 #[test]
 fn a_v1_reader_refuses_fields_outside_its_exact_schema() {
-    let fixture = Fixture::copy("fixture-simple");
-    let output = against(&fixture, &["run", "--offline", "--locked"]);
+    let (fixture, output) = original("run-report-default", &["run", "--offline", "--locked"]);
     assert!(
         output
             .status
@@ -1576,8 +1591,7 @@ fn environment_at(root: &Path, temp: &Path, cache: &Path) -> Environment {
 
 #[test]
 fn the_parts_of_a_catalog_can_be_named_by_a_glob_against_the_report_directory() {
-    let fixture = Fixture::copy("fixture-simple");
-    let ran = against(&fixture, &["run", "--offline", "--locked"]);
+    let (fixture, ran) = original("run-report-default", &["run", "--offline", "--locked"]);
     assert!(
         ran.status
             .code()
@@ -1644,8 +1658,7 @@ fn the_parts_of_a_catalog_can_be_named_by_a_glob_against_the_report_directory() 
 
 #[test]
 fn a_glob_that_names_the_same_part_twice_is_still_the_same_part_twice() {
-    let fixture = Fixture::copy("fixture-simple");
-    let ran = against(&fixture, &["run", "--offline", "--locked"]);
+    let (fixture, ran) = original("run-report-default", &["run", "--offline", "--locked"]);
     assert!(
         ran.status
             .code()

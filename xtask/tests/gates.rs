@@ -31,6 +31,119 @@ fn require(condition: bool, message: impl Into<String>) -> Result<(), TestError>
     }
 }
 
+fn audit_original_reader(
+    directory: &std::path::Path,
+    checkers: &xtask::schemas::Checkers,
+) -> Result<(), TestError> {
+    let binding: serde_json::Value =
+        njutest_devkit::strictjson::decode_slice(&std::fs::read(directory.join("binding.json"))?)
+            .map_err(|error| TestError::Contract(error.to_string()))?;
+    let arguments = binding
+        .get("arguments")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| TestError::Contract("missing original arguments".to_owned()))?
+        .iter()
+        .map(|argument| {
+            argument
+                .as_str()
+                .ok_or_else(|| TestError::Contract("non-text original argument".to_owned()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let original = njutest_devkit::report::Original::read(directory, &arguments)?;
+    let output = original.output()?;
+    require(
+        output.status.code().is_some(),
+        "the actual original exit is retained",
+    )?;
+    let fixture = original.fixture()?;
+    let source =
+        njutest_devkit::report::OriginalTree::read(&directory.join("original"))?.extract()?;
+    let subjects = binding
+        .get("subjects")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| TestError::Contract("missing original subjects".to_owned()))?;
+    for subject in subjects {
+        audit_original_subject(directory, source.path(), subject, checkers)?;
+    }
+    drop(fixture);
+    Ok(())
+}
+
+fn original_parent(path: &std::path::Path) -> Result<&std::path::Path, TestError> {
+    path.parent()
+        .ok_or_else(|| TestError::Contract("missing original parent".to_owned()))
+}
+
+fn audit_original_subject(
+    directory: &std::path::Path,
+    source: &std::path::Path,
+    subject: &serde_json::Value,
+    checkers: &xtask::schemas::Checkers,
+) -> Result<(), TestError> {
+    let path = |field: &str| {
+        subject
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .map(|relative| directory.join("artifacts").join(relative))
+            .ok_or_else(|| TestError::Contract(format!("missing subject {field}")))
+    };
+    let report = path("report")?;
+    let trace = path("trace")?;
+    let audit = if report.file_name() == Some(std::ffi::OsStr::new("run-report-v1.json")) {
+        let audited = gates::engine_audit(
+            checkers,
+            &gates::EngineRun {
+                run: original_parent(&report)?,
+                trace: Some(original_parent(&trace)?),
+                shards: &[],
+                ledger: None,
+                sites: true,
+                root: Some(source),
+            },
+        )
+        .map_err(|error| TestError::Contract(error.to_string()))?;
+        (
+            audited.violations(),
+            audited.unaudited(),
+            audited.to_string(),
+        )
+    } else {
+        let audited = gates::proofaudit(
+            checkers,
+            original_parent(&report)?,
+            Some(original_parent(&trace)?),
+            Some(source),
+        )
+        .map_err(|error| TestError::Contract(error.to_string()))?;
+        (
+            audited.violations(),
+            audited.unaudited(),
+            audited.to_string(),
+        )
+    };
+    require(
+        audit.0 == 0 && audit.1 == 0,
+        format!("{}: {}", directory.display(), audit.2),
+    )
+}
+
+#[test]
+fn every_retained_reader_recording_is_independently_rederived_from_its_original()
+-> Result<(), TestError> {
+    let root = gates::workspace_root().join("xtask/tests/testdata/reader-runs");
+    let checkers = xtask::schemas::Checkers::compiled()
+        .map_err(|error| TestError::Contract(error.to_string()))?;
+    let mut found = false;
+    for entry in std::fs::read_dir(root)? {
+        found = true;
+        audit_original_reader(&entry?.path(), &checkers)?;
+    }
+    require(
+        found,
+        "the complete original reader catalog cannot be absent",
+    )
+}
+
 fn refused<T>(
     result: Result<T, gates::GateError>,
     if_accepted: &'static str,

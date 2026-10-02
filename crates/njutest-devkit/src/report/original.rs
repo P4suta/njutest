@@ -244,6 +244,20 @@ impl Original {
         self.restore(fixture.root())?;
         Ok(fixture)
     }
+
+    /// Reads the actual producer's bound exit and output without claiming a new execution.
+    ///
+    /// # Errors
+    /// The held producer's command, exit, output or complete provenance has changed.
+    pub fn output(&self) -> io::Result<std::process::Output> {
+        verify(&self.directory.join("provenance"), &self.binding.provenance)?;
+        self.binding.captured(&self.directory)?;
+        Ok(crate::process::answered(
+            u8::try_from(self.binding.exit_code).map_err(io::Error::other)?,
+            std::fs::read(self.directory.join("provenance/stdout"))?,
+            std::fs::read(self.directory.join("provenance/stderr"))?,
+        ))
+    }
 }
 
 fn safe(relative: &str) -> io::Result<&Path> {
