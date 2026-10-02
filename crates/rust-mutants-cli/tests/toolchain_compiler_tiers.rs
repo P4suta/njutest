@@ -749,3 +749,256 @@ fn every_fixture_is_compared_by_the_compiler_oracle() {
         [CompilerTier::Optimized, CompilerTier::Unoptimized]
     );
 }
+
+/// The cached upstream source of `name` `version`, exactly as the registry holds it, whose bytes this workspace's own offline builds already read.
+fn upstream(name: &str, version: &str) -> std::path::PathBuf {
+    let wanted = format!("{name}-{version}");
+    let mut homes: Vec<std::path::PathBuf> = std::env::var_os("CARGO_HOME")
+        .map(std::path::PathBuf::from)
+        .into_iter()
+        .chain(std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".cargo")))
+        .collect();
+    if let Some(cargo) = std::env::var_os("CARGO").map(std::path::PathBuf::from)
+        && let Some(home) = cargo.parent().and_then(Path::parent)
+    {
+        homes.push(home.to_path_buf());
+    }
+    for home in homes {
+        let sources = match std::fs::read_dir(home.join("registry").join("src")) {
+            Ok(entries) => entries,
+            Err(_this_home_has_no_registry) => continue,
+        };
+        for source in sources {
+            let candidate = source
+                .expect("a registry source entry can be read")
+                .path()
+                .join(&wanted);
+            match std::fs::metadata(candidate.join("Cargo.toml")) {
+                Ok(metadata) if metadata.is_file() => return candidate,
+                Ok(_) => {}
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+                Err(source) => panic!("the upstream manifest is unreadable: {source}"),
+            }
+        }
+    }
+    panic!("the cached upstream source of {wanted} is in no cargo home this test can name");
+}
+
+#[test]
+fn an_upstream_edition_2015_crate_runs_with_the_generated_runtime_in_scope() {
+    let fixture = Fixture::copy_external(&upstream("fnv", "1.0.7"));
+    let original = fixture.fingerprint();
+    assert_eq!(
+        njutest_devkit::reproducible::digest(&fixture.root().join("lib.rs")),
+        "32bf17ff841b4c285985d9e9df79c5099318c11bf0436ee8582dec30fc9ec826"
+    );
+    let trace = fixture.temp().join("fnv-product-trace");
+    let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
+    command.env("NO_COLOR", "1");
+    command.envs(njutest_devkit::paths::temporary_directory(fixture.temp()));
+    let cache = njutest_devkit::temporary::CacheDirectory::make("edition-2015-product-")
+        .expect("the suite parent retains the product cache until its process ends");
+    command.env("XDG_CACHE_HOME", cache.path());
+    command.arg("run");
+    command.args(["--root", njutest_devkit::paths::utf8(fixture.root())]);
+    command.args(["--tier", "all", "--offline"]);
+    command.arg(format!("--trace={}", trace.display()));
+    let output = command.output().expect("rust-mutants runs");
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
+        "the unchanged FNV product has exactly one sealed StackOverflow doubt\n{}\n{}",
+        njutest_devkit::process::strict_utf8(&output.stdout),
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let report = fnv_report(&fixture, &trace);
+    fnv_tiers(&fixture, &report);
+    let after: BTreeMap<_, _> = fixture.fingerprint().into_iter().collect();
+    for (path, digest) in original {
+        assert_eq!(
+            after.get(&path),
+            Some(&digest),
+            "upstream input changed: {path}"
+        );
+    }
+}
+
+/// Requires the complete actual product report and trace rather than accepting its exit alone.
+fn fnv_report(fixture: &Fixture, trace: &Path) -> rust_mutants::report::run::RunDocument {
+    use rust_mutants::sealed::record::{Doubt, Evidence};
+    let directory = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    );
+    let text = std::fs::read_to_string(directory.join(rust_mutants::report::run::FILE_NAME))
+        .expect("the complete FNV run report");
+    let report = rust_mutants::report::run::parse(&text).expect("the strict FNV report");
+    report.validate().expect("all FNV report cross-field facts");
+    let accounting = report.accounting;
+    assert_eq!(accounting.cataloged, 11);
+    assert_eq!(accounting.executed.count(), 10);
+    assert_eq!(accounting.killed.count(), 9);
+    assert_eq!(accounting.unproven.count(), 1);
+    assert_eq!(accounting.unreached.count(), 1);
+    assert_eq!(accounting.refused.count(), 0);
+    assert_eq!(accounting.errored.count(), 0);
+    assert_eq!(report.selection.tier, "all");
+    assert!(report.selection.operators.is_empty());
+    assert!(report.selection.include.is_empty());
+    assert!(report.selection.exclude.is_empty());
+    assert!(report.selection.packages.is_empty());
+    assert!(report.run.shard.is_none());
+    assert!(!report.run.interrupted);
+    assert!(report.rejections.is_empty());
+    assert_eq!(report.mutants.len(), 11);
+    for row in &report.mutants {
+        assert_eq!(row.path, "lib.rs");
+        assert_eq!(
+            row.source_digest,
+            "32bf17ff841b4c285985d9e9df79c5099318c11bf0436ee8582dec30fc9ec826"
+        );
+        assert!(
+            row.route.is_some(),
+            "the complete execution route of {}",
+            row.id
+        );
+        match &row.evidence {
+            Evidence::Unproven { reasons } => {
+                assert_eq!(reasons, &[Doubt::StackOverflow]);
+                assert_eq!(
+                    row.id,
+                    "d47220664ba83a6f84bca9fa75adcb4ee7af17e59387f1cbe8563c24a2e2f9b3"
+                );
+            }
+            Evidence::Sealed { .. } => {}
+        }
+    }
+    let records = std::fs::read(trace.join(rust_mutants::trace::FILE_NAME))
+        .expect("the full original product trace");
+    let events = rust_mutants::trace::read_events(records.as_slice())
+        .expect("every actual trace event is valid");
+    assert!(rust_mutants::trace::check(&events).is_empty());
+    println!(
+        "FNV run={}, catalog={}, workspace={}, trace={}",
+        report.run.id,
+        report.workspace.catalog_digest,
+        report.workspace.workspace_digest,
+        njutest_devkit::reproducible::digest(&trace.join(rust_mutants::trace::FILE_NAME))
+    );
+    report
+}
+
+/// Builds the unchanged original and holds all of its controls and outcomes to both actual tiers.
+fn fnv_tiers(fixture: &Fixture, report: &rust_mutants::report::run::RunDocument) {
+    let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
+        vars: njutest_devkit::paths::environment_for_a_toolchain_run(&[])
+            .into_iter()
+            .collect(),
+        temp_directory: fixture.temp().to_path_buf(),
+        program: std::env::current_exe().expect("the test executable"),
+        cache_directory: fixture.cache().to_path_buf(),
+        working_directory: fixture.root().to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+        cargo: None,
+        ci: rust_mutants_cli::CiHost::None,
+    };
+    let parsed =
+        cli::parse(["rust-mutants", "run", "--offline", "--tier", "all"].map(OsString::from))
+            .expect("the complete FNV scope");
+    let cli::Command::Run { scope, .. } = parsed.command else {
+        panic!("the original FNV contract is a run");
+    };
+    let settings = Settings::resolve(&scope, &environment).expect("the FNV settings");
+    let cancel = Cancel::new();
+    let options = settings
+        .open_options(&scope, &environment, Recorder::disabled())
+        .expect("the original FNV input graph");
+    let mut preparation = settings.prepare_options().expect("the FNV preparation");
+    assert!(preparation.verify);
+    let store = fixture.cache().join("fnv-full-tier-transcripts");
+    std::fs::create_dir_all(&store).expect("retain complete actual tier transcripts");
+    preparation.transcripts = Some(store.clone());
+    let workspace = Workspace::open(fixture.root(), options, &cancel).expect("FNV opens");
+    let session = workspace
+        .prepare(&preparation, &cancel)
+        .expect("FNV builds and verifies");
+    assert_eq!(session.catalog().digest(), report.workspace.catalog_digest);
+    assert_eq!(session.catalog().mutants().len(), 11);
+    for tier in CompilerTier::ALL {
+        fnv_tier(&session, tier, report, &cancel);
+    }
+    assert!(
+        std::fs::read_dir(&store)
+            .expect("actual tier transcripts")
+            .next()
+            .is_some()
+    );
+    let kept = session.close().expect("every private FNV execution ends");
+    assert!(kept.is_empty());
+}
+
+/// Rejects any missing original control, changed scope or different sealed doubt in one tier.
+fn fnv_tier(
+    session: &rust_mutants::session::Session,
+    tier: CompilerTier,
+    report: &rust_mutants::report::run::RunDocument,
+    cancel: &Cancel,
+) {
+    use rust_mutants::sealed::record::{Doubt, Evidence};
+    let owner = rust_mutants::sealed::ModuleOwner::default();
+    let runner = SealedRunner::with_compiler(&owner, Duration::from_secs(120), tier, None)
+        .expect("the requested actual FNV compiler tier");
+    let bench = session
+        .bench(&runner, cancel)
+        .expect("original FNV instances execute");
+    assert!(bench.unsealed.is_empty(), "{tier:?}: {:?}", bench.unsealed);
+    let held: BTreeMap<_, _> = bench
+        .stations
+        .iter()
+        .map(|(target, station)| (target.as_str(), station.controls.len()))
+        .collect();
+    assert_eq!(
+        held,
+        BTreeMap::from([("fnv/lib/fnv", 1), ("fnv/doc/fnv", 2)])
+    );
+    for station in bench.stations.values() {
+        for control in station.controls.values() {
+            let control = control
+                .as_ref()
+                .expect("each unchanged original baseline passes sealed");
+            assert!(control.declined.is_none());
+            assert!(control.fuel > 0);
+        }
+    }
+    for mutant in session.catalog().mutants() {
+        assert!(session.was_validated(mutant.index));
+        let row = report
+            .mutants
+            .iter()
+            .find(|row| row.id == mutant.id.to_string())
+            .expect("the exact complete catalog row");
+        match sealed_verdict(session, mutant, &bench).expect("the tier answers every FNV mutant") {
+            Sealing::Established(judged) => {
+                assert_eq!(judged.outcome, row.outcome, "{tier:?}: {}", row.id);
+                assert_eq!(judged.not_run_reason, row.not_run_reason);
+                assert_eq!(judged.evidence, row.evidence);
+            }
+            Sealing::Unproven(evidence) => {
+                assert_eq!(
+                    evidence,
+                    Evidence::Unproven {
+                        reasons: vec![Doubt::StackOverflow]
+                    }
+                );
+                assert_eq!(evidence, row.evidence);
+            }
+            Sealing::Interrupted => panic!("the complete FNV tier was interrupted"),
+        }
+    }
+    println!(
+        "FNV {tier:?}: original controls={held:?}, actual work={:?}",
+        runner.spent()
+    );
+}

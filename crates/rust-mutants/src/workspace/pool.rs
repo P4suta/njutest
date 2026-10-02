@@ -18,6 +18,54 @@ pub(super) struct Graph {
     frozen: crate::snapshot::FrozenGraph,
     _lease: std::fs::File,
     key: String,
+    root: Root,
+}
+
+/// A retained source placement that preserves Cargo's standalone workspace discovery.
+enum Root {
+    Retained(std::path::PathBuf),
+    Isolated(std::path::PathBuf),
+}
+
+impl Root {
+    fn of(source: &Path, options: &super::OpenOptions, retained: &Path) -> io::Result<Self> {
+        let manifest: toml::Table =
+            toml::from_str(&std::fs::read_to_string(source.join("Cargo.toml"))?)
+                .map_err(io::Error::other)?;
+        if manifest.get("workspace").is_none() {
+            for ancestor in retained.ancestors() {
+                match std::fs::metadata(ancestor.join("Cargo.toml")) {
+                    Ok(metadata) if metadata.is_file() => {
+                        for parent in options.temp_directory.ancestors() {
+                            match std::fs::metadata(parent.join("Cargo.toml")) {
+                                Ok(metadata) if metadata.is_file() => {
+                                    return Err(io::Error::other(
+                                        "a standalone source owner would inherit another workspace",
+                                    ));
+                                }
+                                Ok(_) => {}
+                                Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+                                Err(source) => return Err(source),
+                            }
+                        }
+                        return Ok(Self::Isolated(
+                            options.temp_directory.join("standalone-source-graphs"),
+                        ));
+                    }
+                    Ok(_) => {}
+                    Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+                    Err(source) => return Err(source),
+                }
+            }
+        }
+        Ok(Self::Retained(retained.to_path_buf()))
+    }
+
+    fn path(&self) -> &Path {
+        match self {
+            Self::Retained(path) | Self::Isolated(path) => path,
+        }
+    }
 }
 
 impl Graph {
@@ -45,7 +93,9 @@ impl Graph {
                 "a source graph cache must be absolute",
             )));
         }
-        let parent = Path::new(root).join("source-graphs-v1").join(&key);
+        let root =
+            Root::of(rules.layout.source_root(), options, Path::new(root)).map_err(unavailable)?;
+        let parent = root.path().join("source-graphs-v1").join(&key);
         std::fs::create_dir_all(&parent).map_err(unavailable)?;
         let lease = graph_lease(&parent, &options.trace).map_err(unavailable)?;
         let record = parent.join("graph.json");
@@ -93,11 +143,16 @@ impl Graph {
             frozen,
             _lease: lease,
             key,
+            root,
         })
     }
 
     pub(super) fn key(&self) -> &str {
         &self.key
+    }
+
+    pub(super) fn retained_root(&self) -> &Path {
+        self.root.path()
     }
 
     pub(super) fn copy(
@@ -207,18 +262,16 @@ fn semantic(rules: &crate::snapshot::Options) -> io::Result<crate::snapshot::Sur
 
 /// Claims the first free editable source lease without a bounded private fallback.
 pub(super) fn claim(
+    root: &Path,
     vars: &Variables,
     (content, toolchain): (&str, &Toolchain),
     now: jiff::Timestamp,
 ) -> io::Result<Option<Owner>> {
-    let Some(root) = vars.var("NJUTEST_FIXTURE_BUILD_CACHE") else {
-        return Ok(None);
-    };
-    if !Path::new(root).is_absolute() {
+    if !root.is_absolute() {
         return Err(io::Error::other("a fixture build cache must be absolute"));
     }
     std::fs::create_dir_all(root)?;
-    let root = crate::canonical::canonical(Path::new(root))?;
+    let root = crate::canonical::canonical(root)?;
     let mut digest = Sha256::new();
     for part in [
         "njutest-fixture-build-v1",

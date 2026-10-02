@@ -1108,13 +1108,18 @@ impl Workspace {
         let now = jiff::Timestamp::now();
         if options.env.holds("NJUTEST_FIXTURE_BUILD_CACHE") {
             let graph = pool::Graph::open(rules, options, now)?;
-            let owner = pool::claim(&options.env, (graph.key(), driver.toolchain), now)
-                .map_err(pool::unavailable)?
-                .ok_or_else(|| {
-                    pool::unavailable(std::io::Error::other(
-                        "a retained source graph needs an editable lease",
-                    ))
-                })?;
+            let owner = pool::claim(
+                graph.retained_root(),
+                &options.env,
+                (graph.key(), driver.toolchain),
+                now,
+            )
+            .map_err(pool::unavailable)?
+            .ok_or_else(|| {
+                pool::unavailable(std::io::Error::other(
+                    "a retained source graph needs an editable lease",
+                ))
+            })?;
             let snapshot = graph.copy((driver.dir, owner.dir().to_path_buf()), options, now)?;
             let owner = std::sync::Arc::new(crate::sealed::BuildClaim::new(owner, None));
             return Ok((snapshot, Some(owner)));

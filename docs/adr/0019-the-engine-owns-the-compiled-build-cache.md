@@ -176,3 +176,13 @@ They continue through an actual compiler and never receive a verified capture hi
 Prepared captures share the target's preparation lease, including settling, actual work, publication and failure evidence.
 The legacy capture and emptying APIs retain their public behavior, while compiler preparation also holds its owned lease.
 No successful removal or signal delivery certifies late-writer completion.
+
+## Amendment, 2026-10-03: retained source placement preserves Cargo discovery
+
+A standalone manifest must not inherit an unrelated workspace from the retained cache's ancestors.
+The exhaustive retained or isolated source owner uses the caller's explicit isolated temporary root when the retained placement would cross that boundary.
+An isolated placement with the same foreign ancestor is refused with its input identity.
+Both placements retain one immutable complete source graph and separate editable leases without changing the original manifest.
+The unchanged FNV 1.0.7 Rust 2015 control binds every original source digest, the complete catalog and every report row to its actual trace.
+Both actual compiler tiers must pass all original sealed baselines and agree on all eleven outcomes.
+Its one declared doubt remains the exact typed StackOverflow mutation, while all nine killed and one unreached outcomes remain established.
